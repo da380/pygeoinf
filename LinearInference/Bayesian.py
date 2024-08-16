@@ -20,7 +20,7 @@ solver:            An instance of the class Operator.Linear that implements the 
                    R the data covariance. 
 
 '''
-class InverseProblem:
+class Inverse:
 
     def __init__(self, priorModelMeasure, errorMeasure, forwardOperator, solver):
         assert forwardOperator.Domain == priorModelMeasure.Space
@@ -110,7 +110,7 @@ solver:            An instance of the class Operator.Linear that implements the 
                    R the data covariance. 
 
 '''
-class InferenceProblem(InverseProblem):
+class Inference(Inverse):
 
     def __init__(self, priorModelMeasure, errorMeasure, forwardOperator, solver, propertyOperator):    
         super(InferenceProblem,self).__init__(priorModelMeasure, errorMeasure, forwardOperator, solver)

@@ -111,6 +111,11 @@ class Linear:
         return Linear(other.Domain, self.CoDomain, lambda x : self(other(x)), lambda x: other.Dual(self.Dual(x)))
 
 
+    # Return dense matrix to be printed
+    def __str__(self):
+        return self.AsDense.__str__()
+
+
     # Return direct sum with a second operator. 
     def DirectSum(self, other):
         domain = self.Domain.DirectSum(other.Domain)
@@ -124,7 +129,7 @@ class Linear:
 # Class for self-dual lear operators.
 class SelfDual(Linear):
     def __init__(self, Space, mapping):        
-        super(SelfAdjoint,self).__init__(Space,Space.Dual(),mapping,mapping)
+        super(SelfDual,self).__init__(Space,Space.Dual,mapping,mapping)
 
 
 # Class for self-adjoint linea operators. 
