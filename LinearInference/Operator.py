@@ -1,5 +1,6 @@
 import numpy as np
-from scipy.sparse.linalg import LinearOperator
+from scipy.sparse.linalg import LinearOperator as SciPyOp
+from LinearInference.Euclidean import EuclideanSpace
 
 
 '''
@@ -58,15 +59,23 @@ class Linear:
         dualMapping = lambda v : self.CoDomain.InverseRiesz(self._mapping(self.Domain.Riesz(v)))
         return Linear(self.CoDomain, self.Domain,mapping, dualMapping)
 
+    # Return the matrix representation of the operator as an instance of the Linear class. 
+    @property
+    def AsMatrix(self):
+        domain = EuclideanSpace(self.Domain.Dimension)
+        coDomain = EuclideanSpace(self.CoDomain.Dimension)
+        mapping = lambda x : self.CoDomain.ToComponents(self( self.Domain.FromComponents(x)))
+        dualMapping = lambda x : self.Domain.Dual.ToComponents(self.Dual(self.CoDomain.Dual.FromComponents(x)))
+        return Linear(domain, coDomain, mapping, dualMapping)
 
     # Return the representation of the operator with respect to the bases for X and Y. The matrix is not formed, 
     # but returned using the SciPy LinearOperator class which is suitable for matrix-free linear algebra.
     @property
     def AsSciPyLinearOperator(self):
         shape = (self.CoDomain.Dimension, self.Domain.Dimension)    
-        matvec = lambda v : self.CoDomain.ToComponents(self(self.Domain.FromComponents(v)))        
-        rmatvec = lambda v : self.Domain.ToComponents(self.Adjoint() ( self.CoDomain.FromComponents(v)))    
-        return LinearOperator(shape, matvec = matvec, rmatvec = rmatvec)
+        matvec = lambda x : self.AsMatrix(x)
+        rmatvec = lambda x : self.AsMatrix.Dual(x)
+        return SciPyOp(shape, matvec = matvec, rmatvec = rmatvec)
 
     # Return the representation of the operator with  to the bases for X and Y as a numpy array. 
     @property
@@ -77,7 +86,7 @@ class Linear:
         x = np.zeros(m)
         for i in range(m):
             x[i] = 1
-            y = self(self.Domain.FromComponents(x))
+            y = self.AsMatrix(x)
             A[:,i] = y
             x[i] = 0
         return A

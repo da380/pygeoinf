@@ -42,13 +42,7 @@ P = Linear(domain = X, coDomain = Y, mapping =  lambda x : x[:Y.Dimension],  dua
 
 A = SelfAdjoint(X, lambda x : 2*x)
 
-x = X.Random()
-y = A(x)
-
-B = CG(A)
-
-
-print(B)
+print(A.AsMatrix)
 
 
 
