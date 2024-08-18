@@ -1,6 +1,4 @@
 from LinearInference.Operator import SelfAdjoint
-
-
 import numpy as np
 
 
