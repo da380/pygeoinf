@@ -64,6 +64,11 @@ class HilbertSpace(VectorSpace):
     def from_dual(self, xp):        
         return self._from_dual(xp)
 
+    # Return the represenation of the vector as a linear form. 
+    def to_dual(self,x):
+        return LinearForm(self, lambda y : self.inner_product(x,y))
+    
+
 
     
 

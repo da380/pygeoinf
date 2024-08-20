@@ -14,7 +14,6 @@ to_components = lambda x : x
 from_components = lambda x : x
 inner_product = lambda x1 , x2 : np.dot(A @ x1,x2)
 
-    
 
 X = HilbertSpace(dimension, to_components, from_components, inner_product)
 
@@ -22,7 +21,9 @@ xp = LinearForm(X, lambda x : x[0])
 
 x = X.from_dual(xp)
 
-print(x)
+yp = X.to_dual(x)
+
+print(yp)
 
 
 
