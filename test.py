@@ -1,21 +1,48 @@
 import numpy as np
 from scipy.stats import norm
 
-from linear_inference.hilbert_space import LinearForm, LinearOperator, VectorSpace, HilbertSpace
+from linear_inference.vector_space import VectorSpace, LinearForm, LinearOperator
+from linear_inference.hilbert_space import HilbertSpace
 
-n = 2
-space = VectorSpace(n)
 
-M = norm.rvs(size = (n,n))
 
-X = VectorSpace(n)
-Y = HilbertSpace(X, X, lambda x : x , lambda x : x)
+dimension = 4
 
-A = LinearOperator(Y, Y, lambda x : M @ x)#, adjoint_mapping = lambda y : M.T @ y)
+A = norm.rvs(size = (dimension, dimension))
+A = A.T @ A
+to_components = lambda x : x
+from_components = lambda x : x
+inner_product = lambda x1 , x2 : np.dot(A @ x1,x2)
 
-print(A)
+    
 
-print(A.adjoint)
+X = HilbertSpace(dimension, to_components, from_components, inner_product)
+
+xp = LinearForm(X, lambda x : x[0])
+
+x = X.from_dual(xp)
+
+print(x)
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
