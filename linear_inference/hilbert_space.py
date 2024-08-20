@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
-from linear_inference.vector_space import VectorSpace, LinearForm, LinearOperator
+import linear_inference.vector_space as vs
+from linear_inference.vector_space import VectorSpace, LinearForm
+
 
 
 class HilbertSpace(VectorSpace):
@@ -10,8 +12,8 @@ class HilbertSpace(VectorSpace):
         self._to_components = to_components
         self._from_components = from_components
         self._inner_product = inner_product
-        # If the mapping from the dual space is not set, use the default implementation. 
         if from_dual == None:            
+            # If the mapping from the dual space is not set, use the default implementation. 
             self._set_metric()
             self._from_dual = lambda xp :  self._from_dual_default(xp)
         else:
@@ -70,6 +72,18 @@ class HilbertSpace(VectorSpace):
     
 
 
-    
 
-    
+
+class LinearOperator(vs.LinearOperator):
+
+    def __init__(self, domain, codomain, mapping):
+        super(LinearOperator, self).__init__(domain, codomain, mapping)
+
+
+
+    @property
+    def adjoint(self):
+        domain = self.codomain
+        codomain = self.domain
+        mapping = lambda y :  codomain.from_dual(self.dual @ domain.to_dual(y))
+        return LinearOperator(domain, codomain, mapping)

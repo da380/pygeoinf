@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 from scipy.stats import norm
-from linear_inference.hilbert_space import VectorSpace, HilbertSpace, LinearOperator
+from linear_inference.hilbert_space import VectorSpace, HilbertSpace
+
 
 
 
@@ -28,3 +29,5 @@ class EuclideanSpace(HilbertSpace):
 
 
         
+
+    
