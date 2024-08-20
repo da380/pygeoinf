@@ -6,20 +6,20 @@ from linear_inference.hilbert_space import LinearForm, LinearOperator, VectorSpa
 n = 2
 space = VectorSpace(n)
 
-mat = norm.rvs(size = (n,n))
+M = norm.rvs(size = (n,n))
+
+X = VectorSpace(n)
+Y = HilbertSpace(X, X, lambda x : x , lambda x : x)
+
+A = LinearOperator(Y, Y, lambda x : M @ x)#, adjoint_mapping = lambda y : M.T @ y)
+
+print(A)
+
+print(A.adjoint)
 
 
-X = HilbertSpace(space, space, lambda x : x, lambda x : x)
 
-def mapping(x):
-    print("Hi")
-    return mat @ x
-A = LinearOperator(X, X, mapping)
 
-A.adjoint @ X.random()
-
-#print(A)
-#print(A.adjoint)
 
 
 

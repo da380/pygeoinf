@@ -1,6 +1,15 @@
 import numpy as np
+from abc import ABC
 from scipy.stats import norm
 from scipy.linalg import cho_factor, cho_solve
+from scipy.sparse.linalg import LinearOperator
+
+class AbstractVectorSpace(ABC):
+    pass
+
+class AbstractHilbertSpace(ABC):
+    pass
+
 
 # Class for linear forms on a vector space. 
 class LinearForm:
@@ -43,10 +52,14 @@ class LinearForm:
 # Class for linear operators between two vector spaces. 
 class LinearOperator:
 
-    def __init__(self, domain, codomain, mapping):
+    def __init__(self, domain, codomain, mapping, /, *, dual_mapping = None, adjoint_mapping = None):
         self._domain = domain
         self._codomain = codomain
-        self._mapping = mapping    
+        self._mapping = mapping  
+        self._dual_mapping = dual_mapping
+        self._adjoint_mapping = adjoint_mapping
+        if self.adjoint_set:
+            assert self.hilbert_space_operator, "adjoint mapping only defined for Hilbert space operators"
 
     # Return the domain of the linear operator. 
     @property
@@ -58,9 +71,32 @@ class LinearOperator:
     def codomain(self):
         return self._codomain
 
+    # Returns true for mappings between Hilbert spaces.
+    @property
+    def hilbert_space_operator(self):
+        return isinstance(self.domain,AbstractHilbertSpace) and isinstance(self.codomain,AbstractHilbertSpace)
+
+    # Returns true if the dual mapping has been set directly. 
+    @property
+    def dual_set(self):
+        return self._dual_mapping is not None
+
+    # Return true if the adjoint mapping has been set directly. 
+    @property
+    def adjoint_set(self):
+        return self._adjoint_mapping is not None
+
     # Return the action of the operator on a vector. 
     def __call__(self,x):
-        return self._mapping(x)
+        if self.hilbert_space_operator:
+            if isinstance(x, LinearForm):
+                assert self.domain == x.domain.dual
+                return self._mapping(self.domain.from_linear_form(x))
+            else:
+                return self._mapping(x)
+
+        else:
+            return self._mapping(x)
 
     # Overloads to make LinearOperators a vector space and algebra.
     def __mul__(self, s):
@@ -88,8 +124,7 @@ class LinearOperator:
             return LinearOperator(other.domain, self.codomain, lambda x : self(other(x)))
         else:
             return self(other)
-
-
+            
     # For writing operator, convert to dense matrix.
     def __str__(self):
         return self.to_dense_matrix.__str__()
@@ -113,37 +148,39 @@ class LinearOperator:
             c[i] = 0
         return A
 
+    # Define the abstract dual mapping. 
+    @property
+    def _abstract_dual_mapping(self):
+        return lambda yp : (lambda x : yp(self @ x))
+
     # Return the dual of the linear mapping.
     @property
-    def dual(self):
-        domain = self.codomain.dual
-        codomain = self.domain.dual
-        mapping = lambda yp : (lambda x : yp(self @ x))
-        return LinearOperator(domain, codomain, mapping)  
-
-    # Return the "covariant-dual" for Hilbert space operators
-    @property
-    def covariant_dual(self):
-        domain = self.domain.dual_representation
-        codomain = self.codomain.dual_representation
-        mapping = lambda x : codomain.to_dual_representation( self(domain.from_dual_representation(x)))
-        return LinearOperator(domain, codomain, mapping)
+    def dual(self):                
+        if self.dual_set:
+            return LinearOperator(self.codomain.dual, self.domain.dual, self._dual_mapping, dual_mapping= self._mapping)
+        elif self.adjoint_set:
+            mapping = lambda yp : self.domain.to_dual(self.adjoint(self.codomain.from_dual(yp)))
+            adjoint_mapping = lambda xp : self.codomain.to_dual(self(self.domain.from_dual(xp)))
+            return LinearOperator(self.codomain.dual, self.domain.dual, mapping, adjoint_mapping= adjoint_mapping)
+        else:
+            if self.hilbert_space_operator:
+                mapping = lambda yp : self.domain.dual.from_linear_form(self._abstract_dual_mapping(self.codomain.dual.to_linear_form(yp)))
+            else:                
+                mapping = self._abstract_dual_mapping        
+        return LinearOperator(self.codomain.dual, self.domain.dual, mapping)          
 
     # Return the adjoint for Hilbert space operators. 
     @property
     def adjoint(self):
-        domain = self.codomain
-        codomain = self.domain
-        def mapping(x):            
-            xp = domain.dual_representation.to_linear_form(domain._to_dual_representation(x))
-            yp = self.dual @ xp
-            return codomain.from_dual_representation(codomain.dual_representation.from_linear_form(yp))
-        return LinearOperator(domain, codomain, mapping)
-
-    
+        assert self.hilbert_space_operator
+        if self.adjoint_set:            
+            return LinearOperator(self.codomain.dual, self.domain.dual, self._adjoint_mapping, adjoint_mapping = self._mapping)
+        else:
+            mapping = lambda y : self.domain.dual.from_dual(self.dual(self.codomain.dual.to_dual(y)))
+            return LinearOperator(self.codomain.dual, self.domain.dual, mapping, adjoint_mapping = self._mapping)
 
 # Class for vector spaces. 
-class VectorSpace:
+class VectorSpace(AbstractVectorSpace):
 
     def __init__(self, dimension, to_components = lambda x : x, from_components = lambda x : x):
         self._dimension = dimension
@@ -204,26 +241,26 @@ class VectorSpace:
 
 
 # Class for a Hilbert space with a concrete representation of its dual. 
-class HilbertSpace(VectorSpace):
+class HilbertSpace(AbstractHilbertSpace,VectorSpace):
 
-    def __init__(self, space, dual_representation, to_dual_representation, from_dual_representation):
+    def __init__(self, space, dual, to_dual, from_dual):
         self._space = space
-        self._dual_representation = dual_representation
-        self._to_dual_representation = to_dual_representation
-        self._from_dual_representation = from_dual_representation    
+        self._dual = dual
+        self._to_dual = to_dual
+        self._from_dual = from_dual    
         super(HilbertSpace,self).__init__(space.dimension, space.to_components, space.from_components)
         
-    def to_dual_representation(self,x):
-        return self._to_dual_representation(x)
+    def to_dual(self,x):
+        return self._to_dual(x)
 
-    def from_dual_representation(self,xp):
-        return self._from_dual_representation(xp)
+    def from_dual(self,xp):
+        return self._from_dual(xp)
 
     def duality_product(self, xp, x):
-        return np.dot(self._dual_representation.to_components(xp), self.to_components(x))
+        return np.dot(self._dual.to_components(xp), self.to_components(x))
 
     def inner_product(self, x1, x2):        
-        return self.duality_product(self.to_dual_representation(x1),x2)
+        return self.duality_product(self.to_dual(x1),x2)
 
     def norm(self, x):
         return np.sqrt(self.inner_product(x,x))
@@ -239,12 +276,12 @@ class HilbertSpace(VectorSpace):
             x = self.from_components(c)
             cp[i] = f(x)
             c[i] = 0
-        xp = self._dual_representation.from_components(cp)
-        return self.from_dual_representation(xp)
+        xp = self._dual.from_components(cp)
+        return self.from_dual(xp)
 
     @property
-    def dual_representation(self):        
-        return HilbertSpace(self._dual_representation, self._space, self.from_dual_representation, self.to_dual_representation)
+    def dual(self):        
+        return HilbertSpace(self._dual, self._space, self.from_dual, self.to_dual)
 
 
     @staticmethod
@@ -267,9 +304,9 @@ class HilbertSpace(VectorSpace):
                 c2[j] = 0
             c1[i] = 0
         factor = cho_factor(metric)        
-        to_dual_representation = lambda x : metric @ space.to_components(x)
-        from_dual_representation = lambda xp : space.from_components( cho_solve(factor, xp))
-        return HilbertSpace(space, Rn , to_dual_representation, from_dual_representation)
+        to_dual = lambda x : metric @ space.to_components(x)
+        from_dual = lambda xp : space.from_components( cho_solve(factor, xp))
+        return HilbertSpace(space, Rn , to_dual, from_dual)
 
             
 
