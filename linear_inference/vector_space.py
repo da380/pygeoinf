@@ -1,55 +1,82 @@
 import numpy as np
+from abc import ABC, abstractmethod, abstractproperty
 from scipy.stats import norm
 from scipy.linalg import cho_factor, cho_solve
 from scipy.sparse.linalg import LinearOperator
 
 
-from linear_inference.interfaces import AbstractVectorSpace, AbstractHilbertSpace
 from linear_inference.linear_form import LinearForm
 
+# Abstract base class for vector spaces. 
+class AbstractVectorSpace(ABC):
 
-class DualVectorSpace(AbstractVectorSpace):
-
-    def __init__(self, space):
-        self._space = space
-
-    @property
+    # Return dimension of the space.     
+    @abstractproperty
     def dimension(self):
-        return self.dual.dimension
+        pass
 
-    @property
+    # Return the dual of the vector space. 
+    @abstractproperty
     def dual(self):
-        return self._space
-        
-    def to_components(self,xp):
+        pass
+
+    # Return the zero vector.
+    @property
+    def zero(self):
+        return self.from_components(np.zeros(self.dimension))
+
+    # Map vector to its components in basis. 
+    @abstractmethod
+    def to_components(self, x):
+        pass
+
+    # Map components to vector using basis. 
+    @abstractmethod
+    def from_components(self, c):
+        pass
+
+    # Maps a dual vector to its components. 
+    def _dual_to_components(self,xp):
         n = self.dimension
         c = np.zeros(n)
         cp = np.zeros(n)
         for i in range(n):
             c[i] = 1
-            cp[i] = xp(self.dual.from_components(c))
+            cp[i] = xp(self.from_components(c))
             c[i] = 0
         return cp
 
-    def from_components(self,cp):
-        return  LinearForm(self.dual, lambda x : np.dot(self.dual.to_components(x),cp))
-    
-    
+    # Maps dual components to the dual vector. 
+    def _dual_from_components(self, cp):
+        return LinearForm(self, lambda x : np.dot(self.to_components(x), cp))
+
+    # Return a vector whose components samples from a given distribution. 
+    def random(self, dist = norm()):
+        return self.from_components(norm.rvs(size = self.dimension))
+
+
+# Class for vector spaces. 
 class VectorSpace(AbstractVectorSpace):
     
-    def __init__(self, dimension, to_components = lambda x : x, from_components = lambda x : x):
+    def __init__(self, dimension, to_components, from_components, /, * , dual_base = None):
         self._dimension = dimension
         self._to_components = to_components
         self._from_components = from_components    
+        self._dual_base = dual_base
 
     # Return the dimension of the space. 
     @property
     def dimension(self):
         return self._dimension
 
+    # Return the dual space. If the dual of a space, the original is returned. 
     @property
     def dual(self):
-        return DualVectorSpace(self)
+        if self._dual_base is None:            
+            return VectorSpace(self.dimension, self._dual_to_components, 
+                               self._dual_from_components, dual_base = self)
+        else:
+            return self._dual_base
 
     # Map a vector to its components. 
     def to_components(self,x):
@@ -60,44 +87,64 @@ class VectorSpace(AbstractVectorSpace):
         return self._from_components(c)    
 
 
-class DualHilbertSpace(AbstractHilbertSpace, DualVectorSpace):
+# Absract base class for Hilbert spaces. 
+class AbstractHilbertSpace(AbstractVectorSpace):
 
-    def __init__(self, space):
-        super(DualHilbertSpace,self).__init__(space)
-        self._space = space
+    # Return the inner product of two vectors.
+    @abstractmethod
+    def inner_product(self, x1, x2):
+        pass
 
-    @property
-    def dual(self):
-        return self._space
+    # Return the norm of a vector. 
+    def norm(self, x):
+        return np.sqrt(self.inner_product(x,x))
 
-    def inner_product(self, xp1, xp2):
-        return self.dual.inner_product(self.dual.from_dual(xp1),self.dual.from_dual(xp2))
+    # Map a dual vector to its representation. 
+    @abstractmethod
+    def from_dual(self, xp):
+        pass
 
-    def from_dual(self, x):
-        return lambda y : self.dual.inner_product(x,y)
+    # Map a vector to the corresponding dual vector. 
+    def to_dual(self, x):
+        return LinearForm(self, lambda y : self.inner_product(x,y))    
 
-        
+    # Inner product on the dual space. 
+    def _dual_inner_product(self, xp1, xp2):
+        return self.inner_product(self.from_dual(xp1),self.from_dual(xp2))
+
+
+# Class for Hilbert spaces.         
 class HilbertSpace(AbstractHilbertSpace, VectorSpace):
     
-    def __init__(self, dimension, to_components = lambda x : x, from_components = lambda x: x, inner_product = (lambda x1, x2 : np.dot(x1,x2)), from_dual = None):
+    def __init__(self, dimension,  to_components, from_components, inner_product, /, *,  from_dual = None, dual_base = None):
         super(HilbertSpace,self).__init__(dimension, to_components, from_components)
         self._inner_product = inner_product
         if from_dual == None:                        
-            self._set_metric()
+            self._form_and_factor_metric()
             self._from_dual = lambda xp :  self._from_dual_default(xp)
         else:
             self._from_dual = from_dual
+        self._dual_base = dual_base
 
+    # Return the dual. If space is the dual of another, the original is returned. 
     @property
     def dual(self):
-        return DualHilbertSpace(self)
+        if self._dual_base is None:            
+            return HilbertSpace(self.dimension,
+                                self._dual_to_components,
+                                self._dual_from_components, 
+                                self._dual_inner_product,
+                                from_dual = self.to_dual,
+                                dual_base = self)
+        else:
+            return self._dual_base        
 
     # Return the inner product of two vectors. 
     def inner_product(self, x1, x2):
         return self._inner_product(x1, x2)
 
     # Construct the Cholesky factorisation of the metric.
-    def _set_metric(self):        
+    def _form_and_factor_metric(self):
         metric = np.zeros((self.dimension, self.dimension))
         c1 = np.zeros(self.dimension)
         c2 = np.zeros(self.dimension)
@@ -123,6 +170,4 @@ class HilbertSpace(AbstractHilbertSpace, VectorSpace):
     # Return the representation of a dual vector in the space. 
     def from_dual(self, xp):        
         return self._from_dual(xp)
-
-
 

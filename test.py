@@ -4,20 +4,34 @@ from scipy.stats import norm
 from linear_inference.vector_space import VectorSpace, HilbertSpace
 from linear_inference.linear_operator import LinearOperator
 
+# Set up the first Hilbert space. 
 m = 3
+gX = norm.rvs(size = (m,m))
+gX = gX.T @ gX + 0.1 * np.identity(m)
+X = HilbertSpace(m, lambda x : x, lambda x : x,  (lambda x1, x2, : np.dot(gX @ x1, x2)))
+
+
+# Set up the second Hilbert space. 
 n = 2
-X = HilbertSpace(m)
-Y = HilbertSpace(n)
+gY = norm.rvs(size = (n,n))
+gY = gY.T @ gY + 0.1 * np.identity(n)
+Y = HilbertSpace(n, lambda x : x, lambda x : x, (lambda y1, y2, : np.dot(gY @ y1, y2)) )
+
+# Define the linear mapping between the two. 
+mapping = lambda x : x[:n]
+dual_mapping = lambda yp : (lambda x : yp(x[:n]))
+A = LinearOperator(X, Y, mapping, dual_mapping= dual_mapping)
+
+# Check the adjoint identity. 
+x = X.random()
+y = Y.random()
+print(Y.inner_product(y, A(x)))
+print(X.inner_product(A.adjoint(y), x))
 
 
 
 
 
-A = LinearOperator(X, Y, lambda x : x[:n])
-
-print(A)
-
-print(A.dual)
 
 
 

@@ -1,90 +1,98 @@
 import numpy as np
-from linear_inference.interfaces import AbstractLinearOperator
+from abc import ABC, abstractmethod, abstractproperty
 from linear_inference.linear_form import LinearForm
+from scipy.sparse.linalg import LinearOperator as SciPyLinearOperator
 
-class DualLinearOperator(AbstractLinearOperator):
 
-    def __init__(self, base, mapping):
-        self._base = base        
-        self._mapping = mapping
+class AbstractLinearOperator(ABC):
 
-    @property
+    # Return domain of the operator.
+    @abstractproperty
     def domain(self):
-        return self._base.codomain.dual
+        pass
 
-    @property
+    # Return the codomain of the operator. 
+    @abstractproperty
     def codomain(self):
-        return self._base.domain.dual
+        pass
 
-    @property
+    # Return the dual of the operator. 
+    @abstractproperty
     def dual(self):
-        return self._base
+        pass
 
-    def __call__(self, yp):
-        return self._mapping(yp)
+    # Return the adjoint of the operator. Implememented 
+    # only for operators between Hilbert spaces. 
+    @abstractproperty
+    def adjoint(self):
+        pass
 
-    # Overloads to make LinearOperators a vector space and algebra.
+    # Return the action of the operator on a vector. 
+    @abstractmethod
+    def __call__(self, x):
+        pass
+
+    # Overloads to make operators into a vector space and algebra. 
+    @abstractmethod
     def __mul__(self, s):
-        return DualLinearOperator(s * self.dual, lambda xp : s * self(xp))
+        pass
 
+    def __rmul__(self, s):
+        return self * s
+
+    def __div__(self, s):
+        return self * (1 /s)
+
+    @abstractmethod
     def __add__(self, other):
-        assert self.domain == other.domain
-        assert self.codomain == other.codomain
-        return DualLinearOperator(self.dual + other.dual, lambda xp : self(xp) + other(xp))
+        return 
 
-    def __matmul__(self,other):        
-        assert self.domain == other.codomain
-        return DualLinearOperator(other.dual @ self.dual, lambda xp : self(other(xp)))
+    def __sub__(self, other): 
+        return self + (-1 * other)
 
-'''
-# Class for adjoint linear operators between two Hilbert spaces. 
-class AdjointLinearOperator(AbstractLinearOperator):
+    @abstractproperty
+    def __matmul__(self, other):
+        pass
 
-    def __init__(self, base, domain, codomain, mapping):
-        self._base = base
-        self._domain = domain
-        self._codomain = codomain
-        self._mapping = mapping
-
-
+    # Return the operator as a dense matrix. 
     @property
-    def domain(self):
-        return self._domain
+    def to_dense_matrix(self):
+        A = np.zeros((self.codomain.dimension, self.domain.dimension))
+        c = np.zeros(self.domain.dimension)        
+        for i in range(self.domain.dimension):
+            c[i] = 1            
+            A[:,i] = self.codomain.to_components(self(self.domain.from_components(c)))
+            c[i] = 0
+        return A
 
+    # Return the operator as a scipy.sparse LinearOperator object.
     @property
-    def codomain(self):
-        return self._codomain
+    def to_scipy_sparse_linear_operator(self):
+        shape = (self.codomain.dimension, self.domain.dimension)    
+        matvec = lambda x : self.codomain.to_components(self(self.domain.from_components(x))) 
+        if self._adjoint_mapping is None:
+            return SciPyLinearOperator(shape, matvec = matvec)
+        else:
+            rmatvec = lambda y : self.domain.to_components(self.adjoint(self.codomain.from_components(y)))
+            return SciPyLinearOperator(shape, matvec = matvec, rmatvec = rmatvec)
 
-    @property
-    def dual(self):
-        return self._base
+    # Convert to dense matrix for printing values. 
+    def __str__(self):
+        return self.to_dense_matrix.__str__()
 
-    def __call__(self, yp):
-        return self._mapping(yp)
 
-    # Overloads to make LinearOperators a vector space and algebra.
-    def __mul__(self, s):
-        return DualLinearOperator(s * self.dual, self.domain, self.codomain, lambda xp : s * self(xp))
-
-    def __add__(self, other):
-        assert self.domain == other.domain
-        assert self.codomain == other.codomain
-        return DualLinearOperator(self.dual + other.dual, self.domain, self.codomain, lambda xp : self(xp) + other(xp))
-
-    def __matmul__(self,other):        
-        assert self.domain == other.codomain
-        return DualLinearOperator(other.dual @ self.dual, other.domain, self.codomain, lambda xp : self(other(xp)))
-'''
 
 # Class for linear operators between two vector spaces. 
 class LinearOperator(AbstractLinearOperator):
 
-    def __init__(self, domain, codomain, mapping, /, *, dual_mapping = None, adjoint_mapping = None):        
+    def __init__(self, domain, codomain, mapping, /, *, dual_mapping = None, adjoint_mapping = None, dual_base = None, adjoint_base = None):        
         self._domain = domain
         self._codomain = codomain        
         self._mapping = mapping  
         self._dual_mapping = dual_mapping
         self._adjoint_mapping = adjoint_mapping
+        self._dual_base = dual_base
+        self._adjoint_base = adjoint_base
     
     # Return the domain of the linear operator. 
     @property
@@ -99,11 +107,30 @@ class LinearOperator(AbstractLinearOperator):
     # Return the dual operator.
     @property
     def dual(self):
-        if self._dual_mapping is None:
-            dual_mapping = lambda yp : LinearForm(self.domain, lambda x : yp(self(x)))
+        if self._dual_base is None:
+            if self._dual_mapping is None:
+                if self._adjoint_mapping is None:
+                    dual_mapping = lambda yp : LinearForm(self.domain, lambda x : yp(self(x)))
+                else:
+                    dual_mapping = lambda yp : self.domain.to_dual(self.adjoint(self.codomain.from_dual(yp)))
+            else:
+                dual_mapping = self._dual_mapping
+            return LinearOperator(self.codomain.dual, self.domain.dual, dual_mapping, dual_mapping = self._mapping, dual_base = self)            
+        else:            
+            return self._dual_base
+        
+
+    # Return the adjoint. 
+    @property 
+    def adjoint(self):
+        if self._adjoint_base is None:
+            if self._adjoint_mapping is None:
+                adjoint_mapping = lambda y : self.domain.from_dual(self.dual(self.codomain.to_dual(y)))
+            else:
+                adjoint_mapping = self._adjoint_mapping
+            return LinearOperator(self.codomain, self.domain, adjoint_mapping, adjoint_mapping = self._mapping, adjoint_base = self)
         else:
-            dual_mapping = self._dual_mapping
-        return DualLinearOperator(self, dual_mapping)
+            return self._adjoint_base
         
     # Return the action of the operator on a vector. 
     def __call__(self,x):        
