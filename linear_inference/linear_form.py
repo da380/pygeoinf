@@ -1,15 +1,43 @@
+import numpy as np
+
 # Class for linear forms on a vector space. 
 class LinearForm:
 
-    def __init__(self, domain, mapping):
-        self._domain = domain    
-        self._mapping = mapping    
-
+    def __init__(self, domain, /, *,  mapping = None, components = None, store_components = False):
+        self._domain = domain        
+        if mapping is None:
+            assert components is not None
+            assert components.size == domain.dimension
+            self._mapping = lambda x : np.dot(domain.to_components(x),components)
+            self._components = components            
+        if components is None:
+            assert mapping is not None
+            self._mapping = mapping
+            if store_components:
+                self._components = self.compute_components()                
+        
     # Return the domain of the linear form.
     @property
     def domain(self):
         return self._domain    
 
+    # Compute the components of the form relative to the induced basis. 
+    def compute_components(self):        
+        return self.domain.dual.to_components(self) 
+
+    # Return true if the components have been stored. 
+    @property
+    def components_stored(self):
+        return self._components is not None
+
+    # Return the compents of the form relative to the induced basis. 
+    @property
+    def components(self):
+        if self.components_stored:
+            return self._components            
+        else:
+            return self.compute_components()            
+            
     # Return action of the form on a vector. 
     def __call__(self,x):
         return self._mapping(x)
@@ -37,3 +65,5 @@ class LinearForm:
 
     def __str__(self):
         return self.domain.dual.to_components(self).__str__()
+
+

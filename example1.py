@@ -10,7 +10,6 @@ gX = norm.rvs(size = (m,m))
 gX = gX.T @ gX + 0.1 * np.identity(m)
 X = HilbertSpace(m, lambda x : x, lambda x : x,  (lambda x1, x2, : np.dot(gX @ x1, x2)))
 
-
 # Set up the second Hilbert space. 
 n = 2
 gY = norm.rvs(size = (n,n))

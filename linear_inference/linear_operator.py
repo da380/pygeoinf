@@ -1,89 +1,11 @@
 import numpy as np
-from abc import ABC, abstractmethod, abstractproperty
 from linear_inference.linear_form import LinearForm
 from scipy.sparse.linalg import LinearOperator as SciPyLinearOperator
 
 
-class AbstractLinearOperator(ABC):
-
-    # Return domain of the operator.
-    @abstractproperty
-    def domain(self):
-        pass
-
-    # Return the codomain of the operator. 
-    @abstractproperty
-    def codomain(self):
-        pass
-
-    # Return the dual of the operator. 
-    @abstractproperty
-    def dual(self):
-        pass
-
-    # Return the adjoint of the operator. Implememented 
-    # only for operators between Hilbert spaces. 
-    @abstractproperty
-    def adjoint(self):
-        pass
-
-    # Return the action of the operator on a vector. 
-    @abstractmethod
-    def __call__(self, x):
-        pass
-
-    # Overloads to make operators into a vector space and algebra. 
-    @abstractmethod
-    def __mul__(self, s):
-        pass
-
-    def __rmul__(self, s):
-        return self * s
-
-    def __div__(self, s):
-        return self * (1 /s)
-
-    @abstractmethod
-    def __add__(self, other):
-        return 
-
-    def __sub__(self, other): 
-        return self + (-1 * other)
-
-    @abstractproperty
-    def __matmul__(self, other):
-        pass
-
-    # Return the operator as a dense matrix. 
-    @property
-    def to_dense_matrix(self):
-        A = np.zeros((self.codomain.dimension, self.domain.dimension))
-        c = np.zeros(self.domain.dimension)        
-        for i in range(self.domain.dimension):
-            c[i] = 1            
-            A[:,i] = self.codomain.to_components(self(self.domain.from_components(c)))
-            c[i] = 0
-        return A
-
-    # Return the operator as a scipy.sparse LinearOperator object.
-    @property
-    def to_scipy_sparse_linear_operator(self):
-        shape = (self.codomain.dimension, self.domain.dimension)    
-        matvec = lambda x : self.codomain.to_components(self(self.domain.from_components(x))) 
-        if self._adjoint_mapping is None:
-            return SciPyLinearOperator(shape, matvec = matvec)
-        else:
-            rmatvec = lambda y : self.domain.to_components(self.adjoint(self.codomain.from_components(y)))
-            return SciPyLinearOperator(shape, matvec = matvec, rmatvec = rmatvec)
-
-    # Convert to dense matrix for printing values. 
-    def __str__(self):
-        return self.to_dense_matrix.__str__()
-
-
 
 # Class for linear operators between two vector spaces. 
-class LinearOperator(AbstractLinearOperator):
+class LinearOperator:
 
     def __init__(self, domain, codomain, mapping, /, *, dual_mapping = None, adjoint_mapping = None, dual_base = None, adjoint_base = None):        
         self._domain = domain
@@ -110,7 +32,7 @@ class LinearOperator(AbstractLinearOperator):
         if self._dual_base is None:
             if self._dual_mapping is None:
                 if self._adjoint_mapping is None:
-                    dual_mapping = lambda yp : LinearForm(self.domain, lambda x : yp(self(x)))
+                    dual_mapping = lambda yp : LinearForm(self.domain, mapping = lambda x : yp(self(x)))
                 else:
                     dual_mapping = lambda yp : self.domain.to_dual(self.adjoint(self.codomain.from_dual(yp)))
             else:
@@ -140,13 +62,51 @@ class LinearOperator(AbstractLinearOperator):
     def __mul__(self, s):
         return LinearOperator(self.domain, self.codomain, lambda x : s * self(x))
 
+    def __rmul__(self, s):
+        return self * s
+
+    def __div__(self, s):
+        return self * (1 /s)        
+
     def __add__(self, other):
         assert self.domain == other.domain
         assert self.codomain == other.codomain
-        return LinearOperator(self.domain, self.codomain, lambda x : self(x) + other(x))    
+        return LinearOperator(self.domain, self.codomain, lambda x : self(x) + other(x))   
+
+    def __sub__(self, other): 
+        return self + (-1 * other)
+ 
 
     def __matmul__(self,other):        
         assert self.domain == other.codomain
         return LinearOperator(other.domain, self.codomain, lambda x : self(other(x)))
+
+
+    # Return the operator as a dense matrix. 
+    @property
+    def to_dense_matrix(self):
+        A = np.zeros((self.codomain.dimension, self.domain.dimension))
+        c = np.zeros(self.domain.dimension)        
+        for i in range(self.domain.dimension):
+            c[i] = 1            
+            A[:,i] = self.codomain.to_components(self(self.domain.from_components(c)))
+            c[i] = 0
+        return A
+
+    # Return the operator as a scipy.sparse LinearOperator object.
+    @property
+    def to_scipy_sparse_linear_operator(self):
+        shape = (self.codomain.dimension, self.domain.dimension)    
+        matvec = lambda x : self.codomain.to_components(self(self.domain.from_components(x))) 
+        if self._adjoint_mapping is None:
+            return SciPyLinearOperator(shape, matvec = matvec)
+        else:
+            rmatvec = lambda y : self.domain.to_components(self.adjoint(self.codomain.from_components(y)))
+            return SciPyLinearOperator(shape, matvec = matvec, rmatvec = rmatvec)
+
+    # Convert to dense matrix for printing values. 
+    def __str__(self):
+        return self.to_dense_matrix.__str__()
+
     
     
