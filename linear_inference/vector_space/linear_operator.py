@@ -15,7 +15,6 @@ class LinearOperator:
         self._dual_base = dual_base
         self._adjoint_base = adjoint_base
 
-
     # Return a self adjoint operator. 
     @staticmethod
     def self_adjoint_operator(domain, mapping):
@@ -23,8 +22,8 @@ class LinearOperator:
 
     # Return a self-dual operator. 
     @staticmethod
-    def self_dual_operator(domain, mapping):
-        dual_mapping = lambda xp : domain.dual.from_components(domain.to_components(mapping(domain.from_components(domain.dual.to_components(xp)))))
+    def self_dual_operator(domain, mapping):        
+        return LinearOperator(X, X.dual, mapping, dual_mapping = mapping)
     
     # Return the domain of the linear operator. 
     @property
