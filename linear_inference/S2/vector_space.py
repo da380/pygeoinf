@@ -1,6 +1,10 @@
+if __name__ == "__main__":
+    pass
+
 import numpy as np
 from pyshtools import SHCoeffs, SHGrid
 from scipy.sparse import diags 
+from linear_inference.vector_space import LinearForm
 from linear_inference.vector_space import HilbertSpace
 
 # Implements the Sobolev space H^s on a two-sphere using a spherical harmonic basis. Vectors are by default 
@@ -47,16 +51,19 @@ class HS(HilbertSpace):
         inverse_metric_values = np.reciprocal(metric_values)
         self._metric = diags([metric_values], [0])
         self._inverse_metric = diags([inverse_metric_values], [0])    
-
-        # Construct the base class.                     
+    
+        # Set the mappings to and from components.                         
         if vectors_as_SHGrid:
-            super(HS, self).__init__(dimension, self._to_components_from_SHGrid,
-                                               self._from_components_to_SHGrid,
-                                               self._inner_product, from_dual = self._from_dual)
+            to_components = self._to_components_from_SHGrid
+            from_components = self._from_components_to_SHGrid
         else:
-            super(HS, self).__init__(dimension, self._to_components_from_SHCoeffs,
-                                               self._from_components_to_SHCoeffs,
-                                               self._inner_product, from_dual = self._from_dual)
+            to_components = self._to_components_from_SHCoeffs
+            from_components = self._from_components_to_SHCoeffs
+
+        # Construct the base class. 
+        super(HS, self).__init__(dimension, to_components, from_components, 
+                                 self._inner_product, from_dual = self._from_dual, 
+                                 to_dual = self._to_dual)
 
     # Return maximum degree. 
     @property
@@ -120,15 +127,25 @@ class HS(HilbertSpace):
         ulm = self._from_components_to_SHCoeffs(c)
         return ulm.expand(grid = self._grid)
 
+    # Local definition of the inner product. 
     def _inner_product(self, u1, u2):
         c1 = self.to_components(u1)
         c2 = self.to_components(u2)
         return np.dot(self._metric @ c1, c2)
 
+    # Local definition of mapping from the dual. 
     def _from_dual(self, up):        
         cp = self.dual.to_components(up)
         c = self._inverse_metric @ cp
         return self.from_components(c)
+
+    # Local definition of mapping to the dual.
+    def _to_dual(self, u):
+        c = self.to_components(x)
+        cp = self._metric @ c
+        return LinearForm(self, components = cp)
+
+    
         
 # Implementation of the Lebesgue space L^{2} on a two-sphere. Obtained as a special case of H^{s} with exponent set to zero. 
 # Note that with this value of s, the value of the length-scale does not matter. 

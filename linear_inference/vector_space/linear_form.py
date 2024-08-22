@@ -1,3 +1,6 @@
+if __name__ == "__main__":
+    pass
+
 import numpy as np
 
 # Class for linear forms on a vector space. 

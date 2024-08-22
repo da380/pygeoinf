@@ -1,3 +1,6 @@
+if __name__ == "__main__":
+    pass
+
 import numpy as np
 from scipy.stats import norm
 from scipy.linalg import cho_factor, cho_solve
@@ -66,14 +69,28 @@ class VectorSpace:
 # Class for Hilbert spaces.         
 class HilbertSpace(VectorSpace):
     
-    def __init__(self, dimension,  to_components, from_components, inner_product, /, *,  from_dual = None, dual_base = None):
+    def __init__(self, dimension,  to_components, from_components, inner_product, /, *,  from_dual = None, to_dual = None, dual_base = None):
+
+        # Form the underlying vector space. 
         super(HilbertSpace,self).__init__(dimension, to_components, from_components)
+
+        # Set the inner
         self._inner_product = inner_product
-        if from_dual == None:                        
+
+        # Set the mapping from the dual space.         
+        if from_dual is None:                        
             self._form_and_factor_metric()
             self._from_dual = lambda xp :  self._from_dual_default(xp)
         else:
             self._from_dual = from_dual
+
+        # Set the mapping to the dual space. 
+        if to_dual is None:
+            self._to_dual = self._to_dual_default
+        else:
+            self._to_dual = to_dual
+
+        # Store the base space (which may be none).
         self._dual_base = dual_base
 
     # Return the dual. If space is the dual of another, the original is returned. 
@@ -85,6 +102,7 @@ class HilbertSpace(VectorSpace):
                                 self._dual_from_components, 
                                 self._dual_inner_product,
                                 from_dual = self.to_dual,
+                                to_dual = self.from_dual,
                                 dual_base = self)
         else:
             return self._dual_base        
@@ -126,7 +144,11 @@ class HilbertSpace(VectorSpace):
         return self._from_dual(xp)
 
     # Map a vector to the corresponding dual vector. 
-    def to_dual(self, x):
+    def to_dual(self, x):        
+        return self._to_dual(x)
+
+    # Default implementation of the mapping to the dual space. 
+    def _to_dual_default(self,x):
         return LinearForm(self, mapping = lambda y : self.inner_product(x,y))    
 
     # Inner product on the dual space. 

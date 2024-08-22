@@ -1,7 +1,10 @@
+if __name__ == "__main__":
+    pass
+
+
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as SciPyLinearOperator
 from linear_inference.vector_space.linear_form import LinearForm
-
 
 # Class for linear operators between two vector spaces. 
 class LinearOperator:
@@ -50,7 +53,6 @@ class LinearOperator:
         else:            
             return self._dual_base
         
-
     # Return the adjoint. 
     @property 
     def adjoint(self):
@@ -85,11 +87,9 @@ class LinearOperator:
     def __sub__(self, other): 
         return self + (-1 * other)
  
-
     def __matmul__(self,other):        
         assert self.domain == other.codomain
         return LinearOperator(other.domain, self.codomain, lambda x : self(other(x)))
-
 
     # Return the operator as a dense matrix. 
     @property

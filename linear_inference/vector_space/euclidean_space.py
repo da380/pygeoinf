@@ -1,7 +1,12 @@
+if __name__ == "__main__":
+    pass
+
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 from scipy.stats import norm
-from linear_inference.vector_space.hilbert_space import HilbertSpace
+from linear_inference.vector_space import HilbertSpace, LinearForm
+
+
 
 
 # Implementation of Euclidean space. By default, the standard metric is used, 
@@ -14,7 +19,9 @@ class EuclideanSpace(HilbertSpace):
         
         if metric is None:
             from_dual = lambda xp : self.dual.to_components(xp)
-            super(EuclideanSpace,self).__init__(dimension, lambda x : x, lambda x : x, (lambda x1, x2, : np.dot(x1,x2)), from_dual = from_dual)
+            to_dual = lambda x : LinearForm(self, components = x)
+            super(EuclideanSpace,self).__init__(dimension, lambda x : x, lambda x : x, (lambda x1, x2, : np.dot(x1,x2)), 
+                                                from_dual = from_dual,  to_dual = to_dual)
         else:            
             factor = cho_factor(metric)            
             inner_product = lambda x1, x2 : np.dot(metric @ x1, x2)

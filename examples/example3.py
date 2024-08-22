@@ -18,13 +18,13 @@ l, m = 20, 5
 cp = np.zeros(X.dimension)
 cp[X.spherical_harmonic_index(l,m)] = 1
 up1 = LinearForm(X, components = cp)
-up2 = LinearForm(X, mapping =  lambda ulm : ulm.coeffs[0,l,m])
+#up2 = LinearForm(X, mapping =  lambda ulm : ulm.coeffs[0,l,m])
 
 v1 = X.from_dual(up1)
-v2 = X.from_dual(up2)
+#v2 = X.from_dual(up2)
 
 print(up1(u) - X.inner_product(v1, u))
-print(up2(u) - X.inner_product(v2, u))
+#print(up2(u) - X.inner_product(v2, u))
 
 
 
