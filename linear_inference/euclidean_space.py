@@ -1,33 +1,32 @@
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 from scipy.stats import norm
-from linear_inference.hilbert_space import VectorSpace, HilbertSpace
+from linear_inference.vector_space import HilbertSpace
 
 
 
-
+# Simple implementation of Euclidean space. By default, the standard metric is used, 
+# but a user-defined one can be supplied as a symmetric numpy matrix. For high-dimensional 
+# spaces with non-standard inner-products a more efficient implementation could be made
+# (e.g., using sparse matrices and iterative methods instead of direct solvers).
 class EuclideanSpace(HilbertSpace):
-
-    def __init__(self,dimension, /, *, metric = None):        
-        space = VectorSpace(dimension)
-        if metric is None:            
-            to_dual_space = lambda x : x
-            from_dual_space = lambda x : x
-        else:
-            factor = cho_factor(metric)
-            to_dual_space = lambda x : metric @ x
-            from_dual_space =  lambda xp : cho_solve(factor,xp)
-        super(EuclideanSpace,self).__init__(space, space, to_dual_space, from_dual_space)
-
-
+    
+    def __init__(self, dimension, /, *, metric = None):
+        
+        if metric is None:
+            from_dual = lambda xp : self.dual.to_components(xp)
+            super(EuclideanSpace,self).__init__(dimension, lambda x : x, lambda x : x, (lambda x1, x2, : np.dot(x1,x2)), from_dual = from_dual)
+        else:            
+            factor = cho_factor(metric)            
+            inner_product = lambda x1, x2 : np.dot(metric @ x1, x2)
+            from_dual = lambda xp : cho_solve(factor, self.dual.to_components(xp))
+            super(EuclideanSpace,self).__init__(dimension, lambda x : x , lambda x : x, inner_product, from_dual = from_dual)
 
     @staticmethod
     def with_random_metric(dimension):
-        A = norm.rvs(size = (dimension,dimension))
+        A = norm.rvs(size = (dimension, dimension))
         metric = A.T @ A + 0.1 * np.identity(dimension)        
         return EuclideanSpace(dimension, metric = metric)
 
-
-        
 
     

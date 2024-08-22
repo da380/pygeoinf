@@ -3,17 +3,17 @@ import numpy as np
 # Class for linear forms on a vector space. 
 class LinearForm:
 
-    def __init__(self, domain, /, *,  mapping = None, components = None, store_components = False):
+    def __init__(self, domain, /, *,  mapping = None, components = None, components_stored = False):
         self._domain = domain        
+        self._components = components
         if mapping is None:
             assert components is not None
             assert components.size == domain.dimension
-            self._mapping = lambda x : np.dot(domain.to_components(x),components)
-            self._components = components            
+            self._mapping = lambda x : np.dot(domain.to_components(x),components)            
         if components is None:
             assert mapping is not None
             self._mapping = mapping
-            if store_components:
+            if components_stored:
                 self._components = self.compute_components()                
         
     # Return the domain of the linear form.
@@ -22,13 +22,13 @@ class LinearForm:
         return self._domain    
 
     # Compute the components of the form relative to the induced basis. 
-    def compute_components(self):        
+    def compute_components(self):         
         return self.domain.dual.to_components(self) 
 
     # Return true if the components have been stored. 
     @property
     def components_stored(self):
-        return self._components is not None
+        return (self._components is not None)
 
     # Return the compents of the form relative to the induced basis. 
     @property

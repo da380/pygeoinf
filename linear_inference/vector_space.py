@@ -34,9 +34,8 @@ class VectorSpace:
 
     # Map a vector to its components. 
     def to_components(self,x):
-       if isinstance(x, LinearForm):
-        if x.components_stored:
-            return x.components
+       if isinstance(x, LinearForm) and x.components_stored:
+        return x.components        
        else:                
         return self._to_components(x)
 
