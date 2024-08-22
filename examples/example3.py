@@ -11,10 +11,8 @@ from pyshtools.expand import MakeGridPoint
 from linear_inference.vector_space import LinearForm
 from linear_inference.two_sphere import HS, L2
 
-lmax = 128
+lmax = 64
 X = HS(lmax, 2, 0.2, grid = "GLQ")
-
-
 
 
 

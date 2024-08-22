@@ -1,1 +1,2 @@
 from linear_inference.euclidean.vector_space import EuclideanSpace
+from linear_inference.euclidean.euclidean_gaussian_measure import EuclideanGaussianMeasure
