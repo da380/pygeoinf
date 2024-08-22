@@ -1,4 +1,5 @@
-from linear_inference.vector_space import LinearForm, EuclideanSpace
+from linear_inference.vector_space import LinearForm
+from linear_inference.euclidean import EuclideanSpace
 
 # Set up standard n-dimensional Euclidean space. 
 n = 5

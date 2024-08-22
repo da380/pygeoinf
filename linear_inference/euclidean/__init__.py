@@ -1,0 +1,1 @@
+from linear_inference.euclidean.vector_space import EuclideanSpace
