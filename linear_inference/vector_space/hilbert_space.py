@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import norm
 from scipy.linalg import cho_factor, cho_solve
 from scipy.sparse.linalg import LinearOperator
-from linear_inference.linear_form import LinearForm
+from linear_inference.vector_space.linear_form import LinearForm
 
 # Class for vector spaces. 
 class VectorSpace:

@@ -5,13 +5,12 @@ from scipy.stats import norm
 from pyshtools import SHGrid, SHCoeffs
 from pyshtools.expand import MakeGridPoint
 
-from linear_inference.vector_space import HilbertSpace
-from linear_inference.linear_form import LinearForm
-from linear_inference.linear_operator import LinearOperator
-from linear_inference.sobolev_S2 import SobolevSpace, LebesgueSpace
+
+from linear_inference.vector_space import LinearForm
+from linear_inference.S2 import HS, L2
 
 lmax = 128
-X = LebesgueSpace(lmax, grid = "GLQ", vectors_as_SHGrid = False)
+X = L2(lmax, grid = "GLQ", vectors_as_SHGrid = False)
 
 u = X.random()
 

@@ -1,8 +1,7 @@
 import numpy as np
 from scipy.stats import norm
+from linear_inference.vector_space import HilbertSpace, LinearForm, LinearOperator
 
-from linear_inference.vector_space import VectorSpace, HilbertSpace
-from linear_inference.linear_operator import LinearOperator
 
 # Set up the first Hilbert space. 
 m = 3

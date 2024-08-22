@@ -1,11 +1,10 @@
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 from scipy.stats import norm
-from linear_inference.vector_space import HilbertSpace
+from linear_inference.vector_space.hilbert_space import HilbertSpace
 
 
-
-# Simple implementation of Euclidean space. By default, the standard metric is used, 
+# Implementation of Euclidean space. By default, the standard metric is used, 
 # but a user-defined one can be supplied as a symmetric numpy matrix. For high-dimensional 
 # spaces with non-standard inner-products a more efficient implementation could be made
 # (e.g., using sparse matrices and iterative methods instead of direct solvers).

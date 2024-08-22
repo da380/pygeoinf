@@ -1,7 +1,6 @@
 import numpy as np
-from linear_inference.linear_form import LinearForm
 from scipy.sparse.linalg import LinearOperator as SciPyLinearOperator
-
+from linear_inference.vector_space.linear_form import LinearForm
 
 
 # Class for linear operators between two vector spaces. 

@@ -18,7 +18,7 @@ from linear_inference.vector_space import HilbertSpace
 # normalization = "ortho" --> Parameter sets the normalisation convention used for the spherical harmonics. 
 #                             Default is orthonormalised but other options availabe in pyshtools can be used. 
 #
-class SobolevSpace(HilbertSpace):
+class HS(HilbertSpace):
     
     def __init__(self, lmax, exponent, length_scale, /, *, vectors_as_SHGrid = True, radius = 1, grid = "DH", normalization = "ortho"):    
 
@@ -50,11 +50,11 @@ class SobolevSpace(HilbertSpace):
 
         # Construct the base class.                     
         if vectors_as_SHGrid:
-            super(SobolevSpace, self).__init__(dimension, self._to_components_from_SHGrid,
+            super(HS, self).__init__(dimension, self._to_components_from_SHGrid,
                                                self._from_components_to_SHGrid,
                                                self._inner_product, from_dual = self._from_dual)
         else:
-            super(SobolevSpace, self).__init__(dimension, self._to_components_from_SHCoeffs,
+            super(HS, self).__init__(dimension, self._to_components_from_SHCoeffs,
                                                self._from_components_to_SHCoeffs,
                                                self._inner_product, from_dual = self._from_dual)
 
@@ -132,10 +132,10 @@ class SobolevSpace(HilbertSpace):
         
 # Implementation of the Lebesgue space L^{2} on a two-sphere. Obtained as a special case of H^{s} with exponent set to zero. 
 # Note that with this value of s, the value of the length-scale does not matter. 
-class LebesgueSpace(SobolevSpace):
+class L2(HS):
 
     def __init__(self, lmax,  /, *, vectors_as_SHGrid = True, radius = 1, grid = "DH", normalization = "ortho"):    
-        super(LebesgueSpace,self).__init__(lmax, 0, 0, 
+        super(L2,self).__init__(lmax, 0, 0, 
                                            vectors_as_SHGrid = vectors_as_SHGrid, 
                                            radius = radius, 
                                            grid = grid, 
