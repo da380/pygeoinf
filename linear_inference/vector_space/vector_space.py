@@ -3,9 +3,9 @@ if __name__ == "__main__":
 
 import numpy as np
 from scipy.stats import norm
-from scipy.linalg import cho_factor, cho_solve
-from scipy.sparse.linalg import LinearOperator
+#from scipy.linalg import cho_factor, cho_solve
 from linear_inference.vector_space.linear_form import LinearForm
+from linear_inference.vector_space.linear_operator import LinearOperator
 
 # Class for vector spaces. 
 class VectorSpace:
@@ -64,6 +64,11 @@ class VectorSpace:
     # Return a vector whose components samples from a given distribution. 
     def random(self, dist = norm()):
         return self.from_components(norm.rvs(size = self.dimension))
+
+    # Return the identity operator on the space. 
+    @property
+    def identity_operator(self):
+        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp)
 
 
 # Class for Hilbert spaces.         
@@ -155,5 +160,9 @@ class HilbertSpace(VectorSpace):
     def _dual_inner_product(self, xp1, xp2):
         return self.inner_product(self.from_dual(xp1),self.from_dual(xp2))
 
+    # Return the identity operator on the space. 
+    @property
+    def identity_operator(self):
+        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp, adjoint_mapping = lambda x : x)
 
 
