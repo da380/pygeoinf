@@ -2,6 +2,7 @@ if __name__ == "__main__":
     pass
 
 from linear_inference.vector_space import LinearOperator
+from scipy.stats import norm
 
 class GaussianMeasure:
 
@@ -20,6 +21,19 @@ class GaussianMeasure:
         else:
             self._sample = sample
             self._sample_defined = True
+
+    @staticmethod
+    # Form a gaussian measure using a factored covariance. The factor is an operator, L,  from 
+    # Euclidean space to the domain of the measure and such that the covariance is LL^{*}. 
+    def form_from_factored_covariance(factor, /, * mean = None):        
+        assert factor.domain.dimension == factor.codomain.dimension
+        covariance  = factor @ factor.adjoint
+        sample_ = lambda : factor(norm().rvs(size = factor.domain.dimension))
+        if mean is not None:
+            sample = lambda mean + sample_()
+        else:
+            sample = sample_
+        return GaussianMeasure(covariance, mean = mean, sample = sample)
 
     # Return the covariance operator. 
     @property

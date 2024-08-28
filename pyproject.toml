@@ -10,6 +10,7 @@ python = "^3.12"
 numpy = "^2.1.0"
 scipy = "^1.14.1"
 pyshtools = "^4.13.1"
+jupyter = "^1.0.0"
 
 
 [build-system]

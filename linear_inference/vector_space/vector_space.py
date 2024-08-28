@@ -3,7 +3,7 @@ if __name__ == "__main__":
 
 import numpy as np
 from scipy.stats import norm
-#from scipy.linalg import cho_factor, cho_solve
+from scipy.linalg import cho_factor, cho_solve
 from linear_inference.vector_space.linear_form import LinearForm
 from linear_inference.vector_space.linear_operator import LinearOperator
 
