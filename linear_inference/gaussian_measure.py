@@ -26,7 +26,7 @@ class GaussianMeasure:
     # basis for the domain. 
     @staticmethod
     def from_dense_covariance(domain, covariance, /, *, mean = None):
-        covariance_ = LinearOperator.self_adjoint_operator(domain, lambda x :  domain_from_components(covariance @ domain.to_components(x)))
+        covariance_ = LinearOperator.self_adjoint(domain, lambda x :  domain.from_components(covariance @ domain.to_components(x)))
         if mean is None:
             dist = multivariate_normal(cov = covariance)
         else:
@@ -96,7 +96,7 @@ class GaussianMeasure:
         
     # Transform the measure by multiplication by a scalar. 
     def __mul__(self, alpha):
-        covariance = LinearOperator.self_adjoint_operator(self.domain, lambda x : alpha * alpha * self.covariance(x))
+        covariance = LinearOperator.self_adjoint(self.domain, lambda x : alpha * alpha * self.covariance(x))
         mean = alpha * self.mean
         if self.sample_defined:
             sample = lambda : alpha * self.sample()

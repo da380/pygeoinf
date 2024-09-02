@@ -35,6 +35,12 @@ class VectorSpace:
     def zero(self):
         return self.from_components(np.zeros(self.dim))
 
+
+    # Return the identity operator on the space. 
+    @property
+    def identity_operator(self):
+        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp)
+
     # Map a vector to its components. 
     def to_components(self,x):
        if isinstance(x, LinearForm) and x.components_stored:
@@ -65,10 +71,7 @@ class VectorSpace:
     def random(self, dist = norm()):
         return self.from_components(norm.rvs(size = self.dim))
 
-    # Return the identity operator on the space. 
-    @property
-    def identity_operator(self):
-        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp)
+
 
 
 # Class for Hilbert spaces.         
@@ -98,6 +101,10 @@ class HilbertSpace(VectorSpace):
         # Store the base space (which may be none).
         self._dual_base = dual_base
 
+    @staticmethod 
+    def from_vector_space(space, inner_product, /, *,  from_dual = None, to_dual = None):
+        return HilbertSpace(space.dim, space. to_components, space.from_components, from_dual = from_dual, to_dual = to_dual)
+
     # Return the dual. If space is the dual of another, the original is returned. 
     @property
     def dual(self):
@@ -111,6 +118,17 @@ class HilbertSpace(VectorSpace):
                                 dual_base = self)
         else:
             return self._dual_base        
+
+
+    # Return the identity operator on the space. 
+    @property
+    def identity_operator(self):
+        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp, adjoint_mapping = lambda x : x)
+
+    # Return the underlying vector space. 
+    @property
+    def to_vector_space(self):
+        return VectorSpace(self.dim, self.to_components, self.from_components, dual_base = self._dual_base)
 
     # Return the inner product of two vectors. 
     def inner_product(self, x1, x2):
@@ -160,9 +178,39 @@ class HilbertSpace(VectorSpace):
     def _dual_inner_product(self, xp1, xp2):
         return self.inner_product(self.from_dual(xp1),self.from_dual(xp2))
 
-    # Return the identity operator on the space. 
+# Implementation of Euclidean space using numpy arrays. By default, the standard metric is used, 
+# but a user-defined one can be supplied as a symmetric numpy matrix. For high-dimensional 
+# spaces with non-standard inner-products a more efficient implementation could be made
+# (e.g., using sparse matrices and iterative methods instead of direct solvers).
+class Euclidean(HilbertSpace):
+    
+    def __init__(self, dim, /, *, metric = None):
+        
+        if metric is None:
+            from_dual = lambda xp : self.dual.to_components(xp)
+            to_dual = lambda x : LinearForm(self, components = x)
+            super(Euclidean,self).__init__(dim, lambda x : x, lambda x : x, (lambda x1, x2, : np.dot(x1,x2)), 
+                                                from_dual = from_dual,  to_dual = to_dual)
+        else:            
+            factor = cho_factor(metric)            
+            inner_product = lambda x1, x2 : np.dot(metric @ x1, x2)
+            from_dual = lambda xp : cho_solve(factor, self.dual.to_components(xp))
+            super(Euclidean,self).__init__(dim, lambda x : x, lambda x : x, inner_product, from_dual = from_dual)
+        
+        self._metric = metric
+
     @property
-    def identity_operator(self):
-        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp, adjoint_mapping = lambda x : x)
+    def metric(self):
+        if self._metric is None:
+            return np.identity(self.dim)
+        else:
+            return self._metric
+
+    @staticmethod
+    def with_random_metric(dim):
+        A = norm.rvs(size = (dim, dim))
+        metric = A.T @ A + 0.1 * np.identity(dim)        
+        return Euclidean(dim, metric = metric)
 
 
+    

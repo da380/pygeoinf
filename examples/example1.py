@@ -1,42 +1,26 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.stats import norm
-from linear_inference.euclidean import L2, GaussianMeasure
+from linear_inference import Euclidean, GaussianMeasure
+from linear_inference.sphere import SphereHS
 
 
-X = L2(10)
 
-covariance = np.identity(X.dimension)
+lmax = 128
+s = 2
+X = SphereHS(lmax, s, length_scale=0.1)
 
-mu = GaussianMeasure(X, covariance)
+mu = X.sobolev_gaussian_measure(2, length_scale=0.1)
 
-print(mu.mean)
+u = mu.sample()
+
+X.plot(u, show=True, colorbar=True)
 
 
-'''
-# Set up the first Hilbert space. 
-m = 3
-gX = norm.rvs(size = (m,m))
-gX = gX.T @ gX + 0.1 * np.identity(m)
-X = HilbertSpace(m, lambda x : x, lambda x : x,  (lambda x1, x2, : np.dot(gX @ x1, x2)))
 
-# Set up the second Hilbert space. 
-n = 2
-gY = norm.rvs(size = (n,n))
-gY = gY.T @ gY + 0.1 * np.identity(n)
-Y = HilbertSpace(n, lambda x : x, lambda x : x, (lambda y1, y2, : np.dot(gY @ y1, y2)) )
 
-# Define the linear mapping between the two. 
-mapping = lambda x : x[:n]
-dual_mapping = lambda yp : (lambda x : yp(x[:n]))
-A = LinearOperator(X, Y, mapping, dual_mapping= dual_mapping)
 
-# Check the adjoint identity. 
-x = X.random()
-y = Y.random()
-print(Y.inner_product(y, A(x)))
-print(X.inner_product(A.adjoint(y), x))
 
-'''
 
 
 

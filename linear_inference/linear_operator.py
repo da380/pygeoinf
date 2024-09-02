@@ -20,13 +20,13 @@ class LinearOperator:
 
     # Return a self adjoint operator. 
     @staticmethod
-    def self_adjoint_operator(domain, mapping):
+    def self_adjoint(domain, mapping):
         return LinearOperator(domain, domain, mapping, adjoint_mapping = mapping)
 
     # Return a self-dual operator. 
     @staticmethod
-    def self_dual_operator(domain, mapping):        
-        return LinearOperator(X, X.dual, mapping, dual_mapping = mapping)
+    def self_dual(domain, mapping):        
+        return LinearOperator(domain, domain.dual, mapping, dual_mapping = mapping)
     
     # Return the domain of the linear operator. 
     @property
