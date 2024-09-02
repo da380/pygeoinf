@@ -1,20 +1,34 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
-from linear_inference import Euclidean, GaussianMeasure
-from linear_inference.sphere import SphereHS
+from linear_inference import Euclidean, GaussianMeasure, LinearForm
+from linear_inference.S2 import Sobolev, Lebesgue
 
 
 
-lmax = 128
-s = 2
-X = SphereHS(lmax, s, length_scale=0.1)
+lmax = 1
+radius = 1
+X = Sobolev(lmax, 2, 0.1, radius=radius)
 
-mu = X.sobolev_gaussian_measure(2, length_scale=0.1)
+mu = X.sobolev_gaussian_measure(2,0.1,1)
+C = mu.covariance
 
-u = mu.sample()
+u = X.dirac_kernel(10,20)
 
-X.plot(u, show=True, colorbar=True)
+print(X.inner_product(C(u),u))
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

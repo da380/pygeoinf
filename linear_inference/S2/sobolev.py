@@ -18,9 +18,9 @@ from linear_inference.gaussian_measure import GaussianMeasure
 # (u,v)_{H^s} = ( \Lambda^{s/2} u, \Lambda^{s/2} v)_{L^2}
 #
 # where \Lambda = 1 + \lambda^{2} \Delta and \lambda is the chosen length-scale. 
-class SphereHS(HilbertSpace):
+class Sobolev(HilbertSpace):
     
-    def __init__(self, lmax,  order, /, *, radius = 1, length_scale = 1,
+    def __init__(self, lmax,  order, length_scale,  /, *, radius = 1, 
                  elements_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
 
         # Store the basic information. 
@@ -48,7 +48,7 @@ class SphereHS(HilbertSpace):
 
         # Construct the metric and its inverse.         
         metric_values = self._scaling_to_diagonal_values(self._sobolev_function,lmax)
-        self._metric = self._diagonal_values_to_matrix(metric_values)
+        self._metric = self.radius**2 * self._diagonal_values_to_matrix(metric_values)
         inverse_metric_values = np.reciprocal(metric_values)
         self._inverse_metric = self._diagonal_values_to_matrix(inverse_metric_values)
 
@@ -62,7 +62,7 @@ class SphereHS(HilbertSpace):
 
         # Construct the base class.         
         dim = (lmax+1)**2
-        super(SphereHS, self).__init__(dim, to_components, from_components, 
+        super(Sobolev, self).__init__(dim, to_components, from_components, 
                                        self._inner_product, from_dual = self._from_dual, 
                                        to_dual = self._to_dual)
 
@@ -88,7 +88,7 @@ class SphereHS(HilbertSpace):
 
     # Return the scaling function that defines the Sobolev inner product. 
     def _sobolev_function(self,l):
-        return self.radius**2 * (1 + (self.length_scale/self.radius)**2 * l * (l + 1))**self.order
+        return  (1 + (self.length_scale/self.radius)**2 * l * (l + 1))**self.order
 
     # Return the component index for the (l,m)th spherical harmonic coefficient
     def spherical_harmonic_index(self, l, m):
@@ -176,7 +176,7 @@ class SphereHS(HilbertSpace):
     # Local definition of mapping from the dual. 
     def _from_dual(self, up):        
         cp = self.dual.to_components(up)
-        c = self._inverse_metric @ cp
+        c = self._inverse_metric @ cp 
         return self.from_components(c)
 
     # Local definition of mapping to the dual.
@@ -184,7 +184,6 @@ class SphereHS(HilbertSpace):
         c = self.to_components(u)
         cp = self._metric @ c
         return LinearForm(self, components = cp)
-
 
     # Return the Dirac measure at a given point as a linear form.
     def dirac_form(self, latitude, longitude, /, *, degrees = True):
@@ -208,18 +207,18 @@ class SphereHS(HilbertSpace):
         if codomain is None:
             codomain = self
         else:
-            assert isinstance(codomain, SphereHS)
+            assert isinstance(codomain, Sobolev)
         matrix = self._scaling_to_diagonal_matrix(f)
         mapping = lambda u : codomain.from_components(matrix @ domain.to_components(u))
-        dual_mapping = lambda up : domain.dual.from_components(matrix @ codomain.dual.to_components(up))
+        dual_mapping = lambda up : domain.dual.from_components(matrix @ codomain.dual.to_components(up) / self.radius**2) 
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)        
 
     # Return a rotationally invarient Gaussian measure on th space given the degree-dependent scaling function. 
     def invariant_gaussian_measure(self, f, /, *, mean = None):
-        g = lambda l : np.sqrt(f(l) / self._sobolev_function(l))
+        g = lambda l : np.sqrt(f(l) / self._sobolev_function(l)) / self.radius
         matrix = self._scaling_to_diagonal_matrix(g)                    
         mapping = lambda c : self.from_components(matrix @ c)        
-        adjoint_mapping = lambda u : self._metric @ matrix @ self.to_components(u)
+        adjoint_mapping = lambda u : self._metric @ matrix @ self.to_components(u) 
         factor = LinearOperator(Euclidean(self.dim), self, mapping, adjoint_mapping= adjoint_mapping)
         return GaussianMeasure.from_factored_covariance(factor, mean = mean)
 
@@ -232,12 +231,12 @@ class SphereHS(HilbertSpace):
         return lambda l : fac * f(l) 
 
     # Return a rotationally invariant Gaussian measure with covariance of the Sobolev form.
-    def sobolev_gaussian_measure(self, order , /, *, length_scale = 1, amplitude = 1,  mean = None):                
-        f = lambda l : self.radius**2 *(1 + (length_scale / self.radius)**2 * l *(l+1))**(-order) 
-        return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude), mean = mean)
+    def sobolev_gaussian_measure(self, order, length_scale, amplitude, /, *,  mean = None):               
+        f = lambda l : (1 + (length_scale / self.radius)**2 * l *(l+1))**(-order) 
+        return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude), mean = mean)        
                         
     # Return a rotationally invariant Gaussian measure iwth covariance of the heat kernel form.
-    def heat_kernel_gaussian_measure(self, /, *, length_scale = 1, ampltide = 1, mean = None):
+    def heat_kernel_gaussian_measure(self, length_scale, amplitude, /, *, mean = None):
         f = lambda l : np.exp(-0.5 * l*(l+1) * (length_scale/self.radius)**2)
         return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude),mean = mean)
 
@@ -258,12 +257,12 @@ class SphereHS(HilbertSpace):
             
 # Implementation of the Lebesgue space L^{2} on a two-sphere. Obtained as a special case of H^{s} with order set to zero. 
 # Note that with this value of s, the value of the length-scale does not matter. 
-class SphereL2(SphereHS):
+class Lebesgue(Sobolev):
 
     def __init__(self, lmax, /, *, radius = 1, length_scale = 1,
                  elements_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
-        super(L2,self).__init__(lmax = lmax, order = 0, radius = radius, length_scale = length_scale,
-                 elements_as_SHGrid = elements_as_SHGrid, csphase = csphase, grid = grid, extend = extend)
+        super(Lebesgue,self).__init__(lmax, 0, 0, radius = radius, elements_as_SHGrid = elements_as_SHGrid,
+                                      csphase = csphase, grid = grid, extend = extend)
 
 
 
