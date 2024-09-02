@@ -4,7 +4,7 @@ if __name__ == "__main__":
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as SciPyLinearOperator
-from linear_inference.vector_space.linear_form import LinearForm
+from linear_inference.linear_form import LinearForm
 
 # Class for linear operators between two vector spaces. 
 class LinearOperator:
@@ -94,9 +94,9 @@ class LinearOperator:
     # Return the operator as a dense matrix. 
     @property
     def to_dense_matrix(self):
-        A = np.zeros((self.codomain.dimension, self.domain.dimension))
-        c = np.zeros(self.domain.dimension)        
-        for i in range(self.domain.dimension):
+        A = np.zeros((self.codomain.dim, self.domain.dim))
+        c = np.zeros(self.domain.dim)        
+        for i in range(self.domain.dim):
             c[i] = 1            
             A[:,i] = self.codomain.to_components(self(self.domain.from_components(c)))
             c[i] = 0
@@ -105,7 +105,7 @@ class LinearOperator:
     # Return the operator as a scipy.sparse LinearOperator object.
     @property
     def to_scipy_sparse_linear_operator(self):
-        shape = (self.codomain.dimension, self.domain.dimension)    
+        shape = (self.codomain.dim, self.domain.dim)    
         matvec = lambda x : self.codomain.to_components(self(self.domain.from_components(x))) 
         if self._adjoint_mapping is None:
             return SciPyLinearOperator(shape, matvec = matvec)

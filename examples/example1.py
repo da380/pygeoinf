@@ -1,8 +1,18 @@
 import numpy as np
 from scipy.stats import norm
-from linear_inference.vector_space import HilbertSpace, LinearForm, LinearOperator
+from linear_inference.euclidean import L2, GaussianMeasure
 
 
+X = L2(10)
+
+covariance = np.identity(X.dimension)
+
+mu = GaussianMeasure(X, covariance)
+
+print(mu.mean)
+
+
+'''
 # Set up the first Hilbert space. 
 m = 3
 gX = norm.rvs(size = (m,m))
@@ -25,6 +35,8 @@ x = X.random()
 y = Y.random()
 print(Y.inner_product(y, A(x)))
 print(X.inner_product(A.adjoint(y), x))
+
+'''
 
 
 

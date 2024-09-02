@@ -11,7 +11,7 @@ class LinearForm:
         self._components = components
         if mapping is None:
             assert components is not None
-            assert components.size == domain.dimension
+            assert components.size == domain.dim
             self._mapping = lambda x : np.dot(domain.to_components(x),components)            
         if components is None:
             assert mapping is not None

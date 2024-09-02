@@ -4,28 +4,28 @@ if __name__ == "__main__":
 import numpy as np
 from scipy.stats import norm
 from scipy.linalg import cho_factor, cho_solve
-from linear_inference.vector_space.linear_form import LinearForm
-from linear_inference.vector_space.linear_operator import LinearOperator
+from linear_inference.linear_form import LinearForm
+from linear_inference.linear_operator import LinearOperator
 
 # Class for vector spaces. 
 class VectorSpace:
 
-    def __init__(self, dimension, to_components, from_components, /, * , dual_base = None):
-        self._dimension = dimension
+    def __init__(self, dim, to_components, from_components, /, * , dual_base = None):
+        self._dim = dim
         self._to_components = to_components
         self._from_components = from_components    
         self._dual_base = dual_base
 
     # Return the dimension of the space. 
     @property
-    def dimension(self):
-        return self._dimension
+    def dim(self):
+        return self._dim
 
     # Return the dual space. If the dual of a space, the original is returned. 
     @property
     def dual(self):
         if self._dual_base is None:            
-            return VectorSpace(self.dimension, self._dual_to_components, 
+            return VectorSpace(self.dim, self._dual_to_components, 
                                self._dual_from_components, dual_base = self)
         else:
             return self._dual_base
@@ -33,7 +33,7 @@ class VectorSpace:
     # Return the zero vector.
     @property
     def zero(self):
-        return self.from_components(np.zeros(self.dimension))
+        return self.from_components(np.zeros(self.dim))
 
     # Map a vector to its components. 
     def to_components(self,x):
@@ -48,7 +48,7 @@ class VectorSpace:
 
     # Maps a dual vector to its components. 
     def _dual_to_components(self,xp):
-        n = self.dimension
+        n = self.dim
         c = np.zeros(n)
         cp = np.zeros(n)
         for i in range(n):
@@ -63,7 +63,7 @@ class VectorSpace:
 
     # Return a vector whose components samples from a given distribution. 
     def random(self, dist = norm()):
-        return self.from_components(norm.rvs(size = self.dimension))
+        return self.from_components(norm.rvs(size = self.dim))
 
     # Return the identity operator on the space. 
     @property
@@ -74,10 +74,10 @@ class VectorSpace:
 # Class for Hilbert spaces.         
 class HilbertSpace(VectorSpace):
     
-    def __init__(self, dimension,  to_components, from_components, inner_product, /, *,  from_dual = None, to_dual = None, dual_base = None):
+    def __init__(self, dim,  to_components, from_components, inner_product, /, *,  from_dual = None, to_dual = None, dual_base = None):
 
         # Form the underlying vector space. 
-        super(HilbertSpace,self).__init__(dimension, to_components, from_components)
+        super(HilbertSpace,self).__init__(dim, to_components, from_components)
 
         # Set the inner
         self._inner_product = inner_product
@@ -102,7 +102,7 @@ class HilbertSpace(VectorSpace):
     @property
     def dual(self):
         if self._dual_base is None:            
-            return HilbertSpace(self.dimension,
+            return HilbertSpace(self.dim,
                                 self._dual_to_components,
                                 self._dual_from_components, 
                                 self._dual_inner_product,
@@ -122,14 +122,14 @@ class HilbertSpace(VectorSpace):
 
     # Construct the Cholesky factorisation of the metric.
     def _form_and_factor_metric(self):
-        metric = np.zeros((self.dimension, self.dimension))
-        c1 = np.zeros(self.dimension)
-        c2 = np.zeros(self.dimension)
-        for i in range(self.dimension):
+        metric = np.zeros((self.dim, self.dim))
+        c1 = np.zeros(self.dim)
+        c2 = np.zeros(self.dim)
+        for i in range(self.dim):
             c1[i] = 1
             x1 = self.from_components(c1)
             metric[i,i] = self.inner_product(x1,x1)
-            for j in range(i+1,self.dimension):
+            for j in range(i+1,self.dim):
                 c2[j] = 1
                 x2 = self.from_components(c2)                
                 metric[i,j] = self.inner_product(x1,x2)          

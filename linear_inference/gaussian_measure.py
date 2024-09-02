@@ -1,8 +1,8 @@
 if __name__ == "__main__":
     pass
 
-from linear_inference.vector_space import LinearOperator
-from scipy.stats import norm
+from linear_inference.linear_operator import LinearOperator
+from scipy.stats import norm, multivariate_normal
 
 class GaussianMeasure:
 
@@ -22,15 +22,27 @@ class GaussianMeasure:
             self._sample = sample
             self._sample_defined = True
 
+    # Returns a Gaussian measure whose covariance is provided as a dense matrix relative to the 
+    # basis for the domain. 
+    @staticmethod
+    def from_dense_covariance(domain, covariance, /, *, mean = None):
+        covariance_ = LinearOperator.self_adjoint_operator(domain, lambda x :  domain_from_components(covariance @ domain.to_components(x)))
+        if mean is None:
+            dist = multivariate_normal(cov = covariance)
+        else:
+            dist = multivariate_normal(mean = domain.to_components(mean), cov = covariance)
+        sample = lambda : dist.rvs()
+        return GaussianMeasure(covariance_, mean = mean, sample = sample)
+
     @staticmethod
     # Form a gaussian measure using a factored covariance. The factor is an operator, L,  from 
-    # Euclidean space to the domain of the measure and such that the covariance is LL^{*}. 
-    def form_from_factored_covariance(factor, /, * mean = None):        
-        assert factor.domain.dimension == factor.codomain.dimension
+    # \mathbb{R}^{n} to the domain of the measure and such that the covariance is LL^{*}. 
+    def from_factored_covariance(factor, /, *,  mean = None):                
+        assert factor.domain.dim == factor.codomain.dim    
         covariance  = factor @ factor.adjoint
-        sample_ = lambda : factor(norm().rvs(size = factor.domain.dimension))
+        sample_ = lambda : factor(norm().rvs(size = factor.domain.dim))
         if mean is not None:
-            sample = lambda mean + sample_()
+            sample = lambda : mean + sample_()
         else:
             sample = sample_
         return GaussianMeasure(covariance, mean = mean, sample = sample)

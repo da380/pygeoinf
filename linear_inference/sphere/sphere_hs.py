@@ -7,38 +7,44 @@ from scipy.sparse import diags
 from linear_inference.vector_space import LinearForm
 from linear_inference.vector_space import HilbertSpace
 
-# Implements the Sobolev space H^s on a two-sphere using a spherical harmonic basis. Vectors are by default 
-# instances of the SHGrid class from pyshtools, but they can also take the form of SHCoeffs objects. 
-# The space is characterised by its exponent, s, and a length-scale, mu. The inner product is defined by
+# Implements the Sobolev space H^s on a sphere using a spherical harmonic basis. The inner product
+# is defined in terms of the Laplace-Beltrami operator, \Delta, by:
 #
-# (u,v)_{H^{s}} = ( (1 + \mu^2 \Delta))^{-s/2} u, (1 + \mu^2 \Delta))^{-s/2} v)_{L^2} 
+# (u,v)_{H^s} = ( \Lambda^{s/2} u, \Lambda^{s/2} v)_{L^2}
 #
-# with \Delta the Laplace beltrami operator. The following default values are assumed:
-#
-# vectors_as_SHGrid = True --> Parameter determines whether SHGrid or SHCoeffs is used for vectors. 
-# radius = 1 --> Parameter sets the radius of the sphere. 
-# grid = "DH" --> Parameter sets the grid used for the spherical harmonic transformations. Default is Driscol-Healy,
-#                 but other options from pyshtools can be used (i.e., GLQ and DH2).abs
-# normalization = "ortho" --> Parameter sets the normalisation convention used for the spherical harmonics. 
-#                             Default is orthonormalised but other options availabe in pyshtools can be used. 
-#
-class HS(HilbertSpace):
+# where \Lambda = 1 + \lambda^{2} \Delta and \lambda is the chosen length-scale. 
+class SphereHS(HilbertSpace):
     
-    def __init__(self, lmax, exponent, length_scale, /, *, vectors_as_SHGrid = True, radius = 1, grid = "DH", normalization = "ortho"):    
+    def __init__(self, lmax, /, *, exponent = 0, radius = 1, length_scale = 1,
+                 vectors_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
 
         # Store the basic information. 
-        self._lmax = lmax
+        self._lmax = lmax        
         self._exponent = exponent
-        self._length_scale = length_scale  
-        self._vectors_as_SHGrid = vectors_as_SHGrid   
         self._radius = radius  
-        self._grid = grid              
-        self._normalization = normalization
+        self._length_scale = length_scale / radius
+
+        # Store SHTools options. 
+        self._vectors_as_SHGrid = vectors_as_SHGrid   
+        self._normalization = "ortho"
+        if csphase in [-1,1]:
+            self._csphase = csphase
+        else:
+            raise ValueError("invalid csphase choice")
+        if grid in ["DH", "DH2", "GLQ"]:            
+            self._grid = grid
+            if grid == "DH2":
+                self._sampling = 2
+            else:
+                self._sampling = 1            
+        else:
+            raise ValueError("invalid grid choice")        
+        self._extend = extend
 
         # Construct the metric and its inverse. 
         sobolev_factor = lambda l : radius * radius * (1 + (length_scale)**2 * l * (l + 1))**exponent
-        dimension = (lmax+1)**2
-        metric_values = np.zeros(dimension)
+        dim = (lmax+1)**2
+        metric_values = np.zeros(dim)
         i = 0
         for l in range(lmax+1):
             j = i + l + 1
@@ -47,7 +53,7 @@ class HS(HilbertSpace):
         for l in range(1,lmax+1):
             j = i + l
             metric_values[i:j] = sobolev_factor(l)
-            i = j
+            i = j        
         inverse_metric_values = np.reciprocal(metric_values)
         self._metric = diags([metric_values], [0])
         self._inverse_metric = diags([inverse_metric_values], [0])    
@@ -61,7 +67,7 @@ class HS(HilbertSpace):
             from_components = self._from_components_to_SHCoeffs
 
         # Construct the base class. 
-        super(HS, self).__init__(dimension, to_components, from_components, 
+        super(SphereHS, self).__init__(dim, to_components, from_components, 
                                  self._inner_product, from_dual = self._from_dual, 
                                  to_dual = self._to_dual)
 
@@ -90,7 +96,7 @@ class HS(HilbertSpace):
 
     # Map a SHCoeffs object to its components as a contiguous vector. 
     def _to_components_from_SHCoeffs(self, ulm):        
-        c = np.empty(self.dimension)        
+        c = np.empty(self.dim)        
         i = 0
         for l in range(self.lmax+1):
             j = i + l + 1
@@ -104,7 +110,7 @@ class HS(HilbertSpace):
 
     # Map a SHGrid object to its components.
     def _to_components_from_SHGrid(self, u):
-        ulm = u.expand(normalization = "ortho")
+        ulm = u.expand(normalization = self._normalization, csphase = self._csphase)
         return self._to_components_from_SHCoeffs(ulm)
 
     # Map components to a SHCoeffs object.
@@ -119,13 +125,13 @@ class HS(HilbertSpace):
             j = i + l
             coeffs[1,l,1:l+1] = c[i:j]
             i = j    
-        ulm = SHCoeffs.from_array(coeffs, normalization = self._normalization)
+        ulm = SHCoeffs.from_array(coeffs, normalization = self._normalization, csphase = self._csphase)
         return ulm
 
     # Map components to a SHGrid object. 
     def _from_components_to_SHGrid(self,c):
         ulm = self._from_components_to_SHCoeffs(c)
-        return ulm.expand(grid = self._grid)
+        return ulm.expand(grid = self._grid, extend = self._extend)
 
     # Local definition of the inner product. 
     def _inner_product(self, u1, u2):
@@ -149,14 +155,12 @@ class HS(HilbertSpace):
         
 # Implementation of the Lebesgue space L^{2} on a two-sphere. Obtained as a special case of H^{s} with exponent set to zero. 
 # Note that with this value of s, the value of the length-scale does not matter. 
-class L2(HS):
+class SphereL2(SphereHS):
 
-    def __init__(self, lmax,  /, *, vectors_as_SHGrid = True, radius = 1, grid = "DH", normalization = "ortho"):    
-        super(L2,self).__init__(lmax, 0, 0, 
-                                           vectors_as_SHGrid = vectors_as_SHGrid, 
-                                           radius = radius, 
-                                           grid = grid, 
-                                           normalization = normalization)
+    def __init__(self, lmax, /, *, radius = 1, length_scale = 1,
+                 vectors_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
+        super(L2,self).__init__(lmax, exponent = 0, radius = radius, length_scale = length_scale,
+                 vectors_as_SHGrid = vectors_as_SHGrid, csphase = csphase, grid = grid, extend = extend):  
 
 
 
