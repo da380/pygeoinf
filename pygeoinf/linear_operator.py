@@ -4,7 +4,7 @@ if __name__ == "__main__":
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as SciPyLinearOperator
-from linear_inference.linear_form import LinearForm
+from pygeoinf.linear_form import LinearForm
 
 # Class for linear operators between two vector spaces. 
 class LinearOperator:

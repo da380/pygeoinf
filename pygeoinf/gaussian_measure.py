@@ -1,8 +1,8 @@
 if __name__ == "__main__":
     pass
 
-from linear_inference.linear_operator import LinearOperator
-from linear_inference.linear_form import LinearForm
+from pygeoinf.linear_operator import LinearOperator
+from pygeoinf.linear_form import LinearForm
 from scipy.stats import norm, multivariate_normal
 
 class GaussianMeasure:

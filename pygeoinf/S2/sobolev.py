@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 from pyshtools import SHCoeffs, SHGrid
 from pyshtools.expand import spharm
 from scipy.sparse import diags 
-from linear_inference.vector_space import HilbertSpace
-from linear_inference.euclidean import Euclidean
-from linear_inference.linear_operator import LinearOperator
-from linear_inference.linear_form import LinearForm
-from linear_inference.gaussian_measure import GaussianMeasure
+from pygeoinf.vector_space import HilbertSpace
+from pygeoinf.euclidean import Euclidean
+from pygeoinf.linear_operator import LinearOperator
+from pygeoinf.linear_form import LinearForm
+from pygeoinf.gaussian_measure import GaussianMeasure
 
 # Implements the Sobolev space H^s on a sphere using a spherical harmonic basis. The inner product
 # is defined in terms of the Laplace-Beltrami operator, \Delta, by:

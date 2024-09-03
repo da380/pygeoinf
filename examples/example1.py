@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pyshtools as sh
 from scipy.stats import norm
-from linear_inference import Euclidean, GaussianMeasure, LinearForm, LinearOperator
-from linear_inference.S2 import Sobolev, Lebesgue
+from pygeoinf import Euclidean, GaussianMeasure, LinearForm, LinearOperator
+from pygeoinf.S2 import Sobolev, Lebesgue
 
 lmax = 256
 radius = 2

@@ -4,9 +4,9 @@ if __name__ == "__main__":
 import numpy as np
 from scipy.stats import norm,multivariate_normal
 from scipy.linalg import cho_factor, cho_solve
-from linear_inference.linear_form import LinearForm
-from linear_inference.vector_space import HilbertSpace
-from linear_inference.gaussian_measure import GaussianMeasure
+from pygeoinf.linear_form import LinearForm
+from pygeoinf.vector_space import HilbertSpace
+from pygeoinf.gaussian_measure import GaussianMeasure
 
 
 

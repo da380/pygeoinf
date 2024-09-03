@@ -1,8 +1,8 @@
 if __name__ == "__main__":
     pass
 
-from linear_inference.vector_space import HilbertSpace, LinearOperator
-from linear_inference.gaussian_measure import GaussianMeasure
+from pygeoinf.vector_space import HilbertSpace, LinearOperator
+from pygeoinf.gaussian_measure import GaussianMeasure
 
 
 class ForwardProblem:

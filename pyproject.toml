@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "linear-inference"
+name = "pygeoinf"
 version = "0.1.0"
-description = "Package for solving linear inference problems posed on Hilbert spaces"
+description = "A package for solving inference and inverse problems, with a focus on geophysical applications"
 authors = ["David Al-Attar"]
 readme = "README.md"
 
@@ -10,7 +10,6 @@ python = "^3.12"
 numpy = "^2.1.0"
 scipy = "^1.14.1"
 pyshtools = "^4.13.1"
-jupyter = "^1.0.0"
 
 
 [build-system]
