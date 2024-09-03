@@ -20,14 +20,19 @@ from linear_inference.gaussian_measure import GaussianMeasure
 # where \Lambda = 1 + \lambda^{2} \Delta and \lambda is the chosen length-scale. 
 class Sobolev(HilbertSpace):
     
-    def __init__(self, lmax,  order, scale,  /, *, radius = 1, 
-                 elements_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
+    def __init__(self, order, scale,  /, *, lmax = None, rtol = 1.e-6, power_of_two = False,
+                 radius = 1, elements_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
 
         # Store the basic information. 
-        self._lmax = lmax        
         self._order = order
         self._radius = radius  
         self._scale = scale         
+        
+        # Deduce lmax is not given. 
+        if lmax is None:
+            self._lmax = self._estimate_lmax(rtol,power_of_two)
+        else:
+            self._lmax = lmax
 
         # Store SHTools options. 
         self._elements_as_SHGrid = elements_as_SHGrid   
@@ -47,7 +52,7 @@ class Sobolev(HilbertSpace):
         self._extend = extend
 
         # Construct the metric and its inverse.         
-        metric_values = self._scaling_to_diagonal_values(self._sobolev_function,lmax)
+        metric_values = self._scaling_to_diagonal_values(self._sobolev_function,self.lmax)
         self._metric =  self._diagonal_values_to_matrix(metric_values)
         inverse_metric_values = np.reciprocal(metric_values)
         self._inverse_metric = self._diagonal_values_to_matrix(inverse_metric_values)
@@ -61,10 +66,33 @@ class Sobolev(HilbertSpace):
             from_components = self._from_components_to_SHCoeffs
 
         # Construct the base class.         
-        dim = (lmax+1)**2
+        dim = (self.lmax+1)**2
         super(Sobolev, self).__init__(dim, to_components, from_components, 
                                        self._inner_product_local, from_dual = self._from_dual_local, 
                                        to_dual = self._to_dual_local)
+
+
+    
+    # Estimate lmax based on order and scale. 
+    def _estimate_lmax(self, rtol, power_of_two):
+        err = 1
+        l = 0 
+        sum = 0
+        while err > rtol:
+            term = (2*l+1) * (1 + self.scale**2 * l*(l+1))**-self.order
+            sum += term
+            err = term/sum
+            l += 1
+        
+        if power_of_two:
+            p = np.log2(l)
+            l = 2**int(p) if p -int(p) == 0 else 2**(int(p)+1)
+
+        return l
+
+        
+
+
 
     # Return maximum degree. 
     @property

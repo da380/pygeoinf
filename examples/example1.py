@@ -7,15 +7,16 @@ from linear_inference.S2 import Sobolev, Lebesgue
 
 lmax = 256
 radius = 2
-X = Sobolev(lmax, 2, 0.1, radius=radius)
+order = 2
+scale = 0.2
+X = Sobolev( order, scale, radius=radius, power_of_two=True)
+print(X.lmax)
 
 mu = X.heat_kernel_gaussian_measure(0.5, 1)
 
 u = X.dirac(20,20)
 
 print(mu.variance_of_linear_form(u))
-
-
 
 
 
