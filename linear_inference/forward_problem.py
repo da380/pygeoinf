@@ -36,7 +36,7 @@ class ForwardProblem:
     @property
     def data_measure(self, model):     
         assert self.error_measure_set   
-        return self._error_measure(translation = self.forward_operator(model))
+        return self._error_measure.affine_transformation(translation = self.forward_operator(model))
 
     # Return synthetic data for given model. By default, a sample from the error_distribution
     # is included if this has been defined. 

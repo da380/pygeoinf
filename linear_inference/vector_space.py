@@ -103,7 +103,7 @@ class HilbertSpace(VectorSpace):
 
     @staticmethod 
     def from_vector_space(space, inner_product, /, *,  from_dual = None, to_dual = None):
-        return HilbertSpace(space.dim, space. to_components, space.from_components, from_dual = from_dual, to_dual = to_dual)
+        return HilbertSpace(space.dim, space. to_components, space.from_components, inner_product, from_dual = from_dual, to_dual = to_dual)
 
     # Return the dual. If space is the dual of another, the original is returned. 
     @property
@@ -178,39 +178,6 @@ class HilbertSpace(VectorSpace):
     def _dual_inner_product(self, xp1, xp2):
         return self.inner_product(self.from_dual(xp1),self.from_dual(xp2))
 
-# Implementation of Euclidean space using numpy arrays. By default, the standard metric is used, 
-# but a user-defined one can be supplied as a symmetric numpy matrix. For high-dimensional 
-# spaces with non-standard inner-products a more efficient implementation could be made
-# (e.g., using sparse matrices and iterative methods instead of direct solvers).
-class Euclidean(HilbertSpace):
-    
-    def __init__(self, dim, /, *, metric = None):
-        
-        if metric is None:
-            from_dual = lambda xp : self.dual.to_components(xp)
-            to_dual = lambda x : LinearForm(self, components = x)
-            super(Euclidean,self).__init__(dim, lambda x : x, lambda x : x, (lambda x1, x2, : np.dot(x1,x2)), 
-                                                from_dual = from_dual,  to_dual = to_dual)
-        else:            
-            factor = cho_factor(metric)            
-            inner_product = lambda x1, x2 : np.dot(metric @ x1, x2)
-            from_dual = lambda xp : cho_solve(factor, self.dual.to_components(xp))
-            super(Euclidean,self).__init__(dim, lambda x : x, lambda x : x, inner_product, from_dual = from_dual)
-        
-        self._metric = metric
-
-    @property
-    def metric(self):
-        if self._metric is None:
-            return np.identity(self.dim)
-        else:
-            return self._metric
-
-    @staticmethod
-    def with_random_metric(dim):
-        A = norm.rvs(size = (dim, dim))
-        metric = A.T @ A + 0.1 * np.identity(dim)        
-        return Euclidean(dim, metric = metric)
 
 
     

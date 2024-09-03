@@ -5,9 +5,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pyshtools import SHCoeffs, SHGrid
 from pyshtools.expand import spharm
-from pyshtools.legendre import PlON
 from scipy.sparse import diags 
-from linear_inference.vector_space import HilbertSpace, Euclidean
+from linear_inference.vector_space import HilbertSpace
+from linear_inference.euclidean import Euclidean
 from linear_inference.linear_operator import LinearOperator
 from linear_inference.linear_form import LinearForm
 from linear_inference.gaussian_measure import GaussianMeasure
@@ -20,14 +20,14 @@ from linear_inference.gaussian_measure import GaussianMeasure
 # where \Lambda = 1 + \lambda^{2} \Delta and \lambda is the chosen length-scale. 
 class Sobolev(HilbertSpace):
     
-    def __init__(self, lmax,  order, length_scale,  /, *, radius = 1, 
+    def __init__(self, lmax,  order, scale,  /, *, radius = 1, 
                  elements_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
 
         # Store the basic information. 
         self._lmax = lmax        
         self._order = order
         self._radius = radius  
-        self._length_scale = length_scale         
+        self._scale = scale         
 
         # Store SHTools options. 
         self._elements_as_SHGrid = elements_as_SHGrid   
@@ -48,7 +48,7 @@ class Sobolev(HilbertSpace):
 
         # Construct the metric and its inverse.         
         metric_values = self._scaling_to_diagonal_values(self._sobolev_function,lmax)
-        self._metric = self.radius**2 * self._diagonal_values_to_matrix(metric_values)
+        self._metric =  self._diagonal_values_to_matrix(metric_values)
         inverse_metric_values = np.reciprocal(metric_values)
         self._inverse_metric = self._diagonal_values_to_matrix(inverse_metric_values)
 
@@ -63,8 +63,8 @@ class Sobolev(HilbertSpace):
         # Construct the base class.         
         dim = (lmax+1)**2
         super(Sobolev, self).__init__(dim, to_components, from_components, 
-                                       self._inner_product, from_dual = self._from_dual, 
-                                       to_dual = self._to_dual)
+                                       self._inner_product_local, from_dual = self._from_dual_local, 
+                                       to_dual = self._to_dual_local)
 
     # Return maximum degree. 
     @property
@@ -81,14 +81,21 @@ class Sobolev(HilbertSpace):
     def radius(self):
         return self._radius
 
-    # Return the length scale. 
+    # Return the relative length scale. 
     @property 
-    def length_scale(self):
-        return self._length_scale
+    def scale(self):
+        return self._scale
 
-    # Return the scaling function that defines the Sobolev inner product. 
+    # Return the scaling function within the Sobolev inner product. 
     def _sobolev_function(self,l):
-        return  (1 + (self.length_scale/self.radius)**2 * l * (l + 1))**self.order
+        return  (1 + self.scale**2 * l * (l + 1))**self.order
+
+    # Expand a SHGrid or SHCoeffs object using the stored conventions. 
+    def expand(self, u):
+        if isinstance(u,SHGrid):
+            return u.expand(normalization = self._normalization, csphase = self._csphase)
+        elif isinstance(u,SHCoeffs):
+            return u.expand(grid = self._grid, extend = self._extend)
 
     # Return the component index for the (l,m)th spherical harmonic coefficient
     def spherical_harmonic_index(self, l, m):
@@ -105,11 +112,11 @@ class Sobolev(HilbertSpace):
         i = 0
         for l in range(self.lmax+1):
             j = i + l + 1
-            c[i:j] = coeffs[0,l,:l+1]    
+            c[i:j] = coeffs[0,l,:l+1] * self.radius   
             i = j
         for l in range(1,self.lmax+1):
             j = i + l
-            c[i:j] = coeffs[1,l,1:l+1]
+            c[i:j] = coeffs[1,l,1:l+1] * self.radius
             i = j    
         return c
 
@@ -118,9 +125,8 @@ class Sobolev(HilbertSpace):
         return self._to_components_from_coeffs(ulm.coeffs)
 
     # Map a SHGrid object to its components.
-    def _to_components_from_SHGrid(self, u):
-        ulm = u.expand(normalization = self._normalization, csphase = self._csphase)
-        return self._to_components_from_SHCoeffs(ulm)
+    def _to_components_from_SHGrid(self, u):        
+        return self._to_components_from_SHCoeffs(self.expand(u))
 
     # Map components to a SHCoeffs object.
     def _from_components_to_SHCoeffs(self,c):
@@ -128,19 +134,18 @@ class Sobolev(HilbertSpace):
         i = 0
         for l in range(self.lmax+1):
             j = i + l + 1
-            coeffs[0,l,:l+1] = c[i:j] 
+            coeffs[0,l,:l+1] = c[i:j] / self.radius
             i = j
-        for l in range(1,self.lmax+1):
+        for l in range(1,self.lmax+1): 
             j = i + l
-            coeffs[1,l,1:l+1] = c[i:j]
+            coeffs[1,l,1:l+1] = c[i:j] / self.radius
             i = j    
         ulm = SHCoeffs.from_array(coeffs, normalization = self._normalization, csphase = self._csphase)
         return ulm
 
     # Map components to a SHGrid object. 
-    def _from_components_to_SHGrid(self,c):
-        ulm = self._from_components_to_SHCoeffs(c)
-        return ulm.expand(grid = self._grid, extend = self._extend)
+    def _from_components_to_SHGrid(self,c):        
+        return self.expand(self._from_components_to_SHCoeffs(c))
 
     # Convert a degree dependent scaling function to vector of diagonal values.
     @staticmethod
@@ -168,19 +173,19 @@ class Sobolev(HilbertSpace):
         return self._diagonal_values_to_matrix(self._scaling_to_diagonal_values(f,self.lmax))    
 
     # Local definition of the inner product. 
-    def _inner_product(self, u1, u2):
+    def _inner_product_local(self, u1, u2):
         c1 = self.to_components(u1)
         c2 = self.to_components(u2)
         return np.dot(self._metric @ c1, c2)
 
     # Local definition of mapping from the dual. 
-    def _from_dual(self, up):        
+    def _from_dual_local(self, up):        
         cp = self.dual.to_components(up)
         c = self._inverse_metric @ cp 
         return self.from_components(c)
 
     # Local definition of mapping to the dual.
-    def _to_dual(self, u):
+    def _to_dual_local(self, u):
         c = self.to_components(u)
         cp = self._metric @ c
         return LinearForm(self, components = cp)
@@ -191,18 +196,18 @@ class Sobolev(HilbertSpace):
             colatitude = 90 - latitude
         else:
             colatitude = np.pi/2 - latitude
-        coeffs = spharm(self.lmax, colatitude, longitude, normalization = self._normalization, csphase = self._csphase, degrees = degrees)
+        coeffs = spharm(self.lmax, colatitude, longitude, normalization = self._normalization, csphase = self._csphase, degrees = degrees) / self.radius**2
         return LinearForm(self, components = self._to_components_from_coeffs(coeffs))
 
     # Return the Dirac measure at a given point as an element of the space. 
-    def dirac_kernel(self, latitude, longitude, /, *, degrees = True):
+    def dirac(self, latitude, longitude, /, *, degrees = True):
         if self.order <= 1:
             raise ValueError("Order of the space must be > 1")
         return self.from_dual(self.dirac_form(latitude, longitude, degrees=degrees))
 
     # Return a rotationally invarient linear operator on the space given the 
     # degree-dependent scaling function. 
-    def invariant_linear_operator(self, f, /, *, codomain = None):
+    def invariant_linear_operator(self, codomain, f):
         domain = self
         if codomain is None:
             codomain = self
@@ -210,38 +215,39 @@ class Sobolev(HilbertSpace):
             assert isinstance(codomain, Sobolev)
         matrix = self._scaling_to_diagonal_matrix(f)
         mapping = lambda u : codomain.from_components(matrix @ domain.to_components(u))
-        dual_mapping = lambda up : domain.dual.from_components(matrix @ codomain.dual.to_components(up) / self.radius**2) 
+        dual_mapping = lambda up : domain.dual.from_components(matrix @ codomain.dual.to_components(up))
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)        
 
     # Return a rotationally invarient Gaussian measure on th space given the degree-dependent scaling function. 
     def invariant_gaussian_measure(self, f, /, *, mean = None):
-        g = lambda l : np.sqrt(f(l) / self._sobolev_function(l)) / self.radius
+        g = lambda l : np.sqrt(f(l) / self._sobolev_function(l))
         matrix = self._scaling_to_diagonal_matrix(g)                    
         mapping = lambda c : self.from_components(matrix @ c)        
         adjoint_mapping = lambda u : self._metric @ matrix @ self.to_components(u) 
         factor = LinearOperator(Euclidean(self.dim), self, mapping, adjoint_mapping= adjoint_mapping)
         return GaussianMeasure.from_factored_covariance(factor, mean = mean)
 
-    def _normalise_covariance_function(self, f, amplitude):
-        p = PlON(self.lmax,1)
-        var = 0
+    # Normalises a the covariance function for an invariant measure such that 
+    # the pointwise standard deviation is equal to amplitude. 
+    def _normalise_covariance_function(self, f, amplitude):        
+        sum = 0
         for l in range(self.lmax+1):
-            var +=  f(l) * p[l]**2
-        fac = np.sqrt(amplitude / var)
-        return lambda l : fac * f(l) 
+            sum +=  f(l) * (2*l+1) / (4*np.pi * self.radius**2 * self._sobolev_function(l))
+        return lambda l : amplitude**2 * f(l) / sum
+
 
     # Return a rotationally invariant Gaussian measure with covariance of the Sobolev form.
-    def sobolev_gaussian_measure(self, order, length_scale, amplitude, /, *,  mean = None):               
-        f = lambda l : (1 + (length_scale / self.radius)**2 * l *(l+1))**(-order) 
+    def sobolev_gaussian_measure(self, order, scale, amplitude, /, *,  mean = None):               
+        f = lambda l : (1 + scale**2 * l *(l+1))**(-order) 
         return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude), mean = mean)        
                         
     # Return a rotationally invariant Gaussian measure iwth covariance of the heat kernel form.
-    def heat_kernel_gaussian_measure(self, length_scale, amplitude, /, *, mean = None):
-        f = lambda l : np.exp(-0.5 * l*(l+1) * (length_scale/self.radius)**2)
+    def heat_kernel_gaussian_measure(self, scale, amplitude, /, *, mean = None):
+        f = lambda l : np.exp(-0.5 * l*(l+1) * (scale/self.radius)**2)
         return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude),mean = mean)
 
     # Make a simple plot of an element of the space. 
-    def plot(self,u, /, *, cmap = "RdBu",  show = False, colorbar = False, symmetric = True):        
+    def plot(self,u, /, *, cmap = "RdBu",  show = True, colorbar = True, symmetric = True):        
         if isinstance(u, SHGrid):
             plt.pcolor(u.lons(), u.lats(), u.data,cmap = cmap)
             if colorbar:
@@ -252,14 +258,14 @@ class Sobolev(HilbertSpace):
             if show:
                 plt.show()            
         else:            
-            self.plot(u.expand(grid = self._grid, extend = self._extend))
+            self.plot(self.expand(u))
 
             
 # Implementation of the Lebesgue space L^{2} on a two-sphere. Obtained as a special case of H^{s} with order set to zero. 
 # Note that with this value of s, the value of the length-scale does not matter. 
 class Lebesgue(Sobolev):
 
-    def __init__(self, lmax, /, *, radius = 1, length_scale = 1,
+    def __init__(self, lmax, /, *, radius = 1, scale = 1,
                  elements_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
         super(Lebesgue,self).__init__(lmax, 0, 0, radius = radius, elements_as_SHGrid = elements_as_SHGrid,
                                       csphase = csphase, grid = grid, extend = extend)
