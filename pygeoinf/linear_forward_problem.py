@@ -1,11 +1,12 @@
 if __name__ == "__main__":
     pass
 
-from pygeoinf.vector_space import HilbertSpace, LinearOperator
+from pygeoinf.hilbert_space import HilbertSpace
+from pygeoinf.linear_operator import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 
-class ForwardProblem:
+class LinearForwardProblem:
 
     def __init__(self, forward_operator, /, *, error_measure = None):
         assert forward_operator.codomain == error_measure.domain

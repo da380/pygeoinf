@@ -4,12 +4,14 @@ version = "0.1.0"
 description = "A package for solving inference and inverse problems, with a focus on geophysical applications"
 authors = ["David Al-Attar"]
 readme = "README.md"
+license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.12"
 numpy = "^2.1.0"
 scipy = "^1.14.1"
 pyshtools = "^4.13.1"
+matplotlib = "^3.9.2"
 
 
 [build-system]

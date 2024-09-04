@@ -1,59 +1,94 @@
-if __name__ == "__main__":
-    pass
+"""
+This module contains the definition of the VectorSpace class. 
+"""
+
 
 import numpy as np
 from scipy.stats import norm
 from scipy.linalg import cho_factor, cho_solve
 from pygeoinf.linear_form import LinearForm
-from pygeoinf.linear_operator import LinearOperator
 
-# Class for vector spaces. 
+
+if __name__ == "__main__":
+    pass
+
+
+
 class VectorSpace:
+    """
+    A class for real vector spaces. A vector space is represented in 
+    terms of the following information:
 
-    def __init__(self, dim, to_components, from_components, /, * , dual_base = None):
+    (1) The dimension of the space or of the approximating basis. 
+    (2) A mapping from elements of the space to their components. This mapping
+        serves to define the basis used for working with the space. 
+    (3) A mapping from components to elements of the space. This must be the 
+        the inverse of the mapping in point (2) though this is not checked. 
+
+    Note that this class does *not* define the elements of the space. These 
+    elements must be implemented elsewhere. This class representing elements
+    of the space may have the vector space operations defined using standard
+    overloads (+,-,*). If this is not the case, functions that implement the 
+    operations can be provided, or default implementations (that work at a
+    component level) can be used. 
+    """
+    def __init__(self, dim, to_components, from_components, /, * , 
+                 operations_defined=True, axpy = None, dual_base = None):
+        """
+        Args:
+            dim (int): Dimension of the space or of the approximating basis. 
+            to_components: Callable object that implements the mapping from
+                the vector space to an array of its components.
+            from_components: Callable object that implements the mapping from
+                an array of components to a vector. 
+            operations_defined (bool): Set to true if elements of the space
+                have vector (+,-) and scalar (*,/) overloads defined. 
+            axpy: Callable object that implements the transformation
+                y -> a*x + y for vectors x and y and scalar y.
+            dual_base (bool): Used internally to record that object is the
+                dual of another VectorSpace. 
+        """
         self._dim = dim
         self._to_components = to_components
         self._from_components = from_components    
         self._dual_base = dual_base
+        self._operations_defined = operations_defined
+        self._axpy = axpy        
+        
 
-    # Return the dimension of the space. 
-    @property
+    @property    
     def dim(self):
+        """Dimension of the space or of its approximating basis."""
         return self._dim
 
-    # Return the dual space. If the dual of a space, the original is returned. 
     @property
     def dual(self):
+        """The dual of the vector space."""
         if self._dual_base is None:            
             return VectorSpace(self.dim, self._dual_to_components, 
                                self._dual_from_components, dual_base = self)
         else:
             return self._dual_base
 
-    # Return the zero vector.
     @property
     def zero(self):
+        """The zero vector within the space."""
         return self.from_components(np.zeros(self.dim))
 
-
-    # Return the identity operator on the space. 
-    @property
-    def identity_operator(self):
-        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp)
-
-    # Map a vector to its components. 
     def to_components(self,x):
-       if isinstance(x, LinearForm) and x.components_stored:
-        return x.components        
-       else:                
-        return self._to_components(x)
-
-    # Map components to a vector. 
+        """Maps a vector to its components."""
+        if isinstance(x, LinearForm) and x.store_components:
+            return x.components        
+        else:                
+            return self._to_components(x)
+    
     def from_components(self,c):
+        """Maps an array of components to the vector"""
         return self._from_components(c)    
-
-    # Maps a dual vector to its components. 
+    
     def _dual_to_components(self,xp):
+        # Default implement of the mapping of a dual vector to 
+        # its components within the induced basis. 
         n = self.dim
         c = np.zeros(n)
         cp = np.zeros(n)
@@ -62,122 +97,39 @@ class VectorSpace:
             cp[i] = xp(self.from_components(c))
             c[i] = 0
         return cp
-
-     # Maps dual components to the dual vector. 
+     
     def _dual_from_components(self, cp):
+        # Maps dual components to the dual vector. 
         return LinearForm(self, components = cp)
 
-    # Return a vector whose components samples from a given distribution. 
     def random(self, dist = norm()):
+        """
+        Returns a vector whose components are idd samples from the given distribution.
+
+        Args:
+            dist: The distribution from which samples are to be drawn. This is required
+                to be a scipy.stats distribution which has a "rvs" method. 
+
+        Note:
+            This method should not generally be used to generate random elements of the 
+            vector space. It is instead a quick method that can be useful for testing.         
+        """
         return self.from_components(norm.rvs(size = self.dim))
 
-
-
-
-# Class for Hilbert spaces.         
-class HilbertSpace(VectorSpace):
     
-    def __init__(self, dim,  to_components, from_components, inner_product, /, *,  from_dual = None, to_dual = None, dual_base = None):
-
-        # Form the underlying vector space. 
-        super(HilbertSpace,self).__init__(dim, to_components, from_components)
-
-        # Set the inner
-        self._inner_product = inner_product
-
-        # Set the mapping from the dual space.         
-        if from_dual is None:                        
-            self._form_and_factor_metric()
-            self._from_dual = lambda xp :  self._from_dual_default(xp)
+    def axpy(self, a, x, y):
+        """ Returns a * x + y with scalar, a, and vectors, x and y."""
+        if self._operations_defined:
+            return a * x + y
         else:
-            self._from_dual = from_dual
-
-        # Set the mapping to the dual space. 
-        if to_dual is None:
-            self._to_dual = self._to_dual_default
-        else:
-            self._to_dual = to_dual
-
-        # Store the base space (which may be none).
-        self._dual_base = dual_base
-
-    @staticmethod 
-    def from_vector_space(space, inner_product, /, *,  from_dual = None, to_dual = None):
-        return HilbertSpace(space.dim, space. to_components, space.from_components, inner_product, from_dual = from_dual, to_dual = to_dual)
-
-    # Return the dual. If space is the dual of another, the original is returned. 
-    @property
-    def dual(self):
-        if self._dual_base is None:            
-            return HilbertSpace(self.dim,
-                                self._dual_to_components,
-                                self._dual_from_components, 
-                                self._dual_inner_product,
-                                from_dual = self.to_dual,
-                                to_dual = self.from_dual,
-                                dual_base = self)
-        else:
-            return self._dual_base        
-
-
-    # Return the identity operator on the space. 
-    @property
-    def identity_operator(self):
-        return LinearOperator(self, self, lambda x : x, dual_mapping = lambda xp : xp, adjoint_mapping = lambda x : x)
-
-    # Return the underlying vector space. 
-    @property
-    def to_vector_space(self):
-        return VectorSpace(self.dim, self.to_components, self.from_components, dual_base = self._dual_base)
-
-    # Return the inner product of two vectors. 
-    def inner_product(self, x1, x2):
-        return self._inner_product(x1, x2)
-
-    # Return the norm of a vector. 
-    def norm(self, x):
-        return np.sqrt(self.inner_product(x,x))
-
-    # Construct the Cholesky factorisation of the metric.
-    def _form_and_factor_metric(self):
-        metric = np.zeros((self.dim, self.dim))
-        c1 = np.zeros(self.dim)
-        c2 = np.zeros(self.dim)
-        for i in range(self.dim):
-            c1[i] = 1
-            x1 = self.from_components(c1)
-            metric[i,i] = self.inner_product(x1,x1)
-            for j in range(i+1,self.dim):
-                c2[j] = 1
-                x2 = self.from_components(c2)                
-                metric[i,j] = self.inner_product(x1,x2)          
-                metric[j,i] = metric[i,j]
-                c2[j] = 0
-            c1[i] = 0                      
-        self._metric_factor = cho_factor(metric)        
-
-    # Default implementation for the representation of a dual vector. 
-    def _from_dual_default(self,xp):    
-        cp = self.dual.to_components(xp)
-        c = cho_solve(self._metric_factor,cp)        
-        return self.from_components(c)
-
-    # Return the representation of a dual vector in the space. 
-    def from_dual(self, xp):        
-        return self._from_dual(xp)
-
-    # Map a vector to the corresponding dual vector. 
-    def to_dual(self, x):        
-        return self._to_dual(x)
-
-    # Default implementation of the mapping to the dual space. 
-    def _to_dual_default(self,x):
-        return LinearForm(self, mapping = lambda y : self.inner_product(x,y))    
-
-    # Inner product on the dual space. 
-    def _dual_inner_product(self, xp1, xp2):
-        return self.inner_product(self.from_dual(xp1),self.from_dual(xp2))
+            if self._axpy is not None:
+                return self._axpy(a,x,y)
+            else:
+                cy = self.to_components(y)
+                cx = self.to_components(x)
+                cy += a * cx
+                return self.from_components(cy)
 
 
 
-    
+

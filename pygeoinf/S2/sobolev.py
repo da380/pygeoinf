@@ -229,8 +229,8 @@ class Sobolev(HilbertSpace):
 
     # Return the Dirac measure at a given point as an element of the space. 
     def dirac(self, latitude, longitude, /, *, degrees = True):
-        if self.order <= 1:
-            raise ValueError("Order of the space must be > 1")
+        #if self.order <= 1:
+        #    raise ValueError("Order of the space must be > 1")
         return self.from_dual(self.dirac_form(latitude, longitude, degrees=degrees))
 
     # Return a rotationally invarient linear operator on the space given the 
