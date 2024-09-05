@@ -21,10 +21,8 @@ class LinearForm:
         """
         Args:
             domain (VectorSpace): Space over which the linear form is defined. 
-            mapping (VectorSpace -> float | None): Callable object that implements
-                the action of the linear norm. 
-            components (ArrayLike | None):  Components of the form relative to the
-                induced basis. 
+            mapping: Functor that implements the action of the linear norm. 
+            components (ArrayLike):  Components of the form.
             store_componets (bool): If true, component values are pre-computed and
                 stored. If components are provided, value set to true.
         """
@@ -40,7 +38,7 @@ class LinearForm:
             assert mapping is not None
             self._mapping = mapping
             if store_components:
-                self._components = self._compute_components()                
+                self._components = self._compute_components()   
             
     @property
     def domain(self):

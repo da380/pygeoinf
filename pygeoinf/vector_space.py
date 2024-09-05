@@ -26,25 +26,31 @@ class VectorSpace:
         the inverse of the mapping in point (2) though this is not checked. 
 
     Note that this class does *not* define the elements of the space. These 
-    elements must be implemented elsewhere. This class representing elements
-    of the space may have the vector space operations defined using standard
-    overloads (+,-,*). If this is not the case, functions that implement the 
-    operations can be provided, or default implementations (that work at a
-    component level) can be used. 
+    elements must be implemented elsewhere. 
+    
+    The class representing elements of the space may have the vector space 
+    operations defined using standard overloads (+,-,*). If this is not the case,
+    a function implementing the mapping y -> a * x + y can be provided, and if 
+    not, a default implementation is used. 
+
+    A functor that returns the zero-vector within the space can also be 
+    provided, and if not, a default implementation is used. 
     """
     def __init__(self, dim, to_components, from_components, /, * , 
-                 operations_defined=True, axpy = None, dual_base = None):
+                 operations_defined=True, axpy = None, zero = None,
+                 dual_base = None):
         """
         Args:
             dim (int): Dimension of the space or of the approximating basis. 
-            to_components: Callable object that implements the mapping from
+            to_components: A functor that implements the mapping from
                 the vector space to an array of its components.
-            from_components: Callable object that implements the mapping from
+            from_components: functor that implements the mapping from
                 an array of components to a vector. 
             operations_defined (bool): Set to true if elements of the space
                 have vector (+,-) and scalar (*,/) overloads defined. 
-            axpy: Callable object that implements the transformation
+            axpy: A functor that implements the transformation
                 y -> a*x + y for vectors x and y and scalar y.
+            zero: A functor that returns the zero-vector within the space. 
             dual_base (bool): Used internally to record that object is the
                 dual of another VectorSpace. 
         """
@@ -54,6 +60,7 @@ class VectorSpace:
         self._dual_base = dual_base
         self._operations_defined = operations_defined
         self._axpy = axpy        
+        self._zero = zero
         
 
     @property    
@@ -73,7 +80,10 @@ class VectorSpace:
     @property
     def zero(self):
         """The zero vector within the space."""
-        return self.from_components(np.zeros(self.dim))
+        if self._zero is None:
+            return self.from_components(np.zeros(self.dim))
+        else:
+            return self._zero()
 
     def to_components(self,x):
         """Maps a vector to its components."""

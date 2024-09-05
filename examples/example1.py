@@ -1,33 +1,34 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import pyshtools as sh
 from scipy.stats import norm
 
-from pygeoinf import VectorSpace,HilbertSpace,LinearOperator,GaussianMeasure,Euclidean
+from pygeoinf.testing import VectorSpace, LinearOperator, DualVector, DualVectorSpace, DualOperator, Real
+
+
+dimX = 5
+dimY = 2
+X = VectorSpace(dimX, lambda x : x, lambda x : x )
+Y = VectorSpace(dimY, lambda x : x, lambda x : x )
+
+A = LinearOperator(X, Y, mapping = lambda x : x[:dimY])
+xp = DualVector(X, mapping =  lambda  x : x[0])
+yp = DualVector(X, matrix = xp.matrix)
+
+x = X.random()
+print(xp)
+print(DualOperator(DualOperator(yp)))
 
 
 
-help(GaussianMeasure)
 
 
 
 
-'''
-lmax = 128
-radius = 2
-order = 2
-scale = 0.1
-X = Sobolev(order, scale, lmax = lmax, radius=radius, power_of_two=True)
 
-mu = X.sobolev_gaussian_measure(2,0.1,1)
 
-A = X.invariant_linear_operator(X, lambda l : l*(l+1))
 
-nu = mu.affine_transformation(operator=A)
 
-X.plot(nu.sample())
 
-'''
+
 
 
 

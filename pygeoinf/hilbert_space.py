@@ -28,40 +28,45 @@ class HilbertSpace(VectorSpace):
     (6) A mapping from the space to the dual vector it cannonically defines. 
 
     Note that this class does *not* define the elements of the space. These 
-    elements must be implemented elsewhere. This class representing elements
-    of the space may have the vector space operations defined using standard
-    overloads (+,-,*). If this is not the case, functions that implement the 
-    operations can be provided, or default implementations (that work at a
-    component level) can be used.         
+    elements must be implemented elsewhere. 
+    
+    The class representing elements of the space may have the vector space 
+    operations defined using standard overloads (+,-,*). If this is not the case,
+    a function implementing the mapping y -> a * x + y can be provided, and if 
+    not, a default implementation is used. 
+
+    A functor that returns the zero-vector within the space can also be 
+    provided, and if not, a default implementation is used. 
 
     If mappings to and from the dual space are not provided, they are 
     generated using default component-level implementations. Such 
-    methods inversion of dense linear systems, and so will be inefficient 
-    for high-dimensional spaces. 
+    methods involve theinversion of dense linear systems, and so will 
+    be inefficient for high-dimensional spaces. 
     """    
     
     def __init__(self, dim,  to_components, from_components,
                  inner_product, /, *,  from_dual = None, 
                  to_dual = None, operations_defined=True, 
-                 axpy=None, dual_base = None):                 
-        """
+                 axpy=None, zero = None, dual_base = None):                 
+        """        
         Args:
             dim (int): Dimension of the space or of the approximating basis. 
-            to_components: Callable object that implements the mapping from
+            to_components: functor that implements the mapping from
                 the vector space to an array of its components.
-            from_components: Callable object that implements the mapping from
+            from_components: A functor that implements the mapping from
                 an array of components to a vector. 
-            inner_product: Callable object that implements the inner product
+            inner_product: A functor that implements the inner product
                 on the space, this being a bilinear mapping from the space 
                 to the real numbers.
-            to_dual: Callable object that implements the mapping from a dual 
+            to_dual: A functor that implements the mapping from a dual 
                 vector to its representation within the space. 
-            from_dual: Callable object that implements the mapping from a 
+            from_dual: A functor that implements the mapping from a 
                 vector to the cannonically defined dual vector. 
             operations_defined (bool): Set to true if elements of the space
                 have vector (+,-) and scalar (*,/) overloads defined. 
-            axpy: Callable object that implements the transformation
+            axpy: A functor that implements the transformation
                 y -> a*x + y for vectors x and y and scalar y.
+            zero: A functor that returns the zero-vector within the space. 
             dual_base (bool): Used internally to record that object is the
                 dual of another VectorSpace.         
         """
@@ -69,7 +74,7 @@ class HilbertSpace(VectorSpace):
         # Form the underlying vector space. 
         super(HilbertSpace,self).__init__(dim, to_components, from_components,
                                           operations_defined=operations_defined,
-                                          axpy=axpy)
+                                          axpy=axpy, zero=zero)
 
         # Set the inner
         self._inner_product = inner_product
@@ -77,7 +82,7 @@ class HilbertSpace(VectorSpace):
         # Set the mapping from the dual space.         
         if from_dual is None:                        
             self._form_and_factor_metric()
-            self._from_dual = lambda xp :  self._from_dual_default(xp)
+            self._from_dual = _from_dual_default
         else:
             self._from_dual = from_dual
 
@@ -99,16 +104,16 @@ class HilbertSpace(VectorSpace):
 
         Args:
             space: The underlying vector space. 
-            inner_product: Callable object that implements the inner product
+            inner_product: functor that implements the inner product
                 on the space, this being a bilinear mapping from the space 
                 to the real numbers.
-            to_dual: Callable object that implements the mapping from a dual 
+            to_dual: functor that implements the mapping from a dual 
                 vector to its representation within the space. 
-            from_dual: Callable object that implements the mapping from a 
+            from_dual: functor that implements the mapping from a 
                 vector to the cannonically defined dual vector. 
             operations_defined (bool): Set to true if elements of the space
                 have vector (+,-) and scalar (*,/) overloads defined. 
-            axpy: Callable object that implements the transformation
+            axpy: functor that implements the transformation
                 y -> a*x + y for vectors x and y and scalar y.       
 
             Returns:
@@ -117,7 +122,6 @@ class HilbertSpace(VectorSpace):
         return HilbertSpace(space.dim, space.to_components, space.from_components,
                             inner_product, from_dual = from_dual, to_dual = to_dual, 
                             operations_defined=space.operations_defined, axpy=space.axpy)
-
     
     @property
     def dual(self):
@@ -183,6 +187,7 @@ class HilbertSpace(VectorSpace):
     def _to_dual_default(self,x):
         # Default implementation of the mapping to the dual space. 
         return LinearForm(self, mapping = lambda y : self.inner_product(x,y))    
+        
 
     def _dual_inner_product(self, xp1, xp2):
         # Inner product on the dual space. 

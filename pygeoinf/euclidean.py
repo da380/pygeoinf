@@ -1,7 +1,7 @@
 """
-This module contains the definition of the Euclidean class. 
+An implementation of Euclidean space as a HilbertSpace object modelled on
+on numpy arrays along with associated functions.
 """
-
 
 import numpy as np
 from scipy.stats import norm,multivariate_normal
@@ -9,6 +9,8 @@ from scipy.linalg import cho_factor, cho_solve
 from pygeoinf.linear_form import LinearForm
 from pygeoinf.hilbert_space import HilbertSpace
 from pygeoinf.gaussian_measure import GaussianMeasure
+
+
 
 if __name__ == "__main__":
     pass

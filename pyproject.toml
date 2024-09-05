@@ -12,6 +12,7 @@ numpy = "^2.1.0"
 scipy = "^1.14.1"
 pyshtools = "^4.13.1"
 matplotlib = "^3.9.2"
+pytest = "^8.3.2"
 
 
 [build-system]

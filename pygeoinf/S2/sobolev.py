@@ -1,6 +1,7 @@
 if __name__ == "__main__":
     pass
 
+
 import numpy as np
 import matplotlib.pyplot as plt
 from pyshtools import SHCoeffs, SHGrid
@@ -11,6 +12,11 @@ from pygeoinf.euclidean import Euclidean
 from pygeoinf.linear_operator import LinearOperator
 from pygeoinf.linear_form import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
+
+
+
+
+
 
 # Implements the Sobolev space H^s on a sphere using a spherical harmonic basis. The inner product
 # is defined in terms of the Laplace-Beltrami operator, \Delta, by:
