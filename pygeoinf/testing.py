@@ -35,7 +35,7 @@ class VectorSpace:
         c1 = self._random_components()
         c2 = self.to_components(self.from_components(c1))        
         return np.linalg.norm(c1-c2) < rtol * np.linalg.norm(c1)
-
+0
 
 
 class Real(VectorSpace):

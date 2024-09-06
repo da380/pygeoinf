@@ -1,7 +1,7 @@
-from pygeoinf.linear_form import LinearForm
-from pygeoinf.vector_space import VectorSpace
-from pygeoinf.hilbert_space import HilbertSpace
-#from pygeoinf.euclidean import Euclidean
-from pygeoinf.linear_operator import LinearOperator
-from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.linear_forward_problem import LinearForwardProblem
+from pygeoinf.vector_space import VectorSpace, standard_vector_space
+from pygeoinf.linear_operator import LinearOperator, LinearForm
+from pygeoinf.dual import DualVectorSpace, DualOperator
+from pygeoinf.hilbert import HilbertSpace, DualHilbertSpace, AdjointOperator, standard_euclidean_space
+
+
+

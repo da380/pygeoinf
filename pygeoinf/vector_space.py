@@ -1,145 +1,116 @@
 """
-This module contains the definition of the VectorSpace class. 
+This module defined the VectorSpace class along with a function 
+that returns n-dimensional real vector space with its standard
+basis as an instance of this class. 
 """
-
 
 import numpy as np
 from scipy.stats import norm
-from scipy.linalg import cho_factor, cho_solve
-from pygeoinf.linear_form import LinearForm
+from pygeoinf.utils import run_randomised_checks
 
-
-if __name__ == "__main__":
-    pass
 
 
 
 class VectorSpace:
     """
-    A class for real vector spaces. A vector space is represented in 
-    terms of the following information:
+    A class for real vector spaces. To define an instance, the
+    user needs to provide the following:
 
-    (1) The dimension of the space or of the approximating basis. 
-    (2) A mapping from elements of the space to their components. This mapping
-        serves to define the basis used for working with the space. 
-    (3) A mapping from components to elements of the space. This must be the 
-        the inverse of the mapping in point (2) though this is not checked. 
+        (1) The dimension of the space, or the dimension of the 
+            finite-dimensional approximating space. 
+        (2) A mapping from elements of the space to their components. 
+            These components must be expressed as numpy arrays with
+            shape (dim,1) with dim the spaces dimension. 
+        (3) A mapping from components back to the vectors. This
+            needs to be the inverse of the mapping in (2), but 
+            this requirement is not automatically checked. 
 
-    Note that this class does *not* define the elements of the space. These 
-    elements must be implemented elsewhere. 
-    
-    The class representing elements of the space may have the vector space 
-    operations defined using standard overloads (+,-,*). If this is not the case,
-    a function implementing the mapping y -> a * x + y can be provided, and if 
-    not, a default implementation is used. 
-
-    A functor that returns the zero-vector within the space can also be 
-    provided, and if not, a default implementation is used. 
+    Note that this class does *not* define elements of the 
+    vector space. These must be pre-defined separately. It 
+    is also assumed that the usual vector operations are 
+    available for this latter space. 
     """
-    def __init__(self, dim, to_components, from_components, /, * , 
-                 operations_defined=True, axpy = None, zero = None,
-                 dual_base = None):
+
+    def __init__(self, dim, to_components, from_components):
         """
         Args:
-            dim (int): Dimension of the space or of the approximating basis. 
-            to_components: A functor that implements the mapping from
-                the vector space to an array of its components.
-            from_components: functor that implements the mapping from
-                an array of components to a vector. 
-            operations_defined (bool): Set to true if elements of the space
-                have vector (+,-) and scalar (*,/) overloads defined. 
-            axpy: A functor that implements the transformation
-                y -> a*x + y for vectors x and y and scalar y.
-            zero: A functor that returns the zero-vector within the space. 
-            dual_base (bool): Used internally to record that object is the
-                dual of another VectorSpace. 
+            dim (int): The dimension of the space, or of the 
+                finite-dimensional approximating space. 
+            to_components (callable):  A functor that maps vectors
+                to their components. 
+            from_components (callable): A functor that maps components
+                to vectors. 
         """
         self._dim = dim
         self._to_components = to_components
-        self._from_components = from_components    
-        self._dual_base = dual_base
-        self._operations_defined = operations_defined
-        self._axpy = axpy        
-        self._zero = zero
-        
-
-    @property    
+        self._from_components = from_components
+    
+    @property
     def dim(self):
-        """Dimension of the space or of its approximating basis."""
+        """The dimension of the space."""
         return self._dim
 
-    @property
-    def dual(self):
-        """The dual of the vector space."""
-        if self._dual_base is None:            
-            return VectorSpace(self.dim, self._dual_to_components, 
-                               self._dual_from_components, dual_base = self)
-        else:
-            return self._dual_base
-
-    @property
-    def zero(self):
-        """The zero vector within the space."""
-        if self._zero is None:
-            return self.from_components(np.zeros(self.dim))
-        else:
-            return self._zero()
-
     def to_components(self,x):
-        """Maps a vector to its components."""
-        if isinstance(x, LinearForm) and x.store_components:
-            return x.components        
-        else:                
-            return self._to_components(x)
-    
-    def from_components(self,c):
-        """Maps an array of components to the vector"""
-        return self._from_components(c)    
-    
-    def _dual_to_components(self,xp):
-        # Default implement of the mapping of a dual vector to 
-        # its components within the induced basis. 
-        n = self.dim
-        c = np.zeros(n)
-        cp = np.zeros(n)
-        for i in range(n):
-            c[i] = 1
-            cp[i] = xp(self.from_components(c))
-            c[i] = 0
-        return cp
-     
-    def _dual_from_components(self, cp):
-        # Maps dual components to the dual vector. 
-        return LinearForm(self, components = cp)
+        """Maps vectors to components."""        
+        return self._to_components(x)
 
-    def random(self, dist = norm()):
+    def from_components(self,c):
+        """Maps components to vectors."""
+        return self._from_components(c)
+
+    def _random_components(self):
+        # Generates a random set of components drawn 
+        # from a standard Gaussian distribution. 
+        return norm().rvs(size = (self.dim,1))
+
+    def random(self):
         """
-        Returns a vector whose components are idd samples from the given distribution.
+        Returns a random vector whose components have been 
+        drawn from a standard Gaussian distribution. 
+        """
+        return self.from_components(self._random_components())
+
+    def check(self, /, *,trials = 1, rtol = 1e-9):
+        """
+        Returns true is checks on the space have been passed. 
 
         Args:
-            dist: The distribution from which samples are to be drawn. This is required
-                to be a scipy.stats distribution which has a "rvs" method. 
+            trials (int): The number of random instances of each check performed.
+            rtol (float): The relative tolerance used within numerical checks. 
 
-        Note:
-            This method should not generally be used to generate random elements of the 
-            vector space. It is instead a quick method that can be useful for testing.         
+        Returns:
+            bool: True if all checks have passed. 
+
+        Notes:
+            The purpose of this function is to check that the functions 
+            provided to set up the vector space are consistent. Specifically,
+            it checks that the functions to_components and from_components 
+            are mutual inverses, and that they are linear. This is done by 
+            computing their actions on randomly generated components and 
+            associated vectors. Such tests cannot be conclusive but are 
+            better than nothing.  
         """
-        return self.from_components(norm.rvs(size = self.dim))
+        checks = (self._mutual_inverse, self._linearity)
+        return run_randomised_checks(checks, trials, rtol)
+                        
+    def _mutual_inverse(self, rtol):
+        c1 = self._random_components()
+        c2 = self.to_components(self.from_components(c1))        
+        return np.linalg.norm(c1-c2) < rtol * np.linalg.norm(c1)
 
-    
-    def axpy(self, a, x, y):
-        """ Returns a * x + y with scalar, a, and vectors, x and y."""
-        if self._operations_defined:
-            return a * x + y
-        else:
-            if self._axpy is not None:
-                return self._axpy(a,x,y)
-            else:
-                cy = self.to_components(y)
-                cx = self.to_components(x)
-                cy += a * cx
-                return self.from_components(cy)
+    def _linearity(self, rtol):
+        x1 = self.random()
+        x2 = self.random()
+        x = x1 + x2
+        c1 = self.to_components(x1)
+        c2 = self.to_components(x2)
+        c = self.to_components(x)
+        return np.linalg.norm(c1 + c2 - c) < rtol * np.linalg.norm(c)
 
+
+def standard_vector_space(dim):
+    """Returns n-dimensional real space with the standard basis."""    
+    return VectorSpace(dim, lambda x : x.reshape(dim,1), lambda x : x.reshape(dim,))
 
 
 

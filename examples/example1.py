@@ -1,29 +1,32 @@
 import numpy as np
 from scipy.stats import norm
 
-from pygeoinf.testing import (VectorSpace, LinearOperator, DualVector, DualVectorSpace, 
-                             DualOperator, HilbertSpace, DualHilbertSpace, RealN,      
-                             AdjointOperator, Euclidean)
+from pygeoinf import (standard_vector_space, LinearOperator, 
+                      LinearForm, DualVectorSpace, DualOperator,
+                      standard_euclidean_space, AdjointOperator)
+
+dimX = 5
+X = standard_euclidean_space(dimX)
+
+dimY = 2
+Y = standard_euclidean_space(dimY)
+
+A = LinearOperator(X, Y, mapping = lambda x : 2 * x[:dimY])
+
+
+
+As = AdjointOperator(A)
+
+y = Y.random()
+
+print(As)
 
 
 
 
 
-X = RealN(5)
-
-Xp = DualVectorSpace(X)
-
-A = LinearOperator(X, X, mapping = lambda x : 2 * x)
-Ap = DualOperator(A)
 
 
-x = X.random()
-
-print(X.to_components(x))
-
-xp = Xp.random()
-
-print(Xp.to_components(xp))
 
 
 

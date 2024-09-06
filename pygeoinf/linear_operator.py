@@ -1,221 +1,189 @@
 """
-This module contains the definition of the LinearOperator class. 
+This module defines the LinearOperator class along with the 
+class DualVector as a special case. 
+
+The definition of the later class requires an implementation
+of the real numbers as a VectorSpace instance. This is stored
+as a module variable, _REAL. There is no need for this variable
+ to be imported or used by others!
 """
 
+
 import numpy as np
-from scipy.sparse.linalg import LinearOperator as SciPyLinearOperator
-from pygeoinf.linear_form import LinearForm
-
-
-if __name__ == "__main__":
-    pass
+from pygeoinf.vector_space import VectorSpace
 
 
 class LinearOperator:
     """
-    Class for linear operators between real vector spaces. A linear operator is represented in 
-    terms of the following information:
+    Class for linear operators between two vector spaces. To define an 
+    instance, the user must provide the following:
 
-    (1) The domain of the operator, this being an instance of VectorSpace (or a derived class).
-    (2) The codomain of the operator, this being an instance of VectorSpace (or a derived class).
-    (3) A functor that performs the action of the operator on an element of its domain. 
+        (1) The domain of the operator as an instance of VectorSpace. 
+        (2) The codomain of the operator as an instance of VectorSpace.     
 
-    The dual of the linear operator can be deduced automatically, but the method is inefficient. 
-    If the action of the dual is known this can be specified. 
+    To define the action of the operator they can provide either:
 
-    For operators between Hilbert spaces, the adjoint of the linear operator can be deduced 
-    automatically, but the method is inefficient. If the action of the dual is known this can
-    be specified. The adjoint can also be efficiently determined from a specified dual mapping, 
-    and conversely. 
+        (a) A functor that represents the action of the operator. 
+        (b) The matrix representation for the operator relative to the 
+            basis for the domain and codomain. This matrix can be a dense
+            numpy matrix, a scipy sparse matrix, or another object that 
+            behaves in the same way. 
+
+    In addition, the user can supply functors that implement the action of
+    the operators dual and its adjoint, with the latter defined only in the 
+    case of operators between Hilbert Spaces. 
+
+    Linear operators form an algebra over the reals in the usual way. Overloads
+    for the relevant operators are provided. In all cases, these operations are
+    lazily implemented. 
     """
 
-    def __init__(self, domain, codomain, mapping, /, *, dual_mapping = None,
-                 adjoint_mapping = None, dual_base = None, adjoint_base = None):        
+    def __init__(self, domain, codomain, /, *, mapping = None,
+                 dual_mapping = None, adjoint_mapping = None, matrix = None):
         """
-        Args:
-            domain (VectorSpace): The domain of the operator.
-            codomain (VectorSpace): The codomain of the operator.
-            mapping: A functor representing the action of the operator. 
-            dual_mapping: A callable oject representing the action of the dual operator. 
-            adjoint_mapping: A functor representing the action of the adjoint operator. 
-            dual_base (bool): Used internally to record that an operator is the dual of another. 
-            adjoint_base (bool): Used internally to record that an operator is the adjoint of another. 
-        """
-        self._domain = domain
-        self._codomain = codomain        
-        self._mapping = mapping  
-        self._dual_mapping = dual_mapping
-        self._adjoint_mapping = adjoint_mapping
-        self._dual_base = dual_base
-        self._adjoint_base = adjoint_base        
-                    
-    @staticmethod
-    def identity(domain):
-        return LinearOperator(domain, domain,lambda x:x, 
-                              dual_mapping=lambda x:x, 
-                              adjoint_mapping=lambda x:x)
-
-
-    @staticmethod
-    def self_adjoint(domain, mapping):
-        """
-        Return a self-adjoint operator on a Hilbert space.
-
-        Args:
-            domain (HilbertSpace): The domain and codomain of the operator. 
-            mapping: A functor that implements the action of the operator. 
-
-        Return:
-            LinearOperator: The self-adjoint operator on the domain. 
-
-        Note:
-            The function does not check that the mapping provided does actually
-            define a self-adjoint operator.
-        """
-        return LinearOperator(domain, domain, mapping, adjoint_mapping = mapping)
-    
-    @staticmethod  
-    def self_dual(domain, mapping):        
-        """
-        Return a self-dual operator from a vector space to its dual. 
-
-        Args:
-            domain (VectorSpace): The domain of the operator. 
-            mapping: A functor that implements the action of the operator. 
-
-        Return:
-            LinearOperator: The self-dual operator on the domain. 
-
-        Note:
-            The function does not check that the mapping provided does actually
-            define a self-dual operator.
-        """
-        return LinearOperator(domain, domain.dual, mapping, dual_mapping = mapping)
-
-    @staticmethod
-    def from_diagonal_values(domain, codomain, diags):
-        """
-        Returns a linear operator between spaces of the same dimension
-        whose matrix representation is diagonal. 
-
         Args:
             domain (VectorSpace): The domain of the operator. 
             codomain (VectorSpace): The codomain of the operator. 
-            diags (ArrayLike): The diagonal values within the matrix representation. 
-
-        Returns:
-            LinearOperator: The linear operator so formed. 
-
-        Raises:
-            ValueError: If dimensions of domain and codomain are different. 
+            mapping (callable | None): A functor that implements the 
+                action of the operator. 
+            dual_mapping (callable | None): A functor that implements 
+                the action of the dual operator. 
+            adjoint_mapping (callable | None): A functor that implements
+                the action of the adjoint operator. 
+            matrix (MatrixLike | None): The matrix representation of the 
+                operator relative to the bases for its domain and codomain.        
         """
-        if domain.dim != codomain.dim:
-            raise ValueError("Domain and codomain must have the same dimensions")        
-        if domain.dim != diags.size:
-            raise ValueError("Diagonal values have the wrong size.")
-        mapping = lambda x : codomain.from_components(diags * domain.to_components(x))        
-        dual_mapping = lambda yp :domain.dual.from_components(diags * codomain.dual.to_components(yp))
-        return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
-    
+        self._domain = domain
+        self._codomain = codomain        
+        self._matrix = matrix        
+        if matrix is not None:
+            self._mapping = self._mapping_from_matrix                    
+        else:
+            self._mapping = mapping
+            self._dual_mapping = dual_mapping
+            self._adjoint_mapping = adjoint_mapping
+
     @property
     def domain(self):
-        """The domain of the operator."""
+        """Domain of the operator."""
         return self._domain
 
-    @property 
+    @property
     def codomain(self):
-        """The codomain of the operator."""
-        return self._codomain    
+        """Codomain of the operator."""
+        return self._codomain
 
     @property
-    def hilbert_operator(self):
-        """True if the operator is between Hilbert spaces."""
-        return self._hilbert_operator
-
-    @property
-    def dual(self):
-        """The dual of the operator."""
-        if self._dual_base is None:
-            if self._dual_mapping is None:
-                if self._adjoint_mapping is None:
-                    dual_mapping = lambda yp : LinearForm(self.domain, mapping = lambda x : yp(self(x)))
-                else:
-                    dual_mapping = lambda yp : self.domain.to_dual(self.adjoint(self.codomain.from_dual(yp)))
-            else:
-                dual_mapping = self._dual_mapping
-            return LinearOperator(self.codomain.dual, self.domain.dual, dual_mapping, dual_mapping = self._mapping, dual_base = self)            
+    def matrix(self):
+        """Matrix representation of the operator."""
+        if self._matrix is None:            
+            return self._compute_matrix()            
         else:            
-            return self._dual_base
-        
-    @property 
-    def adjoint(self):
-        """The adjoint of an operator between Hilbert spaces."""
-        if self._adjoint_base is None:
-            if self._adjoint_mapping is None:
-                adjoint_mapping = lambda y : self.domain.from_dual(self.dual(self.codomain.to_dual(y)))
-            else:
-                adjoint_mapping = self._adjoint_mapping
-            return LinearOperator(self.codomain, self.domain, adjoint_mapping, adjoint_mapping = self._mapping, adjoint_base = self)
-        else:
-            return self._adjoint_base
+            return self._matrix
 
     @property
-    def to_dense_matrix(self):
-        """The operator as a dense matrix."""
-        A = np.zeros((self.codomain.dim, self.domain.dim))
-        c = np.zeros(self.domain.dim)        
+    def shape(self):
+        """Shape of the operator's matrix representation."""
+        return (self.codomain.dim, self.domain.dim)
+
+    def store_matrix(self):
+        """Call to compute and store the operators matrix representation."""
+        if self._matrix is None:
+            self._matrix = self._compute_matrix()
+
+    def _mapping_from_matrix(self,x):
+        # Sets the mapping from the assigned matrix.        
+        cx = self.domain.to_components(x)
+        cy = self.matrix @ cx
+        return self.codomain.from_components(cy)
+        
+    def _compute_matrix(self):        
+        # Compute the matrix representation through.
+        matrix = np.zeros((self.codomain.dim, self.domain.dim))           
+        cx = np.zeros(self.domain.dim)                        
         for i in range(self.domain.dim):
-            c[i] = 1            
-            A[:,i] = self.codomain.to_components(self(self.domain.from_components(c)))
-            c[i] = 0
-        return A
-    
-    @property
-    def to_scipy_sparse_linear_operator(self):
-        """The operator converted to a scipy.sparse.LinearOperator object."""
-        shape = (self.codomain.dim, self.domain.dim)    
-        matvec = lambda x : self.codomain.to_components(self(self.domain.from_components(x))) 
-        if self._adjoint_mapping is None:
-            return SciPyLinearOperator(shape, matvec = matvec)
-        else:
-            rmatvec = lambda y : self.domain.to_components(self.adjoint(self.codomain.from_components(y)))
-            return SciPyLinearOperator(shape, matvec = matvec, rmatvec = rmatvec)
+            cx[i] = 1
+            x = self.domain.from_components(cx)
+            y = self(x)                
+            matrix[:,i] = self.codomain.to_components(y)[:,0]
+            cx[i] = 0
+        return matrix            
 
-        
-    def __call__(self,x):        
-        """The action of the operator on an element of its domain."""
+    def __call__(self, x):
+        """Action of the operator on a vector."""
         return self._mapping(x)
-    
-    def __mul__(self, s):
-        """Multiplication of an operator by a scalar."""
-        return LinearOperator(self.domain, self.codomain, lambda x : s * self(x))
 
-    def __rmul__(self, s):
-        """Multiplication of an operator by a scalar."""        
-        return self * s
+    def __mul__(self, a):
+        """Multiply operator by a scalar."""
+        return LinearOperator(self.domain, self.codomain, mapping = lambda x : a * self(x))
+        
+    def __rmul__(self, a):
+        """Multiply operator by a scalar."""
+        return self * a
 
-    def __div__(self, s):
-        """Division of an operator by a scalar."""
-        return self * (1 /s)        
+    def __div__(self, a):
+        """Divide operator by a scalar."""
+        return self * (1/a)
 
     def __add__(self, other):
-        """Addition of two operators with equal domains and codomains."""
-        assert self.domain == other.domain
-        assert self.codomain == other.codomain
-        return LinearOperator(self.domain, self.codomain, lambda x : self(x) + other(x))   
+        """Sum of two operators."""        
+        if self.domain != other.domain:
+            raise ValueError("Domains must be equal")
+        if self.codomain != other.codomain:
+            raise ValueError("Codomains must be equal")
+        return LinearOperator(self.domain, self.codomain, mapping = lambda x : self(x) + other(x))
 
-    def __sub__(self, other): 
-        """Subtraction of two operators with equal domains and codomains."""
-        return self + (-1 * other)
- 
-    def __matmul__(self,other):        
-        """Composition of linear operators with compatible domains and codomains."""
-        assert self.domain == other.codomain
-        return LinearOperator(other.domain, self.codomain, lambda x : self(other(x)))
-     
+    def __sub__(self, other):     
+        """Difference of two operators."""  
+        if self.domain != other.domain:
+            raise ValueError("Domains must be equal")
+        if self.codomain != other.codomain:
+            raise ValueError("Codomains must be equal")
+        return LinearOperator(self.domain, self.codomain, mapping = lambda x : self(x) - other(x))  
+
+    def __matmul__(self, other):
+        """Composition of two operators."""
+        if self.domain != other.codomain:
+            raise ValueError("Operators cannot be composed")        
+        return LinearOperator(other.domain, self.codomain, mapping = lambda x : self(other(x)))  
+
     def __str__(self):
-        """Print the operator as a dense matrix."""
-        return self.to_dense_matrix.__str__()
+        """Print the operator as its matrix representation."""
+        return self.matrix.__str__()
 
-    
-    
+
+# Implementation of the real numbers as a VectorSpace. This should not be 
+# imported, used, or changed!
+_REAL = VectorSpace(1, lambda x : np.array([[x,]]), lambda c : c[0,0])
+
+
+class LinearForm(LinearOperator):
+    """
+    Class for linear forms on a vector space. 
+
+    The vector space is represented by a VectorSpace object. Linear forms
+    are (continuous) linear mappings from the to the real numbers. These
+    mappings form a vector space known that is *dual* to the original.
+
+    A linear form can be specified either:
+
+        (1) In terms of a functor that performs its action on a vector. 
+        (2) Its matrix-representation relative to the basis for the space.
+
+    Specification of a form in terms of its matrix representation offers
+    computational advatages in many cases. A form specified in terms 
+    of a mapping can (as with a general linear operator) compute and 
+    store its matrix representation.
+    """
+
+    def __init__(self, domain, /, *, mapping = None, matrix = None):
+        """
+        Args:
+            domain (VectorSpace): Domain of the linear form. 
+            mapping (callable | None): A functor that performs the action
+                of the linear form on a vector. 
+            matrix (MatrixLike | None): The matrix representation of the 
+                form, this having shape (1,dim) with dim the dimension of
+                the domain. 
+        """
+        super().__init__(domain, _REAL, mapping = mapping, matrix=matrix )
