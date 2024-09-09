@@ -4,9 +4,10 @@ that returns n-dimensional real vector space with its standard
 basis as an instance of this class. 
 """
 
+from abc import ABC, abstractmethod, abstractproperty
 import numpy as np
-from scipy.linalg import cho_factor, cho_solve
-from scipy.stats import norm
+from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve
+from scipy.stats import norm, multivariate_normal
 
 
 
@@ -60,6 +61,10 @@ class VectorSpace:
         else:            
             return self._base
 
+    @property
+    def zero(self):
+        return self.from_components(np.zeros((self.dim,1)))
+
     def to_components(self,x):
         """Maps vectors to components."""        
         return self._to_components(x)
@@ -67,6 +72,13 @@ class VectorSpace:
     def from_components(self,c):
         """Maps components to vectors."""
         return self._from_components(c)
+
+
+    def basis_vector(self,i):
+        """Return the ith basis vector."""
+        c = np.zeros((self.dim,1))
+        c[i,0] = 1
+        return self.from_components(c)
 
     def random(self):
         """Returns a random vector with components drwn from a standard Gaussian distribution."""
@@ -257,6 +269,8 @@ class LinearOperator:
 
     def __call__(self, x):
         """Action of the operator on a vector."""
+        if self._mapping is None:
+            raise NotImplementedError("Mapping has not been set.")
         return self._mapping(x)
 
     def __neg__(self):
@@ -540,6 +554,212 @@ class EuclideanSpace(HilbertSpace):
     def _from_dual_local(self, xp):
         return self.from_components(self.dual.to_components(xp))
             
+
+
+class GaussianMeasure:
+    """
+    Class for Gaussian measures on a Hilbert space.  
+    """
+
+    def __init__(self, domain, covariance, / , *, expectation = None,
+                 sample = None, sample_using_matrix = False):  
+        """
+        Args:
+            domain (HilbertSpace): The Hilbert space on which the measure is defined. 
+            covariance (callable): A functor representing the covariance operator. 
+            expectation (Vector): The expectation value of the measure. If none is provided, set equal to zero.  
+            sample (callable): A functor that returns a random sample from the measure.         
+        """
+        self._domain = domain              
+        self._covariance = covariance
+        if expectation is None:
+            self._expectation = self.domain.zero
+        else:
+            self._expectation = expectation
+        if sample is None:
+            self._sample_defined = False
+        else:
+            self._sample = sample
+            self._sample_defined = True
+        if sample is None and sample_using_matrix:
+            dist = multivariate_normal(mean = self.expectation, cov= self.covariance.matrix)
+            self._sample = lambda : self.domain.from_components(dist.rvs())
+            self._sample_defined = True
+
+
+    @staticmethod
+    def from_factored_covariance(factor, /, *,  expectation = None):
+            
+        covariance  = factor @ factor.adjoint
+        sample = lambda : factor(norm().rvs(size = factor.domain.dim))
+        if expectation is not None:
+            sample = lambda : expectation + sample()        
+        return GaussianMeasure(factor.codomain, covariance, expectation = expectation, sample = sample)    
+
+    @property
+    def domain(self):
+        """The Hilbert space the measure is defined on."""
+        return self._domain
+    
+    @property
+    def covariance(self):
+        """The covariance operator as an instance of LinearOperator."""
+        return LinearOperator.self_adjoint(self.domain, self._covariance)
+    
+    @property
+    def expectation(self):
+        """The expectation of the measure."""
+        return self._expectation
+
+    @property
+    def sample_defined(self):
+        """True if the sample method has been implemented."""
+        return self._sample_defined
+    
+    def sample(self):
+        """Returns a random sample drawn from the measure."""
+        if self.sample_defined:        
+            return self._sample()
+        else:
+            raise NotImplementedError
+
+    def affine_mapping(self, /, *,  operator = None, translation = None):
+        """
+        Returns the push forward of the measure under an affine mapping.
+
+        Args:
+            operator (LinearOperator): The operator part of the mapping.
+            translation (vector): The translational part of the mapping.
+
+        Returns:
+            Gaussian Measure: The transformed measure defined on the 
+                codomain of the operator.
+
+        Raises:
+            ValueError: If the domain of the operator domain is not 
+                the domain of the measure.
+
+        Notes:
+            If operator is not set, it defaults to the identity.
+            It translation is not set, it defaults to zero. 
+        """
+        assert operator.domain == self.domain        
+        if operator is None:
+            covariance = self.covariance
+        else:
+            covariance = operator @ self.covariance @ operator.adjoint        
+        expectation = operator(self.expectation)
+        if translation is not None:
+            expectation = expectation + translation
+        if self.sample_defined:
+            if translation is None:
+                sample = lambda : operator(self.sample())
+            else: 
+                sample = lambda  : operator(self.sample()) + translation                                        
+        else:
+            sample = None
+        return GaussianMeasure(operator.codomain, covariance, expectation = expectation, sample = sample)            
+
+    def __neg__(self):
+        """Negative of the measure."""
+        if self.sample_defined:
+            sample = lambda : -self.sample()
+        else:
+            sample = None    
+        return GaussianMeasure(self.domain, self.covariance, expectation=-self.expectation, sample=sample)
+    
+        
+    def __mul__(self, alpha):
+        """Multiply the measure by a scalar."""
+        covariance = LinearOperator.self_adjoint(self.domain,lambda x : alpha*2 * self.covariance(x))
+        expectation = alpha * self.expectation
+        if self.sample_defined:
+            sample = lambda : alpha * self.sample()
+        else:
+            sample = None
+        return GaussianMeasure(self.domain, covariance, expectation = expectation, sample = sample)
+
+    def __rmul__(self, alpha):
+        """Multiply the measure by a scalar."""
+        return self * alpha
+    
+    def __add__(self, other):
+        """Add two measures on the same domain."""
+        assert self.domain == other.domain
+        covariance = self.covariance + other.covariance
+        expectation = self.expectation + other.expectation
+        if self.sample_defined and other.sample_defined:
+            sample  = lambda : self.sample() + other.sample()
+        else:
+            sample = None
+        return GaussianMeasure(self.domain, covariance, expectation = expectation, sample = sample) 
+
+    def __sub__(self, other):
+        """Subtract two measures on the same domain."""
+        assert self.domain == other.domain
+        covariance = self.covariance + other.covariance
+        expectation = self.expectation - other.expectation
+        if self.sample_defined and other.sample_defined:
+            sample  = lambda : self.sample() - other.sample()
+        else:
+            sample = None
+        return GaussianMeasure(self.domain, covariance, expectation = expectation, sample = sample)     
+
+
+
+
+
+class LinearSolver(LinearOperator, ABC):
+
+    @abstractmethod
+    def set_operator(self, operator):
+        pass
+
+    def check_dimensions(self, operator):
+        if operator.domain.dim != operator.codomain.dim:
+            raise ValueError("Domain and codomain must have the same dimensions.")
+
+
+
+class DirectLUSolver(LinearSolver):
+
+    def __init__(self):
+        pass
+
+    def set_operator(self, operator):    
+        self.check_dimensions(operator)
+        factor = lu_factor(operator.matrix)
+        mapping = lambda y : operator.domain.from_components(lu_solve(factor,operator.codomain.to_components(y)))
+        dual_mapping = lambda xp : operator.codomain.dual.from_components(lu_solve(factor, operator.domain.dual.to_components(xp), trans=1))
+        super().__init__(operator.codomain, operator.domain, mapping=mapping, dual_mapping=dual_mapping)
+        
+
+
+class DirectCholeskySolver(LinearSolver):
+
+    def __init__(self, /, *, lower = False, overwrite = True, check_finite = False):
+        self._lower = lower
+        self._overwrite = overwrite
+        self._check_finite = check_finite        
+
+    def set_operator(self, operator):
+        self.check_dimensions(operator)
+        factor = cho_factor(operator.matrix, lower=self._lower,
+                            overwrite_a=self._overwrite,
+                            check_finite=self._check_finite)
+        mapping = lambda y :  operator.domain.from_components(cho_solve(factor, operator.codomain.to_components(y),
+                                                                        overwrite_b= self._overwrite, 
+                                                                        check_finite=self._check_finite))
+        dual_mapping = lambda yp :  operator.codomain.dual.from_components(cho_solve(factor, operator.domain.dual.to_components(yp),
+                                                                           overwrite_b= self._overwrite, 
+                                                                           check_finite=self._check_finite))
+        super().__init__(operator.codomain, operator.domain, mapping=mapping, dual_mapping=dual_mapping)
+            
+
+    
+
+
+
 
 
 
