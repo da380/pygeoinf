@@ -1,135 +1,24 @@
+import pygeoinf.linalg as la
 import numpy as np
-from scipy.stats import norm
 
-from pygeoinf import (standard_vector_space, LinearOperator, 
-                      LinearForm, DualVectorSpace, DualOperator,
-                      standard_euclidean_space, AdjointOperator)
+dimX = 4
 
-dimX = 5
-X = standard_euclidean_space(dimX)
+X = la.EuclideanSpace(dimX)
 
 dimY = 2
-Y = standard_euclidean_space(dimY)
+Y = la.EuclideanSpace(dimY)
 
-A = LinearOperator(X, Y, mapping = lambda x : 2 * x[:dimY])
 
 
 
-As = AdjointOperator(A)
+A = la.LinearOperator(X, Y, mapping=lambda x : x[:dimY])
 
-y = Y.random()
+B = A @ A.adjoint
+C = A.adjoint @ A
 
-print(As)
+print(B)
+print(C)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  
