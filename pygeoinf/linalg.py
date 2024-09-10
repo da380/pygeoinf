@@ -85,7 +85,12 @@ class VectorSpace:
         return self.from_components(norm().rvs(size = (self.dim,1)))
 
     def identity(self):
-        return LinearOperator(self, self, mapping=lambda x: x)
+        """Returns identity operator on the space."""
+        if isinstance(self, HilbertSpace):
+            return LinearOperator(self, self, mapping=lambda x: x, dual_mapping = lambda yp : yp, 
+                                  adjoint_mapping=lambda y : y)            
+        else:
+            return LinearOperator(self, self, mapping=lambda x: x, dual_mapping = lambda yp : yp)            
 
 
     def _dual_to_components(self, xp):
@@ -101,9 +106,6 @@ class VectorSpace:
         return LinearForm(self, matrix = cp.reshape(1,self.dim))
 
 
-
-
-
 class LinearOperator:
     """
     Class for linear operators between two vector spaces. To define an 
@@ -115,22 +117,26 @@ class LinearOperator:
     To define the action of the operator they can provide either:
 
         (a) A functor that represents the action of the operator. 
-        (b) The matrix representation for the operator relative to the 
-            basis for the domain and codomain. This matrix can be a dense
-            numpy matrix, a scipy sparse matrix, or another object that 
-            behaves in the same way. 
+        (b) The matrix representation for the operator. 
+        (c) The Galerkin matrix representation for operators 
+            between Hilbert spaces. 
 
-    In addition, the user can supply a functor that implement the action of
-    the operators dual. If the matrix representation is supplied, a default 
-    implemention of the dual mapping is used. 
+    For options (b) and (c) the action of the operator's dual and 
+    (where appropriate) adjoint are deduced internally. Note that 
+    the matrices can either dense or in the scipy sparse format. 
+
+    For option (a) the dual and adjoint can be deduced internally 
+    but in an inefficient manner, or they can be supplied directly. 
 
     Linear operators form an algebra over the reals in the usual way. Overloads
     for the relevant operators are provided. In all cases, these operations are
     lazily implemented. 
     """
 
-    def __init__(self, domain, codomain, /, *, mapping = None,
-                 dual_mapping = None, matrix = None, base = None):
+    def __init__(self, domain, codomain, /, *, matrix = None,
+                 galerkin_matrix = None, mapping = None,
+                 dual_mapping = None, adjoint_mapping = None,  
+                 dual_base = None, adjoint_base = None):
         """
         Args:
             domain (VectorSpace): The domain of the operator. 
@@ -144,54 +150,82 @@ class LinearOperator:
             matrix (MatrixLike | None): The matrix representation of the 
                 operator relative to the bases for its domain and codomain.        
         """
+        # Store basic information. 
         self._domain = domain
         self._codomain = codomain        
-        self._matrix = matrix        
-        self._base = base
+        self._dual_base = dual_base
+        self._adjoint_base = adjoint_base
 
-        if matrix is None:
-            self._mapping = mapping
-            if dual_mapping is None:
-                self._dual_mapping = self._dual_mapping_default
+        # Set defaults that may be overwritten below. 
+        self._matrix = None
+        self._galerkin_matrix = None
+        self._adjoint_mapping = None
+
+        # Set mappings from the matrix representation.  
+        if matrix is not None:
+            self._matrix = matrix
+            if galerkin_matrix is not None:
+                raise ValueError("Cannot specify matrix representation and Galerkin representation")
+            if mapping is not None:
+                raise ValueError("Cannot specify matrix representation and mapping.")
+            if dual_mapping is not None:
+                raise ValueError("Cannot specify matrix representation and dual mapping.")
+            if adjoint_mapping is not None:
+                raise ValueError("Cannot specify matrix representation and adjoint mapping.")
+            self._mapping = self._mapping_from_matrix
+            self._dual_mapping = self._dual_mapping_from_matrix
+            if self.hilbert_operator:
+                self._adjoint_mapping = self._adjoint_mapping_from_dual
             else:
-                self._dual_mapping = dual_mapping            
-        else:
-            self._mapping = self._mapping_from_matrix                    
-            self._dual_mapping = self._dual_mapping_from_matrix                        
-        self._adjoint_mapping = self._adjoint_mapping_default
+                self._adjoint_mapping = None
         
+        if galerkin_matrix is not None:
+            if not self.hilbert_operator:
+                raise ValueError("Galerkin representation only available for Hilbert space operators")
+            self._galerkin_matrix = galerkin_matrix
+            if matrix is not None:
+                raise ValueError("Cannot specify Galerkin representation and matrix representation")
+            if mapping is not None:
+                raise ValueError("Cannot specify Galerkin representation and mapping.")
+            if dual_mapping is not None:
+                raise ValueError("Cannot specify Galerkin representation and dual mapping.")
+            if adjoint_mapping is not None:
+                raise ValueError("Cannot specify Galerkin representation and adjoint mapping.")
+            self._mapping = self._mapping_from_galerkin_matrix
+            self._dual_mapping = self._dual_mapping_from_galerkin_matrix
+            self._adjoint_mapping = self._adjoint_mapping_from_galerkin_matrix
 
+        # Set mapping directly.
+        if mapping is not None:            
+            self._mapping = mapping
+            if dual_mapping is None:                            
+                if self.hilbert_operator:
+                    if adjoint_mapping is None:
+                        self._dual_mapping = self._dual_mapping_default
+                        self._adjoint_mapping = self._adjoint_mapping_from_dual
+                    else:
+                        self._adjoint_mapping = adjoint_mapping
+                        self._dual_mapping = self._dual_mapping_from_adjoint
+                else:                    
+                    self._dual_mapping = self._dual_mapping_default
+                    self._adjoint_mapping = None
+            else:
+                self._dual_mapping = dual_mapping
+                if self.hilbert_operator:
+                    if adjoint_mapping is None:
+                        self._adjoint_mapping = self._adjoint_mapping_from_dual
+                    else:
+                        self._adjoint_mapping = adjoint_mapping
+            
     @staticmethod
     def self_dual(domain, mapping):
-        """
-        Returns a self-dual operator. 
-
-        Args:
-            domain (VectorSpace): The domain of the operator. 
-            mapping (callable): A functor implementing the action of the operator. 
-        """
+        """Returns a self-dual operator in terms of its domain and mapping."""
         return LinearOperator(domain, domain.dual, mapping=mapping, dual_mapping=mapping)
 
-
     @staticmethod
-    def self_adjoint(domain,  mapping):
-        """
-        Returns a self-adjoint operator.
-
-        Args:
-            domain (HilbertSpace): The domain of the operator.             
-            mapping (callable): A functor implementing the action of the operator. 
-
-        Raises:
-            ValueError: If the domain is not a Hilbert space. 
-        """
-        if not isinstance(domain, HilbertSpace):
-            raise ValueError("Domain is not a Hilbert space.")
-        dual_mapping = lambda yp : domain.to_dual(mapping(domain.from_dual(yp)))
-        operator = LinearOperator(domain, domain, mapping=mapping, 
-                                  dual_mapping=dual_mapping)
-        operator.set_adjoint_mapping(mapping)
-        return operator
+    def self_adjoint(domain, mapping):
+        """Returns a self-adjoint operator in terms of its domain and mapping."""
+        return LinearOperator(domain, domain, mapping=mapping, adjoint_mapping=mapping)
 
     @property
     def domain(self):
@@ -204,6 +238,11 @@ class LinearOperator:
         return self._codomain
 
     @property
+    def hilbert_operator(self):
+        """True is operator maps between Hilbert spaces."""
+        return isinstance(self.domain,HilbertSpace) and isinstance(self.codomain,HilbertSpace)
+
+    @property
     def matrix(self):
         """Matrix representation of the operator."""
         if self._matrix is None:            
@@ -212,60 +251,100 @@ class LinearOperator:
             return self._matrix    
 
     @property
+    def galerkin_matrix(self):
+        """Matrix representation of the operator."""
+        if self._galerkin_matrix is None:            
+            return self._compute_galerkin_matrix()
+        else:            
+            return self._galerkin_matrix
+
+    @property
     def dual(self):
         """The dual of the operator."""
-        if self._base is None:            
+        if self._dual_base is None:            
             return LinearOperator(self.codomain.dual, self.domain.dual,
-                              mapping=self._dual_mapping, dual_mapping=self, base = self)                      
+                                  mapping=self._dual_mapping, dual_mapping=self,
+                                  dual_base = self)                      
         else:
-            return self._base
+            return self._dual_base
 
     @property
     def adjoint(self):
         """The adjoint of the operator."""
-        return LinearOperator(self.codomain, self.domain, mapping=self._adjoint_mapping)
-
-    def set_adjoint_mapping(self, adjoint_mapping):
-        """Set the value of the adjoint mapping directly."""
-        self._adjoint_mapping = adjoint_mapping
-
-
-    def store_matrix(self):
-        """Call to compute and store the operators matrix representation."""
-        if self._matrix is None:
-            self._matrix = self._compute_matrix()
+        if not self.hilbert_operator:
+            raise NotImplementedError("Adjoint not defined for the operator.")
+        if self._adjoint_base is None:
+            return LinearOperator(self.codomain, self.domain, mapping=self._adjoint_mapping,
+                                  adjoint_mapping=self._mapping, adjoint_base=self)
+        else:
+            return self._adjoint_base
 
     def _mapping_from_matrix(self,x):
-        # Sets the mapping from the assigned matrix.        
-        cx = self.domain.to_components(x)
-        cy = self.matrix @ cx                
-        return self.codomain.from_components(cy)
+        # Sets the mapping from the matrix representation. 
+        return self.codomain.from_components(self.matrix @ self.domain.to_components(x))
+
+    def _mapping_from_galerkin_matrix(self, x):
+        # Sets the mapping from the Galerkin representation.
+        return self.codomain.from_dual(self.codomain.dual.from_components((self.galerkin_matrix @ self.domain.to_components(x))))
+
+    def _dual_mapping_default(self, yp):
+        # Default implementation of the dual mapping. 
+        return LinearForm(self.domain, mapping=lambda x : yp(self(x)))       
 
     def _dual_mapping_from_matrix(self,yp):
         # Action of the dual mapping via the matrix representation. 
         return self.domain.dual.from_components(self.matrix.T @ self.codomain.dual.to_components(yp))
 
-    def _dual_mapping_default(self, yp):
-        # Default implementation of the dual mapping. 
-        return LinearForm(self.domain, mapping = lambda x: yp(self(x)))       
+    def _dual_mapping_from_galerkin_matrix(self, yp):
+        # Action of the dual mapping via the matrix representation. 
+        return  self.domain.dual.from_components(self.galerkin_matrix.T @ self.codomain.to_components(self.codomain.from_dual(yp)))
 
-    def _adjoint_mapping_default(self, y):
-        if not (isinstance(self.domain,HilbertSpace) 
-                and isinstance(self.codomain,HilbertSpace)):
-            raise ValueError("Adjoints defined only for operators on Hilbert spaces.")
-        return self.domain.from_dual(self.dual(self.codomain.to_dual(y)))
-    
+    def _dual_mapping_from_adjoint(self, yp):
+        # Dual mapping in terms of the adjoint. 
+        return self.domain.to_dual(self._adjoint_mapping(self.codomain.from_dual(yp)))
+
+    def _adjoint_mapping_from_galerkin_matrix(self, y):
+        # Action of the adjoint from the Galerkin representation. 
+        return self.domain.from_dual(self.domain.dual.from_components((self.galerkin_matrix.T @ self.codomain.to_components(y))))
+
+    def _adjoint_mapping_from_dual(self, y):
+        # Adjoing mapping in terms of the dual.
+        return self.domain.from_dual(self._dual_mapping(self.codomain.to_dual(y)))
+
     def _compute_matrix(self):                
-        # Compute the matrix representation through.
+        # Compute the matrix representation.
         matrix = np.zeros((self.codomain.dim, self.domain.dim))              
         cx = np.zeros((self.domain.dim,1))                        
         for i in range(self.domain.dim):
             cx[i,0] = 1
-            x = self.domain.from_components(cx)
-            y = self(x)                
+            y = self(self.domain.from_components(cx))            
             matrix[:,i] = self.codomain.to_components(y)[:,0]
             cx[i,0] = 0
         return matrix            
+
+    def store_matrix(self):
+        """Compute and store the operator's matrix representation."""
+        if self._matrix is None:
+            self._matrix = self._compute_matrix()
+
+    def _compute_galerkin_matrix(self):
+        # Computes the Galerkin matrix representation. 
+        if not self.hilbert_operator:
+            raise NotImplementedError("Galerkin matrix only defined for Hilbert space operators.")
+        matrix = np.zeros((self.codomain.dim, self.domain.dim))              
+        cx = np.zeros((self.domain.dim,1))     
+        for i in range(self.domain.dim):
+            cx[i,0] = 1            
+            y = self(self.domain.from_components(cx))
+            yp = self.codomain.to_dual(y)
+            matrix[:,i] = self.codomain.dual.to_components(yp)[:,0]
+            cx[i,0] = 0
+        return matrix            
+
+    def store_galerkin_matrix(self):
+        """Compute and store the operator's matrix representation."""
+        if self._galerkin_matrix is None:
+            self._galerkin_matrix = self._compute_galerkin_matrix()
 
     def __call__(self, x):
         """Action of the operator on a vector."""
@@ -275,14 +354,28 @@ class LinearOperator:
 
     def __neg__(self):
         """Negative of the operator."""
-        return LinearOperator(self.domain, self.codomain, mapping=lambda x : -self(x), 
-                              dual_mapping=lambda yp : -self.dual(yp))
+        domain = self.domain
+        codomain = self.codomain
+        mapping = lambda x : -self(x)
+        dual_mapping = lambda yp : -self.dual(yp)
+        if self.hilbert_operator:
+            adjoint_mapping = lambda y : -self.adjoint(y)            
+        return LinearOperator(domain, codomain, mapping=mapping, dual_mapping=dual_mapping,
+                              adjoint_mapping=adjoint_mapping)
 
     def __mul__(self, a):
         """Multiply by a scalar."""
-        return LinearOperator(self.domain, self.codomain, mapping=lambda x: a * self(x), 
-                              dual_mapping=lambda yp : a * self.dual(yp))
-
+        domain = self.domain
+        codomain = self.codomain
+        mapping = lambda x : a * self(x)
+        dual_mapping = lambda yp : a * self.dual(yp)
+        if self.hilbert_operator:
+            adjoint_mapping = lambda y : a * self.adjoint(y)
+        else:
+            adjoint_mapping = None            
+        return LinearOperator(domain, codomain, mapping=mapping, dual_mapping=dual_mapping,
+                              adjoint_mapping=adjoint_mapping)        
+        
     def __rmul__(self, a):
         """Multiply by a scalar."""
         return self * a
@@ -295,35 +388,56 @@ class LinearOperator:
         """Add another operator."""
         if self.domain != other.domain or self.codomain != other.codomain:
             raise ValueError("Operators cannot be added.")
-        return LinearOperator(self.domain, self.codomain, mapping=lambda x : self(x) + other(x), 
-                              dual_mapping=lambda yp : self.dual(yp) + other.dual(yp))
+        domain = self.domain
+        codomain = self.codomain
+        mapping = lambda x :  self(x) + other(x)
+        dual_mapping = lambda yp : self.dual(yp) + other.dual(yp)
+        if self.hilbert_operator:        
+            adjoint_mapping = lambda y : self.adjoint(y) + other.adjoint(y)
+        else:
+            adjoint_mapping = None                        
+        return LinearOperator(domain, codomain, mapping=mapping, dual_mapping=dual_mapping,
+                              adjoint_mapping=adjoint_mapping)        
+        
 
     def __sub__(self, other):
         """Subtract another operator."""
         if self.domain != other.domain or self.codomain != other.codomain:
             raise ValueError("Operators cannot be subtracted.")
-        return LinearOperator(self.domain, self.codomain, mapping=lambda x : self(x) - other(x), 
-                              dual_mapping=lambda yp : self.dual(yp) - other.dual(yp))                              
+        domain = self.domain
+        codomain = self.codomain
+        mapping = lambda x :  self(x) - other(x)
+        dual_mapping = lambda yp : self.dual(yp) - other.dual(yp)
+        if self.hilbert_operator:
+            adjoint_mapping = lambda y : self.adjoint(y) - other.adjoint(y)
+        else:
+            adjoint_mapping = None                                    
+        return LinearOperator(domain, codomain, mapping=mapping, dual_mapping=dual_mapping,
+                              adjoint_mapping=adjoint_mapping)                           
 
     def __matmul__(self, other):
         """Compose with another operator."""
         if self.domain != other.codomain:
             raise ValueError("Operators cannot be composed")
-        return LinearOperator(other.domain, self.codomain, mapping=lambda x : self(other(x)), 
-                              dual_mapping=lambda yp : other.dual(self.dual(yp)))
+        domain = other.domain
+        codomain = self.codomain
+        mapping = lambda x :  self(other(x))
+        dual_mapping = lambda yp : other.dual(self.dual(yp))
+        if self.hilbert_operator:
+            adjoint_mapping = lambda y : other.adjoint(self.adjoint(y))
+        else:
+            adjoint_mapping = None                        
+        return LinearOperator(domain, codomain, mapping=mapping, dual_mapping=dual_mapping,
+                              adjoint_mapping=adjoint_mapping)                           
 
-
+        
     def __str__(self):
         """Print the operator as its matrix representation."""
         return self.matrix.__str__()
 
 
-
-
 # Global definition of the real numbers as a VectorSpace. 
 _REAL = VectorSpace(1, lambda x : np.array([[x]]), lambda c : c[0,0])
-
-
 
 
 class LinearForm(LinearOperator):
@@ -356,7 +470,6 @@ class LinearForm(LinearOperator):
                 the domain. 
         """
         super().__init__(domain, _REAL, mapping = mapping, matrix=matrix )
-
 
 
 class HilbertSpace(VectorSpace):
@@ -555,7 +668,6 @@ class EuclideanSpace(HilbertSpace):
         return self.from_components(self.dual.to_components(xp))
             
 
-
 class GaussianMeasure:
     """
     Class for Gaussian measures on a Hilbert space.  
@@ -706,55 +818,97 @@ class GaussianMeasure:
         return GaussianMeasure(self.domain, covariance, expectation = expectation, sample = sample)     
 
 
-
-
-
 class LinearSolver(LinearOperator, ABC):
-
-    @abstractmethod
+    @abstractmethod    
     def set_operator(self, operator):
+        """Set the linear operator whose inverse is to be formed."""
         pass
 
-    def check_dimensions(self, operator):
+    def _check_dimensions(self, operator):
+        # Check that the operator can have a well-defined inverse.
         if operator.domain.dim != operator.codomain.dim:
             raise ValueError("Domain and codomain must have the same dimensions.")
 
-
-
 class DirectLUSolver(LinearSolver):
+    """
+    Linear solver class based on direct LU decomposition of the matrix representation. 
+    """
 
-    def __init__(self):
-        pass
+    def __init__(self, /, *, overwrite = False, check_finite = False):
+        """
+        Args:
+            overwrite (bool): Overwrite the matrix when forming the LU
+                decomposition, or the rhs during backsubstitution. 
+            check_finite (bool): Check matirx and rhs values are finite.                            
+        """
+        self._overwrite = overwrite
+        self._check_finite = check_finite
 
     def set_operator(self, operator):    
-        self.check_dimensions(operator)
-        factor = lu_factor(operator.matrix)
-        mapping = lambda y : operator.domain.from_components(lu_solve(factor,operator.codomain.to_components(y)))
-        dual_mapping = lambda xp : operator.codomain.dual.from_components(lu_solve(factor, operator.domain.dual.to_components(xp), trans=1))
-        super().__init__(operator.codomain, operator.domain, mapping=mapping, dual_mapping=dual_mapping)
+        """ Set the operator."""
+        self._check_dimensions(operator)
+        self._factor = lu_factor(operator.matrix,  
+                                 overwrite_a=self._overwrite, 
+                                 check_finite=self._check_finite)        
+        super().__init__(operator.codomain, operator.domain, 
+                         mapping=self._mapping_local,
+                         dual_mapping=self._dual_mapping_local)
+        
+    def _mapping_local(self, y):
+        # Implement action of the inverse operator via back-substitution. 
+        cy = self.domain.to_components(y)
+        cx = lu_solve(self._factor, cy, 
+                      overwrite_b=self._overwrite,
+                      check_finite=self._check_finite)
+        return self.codomain.from_components(cx)
+
+    def _dual_mapping_local(self, xp):
+        # Implement action of the dual of the inverse operator via back-substitution. 
+        cxp = self.codomain.dual.to_components(xp)
+        cyp = lu_solve(self._factor, cxp, trans=1,
+                      overwrite_b=self._overwrite,
+                      check_finite=self._check_finite)
+        return self.domain.dual.from_components(cyp)
         
 
 
 class DirectCholeskySolver(LinearSolver):
+    """Linear solver class based on direct Cholesky decomposition of the 
+       Galerkin matrix representation. Method applicable only for self-adjoint
+       and positive-definite operators. 
+    """
 
-    def __init__(self, /, *, lower = False, overwrite = True, check_finite = False):
+    def __init__(self, /, *, lower = False, overwrite = False, check_finite = False):
+        """
+        Args:
+            lower (bool): Form lower triangular factorisation. 
+            overwrite (bool): Overwrite the matrix when forming the LU
+                decomposition, or the rhs during backsubstitution. 
+            check_finite (bool): Check matirx and rhs values are finite.                            
+        """
         self._lower = lower
         self._overwrite = overwrite
-        self._check_finite = check_finite        
+        self._check_finite = check_finite
 
-    def set_operator(self, operator):
-        self.check_dimensions(operator)
-        factor = cho_factor(operator.matrix, lower=self._lower,
-                            overwrite_a=self._overwrite,
-                            check_finite=self._check_finite)
-        mapping = lambda y :  operator.domain.from_components(cho_solve(factor, operator.codomain.to_components(y),
-                                                                        overwrite_b= self._overwrite, 
-                                                                        check_finite=self._check_finite))
-        dual_mapping = lambda yp :  operator.codomain.dual.from_components(cho_solve(factor, operator.domain.dual.to_components(yp),
-                                                                           overwrite_b= self._overwrite, 
-                                                                           check_finite=self._check_finite))
-        super().__init__(operator.codomain, operator.domain, mapping=mapping, dual_mapping=dual_mapping)
-            
+    def set_operator(self, operator):    
+        """ Set the operator."""
+        self._check_dimensions(operator)
+        if not operator.hilbert_operator:
+            raise ValueError("Cholesky decomposition applicable only for operators between Hilbert spaces.")
+        self._factor = cho_factor(operator.galerkin_matrix, 
+                                  lower=self._lower, 
+                                  overwrite_a=self._overwrite, 
+                                  check_finite=self._check_finite)        
+        super().__init__(operator.codomain, operator.domain,
+                         mapping=self._mapping_local,
+                         adjoint_mapping=self._mapping_local)
+
+    def _mapping_local(self, y):
+        # Implement the action of the operator via back-substitution. 
+        cyp = self.domain.dual.to_components(self.domain.to_dual(y))
+        cxp = cho_solve(self._factor, cyp, overwrite_b=self._overwrite,
+                        check_finite=self._check_finite)
+        return self.codomain.from_components(cxp)
 
     
 

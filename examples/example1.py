@@ -3,7 +3,7 @@ import numpy as np
 from scipy.stats import norm
 from abc import ABC, abstractmethod, abstractproperty
 
-dimX = 20
+dimX = 4
 
 X = la.EuclideanSpace(dimX)
 
@@ -11,17 +11,11 @@ dimY = 2
 Y = la.EuclideanSpace(dimY)
 
 
-a = norm().rvs(size=(dimX, dimX))
-A = la.LinearOperator(X, X, matrix=a)
+A = la.LinearOperator(X, Y, mapping = lambda x : 2 * x[:dimY])
+
 print(A)
 
-solver = la.DirectLUSolver()
-
-solver.set_operator(A)
-
-print(solver @ A)
-
-
+print(A.galerkin_matrix)
 
 
 
