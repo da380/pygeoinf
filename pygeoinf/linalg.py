@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod, abstractproperty
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve
 from scipy.stats import norm, multivariate_normal
+from scipy.sparse.linalg import LinearOperator as ScipyLinOp, gmres
 
 
 
@@ -279,13 +280,27 @@ class LinearOperator:
         else:
             return self._adjoint_base
 
+
+    @property
+    def scipy_linear_operator(self):
+        """Returns the operator in scipy.sparse.LinearOperator form."""
+        matvec = lambda c : self.codomain.to_components(self(self.domain.from_components(c)))
+        rmatvec = lambda c : self.domain.dual.to_components(self.dual(self.codomain.dual.from_components(c)))
+        return ScipyLinOp((self.codomain.dim, self.domain.dim), matvec=matvec, rmatvec=rmatvec)
+
+
     def _mapping_from_matrix(self,x):
         # Sets the mapping from the matrix representation. 
-        return self.codomain.from_components(self.matrix @ self.domain.to_components(x))
+        cx = self.domain.to_components(x)
+        cy = self.matrix @ cx
+        return self.codomain.from_components(cy)
 
     def _mapping_from_galerkin_matrix(self, x):
         # Sets the mapping from the Galerkin representation.
-        return self.codomain.from_dual(self.codomain.dual.from_components((self.galerkin_matrix @ self.domain.to_components(x))))
+        cx = self.domain.to_components(x)
+        cyp = self.galerkin_matrix @ cx
+        yp = self.codomain.dual.from_components(cyp)
+        return self.codomain.from_dual(yp)
 
     def _dual_mapping_default(self, yp):
         # Default implementation of the dual mapping. 
@@ -293,23 +308,35 @@ class LinearOperator:
 
     def _dual_mapping_from_matrix(self,yp):
         # Action of the dual mapping via the matrix representation. 
-        return self.domain.dual.from_components(self.matrix.T @ self.codomain.dual.to_components(yp))
+        cyp = self.codomain.dual.to_components(yp)
+        cxp = self.matrix.T @ cyp
+        return self.domain.dual.from_components(cxp)
 
     def _dual_mapping_from_galerkin_matrix(self, yp):
         # Action of the dual mapping via the matrix representation. 
-        return  self.domain.dual.from_components(self.galerkin_matrix.T @ self.codomain.to_components(self.codomain.from_dual(yp)))
+        y = self.codomain.from_dual(yp)
+        cy = self.codomain.to_components(y)
+        cxp = self.galerkin_matrix.T @ cy
+        return  self.domain.dual.from_components(cxp)
 
     def _dual_mapping_from_adjoint(self, yp):
         # Dual mapping in terms of the adjoint. 
-        return self.domain.to_dual(self._adjoint_mapping(self.codomain.from_dual(yp)))
+        y = self.codomain.from_dual(yp)
+        x = self._adjoint_mapping(y)
+        return self.domain.to_dual(x)
 
     def _adjoint_mapping_from_galerkin_matrix(self, y):
         # Action of the adjoint from the Galerkin representation. 
-        return self.domain.from_dual(self.domain.dual.from_components((self.galerkin_matrix.T @ self.codomain.to_components(y))))
+        cy = self.codomain.to_components(y)
+        cxp = self.galerkin_matrix.T @ cy
+        xp = self.domain.dual.from_components(cxp)
+        return self.domain.from_dual(xp)
 
     def _adjoint_mapping_from_dual(self, y):
         # Adjoing mapping in terms of the dual.
-        return self.domain.from_dual(self._dual_mapping(self.codomain.to_dual(y)))
+        yp = self.codomain.to_dual(y)
+        xp = self._dual_mapping(yp)
+        return self.domain.from_dual(xp)
 
     def _compute_matrix(self):                
         # Compute the matrix representation.
@@ -399,7 +426,6 @@ class LinearOperator:
         return LinearOperator(domain, codomain, mapping=mapping, dual_mapping=dual_mapping,
                               adjoint_mapping=adjoint_mapping)        
         
-
     def __sub__(self, other):
         """Subtract another operator."""
         if self.domain != other.domain or self.codomain != other.codomain:
@@ -645,29 +671,61 @@ class HilbertSpace(VectorSpace):
 
 
 class EuclideanSpace(HilbertSpace):
+    """
+    Simple implementation of Euclidean space as a HilbertSpace instance. 
 
-    def __init__(self, dim):        
-        space = VectorSpace(dim, self._to_components_local, self._from_components_local)        
+    By defaulf, the standard inner product is used. But a general metric tensor 
+    can be supplied as a dense numpy matrix. The mappings from the dual space is
+    implemented using a Cholesky factorisation of the metric_tensor. 
+    """
+
+    def __init__(self, dim, /, *, metric_tensor = None):        
+        """
+        Args:
+            dim (int): Dimension of the space. 
+            metric_tensor (ArrayLike): The metric tensor for the space. 
+        """
         super().__init__(dim, self._to_components_local, self._from_components_local,
-                         self._inner_product_local, to_dual=self._to_dual_local, 
-                         from_dual=self._from_dual_local)
+                        self._inner_product_local, to_dual=self._to_dual_local, 
+                        from_dual=self._from_dual_local)
+        self._metric_tensor = metric_tensor
+        if metric_tensor is not None:            
+            self._factor = cho_factor(metric_tensor)                                                                    
+        
+        
+        
+            
                          
     def _to_components_local(self, x):
+        # Map vector to its components. 
         return x.reshape(self.dim,1)
 
     def _from_components_local(self, c):
+        # Map components to a vector. 
         return c.reshape(self.dim,)
 
     def _inner_product_local(self, x1, x2):
-        return np.dot(x1, x2)
+        # Inner product on the space. 
+        if self._metric_tensor is None:
+            return np.dot(x1, x2)
+        else:
+            return np.dot(self._metric_tensor @ x1, x2)
 
     def _to_dual_local(self, x):
-        return self.dual.from_components(self.to_components(x))
+        # Mapping to the dual space. 
+        if self._metric_tensor is None:            
+            return self.dual.from_components(self.to_components(x))
+        else:
+            return self.dual.from_components(self._metric_tensor @ self.to_components(x))
 
     def _from_dual_local(self, xp):
-        return self.from_components(self.dual.to_components(xp))
-            
+        # Mapping from the dual space. 
+        if self._metric_tensor is None:
+            return self.from_components(self.dual.to_components(xp))
+        else:
+            return self.from_components(cho_solve(self._factor, self.dual.to_components(xp)))
 
+            
 class GaussianMeasure:
     """
     Class for Gaussian measures on a Hilbert space.  
@@ -829,6 +887,7 @@ class LinearSolver(LinearOperator, ABC):
         if operator.domain.dim != operator.codomain.dim:
             raise ValueError("Domain and codomain must have the same dimensions.")
 
+
 class DirectLUSolver(LinearSolver):
     """
     Linear solver class based on direct LU decomposition of the matrix representation. 
@@ -871,7 +930,6 @@ class DirectLUSolver(LinearSolver):
         return self.domain.dual.from_components(cyp)
         
 
-
 class DirectCholeskySolver(LinearSolver):
     """Linear solver class based on direct Cholesky decomposition of the 
        Galerkin matrix representation. Method applicable only for self-adjoint
@@ -911,6 +969,22 @@ class DirectCholeskySolver(LinearSolver):
         return self.codomain.from_components(cxp)
 
     
+class GMRESSolver(LinearSolver):
+
+    def __init__(self):
+        pass
+
+
+    def set_operator(self, operator):
+        self._check_dimensions(operator)
+        self._operator = operator
+        super().__init__(operator.codomain, operator.domain, mapping = self._mapping_local)
+        
+
+    def _mapping_local(self, y):
+        cy = self.domain.to_components(y)
+        cx, _ =  gmres(self._operator.scipy_linear_operator, cy)
+        return cx
 
 
 
