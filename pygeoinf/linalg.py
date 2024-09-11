@@ -8,7 +8,9 @@ from abc import ABC, abstractmethod, abstractproperty
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve
 from scipy.stats import norm, multivariate_normal
-from scipy.sparse.linalg import LinearOperator as ScipyLinOp, gmres
+from scipy.sparse import diags
+from scipy.sparse.linalg import LinearOperator as ScipyLinOp
+from scipy.sparse.linalg import gmres, bicg, bicgstab, cg
 
 
 
@@ -670,60 +672,40 @@ class HilbertSpace(VectorSpace):
         return self.inner_product(self.from_dual(xp1), self.from_dual(xp2))            
 
 
-class EuclideanSpace(HilbertSpace):
+def euclidean_space(dim, /, *, metric_tensor = None):
     """
-    Simple implementation of Euclidean space as a HilbertSpace instance. 
+    Returns Euclidean space implemented as a HilbertSpace instance. 
 
-    By defaulf, the standard inner product is used. But a general metric tensor 
-    can be supplied as a dense numpy matrix. The mappings from the dual space is
-    implemented using a Cholesky factorisation of the metric_tensor. 
+    Args:
+        dim (int): Dimension of the space. 
+        metric_tensor (ArrayLike | None): The metric tensor that defines
+            the inner product on the space. If none is provided, this is 
+            taken to the identity matrix, and hence the standard Euclidean
+            inner product is used. 
+
+    Notes:
+        To work with a non-standard inner product, the Cholesky factor of the 
+        metric tensor is formed. This implementation uses dense matrices, and 
+        will not be efficient in high-dimensional spaces. An alternative 
+        implementation that uses pre-conditioned iterative solvers would be 
+        preferable in such cases. 
     """
 
-    def __init__(self, dim, /, *, metric_tensor = None):        
-        """
-        Args:
-            dim (int): Dimension of the space. 
-            metric_tensor (ArrayLike): The metric tensor for the space. 
-        """
-        super().__init__(dim, self._to_components_local, self._from_components_local,
-                        self._inner_product_local, to_dual=self._to_dual_local, 
-                        from_dual=self._from_dual_local)
-        self._metric_tensor = metric_tensor
-        if metric_tensor is not None:            
-            self._factor = cho_factor(metric_tensor)                                                                    
-        
-        
-        
-            
-                         
-    def _to_components_local(self, x):
-        # Map vector to its components. 
-        return x.reshape(self.dim,1)
+    to_components = lambda x : x.reshape(dim,1)
+    from_components = lambda c : c.reshape(dim,)
+    space = VectorSpace(dim, to_components, from_components)
 
-    def _from_components_local(self, c):
-        # Map components to a vector. 
-        return c.reshape(self.dim,)
+    if metric_tensor is None:        
+        inner_product = lambda x1, x2 : np.dot(x1, x2)
+        to_dual = lambda x:  space.dual.from_components(space.to_components(x))
+        from_dual = lambda xp : space.from_components(space.dual.to_components(xp))        
+    else:
+        factor = cho_factor(metric_tensor)
+        inner_product = lambda x1, x2 : np.dot(metric_tensor @ x1, x2)
+        to_dual = lambda x : space.dual.from_components(metric_tensor @space.to_components(x))
+        from_dual = lambda xp : space.from_components(cho_solve(factor, space.dual.to_components(xp)))
 
-    def _inner_product_local(self, x1, x2):
-        # Inner product on the space. 
-        if self._metric_tensor is None:
-            return np.dot(x1, x2)
-        else:
-            return np.dot(self._metric_tensor @ x1, x2)
-
-    def _to_dual_local(self, x):
-        # Mapping to the dual space. 
-        if self._metric_tensor is None:            
-            return self.dual.from_components(self.to_components(x))
-        else:
-            return self.dual.from_components(self._metric_tensor @ self.to_components(x))
-
-    def _from_dual_local(self, xp):
-        # Mapping from the dual space. 
-        if self._metric_tensor is None:
-            return self.from_components(self.dual.to_components(xp))
-        else:
-            return self.from_components(cho_solve(self._factor, self.dual.to_components(xp)))
+    return HilbertSpace.from_vector_space(space, inner_product,to_dual=to_dual, from_dual=from_dual)
 
             
 class GaussianMeasure:
@@ -877,6 +859,18 @@ class GaussianMeasure:
 
 
 class LinearSolver(LinearOperator, ABC):
+    """
+    Abstract base class for linear solvers. 
+
+    Each linear solver must have a method called "set_operator" which takes a 
+    LinearOperator as its sole argument. Once this routine has been called, the 
+    LinearSolver then works as a LinearOperator whose action is the inverse of 
+    the operator from which it was formed. 
+
+    Any parameters needed to set up the linear solver should be passed within 
+    the constuctor for the LinearSolver class. 
+    """
+    
     @abstractmethod    
     def set_operator(self, operator):
         """Set the linear operator whose inverse is to be formed."""
@@ -886,6 +880,16 @@ class LinearSolver(LinearOperator, ABC):
         # Check that the operator can have a well-defined inverse.
         if operator.domain.dim != operator.codomain.dim:
             raise ValueError("Domain and codomain must have the same dimensions.")
+
+
+class Preconditioner(LinearSolver):
+    """
+    Abstract base class for preconditioners for linear systems. This class is
+    functionally identical to the LinearSolver class, but the intention is that
+    instances of this class do not need to provide exact implementations of the 
+    inverse mapping.
+    """
+    pass
 
 
 class DirectLUSolver(LinearSolver):
@@ -968,11 +972,45 @@ class DirectCholeskySolver(LinearSolver):
                         check_finite=self._check_finite)
         return self.codomain.from_components(cxp)
 
+
+class DiagonalPreconditioner(Preconditioner):
+
+    def __init__(self, /, *, bandwidth = 0):
+        pass
+
+
+    def set_operator(self, operator):
+        self._check_dimensions(operator)
+
+        n = operator.domain.dim
+        diagonal_values = np.zeros(n)
+        cx = np.zeros((n,1))
+        for i in range(n):
+            cx[i,0] = 1
+            x = operator.domain.from_components(cx)
+            y = operator(x)
+            diagonal_values[i] = 1/y[i]
+            cx[i,0] = 0
+
+        matrix = diags((diagonal_values))
+        super().__init__(operator.codomain, operator.domain, 
+                         matrix=matrix)
+
     
 class GMRESSolver(LinearSolver):
 
-    def __init__(self):
-        pass
+    def __init__(self, /, *, x0 = None, preconditioner=None,
+                 rtol=1e-05, atol=0.0, restart=None, maxiter=None, 
+                 callback=None, callback_type=None):
+        self._x0 = x0
+        self._preconditioner = preconditioner
+        self._rtol = rtol
+        self._atol = atol
+        self._restart = restart
+        self._maxiter = maxiter
+        self._callback = callback
+        self._callback_type = callback_type
+            
 
 
     def set_operator(self, operator):
@@ -983,11 +1021,127 @@ class GMRESSolver(LinearSolver):
 
     def _mapping_local(self, y):
         cy = self.domain.to_components(y)
-        cx, _ =  gmres(self._operator.scipy_linear_operator, cy)
-        return cx
+        if self._x0 is None:
+            c0 = None
+        else:        
+            c0 = self.codomain.to_components(self._x0)
+
+        if self._preconditioner is None:
+            M = None
+        else:
+            self._preconditioner.set_operator(self._operator)
+            M = self._preconditioner.scipy_linear_operator
+        cx, _ =  gmres(self._operator.scipy_linear_operator, cy, c0, rtol=self._rtol, 
+                       atol=self._atol, restart=self._restart, maxiter=self._maxiter,
+                       M=M, callback=self._callback, callback_type=self._callback_type)
+        return self.codomain.from_components(cx)
 
 
+class BICGSolver(LinearSolver):
 
+    def __init__(self, /, *, x0 = None, preconditioner=None,
+                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):
+        self._x0 = x0
+        self._preconditioner = preconditioner
+        self._rtol = rtol
+        self._atol = atol        
+        self._maxiter = maxiter
+        self._callback = callback        
+
+    
+    def set_operator(self, operator):
+        self._check_dimensions(operator)
+        self._operator = operator
+        super().__init__(operator.codomain, operator.domain, mapping = self._mapping_local)
+        
+
+    def _mapping_local(self, y):
+        cy = self.domain.to_components(y)
+        if self._x0 is None:
+            c0 = None
+        else:        
+            c0 = self.codomain.to_components(self._x0)
+
+        if self._preconditioner is None:
+            M = None
+        else:
+            self._preconditioner.set_operator(self._operator)
+            M = self._preconditioner.scipy_linear_operator
+        cx, _ =  bicg(self._operator.scipy_linear_operator, cy, c0, rtol=self._rtol, 
+                      atol=self._atol, maxiter=self._maxiter, M=M, callback=self._callback)
+        return self.codomain.from_components(cx)
+            
+
+class BICGStabSolver(LinearSolver):
+
+    def __init__(self, /, *, x0 = None, preconditioner=None,
+                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):
+        self._x0 = x0
+        self._preconditioner = preconditioner
+        self._rtol = rtol
+        self._atol = atol        
+        self._maxiter = maxiter
+        self._callback = callback        
+
+    
+    def set_operator(self, operator):
+        self._check_dimensions(operator)
+        self._operator = operator
+        super().__init__(operator.codomain, operator.domain, mapping = self._mapping_local)
+        
+
+    def _mapping_local(self, y):
+        cy = self.domain.to_components(y)
+        if self._x0 is None:
+            c0 = None
+        else:        
+            c0 = self.codomain.to_components(self._x0)
+
+        if self._preconditioner is None:
+            M = None
+        else:
+            self._preconditioner.set_operator(self._operator)
+            M = self._preconditioner.scipy_linear_operator
+        cx, _ =  bicgstab(self._operator.scipy_linear_operator, cy, c0, rtol=self._rtol, 
+                      atol=self._atol, maxiter=self._maxiter, M=M, callback=self._callback)
+        return self.codomain.from_components(cx)
+
+
+class CGSolver(LinearSolver):
+
+    def __init__(self, /, *, x0 = None, preconditioner=None,
+                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):
+        self._x0 = x0
+        self._preconditioner = preconditioner
+        self._rtol = rtol
+        self._atol = atol        
+        self._maxiter = maxiter
+        self._callback = callback        
+
+    
+    def set_operator(self, operator):
+        self._check_dimensions(operator)
+        self._operator = operator
+        super().__init__(operator.codomain, operator.domain, mapping = self._mapping_local)
+        
+
+    def _mapping_local(self, y):
+        cy = self.domain.to_components(y)
+        if self._x0 is None:
+            c0 = None
+        else:        
+            c0 = self.codomain.to_components(self._x0)
+
+        if self._preconditioner is None:
+            M = None
+        else:
+            self._preconditioner.set_operator(self._operator)
+            M = self._preconditioner.scipy_linear_operator
+        cx, _ =  cg(self._operator.scipy_linear_operator, cy, c0, rtol=self._rtol, 
+                      atol=self._atol, maxiter=self._maxiter, M=M, callback=self._callback)
+        return self.codomain.from_components(cx)
+
+            
 
 
 
