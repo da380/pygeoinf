@@ -1,29 +1,68 @@
 import numpy as np
 from scipy.stats import norm
-from pygeoinf.linalg import (euclidean_space, LinearOperator, 
-                             DirectLUSolver, DirectCholeskySolver,
-                             GMRESSolver,DiagonalPreconditioner, 
-                             BICGSolver, BICGStabSolver, CGSolver)
+import pygeoinf.linalg as la
 
-dimX = 100000
+dimX = 4
+
+g = norm().rvs((dimX, dimX))
+g =  g @ g.T +   np.identity(dimX)
+X = la.euclidean_space(dimX, metric_tensor=g)
+A = la.LinearOperator(X, X, lambda x : 2 * x + x[0])
+A = A + A.adjoint
+
+solver = la.MatrixSolverCG(galerkin=True)
+
+solver.operator = A
+B = solver.inverse_operator
+
+print(A.adjoint@B.adjoint)
 
 
-X = euclidean_space(dimX)
+#solver = la.MatrixSolverCholesky(galerkin=True)
+#solver = la.MatrixSolverCG(galerkin=True)
+#B = solver.inverse(A)
 
-A = LinearOperator.self_adjoint(X, mapping=lambda x : 2 * x)
+#x = X.random()
+#y = A(x)
+#z = B(y)
+
+#print(np.linalg.norm(x-z) / np.linalg.norm(x))
 
 
+
+
+#x1 = X.random()
+#x2 = X.random()
+#xp = X.dual.random()
+
+#B = la.DirectLUSolver(galerkin=False)
+#B = la.DirectCholeskySolver(galerkin=True)
+
+#B.set_operator(A)
+
+#print(B @ A)
 
 #print(xp(A(x1)))
 #print(A.dual(xp)(x1))
 #print(X.inner_product(A(x1), x2))
 #print(X.inner_product(x1, A.adjoint(x2)))
 
-#solver = DirectLUSolver()
+#B = la.DirectLUSolver(use_galerkin=True)
+
+#B.set_operator(A)
+
+#print(B)
+
+"""
+
+
+#solver = DirectCholeskySolver()
 #solver = GMRESSolver()
 #solver = BICGSolver()
 #solver = BICGStabSolver()
-solver = CGSolver()
+#solver = CGSolver()
+
+
 solver.set_operator(A)
 
 
@@ -33,27 +72,6 @@ z = solver(y)
 print(np.linalg.norm(x-z) / np.linalg.norm(x))
 
 """
-b = norm().rvs(size=(dimX, dimX))
-b = b @ b.T
-
-B = LinearOperator.self_adjoint(X, mapping = A @ A.adjoint + 0.1 * X.identity())
-
-cholesky_solver = DirectCholeskySolver()
-cholesky_solver.set_operator(B)
-
-x = X.random()
-y = B(x)
-z = cholesky_solver(y)
-print(np.linalg.norm(x-z) / np.linalg.norm(x))
-
-
-print(xp(B(x1)))
-print(B.dual(xp)(x1))
-print(X.inner_product(B(x1), x2))
-print(X.inner_product(x1, B.adjoint(x2)))
-
-"""
-
 
 
 
