@@ -95,9 +95,13 @@ class VectorSpace:
         else:
             return LinearOperator(self, self, lambda x: x, dual_mapping = lambda yp : yp)            
 
-
     def _dual_to_components(self, xp):    
-        return xp.components
+        if xp._matrix is None:             
+            matrix = xp.matrix(dense=True)
+        else:                        
+            matrix = xp._matrix
+        return matrix.reshape(xp.domain.dim,1)
+        #return xp.components
 
     def _dual_from_components(self,cp):        
         return LinearForm(self, components=cp)
@@ -143,6 +147,7 @@ class LinearOperator:
         self._dual_base = dual_base
         self._adjoint_base = adjoint_base                
         self._mapping = mapping
+        self._matrix = None
         if dual_mapping is None:                            
             if self.hilbert_operator:
                 if adjoint_mapping is None:
@@ -276,7 +281,7 @@ class LinearOperator:
         domain = self.domain
         codomain = self.codomain
         mapping = lambda x : a * self(x)
-        dual_mapping = lambda yp : a * self.dual(yp)
+        dual_mapping = lambda yp : 2 * self.dual(yp)
         if self.hilbert_operator:
             adjoint_mapping = lambda y : a * self.adjoint(y)
         else:
@@ -384,9 +389,9 @@ class LinearForm(LinearOperator):
 
     @property
     def components(self):        
-        if self._matrix is None:
+        if self._matrix is None:             
             matrix = self.matrix(dense=True)
-        else:
+        else:                        
             matrix = self._matrix
         return matrix.reshape(self.domain.dim,1)
 
@@ -887,14 +892,68 @@ class MatrixSolverCG(MatrixSolver):
         self._maxiter = maxiter
         self._callback = callback
         
-
     def _set_up(self):
         self._matrix = self.operator.matrix(galerkin=self.galerkin)
 
+    def _solver(self, c, trans):
+        if self.initial_guess is None:
+            x0 = None
+        else:
+            x0 = self.domain.to_components(self.initial_guess)        
+        return cg(self._matrix, c, x0 = x0, rtol = self._rtol, atol = self._atol, 
+                 maxiter=self._maxiter, callback=self._callback)[0]
+
+
+
+class MatrixSolverBICSTAB(MatrixSolver):
+    
+    def __init__(self, /, *, preconditioner=None, galerkin=False,
+                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):  
+        super().__init__(galerkin)                          
+        self._preconditioner = preconditioner
+        self._galerkin = galerkin        
+        self._rtol = rtol
+        self._atol = atol
+        self._maxiter = maxiter
+        self._callback = callback
+        
+    def _set_up(self):
+        self._matrix = self.operator.matrix(galerkin=self.galerkin)
 
     def _solver(self, c, trans):
-        return cg(self._matrix, c)[0]
+        if self.initial_guess is None:
+            x0 = None
+        else:
+            x0 = self.domain.to_components(self.initial_guess)        
+        return bicgstab(self._matrix, c, x0 = x0, rtol = self._rtol, atol = self._atol, 
+                 maxiter=self._maxiter, callback=self._callback)[0]
 
     
 
+
+
+class MatrixSolverGMRES(MatrixSolver):
     
+    def __init__(self, /, *, preconditioner=None, galerkin=False,
+                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):  
+        super().__init__(galerkin)                          
+        self._preconditioner = preconditioner
+        self._galerkin = galerkin        
+        self._rtol = rtol
+        self._atol = atol
+        self._maxiter = maxiter
+        self._callback = callback
+        
+    def _set_up(self):
+        self._matrix = self.operator.matrix(galerkin=self.galerkin)
+
+    def _solver(self, c, trans):
+        if self.initial_guess is None:
+            x0 = None
+        else:
+            x0 = self.domain.to_components(self.initial_guess)        
+        return gmres(self._matrix, c, x0 = x0, rtol = self._rtol, atol = self._atol, 
+                 maxiter=self._maxiter, callback=self._callback)[0]
+
+    
+

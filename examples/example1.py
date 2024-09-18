@@ -8,14 +8,26 @@ g = norm().rvs((dimX, dimX))
 g =  g @ g.T +   np.identity(dimX)
 X = la.euclidean_space(dimX, metric_tensor=g)
 A = la.LinearOperator(X, X, lambda x : 2 * x + x[0])
+
 A = A + A.adjoint
 
-solver = la.MatrixSolverCG(galerkin=True)
+
+
+
+#solver = la.MatrixSolverBICSTAB()
+#solver = la.MatrixSolverGMRES()
+solver = la.MatrixSolverLU()
 
 solver.operator = A
+
 B = solver.inverse_operator
 
-print(A.adjoint@B.adjoint)
+print(A.dual @ B.dual)
+
+#solver.operator = A
+#B = solver.inverse_operator
+
+
 
 
 #solver = la.MatrixSolverCholesky(galerkin=True)
