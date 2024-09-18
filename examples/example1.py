@@ -7,22 +7,34 @@ dimX = 4
 g = norm().rvs((dimX, dimX))
 g =  g @ g.T +   np.identity(dimX)
 X = la.euclidean_space(dimX, metric_tensor=g)
-A = la.LinearOperator(X, X, lambda x : 2 * x + x[0])
 
-A = A + A.adjoint
+x = X.random()
+
+xp = la.LinearForm(X, mapping=lambda x : x[0])
+
+print(X.dual.to_components(xp))
+
+
+
+
+#A = la.LinearOperator(X, X, lambda x : 2 * x + x[0])
+
+
+
+#A = A + A.adjoint
 
 
 
 
 #solver = la.MatrixSolverBICSTAB()
 #solver = la.MatrixSolverGMRES()
-solver = la.MatrixSolverLU()
+#solver = la.MatrixSolverLU()
 
-solver.operator = A
+#solver.operator = A
 
-B = solver.inverse_operator
+#B = solver.inverse_operator
 
-print(A.dual @ B.dual)
+#print(A.dual @ B.dual)
 
 #solver.operator = A
 #B = solver.inverse_operator

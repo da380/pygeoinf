@@ -79,13 +79,13 @@ class VectorSpace:
 
     def basis_vector(self,i):
         """Return the ith basis vector."""
-        c = np.zeros((self.dim,1))
-        c[i,0] = 1
+        c = np.zeros(self.dim)
+        c[i] = 1
         return self.from_components(c)
 
     def random(self):
         """Returns a random vector with components drwn from a standard Gaussian distribution."""
-        return self.from_components(norm().rvs(size = (self.dim,1)))
+        return self.from_components(norm().rvs(size = self.dim))
 
     def identity(self):
         """Returns identity operator on the space."""
@@ -100,7 +100,7 @@ class VectorSpace:
             matrix = xp.matrix(dense=True)
         else:                        
             matrix = xp._matrix
-        return matrix.reshape(xp.domain.dim,1)
+        return matrix.reshape(xp.domain.dim)
         #return xp.components
 
     def _dual_from_components(self,cp):        
@@ -251,11 +251,11 @@ class LinearOperator:
     def _compute_dense_matrix(self, galerkin=False):                
         # Compute the matrix representation in dense form. 
         matrix = np.zeros((self.codomain.dim, self.domain.dim))              
-        cx = np.zeros((self.domain.dim,1))                        
+        cx = np.zeros(self.domain.dim)                        
         for i in range(self.domain.dim):
-            cx[i,0] = 1            
-            matrix[:,i] = (self.matrix(galerkin=galerkin) @ cx)[:,0]
-            cx[i,0] = 0
+            cx[i] = 1            
+            matrix[:,i] = (self.matrix(galerkin=galerkin) @ cx)[:]
+            cx[i] = 0
         return matrix            
 
     
@@ -339,11 +339,14 @@ class LinearOperator:
         
     def __str__(self):
         """Print the operator as its dense matrix representation."""
-        return self.matrix(dense=True).__str__()
+        if self._matrix is None:
+            return self.matrix(dense=True).__str__()
+        else:
+            return self._matrix.__str__()
 
 
 # Global definition of the real numbers as a VectorSpace. 
-_REAL = VectorSpace(1, lambda x : np.array([[x]]), lambda c : c[0,0])
+_REAL = VectorSpace(1, lambda x : np.array([x]), lambda c : c[0])
 
 
 class LinearForm(LinearOperator):
@@ -393,7 +396,7 @@ class LinearForm(LinearOperator):
             matrix = self.matrix(dense=True)
         else:                        
             matrix = self._matrix
-        return matrix.reshape(self.domain.dim,1)
+        return matrix.reshape(self.domain.dim)
 
 
 class HilbertSpace(VectorSpace):
@@ -460,15 +463,15 @@ class HilbertSpace(VectorSpace):
         self._inner_product = inner_product
 
         if from_dual is None:
-            self._metric_tensor = self.calculate_metric_tensor()
-            self._metric_tensor_factor = cho_factor(self.metric_tensor)
+            self.__metric_tensor = self.calculate__metric_tensor()
+            self.__metric_tensor_factor = cho_factor(self.metric_tensor)
             self._from_dual = self._from_dual_default
         else:
-            self._metric_tensor = None
+            self.__metric_tensor = None
             self._from_dual = from_dual            
 
         if to_dual is None:
-            if self._metric_tensor is None:
+            if self.__metric_tensor is None:
                 self._to_dual = self._to_dual_default
             else:                                
                 self._to_dual = self._to_dual_default_with_metric
@@ -513,10 +516,10 @@ class HilbertSpace(VectorSpace):
     @property
     def metric_tensor(self):
         """The metric tensor for the space."""
-        if self._metric_tensor is None:
+        if self.__metric_tensor is None:
             return self.calculate_metric_tensor()
         else:
-            return self._metric_tensor
+            return self.__metric_tensor
         
     def inner_product(self, x1, x2):
         """Return the inner product of two vectors."""
@@ -537,19 +540,19 @@ class HilbertSpace(VectorSpace):
     def calculate_metric_tensor(self):
         """Return the space's metric tensor as a numpy matrix."""
         metric_tensor = np.zeros((self.dim, self.dim))
-        c1 = np.zeros((self.dim,1))
-        c2 = np.zeros((self.dim,1))
+        c1 = np.zeros(self.dim)
+        c2 = np.zeros(self.dim)
         for i in range(self.dim):
-            c1[i,0] = 1
+            c1[i] = 1
             x1 = self.from_components(c1)            
             metric_tensor[i,i] = self.inner_product(x1,x1)
             for j in range(i+1,self.dim):
-                c2[j,0] = 1
+                c2[j] = 1
                 x2 = self.from_components(c2)
                 metric_tensor[i,j] = self.inner_product(x1,x2)
                 metric_tensor[j,i] = metric_tensor[i,j]
-                c2[j,0] = 0
-            c1[i,0] = 0
+                c2[j] = 0
+            c1[i] = 0
         return metric_tensor
     
     def _to_dual_default(self,x):
@@ -587,8 +590,8 @@ def euclidean_space(dim, /, *, metric_tensor = None):
         preferable in such cases. 
     """
 
-    to_components = lambda x : x.reshape(dim,1)
-    from_components = lambda c : c.reshape(dim,)
+    to_components = lambda x : x
+    from_components = lambda c : c
     space = VectorSpace(dim, to_components, from_components)
 
     if metric_tensor is None:        
