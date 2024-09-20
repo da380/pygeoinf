@@ -295,17 +295,6 @@ class Sobolev(HilbertSpace):
             self.plot(self.expand(u))
 
             
-# Implementation of the Lebesgue space L^{2} on a two-sphere. Obtained as a special case of H^{s} with order set to zero. 
-# Note that with this value of s, the value of the length-scale does not matter. 
-class Lebesgue(Sobolev):
-
-    def __init__(self, lmax, /, *, radius = 1, scale = 1,
-                 elements_as_SHGrid = True, csphase = 1, grid = "DH", extend = True):    
-        super(Lebesgue,self).__init__(lmax, 0, 0, radius = radius, elements_as_SHGrid = elements_as_SHGrid,
-                                      csphase = csphase, grid = grid, extend = extend)
-
-
-
 
 
 

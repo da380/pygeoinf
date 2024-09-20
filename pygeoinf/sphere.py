@@ -1,7 +1,8 @@
 import numpy as np
 import pyshtools as sh
 from pygeoinf.linalg import VectorSpace, HilbertSpace, \
-                            LinearOperator, GaussianMeasure, euclidean_space
+                            LinearOperator, GaussianMeasure, \
+                            euclidean_space, LinearForm
 from scipy.sparse import diags
 
 
@@ -171,14 +172,38 @@ class Sobolev(SHToolsHelper, HilbertSpace):
     #                 Public methods               #
     #==============================================#
 
-    def dirac(self, colatitude, longitude, /, *, degrees=True):       
+    def dirac(self, latitude, longitude, /, *, degrees=True):       
+        if degrees:
+            colatitude = 90 - latitude
+        else:
+            colatitude = np.pi/2 - latitude
         coeffs = sh.expand.spharm(self.lmax, colatitude, longitude, normalization="ortho", degrees=degrees)
         c = self._to_components_from_coeffs(coeffs)
         return self.dual.from_components(c)
 
-    def dirac_representation(self, colatitude, longitude, /, *, degrees=True):
-        up = self.dirac(colatitude, longitude, degrees=degrees)
+    def dirac_representation(self, latitude, longitude, /, *, degrees=True):
+        up = self.dirac(latitude, longitude, degrees=degrees)
         return self.from_dual(up)
+
+
+    def point_evaluation_operator(self, lats, lons, /, *, degrees=True):
+        
+        assert lats.size == lons.size    
+        codomain = euclidean_space(lats.size)
+
+        def mapping(u):
+            ulm = u.expand(normalization=self.normalization, csphase=self.csphase)
+            return ulm.expand(lat=lats, lon=lons, degrees=degrees)
+
+        def dual_mapping(vp):
+            cvp = codomain.dual.to_components(vp)
+            cup = np.zeros(self.dim)
+            for (c, lat,lon) in zip(cvp, lats, lons):                
+                dirac = self.dirac(lat, lon)
+                cup += c * self.dual.to_components(dirac)
+            return LinearForm(self, components=cup)
+
+        return LinearOperator(self, codomain, mapping, dual_mapping=dual_mapping)
 
 
     def invariant_operator(self, codomain, f):
