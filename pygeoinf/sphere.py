@@ -1,6 +1,7 @@
 import numpy as np
 import pyshtools as sh
-from pygeoinf.linalg import VectorSpace, HilbertSpace
+from pygeoinf.linalg import VectorSpace, HilbertSpace, \
+                            LinearOperator, GaussianMeasure, euclidean_space
 from scipy.sparse import diags
 
 
@@ -136,29 +137,6 @@ class SphericalHarmonicExpansion(SHToolsHelper,VectorSpace):
             VectorSpace.__init__(self, self.dim, self._to_components_from_SHCoeffs, self._from_components_to_SHCoeffs)
 
 
-class Lebesgue(SHToolsHelper, HilbertSpace):
-
-    def __init__(self, lmax, /, *, vector_as_SHGrid=True, radius=1,  grid = "DH"):
-        SHToolsHelper.__init__(self, lmax, radius=radius, grid=grid)                
-        if vector_as_SHGrid:
-            HilbertSpace.__init__(self, self.dim, self._to_components_from_SHGrid, self._from_components_to_SHGrid, 
-                                  self._inner_product_impl, to_dual= self._to_dual_impl, from_dual=self._from_dual_impl)
-        else:
-            HilbertSpace.__init__(self, self.dim, self._to_components_from_SHCoeffs, self._from_components_to_SHCoeffs, 
-                                  self._inner_product_impl, to_dual= self._to_dual_impl, from_dual=self._from_dual_impl)
-
-
-    def _inner_product_impl(self, u, v):
-        return self.radius**2 * np.dot(self.to_components(u), self.to_components(v))        
-
-    def _to_dual_impl(self, u):
-        c = self.to_components(u) * self.radius**2
-        return self.dual.from_components(c)
-
-    def _from_dual_impl(self, up):
-        c = self.dual.to_components(up) / self.radius**2
-        return self.from_components(c)
-
 
 class Sobolev(SHToolsHelper, HilbertSpace):
 
@@ -175,6 +153,11 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             HilbertSpace.__init__(self, self.dim, self._to_components_from_SHCoeffs, self._from_components_to_SHCoeffs, 
                                   self._inner_product_impl, to_dual= self._to_dual_impl, from_dual=self._from_dual_impl)        
 
+
+    #=============================================#
+    #                   Properties                #
+    #=============================================#
+
     @property
     def order(self):
         return self._order
@@ -182,6 +165,11 @@ class Sobolev(SHToolsHelper, HilbertSpace):
     @property
     def scale(self):
         return self._scale
+
+
+    #==============================================#
+    #                 Public methods               #
+    #==============================================#
 
     def dirac(self, colatitude, longitude, /, *, degrees=True):       
         coeffs = sh.expand.spharm(self.lmax, colatitude, longitude, normalization="ortho", degrees=degrees)
@@ -191,6 +179,34 @@ class Sobolev(SHToolsHelper, HilbertSpace):
     def dirac_representation(self, colatitude, longitude, /, *, degrees=True):
         up = self.dirac(colatitude, longitude, degrees=degrees)
         return self.from_dual(up)
+
+
+    def invariant_operator(self, codomain, f):
+        if not isinstance(codomain, Sobolev):
+            raise ValueError("Codomain must be another Sobolev space on a sphere.")        
+        matrix = self._degree_dependent_scaling_to_diagonal_matrix(f)
+        if codomain == self:
+            mapping = lambda x : self.from_components(matrix @ self.to_components(x))
+            return LinearOperator.self_adjoint(self, mapping)
+        else:
+            mapping = lambda x : codomain.from_components(matrix @ self.to_components(x))
+            dual_mapping = lambda yp : self.dual.from_components(matrix @ codomain.dual.to_components(yp))            
+            return LinearOperator(self,  codomain, mapping, dual_mapping=dual_mapping)
+
+
+    def invariant_gaussian_measure(self, f, /, *, expectation = None):
+        g = lambda l : np.sqrt(f(l) / self._sobolev_function(l))
+        matrix = self._degree_dependent_scaling_to_diagonal_matrix(g)
+        domain = euclidean_space(self.dim)
+        mapping = lambda c : self.from_components(matrix @ c)        
+        adjoint_mapping = lambda u : self._metric_tensor @ matrix @ self.to_components(u) 
+        factor = LinearOperator(domain, self, mapping, adjoint_mapping= adjoint_mapping)
+        return GaussianMeasure.from_factored_covariance(factor, expectation=expectation)
+
+
+    #==============================================#
+    #                Private methods               #
+    #==============================================#
 
     def _sobolev_function(self, l):
         return (1 + self.scale**2 * l *(l+1))**self.order
@@ -207,3 +223,11 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         return self.from_components(c)
 
 
+
+class Lebesgue(Sobolev):
+
+    def __init__(self, lmax, /, *, vector_as_SHGrid=True, radius=1,  grid = "DH"):
+        super().__init__(lmax, 0, 0, vector_as_SHGrid=vector_as_SHGrid, radius=radius, grid=grid)    
+
+
+    

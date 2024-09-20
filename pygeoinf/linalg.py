@@ -66,7 +66,7 @@ class VectorSpace:
 
     @property
     def zero(self):
-        return self.from_components(np.zeros((self.dim,1)))
+        return self.from_components(np.zeros((self.dim)))
 
     def to_components(self,x):
         """Maps vectors to components."""        
