@@ -8,17 +8,15 @@ from scipy.sparse import diags
 
 
 class SHToolsHelper:
-    """Helper class for working withmaximum_degree(space) pyshtool grid functions and coefficients."""
+    """Helper class for working with pyshtool grid functions and coefficients."""
 
 
     def __init__(self, lmax, /, *, radius=1, grid = "DH"):
         """
         Args:
             lmax (int): Maximum degree for spherical harmonic expansions. 
-            grid (str): Grid type for spatial functions. 
-            extend (bool): If true, longitudes 0 and 360 included in spatial functions. 
-            normalisation (str): Spherical harmonic normalization convention. 
-            csphase (int): Specifies whether Condon-Shortley phase should be included.    
+            radius (float): radius of the sphere. 
+            grid (str): Grid type for spatial functions.               
         """
         self._lmax = lmax
         self._radius = radius
@@ -34,30 +32,37 @@ class SHToolsHelper:
 
     @property
     def lmax(self):
+        """Returns truncation degree."""
         return self._lmax
 
     @property
     def dim(self):
+        """Returns dimension of vector space."""
         return (self.lmax+1)**2
 
     @property
     def radius(self):
+        """Returns radius of the sphere."""
         return self._radius
 
     @property
     def grid(self):
+        """Returns spatial grid option."""
         return self._grid
 
     @property
     def extend(self):
+        """True is spatial grid contains longitudes 0 and 360."""
         return self._extend
 
     @property
     def normalization(self):
+        """Spherical harmonic normalisation option."""
         return self._normalization
 
     @property
     def csphase(self):
+        """Condon Shortley phase option."""
         return self._csphase    
 
     
@@ -199,7 +204,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             cvp = codomain.dual.to_components(vp)
             cup = np.zeros(self.dim)
             for (c, lat,lon) in zip(cvp, lats, lons):                
-                dirac = self.dirac(lat, lon)
+                dirac = self.dirac(lat, lon, degrees=degrees)
                 cup += c * self.dual.to_components(dirac)
             return LinearForm(self, components=cup)
 
@@ -220,14 +225,26 @@ class Sobolev(SHToolsHelper, HilbertSpace):
 
 
     def invariant_gaussian_measure(self, f, /, *, expectation = None):
-        g = lambda l : np.sqrt(f(l) / self._sobolev_function(l))
+        g = lambda l : np.sqrt(f(l) / (self.radius**2 * self._sobolev_function(l)))                
+        h = lambda l : np.sqrt( self.radius**2 * self._sobolev_function(l) * f(l))
         matrix = self._degree_dependent_scaling_to_diagonal_matrix(g)
+        adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(h)
         domain = euclidean_space(self.dim)
         mapping = lambda c : self.from_components(matrix @ c)        
-        adjoint_mapping = lambda u : self._metric_tensor @ matrix @ self.to_components(u) 
+        adjoint_mapping = lambda u : adjoint_matrix@ self.to_components(u)        
         factor = LinearOperator(domain, self, mapping, adjoint_mapping= adjoint_mapping)
         return GaussianMeasure.from_factored_covariance(factor, expectation=expectation)
 
+
+    def sobolev_gaussian_measure(self, order, scale, amplitude, /, *,  expectation=None):               
+        f = lambda l : (1 + scale**2 * l *(l+1))**(-order) 
+        return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude),
+                                               expectation=expectation)    
+    
+    def heat_kernel_gaussian_measure(self, scale, amplitude, /, *, expectation=None):
+        f = lambda l : np.exp(-0.5 * l*(l+1) * scale**2)
+        return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude),
+                                               expectation=expectation)
 
     #==============================================#
     #                Private methods               #
@@ -247,6 +264,11 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         c = self._inverse_metric_tensor@ self.dual.to_components(up) / self.radius**2
         return self.from_components(c)
 
+    def _normalise_covariance_function(self, f, amplitude):        
+        sum = 0
+        for l in range(self.lmax+1):
+            sum +=  f(l) * (2*l+1) / (4*np.pi * self.radius**2 * self._sobolev_function(l))
+        return lambda l : amplitude**2 * f(l) / sum
 
 
 class Lebesgue(Sobolev):

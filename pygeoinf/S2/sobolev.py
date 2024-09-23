@@ -277,7 +277,7 @@ class Sobolev(HilbertSpace):
                         
     # Return a rotationally invariant Gaussian measure iwth covariance of the heat kernel form.
     def heat_kernel_gaussian_measure(self, scale, amplitude, /, *, mean = None):
-        f = lambda l : np.exp(-0.5 * l*(l+1) * (scale/self.radius)**2)
+        f = lambda l : np.exp(-0.5 * l*(l+1) * scale**2)
         return self.invariant_gaussian_measure(self._normalise_covariance_function(f,amplitude),mean = mean)
 
     # Make a simple plot of an element of the space. 
