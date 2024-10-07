@@ -2,7 +2,7 @@ import numpy as np
 import pyshtools as sh
 from pygeoinf.linalg import VectorSpace, HilbertSpace, \
                             LinearOperator, GaussianMeasure, \
-                            euclidean_space, LinearForm
+                            EuclideanSpace, LinearForm
 from scipy.sparse import diags
 
 
@@ -194,7 +194,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
     def point_evaluation_operator(self, lats, lons, /, *, degrees=True):
         
         assert lats.size == lons.size    
-        codomain = euclidean_space(lats.size)
+        codomain = EuclideanSpace(lats.size)
 
         def mapping(u):
             ulm = u.expand(normalization=self.normalization, csphase=self.csphase)
@@ -229,7 +229,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         h = lambda l : np.sqrt( self.radius**2 * self._sobolev_function(l) * f(l))
         matrix = self._degree_dependent_scaling_to_diagonal_matrix(g)
         adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(h)
-        domain = euclidean_space(self.dim)
+        domain = EuclideanSpace(self.dim)
         mapping = lambda c : self.from_components(matrix @ c)        
         adjoint_mapping = lambda u : adjoint_matrix@ self.to_components(u)        
         factor = LinearOperator(domain, self, mapping, adjoint_mapping= adjoint_mapping)

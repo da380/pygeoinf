@@ -47,8 +47,8 @@ class VectorSpace:
                 and to the base space when forming the dual. 
         """
         self._dim = dim
-        self._to_components = to_components
-        self._from_components = from_components
+        self.__to_components = to_components
+        self.__from_components = from_components
         self._base = base
     
     @property
@@ -70,11 +70,11 @@ class VectorSpace:
 
     def to_components(self,x):
         """Maps vectors to components."""        
-        return self._to_components(x)
+        return self.__to_components(x)
 
     def from_components(self,c):
         """Maps components to vectors."""
-        return self._from_components(c)
+        return self.__from_components(c)
 
 
     def basis_vector(self,i):
@@ -101,10 +101,10 @@ class VectorSpace:
         else:                        
             matrix = xp._matrix
         return matrix.reshape(xp.domain.dim)
-        #return xp.components
 
     def _dual_from_components(self,cp):        
         return LinearForm(self, components=cp)
+
 
 
 class LinearOperator:
@@ -146,28 +146,28 @@ class LinearOperator:
         self._codomain = codomain        
         self._dual_base = dual_base
         self._adjoint_base = adjoint_base                
-        self._mapping = mapping
+        self.__mapping = mapping
         self._matrix = None
         if dual_mapping is None:                            
             if self.hilbert_operator:
                 if adjoint_mapping is None:
-                    self._dual_mapping = self._dual_mapping_default
-                    self._adjoint_mapping = self._adjoint_mapping_from_dual
+                    self.__dual_mapping = self._dual_mapping_default
+                    self.__adjoint_mapping = self._adjoint_mapping_from_dual
                 else:
-                    self._adjoint_mapping = adjoint_mapping
-                    self._dual_mapping = self._dual_mapping_from_adjoint
+                    self.__adjoint_mapping = adjoint_mapping
+                    self.__dual_mapping = self._dual_mapping_from_adjoint
             else:                    
-                self._dual_mapping = self._dual_mapping_default
-                self._adjoint_mapping = None
+                self.__dual_mapping = self._dual_mapping_default
+                self.__adjoint_mapping = None
         else:
-            self._dual_mapping = dual_mapping
+            self.__dual_mapping = dual_mapping
             if self.hilbert_operator:
                 if adjoint_mapping is None:
-                    self._adjoint_mapping = self._adjoint_mapping_from_dual
+                    self.__adjoint_mapping = self._adjoint_mapping_from_dual
                 else:
-                    self._adjoint_mapping = adjoint_mapping
+                    self.__adjoint_mapping = adjoint_mapping
             else:
-                self._adjoint_mapping = None
+                self.__adjoint_mapping = None
             
     @staticmethod
     def self_dual(domain, mapping):
@@ -199,7 +199,7 @@ class LinearOperator:
         """The dual of the operator."""
         if self._dual_base is None:            
             return LinearOperator(self.codomain.dual, self.domain.dual,
-                                  self._dual_mapping, dual_mapping=self,
+                                  self.__dual_mapping, dual_mapping=self,
                                   dual_base = self)                      
         else:
             return self._dual_base
@@ -210,8 +210,8 @@ class LinearOperator:
         if not self.hilbert_operator:
             raise NotImplementedError("Adjoint not defined for the operator.")
         if self._adjoint_base is None:
-            return LinearOperator(self.codomain, self.domain, self._adjoint_mapping,
-                                  adjoint_mapping=self._mapping, adjoint_base=self)
+            return LinearOperator(self.codomain, self.domain, self.__adjoint_mapping,
+                                  adjoint_mapping=self.__mapping, adjoint_base=self)
         else:
             return self._adjoint_base
 
@@ -224,11 +224,20 @@ class LinearOperator:
             if galerkin:
                 if not self.hilbert_operator:
                     raise NotImplementedError("Defined only for operators between Hilbert spaces.")
-                matvec = lambda c : self.codomain.dual.to_components(self.codomain.to_dual(self(self.domain.from_components(c))))
-                rmatvec = lambda c : self.domain.dual.to_components(self.domain.to_dual(self._adjoint_mapping(self.codomain.from_components(c))))                                            
+
+                def matvec(c):                    
+                    return self.codomain.dual.to_components(self.codomain.to_dual(self(self.domain.from_components(c))))
+
+                def rmatvec(c):
+                    return self.domain.dual.to_components(self.domain.to_dual(self.adjoint(self.codomain.from_components(c))))                                                            
             else:
-                matvec = lambda c : self.codomain.to_components(self(self.domain.from_components(c)))
-                rmatvec = lambda c : self.domain.dual.to_components(self.dual(self.codomain.dual.from_components(c)))
+
+                def matvec(c):
+                    return self.codomain.to_components(self(self.domain.from_components(c)))
+
+                def rmatvec(c):
+                    return self.domain.dual.to_components(self.dual(self.codomain.dual.from_components(c)))
+                 
             return ScipyLinOp((self.codomain.dim, self.domain.dim), matvec=matvec, rmatvec=rmatvec)
     
 
@@ -239,13 +248,13 @@ class LinearOperator:
     def _dual_mapping_from_adjoint(self, yp):
         # Dual mapping in terms of the adjoint. 
         y = self.codomain.from_dual(yp)
-        x = self._adjoint_mapping(y)
+        x = self.__adjoint_mapping(y)
         return self.domain.to_dual(x)
     
     def _adjoint_mapping_from_dual(self, y):
         # Adjoing mapping in terms of the dual.
         yp = self.codomain.to_dual(y)
-        xp = self._dual_mapping(yp)
+        xp = self.__dual_mapping(yp)
         return self.domain.from_dual(xp)
 
     def _compute_dense_matrix(self, galerkin=False):                
@@ -261,9 +270,9 @@ class LinearOperator:
     
     def __call__(self, x):
         """Action of the operator on a vector."""
-        if self._mapping is None:
+        if self.__mapping is None:
             raise NotImplementedError("Mapping has not been set.")
-        return self._mapping(x)
+        return self.__mapping(x)
 
     def __neg__(self):
         """Negative of the operator."""
@@ -388,15 +397,29 @@ class LinearForm(LinearOperator):
                     
 
     def _mapping_from_components(self, x):
+        # Implement the action of the form using its components. 
         return self.codomain.from_components(np.dot(self._matrix,self.domain.to_components(x)))
+
+
+    @property
+    def components_stored(self):
+        """True is the form has its components stored."""
+        return self._matrix is not None
 
     @property
     def components(self):        
-        if self._matrix is None:             
-            matrix = self.matrix(dense=True)
+        """Return the components of the form."""
+        if self.components_stored:
+            return self._matrix.reshape(self.domain.dim)    
         else:                        
-            matrix = self._matrix
-        return matrix.reshape(self.domain.dim)
+            self.store_components()
+            return self.components        
+
+    def store_components(self):
+        """Compute and store the forms components."""
+        if not self.components_stored:
+            self._matrix = self.matrix(dense=True)
+            
 
 
 class HilbertSpace(VectorSpace):
@@ -460,23 +483,23 @@ class HilbertSpace(VectorSpace):
                 and to the base space when forming the dual.                 
         """
         super().__init__(dim, to_components, from_components)
-        self._inner_product = inner_product
+        self.__inner_product = inner_product
 
         if from_dual is None:
-            self.__metric_tensor = self.calculate__metric_tensor()
+            self.__metric_tensor = self.calculate_metric_tensor()
             self.__metric_tensor_factor = cho_factor(self.metric_tensor)
-            self._from_dual = self._from_dual_default
+            self.__from_dual = self._from_dual_default
         else:
             self.__metric_tensor = None
-            self._from_dual = from_dual            
+            self.__from_dual = from_dual            
 
         if to_dual is None:
             if self.__metric_tensor is None:
-                self._to_dual = self._to_dual_default
+                self.__to_dual = self._to_dual_default
             else:                                
-                self._to_dual = self._to_dual_default_with_metric
+                self.__to_dual = self._to_dual_default_with_metric
         else:
-            self._to_dual = to_dual
+            self.__to_dual = to_dual
 
         self._base = base
 
@@ -523,7 +546,7 @@ class HilbertSpace(VectorSpace):
         
     def inner_product(self, x1, x2):
         """Return the inner product of two vectors."""
-        return self._inner_product(x1,x2)
+        return self.__inner_product(x1,x2)
 
     def norm(self,x):
         """Return the norm of a vector."""
@@ -531,11 +554,11 @@ class HilbertSpace(VectorSpace):
         
     def to_dual(self, x):
         """Map a vector to cannonically associated dual vector."""
-        return self._to_dual(x)
+        return self.__to_dual(x)
 
     def from_dual(self, xp):
         """Map a dual vector to its representation in the space."""
-        return self._from_dual(xp)
+        return self.__from_dual(xp)
 
     def calculate_metric_tensor(self):
         """Return the space's metric tensor as a numpy matrix."""
@@ -564,49 +587,153 @@ class HilbertSpace(VectorSpace):
 
     def _from_dual_default(self, xp):
         cp = self.dual.to_components(xp)
-        c = cho_solve(self._metric_tensor_factor, cp)
+        c = cho_solve(self.__metric_tensor_factor, cp)
         return self.from_components(c)
 
     def _dual_inner_product(self, xp1, xp2):
         return self.inner_product(self.from_dual(xp1), self.from_dual(xp2))            
 
 
-def euclidean_space(dim, /, *, metric_tensor = None):
-    """
-    Returns Euclidean space implemented as a HilbertSpace instance. 
+class HilbertSpaceDirectSum(HilbertSpace):
+    """Class for direct sums of Hilbert spaces."""
 
-    Args:
-        dim (int): Dimension of the space. 
-        metric_tensor (ArrayLike | None): The metric tensor that defines
-            the inner product on the space. If none is provided, this is 
-            taken to the identity matrix, and hence the standard Euclidean
-            inner product is used. 
+    def __init__(self, spaces):
+        """Form direct sum of a list of Hilbert spaces."""    
+        self._spaces = spaces
+        dim = sum(self.dims)
+        super().__init__(dim, self._to_components, self._from_components, 
+                         self._inner_product, to_dual=self._to_dual, 
+                         from_dual=self._from_dual)
 
-    Notes:
-        To work with a non-standard inner product, the Cholesky factor of the 
-        metric tensor is formed. This implementation uses dense matrices, and 
-        will not be efficient in high-dimensional spaces. An alternative 
-        implementation that uses pre-conditioned iterative solvers would be 
-        preferable in such cases. 
-    """
+    @property
+    def spaces(self):
+        """ Return the list of spaces."""
+        return self._spaces
 
-    to_components = lambda x : x
-    from_components = lambda c : c
-    space = VectorSpace(dim, to_components, from_components)
+    @property
+    def dims(self):
+        """Return a list of dimensions for the spaces."""
+        return [space.dim for space in self._spaces]
+    
 
-    if metric_tensor is None:        
-        inner_product = lambda x1, x2 : np.dot(x1, x2)
-        to_dual = lambda x:  space.dual.from_components(space.to_components(x))
-        from_dual = lambda xp : space.from_components(space.dual.to_components(xp))        
-    else:
-        factor = cho_factor(metric_tensor)
-        inner_product = lambda x1, x2 : np.dot(metric_tensor @ x1, x2)
-        to_dual = lambda x : space.dual.from_components(metric_tensor @space.to_components(x))
-        from_dual = lambda xp : space.from_components(cho_solve(factor, space.dual.to_components(xp)))
+    def space(self,i):
+        """Return the ith space."""
+        if i < 0 or i > len(self._spaces):
+            raise IndexError()
+        return self._spaces[i]
 
-    return HilbertSpace.from_vector_space(space, inner_product,to_dual=to_dual, from_dual=from_dual)
+    def canonical_injection(self, i, xi):
+        """Form an element of the direct sum from an element of the ith space."""
+        x = []
+        for j, space in enumerate(self.spaces):
+            if i == j:
+                x.append(xi)
+            else:
+                x.append(space.zero)
+        return x
 
+    def canonical_projection(self, i, x):
+        """Return the element from the ith space."""
+        return x[i]
+
+
+    def _to_components(self, x):
+        # Map a list of vectors to a component vector.
+        c = np.zeros(0)
+        for xx, space, in zip(x, self.spaces):
+            c = np.append(c, space.to_components(xx))
+        return c
+
+    def _from_components(self,c):
+        # Form a list of vectors from a component vector. 
+        x = []
+        start = 0
+        for space in self.spaces:
+            finish = start + space.dim
+            cc = c[start:finish]
+            x.append(space.from_components(cc))
+            start = finish
+        return x    
             
+
+    def _inner_product(self, x1, x2):
+        products = [space.inner_product(xx1,xx2) for space, xx1, xx2 in zip(self.spaces, x1, x2)]
+        return sum(products)
+
+    def _to_dual(self, x):
+        pass
+
+    def _from_dual(self, xp):
+        pass
+    
+
+
+
+class EuclideanSpace(HilbertSpace):
+    """
+    Euclidean space implemented as an instance of HilbertSpace."""
+
+    def __init__(self, dim, /, *, metric_tensor=None, inverse_metric_tensor=None):
+        """        
+        Args:
+            dim (int): Dimension of the space. 
+            metric_tensor (scipy LinearOperator): The metric tensor in the 
+                form of a scipy LinearOperator or an equivalent object. 
+            inverse_metric_tensor (scipy LinearOpertor): The inverse metric tensor
+                in the form of a scipy LinearOperator or an equivalent object.             
+
+        Notes:
+            If the inverse metric tensor is not provided, it action is
+            computed using the conjugate gradient algorithm.
+        """
+
+    
+        if metric_tensor is None:
+            super().__init__(dim, self._identity, self._identity, 
+                             self._inner_product_without_metric, 
+                             to_dual=self._to_dual_without_metric, 
+                             from_dual=self._from_dual_without_metric)
+        else:
+            self._metric_tensor = metric_tensor
+            if inverse_metric_tensor is None:
+                self._inverse_metric_tensor = self._inverse_metric_tensor_default
+            else:
+                self._inverse_metric_tensor = inverse_metric_tensor
+
+            super().__init__(dim, self._identity, self._identity, 
+                             self._inner_product_with_metric, 
+                             to_dual=self._to_dual_with_metric, 
+                             from_dual=self._from_dual_with_metric)
+
+    def _identity(self,x):
+        return x
+
+    def _inner_product_without_metric(self, x1, x2):
+        return np.dot(x1,x2)
+
+    def _inner_product_with_metric(self, x1, x2):
+        return np.dot(self._metric_tensor @ x1, x2)
+
+    def _to_dual_without_metric(self,x):
+        return self.dual.from_components(x)
+
+    def _to_dual_with_metric(self,x):
+        return self.dual.from_components(self._metric_tensor @ x)
+
+    def _from_dual_without_metric(self,xp):
+        cp = self.dual.to_components(xp)
+        return self.from_components(cp)
+
+    def _from_dual_with_metric(self,xp):
+        cp = self.dual.to_components(xp)
+        c = self._inverse_metric_tensor @ cp
+        return self.from_components(c)
+
+    def _inverse_metric_tensor_default(self, x):
+        return cg(self._metric_tensor, x)
+    
+
+
 class GaussianMeasure:
     """
     Class for Gaussian measures on a Hilbert space.  
@@ -633,14 +760,13 @@ class GaussianMeasure:
             self._sample = sample
             self._sample_defined = True
         if sample is None and sample_using_matrix:
-            dist = multivariate_normal(mean = self.expectation, cov= self.covariance.matrix)
+            dist = multivariate_normal(mean = self.expectation, cov= self.covariance.matrix(dense=True, galerkin=True))
             self._sample = lambda : self.domain.from_components(dist.rvs())
             self._sample_defined = True
 
 
     @staticmethod
-    def from_factored_covariance(factor, /, *,  expectation = None):
-            
+    def from_factored_covariance(factor, /, *,  expectation = None):            
         covariance  = factor @ factor.adjoint
         sample = lambda : factor(norm().rvs(size = factor.domain.dim))
         if expectation is not None:

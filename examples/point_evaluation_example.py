@@ -17,11 +17,5 @@ lons = uniform(loc = 0, scale = 360).rvs(size=n)
 
 A = X.point_evaluation_operator(lats, lons)
 
-Y = A.codomain
-v = Y.random()
-
-vp = Y.dual.random()
-
-
-
+=
 
