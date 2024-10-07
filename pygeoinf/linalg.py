@@ -622,52 +622,72 @@ class HilbertSpaceDirectSum(HilbertSpace):
             raise IndexError()
         return self._spaces[i]
 
-    def canonical_injection(self, i, xi):
+    def canonical_injection(self, i, x):
         """Form an element of the direct sum from an element of the ith space."""
-        x = []
+        y = []
         for j, space in enumerate(self.spaces):
             if i == j:
-                x.append(xi)
+                y.append(x)
             else:
-                x.append(space.zero)
-        return x
+                y.append(space.zero)
+        return y
 
-    def canonical_projection(self, i, x):
+    def canonical_projection(self, i, y):
         """Return the element from the ith space."""
-        return x[i]
+        return y[i]
+
+    @property
+    def canonical_dual(self):
+        """Return the direct sum of the dual spaces."""
+        return HilbertSpaceDirectSum([space.dual for space in self.spaces])
 
 
-    def _to_components(self, x):
+    def _to_components(self, y):
         # Map a list of vectors to a component vector.
         c = np.zeros(0)
-        for xx, space, in zip(x, self.spaces):
-            c = np.append(c, space.to_components(xx))
+        for x, space, in zip(y, self.spaces):
+            c = np.append(c, space.to_components(x))
         return c
 
-    def _from_components(self,c):
+    def _from_components(self,cy):
         # Form a list of vectors from a component vector. 
-        x = []
+        y = []
         start = 0
         for space in self.spaces:
             finish = start + space.dim
-            cc = c[start:finish]
-            x.append(space.from_components(cc))
+            cx = cy[start:finish]
+            y.append(space.from_components(cx))
             start = finish
-        return x    
+        return y    
             
 
-    def _inner_product(self, x1, x2):
-        products = [space.inner_product(xx1,xx2) for space, xx1, xx2 in zip(self.spaces, x1, x2)]
+    def _inner_product(self, y1, y2):        
+        # Implementation of the inner product.
+        products = [space.inner_product(x1,x2) for space, x1, x2 in zip(self.spaces, y1, y2)]
         return sum(products)
 
-    def _to_dual(self, x):
-        pass
 
-    def _from_dual(self, xp):
-        pass
+    def _to_dual(self, y1):        
+        # Implementation of the mapping to the dual space. 
+        def mapping(y2):
+            actions = [space.to_dual(x1)(x2) for space, x1, x2 in zip(self.spaces, y1, y2)]
+            return sum(actions)
+        return LinearForm(self, mapping=mapping)
     
+    def _dual_to_canonical_dual(self, yp):
+        # Map a dual vector into the canonical dual.
+        if yp.components_stored:            
+            return self.canonical_dual.from_components(yp.components)
+        else:
+            mappings = [lambda x : yp(self.canonical_injection(i,x)) for i in range(len(self.spaces))]
+            return [LinearForm(space, mapping=mapping) for space, mapping in zip(self.spaces, mappings)]    
 
+    def _from_dual(self, yp):
+        # Implementation of the mapping from the dual space. 
+        zp = self._dual_to_canonical_dual(yp)
+        return [space.from_dual(xp) for space, xp in zip(self.spaces, zp)]
 
+    
 
 class EuclideanSpace(HilbertSpace):
     """
