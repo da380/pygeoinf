@@ -13,8 +13,6 @@ u = mu.sample()
 
 v = X.dirac_representation(0, 180)
 
-wp = la.LinearForm(X, mapping=lambda u: u.data[10, 10])
-
 
 print(X.inner_product(v, u))
 

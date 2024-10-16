@@ -25,13 +25,14 @@ nu = mu.affine_mapping(operator=A, translation=y)
 
 print(nu.covariance)
 
+print(nu.sample())
 
 Z = Sobolev(128, 2, 0.1)
 
 kappa = Z.sobolev_gaussian_measure(4, 0.1, 1)
 
 
-n = 5
+n = 10
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 B = Z.point_evaluation_operator(lats, lons)
@@ -40,10 +41,13 @@ Q = kappa.covariance
 
 C = B @ Q @ B.adjoint
 
-solver = la.MatrixSolverCG(rtol=1e-12)
+solver = la.CGMatrixSolver()
+D = solver(C)
 
-solver.operator = C
+# solver = la.MatrixSolverLU()
 
-D = solver.inverse_operator
+# solver.operator = C
+
+# D = solver.inverse_operator
 
 print(D @ C)

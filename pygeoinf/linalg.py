@@ -1,7 +1,7 @@
 """
-This module defined the VectorSpace class along with a function 
+This module defined the VectorSpace class along with a function
 that returns n-dimensional real vector space with its standard
-basis as an instance of this class. 
+basis as an instance of this class.
 """
 
 from abc import ABC, abstractmethod
@@ -9,7 +9,7 @@ import numpy as np
 from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve
 from scipy.stats import norm, multivariate_normal
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-from scipy.sparse.linalg import gmres, bicgstab, cg
+from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
 
 class VectorSpace:
@@ -17,32 +17,32 @@ class VectorSpace:
     A class for real vector spaces. To define an instance, the
     user needs to provide the following:
 
-        (1) The dimension of the space, or the dimension of the 
-            finite-dimensional approximating space. 
-        (2) A mapping from elements of the space to their components. 
+        (1) The dimension of the space, or the dimension of the
+            finite-dimensional approximating space.
+        (2) A mapping from elements of the space to their components.
             These components must be expressed as numpy arrays with
-            shape (dim,1) with dim the spaces dimension. 
+            shape (dim,1) with dim the spaces dimension.
         (3) A mapping from components back to the vectors. This
-            needs to be the inverse of the mapping in (2), but 
-            this requirement is not automatically checked. 
+            needs to be the inverse of the mapping in (2), but
+            this requirement is not automatically checked.
 
-    Note that this class does *not* define elements of the 
-    vector space. These must be pre-defined separately. It 
-    is also assumed that the usual vector operations are 
-    available for this latter space. 
+    Note that this class does *not* define elements of the
+    vector space. These must be pre-defined separately. It
+    is also assumed that the usual vector operations are
+    available for this latter space.
     """
 
     def __init__(self, dim, to_components, from_components, /, *, base=None):
         """
         Args:
-            dim (int): The dimension of the space, or of the 
-                finite-dimensional approximating space. 
+            dim (int): The dimension of the space, or of the
+                finite-dimensional approximating space.
             to_components (callable):  A functor that maps vectors
-                to their components. 
+                to their components.
             from_components (callable): A functor that maps components
-                to vectors. 
-            base (VectorSpace | None): Set to none for an original space, 
-                and to the base space when forming the dual. 
+                to vectors.
+            base (VectorSpace | None): Set to none for an original space,
+                and to the base space when forming the dual.
         """
         self._dim = dim
         self.__to_components = to_components
@@ -105,22 +105,22 @@ class VectorSpace:
 
 class LinearOperator:
     """
-    Class for linear operators between two vector spaces. To define an 
+    Class for linear operators between two vector spaces. To define an
     instance, the user must provide the following:
 
-        (1) The domain of the operator as an instance of VectorSpace. 
-        (2) The codomain of the operator as an instance of VectorSpace.     
+        (1) The domain of the operator as an instance of VectorSpace.
+        (2) The codomain of the operator as an instance of VectorSpace.
 
     To define the action of the operator they can provide either:
 
-        (a) A functor that represents the action of the operator.         
+        (a) A functor that represents the action of the operator.
 
-    For option (a) the dual and adjoint can be deduced internally 
-    but in an inefficient manner, or they can be supplied directly. 
+    For option (a) the dual and adjoint can be deduced internally
+    but in an inefficient manner, or they can be supplied directly.
 
     Linear operators form an algebra over the reals in the usual way. Overloads
     for the relevant operators are provided. In all cases, these operations are
-    lazily implemented. 
+    lazily implemented.
     """
 
     def __init__(self, domain, codomain, mapping=None, /, *,
@@ -128,14 +128,14 @@ class LinearOperator:
                  dual_base=None, adjoint_base=None):
         """
         Args:
-            domain (VectorSpace): The domain of the operator. 
-            codomain (VectorSpace): The codomain of the operator.             
-            mapping (callable | None): A functor that implements the 
-                action of the operator. 
-            dual_mapping (callable | None): A functor that implements 
-                the action of the dual operator. 
+            domain (VectorSpace): The domain of the operator.
+            codomain (VectorSpace): The codomain of the operator.
+            mapping (callable | None): A functor that implements the
+                action of the operator.
+            dual_mapping (callable | None): A functor that implements
+                the action of the dual operator.
             adjoint_mapping (callable | None): A functor that implements
-                the action of the adjoint operator.                         
+                the action of the adjoint operator.
         """
 
         self._domain = domain
@@ -374,7 +374,7 @@ _REAL = VectorSpace(1, lambda x: np.array([x]), lambda c: c[0])
 
 class LinearForm(LinearOperator):
     """
-    Class for linear forms on a vector space. 
+    Class for linear forms on a vector space.
 
     The vector space is represented by a VectorSpace object. Linear forms
     are (continuous) linear mappings from the to the real numbers. These
@@ -382,24 +382,24 @@ class LinearForm(LinearOperator):
 
     A linear form can be specified either:
 
-        (1) In terms of a functor that performs its action on a vector. 
+        (1) In terms of a functor that performs its action on a vector.
         (2) Its matrix-representation relative to the basis for the space.
 
     Specification of a form in terms of its matrix representation offers
-    computational advatages in many cases. A form specified in terms 
-    of a mapping can (as with a general linear operator) compute and 
+    computational advatages in many cases. A form specified in terms
+    of a mapping can (as with a general linear operator) compute and
     store its matrix representation.
     """
 
     def __init__(self, domain, /, *, mapping=None, components=None):
         """
         Args:
-            domain (VectorSpace): Domain of the linear form. 
+            domain (VectorSpace): Domain of the linear form.
             mapping (callable | None): A functor that performs the action
-                of the linear form on a vector. 
-            matrix (MatrixLike | None): The matrix representation of the 
+                of the linear form on a vector.
+            matrix (MatrixLike | None): The matrix representation of the
                 form, this having shape (1,dim) with dim the dimension of
-                the domain. 
+                the domain.
         """
 
         if components is None:
@@ -437,40 +437,40 @@ class HilbertSpace(VectorSpace):
     """
     Class for Hilbert spaces. To define an instance, the user provides:
 
-        (1) The dimension of the space, or the dimension of the 
-            finite-dimensional approximating space. 
-        (2) A mapping from elements of the space to their components. 
+        (1) The dimension of the space, or the dimension of the
+            finite-dimensional approximating space.
+        (2) A mapping from elements of the space to their components.
             These components must be expressed as numpy arrays with
-            shape (dim,1) with dim the spaces dimension. 
+            shape (dim,1) with dim the spaces dimension.
         (3) A mapping from components back to the vectors. This
-            needs to be the inverse of the mapping in (2), but 
-            this requirement is not automatically checked. 
-        (4) The inner product on the space. 
+            needs to be the inverse of the mapping in (2), but
+            this requirement is not automatically checked.
+        (4) The inner product on the space.
 
-    Note that this space inherits from VectorSpace. 
+    Note that this space inherits from VectorSpace.
 
     The user can also provide either of the following:
 
-        (a) The mapping from the space to its dual. 
-        (b) The mapping from a dual vector to its representation 
-            within the space. 
+        (a) The mapping from the space to its dual.
+        (b) The mapping from a dual vector to its representation
+            within the space.
 
     The existence of such mappings follows from the Riesz representation
     theorem. If (a) is not provided, then then cannonical form of this
-    mapping is used, with a vector, x, being mapped to the dual vector 
+    mapping is used, with a vector, x, being mapped to the dual vector
     that acts on a vector, y, by y -> (x,y).
 
-    If (b) is not provided, the metric tensor for the space relative 
-    to its basis is computed along with its Cholesky factor. In this 
+    If (b) is not provided, the metric tensor for the space relative
+    to its basis is computed along with its Cholesky factor. In this
     case the mapping in (a) is replaced by one using dual components
-    that is more efficient. 
+    that is more efficient.
 
-    Within high-dimensional spaces, custom mappings to and from the 
-    dual space should be provided for the user for better efficiency.  
+    Within high-dimensional spaces, custom mappings to and from the
+    dual space should be provided for the user for better efficiency.
 
-    A HilbertSpace can be constructed directly, or from an already 
-    formed VectorSpace using the static method "from_vector_space". 
-    The latter option is often preferable as a custom definition of 
+    A HilbertSpace can be constructed directly, or from an already
+    formed VectorSpace using the static method "from_vector_space".
+    The latter option is often preferable as a custom definition of
     the functor "to_dual" requires that the dual space be available.
     """
 
@@ -478,20 +478,20 @@ class HilbertSpace(VectorSpace):
                  /, *, to_dual=None, from_dual=None, base=None):
         """
         Args:
-            dim (int): The dimension of the space, or of the 
-                finite-dimensional approximating space. 
+            dim (int): The dimension of the space, or of the
+                finite-dimensional approximating space.
             to_components (callable):  A functor that maps vectors
-                to their components. 
+                to their components.
             from_components (callable): A functor that maps components
-                to vectors.         
-            inner_product (callable): A functor the implements the inner 
-                product on the space. 
-            to_dual (callable | None): A funcator that maps a vector 
-                to the cannonically associated dual vector. 
+                to vectors.
+            inner_product (callable): A functor the implements the inner
+                product on the space.
+            to_dual (callable | None): A funcator that maps a vector
+                to the cannonically associated dual vector.
             from_dual (callable | None): A functor that maps a dual vector
-                to its representation on the space. 
-            base (VectorSpace | None): Set to none for an original space, 
-                and to the base space when forming the dual.                 
+                to its representation on the space.
+            base (VectorSpace | None): Set to none for an original space,
+                and to the base space when forming the dual.
         """
         super().__init__(dim, to_components, from_components)
         self.__inner_product = inner_product
@@ -517,16 +517,16 @@ class HilbertSpace(VectorSpace):
     @staticmethod
     def from_vector_space(space, inner_product, /, *, to_dual=None, from_dual=None):
         """
-        Form a HilbertSpace from a VectorSpace by providing additional structures. 
+        Form a HilbertSpace from a VectorSpace by providing additional structures.
 
         Args:
-            space (VectorSpace): The vector space to form as base for the Hilbert space. 
-            inner_product (callable): A functor the implements the inner 
-                product on the space. 
-            to_dual (callable | None): A funcator that maps a vector 
-                to the cannonically associated dual vector. 
+            space (VectorSpace): The vector space to form as base for the Hilbert space.
+            inner_product (callable): A functor the implements the inner
+                product on the space.
+            to_dual (callable | None): A funcator that maps a vector
+                to the cannonically associated dual vector.
             from_dual (callable | None): A functor that maps a dual vector
-                to its representation on the space.             
+                to its representation on the space.
         """
         return HilbertSpace(space.dim, space.to_components, space.from_components,
                             inner_product, to_dual=to_dual, from_dual=from_dual)
@@ -702,13 +702,13 @@ class EuclideanSpace(HilbertSpace):
     Euclidean space implemented as an instance of HilbertSpace."""
 
     def __init__(self, dim, /, *, metric_tensor=None, inverse_metric_tensor=None):
-        """        
+        """
         Args:
-            dim (int): Dimension of the space. 
-            metric_tensor (scipy LinearOperator): The metric tensor in the 
-                form of a scipy LinearOperator or an equivalent object. 
+            dim (int): Dimension of the space.
+            metric_tensor (scipy LinearOperator): The metric tensor in the
+                form of a scipy LinearOperator or an equivalent object.
             inverse_metric_tensor (scipy LinearOpertor): The inverse metric tensor
-                in the form of a scipy LinearOperator or an equivalent object.             
+                in the form of a scipy LinearOperator or an equivalent object.
 
         Notes:
             If the inverse metric tensor is not provided, it action is
@@ -762,17 +762,17 @@ class EuclideanSpace(HilbertSpace):
 
 class GaussianMeasure:
     """
-    Class for Gaussian measures on a Hilbert space.  
+    Class for Gaussian measures on a Hilbert space.
     """
 
     def __init__(self, domain, covariance, /, *, expectation=None,
                  sample=None, sample_using_matrix=False):
         """
         Args:
-            domain (HilbertSpace): The Hilbert space on which the measure is defined. 
-            covariance (callable): A functor representing the covariance operator. 
-            expectation (Vector): The expectation value of the measure. If none is provided, set equal to zero.  
-            sample (callable): A functor that returns a random sample from the measure.         
+            domain (HilbertSpace): The Hilbert space on which the measure is defined.
+            covariance (callable): A functor representing the covariance operator.
+            expectation (Vector): The expectation value of the measure. If none is provided, set equal to zero.
+            sample (callable): A functor that returns a random sample from the measure.
         """
         self._domain = domain
         self._covariance = covariance
@@ -836,16 +836,16 @@ class GaussianMeasure:
             translation (vector): The translational part of the mapping.
 
         Returns:
-            Gaussian Measure: The transformed measure defined on the 
+            Gaussian Measure: The transformed measure defined on the
                 codomain of the operator.
 
         Raises:
-            ValueError: If the domain of the operator domain is not 
+            ValueError: If the domain of the operator domain is not
                 the domain of the measure.
 
         Notes:
             If operator is not set, it defaults to the identity.
-            It translation is not set, it defaults to zero. 
+            It translation is not set, it defaults to zero.
         """
         assert operator.domain == self.domain
         if operator is None:
@@ -909,205 +909,344 @@ class GaussianMeasure:
         covariance = self.covariance + other.covariance
         expectation = self.expectation - other.expectation
         if self.sample_defined and other.sample_defined:
-            def sample(): r
-            return self.sample() - other.sample()
+            def sample():
+                return self.sample() - other.sample()
         else:
             sample = None
         return GaussianMeasure(self.domain, covariance, expectation=expectation, sample=sample)
 
 
 class LinearSolver(ABC):
-
-    def __init__(self):
-        self._operator = None
-        self._initial_guess = None
-
-    @abstractmethod
-    def _set_up(self):
-        pass
-
-    @property
-    def operator(self):
-        return self._operator
-
-    @operator.setter
-    def operator(self, operator):
-        self._operator = operator
-        self._set_up()
-
-    @property
-    def domain(self):
-        return self.operator.domain
-
-    @property
-    def codomain(self):
-        return self.operator.codomain
-
-    @property
-    def initial_guess(self):
-        return self._initial_guess
-
-    @initial_guess.setter
-    def initial_guess(self, initial_guess):
-        self._initial_guess = initial_guess
-
-    @property
-    @abstractmethod
-    def inverse_operator(self):
-        """Returns a LinearOperator that is the inverse of the given operator."""
-        pass
+    """
+    Abstract base class for linear solvers.
+    """
 
 
-class MatrixSolver(LinearSolver):
+def _inverse_operator_from_matrix_solver(operator, matrix_solver, galerkin):
+    # Returns the inverse mappings relative to the matrix representation.
+
+    domain = operator.domain
+    codomain = operator.codomain
+
+    if galerkin:
+        def mapping(y):
+            yp = codomain.to_dual(y)
+            cyp = codomain.dual.to_components(yp)
+            cx = matrix_solver(cyp, 0)
+            return domain.from_components(cx)
+
+        def dual_mapping(xp):
+            cxp = domain.dual.to_components(xp)
+            cy = matrix_solver(cxp, trans=1)
+            y = codomain.from_components(cy, 0)
+            return codomain.to_dual(y)
+
+        if operator.hilbert_operator:
+            def adjoint_mapping(x):
+                xp = domain.to_dual(x)
+                cxp = domain.dual.to_components(xp)
+                cy = matrix_solver(cxp, 1)
+                return codomain.from_components(cy)
+
+    else:
+
+        def mapping(y):
+            cy = codomain.to_components(y)
+            cx = matrix_solver(cy, 0)
+            return domain.from_components(cx)
+
+        def dual_mapping(xp):
+            cxp = domain.dual.to_components(xp)
+            cyp = matrix_solver(cxp, 1)
+            return codomain.dual.from_components(cyp)
+
+        if operator.hilbert_operator:
+            def adjoint_mapping(x):
+                xp = domain.to_dual(x)
+                cxp = domain.dual.to_components(xp)
+                cyp = matrix_solver(cxp, 1)
+                yp = codomain.dual.from_components(cyp)
+                return codomain.from_dual(yp)
+
+    if operator.hilbert_operator:
+        return LinearOperator(codomain, domain, mapping,
+                              dual_mapping=dual_mapping,
+                              adjoint_mapping=adjoint_mapping)
+    else:
+        return LinearOperator(codomain, domain, mapping,
+                              dual_mapping=dual_mapping)
+
+
+class DirectLinearSolver(LinearSolver):
+    """
+    Abstract base class for direct linear solvers.
+    """
 
     def __init__(self, galerkin):
-        super().__init__()
         self._galerkin = galerkin
 
     @property
     def galerkin(self):
+        """True if the Galerkin matrix representation is used."""
         return self._galerkin
 
     @abstractmethod
-    def _solver(self, c, trans):
-        pass
+    def _matrix_solver(self, matrix):
+        """
+        Returns the inverse operator's action in terms of its matrix representation.
 
-    def _mapping(self, y):
-        if self.galerkin:
-            yp = self.codomain.to_dual(y)
-            cyp = self.codomain.dual.to_components(yp)
-            cx = self._solver(cyp, 0)
-            return self.domain.from_components(cx)
-        else:
-            cy = self.codomain.to_components(y)
-            cx = self._solver(cy, 0)
-            return self.domain.from_components(cx)
+        Args:
+            matrix (Scipy matrix): Matrix representation of the operator.
 
-    def _dual_mapping(self, xp):
-        if self.galerkin:
-            cxp = self.domain.dual.to_components(xp)
-            cy = self._solver(cxp, 1)
-            y = self.codomain.from_components(cy)
-            return self.codomain.to_dual(y)
-        else:
+        Returns:
+            A callable object that takes arguments (cy, trans). If trans = 0,
+            this function acts the inverse operators matrix representation
+            on the components, cy. If trans=1, the action of the transpose
+            of the inverse's matrix representation is provided.
+        """
 
-            cxp = self.domain.dual.to_components(xp)
-            cyp = self._solver(cxp, 1)
-            return self.codomain.dual.from_components(cyp)
+    def __call__(self, operator):
+        """
+        Given a linear operator, return its inverse.
 
-    def _adjoint_mapping(self, x):
-        if self.galerkin:
-            xp = self.domain.to_dual(x)
-            cxp = self.domain.dual.to_components(xp)
-            cy = self._solver(cxp, 1)
-            return self.codomain.from_components(cy)
-        else:
-            xp = self.domain.to_dual(x)
-            cxp = self.domain.dual.to_components(xp)
-            cyp = self._solver(cxp, 1)
-            yp = self.codomain.dual.from_components(cyp)
-            return self.codomain.from_dual(yp)
+        Args:
+            operator (LineraOperator): The operator to be inverted.
+
+        Returns:
+            LinearOperator: A linear operator that implements the inverse
+                of the input operator.
+        """
+
+        if self.galerkin and not operator.hilbert_operator:
+            raise ValueError(
+                "Galerkin matrix not defined for non-Hilbert operators!")
+
+        matrix = operator.matrix(dense=True, galerkin=self.galerkin)
+        return _inverse_operator_from_matrix_solver(operator, self._matrix_solver(matrix), self.galerkin)
+
+
+class LUSolver(DirectLinearSolver):
+    """
+    Direct Linear solver class based on LU decomposition of the
+    matrix representation.
+    """
+
+    def __init__(self, /, *, galerkin=False):
+        """
+        Args:
+            galerkin (bool): If true, the Galerkin matrix representation is used,
+                otherwise the standard representation applied.
+        """
+        super().__init__(galerkin)
+
+    def _matrix_solver(self, matrix):
+        factor = lu_factor(matrix)
+        return (lambda y, trans: lu_solve(factor, y, trans))
+
+
+class CholeskySolver(DirectLinearSolver):
+    """
+    Direct Linear solver class based on Cholesky decomposition of the
+    matrix representation. This method is applicable only if the
+    chosen matrix representation is symmetric and positive definite.
+    """
+
+    def __init__(self, /, *, galerkin=False):
+        """
+        Args:
+            galerkin (bool): If true, the Galerkin matrix representation is used,
+                otherwise the standard representation applied.
+        """
+        super().__init__(galerkin)
+
+    def _matrix_solver(self, matrix):
+        factor = cho_factor(matrix)
+        return (lambda y, trans: cho_solve(factor, y))
+
+
+class IterativeLinearSolver(LinearSolver):
+
+    @abstractmethod
+    def __call__(self, operator, /, *, preconditioner=None, x0=None):
+        """
+        Given a linear operator, return its inverse.
+
+        Args:
+            operator (LineraOperator): The operator to be inverted.
+            preconditioner (LinearOperator): An optional operator for
+                preconditioning the linear system.
+            x0 (Vector): Optional initial guess for iterative solution,
+                the default value is zero.
+
+        Returns:
+            LinearOperator: A linear operator that implements the inverse
+                of the input operator.
+        """
+
+
+class IterativeMatrixLinearSolver(IterativeLinearSolver):
+    """
+    Abstract base class for iterative linear solvers based
+    on matrix representations.
+    """
+
+    def __init__(self, galerkin):
+        self._galerkin = galerkin
 
     @property
-    def inverse_operator(self):
-        return LinearOperator(self.codomain, self.domain, self._mapping,
-                              dual_mapping=self._dual_mapping,
-                              adjoint_mapping=self._adjoint_mapping)
+    def galerkin(self):
+        """True if the Galerkin matrix representation is used."""
+        return self._galerkin
+
+    @abstractmethod
+    def _matrix_solver(self, matrix, matrix_preconditioner, c0):
+        """
+        Returns the inverse operator's action in terms of its matrix representation.
+
+        Args:
+            matrix (Scipy LinearOperator): Matrix representation of the operator.
+            matrix_preconditioner (Scipy LinearOperator): Matrix representation
+                of the preconditioning operator.
+            c0 (scipy vector): Initial guess in component form.
+
+        Returns:
+            A callable object that takes arguments (cy, trans). If trans = 0,
+            this function acts the inverse operators matrix representation
+            on the components, cy. If trans=1, the action of the transpose
+            of the inverse's matrix representation is provided.
+        """
+
+    def __call__(self, operator, /, *, preconditioner=None, x0=None):
+        """
+        Given a linear operator, return its inverse.
+
+        Args:
+            operator (LineraOperator): The operator to be inverted.
+            preconditioner (LinearOperator): An optional operator for
+                preconditioning the linear system.
+            x0 (Vector): Optional initial guess for iterative solution,
+                the default value is zero.
+
+        Returns:
+            LinearOperator: A linear operator that implements the inverse
+                of the input operator.
+        """
+        if self.galerkin and not operator.hilbert_operator:
+            raise ValueError(
+                "Galerkin matrix not defined for non-Hilbert operators!")
+
+        matrix = operator.matrix(galerkin=self.galerkin)
+        if preconditioner is None:
+            matrix_preconditioner = None
+        else:
+            matrix_preconditioner = preconditioner.matrix(
+                galerkin=self.galerkin)
+
+        if x0 is None:
+            c0 = None
+        else:
+            c0 = operator.domain.to_components(x0)
+
+        return _inverse_operator_from_matrix_solver(operator, self._matrix_solver(matrix, matrix_preconditioner, c0), self.galerkin)
 
 
-class MatrixSolverLU(MatrixSolver):
+class CGMatrixSolver(IterativeMatrixLinearSolver):
+    """Solver class using the conjugate gradient method on the matrix representation."""
 
-    def __init__(self, /, *, galerkin=False):
+    def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, maxiter=None, callback=None):
+        """
+        Args:
+            galerkin (bool): True is the Galerkin matrix representation is used. 
+            rtol (float): relative tolerance within convergence checks. 
+            atol (float): absolute tolerance within convergence checks.
+            maxiter (int): maximum number of iterations to allow. 
+            callback (callable): callable function after each iteration. This function 
+                takes in as argument the current solution vector. 
+        """
         super().__init__(galerkin)
-
-    def _set_up(self):
-        self._factor = lu_factor(self.operator.matrix(
-            dense=True, galerkin=self.galerkin))
-
-    def _solver(self, c, trans):
-        return lu_solve(self._factor, c, trans=trans)
-
-
-class MatrixSolverCholesky(MatrixSolver):
-
-    def __init__(self, /, *, galerkin=False):
-        super().__init__(galerkin)
-
-    def _set_up(self):
-        self._factor = cho_factor(self.operator.matrix(
-            dense=True, galerkin=self.galerkin))
-
-    def _solver(self, c, trans):
-        return cho_solve(self._factor, c)
-
-
-class MatrixSolverCG(MatrixSolver):
-
-    def __init__(self, /, *, preconditioner=None, galerkin=False,
-                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):
-        super().__init__(galerkin)
-        self._preconditioner = preconditioner
-        self._galerkin = galerkin
         self._rtol = rtol
         self._atol = atol
         self._maxiter = maxiter
         self._callback = callback
 
-    def _set_up(self):
-        self._matrix = self.operator.matrix(galerkin=self.galerkin)
-
-    def _solver(self, c, trans):
-        if self.initial_guess is None:
-            x0 = None
-        else:
-            x0 = self.domain.to_components(self.initial_guess)
-        return cg(self._matrix, c, x0=x0, rtol=self._rtol, atol=self._atol,
-                  maxiter=self._maxiter, callback=self._callback)[0]
+    def _matrix_solver(self, matrix, matrix_preconditioner, c0):
+        return (lambda cy, trans: cg(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
+                                     M=matrix_preconditioner, callback=self._callback)[0])
 
 
-class MatrixSolverBICSTAB(MatrixSolver):
+class BICGMatrixSolver(IterativeMatrixLinearSolver):
+    """LinearSolver class using the biconjugate gradient method on the matrix representation."""
 
-    def __init__(self, /, *, preconditioner=None, galerkin=False,
-                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):
+    def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, maxiter=None, callback=None):
+        """
+        Args:
+            galerkin (bool): True is the Galerkin matrix representation is used. 
+            rtol (float): relative tolerance within convergence checks. 
+            atol (float): absolute tolerance within convergence checks.
+            maxiter (int): maximum number of iterations to allow. 
+            callback (callable): callable function after each iteration. This function 
+                takes in as argument the current solution vector. 
+        """
         super().__init__(galerkin)
-        self._preconditioner = preconditioner
-        self._galerkin = galerkin
         self._rtol = rtol
         self._atol = atol
         self._maxiter = maxiter
         self._callback = callback
 
-    def _set_up(self):
-        self._matrix = self.operator.matrix(galerkin=self.galerkin)
-
-    def _solver(self, c, trans):
-        if self.initial_guess is None:
-            x0 = None
-        else:
-            x0 = self.domain.to_components(self.initial_guess)
-        return bicgstab(self._matrix, c, x0=x0, rtol=self._rtol, atol=self._atol,
-                        maxiter=self._maxiter, callback=self._callback)[0]
+    def _matrix_solver(self, matrix, matrix_preconditioner, c0):
+        return (lambda cy, trans: bicg(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
+                                       M=matrix_preconditioner, callback=self._callback)[0])
 
 
-class MatrixSolverGMRES(MatrixSolver):
+class BICGSTABMatrixSolver(IterativeMatrixLinearSolver):
+    """LinearSolver class using the biconjugate gradient stablised method on the matrix representation."""
 
-    def __init__(self, /, *, preconditioner=None, galerkin=False,
-                 rtol=1e-05, atol=0.0, maxiter=None, callback=None):
+    def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, maxiter=None, callback=None):
+        """
+        Args:
+            galerkin (bool): True is the Galerkin matrix representation is used. 
+            rtol (float): relative tolerance within convergence checks. 
+            atol (float): absolute tolerance within convergence checks.
+            maxiter (int): maximum number of iterations to allow. 
+            callback (callable): callable function after each iteration. This function 
+                takes in as argument the current solution vector. 
+        """
         super().__init__(galerkin)
-        self._preconditioner = preconditioner
-        self._galerkin = galerkin
         self._rtol = rtol
         self._atol = atol
         self._maxiter = maxiter
         self._callback = callback
 
-    def _set_up(self):
-        self._matrix = self.operator.matrix(galerkin=self.galerkin)
+    def _matrix_solver(self, matrix, matrix_preconditioner, c0):
+        return (lambda cy, trans: bicgstab(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
+                                           M=matrix_preconditioner, callback=self._callback)[0])
 
-    def _solver(self, c, trans):
-        if self.initial_guess is None:
-            x0 = None
-        else:
-            x0 = self.domain.to_components(self.initial_guess)
-        return gmres(self._matrix, c, x0=x0, rtol=self._rtol, atol=self._atol,
-                     maxiter=self._maxiter, callback=self._callback)[0]
+
+class GMRESMatrixSolver(IterativeMatrixLinearSolver):
+    """LinearSolver class using the GMRES method on the matrix representation."""
+
+    def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, restart=None, maxiter=None, callback=None, callback_type=None):
+        """
+        Args:
+            galerkin (bool): True is the Galerkin matrix representation is used. 
+            rtol (float): relative tolerance within convergence checks. 
+            atol (float): absolute tolerance within convergence checks.
+            restart (int): Number of iterations between restarts.
+            maxiter (int): maximum number of iterations (restart cycles).
+            callback (callable): callable function after each iteration. Signature 
+                of this function is determined by callback_type.
+            callback_type ("x", "pr_norm", "legacy"): If "x" the current solution is 
+                passed to the callback function, if "pr_norm" it is the preconditioned
+                residual norm. The default is "legacy" which means the same as "pr_norm", 
+                but changes the meaning of maxiter to count inner iterations instead of 
+                restart cycles. 
+        """
+        super().__init__(galerkin)
+        self._rtol = rtol
+        self._atol = atol
+        self._maxiter = maxiter
+        self._callback = callback
+
+    def _matrix_solver(self, matrix, matrix_preconditioner, c0):
+        return (lambda cy, trans: bicgstab(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
+                                           M=matrix_preconditioner, callback=self._callback)[0])
