@@ -20,5 +20,4 @@ class LeastSquaresProblem:
         # return self.model_space.identity()
 
     def normal_solver(self, damping, solver):
-        solver.operator = self.normal_operator(damping)
-        return solver.inverse_operator @ self._forward_operator.adjoint
+        return solver(self.normal_operator(damping)) @ self._forward_operator.adjoint

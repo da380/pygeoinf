@@ -4,50 +4,29 @@ from scipy.stats import norm, uniform
 import matplotlib.pyplot as plt
 
 
-dimX = 5
-X = la.EuclideanSpace(dimX)
+X = Sobolev(128, 2, 0.1)
 
-dimY = 3
-Y = la.EuclideanSpace(dimY)
-
-A = la.LinearOperator(X, Y, lambda x: x[:dimY])
-
-x = X.random()
-y = Y.random()
-
-print(Y.inner_product(y, A(x)))
-print(X.inner_product(A.adjoint(y), x))
-
-
-mu = la.GaussianMeasure(X, lambda x: x, sample_using_matrix=True)
-
-nu = mu.affine_mapping(operator=A, translation=y)
-
-print(nu.covariance)
-
-print(nu.sample())
-
-Z = Sobolev(128, 2, 0.1)
-
-kappa = Z.sobolev_gaussian_measure(4, 0.1, 1)
-
+kappa = X.sobolev_gaussian_measure(4, 0.1, 1)
+Q = kappa.covariance
 
 n = 10
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
-B = Z.point_evaluation_operator(lats, lons)
+A = X.point_evaluation_operator(lats, lons)
 
-Q = kappa.covariance
+Y = A.codomain
 
-C = B @ Q @ B.adjoint
+C = A @ Q @ A.adjoint
 
-solver = la.CGMatrixSolver()
+v = Y.random()
+
+w = C(v)
+
+solver = la.CGSolver()
+
 D = solver(C)
 
-# solver = la.MatrixSolverLU()
+x = D(w)
 
-# solver.operator = C
-
-# D = solver.inverse_operator
-
-print(D @ C)
+print(v)
+print(x)

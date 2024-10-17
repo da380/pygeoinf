@@ -604,99 +604,6 @@ class HilbertSpace(VectorSpace):
         return self.inner_product(self.from_dual(xp1), self.from_dual(xp2))
 
 
-class HilbertSpaceDirectSum(HilbertSpace):
-    """Class for direct sums of Hilbert spaces."""
-
-    def __init__(self, spaces):
-        """Form direct sum of a list of Hilbert spaces."""
-        self._spaces = spaces
-        dim = sum(self.dims)
-        super().__init__(dim, self._to_components, self._from_components,
-                         self._inner_product, to_dual=self._to_dual,
-                         from_dual=self._from_dual)
-
-    @property
-    def spaces(self):
-        """ Return the list of spaces."""
-        return self._spaces
-
-    @property
-    def dims(self):
-        """Return a list of dimensions for the spaces."""
-        return [space.dim for space in self._spaces]
-
-    def space(self, i):
-        """Return the ith space."""
-        if i < 0 or i > len(self._spaces):
-            raise IndexError()
-        return self._spaces[i]
-
-    def canonical_injection(self, i, x):
-        """Form an element of the direct sum from an element of the ith space."""
-        y = []
-        for j, space in enumerate(self.spaces):
-            if i == j:
-                y.append(x)
-            else:
-                y.append(space.zero)
-        return y
-
-    def canonical_projection(self, i, y):
-        """Return the element from the ith space."""
-        return y[i]
-
-    @property
-    def canonical_dual(self):
-        """Return the direct sum of the dual spaces."""
-        return HilbertSpaceDirectSum([space.dual for space in self.spaces])
-
-    def _to_components(self, y):
-        # Map a list of vectors to a component vector.
-        c = np.zeros(0)
-        for x, space, in zip(y, self.spaces):
-            c = np.append(c, space.to_components(x))
-        return c
-
-    def _from_components(self, cy):
-        # Form a list of vectors from a component vector.
-        y = []
-        start = 0
-        for space in self.spaces:
-            finish = start + space.dim
-            cx = cy[start:finish]
-            y.append(space.from_components(cx))
-            start = finish
-        return y
-
-    def _inner_product(self, y1, y2):
-        # Implementation of the inner product.
-        products = [space.inner_product(x1, x2)
-                    for space, x1, x2 in zip(self.spaces, y1, y2)]
-        return sum(products)
-
-    def _to_dual(self, y1):
-        # Implementation of the mapping to the dual space.
-        def mapping(y2):
-            actions = [space.to_dual(x1)(x2)
-                       for space, x1, x2 in zip(self.spaces, y1, y2)]
-            return sum(actions)
-        return LinearForm(self, mapping=mapping)
-
-    def _dual_to_canonical_dual(self, yp):
-        # Map a dual vector into the canonical dual.
-        if yp.components_stored:
-            return self.canonical_dual.from_components(yp.components)
-        else:
-            mappings = [lambda x: yp(self.canonical_injection(i, x))
-                        for i in range(len(self.spaces))]
-            return [LinearForm(space, mapping=mapping) for space, mapping in zip(self.spaces, mappings)]
-
-    def _from_dual(self, yp):
-        # Implementation of the mapping from the dual space.
-        zp = self._dual_to_canonical_dual(yp)
-        return [space.from_dual(xp) for space, xp in zip(self.spaces, zp)]
-
-
 class EuclideanSpace(HilbertSpace):
     """
     Euclidean space implemented as an instance of HilbertSpace."""
@@ -765,39 +672,47 @@ class GaussianMeasure:
     Class for Gaussian measures on a Hilbert space.
     """
 
-    def __init__(self, domain, covariance, /, *, expectation=None,
-                 sample=None, sample_using_matrix=False):
+    def __init__(self, domain, covariance, /, *,
+                 inverse_covariance=None,
+                 expectation=None,
+                 sample=None):
         """
         Args:
             domain (HilbertSpace): The Hilbert space on which the measure is defined.
             covariance (callable): A functor representing the covariance operator.
+            inverse_covariance (callable): A functor representing the action of the inverse covariance operator.
             expectation (Vector): The expectation value of the measure. If none is provided, set equal to zero.
             sample (callable): A functor that returns a random sample from the measure.
         """
         self._domain = domain
         self._covariance = covariance
+        self._inverse_covariance = inverse_covariance
+        self._inverse_covariance_set = self._inverse_covariance is not None
+
         if expectation is None:
             self._expectation = self.domain.zero
         else:
             self._expectation = expectation
-        if sample is None:
-            self._sample_defined = False
-        else:
-            self._sample = sample
-            self._sample_defined = True
-        if sample is None and sample_using_matrix:
-            dist = multivariate_normal(
-                mean=self.expectation, cov=self.covariance.matrix(dense=True, galerkin=True))
-            self._sample = lambda: self.domain.from_components(dist.rvs())
-            self._sample_defined = True
+
+        self._sample = sample
+        self._sample_set = self._sample is not None
+
+        # if sample is None and sample_using_matrix:
+        #    dist = multivariate_normal(
+        #        mean=self.expectation, cov=self.covariance.matrix(dense=True, galerkin=True))
+        #    self._sample = lambda: self.domain.from_components(dist.rvs())
+        #    self._sample_defined = True
 
     @staticmethod
     def from_factored_covariance(factor, /, *,  expectation=None):
         covariance = factor @ factor.adjoint
-        if expectation is None:
-            def sample(): return factor(norm().rvs(size=factor.domain.dim))
-        else:
-            def sample(): return expectation + sample()
+
+        def sample():
+            value = factor(norm().rvs(size=factor.domain.dim))
+            if expectation is None:
+                return value
+            else:
+                return value + expectation
         return GaussianMeasure(factor.codomain, covariance, expectation=expectation, sample=sample)
 
     @property
@@ -811,21 +726,85 @@ class GaussianMeasure:
         return LinearOperator.self_adjoint(self.domain, self._covariance)
 
     @property
+    def inverse_covariance_set(self):
+        return self._inverse_covariance_set
+
+    @property
+    def inverse_covariance(self):
+        """The inverse covariance operator as an instance of LinearOperator."""
+        if self.inverse_covariance_set:
+            return LinearOperator.self_adjoint(self.domain, self._inverse_covariance)
+        else:
+            raise NotImplementedError()
+
+    @property
     def expectation(self):
         """The expectation of the measure."""
         return self._expectation
 
     @property
-    def sample_defined(self):
+    def sample_set(self):
         """True if the sample method has been implemented."""
-        return self._sample_defined
+        return self._sample_set
 
     def sample(self):
         """Returns a random sample drawn from the measure."""
-        if self.sample_defined:
+        if self.sample_set:
             return self._sample()
         else:
-            raise NotImplementedError
+            raise NotImplementedError()
+
+    def set_sample_using_dense_matrix():
+        """
+        Set up the sampling method via dense matrix decomposition. 
+        """
+        def sample():
+            dist = multivariate_normal(
+                mean=self.expectation,
+                cov=self.covariance.matrix(dense=True, galerkin=True))
+        self._sample = sample
+        self._sample_set = True
+
+    def cameron_martin_space(self, /, *,
+                             solver=None,
+                             preconditioner=None):
+        """
+        Returns the associated Cameron-Martin space as a HilbertSpace instance. 
+
+        Args:
+            inverse_covariance (LinearOperator): The inverse covariance operator. If this 
+                is not provided, it is computed using the provided solver. 
+            solver (LinearSolver): The linear solver used to invert the covariance. The 
+                default is to use the conjugate gradient algorithm. 
+            preconditioner (LinearOperator): A preconditioner for the inversion of the 
+                covariance. Only used if the solver method is an iterative one.
+
+        Returns:
+            HilbertSpace: The Cameron-Martin space. 
+        """
+
+        if self._inverse_covariance is not None:
+            inverse_covariance = self._inverse_covariance
+        else:
+            if solver is None:
+                solver = CGSolver()
+            if isinstance(solver, IterativeLinearSolver):
+                inverse_covariance = solver(
+                    self.covariance, preconditioner=preconditioner)
+            else:
+                inverse_covariance = solver(self.covariance)
+
+        def inner_product(x1, x2):
+            return self.domain.inner_product(inverse_covariance(x1), x2)
+
+        def to_dual(x):
+            return self.domain.to_dual(inverse_covariance(x))
+
+        def from_dual(xp):
+            return self.covariance(self.domain.from_dual(xp))
+
+        return HilbertSpace.from_vector_space(self.domain, inner_product,
+                                              to_dual=to_dual, from_dual=from_dual)
 
     def affine_mapping(self, /, *,  operator=None, translation=None):
         """
@@ -1147,7 +1126,10 @@ class IterativeMatrixLinearSolver(IterativeLinearSolver):
         else:
             c0 = operator.domain.to_components(x0)
 
-        return _inverse_operator_from_matrix_solver(operator, self._matrix_solver(matrix, matrix_preconditioner, c0), self.galerkin)
+        return _inverse_operator_from_matrix_solver(operator,
+                                                    self._matrix_solver(
+                                                        matrix, matrix_preconditioner, c0),
+                                                    self.galerkin)
 
 
 class CGMatrixSolver(IterativeMatrixLinearSolver):
@@ -1170,8 +1152,14 @@ class CGMatrixSolver(IterativeMatrixLinearSolver):
         self._callback = callback
 
     def _matrix_solver(self, matrix, matrix_preconditioner, c0):
-        return (lambda cy, trans: cg(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
-                                     M=matrix_preconditioner, callback=self._callback)[0])
+        return (lambda cy, trans: cg(matrix,
+                                     cy,
+                                     x0=c0,
+                                     rtol=self._rtol,
+                                     atol=self._atol,
+                                     maxiter=self._maxiter,
+                                     M=matrix_preconditioner,
+                                     callback=self._callback)[0])
 
 
 class BICGMatrixSolver(IterativeMatrixLinearSolver):
@@ -1194,8 +1182,14 @@ class BICGMatrixSolver(IterativeMatrixLinearSolver):
         self._callback = callback
 
     def _matrix_solver(self, matrix, matrix_preconditioner, c0):
-        return (lambda cy, trans: bicg(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
-                                       M=matrix_preconditioner, callback=self._callback)[0])
+        return (lambda cy, trans: bicg(matrix,
+                                       cy,
+                                       x0=c0,
+                                       rtol=self._rtol,
+                                       atol=self._atol,
+                                       maxiter=self._maxiter,
+                                       M=matrix_preconditioner,
+                                       callback=self._callback)[0])
 
 
 class BICGSTABMatrixSolver(IterativeMatrixLinearSolver):
@@ -1218,8 +1212,14 @@ class BICGSTABMatrixSolver(IterativeMatrixLinearSolver):
         self._callback = callback
 
     def _matrix_solver(self, matrix, matrix_preconditioner, c0):
-        return (lambda cy, trans: bicgstab(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
-                                           M=matrix_preconditioner, callback=self._callback)[0])
+        return (lambda cy, trans: bicgstab(matrix,
+                                           cy,
+                                           x0=c0,
+                                           rtol=self._rtol,
+                                           atol=self._atol,
+                                           maxiter=self._maxiter,
+                                           M=matrix_preconditioner,
+                                           callback=self._callback)[0])
 
 
 class GMRESMatrixSolver(IterativeMatrixLinearSolver):
@@ -1244,9 +1244,105 @@ class GMRESMatrixSolver(IterativeMatrixLinearSolver):
         super().__init__(galerkin)
         self._rtol = rtol
         self._atol = atol
+        self._restart = restart
         self._maxiter = maxiter
         self._callback = callback
+        self._callback_type = callback_type
 
     def _matrix_solver(self, matrix, matrix_preconditioner, c0):
-        return (lambda cy, trans: bicgstab(matrix, cy, x0=c0, rtol=self._rtol, atol=self._atol, maxiter=self._maxiter,
-                                           M=matrix_preconditioner, callback=self._callback)[0])
+        return (lambda cy, trans: gmres(matrix,
+                                        cy,
+                                        x0=c0,
+                                        rtol=self._rtol,
+                                        atol=self._atol,
+                                        restart=self._restart,
+                                        maxiter=self._maxiter,
+                                        M=matrix_preconditioner,
+                                        callback=self._callback,
+                                        callback_type=self._callback_type)[0])
+
+
+class CGSolver(IterativeLinearSolver):
+    """
+    LinearSolver class using the conjugate gradient algorithm within 
+    use of the matrix representation. Can be applied to self-adjoint 
+    operators on a general Hilbert space. 
+    """
+
+    def __init__(self, rtol=1.e-5, atol=0, maxiter=None, callback=None):
+        if (rtol > 0):
+            self._rtol = rtol
+        else:
+            raise ValueError("rtol must be positive")
+        if (atol >= 0):
+            self._atol = atol
+        else:
+            raise ValueError("atol must be non-negative!")
+        if maxiter is None:
+            self._maxiter = maxiter
+        else:
+            if (maxiter >= 0):
+                self._maxiter = maxiter
+            else:
+                raise ValueError("maxiter must be None or positive")
+
+        self._callback = callback
+
+    def __call__(self, operator, /, *, preconditioner=None, x0=None):
+
+        if operator.domain != operator.codomain:
+            raise ValueError("Operator is not self-adjoint!")
+
+        def mapping(y):
+
+            if x0 is None:
+                x = operator.domain.zero
+            else:
+                x = x0
+
+            r = y - operator(x)
+            if preconditioner is None:
+                z = r
+            else:
+                z = preconditioner(r)
+            p = z
+
+            tol = np.max([self._atol, self._rtol * operator.domain.norm(y)])
+
+            if self._maxiter is None:
+                maxiter = 10 * operator.domain.dim
+            else:
+                maxiter = self._maxiter
+
+            i = 0
+            while (operator.domain.norm(r) >= tol):
+
+                i += 1
+                if (i > maxiter):
+                    break
+
+                q = operator(p)
+                num = operator.domain.inner_product(r, z)
+                den = operator.domain.inner_product(p, q)
+                alpha = num / den
+
+                x += alpha * p
+                r -= alpha * q
+
+                if preconditioner is None:
+                    z = r
+                else:
+                    z = preconditioner(r)
+
+                den = num
+                num = operator.domain.inner_product(r, z)
+                beta = num / den
+
+                p = z + beta * p
+
+                if self._callback is not None:
+                    self._callback(x)
+
+            return x
+
+        return LinearOperator.self_adjoint(operator.domain, mapping)
