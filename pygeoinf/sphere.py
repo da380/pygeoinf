@@ -185,7 +185,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
 
         Args:
             latitude (float): Latitude for the Dirac measure.
-            longitutde (float): Longitude for the Dirac measure.
+            longitude (float): Longitude for the Dirac measure.
             degrees (bool): If true, angles in degrees, otherwise
                 they are in radians.
         Returns:
@@ -211,7 +211,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
 
         Args:
             latitude (float): Latitude for the Dirac measure.
-            longitutde (float): Longitude for the Dirac measure.
+            longitude (float): Longitude for the Dirac measure.
             degrees (bool): If true, angles in degrees, otherwise
                 they are in radians.
         Returns:
@@ -326,9 +326,27 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         def adjoint_mapping(u):
             return adjoint_matrix @ self.to_components(u)
 
+        inverse_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
+            lambda l: 1 / g(l))
+
+        inverse_adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
+            lambda l: 1 / h(l))
+
+        def inverse_mapping(u):
+            return inverse_matrix @ self.to_components(u)
+
+        def inverse_adjoint_mapping(c):
+            return self.from_components(inverse_adjoint_matrix @ c)
+
         factor = LinearOperator(domain, self, mapping,
                                 adjoint_mapping=adjoint_mapping)
-        return GaussianMeasure.from_factored_covariance(factor, expectation=expectation)
+
+        inverse_factor = LinearOperator(
+            self, domain, inverse_mapping, adjoint_mapping=inverse_adjoint_mapping)
+
+        return GaussianMeasure.from_factored_covariance(factor,
+                                                        inverse_factor=inverse_factor,
+                                                        expectation=expectation)
 
     def sobolev_gaussian_measure(self, order, scale, amplitude, /, *,  expectation=None):
         """
@@ -394,11 +412,11 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         # Normalise a degree-dependent scaling function, f, so that
         # the associated invariant Gaussian measure has standard deviation
         # for point values equal to amplitude.
-        sum = 0
+        norm = 0
         for l in range(self.lmax+1):
-            sum += f(l) * (2*l+1) / (4*np.pi * self.radius **
-                                     2 * self._sobolev_function(l))
-        return lambda l: amplitude**2 * f(l) / sum
+            norm += f(l) * (2*l+1) / (4*np.pi * self.radius **
+                                      2 * self._sobolev_function(l))
+        return lambda l: amplitude**2 * f(l) / norm
 
 
 class Lebesgue(Sobolev):

@@ -10,6 +10,7 @@ from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve
 from scipy.stats import norm, multivariate_normal
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
+from scipy.sparse import diags
 
 
 class VectorSpace:
@@ -317,10 +318,15 @@ class LinearOperator:
         """Add another operator."""
         domain = self.domain
         codomain = self.codomain
-        def mapping(x): return self(x) + other(x)
-        def dual_mapping(yp): return self.dual(yp) + other.dual(yp)
+
+        def mapping(x):
+            return self(x) + other(x)
+
+        def dual_mapping(yp):
+            return self.dual(yp) + other.dual(yp)
         if self.hilbert_operator:
-            def adjoint_mapping(y): return self.adjoint(y) + other.adjoint(y)
+            def adjoint_mapping(y):
+                return self.adjoint(y) + other.adjoint(y)
         else:
             adjoint_mapping = None
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping,
@@ -334,9 +340,11 @@ class LinearOperator:
         def mapping(x):
             return self(x) - other(x)
 
-        def dual_mapping(yp): return self.dual(yp) - other.dual(yp)
+        def dual_mapping(yp):
+            return self.dual(yp) - other.dual(yp)
         if self.hilbert_operator:
-            def adjoint_mapping(y): return self.adjoint(y) - other.adjoint(y)
+            def adjoint_mapping(y):
+                return self.adjoint(y) - other.adjoint(y)
         else:
             adjoint_mapping = None
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping,
@@ -614,7 +622,7 @@ class EuclideanSpace(HilbertSpace):
             dim (int): Dimension of the space.
             metric_tensor (scipy LinearOperator): The metric tensor in the
                 form of a scipy LinearOperator or an equivalent object.
-            inverse_metric_tensor (scipy LinearOpertor): The inverse metric tensor
+            inverse_metric_tensor (scipy LinearOperator): The inverse metric tensor
                 in the form of a scipy LinearOperator or an equivalent object.
 
         Notes:
@@ -638,6 +646,33 @@ class EuclideanSpace(HilbertSpace):
                              self._inner_product_with_metric,
                              to_dual=self._to_dual_with_metric,
                              from_dual=self._from_dual_with_metric)
+
+    def standard_gaussisan_measure(self, standard_deviation):
+        """
+        Returns a Gaussian measure on the space with covariance proportional 
+        to the identity operator and with zero expectation. 
+
+        Args:
+            standard_deviation (float): The standard deviation for each component. 
+        """
+        factor = standard_deviation * self.identity()
+        inverse_factor = self.identity() / standard_deviation
+        return GaussianMeasure.from_factored_covariance(factor, inverse_factor=inverse_factor)
+
+    def diagonal_covariance(self, standard_deviations):
+        """
+        Returns a Gaussian measure on the space with a diagonal 
+        covariance and with zero expectation. 
+
+        Args:
+            standard_deviations (vector): Vector of the standard deviations. 
+        """
+        matrix = diags([standard_deviations], [0])
+        inverse_matrix = diags([standard_deviations.reciprocal()], [0])
+        factor = LinearOperator.self_adjoint(self, lambda x: matrix @ x)
+        inverse_factor = LinearOperator.self_adjoint(
+            self, lambda x: inverse_matrix @ x)
+        return GaussianMeasure.from_factored_covariance(factor, inverse_factor=inverse_factor)
 
     def _identity(self, x):
         return x
@@ -694,18 +729,31 @@ class GaussianMeasure:
         else:
             self._expectation = expectation
 
-        self._sample = sample
-        self._sample_set = self._sample is not None
+        if sample is None:
+            self._dist = multivariate_normal(mean=self.expectation,
+                                             cov=self.covariance.matrix(dense=True, galerkin=True))
+            self._sample = self._sample_using_dense_matrix
+        else:
+            self._sample = sample
 
-        # if sample is None and sample_using_matrix:
-        #    dist = multivariate_normal(
-        #        mean=self.expectation, cov=self.covariance.matrix(dense=True, galerkin=True))
-        #    self._sample = lambda: self.domain.from_components(dist.rvs())
-        #    self._sample_defined = True
+        self._solver = CGSolver(rtol=1.e-8)
+        self._preconditioner = None
 
     @staticmethod
-    def from_factored_covariance(factor, /, *,  expectation=None):
-        covariance = factor @ factor.adjoint
+    def from_factored_covariance(factor, /, *, inverse_factor=None, expectation=None):
+        """
+        For a Gaussian measure hows covariance, C, is approximated in the form C = LL*,
+        with L a mapping into the domain from Euclidean space.
+
+        Args:
+            factor (LinearOperator): Linear operator from Euclidean space into the
+                domain of the measure.
+            inverse_factor (LinearOperator): Inverse of the factor operator. Default is None.
+            expectation (vector): expected value of the measure. Default is zero.
+
+        Returns:
+            GassianMeasure: The measure with the required covariance and expectation.
+        """
 
         def sample():
             value = factor(norm().rvs(size=factor.domain.dim))
@@ -713,7 +761,19 @@ class GaussianMeasure:
                 return value
             else:
                 return value + expectation
-        return GaussianMeasure(factor.codomain, covariance, expectation=expectation, sample=sample)
+
+        covariance = factor @ factor.adjoint
+
+        if inverse_factor is None:
+            inverse_covariance = None
+        else:
+            inverse_covariance = inverse_factor.adjoint @ inverse_factor
+
+        return GaussianMeasure(factor.codomain,
+                               covariance,
+                               inverse_covariance=inverse_covariance,
+                               expectation=expectation,
+                               sample=sample)
 
     @property
     def domain(self):
@@ -726,16 +786,17 @@ class GaussianMeasure:
         return LinearOperator.self_adjoint(self.domain, self._covariance)
 
     @property
-    def inverse_covariance_set(self):
-        return self._inverse_covariance_set
-
-    @property
     def inverse_covariance(self):
         """The inverse covariance operator as an instance of LinearOperator."""
-        if self.inverse_covariance_set:
-            return LinearOperator.self_adjoint(self.domain, self._inverse_covariance)
+        if self._inverse_covariance_set:
+            mapping = self._inverse_covariance
         else:
-            raise NotImplementedError()
+            if isinstance(self._solver, IterativeLinearSolver):
+                mapping = self._solver(
+                    self.covariance, preconditioner=self._preconditioner)
+            else:
+                mapping = self._solver(self.covariance)
+        return LinearOperator.self_adjoint(self.domain, mapping)
 
     @property
     def expectation(self):
@@ -743,68 +804,50 @@ class GaussianMeasure:
         return self._expectation
 
     @property
-    def sample_set(self):
-        """True if the sample method has been implemented."""
-        return self._sample_set
-
-    def sample(self):
-        """Returns a random sample drawn from the measure."""
-        if self.sample_set:
-            return self._sample()
-        else:
-            raise NotImplementedError()
-
-    def set_sample_using_dense_matrix():
+    def cameron_martin_space(self):
         """
-        Set up the sampling method via dense matrix decomposition. 
-        """
-        def sample():
-            dist = multivariate_normal(
-                mean=self.expectation,
-                cov=self.covariance.matrix(dense=True, galerkin=True))
-        self._sample = sample
-        self._sample_set = True
+          Returns the associated Cameron-Martin space as a HilbertSpace instance.
 
-    def cameron_martin_space(self, /, *,
-                             solver=None,
-                             preconditioner=None):
-        """
-        Returns the associated Cameron-Martin space as a HilbertSpace instance. 
+          Args:
+              inverse_covariance (LinearOperator): The inverse covariance operator. If this
+                  is not provided, it is computed using the provided solver.
+              solver (LinearSolver): The linear solver used to invert the covariance. The
+                  default is to use the conjugate gradient algorithm.
+              preconditioner (LinearOperator): A preconditioner for the inversion of the
+                  covariance. Only used if the solver method is an iterative one.
 
-        Args:
-            inverse_covariance (LinearOperator): The inverse covariance operator. If this 
-                is not provided, it is computed using the provided solver. 
-            solver (LinearSolver): The linear solver used to invert the covariance. The 
-                default is to use the conjugate gradient algorithm. 
-            preconditioner (LinearOperator): A preconditioner for the inversion of the 
-                covariance. Only used if the solver method is an iterative one.
-
-        Returns:
-            HilbertSpace: The Cameron-Martin space. 
-        """
-
-        if self._inverse_covariance is not None:
-            inverse_covariance = self._inverse_covariance
-        else:
-            if solver is None:
-                solver = CGSolver()
-            if isinstance(solver, IterativeLinearSolver):
-                inverse_covariance = solver(
-                    self.covariance, preconditioner=preconditioner)
-            else:
-                inverse_covariance = solver(self.covariance)
+          Returns:
+              HilbertSpace: The Cameron-Martin space.
+          """
 
         def inner_product(x1, x2):
-            return self.domain.inner_product(inverse_covariance(x1), x2)
+            return self.domain.inner_product(self.inverse_covariance(x1), x2)
 
         def to_dual(x):
-            return self.domain.to_dual(inverse_covariance(x))
+            return self.domain.to_dual(self.inverse_covariance(x))
 
         def from_dual(xp):
             return self.covariance(self.domain.from_dual(xp))
 
         return HilbertSpace.from_vector_space(self.domain, inner_product,
                                               to_dual=to_dual, from_dual=from_dual)
+
+    def sample(self):
+        """Returns a random sample drawn from the measure."""
+        return self._sample()
+
+    def _sample_using_dense_matrix(self):
+        # return sample using dense matrix factorisation.
+        return self._dist.rvs()
+
+    def set_solver(self, solver):
+        """Set the linear solver to be used in computing the inverse covariance."""
+
+        self._solver = solver
+
+    def set_preconditioner(self, preconditioner):
+        """Set the preconditioner to be used in computing the inverse covariance."""
+        self._preconditioner = preconditioner
 
     def affine_mapping(self, /, *,  operator=None, translation=None):
         """
@@ -826,45 +869,42 @@ class GaussianMeasure:
             If operator is not set, it defaults to the identity.
             It translation is not set, it defaults to zero.
         """
-        assert operator.domain == self.domain
+
         if operator is None:
-            covariance = self.covariance
+            _operator = self.domain.identity()
         else:
-            covariance = operator @ self.covariance @ operator.adjoint
-        expectation = operator(self.expectation)
-        if translation is not None:
-            expectation = expectation + translation
-        if self.sample_defined:
-            if translation is None:
-                def sample():
-                    return operator(self.sample())
-            else:
-                def sample():
-                    return operator(self.sample()) + translation
+            _operator = operator
+
+        if translation is None:
+            _translation = _operator.codomain.zero
         else:
-            sample = None
-        return GaussianMeasure(operator.codomain, covariance, expectation=expectation, sample=sample)
+            _translation = translation
+
+        covariance = _operator @ self.covariance @ _operator.adjoint
+        expectation = _operator(self.expectation) + _translation
+
+        def sample():
+            return _operator(self.sample()) + _translation
+
+        return GaussianMeasure(_operator.codomain, covariance, expectation=expectation, sample=sample)
 
     def __neg__(self):
         """Negative of the measure."""
-        if self.sample_defined:
-            def sample():
-                return -self.sample()
-        else:
-            sample = None
-        return GaussianMeasure(self.domain, self.covariance, expectation=-self.expectation, sample=sample)
+
+        return GaussianMeasure(self.domain,
+                               -self.covariance,
+                               inverse_covariance=-self.inverse_covariance,
+                               expectation=-self.expectation,
+                               sample=lambda: -self.sample())
 
     def __mul__(self, alpha):
         """Multiply the measure by a scalar."""
-        covariance = LinearOperator.self_adjoint(
-            self.domain, lambda x: alpha*2 * self.covariance(x))
-        expectation = alpha * self.expectation
-        if self.sample_defined:
-            def sample():
-                return alpha * self.sample()
-        else:
-            sample = None
-        return GaussianMeasure(self.domain, covariance, expectation=expectation, sample=sample)
+        return GaussianMeasure(self.domain,
+                               alpha * alpha * self.covariance,
+                               inverse_covariance=self.inverse_covariance /
+                               (alpha * alpha),
+                               expectation=alpha * self.expectation,
+                               sample=lambda: alpha * self.sample())
 
     def __rmul__(self, alpha):
         """Multiply the measure by a scalar."""
@@ -872,27 +912,19 @@ class GaussianMeasure:
 
     def __add__(self, other):
         """Add two measures on the same domain."""
-        assert self.domain == other.domain
-        covariance = self.covariance + other.covariance
-        expectation = self.expectation + other.expectation
-        if self.sample_defined and other.sample_defined:
-            def sample():
-                return self.sample() + other.sample()
-        else:
-            sample = None
-        return GaussianMeasure(self.domain, covariance, expectation=expectation, sample=sample)
+        return GaussianMeasure(self.domain,
+                               self.covariance + other.covariance,
+                               inverse_covariance=self.inverse_covariance + other.inverse_covariance,
+                               expectation=self.expectation + other.expectation,
+                               sample=lambda: self.sample() + other.sample())
 
     def __sub__(self, other):
         """Subtract two measures on the same domain."""
-        assert self.domain == other.domain
-        covariance = self.covariance + other.covariance
-        expectation = self.expectation - other.expectation
-        if self.sample_defined and other.sample_defined:
-            def sample():
-                return self.sample() - other.sample()
-        else:
-            sample = None
-        return GaussianMeasure(self.domain, covariance, expectation=expectation, sample=sample)
+        return GaussianMeasure(self.domain,
+                               self.covariance + other.covariance,
+                               inverse_covariance=self.inverse_covariance + other.inverse_covariance,
+                               expectation=self.expectation - other.expectation,
+                               sample=lambda: self.sample() - other.sample())
 
 
 class LinearSolver(ABC):
@@ -1044,6 +1076,7 @@ class CholeskySolver(DirectLinearSolver):
 
 
 class IterativeLinearSolver(LinearSolver):
+    """Base class for iterative linear solvers."""
 
     @abstractmethod
     def __call__(self, operator, /, *, preconditioner=None, x0=None):
@@ -1138,12 +1171,12 @@ class CGMatrixSolver(IterativeMatrixLinearSolver):
     def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, maxiter=None, callback=None):
         """
         Args:
-            galerkin (bool): True is the Galerkin matrix representation is used. 
-            rtol (float): relative tolerance within convergence checks. 
+            galerkin (bool): True is the Galerkin matrix representation is used.
+            rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow. 
-            callback (callable): callable function after each iteration. This function 
-                takes in as argument the current solution vector. 
+            maxiter (int): maximum number of iterations to allow.
+            callback (callable): callable function after each iteration. This function
+                takes in as argument the current solution vector.
         """
         super().__init__(galerkin)
         self._rtol = rtol
@@ -1168,12 +1201,12 @@ class BICGMatrixSolver(IterativeMatrixLinearSolver):
     def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, maxiter=None, callback=None):
         """
         Args:
-            galerkin (bool): True is the Galerkin matrix representation is used. 
-            rtol (float): relative tolerance within convergence checks. 
+            galerkin (bool): True is the Galerkin matrix representation is used.
+            rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow. 
-            callback (callable): callable function after each iteration. This function 
-                takes in as argument the current solution vector. 
+            maxiter (int): maximum number of iterations to allow.
+            callback (callable): callable function after each iteration. This function
+                takes in as argument the current solution vector.
         """
         super().__init__(galerkin)
         self._rtol = rtol
@@ -1198,12 +1231,12 @@ class BICGSTABMatrixSolver(IterativeMatrixLinearSolver):
     def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, maxiter=None, callback=None):
         """
         Args:
-            galerkin (bool): True is the Galerkin matrix representation is used. 
-            rtol (float): relative tolerance within convergence checks. 
+            galerkin (bool): True is the Galerkin matrix representation is used.
+            rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow. 
-            callback (callable): callable function after each iteration. This function 
-                takes in as argument the current solution vector. 
+            maxiter (int): maximum number of iterations to allow.
+            callback (callable): callable function after each iteration. This function
+                takes in as argument the current solution vector.
         """
         super().__init__(galerkin)
         self._rtol = rtol
@@ -1228,18 +1261,18 @@ class GMRESMatrixSolver(IterativeMatrixLinearSolver):
     def __init__(self, /, *, galerkin=False, rtol=1.e-5, atol=0, restart=None, maxiter=None, callback=None, callback_type=None):
         """
         Args:
-            galerkin (bool): True is the Galerkin matrix representation is used. 
-            rtol (float): relative tolerance within convergence checks. 
+            galerkin (bool): True is the Galerkin matrix representation is used.
+            rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
             restart (int): Number of iterations between restarts.
             maxiter (int): maximum number of iterations (restart cycles).
-            callback (callable): callable function after each iteration. Signature 
+            callback (callable): callable function after each iteration. Signature
                 of this function is determined by callback_type.
-            callback_type ("x", "pr_norm", "legacy"): If "x" the current solution is 
+            callback_type ("x", "pr_norm", "legacy"): If "x" the current solution is
                 passed to the callback function, if "pr_norm" it is the preconditioned
-                residual norm. The default is "legacy" which means the same as "pr_norm", 
-                but changes the meaning of maxiter to count inner iterations instead of 
-                restart cycles. 
+                residual norm. The default is "legacy" which means the same as "pr_norm",
+                but changes the meaning of maxiter to count inner iterations instead of
+                restart cycles.
         """
         super().__init__(galerkin)
         self._rtol = rtol
@@ -1264,9 +1297,9 @@ class GMRESMatrixSolver(IterativeMatrixLinearSolver):
 
 class CGSolver(IterativeLinearSolver):
     """
-    LinearSolver class using the conjugate gradient algorithm within 
-    use of the matrix representation. Can be applied to self-adjoint 
-    operators on a general Hilbert space. 
+    LinearSolver class using the conjugate gradient algorithm within
+    use of the matrix representation. Can be applied to self-adjoint
+    operators on a general Hilbert space.
     """
 
     def __init__(self, rtol=1.e-5, atol=0, maxiter=None, callback=None):
@@ -1298,14 +1331,14 @@ class CGSolver(IterativeLinearSolver):
             if x0 is None:
                 x = operator.domain.zero
             else:
-                x = x0
+                x = x0.copy()
 
             r = y - operator(x)
             if preconditioner is None:
-                z = r
+                z = r.copy()
             else:
                 z = preconditioner(r)
-            p = z
+            p = z.copy()
 
             tol = np.max([self._atol, self._rtol * operator.domain.norm(y)])
 
@@ -1314,11 +1347,9 @@ class CGSolver(IterativeLinearSolver):
             else:
                 maxiter = self._maxiter
 
-            i = 0
-            while (operator.domain.norm(r) >= tol):
+            for iteration in range(maxiter):
 
-                i += 1
-                if (i > maxiter):
+                if (operator.domain.norm(r) < tol):
                     break
 
                 q = operator(p)
@@ -1330,7 +1361,7 @@ class CGSolver(IterativeLinearSolver):
                 r -= alpha * q
 
                 if preconditioner is None:
-                    z = r
+                    z = r.copy()
                 else:
                     z = preconditioner(r)
 
@@ -1338,7 +1369,8 @@ class CGSolver(IterativeLinearSolver):
                 num = operator.domain.inner_product(r, z)
                 beta = num / den
 
-                p = z + beta * p
+                p *= beta
+                p += z
 
                 if self._callback is not None:
                     self._callback(x)
