@@ -1349,7 +1349,8 @@ class CGSolver(IterativeLinearSolver):
 
             for iteration in range(maxiter):
 
-                if (operator.domain.norm(r) < tol):
+                err = operator.domain.norm(r) / tol
+                if (err < 1):
                     break
 
                 q = operator(p)
