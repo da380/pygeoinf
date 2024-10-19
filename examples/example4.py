@@ -1,7 +1,7 @@
 import numpy as np
 import pygeoinf.linalg as la
 from pygeoinf.forward_problem import ForwardProblem
-from pygeoinf.least_squares import LeastSquaresProblem
+from pygeoinf.least_squares import LeastSquares
 from pygeoinf.sphere import Sobolev
 from scipy.stats import norm, uniform
 import matplotlib.pyplot as plt
@@ -14,7 +14,7 @@ mu = X.sobolev_gaussian_measure(2, 0.4, 1)
 u = mu.sample()
 
 # Set up the forward operator.
-n = 50
+n = 10
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -25,9 +25,15 @@ Y = A.codomain
 sigma = 0.1
 nu = Y.standard_gaussisan_measure(sigma)
 
-problem = LeastSquaresProblem(A, nu)
+problem = LeastSquares(A, nu)
 
 v = problem.data_measure(u).sample()
+
+dampings = np.linspace(0.01, 20, 50)
+
+problem.trade_off_curve(dampings, v)
+
+'''
 
 B = problem.least_squares_operator(0.1)
 
@@ -63,3 +69,5 @@ plt.colorbar()
 
 
 plt.show()
+
+'''

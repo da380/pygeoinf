@@ -1,9 +1,11 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import pygeoinf.linalg as la
 from pygeoinf.forward_problem import ForwardProblem
 
 
-class LeastSquaresProblem(ForwardProblem):
+class LeastSquares(ForwardProblem):
     """
     Class for the solution of regularised least-squares
     problems within a Hilbert space.
@@ -46,7 +48,7 @@ class LeastSquaresProblem(ForwardProblem):
         I = self.model_space.identity()
         return A.adjoint @ Ci @ A + damping * I
 
-    def least_squares_operator(self, damping, /, *, solver=None,  preconditioner=None, x0=None):
+    def least_squares_operator(self, damping, /, *, solver=None,  preconditioner=None, model0=None):
         """
         Returns a linear operator that solves the least-squares problem.
 
@@ -56,7 +58,7 @@ class LeastSquaresProblem(ForwardProblem):
                 The default is conjugate-gradients.
             preconditioner (LinearOperator): Preconditioner for use in 
                 solving the normal equations. The default is the identity.
-            x0 (model-space vector): Initial guess within an iterative solution. 
+            model0 (model-space vector): Initial guess within an iterative solution. 
                 The default is zero.
 
         Returns:
@@ -71,17 +73,17 @@ class LeastSquaresProblem(ForwardProblem):
         else:
             _solver = solver
 
-        if x0 is None:
-            _x0 = self.model_space.zero
+        if model0 is None:
+            _model0 = self.model_space.zero
         else:
-            _x0 = x0
+            _model0 = model0.copy()
 
         A = self.forward_operator
         Ci = self.data_error_measure.inverse_covariance
         N = self.normal_operator(damping)
 
         if isinstance(_solver, la.IterativeLinearSolver):
-            Ni = _solver(N, preconditioner=preconditioner, x0=_x0)
+            Ni = _solver(N, preconditioner=preconditioner, x0=_model0)
         elif isinstance(_solver, la.DirectLinearSolver):
             Ni = _solver(N)
         else:
@@ -89,7 +91,7 @@ class LeastSquaresProblem(ForwardProblem):
 
         return Ni @ A.adjoint @ Ci
 
-    def model_measure(self, damping, /, *, solver=None,  preconditioner=None, x0=None):
+    def model_measure(self, damping, /, *, solver=None,  preconditioner=None, model0=None):
         """
         Returns the measure on the model space induced by the least-squares solution. 
 
@@ -99,7 +101,7 @@ class LeastSquaresProblem(ForwardProblem):
                 The default is conjugate-gradients.
             preconditioner (LinearOperator): Preconditioner for use in 
                 solving the normal equations. The default is the identity.
-            x0 (model-space vector): Initial guess within an iterative solution. 
+            model0 (model-space vector): Initial guess within an iterative solution. 
                 The default is zero.
 
         Returns:
@@ -115,10 +117,10 @@ class LeastSquaresProblem(ForwardProblem):
         B = self.least_squares_operator(damping,
                                         solver=solver,
                                         preconditioner=preconditioner,
-                                        x0=x0)
+                                        model0=model0)
         return self.data_error_measure.affine_mapping(operator=B)
 
-    def resolution_operator(self, damping, /, *, solver=None,  preconditioner=None, x0=None):
+    def resolution_operator(self, damping, /, *, solver=None,  preconditioner=None, model0=None):
         """
         Returns the resolution operator for the least-squares problem. 
 
@@ -128,7 +130,7 @@ class LeastSquaresProblem(ForwardProblem):
                 The default is conjugate-gradients.
             preconditioner (LinearOperator): Preconditioner for use in 
                 solving the normal equations. The default is the identity.
-            x0 (model-space vector): Initial guess within an iterative solution. 
+            model0 (model-space vector): Initial guess within an iterative solution. 
                 The default is zero.
 
         Returns:
@@ -144,6 +146,43 @@ class LeastSquaresProblem(ForwardProblem):
         B = self.least_squares_operator(damping,
                                         solver=solver,
                                         preconditioner=preconditioner,
-                                        x0=x0)
+                                        model0=model0)
 
         return B @ A
+
+    def trade_off_curve(self, dampings, data, /, *, solver=None, preconditioner=None, model0=None):
+        """
+        Plots a trade-off curve of squared model norm against chi-squared.
+
+        Args:
+            dampings (range): Damping values to plot.
+            data (data-space vector): Observed data. 
+        """
+
+        squared_norm = []
+        chi_squared = []
+
+        if model0 is None:
+            model = self.model_space.zero
+        else:
+            model = model0.copy()
+
+        for damping in dampings:
+            B = self.least_squares_operator(
+                damping, solver=solver, preconditioner=preconditioner, model0=model)
+            model = B(data)
+            squared_norm.append(self.model_space.inner_product(model, model))
+            chi_squared.append(self.chi_squared(model, data))
+
+        def plot_colourline(x, y, c):
+            col = cm.jet((c-np.min(c))/(np.max(c)-np.min(c)))
+            ax = plt.gca()
+            for i in np.arange(len(x)-1):
+                ax.plot([x[i], x[i+1]], [y[i], y[i+1]], c=col[i])
+                im = ax.scatter(x, y, c=c, s=0, cmap=cm.jet)
+            return im
+
+        fig = plt.figure(1, figsize=(5, 5))
+        im = plot_colourline(squared_norm, chi_squared, dampings)
+        fig.colorbar(im)
+        plt.show()
