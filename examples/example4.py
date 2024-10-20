@@ -14,7 +14,7 @@ mu = X.sobolev_gaussian_measure(2, 0.4, 1)
 u = mu.sample()
 
 # Set up the forward operator.
-n = 10
+n = 250
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -29,11 +29,9 @@ problem = LeastSquares(A, nu)
 
 v = problem.data_measure(u).sample()
 
-dampings = np.linspace(0.01, 20, 50)
 
-problem.trade_off_curve(dampings, v)
+# problem.trade_off_curve(0.1, 10.0, 100, v)
 
-'''
 
 B = problem.least_squares_operator(0.1)
 
@@ -69,5 +67,3 @@ plt.colorbar()
 
 
 plt.show()
-
-'''
