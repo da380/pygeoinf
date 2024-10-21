@@ -283,6 +283,8 @@ class LinearOperator:
         if self.hilbert_operator:
             def adjoint_mapping(y):
                 return -self.adjoint(y)
+        else:
+            adjoint_mapping = None
 
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping,
                               adjoint_mapping=adjoint_mapping)
@@ -303,6 +305,7 @@ class LinearOperator:
                 return a * self.adjoint(y)
         else:
             adjoint_mapping = None
+
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping,
                               adjoint_mapping=adjoint_mapping)
 
@@ -324,11 +327,13 @@ class LinearOperator:
 
         def dual_mapping(yp):
             return self.dual(yp) + other.dual(yp)
+
         if self.hilbert_operator:
             def adjoint_mapping(y):
                 return self.adjoint(y) + other.adjoint(y)
         else:
             adjoint_mapping = None
+
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping,
                               adjoint_mapping=adjoint_mapping)
 
@@ -342,11 +347,13 @@ class LinearOperator:
 
         def dual_mapping(yp):
             return self.dual(yp) - other.dual(yp)
+
         if self.hilbert_operator:
             def adjoint_mapping(y):
                 return self.adjoint(y) - other.adjoint(y)
         else:
             adjoint_mapping = None
+
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping,
                               adjoint_mapping=adjoint_mapping)
 
@@ -360,11 +367,13 @@ class LinearOperator:
 
         def dual_mapping(yp):
             return other.dual(self.dual(yp))
+
         if self.hilbert_operator:
             def adjoint_mapping(y):
                 return other.adjoint(self.adjoint(y))
         else:
             adjoint_mapping = None
+
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping,
                               adjoint_mapping=adjoint_mapping)
 
@@ -566,9 +575,13 @@ class HilbertSpace(VectorSpace):
         """Return the inner product of two vectors."""
         return self.__inner_product(x1, x2)
 
+    def squared_norm(self, x):
+        """Return the squared norm of a vector."""
+        return self.inner_product(x, x)
+
     def norm(self, x):
         """Return the norm of a vector."""
-        return np.sqrt(self.inner_product(x, x))
+        return np.sqrt(self.squared_norm(x))
 
     def to_dual(self, x):
         """Map a vector to cannonically associated dual vector."""
