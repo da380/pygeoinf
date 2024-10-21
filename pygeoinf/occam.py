@@ -24,7 +24,10 @@ class OccamInversion(ForwardProblem):
     def least_squares_inversion(self):
         return self._least_squares_inversion
 
-    def minimum_norm_operator(self, confidence_level, /, *, solver=None, preconditioner=None):
+    def minimum_norm_operator(self, confidence_level, /, *,
+                              solver=None,
+                              preconditioner=None,
+                              preconditioning_method=None):
         """
         Returns the operator that maps data to the minimum norm solution for the
         given confidence level.
@@ -55,7 +58,8 @@ class OccamInversion(ForwardProblem):
             def compute_model_chi_squared(damping, initial_model=None):
                 print("Solving least squares problem")
                 B = self.least_squares_inversion.least_squares_operator(
-                    damping, solver=solver, preconditioner=preconditioner, initial_model=initial_model)
+                    damping, solver=solver, preconditioner=preconditioner,
+                    preconditioning_method=preconditioning_method, initial_model=initial_model)
                 model = B(data)
                 return model, self.chi_squared(model, data)
 
@@ -99,7 +103,9 @@ class OccamInversion(ForwardProblem):
 
         return la.Operator(self.data_space, self.model_space, mapping)
 
-    def resolution_operator(self, confidence_level, /, *, solver=None,  preconditioner=None):
+    def resolution_operator(self, confidence_level, /, *, solver=None,
+                            preconditioner=None,
+                            preconditioning_method=None):
         """
         Returns the resolution operator for the least-squares problem. 
 
@@ -120,5 +126,7 @@ class OccamInversion(ForwardProblem):
         """
         A = self.forward_operator
         B = self.minimum_norm_operator(
-            confidence_level, solver=solver, preconditioner=preconditioner)
+            confidence_level, solver=solver,
+            preconditioner=preconditioner,
+            preconditioning_method=preconditioning_method)
         return la.Operator(self.model_space, self.model_space, lambda x: B(A(x)))

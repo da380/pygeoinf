@@ -1,4 +1,6 @@
 import numpy as np
+from scipy.sparse.linalg import eigsh
+from scipy.sparse import diags
 import pygeoinf.linalg as la
 from pygeoinf.forward_problem import ForwardProblem
 
@@ -32,20 +34,34 @@ class BayesianInversion(ForwardProblem):
         """
         return self.model_prior_measure.affine_mapping(operator=self.forward_operator) + self.data_error_measure
 
-    def model_posterior_measure(self, data, /, *, solver=None, preconditioner=None):
+    def model_posterior_measure(self, data, /, *,
+                                solver=None,
+                                preconditioner=None,
+                                preconditioning_method=None,
+                                factor_covariance=False):
         """
         Returns the posterior measure on the model space given the data.
         """
+
+        A = self.forward_operator
+        Q = self.model_prior_measure.covariance
+        N = self.normal_operator()
+
         if solver is None:
             _solver = la.CGSolver()
         else:
             _solver = solver
 
-        A = self.forward_operator
-        Q = self.model_prior_measure.covariance
-        N = self.normal_operator()
+        if preconditioner is None:
+            if preconditioning_method is None:
+                _preconditioner = la.IdentityPreconditioner()(N)
+            else:
+                _preconditioner = preconditioning_method(N)
+        else:
+            _preconditioner = preconditioner
+
         if isinstance(_solver, la.IterativeLinearSolver):
-            Ni = _solver(N, preconditioner=preconditioner)
+            Ni = _solver(N, preconditioner=_preconditioner)
         else:
             Ni = _solver(N)
 
@@ -54,7 +70,31 @@ class BayesianInversion(ForwardProblem):
         data0 = A(model0)
         expectation = (Q @ A.adjoint @ Ni)(data - data0)
 
-        # Set the posterior covariance.
-        S = Q - Ni @ A @ Q
+        if factor_covariance:
 
-        return la.GaussianMeasure(self.model_space, S, expectation=expectation)
+            """
+            D, U = eigsh(N.matrix(), k=10, which="LM")
+
+            Di = diags([1/D], [0])
+
+            def factor_mapping(c):
+                return (Q @ A.adjoint)(U @ Di @ U.T @ c)
+
+            def adjoint_factor_mapping(x):
+                return U @ Di @ U.T @ A(Q(x))
+
+            factor = la.LinearOperator(la.EuclideanSpace(
+                self.data_space.dim), self.model_space, factor_mapping, adjoint_mapping=adjoint_factor_mapping)
+
+
+
+            return la.GaussianMeasure.from_factored_covariance(factor, expectation=expectation)
+
+            """
+
+            raise NotImplementedError()
+
+        else:
+
+            S = Q - Q @ A.adjoint @ Ni
+            return la.GaussianMeasure(self.model_space, S, expectation=expectation)

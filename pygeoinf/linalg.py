@@ -137,6 +137,11 @@ class Operator:
         """True is operator maps between Hilbert spaces."""
         return isinstance(self.domain, HilbertSpace) and isinstance(self.codomain, HilbertSpace)
 
+    @ property
+    def square_operator(self):
+        """True is operator maps a space into itself."""
+        return self.domain == self.codomain
+
     def __call__(self, x):
         """Action of the operator on a vector."""
         return self.__mapping(x)
@@ -1441,3 +1446,21 @@ class CGSolver(IterativeLinearSolver):
             return x
 
         return LinearOperator.self_adjoint(operator.domain, mapping)
+
+
+class PreconditioningMethod(ABC):
+    """Base class for pre-conditioning methods."""
+
+    @abstractmethod
+    def __call__(self, operator):
+        """
+        Given an operator, constructs the associated preconditioner. 
+        """
+
+
+class IdentityPreconditioner(PreconditioningMethod):
+    """Class for use of the identity operator as a preconditioner."""
+
+    def __call__(self, operator):
+        assert (operator.square_operator)
+        return operator.domain.identity()

@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 X = Sobolev(64, 2, 0.3)
 
 # Set up the forward operator.
-n = 250
+n = 100
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
