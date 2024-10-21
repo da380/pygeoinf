@@ -4,13 +4,14 @@ import matplotlib.pyplot as plt
 import pygeoinf.linalg as la
 import pygeoinf.sphere as sph
 
-lmax = 64
+lmax = 16
 X = sph.Sobolev(lmax, 2.0, 0.4, radius=10)
 
-mu = X.sobolev_gaussian_measure(3, 0.1, 1)
+m = 10
+forms = []
+for i in range(m):
+    forms.append(X.dual.random())
 
-Y = mu.cameron_martin_space
+A = la.LinearOperator.from_linear_forms(forms)
 
-u = mu.sample()
-
-print(Y.inner_product(u, u))
+print(A.dual)

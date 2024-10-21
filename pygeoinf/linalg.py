@@ -211,6 +211,42 @@ class LinearOperator(Operator):
         """Returns a self-adjoint operator in terms of its domain and mapping."""
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
+    @staticmethod
+    def from_linear_forms(forms):
+        """
+        Returns a linear operator into Euclidiean space defined by the tensor
+        product of a set of forms with the standard Euclidean basis vectors.
+
+        Args:
+            forms ([LinearForms]): A list of linear forms defined on a common domain.            
+
+        Returns:
+            LinearOperator: The linear operator.
+
+        Notes: The matrix components of the forms are used to define the 
+            matrix representation of the operator and this is stored internally.
+        """
+        domain = forms[0].domain
+        codomain = EuclideanSpace(len(forms))
+        if not all([form.domain == domain for form in forms]):
+            raise ValueError("Forms need to be defined on a common domain")
+
+        matrix = np.zeros((codomain.dim, domain.dim))
+        for i, form in enumerate(forms):
+            matrix[i, :] = form.components
+
+        def mapping(x):
+            cx = domain.to_components(x)
+            cy = matrix @ cx
+            return cy
+
+        def dual_mapping(yp):
+            cyp = codomain.dual.to_components(yp)
+            cxp = matrix.T @ cyp
+            return domain.dual.from_components(cxp)
+
+        return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+
     @ property
     def dual(self):
         """The dual of the operator."""
@@ -756,12 +792,7 @@ class GaussianMeasure:
         else:
             self._expectation = expectation
 
-        if sample is None:
-            self._dist = multivariate_normal(mean=self.expectation,
-                                             cov=self.covariance.matrix(dense=True, galerkin=True))
-            self._sample = self._sample_using_dense_matrix
-        else:
-            self._sample = sample
+        self._sample = sample
 
         self._solver = CGSolver(rtol=1.e-8)
         self._preconditioner = None
@@ -861,7 +892,10 @@ class GaussianMeasure:
 
     def sample(self):
         """Returns a random sample drawn from the measure."""
-        return self._sample()
+        if self._sample is None:
+            raise NotImplementedError("Sample method is not set.")
+        else:
+            return self._sample()
 
     def _sample_using_dense_matrix(self):
         # return sample using dense matrix factorisation.
@@ -1377,6 +1411,7 @@ class CGSolver(IterativeLinearSolver):
             for iteration in range(maxiter):
 
                 err = operator.domain.norm(r) / tol
+                print(err)
                 if (err < 1):
                     break
 
