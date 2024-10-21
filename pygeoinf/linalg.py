@@ -22,7 +22,7 @@ class VectorSpace:
             finite-dimensional approximating space.
         (2) A mapping from elements of the space to their components.
             These components must be expressed as numpy arrays with
-            shape (dim,1) with dim the spaces dimension.
+            shape (dim) with dim the spaces dimension.
         (3) A mapping from components back to the vectors. This
             needs to be the inverse of the mapping in (2), but
             this requirement is not automatically checked.
@@ -104,7 +104,45 @@ class VectorSpace:
         return LinearForm(self, components=cp)
 
 
-class LinearOperator:
+class Operator:
+    """
+    Class for operators between two vector spaces.
+
+
+    (1) The domain of the operator as an instance of VectorSpace.
+        (2) The codomain of the operator as an instance of VectorSpace.
+
+    To define the action of the operator they can provide either:
+
+        (a) A functor that represents the action of the operator.
+    """
+
+    def __init__(self, domain, codomain, mapping):
+        self._domain = domain
+        self._codomain = codomain
+        self.__mapping = mapping
+
+    @ property
+    def domain(self):
+        """Domain of the operator."""
+        return self._domain
+
+    @ property
+    def codomain(self):
+        """Codomain of the operator."""
+        return self._codomain
+
+    @ property
+    def hilbert_operator(self):
+        """True is operator maps between Hilbert spaces."""
+        return isinstance(self.domain, HilbertSpace) and isinstance(self.codomain, HilbertSpace)
+
+    def __call__(self, x):
+        """Action of the operator on a vector."""
+        return self.__mapping(x)
+
+
+class LinearOperator(Operator):
     """
     Class for linear operators between two vector spaces. To define an
     instance, the user must provide the following:
@@ -124,7 +162,7 @@ class LinearOperator:
     lazily implemented.
     """
 
-    def __init__(self, domain, codomain, mapping=None, /, *,
+    def __init__(self, domain, codomain, mapping, /, *,
                  dual_mapping=None, adjoint_mapping=None,
                  dual_base=None, adjoint_base=None):
         """
@@ -138,12 +176,9 @@ class LinearOperator:
             adjoint_mapping (callable | None): A functor that implements
                 the action of the adjoint operator.
         """
-
-        self._domain = domain
-        self._codomain = codomain
+        super().__init__(domain, codomain, mapping)
         self._dual_base = dual_base
         self._adjoint_base = adjoint_base
-        self.__mapping = mapping
         self._matrix = None
         if dual_mapping is None:
             if self.hilbert_operator:
@@ -166,32 +201,17 @@ class LinearOperator:
             else:
                 self.__adjoint_mapping = None
 
-    @staticmethod
+    @ staticmethod
     def self_dual(domain, mapping):
         """Returns a self-dual operator in terms of its domain and mapping."""
         return LinearOperator(domain, domain.dual, mapping, dual_mapping=mapping)
 
-    @staticmethod
+    @ staticmethod
     def self_adjoint(domain, mapping):
         """Returns a self-adjoint operator in terms of its domain and mapping."""
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
-    @property
-    def domain(self):
-        """Domain of the operator."""
-        return self._domain
-
-    @property
-    def codomain(self):
-        """Codomain of the operator."""
-        return self._codomain
-
-    @property
-    def hilbert_operator(self):
-        """True is operator maps between Hilbert spaces."""
-        return isinstance(self.domain, HilbertSpace) and isinstance(self.codomain, HilbertSpace)
-
-    @property
+    @ property
     def dual(self):
         """The dual of the operator."""
         if self._dual_base is None:
@@ -201,14 +221,14 @@ class LinearOperator:
         else:
             return self._dual_base
 
-    @property
+    @ property
     def adjoint(self):
         """The adjoint of the operator."""
         if not self.hilbert_operator:
             raise NotImplementedError("Adjoint not defined for the operator.")
         if self._adjoint_base is None:
             return LinearOperator(self.codomain, self.domain, self.__adjoint_mapping,
-                                  adjoint_mapping=self.__mapping, adjoint_base=self)
+                                  adjoint_mapping=self, adjoint_base=self)
         else:
             return self._adjoint_base
 
@@ -262,12 +282,6 @@ class LinearOperator:
             matrix[:, i] = (self.matrix(galerkin=galerkin) @ cx)[:]
             cx[i] = 0
         return matrix
-
-    def __call__(self, x):
-        """Action of the operator on a vector."""
-        if self.__mapping is None:
-            raise NotImplementedError("Mapping has not been set.")
-        return self.__mapping(x)
 
     def __neg__(self):
         """Negative of the operator."""
@@ -430,12 +444,12 @@ class LinearForm(LinearOperator):
         # Implement the action of the form using its components.
         return self.codomain.from_components(np.dot(self._matrix, self.domain.to_components(x)))
 
-    @property
+    @ property
     def components_stored(self):
         """True is the form has its components stored."""
         return self._matrix is not None
 
-    @property
+    @ property
     def components(self):
         """Return the components of the form."""
         if self.components_stored:
@@ -531,7 +545,7 @@ class HilbertSpace(VectorSpace):
 
         self._base = base
 
-    @staticmethod
+    @ staticmethod
     def from_vector_space(space, inner_product, /, *, to_dual=None, from_dual=None):
         """
         Form a HilbertSpace from a VectorSpace by providing additional structures.
@@ -548,12 +562,12 @@ class HilbertSpace(VectorSpace):
         return HilbertSpace(space.dim, space.to_components, space.from_components,
                             inner_product, to_dual=to_dual, from_dual=from_dual)
 
-    @property
+    @ property
     def vector_space(self):
         """The underlying vector space."""
         return VectorSpace(self.dim, self.to_components, self.from_components)
 
-    @property
+    @ property
     def dual(self):
         """The dual of the Hilbert space."""
         if self._base is None:
@@ -563,7 +577,7 @@ class HilbertSpace(VectorSpace):
         else:
             return self._base
 
-    @property
+    @ property
     def metric_tensor(self):
         """The metric tensor for the space."""
         if self.__metric_tensor is None:
@@ -662,11 +676,11 @@ class EuclideanSpace(HilbertSpace):
 
     def standard_gaussisan_measure(self, standard_deviation):
         """
-        Returns a Gaussian measure on the space with covariance proportional 
-        to the identity operator and with zero expectation. 
+        Returns a Gaussian measure on the space with covariance proportional
+        to the identity operator and with zero expectation.
 
         Args:
-            standard_deviation (float): The standard deviation for each component. 
+            standard_deviation (float): The standard deviation for each component.
         """
         factor = standard_deviation * self.identity()
         inverse_factor = self.identity() / standard_deviation
@@ -674,11 +688,11 @@ class EuclideanSpace(HilbertSpace):
 
     def diagonal_covariance(self, standard_deviations):
         """
-        Returns a Gaussian measure on the space with a diagonal 
-        covariance and with zero expectation. 
+        Returns a Gaussian measure on the space with a diagonal
+        covariance and with zero expectation.
 
         Args:
-            standard_deviations (vector): Vector of the standard deviations. 
+            standard_deviations (vector): Vector of the standard deviations.
         """
         matrix = diags([standard_deviations], [0])
         inverse_matrix = diags([standard_deviations.reciprocal()], [0])
@@ -752,7 +766,7 @@ class GaussianMeasure:
         self._solver = CGSolver(rtol=1.e-8)
         self._preconditioner = None
 
-    @staticmethod
+    @ staticmethod
     def from_factored_covariance(factor, /, *, inverse_factor=None, expectation=None):
         """
         For a Gaussian measure hows covariance, C, is approximated in the form C = LL*,
@@ -788,17 +802,17 @@ class GaussianMeasure:
                                expectation=expectation,
                                sample=sample)
 
-    @property
+    @ property
     def domain(self):
         """The Hilbert space the measure is defined on."""
         return self._domain
 
-    @property
+    @ property
     def covariance(self):
         """The covariance operator as an instance of LinearOperator."""
         return LinearOperator.self_adjoint(self.domain, self._covariance)
 
-    @property
+    @ property
     def inverse_covariance(self):
         """The inverse covariance operator as an instance of LinearOperator."""
         if self._inverse_covariance_set:
@@ -811,12 +825,12 @@ class GaussianMeasure:
                 mapping = self._solver(self.covariance)
         return LinearOperator.self_adjoint(self.domain, mapping)
 
-    @property
+    @ property
     def expectation(self):
         """The expectation of the measure."""
         return self._expectation
 
-    @property
+    @ property
     def cameron_martin_space(self):
         """
           Returns the associated Cameron-Martin space as a HilbertSpace instance.
@@ -1009,12 +1023,12 @@ class DirectLinearSolver(LinearSolver):
     def __init__(self, galerkin):
         self._galerkin = galerkin
 
-    @property
+    @ property
     def galerkin(self):
         """True if the Galerkin matrix representation is used."""
         return self._galerkin
 
-    @abstractmethod
+    @ abstractmethod
     def _matrix_solver(self, matrix):
         """
         Returns the inverse operator's action in terms of its matrix representation.
@@ -1091,7 +1105,7 @@ class CholeskySolver(DirectLinearSolver):
 class IterativeLinearSolver(LinearSolver):
     """Base class for iterative linear solvers."""
 
-    @abstractmethod
+    @ abstractmethod
     def __call__(self, operator, /, *, preconditioner=None, x0=None):
         """
         Given a linear operator, return its inverse.
@@ -1118,12 +1132,12 @@ class IterativeMatrixLinearSolver(IterativeLinearSolver):
     def __init__(self, galerkin):
         self._galerkin = galerkin
 
-    @property
+    @ property
     def galerkin(self):
         """True if the Galerkin matrix representation is used."""
         return self._galerkin
 
-    @abstractmethod
+    @ abstractmethod
     def _matrix_solver(self, matrix, matrix_preconditioner, c0):
         """
         Returns the inverse operator's action in terms of its matrix representation.
@@ -1363,7 +1377,6 @@ class CGSolver(IterativeLinearSolver):
             for iteration in range(maxiter):
 
                 err = operator.domain.norm(r) / tol
-                print(err)
                 if (err < 1):
                     break
 
