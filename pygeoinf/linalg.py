@@ -317,10 +317,11 @@ class LinearOperator(Operator):
     def _compute_dense_matrix(self, galerkin=False):
         # Compute the matrix representation in dense form.
         matrix = np.zeros((self.codomain.dim, self.domain.dim))
+        a = self.matrix(galerkin=galerkin)
         cx = np.zeros(self.domain.dim)
         for i in range(self.domain.dim):
             cx[i] = 1
-            matrix[:, i] = (self.matrix(galerkin=galerkin) @ cx)[:]
+            matrix[:, i] = (a @ cx)[:]
             cx[i] = 0
         return matrix
 
@@ -790,8 +791,8 @@ class GaussianMeasure:
         self._domain = domain
         self._covariance = covariance
         self._inverse_covariance = inverse_covariance
-        self._covariance_factor = covariance_factor
         self._inverse_covariance_set = self._inverse_covariance is not None
+        self._dist = None
 
         if expectation is None:
             self._expectation = self.domain.zero
@@ -896,6 +897,19 @@ class GaussianMeasure:
         return HilbertSpace.from_vector_space(self.domain, inner_product,
                                               to_dual=to_dual, from_dual=from_dual)
 
+    def sample_using_dense_matrix(self):
+        """
+        If sampling method is not set, use scipy algorithm based on 
+        dense matrix representation.  
+        """
+        if self._sample is None:
+            mean = self.domain.to_components(self.expectation)
+            cov = self.covariance.matrix(dense=True, galerkin=True)
+            cov = 0.5*(cov+cov.T)
+            self._dist = multivariate_normal(mean=mean, cov=cov)
+        self._sample = lambda: self.domain.from_dual(
+            self.domain.dual.from_components(self._dist.rvs()))
+
     def sample(self):
         """Returns a random sample drawn from the measure."""
         if self._sample is None:
@@ -988,47 +1002,6 @@ class GaussianMeasure:
                                inverse_covariance=self.inverse_covariance + other.inverse_covariance,
                                expectation=self.expectation - other.expectation,
                                sample=lambda: self.sample() - other.sample())
-
-
-class FactoredGaussianMeasure(GaussianMeasure):
-    """
-    Class for Gaussian measures whose covariances are expressed within 
-    the factored form C = LL*, with L a mapping from Euclidean space.
-    """
-
-    def __init__(self, factor, /, *, expectation=None, inverse_factor=None):
-        """
-        Args:
-            factor (LinearOperator): Linear mapping, L, from Euclidean space to the 
-                domain of the measure such that C = LL*.
-            expectation (domain-vector): Expected value of the measure. 
-            inverse_factor (LinearOperator): The inverse of the factor mapping. Default
-                value is None. If provided, this is used to define the inverse covariance.
-        """
-        domain = factor.codomain
-        self._factor = factor
-        self._inverse_factor = inverse_factor
-        covariance = factor @ factor.adjoint
-        if inverse_factor is None:
-            inverse_covariance = None
-        else:
-            inverse_covariance = inverse_factor.adjoint @ inverse_factor
-        super().__init__(domain, covariance, expectation=expectation,
-                         inverse_covariance=inverse_covariance)
-
-    @property
-    def covariance_factor(self):
-        """
-        Return the covariance factor. 
-        """
-        return self._factor
-
-    @property
-    def inverse_covariance_factor(self):
-        """
-        Return the inverse covariance factor. 
-        """
-        return self._inverse_factor
 
 
 class LinearSolver(ABC):
@@ -1444,7 +1417,11 @@ class CGSolver(IterativeLinearSolver):
                 z = preconditioner(r)
             p = z.copy()
 
-            tol = np.max([self._atol, self._rtol * operator.domain.norm(y)])
+            y_squared_norm = operator.domain.squared_norm(y)
+            if y_squared_norm <= self._atol:
+                return y
+
+            tol = np.max([self._atol, self._rtol * y_squared_norm])
 
             if self._maxiter is None:
                 maxiter = 10 * operator.domain.dim
@@ -1453,9 +1430,7 @@ class CGSolver(IterativeLinearSolver):
 
             for iteration in range(maxiter):
 
-                err = operator.domain.norm(r) / tol
-                print(err)
-                if (err < 1):
+                if (operator.domain.norm(r) <= tol):
                     break
 
                 q = operator(p)

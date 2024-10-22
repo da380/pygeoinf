@@ -14,7 +14,7 @@ mu = X.sobolev_gaussian_measure(2, 0.3, 1)
 u = mu.sample()
 
 # Set up the forward operator.
-n = 200
+n = 50
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
