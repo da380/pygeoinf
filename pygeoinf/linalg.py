@@ -790,6 +790,7 @@ class GaussianMeasure:
         self._domain = domain
         self._covariance = covariance
         self._inverse_covariance = inverse_covariance
+        self._covariance_factor = covariance_factor
         self._inverse_covariance_set = self._inverse_covariance is not None
 
         if expectation is None:
@@ -902,10 +903,6 @@ class GaussianMeasure:
         else:
             return self._sample()
 
-    def _sample_using_dense_matrix(self):
-        # return sample using dense matrix factorisation.
-        return self._dist.rvs()
-
     def set_solver(self, solver):
         """Set the linear solver to be used in computing the inverse covariance."""
 
@@ -991,6 +988,47 @@ class GaussianMeasure:
                                inverse_covariance=self.inverse_covariance + other.inverse_covariance,
                                expectation=self.expectation - other.expectation,
                                sample=lambda: self.sample() - other.sample())
+
+
+class FactoredGaussianMeasure(GaussianMeasure):
+    """
+    Class for Gaussian measures whose covariances are expressed within 
+    the factored form C = LL*, with L a mapping from Euclidean space.
+    """
+
+    def __init__(self, factor, /, *, expectation=None, inverse_factor=None):
+        """
+        Args:
+            factor (LinearOperator): Linear mapping, L, from Euclidean space to the 
+                domain of the measure such that C = LL*.
+            expectation (domain-vector): Expected value of the measure. 
+            inverse_factor (LinearOperator): The inverse of the factor mapping. Default
+                value is None. If provided, this is used to define the inverse covariance.
+        """
+        domain = factor.codomain
+        self._factor = factor
+        self._inverse_factor = inverse_factor
+        covariance = factor @ factor.adjoint
+        if inverse_factor is None:
+            inverse_covariance = None
+        else:
+            inverse_covariance = inverse_factor.adjoint @ inverse_factor
+        super().__init__(domain, covariance, expectation=expectation,
+                         inverse_covariance=inverse_covariance)
+
+    @property
+    def covariance_factor(self):
+        """
+        Return the covariance factor. 
+        """
+        return self._factor
+
+    @property
+    def inverse_covariance_factor(self):
+        """
+        Return the inverse covariance factor. 
+        """
+        return self._inverse_factor
 
 
 class LinearSolver(ABC):
