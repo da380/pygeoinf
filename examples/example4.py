@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 
 # Set the model space.
-X = Sobolev(64, 2, 0.3)
+X = Sobolev(128, 0, 0.3)
 
 mu = X.sobolev_gaussian_measure(2, 0.3, 1)
 u = mu.sample()

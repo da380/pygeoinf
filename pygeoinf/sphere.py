@@ -161,7 +161,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
                                   self._inner_product_impl, to_dual=self._to_dual_impl, from_dual=self._from_dual_impl)
 
     # =============================================#
-    #                   Properties                #
+    #                   Properties                 #
     # =============================================#
 
     @property
@@ -175,7 +175,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         return self._scale
 
     # ==============================================#
-    #                 Public methods               #
+    #                 Public methods                #
     # ==============================================#
 
     def dirac(self, latitude, longitude, /, *, degrees=True):

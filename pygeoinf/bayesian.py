@@ -34,7 +34,7 @@ class BayesianInversion(ForwardProblem):
         R = self.data_error_measure.covariance
         return A @ Q @ A.adjoint + R
 
-    def data_posterior_measure(self):
+    def data_prior_measure(self):
         """
         Return the prior distribution on the data
         """
