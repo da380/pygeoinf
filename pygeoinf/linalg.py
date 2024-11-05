@@ -33,7 +33,9 @@ class VectorSpace:
     available for this latter space.
     """
 
-    def __init__(self, dim, to_components, from_components, /, *, base=None):
+    def __init__(self, dim, to_components, from_components, /, *,
+                 add=None, subtract=None, multiply=None, axpy=None,
+                 copy=None, base=None):
         """
         Args:
             dim (int): The dimension of the space, or of the
@@ -42,6 +44,11 @@ class VectorSpace:
                 to their components.
             from_components (callable): A functor that maps components
                 to vectors.
+            add (callable): Implements vector addition.
+            subtract (callable): Implements vector subtraction. 
+            multiply (callable): Implements scalar multiplication. 
+            axpy (callable): Implements the mapping y -> a*x + y
+            copy (callable): Implements deep copy of a vector. 
             base (VectorSpace | None): Set to none for an original space,
                 and to the base space when forming the dual.
         """
@@ -49,6 +56,13 @@ class VectorSpace:
         self.__to_components = to_components
         self.__from_components = from_components
         self._base = base
+
+        # Default vector operations.
+        self._add = self.__add if add is None else add
+        self._subtract = self.__subtract if subtract is None else subtract
+        self._multiply = self.__multiply if multiply is None else multiply
+        self._axpy = self.__axpy if axpy is None else axpy
+        self._copy = self.__copy if copy is None else copy
 
     @property
     def dim(self):
@@ -66,6 +80,28 @@ class VectorSpace:
     @property
     def zero(self):
         return self.from_components(np.zeros((self.dim)))
+
+    def add(self, x, y):
+        """Returns x + y."""
+        return self._add(x, y)
+
+    def subtract(self, x, y):
+        """Returns x - y."""
+        return self._subtract(x, y)
+
+    def multiply(self, a, x):
+        """Returns a * x."""
+        return self._multiply(a, x)
+
+    def negative(self, x):
+        """Returns -x."""
+        return self.multiply(-1, x)
+
+    def axpy(self, a, x, y):
+        return self._axpy(a, x, y)
+
+    def copy(self, x):
+        return self._copy(x)
 
     def to_components(self, x):
         """Maps vectors to components."""
@@ -102,6 +138,26 @@ class VectorSpace:
 
     def _dual_from_components(self, cp):
         return LinearForm(self, components=cp)
+
+    def __add(self, x, y):
+        # Default implementation of vector addition.
+        return x + y
+
+    def __subtract(self, x, y):
+        # Default implementation of vector subtraction.
+        return x - y
+
+    def __multiply(self, a, x):
+        # Default implementation of scalar multiplication.
+        return a * x.copy()
+
+    def __axpy(self, a, x, y):
+        # Default implementation of y -> a*x+y.
+        y += a*x
+        return y
+
+    def __copy(self, x):
+        return x.copy()
 
 
 class Operator:
@@ -331,14 +387,14 @@ class LinearOperator(Operator):
         codomain = self.codomain
 
         def mapping(x):
-            return -self(x)
+            return codomain.negative(self(x))
 
         def dual_mapping(yp):
-            return -self.dual(yp)
+            return domain.dual.negative(self.dual(yp))
 
         if self.hilbert_operator:
             def adjoint_mapping(y):
-                return -self.adjoint(y)
+                return domain.negative(self.adjoint(y))
         else:
             adjoint_mapping = None
 
@@ -351,14 +407,14 @@ class LinearOperator(Operator):
         codomain = self.codomain
 
         def mapping(x):
-            return a * self(x)
+            return codomain.multiply(a, self(x))
 
         def dual_mapping(yp):
-            return 2 * self.dual(yp)
+            return domain.dual.multiply(a, self.dual(yp))
 
         if self.hilbert_operator:
             def adjoint_mapping(y):
-                return a * self.adjoint(y)
+                return domain.multiply(a, self.adjoint(y))
         else:
             adjoint_mapping = None
 
@@ -379,14 +435,14 @@ class LinearOperator(Operator):
         codomain = self.codomain
 
         def mapping(x):
-            return self(x) + other(x)
+            return codomain.add(self(x), other(x))
 
         def dual_mapping(yp):
-            return self.dual(yp) + other.dual(yp)
+            return domain.dual.add(dual(yp), other.dual(yp))
 
         if self.hilbert_operator:
             def adjoint_mapping(y):
-                return self.adjoint(y) + other.adjoint(y)
+                return domain.add(self.adjoint(y), other.adjoint(y))
         else:
             adjoint_mapping = None
 
@@ -399,14 +455,14 @@ class LinearOperator(Operator):
         codomain = self.codomain
 
         def mapping(x):
-            return self(x) - other(x)
+            return codomain.subtract(self(x), other(x))
 
         def dual_mapping(yp):
-            return self.dual(yp) - other.dual(yp)
+            return domain.dual.subtract(self.dual(yp), other.dual(yp))
 
         if self.hilbert_operator:
             def adjoint_mapping(y):
-                return self.adjoint(y) - other.adjoint(y)
+                return domain.subtract(self.adjoint(y), other.adjoint(y))
         else:
             adjoint_mapping = None
 
@@ -825,7 +881,7 @@ class GaussianMeasure:
             if expectation is None:
                 return value
             else:
-                return value + expectation
+                return factor.codomain.add(value, expectation)
 
         covariance = factor @ factor.adjoint
 
@@ -958,10 +1014,11 @@ class GaussianMeasure:
             _translation = translation
 
         covariance = _operator @ self.covariance @ _operator.adjoint
-        expectation = _operator(self.expectation) + _translation
+        expectation = _operator.codomain.add(
+            _operator(self.expectation), _translation)
 
         def sample():
-            return _operator(self.sample()) + _translation
+            return _operator.codomain.add(_operator(self.sample()), _translation)
 
         return GaussianMeasure(_operator.codomain, covariance, expectation=expectation, sample=sample)
 
@@ -971,8 +1028,9 @@ class GaussianMeasure:
         return GaussianMeasure(self.domain,
                                -self.covariance,
                                inverse_covariance=-self.inverse_covariance,
-                               expectation=-self.expectation,
-                               sample=lambda: -self.sample())
+                               expectation=self.domain.negative(
+                                   self.expectation),
+                               sample=lambda: self.domain.negative(self.sample()))
 
     def __mul__(self, alpha):
         """Multiply the measure by a scalar."""
@@ -980,8 +1038,9 @@ class GaussianMeasure:
                                alpha * alpha * self.covariance,
                                inverse_covariance=self.inverse_covariance /
                                (alpha * alpha),
-                               expectation=alpha * self.expectation,
-                               sample=lambda: alpha * self.sample())
+                               expectation=self.domain.multiply(
+                                   alpha, self.expectation),
+                               sample=lambda: self.domain.multiply(alpha, self.sample()))
 
     def __rmul__(self, alpha):
         """Multiply the measure by a scalar."""
@@ -992,16 +1051,18 @@ class GaussianMeasure:
         return GaussianMeasure(self.domain,
                                self.covariance + other.covariance,
                                inverse_covariance=self.inverse_covariance + other.inverse_covariance,
-                               expectation=self.expectation + other.expectation,
-                               sample=lambda: self.sample() + other.sample())
+                               expectation=self.domain.add(
+                                   self.expectation, other.expectation),
+                               sample=lambda: self.domain.add(self.sample(), other.sample()))
 
     def __sub__(self, other):
         """Subtract two measures on the same domain."""
         return GaussianMeasure(self.domain,
                                self.covariance + other.covariance,
                                inverse_covariance=self.inverse_covariance + other.inverse_covariance,
-                               expectation=self.expectation - other.expectation,
-                               sample=lambda: self.sample() - other.sample())
+                               expectation=self.domain.subtract(
+                                   self.expectation, other.expectation),
+                               sample=lambda: self.domain.subtract(self.sample(), other.sample()))
 
 
 class LinearSolver(ABC):
@@ -1405,44 +1466,46 @@ class CGSolver(IterativeLinearSolver):
 
         def mapping(y):
 
-            if x0 is None:
-                x = operator.domain.zero
-            else:
-                x = x0.copy()
+            domain = operator.domain
 
-            r = y - operator(x)
+            if x0 is None:
+                x = domain.zero
+            else:
+                x = domain.copy(x0)
+
+            r = domain.subtract(y, operator(x))
             if preconditioner is None:
-                z = r.copy()
+                z = domain.copy(r)
             else:
                 z = preconditioner(r)
-            p = z.copy()
+            p = domain.copy(z)
 
-            y_squared_norm = operator.domain.squared_norm(y)
+            y_squared_norm = domain.squared_norm(y)
             if y_squared_norm <= self._atol:
                 return y
 
             tol = np.max([self._atol, self._rtol * y_squared_norm])
 
             if self._maxiter is None:
-                maxiter = 10 * operator.domain.dim
+                maxiter = 10 * domain.dim
             else:
                 maxiter = self._maxiter
 
             for iteration in range(maxiter):
 
-                if (operator.domain.norm(r) <= tol):
+                if (domain.norm(r) <= tol):
                     break
 
                 q = operator(p)
-                num = operator.domain.inner_product(r, z)
-                den = operator.domain.inner_product(p, q)
+                num = domain.inner_product(r, z)
+                den = domain.inner_product(p, q)
                 alpha = num / den
 
-                x += alpha * p
-                r -= alpha * q
+                x = domain.axpy(alpha, p, x)
+                r = domain.axpy(-alpha, q, r)
 
                 if preconditioner is None:
-                    z = r.copy()
+                    z = domain.copy(r)
                 else:
                     z = preconditioner(r)
 
@@ -1450,8 +1513,8 @@ class CGSolver(IterativeLinearSolver):
                 num = operator.domain.inner_product(r, z)
                 beta = num / den
 
-                p *= beta
-                p += z
+                p = domain.multiply(beta, p)
+                p = domain.add(p, z)
 
                 if self._callback is not None:
                     self._callback(x)

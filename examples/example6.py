@@ -38,15 +38,6 @@ problem = BayesianInference(A, B, mu, nu)
 u = mu.sample()
 v = problem.data_measure(u).sample()
 
-u2 = problem.model_posterior_measure(v).expectation
-
-plt.figure()
-plt.pcolormesh(u.data)
-
-plt.figure()
-plt.pcolormesh(u2.data)
-
-plt.show()
 
 # Form the posterior distribution
 pi = problem.property_posterior_measure(v)

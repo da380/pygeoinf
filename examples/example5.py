@@ -2,7 +2,7 @@ import numpy as np
 import pygeoinf.linalg as la
 from scipy.stats import chi2
 from pygeoinf.forward_problem import ForwardProblem
-from pygeoinf.occam import OccamInversion
+from pygeoinf.optimisation import OccamInversion
 from pygeoinf.sphere import Sobolev
 from scipy.stats import norm, uniform
 import matplotlib.pyplot as plt
