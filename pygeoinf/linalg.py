@@ -772,7 +772,7 @@ class EuclideanSpace(HilbertSpace):
                              to_dual=self._to_dual_with_metric,
                              from_dual=self._from_dual_with_metric)
 
-    def standard_gaussisan_measure(self, standard_deviation):
+    def standard_gaussian_measure(self, standard_deviation):
         """
         Returns a Gaussian measure on the space with covariance proportional
         to the identity operator and with zero expectation.
