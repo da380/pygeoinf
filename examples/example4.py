@@ -8,10 +8,13 @@ import matplotlib.pyplot as plt
 
 
 # Set the model space.
-X = Sobolev(64, 2, 0.2)
+X = Sobolev(256, 2, 0.2)
 
-mu = X.sobolev_gaussian_measure(2, 0.2, 1)
+mu = X.sobolev_gaussian_measure(2, 0.1, 1)
 u = mu.sample()
+
+print(u.lons())
+
 
 # Set up the forward operator.
 n = 500

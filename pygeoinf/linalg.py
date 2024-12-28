@@ -262,12 +262,12 @@ class LinearOperator(Operator):
             else:
                 self.__adjoint_mapping = None
 
-    @ staticmethod
+    @staticmethod
     def self_dual(domain, mapping):
         """Returns a self-dual operator in terms of its domain and mapping."""
         return LinearOperator(domain, domain.dual, mapping, dual_mapping=mapping)
 
-    @ staticmethod
+    @staticmethod
     def self_adjoint(domain, mapping):
         """Returns a self-adjoint operator in terms of its domain and mapping."""
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
@@ -438,7 +438,7 @@ class LinearOperator(Operator):
             return codomain.add(self(x), other(x))
 
         def dual_mapping(yp):
-            return domain.dual.add(dual(yp), other.dual(yp))
+            return domain.dual.add(self.dual(yp), other.dual(yp))
 
         if self.hilbert_operator:
             def adjoint_mapping(y):
