@@ -68,7 +68,7 @@ class BayesianInversion(ForwardProblem):
         N = self.normal_operator()
 
         if solver is None:
-            _solver = la.CGSolver(rtol=1.e-7)
+            _solver = la.CGMatrixSolver()
         else:
             _solver = solver
 
