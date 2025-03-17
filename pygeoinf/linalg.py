@@ -117,7 +117,7 @@ class Operator:
         (a) A functor that represents the action of the operator.
     """
 
-    def __init__(self, domain, codomain, mapping):
+    def __init__(self, domain: VectorSpace, codomain: VectorSpace, mapping: callable):
         self._domain = domain
         self._codomain = codomain
         self.__mapping = mapping
@@ -134,12 +134,12 @@ class Operator:
 
     @ property
     def hilbert_operator(self):
-        """True is operator maps between Hilbert spaces."""
+        """True if operator maps between Hilbert spaces."""
         return isinstance(self.domain, HilbertSpace) and isinstance(self.codomain, HilbertSpace)
 
     @ property
     def square_operator(self):
-        """True is operator maps a space into itself."""
+        """True if operator maps a space into itself."""
         return self.domain == self.codomain
 
     def __call__(self, x):
@@ -223,12 +223,12 @@ class LinearOperator(Operator):
         product of a set of forms with the standard Euclidean basis vectors.
 
         Args:
-            forms ([LinearForms]): A list of linear forms defined on a common domain.            
+            forms ([LinearForms]): A list of linear forms defined on a common domain.
 
         Returns:
             LinearOperator: The linear operator.
 
-        Notes: The matrix components of the forms are used to define the 
+        Notes: The matrix components of the forms are used to define the
             matrix representation of the operator and this is stored internally.
         """
         domain = forms[0].domain
@@ -899,8 +899,8 @@ class GaussianMeasure:
 
     def sample_using_dense_matrix(self):
         """
-        If sampling method is not set, use scipy algorithm based on 
-        dense matrix representation.  
+        If sampling method is not set, use scipy algorithm based on
+        dense matrix representation.
         """
         if self._sample is None:
             mean = self.domain.to_components(self.expectation)
@@ -1467,7 +1467,7 @@ class PreconditioningMethod(ABC):
     @abstractmethod
     def __call__(self, operator):
         """
-        Given an operator, constructs the associated preconditioner. 
+        Given an operator, constructs the associated preconditioner.
         """
 
 
