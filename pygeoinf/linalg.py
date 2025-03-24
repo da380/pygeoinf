@@ -45,10 +45,10 @@ class VectorSpace:
             from_components (callable): A functor that maps components
                 to vectors.
             add (callable): Implements vector addition.
-            subtract (callable): Implements vector subtraction. 
-            multiply (callable): Implements scalar multiplication. 
+            subtract (callable): Implements vector subtraction.
+            multiply (callable): Implements scalar multiplication.
             axpy (callable): Implements the mapping y -> a*x + y
-            copy (callable): Implements deep copy of a vector. 
+            copy (callable): Implements deep copy of a vector.
             base (VectorSpace | None): Set to none for an original space,
                 and to the base space when forming the dual.
         """
