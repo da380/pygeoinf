@@ -105,6 +105,14 @@ class VectorSpace:
         return LinearForm(self, components=cp)
 
 
+class DirectSumSpace(VectorSpace):
+    """
+    Class for the direct sum of vector spaces. 
+    """
+    def __init__(self, spaces):
+        self._spaces = spaces
+
+
 class Operator:
     """
     Class for operators between two vector spaces.

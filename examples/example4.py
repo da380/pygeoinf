@@ -13,11 +13,8 @@ X = Sobolev(256, 2, 0.2)
 mu = X.sobolev_gaussian_measure(2, 0.1, 1)
 u = mu.sample()
 
-print(u.lons())
-
-
 # Set up the forward operator.
-n = 500
+n = 50
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -52,7 +49,7 @@ plt.plot(lons, lats, 'ko')
 plt.colorbar()
 plt.show()
 
-'''
+
 w = X.dirac_representation(20, 180)
 
 R = problem.resolution_operator(damping)
@@ -70,4 +67,3 @@ plt.colorbar()
 
 
 plt.show()
-'''
