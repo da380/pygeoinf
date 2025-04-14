@@ -1,0 +1,57 @@
+Timer unit: 1e-06 s
+
+Total time: 2.2726 s
+File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Function: __call__ at line 201
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   201                                               def __call__(self, x):
+   202                                                   """Action of the operator on a vector."""
+   203         1    2272596.8    2e+06    100.0          return self.__mapping(x)
+
+Total time: 5.8e-06 s
+File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Function: __init__ at line 226
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   226                                               def __init__(self, domain, codomain, mapping, /, *,
+   227                                                            dual_mapping=None, adjoint_mapping=None,
+   228                                                            dual_base=None, adjoint_base=None):
+   229                                                   """
+   230                                                   Args:
+   231                                                       domain (VectorSpace): The domain of the operator.
+   232                                                       codomain (VectorSpace): The codomain of the operator.
+   233                                                       mapping (callable | None): A functor that implements the
+   234                                                           action of the operator.
+   235                                                       dual_mapping (callable | None): A functor that implements
+   236                                                           the action of the dual operator.
+   237                                                       adjoint_mapping (callable | None): A functor that implements
+   238                                                           the action of the adjoint operator.
+   239                                                   """
+   240         1          2.7      2.7     46.3          super().__init__(domain, codomain, mapping)
+   241         1          0.2      0.2      3.4          self._dual_base = dual_base
+   242         1          0.1      0.1      2.2          self._adjoint_base = adjoint_base
+   243         1          0.1      0.1      2.4          self._matrix = None
+   244         1          0.2      0.2      2.8          if dual_mapping is None:
+   245         1          1.8      1.8     30.8              if self.hilbert_operator:
+   246         1          0.1      0.1      2.1                  if adjoint_mapping is None:
+   247         1          0.2      0.2      4.1                      self.__dual_mapping = self._dual_mapping_default
+   248         1          0.3      0.3      5.9                      self.__adjoint_mapping = self._adjoint_mapping_from_dual
+   249                                                           else:
+   250                                                               self.__adjoint_mapping = adjoint_mapping
+   251                                                               self.__dual_mapping = self._dual_mapping_from_adjoint
+   252                                                       else:
+   253                                                           self.__dual_mapping = self._dual_mapping_default
+   254                                                           self.__adjoint_mapping = None
+   255                                                   else:
+   256                                                       self.__dual_mapping = dual_mapping
+   257                                                       if self.hilbert_operator:
+   258                                                           if adjoint_mapping is None:
+   259                                                               self.__adjoint_mapping = self._adjoint_mapping_from_dual
+   260                                                           else:
+   261                                                               self.__adjoint_mapping = adjoint_mapping
+   262                                                       else:
+   263                                                           self.__adjoint_mapping = None
+

@@ -1,0 +1,175 @@
+Mon Apr 14 09:47:20 2025    profile_results
+
+         13887303 function calls (13779050 primitive calls) in 15.582 seconds
+
+   Ordered by: internal time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+   107940    2.733    0.000    7.916    0.000 _orthogonal.py:160(_gen_roots_and_weights)
+   669247    1.204    0.000    1.204    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+   107940    0.999    0.000    0.999    0.000 _orthogonal.py:2437(df)
+   215880    0.838    0.000    4.083    0.000 polynomial.py:1227(__init__)
+   107940    0.834    0.000    5.290    0.000 _orthogonal.py:117(__init__)
+   107940    0.706    0.000    0.706    0.000 _orthogonal.py:2434(bn_func)
+   107940    0.688    0.000    2.514    0.000 polynomial.py:45(poly)
+   107940    0.666    0.000    1.961    0.000 _decomp.py:659(eig_banded)
+   107940    0.636    0.000   13.976    0.000 _orthogonal.py:2443(legendre)
+   755696    0.365    0.000    0.365    0.000 {built-in method numpy.array}
+   345408    0.337    0.000    0.504    0.000 shape_base.py:23(atleast_1d)
+   215880    0.311    0.000    0.640    0.000 numeric.py:738(convolve)
+   107940    0.272    0.000    0.962    0.000 _util.py:491(_asarray_validated)
+   215880    0.236    0.000    0.278    0.000 function_base.py:1804(trim_zeros)
+   215880    0.214    0.000    0.214    0.000 {built-in method numpy.core._multiarray_umath.correlate}
+   107958    0.199    0.000    0.615    0.000 function_base.py:564(asarray_chkfinite)
+    86352    0.193    0.000    0.250    0.000 numeric.py:136(ones)
+    21588    0.181    0.000    0.736    0.000 predefined_functions.py:2318(evaluate)
+   107940    0.173    0.000    0.173    0.000 _orthogonal.py:2495(<lambda>)
+   107940    0.173    0.000    0.415    0.000 type_check.py:25(mintypecode)
+  2180397    0.163    0.000    0.163    0.000 {built-in method builtins.len}
+   107940    0.153    0.000   14.395    0.000 inference.py:24(<lambda>)
+   107940    0.141    0.000    0.141    0.000 _orthogonal.py:2432(an_func)
+    21588    0.135    0.000    0.141    0.000 domains.py:269(check_if_in_domain)
+   107940    0.135    0.000    0.157    0.000 _orthogonal.py:119(<listcomp>)
+   107940    0.134    0.000    8.049    0.000 _orthogonal.py:2319(roots_legendre)
+      310    0.126    0.000   15.573    0.050 {built-in method scipy.integrate._quadpack._qagse}
+   107949    0.121    0.000    0.160    0.000 blas.py:384(getter)
+   108250    0.111    0.000    0.111    0.000 {built-in method builtins.min}
+   129528    0.109    0.000   14.552    0.000 inference.py:53(<genexpr>)
+   107940    0.108    0.000    0.132    0.000 _decomp.py:626(_check_select)
+   107940    0.107    0.000    0.107    0.000 {built-in method numpy.arange}
+   107940    0.101    0.000    0.101    0.000 {method 'astype' of 'numpy.ndarray' objects}
+    21588    0.097    0.000    0.116    0.000 predefined_functions.py:2137(_evaluate_NormalModes_1D)
+   799426    0.091    0.000    0.091    0.000 {built-in method builtins.isinstance}
+   107940    0.081    0.000    0.266    0.000 _orthogonal.py:143(__call__)
+   215880    0.077    0.000    0.520    0.000 {method 'max' of 'numpy.ndarray' objects}
+    21588    0.075    0.000   15.447    0.001 inference.py:39(<lambda>)
+   215880    0.075    0.000    0.075    0.000 polynomial.py:1218(_coeffs)
+   345462    0.070    0.000    0.070    0.000 {built-in method numpy.asanyarray}
+   215880    0.068    0.000    0.132    0.000 type_check.py:71(<genexpr>)
+   107940    0.066    0.000    2.026    0.000 _decomp.py:1031(eigvals_banded)
+   215880    0.063    0.000    0.443    0.000 _methods.py:39(_amax)
+129528/21588    0.062    0.000   14.636    0.001 functions.py:52(evaluate)
+   215880    0.060    0.000    0.406    0.000 {method 'min' of 'numpy.ndarray' objects}
+    21589    0.056    0.000    0.171    0.000 fromnumeric.py:71(_wrapreduction)
+   215880    0.054    0.000    0.063    0.000 type_check.py:69(<genexpr>)
+   107958    0.053    0.000    0.389    0.000 {method 'all' of 'numpy.ndarray' objects}
+   215880    0.053    0.000    0.346    0.000 _methods.py:43(_amin)
+   107968    0.050    0.000    0.050    0.000 {built-in method numpy.zeros}
+    21588    0.049    0.000   14.600    0.001 {built-in method builtins.sum}
+    86352    0.042    0.000    0.042    0.000 {built-in method numpy.empty}
+   107958    0.040    0.000    0.335    0.000 _methods.py:61(_all)
+   107994    0.039    0.000    0.039    0.000 {method 'get' of 'dict' objects}
+   345408    0.039    0.000    0.039    0.000 {method 'append' of 'list' objects}
+   107940    0.039    0.000    0.228    0.000 {method 'sum' of 'numpy.ndarray' objects}
+   345408    0.036    0.000    0.036    0.000 shape_base.py:19(_atleast_1d_dispatcher)
+    21588    0.033    0.000    0.245    0.000 domains.py:343(total_measure)
+   107940    0.031    0.000    0.060    0.000 polynomial.py:1186(coeffs)
+   107940    0.030    0.000    0.189    0.000 _methods.py:47(_sum)
+    21588    0.029    0.000    0.199    0.000 fromnumeric.py:2979(prod)
+   107940    0.028    0.000    0.028    0.000 polynomial.py:1215(_coeffs)
+   215880    0.028    0.000    0.028    0.000 function_base.py:1800(_trim_zeros)
+    43248    0.028    0.000    0.028    0.000 {method 'reshape' of 'numpy.ndarray' objects}
+   107985    0.028    0.000    0.042    0.000 _base.py:1401(issparse)
+   108084    0.027    0.000    0.027    0.000 {built-in method numpy.asarray}
+   215880    0.027    0.000    0.027    0.000 numeric.py:734(_convolve_dispatcher)
+   107940    0.027    0.000    0.027    0.000 _decomp.py:1384(_check_info)
+   215880    0.026    0.000    0.026    0.000 {method 'upper' of 'str' objects}
+   107940    0.025    0.000    0.033    0.000 core.py:6485(isMaskedArray)
+    21588    0.022    0.000   14.623    0.001 inference.py:53(<lambda>)
+   215880    0.022    0.000    0.022    0.000 _orthogonal.py:2493(<lambda>)
+    21634    0.020    0.000    0.020    0.000 {built-in method builtins.getattr}
+    21588    0.018    0.000    0.018    0.000 serialize.py:30(_numba_unpickle)
+   107940    0.016    0.000    0.016    0.000 {method 'lower' of 'str' objects}
+    21589    0.015    0.000    0.015    0.000 fromnumeric.py:72(<dictcomp>)
+   107940    0.014    0.000    0.014    0.000 polynomial.py:41(_poly_dispatcher)
+    86352    0.014    0.000    0.014    0.000 multiarray.py:1080(copyto)
+    86352    0.012    0.000    0.012    0.000 {built-in method builtins.issubclass}
+    21588    0.009    0.000    0.009    0.000 domains.py:364(<listcomp>)
+    21588    0.004    0.000    0.004    0.000 fromnumeric.py:2974(_prod_dispatcher)
+    21589    0.004    0.000    0.004    0.000 {method 'items' of 'dict' objects}
+      310    0.001    0.000   15.575    0.050 _quadpack_py.py:20(quad)
+      310    0.001    0.000   15.576    0.050 inference.py:37(M_inner_product)
+      310    0.001    0.000   15.574    0.050 _quadpack_py.py:588(_quad)
+       54    0.001    0.000    0.001    0.000 linalg.py:541(_mapping_from_components)
+      340    0.000    0.000   15.577    0.046 linalg.py:686(inner_product)
+       62    0.000    0.000   15.577    0.251 inference.py:78(<listcomp>)
+    189/1    0.000    0.000   15.582   15.582 linalg.py:201(__call__)
+        9    0.000    0.000   14.197    1.577 linalg.py:373(_compute_dense_matrix)
+       54    0.000    0.000   14.196    0.263 _interface.py:227(matvec)
+       90    0.000    0.000    0.000    0.000 numeric.py:1855(isscalar)
+        9    0.000    0.000    0.000    0.000 _decomp_cholesky.py:182(cho_solve)
+       63    0.000    0.000    0.000    0.000 functions.py:35(__init__)
+       45    0.000    0.000   13.516    0.300 _interface.py:441(dot)
+    117/9    0.000    0.000   14.197    1.577 linalg.py:106(to_components)
+       54    0.000    0.000   14.195    0.263 linalg.py:349(matvec)
+       63    0.000    0.000    0.000    0.000 inference.py:52(M_from_components)
+       45    0.000    0.000    0.000    0.000 _sputils.py:543(is_pydata_spmatrix)
+        1    0.000    0.000   14.029   14.029 linalg.py:1467(mapping)
+       45    0.000    0.000   13.517    0.300 _interface.py:472(__matmul__)
+      127    0.000    0.000    0.001    0.000 linalg.py:110(from_components)
+     18/9    0.000    0.000   14.197    1.577 linalg.py:332(matrix)
+       62    0.000    0.000   15.577    0.251 inference.py:77(G_mapping)
+       54    0.000    0.000   14.195    0.263 linalg.py:359(<lambda>)
+       90    0.000    0.000    0.000    0.000 {built-in method _abc._abc_instancecheck}
+       18    0.000    0.000    0.000    0.000 _sputils.py:350(isintlike)
+       14    0.000    0.000    0.000    0.000 linalg.py:154(__axpy)
+       90    0.000    0.000    0.000    0.000 abc.py:117(__instancecheck__)
+      310    0.000    0.000    0.000    0.000 {built-in method builtins.max}
+       54    0.000    0.000   14.196    0.263 _interface.py:612(_matvec)
+        9    0.000    0.000   14.198    1.578 linalg.py:367(_adjoint_mapping_from_dual)
+        1    0.000    0.000   15.582   15.582 inference.py:120(compute_solution)
+       30    0.000    0.000    0.000    0.000 linalg.py:805(_inner_product_without_metric)
+      153    0.000    0.000    0.000    0.000 linalg.py:186(codomain)
+       63    0.000    0.000    0.000    0.000 inference.py:63(<lambda>)
+       18    0.000    0.000    0.000    0.000 linalg.py:606(__init__)
+       18    0.000    0.000    0.000    0.000 linalg.py:668(dual)
+       62    0.000    0.000   15.577    0.251 inference.py:82(<lambda>)
+      206    0.000    0.000    0.000    0.000 linalg.py:181(domain)
+      9/1    0.000    0.000   15.582   15.582 linalg.py:477(mapping)
+       18    0.000    0.000    0.000    0.000 linalg.py:191(hilbert_operator)
+        9    0.000    0.000   14.197    1.577 linalg.py:132(_dual_to_components)
+       45    0.000    0.000   13.516    0.300 _interface.py:432(__mul__)
+       18    0.000    0.000    0.000    0.000 linalg.py:523(__init__)
+        9    0.000    0.000   14.198    1.578 linalg.py:731(_from_dual_default)
+        9    0.000    0.000    0.000    0.000 _interface.py:154(__new__)
+        9    0.000    0.000    0.680    0.076 _interface.py:185(_init_dtype)
+       54    0.000    0.000    0.000    0.000 linalg.py:501(<lambda>)
+       18    0.000    0.000    0.000    0.000 linalg.py:36(__init__)
+        9    0.000    0.000    0.000    0.000 linalg.py:811(_to_dual_without_metric)
+       18    0.000    0.000    0.000    0.000 linalg.py:226(__init__)
+       18    0.000    0.000    0.000    0.000 fromnumeric.py:3176(ndim)
+        9    0.000    0.000    0.680    0.076 _interface.py:593(__init__)
+        9    0.000    0.000    0.000    0.000 _interface.py:169(__init__)
+        9    0.000    0.000    0.000    0.000 linalg.py:139(_dual_from_components)
+        9    0.000    0.000    0.000    0.000 _sputils.py:372(isshape)
+       91    0.000    0.000    0.000    0.000 linalg.py:67(dim)
+       84    0.000    0.000    0.000    0.000 multiarray.py:741(dot)
+        1    0.000    0.000   15.582   15.582 {built-in method builtins.exec}
+        9    0.000    0.000   14.198    1.578 linalg.py:702(from_dual)
+        8    0.000    0.000    0.000    0.000 linalg.py:694(norm)
+        9    0.000    0.000    0.000    0.000 linalg.py:357(_dual_mapping_default)
+        7    0.000    0.000    0.000    0.000 linalg.py:150(__multiply)
+       55    0.000    0.000    0.000    0.000 linalg.py:802(_identity)
+       16    0.000    0.000    0.000    0.000 {method 'copy' of 'numpy.ndarray' objects}
+       18    0.000    0.000    0.000    0.000 linalg.py:176(__init__)
+       14    0.000    0.000    0.000    0.000 linalg.py:100(axpy)
+        9    0.000    0.000    0.000    0.000 linalg.py:698(to_dual)
+        9    0.000    0.000    0.000    0.000 linalg.py:159(__copy)
+        7    0.000    0.000    0.000    0.000 linalg.py:84(add)
+        7    0.000    0.000    0.000    0.000 linalg.py:92(multiply)
+        7    0.000    0.000    0.000    0.000 linalg.py:142(__add)
+        9    0.000    0.000    0.000    0.000 linalg.py:103(copy)
+        9    0.000    0.000    0.000    0.000 {built-in method __new__ of type object at 0x5600aa2495e0}
+        1    0.000    0.000    0.000    0.000 linalg.py:80(zero)
+        9    0.000    0.000    0.000    0.000 _misc.py:181(_datacopied)
+       18    0.000    0.000    0.000    0.000 fromnumeric.py:3172(_ndim_dispatcher)
+       18    0.000    0.000    0.000    0.000 {built-in method _operator.index}
+        9    0.000    0.000    0.000    0.000 linalg.py:690(squared_norm)
+        1    0.000    0.000    0.000    0.000 fromnumeric.py:2692(max)
+        1    0.000    0.000    0.000    0.000 linalg.py:146(__subtract)
+        1    0.000    0.000   15.582   15.582 <string>:1(<module>)
+        1    0.000    0.000    0.000    0.000 linalg.py:88(subtract)
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+        1    0.000    0.000    0.000    0.000 fromnumeric.py:2687(_max_dispatcher)
+
+
