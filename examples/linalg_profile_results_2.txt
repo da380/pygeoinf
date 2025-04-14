@@ -1,17 +1,39 @@
 Timer unit: 1e-06 s
 
-Total time: 2.2726 s
-File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Total time: 6.40731 s
+File: /disks/data/PhD/Inferences/pygeoinf/examples/inference.py
+Function: M_inner_product at line 39
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    39                                           def M_inner_product(f: functions.Function, g: functions.Function):
+    40       855    6407104.8   7493.7    100.0      return spi.quad(
+    41       285         44.5      0.2      0.0          lambda x: f.evaluate(x) * g.evaluate(x),
+    42       285         63.9      0.2      0.0          f.domain.bounds[0][0],
+    43       285         41.0      0.1      0.0          f.domain.bounds[0][1]
+    44       285         54.6      0.2      0.0      )[0]
+
+Total time: 6.40807 s
+File: /disks/data/PhD/Inferences/pygeoinf/examples/inference.py
+Function: G_mapping at line 79
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    79                                           def G_mapping(f: functions.Function, kernels):
+    80        57    6408070.0 112422.3    100.0      return np.array([M.inner_product(f, kernel) for kernel in kernels])
+
+Total time: 6.40874 s
+File: /disks/data/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
 Function: __call__ at line 201
 
 Line #      Hits         Time  Per Hit   % Time  Line Contents
 ==============================================================
    201                                               def __call__(self, x):
    202                                                   """Action of the operator on a vector."""
-   203         1    2272596.8    2e+06    100.0          return self.__mapping(x)
+   203       170    6408742.7  37698.5    100.0          return self.__mapping(x)
 
-Total time: 5.8e-06 s
-File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Total time: 4.3108e-05 s
+File: /disks/data/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
 Function: __init__ at line 226
 
 Line #      Hits         Time  Per Hit   % Time  Line Contents
@@ -30,21 +52,21 @@ Line #      Hits         Time  Per Hit   % Time  Line Contents
    237                                                       adjoint_mapping (callable | None): A functor that implements
    238                                                           the action of the adjoint operator.
    239                                                   """
-   240         1          2.7      2.7     46.3          super().__init__(domain, codomain, mapping)
-   241         1          0.2      0.2      3.4          self._dual_base = dual_base
-   242         1          0.1      0.1      2.2          self._adjoint_base = adjoint_base
-   243         1          0.1      0.1      2.4          self._matrix = None
-   244         1          0.2      0.2      2.8          if dual_mapping is None:
-   245         1          1.8      1.8     30.8              if self.hilbert_operator:
-   246         1          0.1      0.1      2.1                  if adjoint_mapping is None:
-   247         1          0.2      0.2      4.1                      self.__dual_mapping = self._dual_mapping_default
-   248         1          0.3      0.3      5.9                      self.__adjoint_mapping = self._adjoint_mapping_from_dual
+   240        17         14.0      0.8     32.5          super().__init__(domain, codomain, mapping)
+   241        17          2.1      0.1      4.8          self._dual_base = dual_base
+   242        17          1.8      0.1      4.1          self._adjoint_base = adjoint_base
+   243        17          1.9      0.1      4.5          self._matrix = None
+   244        17          1.5      0.1      3.4          if dual_mapping is None:
+   245        17         16.6      1.0     38.4              if self.hilbert_operator:
+   246         1          0.1      0.1      0.2                  if adjoint_mapping is None:
+   247         1          0.2      0.2      0.4                      self.__dual_mapping = self._dual_mapping_default
+   248         1          0.1      0.1      0.3                      self.__adjoint_mapping = self._adjoint_mapping_from_dual
    249                                                           else:
    250                                                               self.__adjoint_mapping = adjoint_mapping
    251                                                               self.__dual_mapping = self._dual_mapping_from_adjoint
    252                                                       else:
-   253                                                           self.__dual_mapping = self._dual_mapping_default
-   254                                                           self.__adjoint_mapping = None
+   253        16          2.9      0.2      6.7                  self.__dual_mapping = self._dual_mapping_default
+   254        16          2.0      0.1      4.7                  self.__adjoint_mapping = None
    255                                                   else:
    256                                                       self.__dual_mapping = dual_mapping
    257                                                       if self.hilbert_operator:
