@@ -38,13 +38,13 @@ u2 = B(v)
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
+plt.plot(lons, lats, "ko")
 
 plt.colorbar()
 
 plt.figure()
 plt.pcolormesh(u2.lons(), u2.lats(), u2.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
+plt.plot(lons, lats, "ko")
 
 plt.colorbar()
 plt.show()
@@ -57,12 +57,12 @@ z = R.adjoint(w)
 
 plt.figure()
 plt.pcolormesh(z.lons(), z.lats(), w.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
+plt.plot(lons, lats, "ko")
 plt.colorbar()
 
 plt.figure()
 plt.pcolormesh(z.lons(), z.lats(), z.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
+plt.plot(lons, lats, "ko")
 plt.colorbar()
 
 

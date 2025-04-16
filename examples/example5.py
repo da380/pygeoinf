@@ -34,12 +34,12 @@ u2 = problem.minimum_norm_operator(0.95)(v)
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
+plt.plot(lons, lats, "ko")
 plt.colorbar()
 
 plt.figure()
 plt.pcolormesh(u2.lons(), u2.lats(), u2.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
+plt.plot(lons, lats, "ko")
 plt.colorbar()
 
 plt.show()
