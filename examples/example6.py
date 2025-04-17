@@ -1,6 +1,7 @@
 import numpy as np
 import pygeoinf.linalg as la
 from scipy.stats import chi2
+from pygeoinf.linalg import GaussianMeasure
 from pygeoinf.forward_problem import ForwardProblem
 from pygeoinf.bayesian import BayesianInversion, BayesianInference
 from pygeoinf.sphere import Sobolev
@@ -22,7 +23,7 @@ B = X.point_evaluation_operator(lats, lons)
 
 
 # Set up the forward operator.
-n = 100
+n = 30
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -34,20 +35,15 @@ sigma = 0.01
 nu = Y.standard_gaussisan_measure(sigma)
 
 # Set up the inference problem
-problem = BayesianInference(A, B, mu, nu)
+problem = BayesianInversion(A, mu, nu)
 
 # Generate synthetic data.
 u = mu.sample()
 v = problem.data_measure(u).sample()
+pi = problem.model_posterior_measure(v)
 
-u2 = problem.model_posterior_measure(v).expectation
+# xi = GaussianMeasure.low_rank_measure_by_factored_covariance(pi, 10)
 
-
-# Form the posterior distribution
-pi = problem.property_posterior_measure(v)
-
-print(mu.affine_mapping(operator=B).covariance)
-print(pi.covariance)
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
@@ -55,7 +51,7 @@ plt.plot(lons, lats, "ko")
 plt.colorbar()
 
 plt.figure()
-plt.pcolormesh(u2.lons(), u2.lats(), u2.data, cmap="seismic")
+plt.pcolormesh(u.lons(), u.lats(), pi.expectation.data, cmap="seismic")
 plt.plot(lons, lats, "ko")
 plt.colorbar()
 
