@@ -14,7 +14,7 @@ class BayesianInversion(ForwardProblem):
         """
         Args:
             forward_operator (LinearOperator): The forward operator for the problem.
-            model_prior_measure (GaussianMeasure): The prior measure on the data. 
+            model_prior_measure (GaussianMeasure): The prior measure on the data.
             data_error_measure (GaussianMeasure): The error measure on the data.
         """
         super().__init__(forward_operator, data_error_measure)
@@ -38,29 +38,31 @@ class BayesianInversion(ForwardProblem):
         """
         Return the prior distribution on the data
         """
-        return self.model_prior_measure.affine_mapping(operator=self.forward_operator) + self.data_error_measure
+        return (
+            self.model_prior_measure.affine_mapping(operator=self.forward_operator)
+            + self.data_error_measure
+        )
 
-    def model_posterior_measure(self, data, /, *,
-                                solver=None,
-                                preconditioner=None,
-                                preconditioning_method=None):
+    def model_posterior_measure(
+        self, data, /, *, solver=None, preconditioner=None, preconditioning_method=None
+    ):
         """
         Returns the posterior measure on the model space given the data.
 
         Args:
-            data (data-space vector): The observed data. 
-            solver (LinearSolver): A linear solver for the normal equations. 
-            preconditioner (LinearSolver): A preconditioner for use in solving 
-                the normal equations. 
-            preconditioning_method (PreconditioningMethod): A preconditioning 
-                method that constructs a preconditioner from the normal operator. 
+            data (data-space vector): The observed data.
+            solver (LinearSolver): A linear solver for the normal equations.
+            preconditioner (LinearSolver): A preconditioner for use in solving
+                the normal equations.
+            preconditioning_method (PreconditioningMethod): A preconditioning
+                method that constructs a preconditioner from the normal operator.
 
         Returns:
             GaussianMeasure: The posterior measure.
 
-        Notes: 
-            The posterior measure does not have a sampling method set. If required, 
-            this should be set directly afterwards. 
+        Notes:
+            The posterior measure does not have a sampling method set. If required,
+            this should be set directly afterwards.
         """
 
         A = self.forward_operator
@@ -85,8 +87,9 @@ class BayesianInversion(ForwardProblem):
         else:
             Ni = _solver(N)
 
-        expectation = (Q @ A.adjoint @ Ni)(data -
-                                           A(self.model_prior_measure.expectation))
+        expectation = (Q @ A.adjoint @ Ni)(
+            data - A(self.model_prior_measure.expectation)
+        )
         covariance = Q - Q @ A.adjoint @ Ni @ A @ Q
 
         return la.GaussianMeasure(self.model_space, covariance, expectation=expectation)
@@ -95,16 +98,22 @@ class BayesianInversion(ForwardProblem):
 class BayesianInference(BayesianInversion):
     """Class for solving Bayesian inference problems."""
 
-    def __init__(self, forward_operator, property_operator, model_prior_measure, data_error_measure):
+    def __init__(
+        self,
+        forward_operator,
+        property_operator,
+        model_prior_measure,
+        data_error_measure,
+    ):
         """
         Args:
             forward_operator (LinearOperator): The forward operator.
-            property_operator (LinearOperator): The property operator. 
+            property_operator (LinearOperator): The property operator.
             model_prior_measure (GaussianMeasure): The prior measure on the data.
             data_error_measure (GaussianMeasure): The error measure on the data.
         """
         super().__init__(forward_operator, model_prior_measure, data_error_measure)
-        assert (property_operator.domain == self.model_space)
+        assert property_operator.domain == self.model_space
         self._property_operator = property_operator
 
     @property
@@ -121,30 +130,31 @@ class BayesianInference(BayesianInversion):
         """Return the prior measure on the property space."""
         return self.model_prior_measure.affine_mapping(operator=self.property_operator)
 
-    def property_posterior_measure(self, data,  /, *,
-                                   solver=None,
-                                   preconditioner=None,
-                                   preconditioning_method=None):
+    def property_posterior_measure(
+        self, data, /, *, solver=None, preconditioner=None, preconditioning_method=None
+    ):
         """
         Returns the posterior measure on the property space given the data.
 
         Args:
-            data (data-space vector): The observed data. 
-            solver (LinearSolver): A linear solver for the normal equations. 
-            preconditioner (LinearSolver): A preconditioner for use in solving 
-                the normal equations. 
-            preconditioning_method (PreconditioningMethod): A preconditioning 
-                method that constructs a preconditioner from the normal operator. 
+            data (data-space vector): The observed data.
+            solver (LinearSolver): A linear solver for the normal equations.
+            preconditioner (LinearSolver): A preconditioner for use in solving
+                the normal equations.
+            preconditioning_method (PreconditioningMethod): A preconditioning
+                method that constructs a preconditioner from the normal operator.
 
         Returns:
             GaussianMeasure: The posterior measure.
 
-        Notes: 
-            The posterior measure does not have a sampling method set. If required, 
-            this should be set directly afterwards. 
+        Notes:
+            The posterior measure does not have a sampling method set. If required,
+            this should be set directly afterwards.
         """
-        pi = self.model_posterior_measure(data,
-                                          solver=solver,
-                                          preconditioner=preconditioner,
-                                          preconditioning_method=preconditioning_method)
+        pi = self.model_posterior_measure(
+            data,
+            solver=solver,
+            preconditioner=preconditioner,
+            preconditioning_method=preconditioning_method,
+        )
         return pi.affine_mapping(operator=self.property_operator)

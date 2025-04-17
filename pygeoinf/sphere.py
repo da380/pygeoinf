@@ -5,9 +5,14 @@ Module for Sobolev spaces on the two-sphere.
 import numpy as np
 from scipy.sparse import diags
 import pyshtools as sh
-from pygeoinf.linalg import VectorSpace, HilbertSpace, \
-    LinearOperator, GaussianMeasure, \
-    EuclideanSpace, LinearForm
+from pygeoinf.linalg import (
+    VectorSpace,
+    HilbertSpace,
+    LinearOperator,
+    GaussianMeasure,
+    EuclideanSpace,
+    LinearForm,
+)
 
 
 class SHToolsHelper:
@@ -39,7 +44,7 @@ class SHToolsHelper:
     @property
     def dim(self):
         """Returns dimension of vector space."""
-        return (self.lmax+1)**2
+        return (self.lmax + 1) ** 2
 
     @property
     def radius(self):
@@ -69,22 +74,22 @@ class SHToolsHelper:
     def spherical_harmonic_index(self, l, m):
         """Return the component index for given spherical harmonic degree and order."""
         if m >= 0:
-            return int(l*(l+1)/2) + m
+            return int(l * (l + 1) / 2) + m
         else:
-            offset = int((self.lmax + 1)*(self.lmax + 2) / 2)
+            offset = int((self.lmax + 1) * (self.lmax + 2) / 2)
             return offset + int((l - 1) * l / 2) - m - 1
 
     def _to_components_from_coeffs(self, coeffs):
         """Return component vector from coefficient array."""
         c = np.empty(self.dim)
         i = 0
-        for l in range(self.lmax+1):
+        for l in range(self.lmax + 1):
             j = i + l + 1
-            c[i:j] = coeffs[0, l, :l+1]
+            c[i:j] = coeffs[0, l, : l + 1]
             i = j
-        for l in range(1, self.lmax+1):
+        for l in range(1, self.lmax + 1):
             j = i + l
-            c[i:j] = coeffs[1, l, 1:l+1]
+            c[i:j] = coeffs[1, l, 1 : l + 1]
             i = j
         return c
 
@@ -99,18 +104,19 @@ class SHToolsHelper:
 
     def _from_components_to_SHCoeffs(self, c):
         """Return SHCoeffs object from its component vector."""
-        coeffs = np.zeros((2, self.lmax+1, self.lmax+1))
+        coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
         i = 0
-        for l in range(self.lmax+1):
+        for l in range(self.lmax + 1):
             j = i + l + 1
-            coeffs[0, l, :l+1] = c[i:j]
+            coeffs[0, l, : l + 1] = c[i:j]
             i = j
-        for l in range(1, self.lmax+1):
+        for l in range(1, self.lmax + 1):
             j = i + l
-            coeffs[1, l, 1:l+1] = c[i:j]
+            coeffs[1, l, 1 : l + 1] = c[i:j]
             i = j
         ulm = sh.SHCoeffs.from_array(
-            coeffs, normalization=self.normalization, csphase=self.csphase)
+            coeffs, normalization=self.normalization, csphase=self.csphase
+        )
         return ulm
 
     def _from_components_to_SHGrid(self, c):
@@ -121,11 +127,11 @@ class SHToolsHelper:
     def _degree_dependent_scaling_to_diagonal_matrix(self, f):
         values = np.zeros(self.dim)
         i = 0
-        for l in range(self.lmax+1):
+        for l in range(self.lmax + 1):
             j = i + l + 1
             values[i:j] = f(l)
             i = j
-        for l in range(1, self.lmax+1):
+        for l in range(1, self.lmax + 1):
             j = i + l
             values[i:j] = f(l)
             i = j
@@ -135,7 +141,9 @@ class SHToolsHelper:
 class Sobolev(SHToolsHelper, HilbertSpace):
     """Sobolev spaces on a two-sphere as an instance of HilbertSpace."""
 
-    def __init__(self, lmax, order, scale, /, *,  vector_as_SHGrid=True, radius=1,  grid="DH"):
+    def __init__(
+        self, lmax, order, scale, /, *, vector_as_SHGrid=True, radius=1, grid="DH"
+    ):
         """
         Args:
             lmax (int): Truncation degree for spherical harmoincs.
@@ -150,15 +158,31 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         self._scale = scale
         SHToolsHelper.__init__(self, lmax, radius=radius, grid=grid)
         self._metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
-            self._sobolev_function)
+            self._sobolev_function
+        )
         self._inverse_metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
-            lambda l: 1 / self._sobolev_function(l))
+            lambda l: 1 / self._sobolev_function(l)
+        )
         if vector_as_SHGrid:
-            HilbertSpace.__init__(self, self.dim, self._to_components_from_SHGrid, self._from_components_to_SHGrid,
-                                  self._inner_product_impl, to_dual=self._to_dual_impl, from_dual=self._from_dual_impl)
+            HilbertSpace.__init__(
+                self,
+                self.dim,
+                self._to_components_from_SHGrid,
+                self._from_components_to_SHGrid,
+                self._inner_product_impl,
+                to_dual=self._to_dual_impl,
+                from_dual=self._from_dual_impl,
+            )
         else:
-            HilbertSpace.__init__(self, self.dim, self._to_components_from_SHCoeffs, self._from_components_to_SHCoeffs,
-                                  self._inner_product_impl, to_dual=self._to_dual_impl, from_dual=self._from_dual_impl)
+            HilbertSpace.__init__(
+                self,
+                self.dim,
+                self._to_components_from_SHCoeffs,
+                self._from_components_to_SHCoeffs,
+                self._inner_product_impl,
+                to_dual=self._to_dual_impl,
+                from_dual=self._from_dual_impl,
+            )
 
     # =============================================#
     #                   Properties                 #
@@ -198,9 +222,10 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         if degrees:
             colatitude = 90 - latitude
         else:
-            colatitude = np.pi/2 - latitude
+            colatitude = np.pi / 2 - latitude
         coeffs = sh.expand.spharm(
-            self.lmax, colatitude, longitude, normalization="ortho", degrees=degrees)
+            self.lmax, colatitude, longitude, normalization="ortho", degrees=degrees
+        )
         c = self._to_components_from_coeffs(coeffs)
         return self.dual.from_components(c)
 
@@ -246,19 +271,17 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         """
 
         if lats.size != lons.size:
-            raise ValueError(
-                "Must have the same number of latitudes and longitudes.")
+            raise ValueError("Must have the same number of latitudes and longitudes.")
         codomain = EuclideanSpace(lats.size)
 
         def mapping(u):
-            ulm = u.expand(normalization=self.normalization,
-                           csphase=self.csphase)
+            ulm = u.expand(normalization=self.normalization, csphase=self.csphase)
             return ulm.expand(lat=lats, lon=lons, degrees=degrees)
 
         def dual_mapping(vp):
             cvp = codomain.dual.to_components(vp)
             cup = np.zeros(self.dim)
-            for (c, lat, lon) in zip(cvp, lats, lons):
+            for c, lat, lon in zip(cvp, lats, lons):
                 dirac = self.dirac(lat, lon, degrees=degrees)
                 cup += c * self.dual.to_components(dirac)
             return LinearForm(self, components=cup)
@@ -281,20 +304,25 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             ValueError: If the codomain is not another Sobolev on a two-sphere.
         """
         if not isinstance(codomain, Sobolev):
-            raise ValueError(
-                "Codomain must be another Sobolev space on a sphere.")
+            raise ValueError("Codomain must be another Sobolev space on a sphere.")
         matrix = self._degree_dependent_scaling_to_diagonal_matrix(f)
         if codomain == self:
+
             def mapping(x):
                 return self.from_components(matrix @ self.to_components(x))
+
             return LinearOperator.self_adjoint(self, mapping)
         else:
+
             def mapping(x):
                 return codomain.from_components(matrix @ self.to_components(x))
 
             def dual_mapping(yp):
-                return self.dual.from_components(matrix @ codomain.dual.to_components(yp))
-            return LinearOperator(self,  codomain, mapping, dual_mapping=dual_mapping)
+                return self.dual.from_components(
+                    matrix @ codomain.dual.to_components(yp)
+                )
+
+            return LinearOperator(self, codomain, mapping, dual_mapping=dual_mapping)
 
     def invariant_gaussian_measure(self, f, /, *, expectation=None):
         """
@@ -314,7 +342,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             return np.sqrt(f(l) / (self.radius**2 * self._sobolev_function(l)))
 
         def h(l):
-            return np.sqrt(self.radius ** 2 * self._sobolev_function(l) * f(l))
+            return np.sqrt(self.radius**2 * self._sobolev_function(l) * f(l))
 
         matrix = self._degree_dependent_scaling_to_diagonal_matrix(g)
         adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(h)
@@ -327,10 +355,12 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             return adjoint_matrix @ self.to_components(u)
 
         inverse_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
-            lambda l: 1 / g(l))
+            lambda l: 1 / g(l)
+        )
 
         inverse_adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
-            lambda l: 1 / h(l))
+            lambda l: 1 / h(l)
+        )
 
         def inverse_mapping(u):
             return inverse_matrix @ self.to_components(u)
@@ -338,17 +368,17 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         def inverse_adjoint_mapping(c):
             return self.from_components(inverse_adjoint_matrix @ c)
 
-        factor = LinearOperator(domain, self, mapping,
-                                adjoint_mapping=adjoint_mapping)
+        factor = LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
 
         inverse_factor = LinearOperator(
-            self, domain, inverse_mapping, adjoint_mapping=inverse_adjoint_mapping)
+            self, domain, inverse_mapping, adjoint_mapping=inverse_adjoint_mapping
+        )
 
-        return GaussianMeasure.from_factored_covariance(factor,
-                                                        inverse_factor=inverse_factor,
-                                                        expectation=expectation)
+        return GaussianMeasure.from_factored_covariance(
+            factor, inverse_factor=inverse_factor, expectation=expectation
+        )
 
-    def sobolev_gaussian_measure(self, order, scale, amplitude, /, *,  expectation=None):
+    def sobolev_gaussian_measure(self, order, scale, amplitude, /, *, expectation=None):
         """
         Returns an invariant Gaussian measure on the space whose covariance
         operator takes the Sobolev form:
@@ -362,10 +392,13 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         Returns:
             GaussianMeasures: The Gaussian measure on the space.
         """
+
         def f(l):
-            return (1 + scale**2 * l * (l+1))**(-order)
-        return self.invariant_gaussian_measure(self._normalise_covariance_function(f, amplitude),
-                                               expectation=expectation)
+            return (1 + scale**2 * l * (l + 1)) ** (-order)
+
+        return self.invariant_gaussian_measure(
+            self._normalise_covariance_function(f, amplitude), expectation=expectation
+        )
 
     def heat_kernel_gaussian_measure(self, scale, amplitude, /, *, expectation=None):
         """
@@ -380,10 +413,13 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         Returns:
             GaussianMeasures: The Gaussian measure on the space.
         """
+
         def f(l):
-            return np.exp(-0.5 * l*(l+1) * scale**2)
-        return self.invariant_gaussian_measure(self._normalise_covariance_function(f, amplitude),
-                                               expectation=expectation)
+            return np.exp(-0.5 * l * (l + 1) * scale**2)
+
+        return self.invariant_gaussian_measure(
+            self._normalise_covariance_function(f, amplitude), expectation=expectation
+        )
 
     # ==============================================#
     #                Private methods               #
@@ -391,11 +427,13 @@ class Sobolev(SHToolsHelper, HilbertSpace):
 
     def _sobolev_function(self, l):
         # Degree-dependent scaling that defines the Sobolev inner product.
-        return (1 + self.scale**2 * l * (l+1))**self.order
+        return (1 + self.scale**2 * l * (l + 1)) ** self.order
 
     def _inner_product_impl(self, u, v):
         # Implementation of the inner product.
-        return self.radius**2 * np.dot(self._metric_tensor @ self.to_components(u), self.to_components(v))
+        return self.radius**2 * np.dot(
+            self._metric_tensor @ self.to_components(u), self.to_components(v)
+        )
 
     def _to_dual_impl(self, u):
         # Implementation of the mapping to the dual space.
@@ -404,8 +442,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
 
     def _from_dual_impl(self, up):
         # Implementation of the mapping from the dual space.
-        c = self._inverse_metric_tensor @ self.dual.to_components(
-            up) / self.radius**2
+        c = self._inverse_metric_tensor @ self.dual.to_components(up) / self.radius**2
         return self.from_components(c)
 
     def _normalise_covariance_function(self, f, amplitude):
@@ -413,26 +450,31 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         # the associated invariant Gaussian measure has standard deviation
         # for point values equal to amplitude.
         norm = 0
-        for l in range(self.lmax+1):
-            norm += f(l) * (2*l+1) / (4*np.pi * self.radius **
-                                      2 * self._sobolev_function(l))
+        for l in range(self.lmax + 1):
+            norm += (
+                f(l)
+                * (2 * l + 1)
+                / (4 * np.pi * self.radius**2 * self._sobolev_function(l))
+            )
         return lambda l: amplitude**2 * f(l) / norm
 
 
 class Lebesgue(Sobolev):
     """
-    L2 on the two-sphere as an instance of HilbertSpace. 
+    L2 on the two-sphere as an instance of HilbertSpace.
 
     Implemented as a special case of the Sobolev class with order = 0.
     """
 
-    def __init__(self, lmax, /, *, vector_as_SHGrid=True, radius=1,  grid="DH"):
+    def __init__(self, lmax, /, *, vector_as_SHGrid=True, radius=1, grid="DH"):
         """
         Args:
-            lmax (int): Truncation degree for spherical harmoincs.            
-            vector_as_SHGrid (bool): If true, elements of the space are 
+            lmax (int): Truncation degree for spherical harmoincs.
+            vector_as_SHGrid (bool): If true, elements of the space are
                 instances of the SHGrid class, otherwise they are SHCoeffs.
             radius (float): Radius of the two sphere.
             grid (str): pyshtools grid type.
         """
-        super().__init__(lmax, 0, 0, vector_as_SHGrid=vector_as_SHGrid, radius=radius, grid=grid)
+        super().__init__(
+            lmax, 0, 0, vector_as_SHGrid=vector_as_SHGrid, radius=radius, grid=grid
+        )
