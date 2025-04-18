@@ -471,8 +471,8 @@ class LinearOperator(Operator):
     def from_matrix(matrix, domain, codomain, galerkin=False):
         """
         Returns a linear operator defined by its matrix representation.
-        By default the standard representation is returned. But the
-        Galerkin representation can be returned optionally so long as the
+        By default the standard representation is assumed but the
+        Galerkin representation can optinally be used so long as the
         domain and codomain are Hilbert spaces.
 
         Args:
@@ -587,28 +587,28 @@ class LinearOperator(Operator):
         return LinearOperator.self_adjoint(domain, mapping)
 
     @staticmethod
-    def self_adjoint_from_cholesky_factor(domain, F):
+    def self_adjoint_from_cholesky_factor(domain, factor):
         """
         Returns a self-adjoint linear operator on a Hilbert space
         from its low-rank Cholesky-factors.
 
         Args:
             domain (VectorSpace): The domain of the operator.
-            F (np.ndarray or SciPy LinOp): The Cholesky factor.
+            factor (np.ndarray or SciPy LinOp): The Cholesky factor.
 
         Returns:
             LinearOperator: The linear operator F @ F.T.
         """
         assert isinstance(domain, HilbertSpace)
-        assert F.shape[0] == domain.dim
+        assert factor.shape[0] == domain.dim
 
         def mapping(x):
             cx = domain.to_components(x)
-            cyp = F @ (F.T @ cx)
+            cyp = factor @ (factor.T @ cx)
             yp = domain.dual.from_components(cyp)
             return domain.from_dual(yp)
 
-        return LinearOperator(domain, domain, mapping)
+        return LinearOperator.self_adjoint(domain, mapping)
 
     @property
     def linear(self):
@@ -720,7 +720,7 @@ class LinearOperator(Operator):
         Args:
             rank (int): The target rank.
             galerkin (bool): Whether to use the Galerkin matrix representation.
-            q (int): The power iteration exponent (default 0, meaning no power iteration).
+            pow (int): The power iteration exponent (default 0, meaning no power iteration).
 
         Returns:
             np.ndarray: An orthonormal basis for the range.
@@ -732,14 +732,13 @@ class LinearOperator(Operator):
         p = np.random.randn(n, rank)
 
         y = np.zeros((m, rank))
-        for i in range(rank):  # todo: parellise?
+        for i in range(rank):
             y[:, i] = a @ p[:, i]
 
         for _ in range(pow):
             y = a @ (a.T @ y)
             if reorth:
-                y, _ = np.linalg.qr(y)  # todo: test this
-
+                y, _ = np.linalg.qr(y)
         if not reorth:
             q, _ = np.linalg.qr(y)
         else:
@@ -754,7 +753,7 @@ class LinearOperator(Operator):
         Args:
             rank (int): The target rank.
             galerkin (bool): Whether to use the Galerkin matrix representation.
-            q (int): The power iteration exponent.
+            pow (int): The power iteration exponent.
 
         Returns:
             U (np.ndarray): Left singular vectors.
@@ -776,7 +775,7 @@ class LinearOperator(Operator):
 
         Args:
             rank (int): The rank of the decomposition.
-            q (int): The power iteration exponent.
+            pow (int): The power iteration exponent.
 
         Returns:
             np.ndarray: The eigen factors.
@@ -809,7 +808,8 @@ class LinearOperator(Operator):
 
     def reduced_rank_cholesky_factor(self, rank, /, *, pow=0):
         """
-        Given a symmetric, positive-definite operator and rank, computes an approximate Cholesky factorisation.
+        Given a symmetric, positive-definite operator and rank,
+        computes an approximate Cholesky factorisation.
 
         Args:
             rank (int): The rank of the factorisation.
@@ -850,7 +850,7 @@ class LinearOperator(Operator):
         Args:
             rank (int): The rank of the approximation.
             method (str): The method to use. Options are 'cholesky', 'eigen', 'nystrom'.
-            q (int): The power iteration exponent.
+            pow (int): The power iteration exponent.
 
         Returns:
             LinearOperator: The low-rank operator.
@@ -873,7 +873,7 @@ class LinearOperator(Operator):
 
         Args:
             rank (int): The rank of the approximation.
-            q (int): The power iteration exponent.
+            pow (int): The power iteration exponent.
 
         Returns:
             LinearOperator: The low-rank operator.
@@ -1157,32 +1157,14 @@ class HilbertSpace(VectorSpace):
             needs to be the inverse of the mapping in (2), but
             this requirement is not automatically checked.
         (4) The inner product on the space.
+        (5) The mapping from the space to its dual.
+        (5) The mapping from a dual vector to its representation
+            within the space.
 
     Note that this space inherits from VectorSpace.
 
-    The user can also provide either of the following:
-
-        (a) The mapping from the space to its dual.
-        (b) The mapping from a dual vector to its representation
-            within the space.
-
-    The existence of such mappings follows from the Riesz representation
-    theorem. If (a) is not provided, then then cannonical form of this
-    mapping is used, with a vector, x, being mapped to the dual vector
-    that acts on a vector, y, by y -> (x,y).
-
-    If (b) is not provided, the metric tensor for the space relative
-    to its basis is computed along with its Cholesky factor. In this
-    case the mapping in (a) is replaced by one using dual components
-    that is more efficient.
-
-    Within high-dimensional spaces, custom mappings to and from the
-    dual space should be provided for the user for better efficiency.
-
-    A HilbertSpace can be constructed directly, or from an already
-    formed VectorSpace using the static method "from_vector_space".
-    The latter option is often preferable as a custom definition of
-    the functor "to_dual" requires that the dual space be available.
+    The user can also provide custom implementations of the basic
+    vector operations as with the VectorSpace class.
     """
 
     def __init__(
@@ -1191,10 +1173,15 @@ class HilbertSpace(VectorSpace):
         to_components,
         from_components,
         inner_product,
+        to_dual,
+        from_dual,
         /,
         *,
-        to_dual=None,
-        from_dual=None,
+        add=None,
+        subtract=None,
+        multiply=None,
+        axpy=None,
+        copy=None,
         base=None,
     ):
         """
@@ -1211,32 +1198,32 @@ class HilbertSpace(VectorSpace):
                 to the cannonically associated dual vector.
             from_dual (callable | None): A functor that maps a dual vector
                 to its representation on the space.
+            add (callable): Implements vector addition.
+            subtract (callable): Implements vector subtraction.
+            multiply (callable): Implements scalar multiplication.
+            axpy (callable): Implements the mapping y -> a*x + y
+            copy (callable): Implements deep copy of a vector.
             base (VectorSpace | None): Set to none for an original space,
                 and to the base space when forming the dual.
         """
-        super().__init__(dim, to_components, from_components)
+        super().__init__(
+            dim,
+            to_components,
+            from_components,
+            add=add,
+            subtract=subtract,
+            multiply=multiply,
+            axpy=axpy,
+            copy=copy,
+        )
         self.__inner_product = inner_product
-
-        if from_dual is None:
-            self.__metric_tensor = self.calculate_metric_tensor()
-            self.__metric_tensor_factor = cho_factor(self.metric_tensor)
-            self.__from_dual = self._from_dual_default
-        else:
-            self.__metric_tensor = None
-            self.__from_dual = from_dual
-
-        if to_dual is None:
-            if self.__metric_tensor is None:
-                self.__to_dual = self._to_dual_default
-            else:
-                self.__to_dual = self._to_dual_default_with_metric
-        else:
-            self.__to_dual = to_dual
-
+        self.__metric_tensor = None
+        self.__from_dual = from_dual
+        self.__to_dual = to_dual
         self._base = base
 
     @staticmethod
-    def from_vector_space(space, inner_product, /, *, to_dual=None, from_dual=None):
+    def from_vector_space(space, inner_product, to_dual, from_dual):
         """
         Form a HilbertSpace from a VectorSpace by providing additional structures.
 
@@ -1254,8 +1241,8 @@ class HilbertSpace(VectorSpace):
             space.to_components,
             space.from_components,
             inner_product,
-            to_dual=to_dual,
-            from_dual=from_dual,
+            to_dual,
+            from_dual,
         )
 
     @property
@@ -1272,20 +1259,12 @@ class HilbertSpace(VectorSpace):
                 self._dual_to_components,
                 self._dual_from_components,
                 self._dual_inner_product,
-                to_dual=self.from_dual,
-                from_dual=self.to_dual,
+                self.from_dual,
+                self.to_dual,
                 base=self,
             )
         else:
             return self._base
-
-    @property
-    def metric_tensor(self):
-        """The metric tensor for the space."""
-        if self.__metric_tensor is None:
-            return self.calculate_metric_tensor()
-        else:
-            return self.__metric_tensor
 
     def inner_product(self, x1, x2):
         """Return the inner product of two vectors."""
@@ -1307,36 +1286,6 @@ class HilbertSpace(VectorSpace):
         """Map a dual vector to its representation in the space."""
         return self.__from_dual(xp)
 
-    def calculate_metric_tensor(self):
-        """Return the space's metric tensor as a numpy matrix."""
-        metric_tensor = np.zeros((self.dim, self.dim))
-        c1 = np.zeros(self.dim)
-        c2 = np.zeros(self.dim)
-        for i in range(self.dim):
-            c1[i] = 1
-            x1 = self.from_components(c1)
-            metric_tensor[i, i] = self.inner_product(x1, x1)
-            for j in range(i + 1, self.dim):
-                c2[j] = 1
-                x2 = self.from_components(c2)
-                metric_tensor[i, j] = self.inner_product(x1, x2)
-                metric_tensor[j, i] = metric_tensor[i, j]
-                c2[j] = 0
-            c1[i] = 0
-        return metric_tensor
-
-    def _to_dual_default(self, x):
-        return LinearForm(self, mapping=lambda y: self.inner_product(x, y))
-
-    def _to_dual_default_with_metric(self, x):
-        cp = self.metric_tensor @ self.to_components(x)
-        return self.dual.from_components(cp)
-
-    def _from_dual_default(self, xp):
-        cp = self.dual.to_components(xp)
-        c = cho_solve(self.__metric_tensor_factor, cp)
-        return self.from_components(c)
-
     def _dual_inner_product(self, xp1, xp2):
         return self.inner_product(self.from_dual(xp1), self.from_dual(xp2))
 
@@ -1345,44 +1294,20 @@ class EuclideanSpace(HilbertSpace):
     """
     Euclidean space implemented as an instance of HilbertSpace."""
 
-    def __init__(self, dim, /, *, metric_tensor=None, inverse_metric_tensor=None):
+    def __init__(self, dim):
         """
         Args:
             dim (int): Dimension of the space.
-            metric_tensor (scipy LinearOperator): The metric tensor in the
-                form of a scipy LinearOperator or an equivalent object.
-            inverse_metric_tensor (scipy LinearOperator): The inverse metric tensor
-                in the form of a scipy LinearOperator or an equivalent object.
-
-        Notes:
-            If the inverse metric tensor is not provided, it action is
-            computed using the conjugate gradient algorithm.
         """
 
-        if metric_tensor is None:
-            super().__init__(
-                dim,
-                self._identity,
-                self._identity,
-                self._inner_product_without_metric,
-                to_dual=self._to_dual_without_metric,
-                from_dual=self._from_dual_without_metric,
-            )
-        else:
-            self._metric_tensor = metric_tensor
-            if inverse_metric_tensor is None:
-                self._inverse_metric_tensor = self._inverse_metric_tensor_default
-            else:
-                self._inverse_metric_tensor = inverse_metric_tensor
-
-            super().__init__(
-                dim,
-                self._identity,
-                self._identity,
-                self._inner_product_with_metric,
-                to_dual=self._to_dual_with_metric,
-                from_dual=self._from_dual_with_metric,
-            )
+        super().__init__(
+            dim,
+            lambda x: x,
+            lambda x: x,
+            self.__inner_product,
+            self.__to_dual,
+            self.__from_dual,
+        )
 
     def standard_gaussisan_measure(self, standard_deviation):
         """
@@ -1414,32 +1339,15 @@ class EuclideanSpace(HilbertSpace):
             factor, inverse_factor=inverse_factor
         )
 
-    def _identity(self, x):
-        return x
-
-    def _inner_product_without_metric(self, x1, x2):
+    def __inner_product(self, x1, x2):
         return np.dot(x1, x2)
 
-    def _inner_product_with_metric(self, x1, x2):
-        return np.dot(self._metric_tensor @ x1, x2)
-
-    def _to_dual_without_metric(self, x):
+    def __to_dual(self, x):
         return self.dual.from_components(x)
 
-    def _to_dual_with_metric(self, x):
-        return self.dual.from_components(self._metric_tensor @ x)
-
-    def _from_dual_without_metric(self, xp):
+    def __from_dual(self, xp):
         cp = self.dual.to_components(xp)
         return self.from_components(cp)
-
-    def _from_dual_with_metric(self, xp):
-        cp = self.dual.to_components(xp)
-        c = self._inverse_metric_tensor @ cp
-        return self.from_components(c)
-
-    def _inverse_metric_tensor_default(self, x):
-        return cg(self._metric_tensor, x)
 
 
 class GaussianMeasure:
@@ -1477,14 +1385,13 @@ class GaussianMeasure:
             self._expectation = expectation
 
         self._sample = sample
-
         self._solver = CGSolver(rtol=1.0e-8)
         self._preconditioner = None
 
     @staticmethod
     def from_factored_covariance(factor, /, *, inverse_factor=None, expectation=None):
         """
-        For a Gaussian measure hows covariance, C, is approximated in the form C = LL*,
+        For a Gaussian measure whos covariance, C, is approximated in the form C = LL*,
         with L a mapping into the domain from Euclidean space.
 
         Args:
@@ -1498,13 +1405,11 @@ class GaussianMeasure:
         """
 
         def sample():
-            value = factor(
-                norm().rvs(size=factor.domain.dim)
-            )  # todo: it's already fine?
+            value = factor(norm().rvs(size=factor.domain.dim))
             if expectation is None:
                 return value
             else:
-                return value + expectation
+                return factor.codomain.add(value, expectation)
 
         covariance = factor @ factor.adjoint
 
@@ -1522,25 +1427,25 @@ class GaussianMeasure:
         )
 
     @staticmethod
-    def low_rank_measure_by_factored_covariance(measure, rank):
+    def from_low_rank_factorisation(measure, rank):
         """
-        Returns a low-rank approximation to a Gaussian measure by forming a
+        Returns an approximation to a Gaussian measure by forming a
         low-rank approximation of the covariance.
 
         Args:
             measure (GaussianMeasure): The original measure.
-            rank (int): The rank of the approximation.
+            rank (int): The rank for the covariance approximation.
 
         Returns:
             GaussianMeasure: The low-rank approximation.
         """
-        F = measure.covariance.reduced_rank_cholesky_factor(rank)
-        euclidean_space = EuclideanSpace(rank)
-        F_operator = LinearOperator.from_matrix(
-            F, euclidean_space, measure.covariance.domain
+        factor = LinearOperator.from_matrix(
+            measure.covariance.reduced_rank_cholesky_factor(rank),
+            EuclideanSpace(rank),
+            measure.covariance.domain,
         )
         return GaussianMeasure.from_factored_covariance(
-            F_operator, expectation=measure.expectation
+            factor, expectation=measure.expectation
         )
 
     @property
@@ -1599,7 +1504,7 @@ class GaussianMeasure:
             return self.covariance(self.domain.from_dual(xp))
 
         return HilbertSpace.from_vector_space(
-            self.domain, inner_product, to_dual=to_dual, from_dual=from_dual
+            self.domain, inner_product, to_dual, from_dual
         )
 
     def sample_using_dense_matrix(self):
@@ -1612,9 +1517,9 @@ class GaussianMeasure:
             cov = self.covariance.matrix(dense=True, galerkin=True)
             cov = 0.5 * (cov + cov.T)
             self._dist = multivariate_normal(mean=mean, cov=cov)
-        self._sample = lambda: self.domain.from_dual(
-            self.domain.dual.from_components(self._dist.rvs())
-        )
+            self._sample = lambda: self.domain.from_dual(
+                self.domain.dual.from_components(self._dist.rvs())
+            )
 
     def sample(self):
         """Returns a random sample drawn from the measure."""
@@ -1625,7 +1530,6 @@ class GaussianMeasure:
 
     def set_solver(self, solver):
         """Set the linear solver to be used in computing the inverse covariance."""
-
         self._solver = solver
 
     def set_preconditioner(self, preconditioner):
@@ -1664,10 +1568,10 @@ class GaussianMeasure:
             _translation = translation
 
         covariance = _operator @ self.covariance @ _operator.adjoint
-        expectation = _operator(self.expectation) + _translation
+        expectation = _operator.codomain.add(_operator(self.expectation), _translation)
 
         def sample():
-            return _operator(self.sample()) + _translation
+            return _operator.codomain.add(_operator(self.sample()), _translation)
 
         return GaussianMeasure(
             _operator.codomain, covariance, expectation=expectation, sample=sample
@@ -1675,13 +1579,12 @@ class GaussianMeasure:
 
     def __neg__(self):
         """Negative of the measure."""
-
         return GaussianMeasure(
             self.domain,
             -self.covariance,
             inverse_covariance=-self.inverse_covariance,
-            expectation=-self.expectation,
-            sample=lambda: -self.sample(),
+            expectation=self.domain.negative(self.expectation),
+            sample=lambda: self.domain.negative(self.sample()),
         )
 
     def __mul__(self, alpha):
@@ -1690,8 +1593,8 @@ class GaussianMeasure:
             self.domain,
             alpha * alpha * self.covariance,
             inverse_covariance=self.inverse_covariance / (alpha * alpha),
-            expectation=alpha * self.expectation,
-            sample=lambda: alpha * self.sample(),
+            expectation=self.domain.multiply(alpha, self.expectation),
+            sample=lambda: self.domain.multiply(alpha, self.sample()),
         )
 
     def __rmul__(self, alpha):
@@ -1704,8 +1607,8 @@ class GaussianMeasure:
             self.domain,
             self.covariance + other.covariance,
             inverse_covariance=self.inverse_covariance + other.inverse_covariance,
-            expectation=self.expectation + other.expectation,
-            sample=lambda: self.sample() + other.sample(),
+            expectation=self.domain.add(self.expectation, other.expectation),
+            sample=lambda: self.domain.add(self.sample(), other.sample()),
         )
 
     def __sub__(self, other):
@@ -1714,8 +1617,8 @@ class GaussianMeasure:
             self.domain,
             self.covariance + other.covariance,
             inverse_covariance=self.inverse_covariance + other.inverse_covariance,
-            expectation=self.expectation - other.expectation,
-            sample=lambda: self.sample() - other.sample(),
+            expectation=self.domain.subtract(self.expectation, other.expectation),
+            sample=lambda: self.domain.subtract(self.sample(), other.sample()),
         )
 
 
@@ -2120,7 +2023,7 @@ class GMRESMatrixSolver(IterativeMatrixLinearSolver):
 
 class CGSolver(IterativeLinearSolver):
     """
-    LinearSolver class using the conjugate gradient algorithm within
+    LinearSolver class using the conjugate gradient algorithm without
     use of the matrix representation. Can be applied to self-adjoint
     operators on a general Hilbert space.
     """
@@ -2151,44 +2054,46 @@ class CGSolver(IterativeLinearSolver):
 
         def mapping(y):
 
-            if x0 is None:
-                x = operator.domain.zero
-            else:
-                x = x0.copy()
+            domain = operator.domain
 
-            r = y - operator(x)
+            if x0 is None:
+                x = domain.zero
+            else:
+                x = domain.copy(x0)
+
+            r = domain.subtract(y, operator(x))
             if preconditioner is None:
-                z = r.copy()
+                z = domain.copy(r)
             else:
                 z = preconditioner(r)
-            p = z.copy()
+            p = domain.copy(z)
 
-            y_squared_norm = operator.domain.squared_norm(y)
+            y_squared_norm = domain.squared_norm(y)
             if y_squared_norm <= self._atol:
                 return y
 
             tol = np.max([self._atol, self._rtol * y_squared_norm])
 
             if self._maxiter is None:
-                maxiter = 10 * operator.domain.dim
+                maxiter = 10 * domain.dim
             else:
                 maxiter = self._maxiter
 
-            for iteration in range(maxiter):
+            for _ in range(maxiter):
 
-                if operator.domain.norm(r) <= tol:
+                if domain.norm(r) <= tol:
                     break
 
                 q = operator(p)
-                num = operator.domain.inner_product(r, z)
-                den = operator.domain.inner_product(p, q)
+                num = domain.inner_product(r, z)
+                den = domain.inner_product(p, q)
                 alpha = num / den
 
-                x += alpha * p
-                r -= alpha * q
+                x = domain.axpy(alpha, p, x)
+                r = domain.axpy(-alpha, q, r)
 
                 if preconditioner is None:
-                    z = r.copy()
+                    z = domain.copy(r)
                 else:
                     z = preconditioner(r)
 
@@ -2196,8 +2101,8 @@ class CGSolver(IterativeLinearSolver):
                 num = operator.domain.inner_product(r, z)
                 beta = num / den
 
-                p *= beta
-                p += z
+                p = domain.multiply(beta, p)
+                p = domain.add(p, z)
 
                 if self._callback is not None:
                     self._callback(x)
@@ -2245,25 +2150,4 @@ class FixedRankRandomisedSVDPreconditioner(PreconditioningMethod):
         Returns:
             LinearOperator: The preconditioner.
         """
-        assert operator.automorphism
-        Q = operator.reduced_rank_basis(self._rank)
-        A = operator.matrix(galerkin=True)
-
-        # Eigenvalue decomposition
-        B = np.zeros((self._rank, self._rank))
-        w = np.zeros(self._rank)
-        z = np.zeros(self._rank)  # todo: delete this?
-        for j in range(self._rank):
-            w[j] = 1
-            x = Q @ w
-            y = A @ x
-            z = Q.T @ y
-            B[:, j] = z[:]
-            w[j] = 0
-
-        # Form U and the approx inverse
-        lambdas, V = np.linalg.eig(B)
-        U = Q @ V
-        mapping = U @ np.diag(1 / lambdas) @ U.T
-
-        return LinearOperator.self_adjoint(operator.domain, lambda x: mapping @ x)
+        return operator.low_rank_approximation_by_eigen(self._rank, inverse=True)

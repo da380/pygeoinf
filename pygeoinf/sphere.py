@@ -170,8 +170,8 @@ class Sobolev(SHToolsHelper, HilbertSpace):
                 self._to_components_from_SHGrid,
                 self._from_components_to_SHGrid,
                 self._inner_product_impl,
-                to_dual=self._to_dual_impl,
-                from_dual=self._from_dual_impl,
+                self._to_dual_impl,
+                self._from_dual_impl,
             )
         else:
             HilbertSpace.__init__(
@@ -180,8 +180,8 @@ class Sobolev(SHToolsHelper, HilbertSpace):
                 self._to_components_from_SHCoeffs,
                 self._from_components_to_SHCoeffs,
                 self._inner_product_impl,
-                to_dual=self._to_dual_impl,
-                from_dual=self._from_dual_impl,
+                self._to_dual_impl,
+                self._from_dual_impl,
             )
 
     # =============================================#
