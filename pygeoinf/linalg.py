@@ -1,7 +1,5 @@
 """
-This module defined the VectorSpace class along with a function
-that returns n-dimensional real vector space with its standard
-basis as an instance of this class.
+This module contains classes related to linear algebra on vector spaces.
 """
 
 from abc import ABC, abstractmethod
@@ -650,6 +648,8 @@ class LinearOperator(Operator):
         if dense:
             return self._compute_dense_matrix(galerkin)
         else:
+
+            # Implement matrix-vector and transposed-matrix-vector products
             if galerkin:
                 if not self.hilbert_operator:
                     raise NotImplementedError(
@@ -660,13 +660,12 @@ class LinearOperator(Operator):
                     x = self.domain.from_components(cx)
                     y = self(x)
                     yp = self.codomain.to_dual(y)
-                    return self.codomain.to_components(yp)
+                    return self.codomain.dual.to_components(yp)
 
                 def rmatvec(cy):
                     y = self.codomain.from_components(cy)
                     x = self.adjoint(y)
-                    xp = seld.to_dual(x)
-                    return self.domain.dual_to_components(x)
+                    return self.domain.to_components(x)
 
             else:
 
@@ -680,8 +679,32 @@ class LinearOperator(Operator):
                     xp = self.dual(yp)
                     return self.domain.dual.to_components(xp)
 
+            # Implement matrix-matrix and transposed-matrix-matrix products
+            def matmat(cX):
+                n, k = cX.shape
+                assert n == self.domain.dim
+                cY = np.zeros((self.codomain.dim, k))
+                for j in range(k):
+                    cx = cX[:, j]
+                    cY[:, j] = matvec(cx)
+                return cY
+
+            def rmatmat(cY):
+                m, k = cY.shape
+                assert m == self.codomain.dim
+                cX = np.zeros((self.domain.dim, k))
+                for j in range(k):
+                    cy = cY[:, j]
+                    cX[:, j] = rmatvec(cy)
+                return cX
+
+            # Return the scipy LinearOperator
             return ScipyLinOp(
-                (self.codomain.dim, self.domain.dim), matvec=matvec, rmatvec=rmatvec
+                (self.codomain.dim, self.domain.dim),
+                matvec=matvec,
+                rmatvec=rmatvec,
+                matmat=matmat,
+                rmatmat=rmatmat,
             )
 
     def _dual_mapping_default(self, yp):
