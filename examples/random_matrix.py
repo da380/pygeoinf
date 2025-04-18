@@ -1,12 +1,16 @@
 import numpy as np
 from pygeoinf.linalg import EuclideanSpace, LinearOperator
-from pygeoinf.random_matrix import (
-    RandomSVDApproximation,
-    fixed_rank_basis,
-    low_rank_svd,
-)
 
-from pygeoinf.sphere import Lebesgue
+from pygeoinf.random_matrix import (
+    fixed_rank_basis,
+    svd,
+    eigh,
+    RandomSVDOperator,
+    RandomEigenOperator,
+)
+import matplotlib.pyplot as plt
+
+from pygeoinf.sphere import Lebesgue, Sobolev
 from scipy.stats import norm, uniform
 
 
@@ -24,18 +28,33 @@ a = LinearOperator.self_adjoint(X, mapping)
 A = a.matrix()
 """
 
-X = Lebesgue(10)
+X = Sobolev(64, 2, 0.1)
 
-m = 4
+
+mu = X.sobolev_gaussian_measure(5, 0.1, 1)
+
+m = 6
 lats = uniform(loc=-90, scale=180).rvs(size=m)
 lons = uniform(loc=0, scale=360).rvs(size=m)
-a = X.point_evaluation_operator(lats, lons)
-A = a.matrix(galerkin=True)
 
 
-Q = fixed_rank_basis(A, 3, 0)
-
-U, S, Vh = low_rank_svd(A, Q)
+a = mu.covariance
 
 
-print(np.max(a.matrix(dense=True) - U @ S @ Vh))
+# b = RandomSVDOperator(a, 200, power=0, galerkin=True)
+b = RandomEigenOperator(a, 500, power=3)
+
+u = X.dirac_representation(0, 180)
+
+v = a(u)
+w = b(u)
+
+plt.figure()
+plt.pcolormesh(v.lons(), v.lats(), v.data, cmap="seismic")
+plt.colorbar()
+
+plt.figure()
+plt.pcolormesh(w.lons(), w.lats(), w.data, cmap="seismic")
+plt.colorbar()
+
+plt.show()

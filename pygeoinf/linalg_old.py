@@ -497,8 +497,8 @@ class LinearOperator(Operator):
 
             def dual_mapping(yp):
                 y = codomain.from_dual(yp)
-                cy = codomain.to_components(y)
-                cxp = matrix.T @ cy
+                cyp = codomain.to_components(yp)
+                cxp = matrix.T @ cyp
                 return domain.dual.from_components(cxp)
 
         else:
@@ -514,6 +514,99 @@ class LinearOperator(Operator):
                 return domain.dual.from_components(cxp)
 
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+
+    @staticmethod
+    def from_svd_factors(domain, codomain, u, sigma, vt):
+        """
+        Returns a linear operator defined from low-rank SVD factors for
+        it standard matrix representation.
+
+        Args:
+            domain (VectorSpace): The domain of the operator.
+            codomain (VectorSpace): The codomain of the operator.
+            u (np.ndarray): The left singular vectors.
+            sigma (np.ndarray): The singular values.
+            vt (np.ndarray): The right singular vectors.
+
+        Returns:
+            LinearOperator: The linear operator.
+        """
+        assert u.shape[0] == codomain.dim
+        assert u.shape[1] == len(sigma)
+        assert vt.shape[0] == len(sigma)
+        assert vt.shape[1] == domain.dim
+
+        # Form diagonal operator from singular values.
+        s = diags([sigma], [0])
+
+        def mapping(x):
+            cx = domain.to_components(x)
+            cy = u @ (s @ (vt @ cx))
+            return codomain.from_components(cy)
+
+        def dual_mapping(yp):
+            cyp = codomain.dual.to_components(yp)
+            cxp = vt.T @ (s @ (u.T @ cyp))
+            return domain.dual.from_components(cxp)
+
+        return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+
+    @staticmethod
+    def self_adjoint_from_eigen_factors(domain, u, lambdas, inverse=False):
+        """
+        Returns a self-adjoint operator defined by low rank eigen-factors
+        for its Galkerin representation. The approximate inverse of the
+        operator can, optionally, be returned.
+
+        Args:
+            domain (VectorSpace): The domain of the operator.
+            u (np.ndarray): The matrix of eigenvectors stored columwise.
+            lambdas (np.ndarray): The eigenvalues.
+            inverse (bool): If true, the inverse operator is returned.
+
+        Returns:
+            LinearOperator: The linear operator.
+        """
+        assert isinstance(domain, HilbertSpace)
+        assert u.shape[0] == domain.dim
+        assert u.shape[1] == len(lambdas)
+        d = (
+            diags([lambdas], [0])
+            if not inverse
+            else diags([np.reciprocal(lambdas)], [0])
+        )
+
+        def mapping(x):
+            cx = domain.to_components(x)
+            cyp = u @ (d @ (u.T @ cx))
+            yp = domain.dual.from_component(cyp)
+            return domain.from_dual(yp)
+
+        return LinearOperator.self_adjoint(domain, mapping)
+
+    @staticmethod
+    def self_adjoint_from_cholesky_factor(domain, factor):
+        """
+        Returns a self-adjoint linear operator on a Hilbert space
+        from its low-rank Cholesky-factors.
+
+        Args:
+            domain (VectorSpace): The domain of the operator.
+            factor (np.ndarray or SciPy LinOp): The Cholesky factor.
+
+        Returns:
+            LinearOperator: The linear operator F @ F.T.
+        """
+        assert isinstance(domain, HilbertSpace)
+        assert factor.shape[0] == domain.dim
+
+        def mapping(x):
+            cx = domain.to_components(x)
+            cyp = factor @ (factor.T @ cx)
+            yp = domain.dual.from_components(cyp)
+            return domain.from_dual(yp)
+
+        return LinearOperator.self_adjoint(domain, mapping)
 
     @property
     def linear(self):
@@ -641,6 +734,248 @@ class LinearOperator(Operator):
             matrix[:, i] = (a @ cx)[:]
             cx[i] = 0
         return matrix
+
+    def reduced_rank_basis(self, rank, /, *, galerkin=True, pow=0, reorth=False):
+        """
+        Given an operator and rank, computes an approximate basis for the range.
+
+        Uses power iteration when q > 0 to enhance the approximation.
+
+        Args:
+            rank (int): The target rank.
+            galerkin (bool): Whether to use the Galerkin matrix representation.
+            pow (int): The power iteration exponent (default 0, meaning no power iteration).
+
+        Returns:
+            np.ndarray: An orthonormal basis for the range.
+        """
+        m = self.domain.dim
+        n = self.codomain.dim
+
+        a = self.matrix(galerkin=galerkin)
+        p = np.random.randn(n, rank)
+
+        y = np.zeros((m, rank))
+        for i in range(rank):
+            y[:, i] = a @ p[:, i]
+
+        for _ in range(pow):
+            y = a @ (a.T @ y)
+            if reorth:
+                y, _ = np.linalg.qr(y)
+        if not reorth:
+            q, _ = np.linalg.qr(y)
+        else:
+            q = y
+
+        return q
+
+    def reduced_rank_svd(self, rank, /, *, pow=0, galerkin=False):
+        """
+        Computes an approximate low-rank SVD of a general (non-square) operator.
+
+        Args:
+            rank (int): The target rank.
+            galerkin (bool): Whether to use the Galerkin matrix representation.
+            pow (int): The power iteration exponent.
+
+        Returns:
+            U (np.ndarray): Left singular vectors.
+            Sigma (np.ndarray): Singular values.
+            Vt (np.ndarray): Right singular vectors (transposed).
+        """
+        a = self.matrix(galerkin=galerkin)
+
+        q = self.reduced_rank_basis(rank, galerkin=galerkin, pow=pow)
+        b = q.T @ a
+
+        u_tilde, sigma, vt = svd(b, full_matrices=False)
+        u = q @ u_tilde
+        return u, sigma, vt
+
+    def reduced_rank_eigen_factors(self, rank, /, *, pow=0):
+        """
+        Given a rank, computes an approximate eigenvalue decomposition of a self-adjoint operator.
+
+        Args:
+            rank (int): The rank of the decomposition.
+            pow (int): The power iteration exponent.
+
+        Returns:
+            np.ndarray: The eigen factors.
+            np.ndarray: The eigenvalues.
+        """
+        assert self.automorphism
+
+        m = self.domain.dim
+        if rank > m:
+            rank = m
+            warnings.warn(
+                "Rank exceeds dimension of operator. Rank set to dimension of operator.",
+                UserWarning,
+            )
+
+        a = self.matrix(galerkin=True)
+        q = self.reduced_rank_basis(rank, galerkin=True, pow=pow)
+
+        # Eigenvalue decomposition
+        op = LinearOperator.self_adjoint(
+            EuclideanSpace(rank), lambda x: q.T @ (a @ (q @ x))
+        )
+        b = op.matrix(dense=True)
+
+        # Form U and the approx operator
+        lambdas, v = eigh(b)
+        u = q @ v
+
+        return v, lambdas
+
+    def reduced_rank_cholesky_factor(self, rank, /, *, pow=0):
+        """
+        Given a symmetric, positive-definite operator and rank,
+        computes an approximate Cholesky factorisation.
+
+        Args:
+            rank (int): The rank of the factorisation.
+
+        Returns:
+            np.ndarray: The Cholesky factor as a matrix.
+        """
+        assert self.automorphism
+
+        m = self.domain.dim
+        if rank > m:
+            rank = m
+            warnings.warn(
+                "Rank exceeds dimension of operator. Rank set to dimension of operator.",
+                UserWarning,
+            )
+
+        q = self.reduced_rank_basis(rank, galerkin=True, pow=pow)
+        a = self.matrix(galerkin=True)
+
+        b1 = np.zeros((m, rank))
+        for i in range(rank):  # todo: parellise?
+            b1[:, i] = a @ q[:, i]
+        b2 = q.T @ b1
+
+        # Perform a cholesky factorisation of b2
+        c, _ = cho_factor(b2)
+
+        c_inv = solve_triangular(c, np.eye(rank), lower=True)
+        f = b1 @ c_inv
+
+        return f
+
+    def low_rank_approximation(self, rank, /, *, method="svd", pow=0):
+        """
+        Given an operator and rank, computes an approximate low-rank operator.
+
+        Args:
+            rank (int): The rank of the approximation.
+            method (str): The method to use. Options are 'cholesky', 'eigen', 'nystrom'.
+            pow (int): The power iteration exponent.
+
+        Returns:
+            LinearOperator: The low-rank operator.
+        """
+
+        if method == "svd":
+            return self.low_rank_approximation_by_svd(rank, pow=pow)
+        elif method == "cholesky":
+            return self.low_rank_approximation_by_cholesky(rank, pow=pow)
+        elif method == "eigen":
+            return self.low_rank_approximation_by_eigen(rank, pow=pow)
+        elif method == "nystrom":
+            return self.low_rank_approximation_by_nystrom(rank, pow=pow)
+        else:
+            raise ValueError("Invalid method.")
+
+    def low_rank_approximation_by_svd(self, rank, /, *, pow=0):
+        """
+        Given an operator and rank, computes an approximate low-rank operator using the SVD.
+
+        Args:
+            rank (int): The rank of the approximation.
+            pow (int): The power iteration exponent.
+
+        Returns:
+            LinearOperator: The low-rank operator.
+        """
+        # todo: optional inverse for if the operator is self-adjoint?
+        u, sigma, vt = self.reduced_rank_svd(rank, pow=pow)
+        return LinearOperator.from_svd_factors(self.domain, self.codomain, u, sigma, vt)
+
+    def low_rank_approximation_by_cholesky(self, rank, /, *, pow=0):
+        """
+        Given a symmetric, positive-definite operator and rank, computes an approximate low-rank operator using Cholesky factorisation.
+
+        Args:
+            rank (int): The rank of the approximation.
+
+        Returns:
+            LinearOperator: The low-rank operator.
+        """
+        f = self.reduced_rank_cholesky_factor(rank, pow=pow)
+        return LinearOperator.self_adjoint_from_cholesky_factor(self.domain, f)
+
+    def low_rank_approximation_by_eigen(self, rank, /, *, inverse=False, pow=0):
+        """
+        Given a self-adjoint operator and rank, computes a low rank eigenvalue decomposition and returns as an operator.
+
+        Args:
+            rank (int): The rank of the decomposition.
+            inverse (bool): If true, the inverse operator is returned.
+
+        Returns:
+            LinearOperator: The low-rank operator.
+        """
+        u, lambdas = self.reduced_rank_eigen_factors(rank, pow=pow)
+        return LinearOperator.self_adjoint_from_eigen_factors(
+            self.domain, u, lambdas, inverse=inverse
+        )
+
+    def low_rank_approximation_by_nystrom(self, rank, /, *, inverse=False, pow=0):
+        """
+        Given an operator and rank, computes an approximate low-rank operator using the Nyström method.
+
+        Args:
+            rank (int): The rank of the approximation.
+            inverse (bool): If true, an approximate inverse operator is returned.
+
+        Returns:
+            LinearOperator: The low-rank operator.
+        """
+
+        f = self.reduced_rank_cholesky_factor(rank, pow=pow)
+        return LinearOperator.self_adjoint_from_cholesky_factor(self.domain, f)
+
+    def __neg__(self):
+        """Negative of the operator."""
+        domain = self.domain
+        codomain = self.codomain
+
+        def mapping(x):
+            return codomain.negative(x)
+
+        def dual_mapping(yp):
+            return domain.dual.negative(self.dual(yp))
+
+        if self.hilbert_operator:
+
+            def adjoint_mapping(y):
+                return domain.negative(self.adjoint(y))
+
+        else:
+            adjoint_mapping = None
+
+        return LinearOperator(
+            domain,
+            codomain,
+            mapping,
+            dual_mapping=dual_mapping,
+            adjoint_mapping=adjoint_mapping,
+        )
 
     def __mul__(self, a):
         """Multiply by a scalar."""
@@ -1840,3 +2175,53 @@ class FixedRankRandomisedSVDPreconditioner(PreconditioningMethod):
             LinearOperator: The preconditioner.
         """
         return operator.low_rank_approximation_by_eigen(self._rank, inverse=True)
+
+
+def fixed_rank_basis(A, rank, power=0):
+    """
+    Forms the fixed-rank approximation to the range of a matrix using
+    a random-matrix method.
+
+    Args:
+        A (matrix-like): (m,n)-matrix whose range is to be approximated.
+        rank (int): The desired rank. Must be greater than 1.
+        power (int): The exponent to use within the power iterations.
+
+    Returns:
+        Q (numpy-matrix): A (m,rank)-matrix whose columns are orthonormal and
+            whose span approximate the desired range.
+
+    Notes:
+        The input matrix can be a numpy array or a scipy LinearOperator. In the latter case,
+        it requires the the matmat, and rmatmat methods have been implemented.
+
+        This method is based on Algorithm 4.4 in Halko et. al. 2011
+    """
+
+    assert rank > 1
+
+    m, n = A.shape
+    Omega = np.random.rand(n, rank)
+
+    Y = A @ Omega
+    Q, _ = qr(Y, overwrite_a=True, mode="economic")
+
+    for _ in range(power):
+        YT = A.T @ Q
+        QT, _ = qr(YT, overwrite_a=True, mode="economic")
+        Y = A @ QT
+        Q, _ = qr(Y, overwrite_a=True, mode="economic")
+
+    return Q
+
+
+def low_rank_svd(A, Q):
+    """
+    Given a matrix A and a low-rank approximation to its range in Q,
+    this function returns the approximate SVD factors, (U, S, Vh)
+    such that A \approx U @ Simga @ VT
+    """
+    B = A.T @ Q
+    Vh, S, U = svd(B, full_matrices=False, overwrite_a=True)
+    print(S)
+    return Q @ U, diags([S], [0]), Vh
