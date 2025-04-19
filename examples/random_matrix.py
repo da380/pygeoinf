@@ -1,13 +1,7 @@
 import numpy as np
 from pygeoinf.linalg import EuclideanSpace, LinearOperator
 
-from pygeoinf.random_matrix import (
-    fixed_rank_basis,
-    svd,
-    eigh,
-    RandomSVDOperator,
-    RandomEigenOperator,
-)
+
 import matplotlib.pyplot as plt
 
 from pygeoinf.sphere import Lebesgue, Sobolev
@@ -31,7 +25,7 @@ A = a.matrix()
 X = Sobolev(64, 2, 0.1)
 
 
-mu = X.sobolev_gaussian_measure(5, 0.1, 1)
+mu = X.sobolev_gaussian_measure(5, 0.4, 1)
 
 m = 6
 lats = uniform(loc=-90, scale=180).rvs(size=m)
@@ -39,10 +33,12 @@ lons = uniform(loc=0, scale=360).rvs(size=m)
 
 
 a = mu.covariance
+f = a.random_cholesky(10, power=2)
 
+b = f @ f.adjoint
 
-# b = RandomSVDOperator(a, 200, power=0, galerkin=True)
-b = RandomEigenOperator(a, 500, power=3)
+# b = a.random_eig_approximation(100, power=2)
+
 
 u = X.dirac_representation(0, 180)
 

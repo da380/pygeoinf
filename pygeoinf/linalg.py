@@ -466,7 +466,7 @@ class LinearOperator(Operator):
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
 
     @staticmethod
-    def from_matrix(matrix, domain, codomain, galerkin=False):
+    def from_matrix(domain, codomain, matrix, /, *, galerkin=False):
         """
         Returns a linear operator defined by its matrix representation.
         By default the standard representation is assumed but the
@@ -474,9 +474,9 @@ class LinearOperator(Operator):
         domain and codomain are Hilbert spaces.
 
         Args:
-            matrix (MatrixLike): The matrix representation of the operator.
             domain (VectorSpace): The domain of the operator.
             codomain (VectorSpace): The codomain of the operator.
+            matrix (MatrixLike): The matrix representation of the operator.
             galerkin (bool): True if the Galkerin represention is used.
 
         Returns:
@@ -495,11 +495,18 @@ class LinearOperator(Operator):
                 yp = codomain.dual.from_components(cyp)
                 return codomain.from_dual(yp)
 
-            def dual_mapping(yp):
-                y = codomain.from_dual(yp)
+            def adjoint_mapping(y):
                 cy = codomain.to_components(y)
                 cxp = matrix.T @ cy
-                return domain.dual.from_components(cxp)
+                xp = domain.dual.from_components(cxp)
+                return domain.from_dual(xp)
+
+            return LinearOperator(
+                domain,
+                codomain,
+                mapping,
+                adjoint_mapping=adjoint_mapping,
+            )
 
         else:
 
@@ -513,7 +520,23 @@ class LinearOperator(Operator):
                 cxp = matrix.T @ cyp
                 return domain.dual.from_components(cxp)
 
-        return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+            return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+
+    @staticmethod
+    def from_self_adjoint_matrix(domain, matrix):
+        """
+        Given a Hilbert space an a self-adjoint matrix, returns
+        a linear operator for which the matrix is its Galerkin representation.
+        """
+
+        assert isinstance(domain, HilbertSpace)
+
+        def mapping(x):
+            cx = domain.to_components(x)
+            cy = matrix @ cx
+            return domain.from_components(cy)
+
+        return LinearOperator.self_adjoint(domain, mapping)
 
     @property
     def linear(self):
@@ -614,6 +637,129 @@ class LinearOperator(Operator):
                 matmat=matmat,
                 rmatmat=rmatmat,
             )
+
+    def random_svd(self, rank, /, *, power=0, galerkin=False):
+        """
+        Returns an approximation to the operator based on the randomised SVD method
+        of Halko et al. 2011.
+
+        Args:
+
+            rank (int) : rank for the decomposition.
+            power (int) : exponent within the power iterations.
+            galerking (bool) : If true, use the Galerkin representation of the
+                operator. Only possible if the operator maps between Hilbert spaces.
+
+        Returns:
+            LinearOperator : The approximation to the operator.
+
+        """
+        assert self.hilbert_operator or not galerkin
+        matrix = self.matrix(galerkin=galerkin)
+        qr_factor = fixed_rank_random_range(matrix, rank, power)
+        left_factor, singular_values, right_factor_transposed = random_svd(
+            matrix, qr_factor
+        )
+
+        if galerkin:
+
+            def mapping(x):
+                cx = self.domain.to_components(x)
+                cyp = left_factor @ (singular_values @ (right_factor_transposed @ cx))
+                yp = self.codomain.dual.from_components(cyp)
+                return self.codomain.from_dual(yp)
+
+            def adjoint_mapping(y):
+                cy = self.codomain.to_components(y)
+                cxp = right_factor_transposed.T @ (
+                    singular_values @ (left_factor.T @ cy)
+                )
+                xp = self.domain.dual.from_compoenents(cxp)
+                return self.domain.from_dual(xp)
+
+            return LinearOperator(
+                self.domain, self.codomain, mapping, adjoint_mapping=adjoint_mapping
+            )
+        else:
+
+            def mapping(x):
+                cx = self.domain.to_components(x)
+                cy = left_factor @ (singular_values @ (right_factor_transposed @ cx))
+                return self.codomain.from_components(cy)
+
+            def dual_mapping(yp):
+                cyp = self.codomain.dual.to_components(yp)
+                cxp = right_factor_transposed.T @ (
+                    singular_values @ (left_factor.T @ cyp)
+                )
+                return self.domain.dual.from_components(cxp)
+
+            return LinearOperator(
+                self.domain, self.codomain, mapping, dual_mapping=dual_mapping
+            )
+
+    def random_eig(self, rank, /, *, power=0):
+        """
+        Returns an approximation to a self-adjoint operator based on the randomised
+        eigen-decomposition method of Halko et al. 2011.
+
+        Args:
+
+            rank (int) : rank for the decomposition.
+            power (int) : exponent within the power iterations.
+
+        Returns:
+            LinearOperator : The approximation to the operator.
+
+        """
+        assert self.hilbert_operator
+        assert self.domain == self.codomain
+        matrix = self.matrix(galerkin=True)
+        qr_factor = fixed_rank_random_range(matrix, rank, power)
+        eigenvectors, eigenvalues = random_eig(matrix, qr_factor)
+
+        def mapping(x):
+            cx = self.domain.to_components(x)
+            cy = eigenvectors @ (eigenvalues @ (eigenvectors.T @ cx))
+            return self.domain.from_components(cy)
+
+        return LinearOperator.self_adjoint(self.domain, mapping)
+
+    def random_cholesky(self, rank, /, *, power=0):
+        """
+        Returns an approximate Cholesky factorisation for a self-adjoint
+        operator, A, based on the randomised method of Halko et al. 2011.
+        The Cholesky factor, F, is a linear operator from a Euclidean space
+        with dimension rank into the domain of the operator and such
+        that A ~ FF*
+
+        Args:
+
+            rank (int) : rank for the decomposition.
+            power (int) : exponent within the power iterations.
+
+        Returns:
+            LinearOperator : The approximate Cholesky factor
+
+        """
+        assert self.hilbert_operator
+        assert self.domain == self.codomain
+        matrix = self.matrix(galerkin=True)
+        qr_factor = fixed_rank_random_range(matrix, rank, power)
+        cholesky_factor = random_cholesky(matrix, qr_factor)
+
+        def mapping(x):
+            cyp = cholesky_factor @ x
+            yp = self.codomain.dual.from_components(cyp)
+            return self.codomain.from_dual(yp)
+
+        def adjoint_mapping(y):
+            x = self.codomain.to_components(y)
+            return cholesky_factor.T @ x
+
+        return LinearOperator(
+            EuclideanSpace(rank), self.domain, mapping, adjoint_mapping=adjoint_mapping
+        )
 
     def _dual_mapping_default(self, yp):
         # Default implementation of the dual mapping.
@@ -1840,3 +1986,114 @@ class FixedRankRandomisedSVDPreconditioner(PreconditioningMethod):
             LinearOperator: The preconditioner.
         """
         return operator.low_rank_approximation_by_eigen(self._rank, inverse=True)
+
+
+def fixed_rank_random_range(matrix, rank, power=0):
+    """
+    Forms the fixed-rank approximation to the range of a matrix using
+    a random-matrix method.
+
+    Args:
+        A (matrix-like): (m,n)-matrix whose range is to be approximated.
+        rank (int): The desired rank. Must be greater than 1.
+        power (int): The exponent to use within the power iterations.
+
+    Returns:
+        Q (numpy-matrix): A (m,rank)-matrix whose columns are orthonormal and
+            whose span approximates the desired range.
+
+    Notes:
+        The input matrix can be a numpy array or a scipy LinearOperator. In the latter case,
+        it requires the the matmat, and rmatmat methods have been implemented.
+
+        This method is based on Algorithm 4.4 in Halko et. al. 2011
+    """
+
+    assert rank > 1
+
+    m, n = matrix.shape
+    random_matrix = np.random.rand(n, rank)
+
+    product_matrix = matrix @ random_matrix
+    qr_factor, _ = qr(product_matrix, overwrite_a=True, mode="economic")
+
+    for _ in range(power):
+        tilde_product_matrix = matrix.T @ qr_factor
+        tilde_qr_factor, _ = qr(tilde_product_matrix, overwrite_a=True, mode="economic")
+        product_matrix = matrix @ tilde_qr_factor
+        qr_factor, _ = qr(product_matrix, overwrite_a=True, mode="economic")
+
+    return qr_factor
+
+
+def variable_rank_random_range(matrix, rtol, /, *, power=0):
+    """
+    Forms the variable-rank approximation to the range of a matrix using
+    a random-matrix method.
+
+    Args:
+        A (matrix-like): (m,n)-matrix whose range is to be approximated.
+        rtol (float): The desired relative accuracy.
+        power (int): The exponent to use within the power iterations.
+
+    Returns:
+        Q (numpy-matrix): A (m,rank)-matrix whose columns are orthonormal and
+            whose span approximates the desired range.
+
+    Notes:
+        The input matrix can be a numpy array or a scipy LinearOperator. In the latter case,
+        it requires the the matmat, and rmatmat methods have been implemented.
+
+        This method is based on Algorithm 4.5 in Halko et. al. 2011
+    """
+    raise NotImplementedError
+
+
+def random_svd(matrix, qr_factor):
+    """
+    Given a matrix, A,  and a low-rank approximation to its range, Q,
+    this function returns the approximate SVD factors, (U, S, Vh)
+    such that A ~ U @ S @ VT where S is diagonal.
+
+    Based on Algorithm 5.1 of Halko et al. 2011
+    """
+    small_matrix = qr_factor.T @ matrix
+    left_factor, diagonal_factor, right_factor_transposed = svd(
+        small_matrix, full_matrices=False, overwrite_a=True
+    )
+    return (
+        qr_factor @ left_factor,
+        diags([diagonal_factor], [0]),
+        right_factor_transposed,
+    )
+
+
+def random_eig(matrix, qr_factor):
+    """
+    Given a symmetric matrix, A,  and a low-rank approximation to its range, Q,
+    this function returns the approximate eigen-decomposition, (U, S)
+    such that A ~ U @ S @ U.T where S is diagonal.
+
+    Based on Algorithm 5.3 of Halko et al. 2011
+    """
+    m, n = matrix.shape
+    assert m == n
+    small_matrix = qr_factor.T @ matrix @ qr_factor
+    eigenvalues, eigenvectors = eigh(small_matrix, overwrite_a=True)
+    return qr_factor @ eigenvectors, diags([eigenvalues], [0])
+
+
+def random_cholesky(matrix, qr_factor):
+    """
+    Given a symmetric and positive-definite matrix, A,  along with a low-rank
+    approximation to its range, Q, this function returns the approximate
+    Cholesky factorisation A ~ F F*.
+
+    Based on Algorithm 5.5 of Halko et al. 2011
+    """
+    small_matrix_1 = matrix @ qr_factor
+    small_matrix_2 = qr_factor.T @ small_matrix_1
+    factor, lower = cho_factor(small_matrix_2, overwrite_a=True)
+    identity = np.identity(factor.shape[0])
+    inverse_factor = solve_triangular(factor, identity, overwrite_b=True, lower=lower)
+    return small_matrix_1 @ inverse_factor
