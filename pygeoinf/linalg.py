@@ -640,18 +640,33 @@ class LinearOperator(Operator):
 
     def random_svd(self, rank, /, *, power=0, galerkin=False):
         """
-        Returns an approximation to the operator based on the randomised SVD method
-        of Halko et al. 2011.
+        Returns an approximate singular value decomposition of an operator using
+        the randomised method of Halko et al. 2011.
+
+        Let X and Y be the domain and codomain of the operator, A, and E be Euclidean
+        space of dimension rank. The factorisation then takes the form
+
+        A = L D R
+
+        where the factors map:
+
+        R : X --> E
+        D : E --> E
+        L : E --> Y
+
+        with D diagonal and comprises the singular values for the operator.
 
         Args:
 
             rank (int) : rank for the decomposition.
             power (int) : exponent within the power iterations.
-            galerking (bool) : If true, use the Galerkin representation of the
+            galerkin (bool) : If true, use the Galerkin representation of the
                 operator. Only possible if the operator maps between Hilbert spaces.
 
         Returns:
-            LinearOperator : The approximation to the operator.
+            LinearOperator: The left factor, L.
+            DiagonalLinearOperator: The diagonal factor, D.
+            LinearOperator: The right factor, R.
 
         """
         assert self.hilbert_operator or not galerkin
@@ -661,77 +676,159 @@ class LinearOperator(Operator):
             matrix, qr_factor
         )
 
+        euclidean = EuclideanSpace(rank)
+        diagonal = DiagonalLinearOperator(euclidean, euclidean, singular_values)
+
         if galerkin:
 
-            def mapping(x):
+            def right_mapping(x):
                 cx = self.domain.to_components(x)
-                cyp = left_factor @ (singular_values @ (right_factor_transposed @ cx))
-                yp = self.codomain.dual.from_components(cyp)
-                return self.codomain.from_dual(yp)
+                return right_factor_transposed @ cx
 
-            def adjoint_mapping(y):
-                cy = self.codomain.to_components(y)
-                cxp = right_factor_transposed.T @ (
-                    singular_values @ (left_factor.T @ cy)
-                )
+            def right_mapping_adjoint(cx):
+                cxp = right_factor_transposed.T @ cx
                 xp = self.domain.dual.from_compoenents(cxp)
                 return self.domain.from_dual(xp)
 
-            return LinearOperator(
-                self.domain, self.codomain, mapping, adjoint_mapping=adjoint_mapping
+            right = LinearOperator(
+                self.domain,
+                euclidean,
+                right_mapping,
+                adjoint_mapping=right_mapping_adjoint,
             )
+
+            def left_mapping(cx):
+                cyp = left_factor @ cx
+                yp = self.codomain.dual.from_components(cyp)
+                return self.codomain.from_dual(yp)
+
+            def left_mapping_adjoint(y):
+                cy = self.codomain.to_components(y)
+                return left_factor.T @ cy
+
+            left = LinearOperator(
+                euclidean,
+                self.codomain,
+                left_mapping,
+                adjoint_mapping=left_mapping_adjoint,
+            )
+
         else:
 
-            def mapping(x):
+            def right_mapping(x):
                 cx = self.domain.to_components(x)
-                cy = left_factor @ (singular_values @ (right_factor_transposed @ cx))
-                return self.codomain.from_components(cy)
+                return right_factor_transposed @ cx
 
-            def dual_mapping(yp):
-                cyp = self.codomain.dual.to_components(yp)
-                cxp = right_factor_transposed.T @ (
-                    singular_values @ (left_factor.T @ cyp)
-                )
+            def right_mapping_dual(cp):
+                c = euclidean.from_dual(cp)
+                cxp = right_factor_transposed.T @ c
                 return self.domain.dual.from_components(cxp)
 
-            return LinearOperator(
-                self.domain, self.codomain, mapping, dual_mapping=dual_mapping
+            right = LinearOperator(
+                self.domain, euclidean, right_mapping, dual_mapping=right_mapping_dual
             )
 
-    def random_eig(self, rank, /, *, power=0):
+            def left_mapping(c):
+                cy = left_factor @ c
+                return self.codomain.from_components(cy)
+
+            def left_mapping_dual(yp):
+                cpy = self.codomain.dual.to_components(yp)
+                c = left_factor.T @ cpy
+                return euclidean.to_dual(c)
+
+            left = LinearOperator(
+                euclidean, self.codomain, left_mapping, dual_mapping=left_mapping_dual
+            )
+
+        # Return the factors.
+        return left, diagonal, right
+
+    def random_eig(self, rank, /, *, power=0, inverse=False):
         """
-        Returns an approximation to a self-adjoint operator based on the randomised
-        eigen-decomposition method of Halko et al. 2011.
+        Returns an approximate eigenvalue decomposition of a self-adjoint operator using
+        the randomised method of Halko et al. 2011. The method can also return the
+        approximate eigen-decomposition for the inverse operator.
+
+        Let X  the domain the operator, A, and E be Euclidean space of dimension rank.
+        The factorisation then takes the form
+
+        A = U D U*
+
+        where the factors map:
+
+        U : E --> X
+        D : E --> E
+
+        with D diagonal and comprises the eigenvalues of the operator. The
+        mapping U can be seen as taking vectors to their components in the
+        approximate eigenbasis.
+
+        Note that, in general, U*U and UU* do not take a simple form. In
+        particular, U*U need not be the identity, with this holding only
+        if the Hilbert space is trivilly identified with its dual.
 
         Args:
-
             rank (int) : rank for the decomposition.
             power (int) : exponent within the power iterations.
+            inverse (bool): If true, return the decomposition for
+                the inverse operator.
 
         Returns:
-            LinearOperator : The approximation to the operator.
-
+            LinearOperator: The factor, U.
+            DiagonalLinearOperator: The diagonal factor, D.
         """
+
         assert self.hilbert_operator
         assert self.domain == self.codomain
         matrix = self.matrix(galerkin=True)
         qr_factor = fixed_rank_random_range(matrix, rank, power)
         eigenvectors, eigenvalues = random_eig(matrix, qr_factor)
 
-        def mapping(x):
-            cx = self.domain.to_components(x)
-            cy = eigenvectors @ (eigenvalues @ (eigenvectors.T @ cx))
-            return self.domain.from_components(cy)
+        euclidean = EuclideanSpace(rank)
+        diagonal = DiagonalLinearOperator(euclidean, euclidean, eigenvalues)
 
-        return LinearOperator.self_adjoint(self.domain, mapping)
+        if inverse:
+
+            diagonal = diagonal.inverse
+
+            def mapping(c):
+                cx = eigenvectors @ c
+                return self.domain.from_components(cx)
+
+            def adjoint_mapping(x):
+                xp = self.domain.to_dual(x)
+                cxp = self.domain.dual.to_components(xp)
+                return eigenvectors.T @ cxp
+
+        else:
+
+            def mapping(c):
+                cyp = eigenvectors @ c
+                yp = self.domain.dual.from_components(cyp)
+                return self.domain.from_dual(yp)
+
+            def adjoint_mapping(x):
+                cx = self.domain.to_components(x)
+                return eigenvectors.T @ cx
+
+        expansion = LinearOperator(
+            euclidean, self.domain, mapping, adjoint_mapping=adjoint_mapping
+        )
+
+        return expansion, diagonal
 
     def random_cholesky(self, rank, /, *, power=0):
         """
-        Returns an approximate Cholesky factorisation for a self-adjoint
-        operator, A, based on the randomised method of Halko et al. 2011.
-        The Cholesky factor, F, is a linear operator from a Euclidean space
-        with dimension rank into the domain of the operator and such
-        that A ~ FF*
+        Returns an approximate Cholesky decomposition of a positive-definite and
+        self-adjoint operator using the randomised method of Halko et al. 2011.
+
+        Let X  the domain the operator, A, and E be Euclidean space of dimension rank.
+        The factorisation then takes the form
+
+        A = F F*
+
+        where F : E --> X.
 
         Args:
 
@@ -739,7 +836,7 @@ class LinearOperator(Operator):
             power (int) : exponent within the power iterations.
 
         Returns:
-            LinearOperator : The approximate Cholesky factor
+            LinearOperator : The Cholesky factor, F
 
         """
         assert self.hilbert_operator
@@ -910,6 +1007,75 @@ class LinearOperator(Operator):
             return self.matrix(dense=True).__str__()
         else:
             return self._matrix.__str__()
+
+
+class DiagonalLinearOperator(LinearOperator):
+    """
+    Class for Linear operators whose matrix representation is diagonal.
+    """
+
+    def __init__(self, domain, codomain, diagonal_values, /, *, galerkin=False):
+        """
+        Args:
+            domain (VectorSpace): The domain of the operator.
+            codoomain (VectorSpace): The codomain of the operator.
+            diagonal_values (numpy vector): Diagonal values for the
+                operator's matrix representation.
+            galerkin (bool): true is galerkin representation is used.
+        """
+
+        assert domain.dim == codomain.dim
+        assert domain.dim == len(diagonal_values)
+        self._diagonal_values = diagonal_values
+        matrix = diags([diagonal_values], [0])
+        operator = LinearOperator.from_matrix(
+            domain, codomain, matrix, galerkin=galerkin
+        )
+        super().__init__(
+            operator.domain,
+            operator.codomain,
+            operator,
+            dual_mapping=operator.dual,
+            adjoint_mapping=operator.adjoint,
+        )
+
+    @staticmethod
+    def euclidean(diagonal_values):
+        """
+        Forms a diagonal operator from the given values on a Euclidean space
+        of the appropriate dimension.
+        """
+        domain = EuclideanSpace(len(diagonal_values))
+        return DiagonalLinearOperator(domain, domain, diagonal_values)
+
+    @property
+    def diagonal_values(self):
+        """
+        Return the diagonal values.
+        """
+        return self._diagonal_values
+
+    @property
+    def inverse(self):
+        """
+        return the inverse operator. Valid only if diagonal values
+        are non-zero.
+        """
+        assert all([val != 0 for val in self._diagonal_values])
+        return DiagonalLinearOperator(
+            self.domain, self.codomain, np.reciprocal(self._diagonal_values)
+        )
+
+    @property
+    def sqrt(self):
+        """
+        Returns the square root of the operator. Valid only if diagonal values
+        are non-negative.
+        """
+        assert all([val >= 0 for val in self._diagonal_values])
+        return DiagonalLinearOperator(
+            self.domain, self.codomain, np.sqrt(self._diagonal_values)
+        )
 
 
 # Global definition of the real numbers as a VectorSpace.
@@ -2063,7 +2229,7 @@ def random_svd(matrix, qr_factor):
     )
     return (
         qr_factor @ left_factor,
-        diags([diagonal_factor], [0]),
+        diagonal_factor,
         right_factor_transposed,
     )
 
@@ -2080,7 +2246,7 @@ def random_eig(matrix, qr_factor):
     assert m == n
     small_matrix = qr_factor.T @ matrix @ qr_factor
     eigenvalues, eigenvectors = eigh(small_matrix, overwrite_a=True)
-    return qr_factor @ eigenvectors, diags([eigenvalues], [0])
+    return qr_factor @ eigenvectors, eigenvalues
 
 
 def random_cholesky(matrix, qr_factor):

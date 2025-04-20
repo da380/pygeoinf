@@ -1,5 +1,5 @@
 import numpy as np
-from pygeoinf.linalg import EuclideanSpace, LinearOperator
+from pygeoinf.linalg import EuclideanSpace, LinearOperator, DiagonalLinearOperator
 
 
 import matplotlib.pyplot as plt
@@ -8,42 +8,33 @@ from pygeoinf.sphere import Lebesgue, Sobolev
 from scipy.stats import norm, uniform
 
 
-"""
-X = EuclideanSpace(4)
-
-
-def mapping(x):
-    y = x.copy()
-    for i, val in enumerate(y):
-        y[i] /= (i + 1) ** 4
-    return y
-
-a = LinearOperator.self_adjoint(X, mapping)
-A = a.matrix()
-"""
-
 X = Sobolev(64, 2, 0.1)
+# X = Lebesgue(64)
 
-
-mu = X.sobolev_gaussian_measure(5, 0.4, 1)
+mu = X.sobolev_gaussian_measure(2, 0.4, 1)
 
 m = 6
 lats = uniform(loc=-90, scale=180).rvs(size=m)
 lons = uniform(loc=0, scale=360).rvs(size=m)
 
 
-a = mu.covariance
-f = a.random_cholesky(10, power=2)
+A = mu.covariance
 
-b = f @ f.adjoint
+# L, D, R = A.random_svd(10, galerkin=True)
+# B = L @ D @ R
 
-# b = a.random_eig_approximation(100, power=2)
+U, D = A.random_eig(10, power=2, inverse=True)
+C = U @ D @ U.adjoint
 
 
-u = X.dirac_representation(0, 180)
+# u = X.dirac_representation(0, 180)
+u = mu.sample()
 
-v = a(u)
-w = b(u)
+# v = A(u)
+# w = B(u)
+
+v = u
+w = (C @ A)(u)
 
 plt.figure()
 plt.pcolormesh(v.lons(), v.lats(), v.data, cmap="seismic")
