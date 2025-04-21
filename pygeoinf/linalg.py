@@ -105,6 +105,37 @@ class VectorSpace:
     def zero(self):
         return self.from_components(np.zeros((self.dim)))
 
+    @property
+    def inclusion(self):
+        """
+        Returns the linear operator that maps coordinate vectors
+        to elements of the sapce.
+        """
+        domain = EuclideanSpace(self.dim)
+
+        def dual_mapping(xp):
+            cp = self.dual.to_components(xp)
+            return domain.to_dual(cp)
+
+        return LinearOperator(
+            domain, self, self.from_components, dual_mapping=dual_mapping
+        )
+
+    @property
+    def projection(self):
+        """
+        Returns the linear operator that maps vectors to their coordinates.
+        """
+        codomain = EuclideanSpace(self.dim)
+
+        def dual_mapping(cp):
+            c = codomain.from_dual(cp)
+            return self.dual.from_components(c)
+
+        return LinearOperator(
+            self, codomain, self.to_components, dual_mapping=dual_mapping
+        )
+
     def add(self, x, y):
         """Returns x + y."""
         return self._add(x, y)
@@ -687,7 +718,7 @@ class LinearOperator(Operator):
 
             def right_mapping_adjoint(cx):
                 cxp = right_factor_transposed.T @ cx
-                xp = self.domain.dual.from_compoenents(cxp)
+                xp = self.domain.dual.from_components(cxp)
                 return self.domain.from_dual(xp)
 
             right = LinearOperator(
@@ -744,11 +775,10 @@ class LinearOperator(Operator):
         # Return the factors.
         return left, diagonal, right
 
-    def random_eig(self, rank, /, *, power=0, inverse=False):
+    def random_eig(self, rank, /, *, power=0):
         """
         Returns an approximate eigenvalue decomposition of a self-adjoint operator using
-        the randomised method of Halko et al. 2011. The method can also return the
-        approximate eigen-decomposition for the inverse operator.
+        the randomised method of Halko et al. 2011.
 
         Let X  the domain the operator, A, and E be Euclidean space of dimension rank.
         The factorisation then takes the form
@@ -760,13 +790,15 @@ class LinearOperator(Operator):
         U : E --> X
         D : E --> E
 
-        with D diagonal and comprises the eigenvalues of the operator. The
-        mapping U can be seen as taking vectors to their components in the
-        approximate eigenbasis.
+        with D diagonal and comprises the eigenvalues of the operator.
 
-        Note that, in general, U*U and UU* do not take a simple form. In
-        particular, U*U need not be the identity, with this holding only
-        if the Hilbert space is trivilly identified with its dual.
+        If the diagonal values are non-zero, we can also factor an
+        approximation to the inverse mapping as:
+
+        A^{-1} = V D^{-1} V*
+
+        where V = I I* U with I the inclusion mapping on the Hilbert space.
+
 
         Args:
             rank (int) : rank for the decomposition.
@@ -788,6 +820,7 @@ class LinearOperator(Operator):
         euclidean = EuclideanSpace(rank)
         diagonal = DiagonalLinearOperator(euclidean, euclidean, eigenvalues)
 
+        """
         if inverse:
 
             diagonal = diagonal.inverse
@@ -802,15 +835,16 @@ class LinearOperator(Operator):
                 return eigenvectors.T @ cxp
 
         else:
+        """
 
-            def mapping(c):
-                cyp = eigenvectors @ c
-                yp = self.domain.dual.from_components(cyp)
-                return self.domain.from_dual(yp)
+        def mapping(c):
+            cyp = eigenvectors @ c
+            yp = self.domain.dual.from_components(cyp)
+            return self.domain.from_dual(yp)
 
-            def adjoint_mapping(x):
-                cx = self.domain.to_components(x)
-                return eigenvectors.T @ cx
+        def adjoint_mapping(x):
+            cx = self.domain.to_components(x)
+            return eigenvectors.T @ cx
 
         expansion = LinearOperator(
             euclidean, self.domain, mapping, adjoint_mapping=adjoint_mapping
@@ -1266,6 +1300,69 @@ class HilbertSpace(VectorSpace):
             )
         else:
             return self._base
+
+    @property
+    def inclusion(self):
+        """
+        Returns the linear operator that maps coordinate vectors
+        to elements of the sapce.
+        """
+        domain = EuclideanSpace(self.dim)
+
+        def dual_mapping(xp):
+            cp = self.dual.to_components(xp)
+            return domain.to_dual(cp)
+
+        def adjoint_mapping(y):
+            yp = self.to_dual(y)
+            return self.dual.to_components(yp)
+
+        return LinearOperator(
+            domain,
+            self,
+            self.from_components,
+            dual_mapping=dual_mapping,
+            adjoint_mapping=adjoint_mapping,
+        )
+
+    @property
+    def projection(self):
+        """
+        Returns the linear operator that maps vectors to their coordinates.
+        """
+        codomain = EuclideanSpace(self.dim)
+
+        def dual_mapping(cp):
+            c = codomain.from_dual(cp)
+            return self.dual.from_components(c)
+
+        def adjoint_mapping(c):
+            xp = self.dual.from_components(c)
+            return self.from_dual(xp)
+
+        return LinearOperator(
+            self,
+            codomain,
+            self.to_components,
+            dual_mapping=dual_mapping,
+            adjoint_mapping=adjoint_mapping,
+        )
+
+    @property
+    def riesz(self):
+        """
+        Returns as a LinearOpeator the isomorphism from the
+        dual space to the space via the Riesz representation theorem.
+        """
+        return LinearOperator.self_dual(self.dual, self.from_dual)
+
+    @property
+    def inverse_riesz(self):
+        """
+        Returns as a LinearOpeator the isomorphism from the
+        space to the dual space via the Riesz representation theorem.
+        """
+        return LinearOperator.self_dual(self, self.to_dual)
 
     def inner_product(self, x1, x2):
         """Return the inner product of two vectors."""
@@ -2081,6 +2178,8 @@ class CGSolver(IterativeLinearSolver):
                 maxiter = self._maxiter
 
             for _ in range(maxiter):
+
+                print(domain.norm(r), tol)
 
                 if domain.norm(r) <= tol:
                     break

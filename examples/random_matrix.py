@@ -1,5 +1,11 @@
 import numpy as np
-from pygeoinf.linalg import EuclideanSpace, LinearOperator, DiagonalLinearOperator
+from pygeoinf.linalg import (
+    EuclideanSpace,
+    LinearOperator,
+    DiagonalLinearOperator,
+    CGSolver,
+    CGMatrixSolver,
+)
 
 
 import matplotlib.pyplot as plt
@@ -11,7 +17,7 @@ from scipy.stats import norm, uniform
 X = Sobolev(64, 2, 0.1)
 # X = Lebesgue(64)
 
-mu = X.sobolev_gaussian_measure(2, 0.4, 1)
+mu = X.sobolev_gaussian_measure(2, 0.6, 1)
 
 m = 6
 lats = uniform(loc=-90, scale=180).rvs(size=m)
@@ -20,24 +26,37 @@ lons = uniform(loc=0, scale=360).rvs(size=m)
 
 A = mu.covariance
 
-# L, D, R = A.random_svd(10, galerkin=True)
-# B = L @ D @ R
 
-U, D = A.random_eig(10, power=2, inverse=True)
-C = U @ D @ U.adjoint
+U, D = A.random_eig(20, power=2)
+
+IX = X.inclusion
+V = IX @ IX.adjoint @ U
+B = V @ D.inverse @ V.adjoint
 
 
-# u = X.dirac_representation(0, 180)
+def pre(x):
+    x1 = U(V.adjoint(x))
+    x0 = x - x1
+    return x0 + x1
+
+
+P = LinearOperator.self_adjoint(X, pre)
+# P = X.identity()
+
+
 u = mu.sample()
 
-# v = A(u)
-# w = B(u)
 
-v = u
-w = (C @ A)(u)
+v = A(u)
+
+solver = CGSolver(atol=1e-20)
+C = solver(A, preconditioner=P)
+# w = C(v)
+w = P(v)
+
 
 plt.figure()
-plt.pcolormesh(v.lons(), v.lats(), v.data, cmap="seismic")
+plt.pcolormesh(u.lons(), v.lats(), v.data, cmap="seismic")
 plt.colorbar()
 
 plt.figure()
