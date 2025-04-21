@@ -820,23 +820,6 @@ class LinearOperator(Operator):
         euclidean = EuclideanSpace(rank)
         diagonal = DiagonalLinearOperator(euclidean, euclidean, eigenvalues)
 
-        """
-        if inverse:
-
-            diagonal = diagonal.inverse
-
-            def mapping(c):
-                cx = eigenvectors @ c
-                return self.domain.from_components(cx)
-
-            def adjoint_mapping(x):
-                xp = self.domain.to_dual(x)
-                cxp = self.domain.dual.to_components(xp)
-                return eigenvectors.T @ cxp
-
-        else:
-        """
-
         def mapping(c):
             cyp = eigenvectors @ c
             yp = self.domain.dual.from_components(cyp)
@@ -1524,28 +1507,6 @@ class GaussianMeasure:
             sample=sample,
         )
 
-    @staticmethod
-    def from_low_rank_factorisation(measure, rank):
-        """
-        Returns an approximation to a Gaussian measure by forming a
-        low-rank approximation of the covariance.
-
-        Args:
-            measure (GaussianMeasure): The original measure.
-            rank (int): The rank for the covariance approximation.
-
-        Returns:
-            GaussianMeasure: The low-rank approximation.
-        """
-        factor = LinearOperator.from_matrix(
-            measure.covariance.reduced_rank_cholesky_factor(rank),
-            EuclideanSpace(rank),
-            measure.covariance.domain,
-        )
-        return GaussianMeasure.from_factored_covariance(
-            factor, expectation=measure.expectation
-        )
-
     @property
     def domain(self):
         """The Hilbert space the measure is defined on."""
@@ -1674,6 +1635,15 @@ class GaussianMeasure:
         return GaussianMeasure(
             _operator.codomain, covariance, expectation=expectation, sample=sample
         )
+
+    def low_rank_approximation(self, rank, /, *, power=0):
+        """
+        Returns an approximation to the measure with the covariance operator
+        replaced by a low-rank Cholesky decomposition along with the associated
+        sampling method.
+        """
+        F = self.covariance.random_cholesky(rank, power=power)
+        return GaussianMeasure.from_factored_covariance(F, expectation=self.expectation)
 
     def __neg__(self):
         """Negative of the measure."""
