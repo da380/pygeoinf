@@ -897,8 +897,6 @@ class LinearOperator(Operator):
         matrix = self.matrix(galerkin=True)
         qr_factor = fixed_rank_random_range(matrix, rank, power)
         eigenvectors, eigenvalues = random_eig(matrix, qr_factor)
-        print(eigenvalues)
-
         euclidean = EuclideanSpace(rank)
         diagonal = DiagonalLinearOperator(euclidean, euclidean, eigenvalues)
 
@@ -1181,16 +1179,15 @@ class DiagonalLinearOperator(LinearOperator):
         """
         return self._diagonal_values
 
-    def inverse(self, eps=0):
+    @property
+    def inverse(self):
         """
         return the inverse operator. Valid only if diagonal values
         are non-zero.
         """
         assert all([val != 0 for val in self._diagonal_values])
         diagonal_values = np.reciprocal(self._diagonal_values.copy())
-        return DiagonalLinearOperator(
-            self.domain, self.codomain, np.reciprocal(diagonal_values + eps)
-        )
+        return DiagonalLinearOperator(self.codomain, self.domain, diagonal_values)
 
     @property
     def sqrt(self):

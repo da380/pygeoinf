@@ -14,8 +14,7 @@ from pygeoinf.sphere import Lebesgue, Sobolev
 from scipy.stats import norm, uniform
 
 
-X = Sobolev(32, 2.0, 0.5)
-# X = Lebesgue(64)
+X = Sobolev(32, 1.5, 0.1)
 
 mu = X.sobolev_gaussian_measure(2.0, 0.5, 1)
 
@@ -27,19 +26,20 @@ lons = uniform(loc=0, scale=360).rvs(size=m)
 A = mu.covariance
 
 
-# U, D = A.random_eig(100, power=0)
-# B = U @ D @ U.adjoint
+U, D = A.random_eig(100, power=0)
+B = U @ D @ U.adjoint
 
-# R, D, L = A.random_svd(100, galerkin=True)
-# B = R @ D @ L
+I = X.inclusion
+V = I @ I.adjoint @ U
+C = V @ D.inverse @ V.adjoint
 
-F = A.random_cholesky(100)
-B = F @ F.adjoint
 
 u = mu.sample()
 v = A(u)
 w = B(u)
-# z = C(v)
+
+D = CGSolver(atol=1.0e-7)(A, preconditioner=X.identity, x0=C(v))
+z = D(v)
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
@@ -53,8 +53,8 @@ plt.figure()
 plt.pcolormesh(w.lons(), w.lats(), w.data, cmap="seismic")
 plt.colorbar()
 
-# plt.figure()
-# plt.pcolormesh(z.lons(), z.lats(), z.data, cmap="seismic")
-# plt.colorbar()
+plt.figure()
+plt.pcolormesh(z.lons(), z.lats(), z.data, cmap="seismic")
+plt.colorbar()
 
 plt.show()
