@@ -18,7 +18,6 @@ from scipy.stats import norm, multivariate_normal
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 from scipy.sparse import diags
-import warnings
 
 
 class VectorSpace:
@@ -136,6 +135,12 @@ class VectorSpace:
             self, codomain, self.to_components, dual_mapping=dual_mapping
         )
 
+    def is_element(self, x):
+        """
+        Returns True if the argument is a vector in the space.
+        """
+        return isinstance(x, type(self.zero))
+
     def add(self, x, y):
         """Returns x + y."""
         return self._add(x, y)
@@ -176,6 +181,7 @@ class VectorSpace:
         """Returns a random vector with components drwn from a standard Gaussian distribution."""
         return self.from_components(norm().rvs(size=self.dim))
 
+    @property
     def identity(self):
         """Returns identity operator on the space."""
         if isinstance(self, HilbertSpace):
@@ -569,6 +575,81 @@ class LinearOperator(Operator):
 
         return LinearOperator.self_adjoint(domain, mapping)
 
+    @staticmethod
+    def from_tensor_product(domain, codomain, vector_pairs, /, *, weights=None):
+        """
+        Forms a LinearOperator between Hilbert spaces from
+        the tensor product of a list of pairs of vectors.
+
+        Args:
+            domain (HilbertSpace): Domain for the linear operator.
+            codomain (HilbertSpace): Codomain for the linear operator.
+            vector_pairs ([[codomain vector, domain vector]]): A list of pairs of vectors
+                from which the tensor product is to be constructed.
+            weights [float]: Optional list of weights for the terms in the tensor
+               product. If none is provided default weights of one are used.
+        """
+
+        assert isinstance(domain, HilbertSpace)
+        assert isinstance(codomain, HilbertSpace)
+
+        assert all([domain.is_element(vector) for _, vector in vector_pairs])
+        assert all([codomain.is_element(vector) for vector, _ in vector_pairs])
+
+        if weights is None:
+            _weights = [1 for _ in vector_pairs]
+        else:
+            _weights = weights
+
+        def mapping(x):
+            y = codomain.zero
+            for left, right, weight in zip(vector_pairs, _weights):
+                product = domain.inner_product(right, x)
+                y = codomain.axpy(weight * product, left, y)
+            return y
+
+        def adjoint_mapping(y):
+            x = domain.zero
+            for left, right, weight in zip(vector_pairs, _weights):
+                product = codomain.inner_product(left, y)
+                x = domain.axpy(weight * product, right, x)
+            return x
+
+        return LinearOperator(
+            domain, codomain, mapping, adjoint_mapping=adjoint_mapping
+        )
+
+    @staticmethod
+    def self_adjoint_from_tensor_product(domain, vectors, /, *, weights=None):
+        """
+        Forms a self-adjoint LinearOperator on a Hilbert space from
+        the tensor product of a list of vectors.
+
+        Args:
+            domain (HilbertSpace): Domain for the linear operator.
+            vectors ([domain vector]): A list of vectors from which
+                the tensor product is to be constructed.
+            weights [float]: Optional list of weights for the terms in the tensor
+                product. If none is provided default weights of one are used.
+        """
+
+        assert isinstance(domain, HilbertSpace)
+        assert all([domain.is_element(vector) for vector in vectors])
+
+        if weights is None:
+            _weights = [1 for _ in vectors]
+        else:
+            _weights = weights
+
+        def mapping(x):
+            y = domain.zero
+            for vector, weight in zip(vectors, _weights):
+                product = domain.inner_product(vector, x)
+                y = domain.axpy(weight * product, vector, y)
+            return y
+
+        return LinearOperator.self_adjoint(domain, mapping)
+
     @property
     def linear(self):
         # Overide of method from base class.
@@ -901,6 +982,33 @@ class LinearOperator(Operator):
             matrix[:, i] = (a @ cx)[:]
             cx[i] = 0
         return matrix
+
+    def __neg__(self):
+        """negative unary"""
+        domain = self.domain
+        codomain = self.codomain
+
+        def mapping(x):
+            return codomain.negative(self(x))
+
+        def dual_mapping(yp):
+            return domain.dual.negative(self.dual(yp))
+
+        if self.hilbert_operator:
+
+            def adjoint_mapping(y):
+                return domain.negative(self.adjoint(y))
+
+        else:
+            adjoint_mapping = None
+
+        return LinearOperator(
+            domain,
+            codomain,
+            mapping,
+            dual_mapping=dual_mapping,
+            adjoint_mapping=adjoint_mapping,
+        )
 
     def __mul__(self, a):
         """Multiply by a scalar."""
@@ -1398,8 +1506,8 @@ class EuclideanSpace(HilbertSpace):
         Args:
             standard_deviation (float): The standard deviation for each component.
         """
-        factor = standard_deviation * self.identity()
-        inverse_factor = self.identity() / standard_deviation
+        factor = standard_deviation * self.identity
+        inverse_factor = self.identity / standard_deviation
         return GaussianMeasure.from_factored_covariance(
             factor, inverse_factor=inverse_factor
         )
@@ -1628,7 +1736,7 @@ class GaussianMeasure:
         """
 
         if operator is None:
-            _operator = self.domain.identity()
+            _operator = self.domain.identity
         else:
             _operator = operator
 
@@ -2208,30 +2316,7 @@ class IdentityPreconditioner(PreconditioningMethod):
 
     def __call__(self, operator):
         assert operator.automorphism
-        return operator.domain.identity()
-
-
-class FixedRankRandomisedSVDPreconditioner(PreconditioningMethod):
-
-    def __init__(self, rank):
-        """
-        Args:
-            rank (int): The rank of the preconditioner.
-        """
-        self._rank = rank
-
-    def __call__(self, operator):
-        """
-        Given an operator, constructs the associated preconditioner.
-
-        Args:
-            operator (LinearOperator): The operator to be preconditioned.
-            rank (int): The rank of the preconditioner.
-
-        Returns:
-            LinearOperator: The preconditioner.
-        """
-        return operator.low_rank_approximation_by_eigen(self._rank, inverse=True)
+        return operator.domain.identity
 
 
 def fixed_rank_random_range(matrix, rank, power=0):
@@ -2240,12 +2325,12 @@ def fixed_rank_random_range(matrix, rank, power=0):
     a random-matrix method.
 
     Args:
-        A (matrix-like): (m,n)-matrix whose range is to be approximated.
+        matrix (matrix-like): (m,n)-matrix whose range is to be approximated.
         rank (int): The desired rank. Must be greater than 1.
         power (int): The exponent to use within the power iterations.
 
     Returns:
-        Q (numpy-matrix): A (m,rank)-matrix whose columns are orthonormal and
+        matrix: A (m,rank)-matrix whose columns are orthonormal and
             whose span approximates the desired range.
 
     Notes:
@@ -2272,18 +2357,20 @@ def fixed_rank_random_range(matrix, rank, power=0):
     return qr_factor
 
 
-def variable_rank_random_range(matrix, rtol, /, *, power=0):
+def variable_rank_random_range(matrix, rtol, /, *, rank=None, power=0):
     """
     Forms the variable-rank approximation to the range of a matrix using
     a random-matrix method.
 
     Args:
-        A (matrix-like): (m,n)-matrix whose range is to be approximated.
+        matrix (matrix-like): (m,n)-matrix whose range is to be approximated.
         rtol (float): The desired relative accuracy.
+        rank (int): Starting rank for the decomposition. If none, then
+            determined from the dimension of the matrix.
         power (int): The exponent to use within the power iterations.
 
     Returns:
-        Q (numpy-matrix): A (m,rank)-matrix whose columns are orthonormal and
+        matrix: A (m,rank)-matrix whose columns are orthonormal and
             whose span approximates the desired range.
 
     Notes:

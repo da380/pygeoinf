@@ -14,7 +14,7 @@ from pygeoinf.sphere import Lebesgue, Sobolev
 from scipy.stats import norm, uniform
 
 
-X = Sobolev(64, 2, 0.1)
+X = Sobolev(4, 2, 0.1)
 # X = Lebesgue(64)
 
 mu = X.sobolev_gaussian_measure(2, 0.6, 1)
@@ -32,6 +32,16 @@ U, D = A.random_eig(20, power=2)
 IX = X.inclusion
 V = IX @ IX.adjoint @ U
 B = V @ D.inverse @ V.adjoint
+
+M = X.identity() - A @ B
+
+
+plt.matshow(M.matrix(dense=True, galerkin=True))
+plt.colorbar()
+plt.show()
+
+
+"""
 
 
 def pre(x):
@@ -64,3 +74,5 @@ plt.pcolormesh(w.lons(), w.lats(), w.data, cmap="seismic")
 plt.colorbar()
 
 plt.show()
+
+"""
