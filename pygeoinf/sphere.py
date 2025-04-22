@@ -5,6 +5,8 @@ Module for Sobolev spaces on the two-sphere.
 import numpy as np
 from scipy.sparse import diags
 import pyshtools as sh
+import matplotlib.pyplot as plt
+
 from pygeoinf.linalg import (
     VectorSpace,
     HilbertSpace,
@@ -165,6 +167,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         self._inverse_metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
             lambda l: 1 / self._sobolev_function(l)
         )
+        self._vector_as_SHGrid = vector_as_SHGrid
         if vector_as_SHGrid:
             HilbertSpace.__init__(
                 self,
@@ -422,6 +425,23 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         return self.invariant_gaussian_measure(
             self._normalise_covariance_function(f, amplitude), expectation=expectation
         )
+
+    def plot(self, u, ax=None):
+        """
+        Make a simple plot of an element of the space.
+        """
+        if ax is None:
+            _fig, _ax = plt.subplots(1, 1)
+        else:
+            _ax = ax
+
+        if self._vector_as_SHGrid:
+            out = _ax.pcolormesh(u.lons(), u.lats(), u.data)
+        else:
+            _u = u.expand(grid=self.grid, extend=self.extend)
+            out = _ax.pcolormesh(_u.lons(), _u.lats(), _u.data)
+
+        return out
 
     # ==============================================#
     #                Private methods               #

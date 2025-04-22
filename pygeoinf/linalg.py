@@ -1613,6 +1613,51 @@ class GaussianMeasure:
             sample=sample,
         )
 
+    @staticmethod
+    def from_samples(domain, samples):
+        """
+        Forms a Gaussian measure from a set of samples based on
+        the sample expectation and sample variance.
+
+        Args:
+            domain (HilbertSpace): The space the measure is defined on.
+            samples ([vectors]): A list of samples.
+
+        Notes:
+            :
+        """
+
+        assert isinstance(domain, HilbertSpace)
+        assert all([domain.is_element(x) for x in samples])
+
+        n = len(samples)
+        expectation = domain.zero
+        for x in samples:
+            expectation = domain.axpy(1 / n, x, expectation)
+
+        if n == 1:
+            covariance = LinearOperator.self_adjoint(domain, lambda x: domain.zero)
+
+            def sample():
+                return expectation
+
+        else:
+            offsets = [domain.subtract(x, expectation) for x in samples]
+            covariance = LinearOperator.self_adjoint_from_tensor_product(
+                domain, offsets
+            ) / (n - 1)
+
+            def sample():
+                x = expectation
+                randoms = np.random.randn(len(offsets))
+                for y, r in zip(offsets, randoms):
+                    x = domain.axpy(r / np.sqrt(n - 1), y, x)
+                return x
+
+        return GaussianMeasure(
+            domain, covariance, expectation=expectation, sample=sample
+        )
+
     @property
     def domain(self):
         """The Hilbert space the measure is defined on."""
@@ -2265,8 +2310,6 @@ class CGSolver(IterativeLinearSolver):
                 maxiter = self._maxiter
 
             for _ in range(maxiter):
-
-                print(domain.norm(r), tol)
 
                 if domain.norm(r) <= tol:
                     break

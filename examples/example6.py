@@ -10,14 +10,14 @@ import matplotlib.pyplot as plt
 
 
 # Set the model space.
-X = Sobolev(64, 2.0, 0.1)
+X = Sobolev(64, 1.5, 0.1)
 
 # Set up the prior distribution.
 mu = X.sobolev_gaussian_measure(2.0, 0.2, 1)
 
 
 # Set up the forward operator.
-n = 40
+n = 100
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
