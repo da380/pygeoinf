@@ -10,14 +10,14 @@ import matplotlib.pyplot as plt
 
 
 # Set the model space.
-X = Sobolev(64, 1.5, 0.1)
+X = Sobolev(64, 2.0, 0.1)
 
 # Set up the prior distribution.
-mu = X.sobolev_gaussian_measure(2, 0.5, 1)
+mu = X.sobolev_gaussian_measure(2.0, 0.2, 1)
 
 
 # Set up the forward operator.
-n = 50
+n = 40
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -25,7 +25,7 @@ A = X.point_evaluation_operator(lats, lons)
 
 # Set up the error distribution.
 Y = A.codomain
-sigma = 0.01
+sigma = 0.1
 nu = Y.standard_gaussisan_measure(sigma)
 
 # Set up the inference problem
@@ -35,7 +35,7 @@ problem = BayesianInversion(A, mu, nu)
 u = mu.sample()
 v = problem.data_measure(u).sample()
 pi = problem.model_posterior_measure(v, solver=CholeskySolver()).low_rank_approximation(
-    20, power=2
+    10, power=3
 )
 
 ub = pi.expectation
@@ -48,11 +48,11 @@ for _ in range(n):
 uvar /= ns - 1
 uvar.data = np.sqrt(uvar.data)
 
-umax = np.max(np.abs(u.data))
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
 plt.plot(lons, lats, "ko")
+umax = np.max(np.abs(u.data))
 plt.clim([-umax, umax])
 plt.colorbar()
 
@@ -63,13 +63,18 @@ plt.plot(lons, lats, "ko")
 plt.clim([-umax, umax])
 plt.colorbar()
 
-uvar *= 100 / umax
-uvmax = np.max(np.abs(uvar.data))
+plt.figure()
+plt.pcolormesh(u.lons(), u.lats(), pi.sample().data, cmap="seismic")
+plt.plot(lons, lats, "ko")
+plt.clim([-umax, umax])
+plt.colorbar()
+
 
 plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), uvar.data, cmap="seismic")
+plt.pcolormesh(u.lons(), u.lats(), uvar.data, cmap="Reds")
 plt.plot(lons, lats, "ko")
-plt.clim([-uvmax, uvmax])
+uvmax = np.max(np.abs(uvar.data))
+plt.clim([0, uvmax])
 plt.colorbar()
 
 

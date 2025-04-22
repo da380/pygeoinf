@@ -1587,6 +1587,17 @@ class GaussianMeasure:
         else:
             return self._sample()
 
+    def sample_expectation(self, n):
+        """
+        Returns the sample expectation using n > 1 samples.
+        """
+        assert n >= 1
+        expectation = self.domain.zero
+        for _ in range(n):
+            sample = self.sample()
+            expectation = self.domain.axpy(1 / n, sample, expectation)
+        return expectation
+
     def set_solver(self, solver):
         """Set the linear solver to be used in computing the inverse covariance."""
         self._solver = solver
@@ -1849,7 +1860,7 @@ class IterativeLinearSolver(LinearSolver):
     """Base class for iterative linear solvers."""
 
     @abstractmethod
-    def __call__(self, operator, /, *, preconditioner=None, x0=None):
+    def __call__(self, operator, /, *, preconditioner=None):
         """
         Given a linear operator, return its inverse.
 
