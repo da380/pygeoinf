@@ -2340,7 +2340,7 @@ def fixed_rank_random_range(matrix, rank, power=0):
         This method is based on Algorithm 4.4 in Halko et. al. 2011
     """
 
-    assert rank > 1
+    # assert rank > 1
 
     m, n = matrix.shape
     random_matrix = np.random.rand(n, rank)

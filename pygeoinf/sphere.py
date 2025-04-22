@@ -106,6 +106,8 @@ class SHToolsHelper:
         """Return SHCoeffs object from its component vector."""
         coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
         i = 0
+        if len(c.shape) == 2:
+            c = c.reshape(-1)
         for l in range(self.lmax + 1):
             j = i + l + 1
             coeffs[0, l, : l + 1] = c[i:j]

@@ -27,13 +27,13 @@ lons = uniform(loc=0, scale=360).rvs(size=m)
 A = mu.covariance
 
 
-U, D = A.random_eig(20, power=2)
+U, D = A.random_eig(4, power=2)
 
 IX = X.inclusion
 V = IX @ IX.adjoint @ U
 B = V @ D.inverse @ V.adjoint
 
-M = X.identity() - A @ B
+M = X.identity - A @ B
 
 
 plt.matshow(M.matrix(dense=True, galerkin=True))
