@@ -426,6 +426,45 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             self._normalise_covariance_function(f, amplitude), expectation=expectation
         )
 
+    def sample_variance(self, vectors, /, *, expectation=None):
+        """
+        Given a list of elements in the space, forms a field
+        of point-wise sample variances.
+
+        Args:
+            vectors ([vector]): A list of vectors.
+            expectation (vector): The expected value that can be provided.
+                If not, the sample expectation is used.
+        """
+        n = len(vectors)
+        if expectation is None:
+            assert n > 1
+            fac = 1 / (n - 1)
+            ubar = self.sample_expectation(vectors)
+        else:
+            assert n > 0
+            fac = 1 / n
+            ubar = expectation
+        uvar = self.zero
+        for u in vectors:
+            u = (u - ubar) * (u - ubar)
+            uvar = self.axpy(fac, u, uvar)
+        return uvar
+
+    def sample_std(self, vectors, /, *, expectation=None):
+        """
+        Given a list of elements in the space, forms a field
+        of point-wise sample standard deviations.
+
+        Args:
+            vectors ([vector]): A list of vectors.
+            expectation (vector): The expected value that can be provided.
+                If not, the sample expectation is used.
+        """
+        ustd = self.sample_variance(vectors, expectation=expectation)
+        ustd.data = np.sqrt(ustd.data)
+        return ustd
+
     def plot(self, u, ax=None):
         """
         Make a simple plot of an element of the space.

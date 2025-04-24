@@ -4,16 +4,17 @@ from scipy.stats import chi2
 from pygeoinf.linalg import GaussianMeasure, CholeskySolver
 from pygeoinf.forward_problem import ForwardProblem
 from pygeoinf.bayesian import BayesianInversion, BayesianInference
-from pygeoinf.sphere import Sobolev
+from pygeoinf.sphere import Sobolev, Lebesgue
 from scipy.stats import norm, uniform
 import matplotlib.pyplot as plt
 
 
 # Set the model space.
-X = Sobolev(64, 1.5, 0.1)
+X = Sobolev(128, 1.1, 0.1)
+
 
 # Set up the prior distribution.
-mu = X.sobolev_gaussian_measure(2.0, 0.2, 1)
+mu = X.sobolev_gaussian_measure(2.0, 0.25, 1)
 
 
 # Set up the forward operator.
@@ -35,46 +36,38 @@ problem = BayesianInversion(A, mu, nu)
 u = mu.sample()
 v = problem.data_measure(u).sample()
 pi = problem.model_posterior_measure(v, solver=CholeskySolver()).low_rank_approximation(
-    10, power=3
+    50, power=2
 )
 
-ub = pi.expectation
+ubar = pi.expectation
+ustd = X.sample_std(pi.samples(100), expectation=ubar)
 
-ns = 20
-uvar = X.zero
-for _ in range(n):
-    us = pi.sample()
-    uvar += (us - ub) * (us - ub)
-uvar /= ns - 1
-uvar.data = np.sqrt(uvar.data)
 
+umax = np.max(np.abs(u.data))
+uvmax = np.max(np.abs(ustd.data))
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
 plt.plot(lons, lats, "ko")
-umax = np.max(np.abs(u.data))
 plt.clim([-umax, umax])
 plt.colorbar()
 
-
 plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), ub.data, cmap="seismic")
+plt.pcolormesh(u.lons(), u.lats(), ubar.data, cmap="seismic")
 plt.plot(lons, lats, "ko")
 plt.clim([-umax, umax])
 plt.colorbar()
 
 plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), pi.sample().data, cmap="seismic")
+plt.pcolormesh(u.lons(), u.lats(), 2 * ustd.data, cmap="Reds")
 plt.plot(lons, lats, "ko")
-plt.clim([-umax, umax])
+plt.clim([0, umax])
 plt.colorbar()
 
-
 plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), uvar.data, cmap="Reds")
+plt.pcolormesh(u.lons(), u.lats(), np.abs((ubar - u).data), cmap="Reds")
 plt.plot(lons, lats, "ko")
-uvmax = np.max(np.abs(uvar.data))
-plt.clim([0, uvmax])
+plt.clim([0, umax])
 plt.colorbar()
 
 
