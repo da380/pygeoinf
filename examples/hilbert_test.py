@@ -6,15 +6,26 @@ from pygeoinf.hilbert import (
     LinearOperator,
     LinearForm,
     LUSolver,
+    CholeskySolver,
+    CGMatrixSolver,
 )
 
 X = EuclideanSpace(4)
 
-a = np.random.randn(X.dim, X.dim)
-A = LinearOperator.from_matrix(X, X, a)
+a = np.random.randn(X.dim, X.dim) + np.identity(X.dim)
+A = LinearOperator.from_matrix(X, X, a @ a.T)
 
-print(A)
 
-B = LUSolver()(A)
+x0 = X.random()
+B = CGMatrixSolver(galerkin=True)(A, x0=x0)
 
-print(A @ B)
+
+x = X.random()
+
+y = A(x)
+
+
+z = B(y)
+
+print(x)
+print(z)

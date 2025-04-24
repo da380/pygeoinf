@@ -277,11 +277,7 @@ class HilbertSpace:
         )
 
     def _dual_to_components(self, xp):
-        if xp._matrix is None:
-            matrix = xp.matrix(dense=True)
-        else:
-            matrix = xp._matrix
-        return matrix.reshape(xp.domain.dim)
+        return xp.components
 
     def _dual_from_components(self, cp):
         return LinearForm(self, components=cp)
@@ -443,7 +439,6 @@ class LinearOperator(Operator):
         super().__init__(domain, codomain, mapping)
         self._dual_base = dual_base
         self._adjoint_base = adjoint_base
-        self._matrix = None
         if dual_mapping is None:
             if adjoint_mapping is None:
                 self.__dual_mapping = self._dual_mapping_default
@@ -559,16 +554,16 @@ class LinearOperator(Operator):
             return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
 
     @staticmethod
-    def from_self_adjoint_matrix(domain, matrix):
+    def self_adjoint_from_matrix(domain, matrix):
         """
-        Given a Hilbert space an a self-adjoint matrix, returns
-        a linear operator for which the matrix is its Galerkin representation.
+        Forms a self-adjoint operator from its Galerkin G matrix representation.
         """
 
         def mapping(x):
             cx = domain.to_components(x)
-            cy = matrix @ cx
-            return domain.from_components(cy)
+            cyp = matrix @ cx
+            yp = domain.dual.from_components(cyp)
+            return domain.from_dual(yp)
 
         return LinearOperator.self_adjoint(domain, mapping)
 
@@ -643,6 +638,7 @@ class LinearOperator(Operator):
 
         return LinearOperator.self_adjoint(domain, mapping)
 
+    @property
     def linear(self):
         # Overide of method from base class.
         return True
@@ -709,23 +705,23 @@ class LinearOperator(Operator):
                     return self.domain.dual.to_components(xp)
 
             # Implement matrix-matrix and transposed-matrix-matrix products
-            def matmat(cX):
-                n, k = cX.shape
+            def matmat(xmat):
+                n, k = xmat.shape
                 assert n == self.domain.dim
-                cY = np.zeros((self.codomain.dim, k))
+                ymat = np.zeros((self.codomain.dim, k))
                 for j in range(k):
-                    cx = cX[:, j]
-                    cY[:, j] = matvec(cx)
-                return cY
+                    cx = xmat[:, j]
+                    ymat[:, j] = matvec(cx)
+                return ymat
 
-            def rmatmat(cY):
-                m, k = cY.shape
+            def rmatmat(ymat):
+                m, k = ymat.shape
                 assert m == self.codomain.dim
-                cX = np.zeros((self.domain.dim, k))
+                xmat = np.zeros((self.domain.dim, k))
                 for j in range(k):
-                    cy = cY[:, j]
-                    cX[:, j] = rmatvec(cy)
-                return cX
+                    cy = ymat[:, j]
+                    xmat[:, j] = rmatvec(cy)
+                return xmat
 
             # Return the scipy LinearOperator
             return ScipyLinOp(
@@ -1085,10 +1081,7 @@ class LinearOperator(Operator):
 
     def __str__(self):
         """Print the operator as its dense matrix representation."""
-        if self._matrix is None:
-            return self.matrix(dense=True).__str__()
-        else:
-            return self._matrix.__str__()
+        return self.matrix(dense=True).__str__()
 
 
 class DiagonalLinearOperator(LinearOperator):
@@ -1546,19 +1539,13 @@ class LUSolver(DirectLinearSolver):
         """
         self._galerkin = galerkin
 
-    # def _matrix_solver(self, matrix):
-    #    factor = lu_factor(matrix)
-    #    return lambda y, trans: lu_solve(factor, y, trans)
-
     def __call__(self, operator):
         """
         Returns the inverse of a LinearOperator based on the LU factorisation
         of its dense matrix representation.
         """
 
-        n = operator.domain.dim
-        m = operator.codomain.dim
-        assert n == m
+        assert operator.domain.dim == operator.codomain.dim
         matrix = operator.matrix(dense=True, galerkin=self._galerkin)
         factor = lu_factor(matrix, overwrite_a=True)
 
@@ -1569,14 +1556,117 @@ class LUSolver(DirectLinearSolver):
             return lu_solve(factor, cx, 1)
 
         inverse_matrix = ScipyLinOp(
-            (m, n),
+            (operator.domain.dim, operator.codomain.dim),
             matvec=matvec,
             rmatvec=rmatvec,
         )
 
         return LinearOperator.from_matrix(
-            operator.codomain, operator.domain, inverse_matrix
+            operator.codomain, operator.domain, inverse_matrix, galerkin=self._galerkin
         )
+
+
+class CholeskySolver(DirectLinearSolver):
+    """
+    Direct Linear solver class based on Cholesky decomposition of the
+    matrix representation. It is assumed that the operator's matrix
+    representation is self-adjoint and positive-definite.
+    """
+
+    def __init__(self, /, *, galerkin=False):
+        """
+        galerkin (bool): If true, use the Galerkin matrix representation.
+        """
+        self._galerkin = galerkin
+
+    def __call__(self, operator):
+        """
+        Returns the inverse of a LinearOperator based on the LU factorisation
+        of its dense matrix representation.
+        """
+
+        assert operator.automorphism
+
+        matrix = operator.matrix(dense=True, galerkin=self._galerkin)
+        factor = cho_factor(matrix, overwrite_a=False)
+
+        def matvec(cy):
+            return cho_solve(factor, cy)
+
+        inverse_matrix = ScipyLinOp(
+            (operator.domain.dim, operator.codomain.dim), matvec=matvec, rmatvec=matvec
+        )
+
+        return LinearOperator.from_matrix(
+            operator.domain, operator.domain, inverse_matrix, galerkin=self._galerkin
+        )
+
+
+class IterativeLinearSolver(LinearSolver):
+    """
+    Abstract base class for direct linear solvers.
+    """
+
+
+class CGMatrixSolver(IterativeLinearSolver):
+    """
+    Linear solver for self-adjoint operators based on the application
+    of the conjugate gradient algorithm to the matrix representation.
+    """
+
+    def __init__(
+        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
+    ):
+        """
+        Args:
+            rtol (float): relative tolerance within convergence checks.
+            atol (float): absolute tolerance within convergence checks.
+            maxiter (int): maximum number of iterations to allow.
+            callback (callable): callable function after each iteration. This function
+                takes in as argument the current solution vector.
+        """
+        self._rtol = rtol
+        self._atol = atol
+        self._maxiter = maxiter
+        self._callback = callback
+
+    def __call__(self, operator, /, *, galerkin=False, preconditioner=None, x0=None):
+        """
+        Returns the IterativeLinearOperator corresponding to the given operator.
+
+        Args:
+            operator (LinearOperator): The operator to invert.
+            galerkin (bool): True if the Galerkin matrix representation is used.
+        """
+        assert operator.automorphism
+        domain = operator.codomain
+        matrix = operator.matrix(galerkin=galerkin)
+
+        if preconditioner is None:
+            matrix_preconditioner = None
+        else:
+            matrix_preconditioner = preconditioner.matrix(galerkin=galerkin)
+
+        def mapping(y):
+            cy = domain.to_components(y)
+            cx0 = domain.to_components(x0) if x0 is not None else None
+            cxp = cg(
+                matrix,
+                cy,
+                x0=cx0,
+                rtol=self._rtol,
+                atol=self._atol,
+                maxiter=self._maxiter,
+                M=matrix_preconditioner,
+                callback=self._callback,
+            )[0]
+            if galerkin:
+                xp = domain.dual.from_components(cxp)
+                return domain.from_dual(xp)
+            else:
+                return domain.from_components(cxp)
+
+        return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
 
 ###########################################################################
