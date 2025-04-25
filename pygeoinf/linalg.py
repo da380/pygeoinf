@@ -2437,24 +2437,6 @@ class CGSolver(IterativeLinearSolver):
         return LinearOperator.self_adjoint(operator.domain, mapping)
 
 
-class PreconditioningMethod(ABC):
-    """Base class for pre-conditioning methods."""
-
-    @abstractmethod
-    def __call__(self, operator):
-        """
-        Given an operator, constructs the associated preconditioner.
-        """
-
-
-class IdentityPreconditioner(PreconditioningMethod):
-    """Class for use of the identity operator as a preconditioner."""
-
-    def __call__(self, operator):
-        assert operator.automorphism
-        return operator.domain.identity
-
-
 def fixed_rank_random_range(matrix, rank, power=0):
     """
     Forms the fixed-rank approximation to the range of a matrix using

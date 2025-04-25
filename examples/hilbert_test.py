@@ -8,6 +8,9 @@ from pygeoinf.hilbert import (
     LUSolver,
     CholeskySolver,
     CGMatrixSolver,
+    BICGMatrixSolver,
+    GMRESMatrixSolver,
+    CGSolver,
 )
 
 X = EuclideanSpace(4)
@@ -16,16 +19,11 @@ a = np.random.randn(X.dim, X.dim) + np.identity(X.dim)
 A = LinearOperator.from_matrix(X, X, a @ a.T)
 
 
-x0 = X.random()
-B = CGMatrixSolver(galerkin=True)(A, x0=x0)
+B = CGSolver(rtol=1.0e-10)(A)
 
 
 x = X.random()
 
 y = A(x)
 
-
-z = B(y)
-
-print(x)
-print(z)
+print(A.dual @ B.dual)
