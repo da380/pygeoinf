@@ -5,10 +5,9 @@ Module for Sobolev spaces on the two-sphere.
 import numpy as np
 from scipy.sparse import diags
 import pyshtools as sh
-import matplotlib.pyplot as plt
 
-from pygeoinf.linalg import (
-    VectorSpace,
+
+from pygeoinf.hilbert import (
     HilbertSpace,
     LinearOperator,
     GaussianMeasure,
@@ -203,6 +202,14 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         """Non-dimensional length-scale."""
         return self._scale
 
+    @property
+    def laplace_beltrami_operator(self):
+        """
+        Returns the Laplace Beltrami operator on the space.
+        """
+        codomain = Sobolev(self.lmax, self.order - 2, self.scale)
+        return self.invariant_operator(codomain, lambda l: l * (l + 1) / self.radius**2)
+
     # ==============================================#
     #                 Public methods                #
     # ==============================================#
@@ -380,7 +387,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         )
 
         return GaussianMeasure.from_factored_covariance(
-            factor, inverse_factor=inverse_factor, expectation=expectation
+            factor, expectation=expectation, inverse_factor=inverse_factor
         )
 
     def sobolev_gaussian_measure(self, order, scale, amplitude, /, *, expectation=None):
@@ -464,23 +471,6 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         ustd = self.sample_variance(vectors, expectation=expectation)
         ustd.data = np.sqrt(ustd.data)
         return ustd
-
-    def plot(self, u, ax=None):
-        """
-        Make a simple plot of an element of the space.
-        """
-        if ax is None:
-            _fig, _ax = plt.subplots(1, 1)
-        else:
-            _ax = ax
-
-        if self._vector_as_SHGrid:
-            out = _ax.pcolormesh(u.lons(), u.lats(), u.data)
-        else:
-            _u = u.expand(grid=self.grid, extend=self.extend)
-            out = _ax.pcolormesh(_u.lons(), _u.lats(), _u.data)
-
-        return out
 
     # ==============================================#
     #                Private methods               #

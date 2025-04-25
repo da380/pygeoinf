@@ -14,7 +14,7 @@ from scipy.linalg import (
     svd,
     qr,
 )
-from scipy.stats import norm, multivariate_normal
+from scipy.stats import norm
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 from scipy.sparse import diags
@@ -87,7 +87,6 @@ class HilbertSpace:
         self.__to_components = to_components
         self.__from_components = from_components
         self.__inner_product = inner_product
-        self.__metric_tensor = None
         self.__from_dual = from_dual
         self.__to_dual = to_dual
         self._base = base
@@ -331,9 +330,12 @@ class EuclideanSpace(HilbertSpace):
             standard_deviation (float): The standard deviation for each component.
         """
         factor = standard_deviation * self.identity
-        return GaussianMeasure.from_factored_covariance(factor)
+        inverse_factor = (1 / standard_deviation) * self.identity
+        return GaussianMeasure.from_factored_covariance(
+            factor, inverse_factor=inverse_factor
+        )
 
-    def diagonal_covariance(self, standard_deviations):
+    def diagonal_gaussian_measure(self, standard_deviations):
         """
         Returns a Gaussian measure on the space with a diagonal
         covariance and with zero expectation.
@@ -341,9 +343,10 @@ class EuclideanSpace(HilbertSpace):
         Args:
             standard_deviations (vector): Vector of the standard deviations.
         """
-        matrix = diags([standard_deviations], [0])
-        factor = LinearOperator.self_adjoint(self, lambda x: matrix @ x)
-        return GaussianMeasure.from_factored_covariance(factor)
+        factor = DiagonalLinearOperator(self, self, standard_deviations)
+        return GaussianMeasure.from_factored_covariance(
+            factor, inverse_factor=factor.inverse
+        )
 
     def __inner_product(self, x1, x2):
         return np.dot(x1, x2)
@@ -452,7 +455,7 @@ class LinearOperator(Operator):
                 self.__adjoint_mapping = adjoint_mapping
                 self.__dual_mapping = self._dual_mapping_from_adjoint
         else:
-            self.__dual_mapping = self._dual_mapping_default
+            self.__dual_mapping = dual_mapping
             if adjoint_mapping is None:
                 self.__adjoint_mapping = self._adjoint_mapping_from_dual
             else:
@@ -769,6 +772,9 @@ class LinearOperator(Operator):
 
         """
         matrix = self.matrix(galerkin=galerkin)
+        m, n = matrix.shape
+        k = min(m, n)
+        rank = rank if rank <= k else k
         qr_factor = fixed_rank_random_range(matrix, rank, power)
         left_factor, singular_values, right_factor_transposed = random_svd(
             matrix, qr_factor
@@ -878,8 +884,11 @@ class LinearOperator(Operator):
             DiagonalLinearOperator: The diagonal factor, D.
         """
 
-        assert self.domain == self.codomain
+        assert self.is_automorphism
         matrix = self.matrix(galerkin=True)
+        m, n = matrix.shape
+        k = min(m, n)
+        rank = rank if rank <= k else k
         qr_factor = fixed_rank_random_range(matrix, rank, power)
         eigenvectors, eigenvalues = random_eig(matrix, qr_factor)
         euclidean = EuclideanSpace(rank)
@@ -921,8 +930,11 @@ class LinearOperator(Operator):
             LinearOperator : The Cholesky factor, F
 
         """
-        assert self.domain == self.codomain
+        assert self.is_automorphism
         matrix = self.matrix(galerkin=True)
+        m, n = matrix.shape
+        k = min(m, n)
+        rank = rank if rank <= k else k
         qr_factor = fixed_rank_random_range(matrix, rank, power)
         cholesky_factor = random_cholesky(matrix, qr_factor)
 
@@ -938,6 +950,24 @@ class LinearOperator(Operator):
         return LinearOperator(
             EuclideanSpace(rank), self.domain, mapping, adjoint_mapping=adjoint_mapping
         )
+
+    def random_preconditioner(self, rank, /, *, power=0):
+        """
+        Returns an approximate inverse of a self-adjoint operator
+        based on a random Cholesky factorisation.
+
+        Args:
+            rank (int) : rank for the decomposition.
+            sigma (float | None): The shift to apply in forming the inverse.
+            power (int) : exponent within the power iterations.
+        """
+        assert self.domain == self.codomain
+        U, D = self.random_eig(rank, power=power)
+        sigma = 1
+        F = U @ D.sqrt
+        M = F.domain.identity + (1 / sigma) * F.adjoint @ F
+        N = CholeskySolver()(M)
+        return (1 / sigma) * self.domain.identity - (1 / sigma**2) * F @ N @ F.adjoint
 
     def _dual_mapping_default(self, yp):
         # Default implementation of the dual mapping.
@@ -1294,6 +1324,7 @@ class GaussianMeasure:
         *,
         expectation=None,
         sample=None,
+        inverse_covariance=None,
     ):
         """
         Args:
@@ -1301,6 +1332,11 @@ class GaussianMeasure:
             covariance (LinearOperator): A self-adjoint and non-negative linear operator on the domain
             expectation (vector | zero): The expectation value of the measure.
             sample (callable | None): A functor that returns a random sample from the measure.
+            inverse_covariance (LinearOperator | None): The inverse of the covaraiance.
+
+        Notes:
+            If the inverse of the covariance is not provided, it is computed internally
+            using a matrix-free CG solver.
         """
         self._domain = domain
         self._covariance = covariance
@@ -1312,6 +1348,11 @@ class GaussianMeasure:
 
         self._sample = sample
 
+        if inverse_covariance is None:
+            self._inverse_covariance = CGSolver()(covariance)
+        else:
+            self._inverse_covariance = inverse_covariance
+
     @staticmethod
     def from_factored_covariance(factor, /, *, inverse_factor=None, expectation=None):
         """
@@ -1322,6 +1363,7 @@ class GaussianMeasure:
             factor (LinearOperator): Linear operator from Euclidean space into the
                 domain of the measure.
             expectation (vector | zero): expected value of the measure.
+            inverse factor (LinearOperator): An analgous factorisation of the inverse covariance.
 
         Returns:
             GassianMeasure: The measure with the required covariance and expectation.
@@ -1336,11 +1378,18 @@ class GaussianMeasure:
 
         covariance = factor @ factor.adjoint
 
+        _inverse_covariance = (
+            inverse_factor.adjoint @ inverse_factor
+            if inverse_factor is not None
+            else None
+        )
+
         return GaussianMeasure(
             factor.codomain,
             covariance,
             expectation=expectation,
             sample=sample,
+            inverse_covariance=_inverse_covariance,
         )
 
     @staticmethod
@@ -1395,6 +1444,11 @@ class GaussianMeasure:
     def covariance(self):
         """The covariance operator as an instance of LinearOperator."""
         return self._covariance
+
+    @property
+    def inverse_covariance(self):
+        """The covariance operator as an instance of LinearOperator."""
+        return self._inverse_covariance
 
     @property
     def expectation(self):
@@ -1623,36 +1677,40 @@ class CGMatrixSolver(IterativeLinearSolver):
     Galerkin representation is used.
     """
 
-    def __init__(self, /, *, rtol=1.0e-5, atol=0, maxiter=None, callback=None):
+    def __init__(
+        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
+    ):
         """
         Args:
+            galerkin (bool): True if the Galerkin matrix representation is used.
             rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
             maxiter (int): maximum number of iterations to allow.
             callback (callable): callable function after each iteration. This function
                 takes in as argument the current solution vector.
         """
+        self._galerkin = galerkin
         self._rtol = rtol
         self._atol = atol
         self._maxiter = maxiter
         self._callback = callback
 
-    def __call__(self, operator, /, *, galerkin=False, preconditioner=None):
+    def __call__(self, operator, /, *, preconditioner=None):
         """
         Returns the IterativeLinearOperator corresponding to the given operator.
 
         Args:
             operator (LinearOperator): The operator to invert.
-            galerkin (bool): True if the Galerkin matrix representation is used.
+
         """
         assert operator.is_automorphism
         domain = operator.codomain
-        matrix = operator.matrix(galerkin=galerkin)
+        matrix = operator.matrix(galerkin=self._galerkin)
 
         if preconditioner is None:
             matrix_preconditioner = None
         else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=galerkin)
+            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
         def mapping(y):
             cy = domain.to_components(y)
@@ -1665,7 +1723,7 @@ class CGMatrixSolver(IterativeLinearSolver):
                 M=matrix_preconditioner,
                 callback=self._callback,
             )[0]
-            if galerkin:
+            if self._galerkin:
                 xp = domain.dual.from_components(cxp)
                 return domain.from_dual(xp)
             else:
@@ -1680,37 +1738,40 @@ class BICGMatrixSolver(IterativeLinearSolver):
     of the biconjugate gradient algorithm to the matrix representation.
     """
 
-    def __init__(self, /, *, rtol=1.0e-5, atol=0, maxiter=None, callback=None):
+    def __init__(
+        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
+    ):
         """
         Args:
+            galerkin (bool): True if the Galerkin matrix representation is used.
             rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
             maxiter (int): maximum number of iterations to allow.
             callback (callable): callable function after each iteration. This function
                 takes in as argument the current solution vector.
         """
+        self._galerkin = galerkin
         self._rtol = rtol
         self._atol = atol
         self._maxiter = maxiter
         self._callback = callback
 
-    def __call__(self, operator, /, *, galerkin=False, preconditioner=None):
+    def __call__(self, operator, /, *, preconditioner=None):
         """
         Returns the IterativeLinearOperator corresponding to the given operator.
 
         Args:
             operator (LinearOperator): The operator to invert.
-            galerkin (bool): True if the Galerkin matrix representation is used.
         """
         assert operator.is_square
         domain = operator.codomain
         codomain = operator.domain
-        matrix = operator.matrix(galerkin=galerkin)
+        matrix = operator.matrix(galerkin=self._galerkin)
 
         if preconditioner is None:
             matrix_preconditioner = None
         else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=galerkin)
+            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
         def mapping(y):
             cy = domain.to_components(y)
@@ -1723,7 +1784,7 @@ class BICGMatrixSolver(IterativeLinearSolver):
                 M=matrix_preconditioner,
                 callback=self._callback,
             )[0]
-            if galerkin:
+            if self._galerkin:
                 xp = codomain.dual.from_components(cxp)
                 return codomain.from_dual(xp)
             else:
@@ -1740,7 +1801,7 @@ class BICGMatrixSolver(IterativeLinearSolver):
                 M=matrix_preconditioner,
                 callback=self._callback,
             )[0]
-            if galerkin:
+            if self._galerkin:
                 yp = domain.dual.from_components(cyp)
                 return domain.from_dual(yp)
             else:
@@ -1755,37 +1816,40 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
     of the biconjugate gradient stabilised algorithm to the matrix representation.
     """
 
-    def __init__(self, /, *, rtol=1.0e-5, atol=0, maxiter=None, callback=None):
+    def __init__(
+        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
+    ):
         """
         Args:
+            galerkin (bool): True if the Galerkin matrix representation is used.
             rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
             maxiter (int): maximum number of iterations to allow.
             callback (callable): callable function after each iteration. This function
                 takes in as argument the current solution vector.
         """
+        self._galerkin = galerkin
         self._rtol = rtol
         self._atol = atol
         self._maxiter = maxiter
         self._callback = callback
 
-    def __call__(self, operator, /, *, galerkin=False, preconditioner=None):
+    def __call__(self, operator, /, *, preconditioner=None):
         """
         Returns the IterativeLinearOperator corresponding to the given operator.
 
         Args:
             operator (LinearOperator): The operator to invert.
-            galerkin (bool): True if the Galerkin matrix representation is used.
         """
         assert operator.is_square
         domain = operator.codomain
         codomain = operator.domain
-        matrix = operator.matrix(galerkin=galerkin)
+        matrix = operator.matrix(galerkin=self._galerkin)
 
         if preconditioner is None:
             matrix_preconditioner = None
         else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=galerkin)
+            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
         def mapping(y):
             cy = domain.to_components(y)
@@ -1798,7 +1862,7 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
                 M=matrix_preconditioner,
                 callback=self._callback,
             )[0]
-            if galerkin:
+            if self._galerkin:
                 xp = codomain.dual.from_components(cxp)
                 return codomain.from_dual(xp)
             else:
@@ -1815,7 +1879,7 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
                 M=matrix_preconditioner,
                 callback=self._callback,
             )[0]
-            if galerkin:
+            if self._galerkin:
                 yp = domain.dual.from_components(cyp)
                 return domain.from_dual(yp)
             else:
@@ -1834,6 +1898,7 @@ class GMRESMatrixSolver(IterativeLinearSolver):
         self,
         /,
         *,
+        galerkin=False,
         rtol=1.0e-5,
         atol=0,
         restart=None,
@@ -1843,6 +1908,7 @@ class GMRESMatrixSolver(IterativeLinearSolver):
     ):
         """
         Args:
+            galerkin (bool): True if the Galerkin matrix representation is used.
             rtol (float): relative tolerance within convergence checks.
             atol (float): absolute tolerance within convergence checks.
             restart (int): Number of iterations between restarts.
@@ -1855,6 +1921,7 @@ class GMRESMatrixSolver(IterativeLinearSolver):
                 but changes the meaning of maxiter to count inner iterations instead of
                 restart cycles.
         """
+        self._galerkin = galerkin
         self._rtol = rtol
         self._atol = atol
         self._restart = restart
@@ -1862,7 +1929,7 @@ class GMRESMatrixSolver(IterativeLinearSolver):
         self._callback = callback
         self._callback_type = callback_type
 
-    def __call__(self, operator, /, *, galerkin=False, preconditioner=None):
+    def __call__(self, operator, /, *, preconditioner=None):
         """
         Returns the IterativeLinearOperator corresponding to the given operator.
 
@@ -1873,12 +1940,12 @@ class GMRESMatrixSolver(IterativeLinearSolver):
         assert operator.is_square
         domain = operator.codomain
         codomain = operator.domain
-        matrix = operator.matrix(galerkin=galerkin)
+        matrix = operator.matrix(galerkin=self._galerkin)
 
         if preconditioner is None:
             matrix_preconditioner = None
         else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=galerkin)
+            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
         def mapping(y):
             cy = domain.to_components(y)
@@ -1893,7 +1960,7 @@ class GMRESMatrixSolver(IterativeLinearSolver):
                 callback=self._callback,
                 callback_type=self._callback_type,
             )[0]
-            if galerkin:
+            if self._galerkin:
                 xp = codomain.dual.from_components(cxp)
                 return codomain.from_dual(xp)
             else:
@@ -1912,7 +1979,7 @@ class GMRESMatrixSolver(IterativeLinearSolver):
                 callback=self._callback,
                 callback_type=self._callback_type,
             )[0]
-            if galerkin:
+            if self._galerkin:
                 yp = domain.dual.from_components(cyp)
                 return domain.from_dual(yp)
             else:
@@ -1928,7 +1995,15 @@ class CGSolver(IterativeLinearSolver):
     operators on a general Hilbert space.
     """
 
-    def __init__(self, rtol=1.0e-5, atol=0, maxiter=None, callback=None):
+    def __init__(self, /, *, rtol=1.0e-5, atol=0, maxiter=None, callback=None):
+        """
+        Args:
+            rtol (float): relative tolerance within convergence checks.
+            atol (float): absolute tolerance within convergence checks.
+            maxiter (int): maximum number of iterations to allow.
+            callback (callable): callable function after each iteration. This function
+                takes in as argument the current solution vector.
+        """
         if rtol > 0:
             self._rtol = rtol
         else:
@@ -1975,6 +2050,8 @@ class CGSolver(IterativeLinearSolver):
                 maxiter = self._maxiter
 
             for _ in range(maxiter):
+
+                print(domain.norm(r))
 
                 if domain.norm(r) <= tol:
                     break

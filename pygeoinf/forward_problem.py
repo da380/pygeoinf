@@ -2,8 +2,7 @@
 Module defined the forward problem class. 
 """
 
-import numpy as np
-import pygeoinf.linalg as la
+from pygeoinf.hilbert import LinearOperator
 
 
 class ForwardProblem:
@@ -51,7 +50,8 @@ class ForwardProblem:
 
     def chi_squared(self, model, data):
         """Returns the chi-squared statistic for a given model and observed data."""
-        difference = self.forward_operator(model) - data
-        return self.data_error_measure.cameron_martin_space.inner_product(
-            difference, difference
+        difference = data - self.forward_operator(model)
+        inverse_data_covariance = self.data_error_measure.inverse_covariance
+        return self.data_space.inner_product(
+            inverse_data_covariance(difference), difference
         )

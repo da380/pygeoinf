@@ -1,5 +1,5 @@
 import numpy as np
-from pygeoinf.linalg import (
+from pygeoinf.hilbert import (
     EuclideanSpace,
     LinearOperator,
     DiagonalLinearOperator,
@@ -14,7 +14,7 @@ from pygeoinf.sphere import Lebesgue, Sobolev
 from scipy.stats import norm, uniform
 
 
-X = Sobolev(32, 1.5, 0.1)
+X = Sobolev(32, 0.0, 0.5)
 
 mu = X.sobolev_gaussian_measure(2.0, 0.5, 1)
 
@@ -23,30 +23,25 @@ lats = uniform(loc=-90, scale=180).rvs(size=m)
 lons = uniform(loc=0, scale=360).rvs(size=m)
 
 
+u0 = mu.sample()
+
 A = mu.covariance
-
-
-U, D = A.random_eig(100, power=0)
-B = U @ D @ U.adjoint
-
-I = X.inclusion
-V = I @ I.adjoint @ U
-C = V @ D.inverse @ V.adjoint
-
 
 u = mu.sample()
 v = A(u)
-w = B(u)
 
-D = CGSolver(atol=1.0e-7)(A, preconditioner=X.identity, x0=C(v))
-z = D(v)
+P = A.random_preconditioner(100, power=0)
+
+
+B = CGSolver(rtol=1.0e-10)(A, preconditioner=P)
+C = CGSolver(rtol=1.0e-10)(A, preconditioner=None)
+w = P(v)
+z = C(v)
+print(X.norm(u - w))
+print(X.norm(u - z))
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
-plt.colorbar()
-
-plt.figure()
-plt.pcolormesh(u.lons(), v.lats(), v.data, cmap="seismic")
 plt.colorbar()
 
 plt.figure()
@@ -56,5 +51,6 @@ plt.colorbar()
 plt.figure()
 plt.pcolormesh(z.lons(), z.lats(), z.data, cmap="seismic")
 plt.colorbar()
+
 
 plt.show()

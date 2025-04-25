@@ -1,7 +1,4 @@
-import numpy as np
-from scipy.sparse.linalg import eigsh
-from scipy.sparse import diags
-import pygeoinf.linalg as la
+import pygeoinf.hilbert as hs
 from pygeoinf.forward_problem import ForwardProblem
 
 
@@ -25,14 +22,18 @@ class BayesianInversion(ForwardProblem):
         """Return the model prior measure."""
         return self._model_prior_measure
 
+    @property
     def normal_operator(self):
         """
         Returns the data-space normal operator.
         """
-        A = self.forward_operator
-        Q = self.model_prior_measure.covariance
-        R = self.data_error_measure.covariance
-        return A @ Q @ A.adjoint + R
+        forward_operator = self.forward_operator
+        prior_model_covariance = self.model_prior_measure.covariance
+        data_covariance = self.data_error_measure.covariance
+        return (
+            forward_operator @ prior_model_covariance @ forward_operator.adjoint
+            + data_covariance
+        )
 
     def data_prior_measure(self):
         """
@@ -43,9 +44,7 @@ class BayesianInversion(ForwardProblem):
             + self.data_error_measure
         )
 
-    def model_posterior_measure(
-        self, data, /, *, solver=None, preconditioner=None, preconditioning_method=None
-    ):
+    def model_posterior_measure(self, data, /, *, solver=None, preconditioner=None):
         """
         Returns the posterior measure on the model space given the data.
 
@@ -54,8 +53,6 @@ class BayesianInversion(ForwardProblem):
             solver (LinearSolver): A linear solver for the normal equations.
             preconditioner (LinearSolver): A preconditioner for use in solving
                 the normal equations.
-            preconditioning_method (PreconditioningMethod): A preconditioning
-                method that constructs a preconditioner from the normal operator.
 
         Returns:
             GaussianMeasure: The posterior measure.
@@ -65,34 +62,35 @@ class BayesianInversion(ForwardProblem):
             this should be set directly afterwards.
         """
 
-        A = self.forward_operator
-        Q = self.model_prior_measure.covariance
-        N = self.normal_operator()
+        forward_operator = self.forward_operator
+        prior_model_covariance = self.model_prior_measure.covariance
+        normal_operator = self.normal_operator
 
         if solver is None:
-            _solver = la.CGMatrixSolver()
+            _solver = hs.CGMatrixSolver(galerkin=True)
         else:
             _solver = solver
 
-        if preconditioner is None:
-            if preconditioning_method is None:
-                _preconditioner = la.IdentityPreconditioner()(N)
-            else:
-                _preconditioner = preconditioning_method(N)
+        if isinstance(_solver, hs.IterativeLinearSolver):
+            inverse_normal_operator = _solver(
+                normal_operator, preconditioner=preconditioner
+            )
         else:
-            _preconditioner = preconditioner
+            inverse_normal_operator = _solver(normal_operator)
 
-        if isinstance(_solver, la.IterativeLinearSolver):
-            Ni = _solver(N, preconditioner=_preconditioner)
-        else:
-            Ni = _solver(N)
-
-        expectation = (Q @ A.adjoint @ Ni)(
-            data - A(self.model_prior_measure.expectation)
+        expectation = (
+            prior_model_covariance @ forward_operator.adjoint @ inverse_normal_operator
+        )(data - forward_operator(self.model_prior_measure.expectation))
+        covariance = (
+            prior_model_covariance
+            - prior_model_covariance
+            @ forward_operator.adjoint
+            @ inverse_normal_operator
+            @ forward_operator
+            @ prior_model_covariance
         )
-        covariance = Q - Q @ A.adjoint @ Ni @ A @ Q
 
-        return la.GaussianMeasure(self.model_space, covariance, expectation=expectation)
+        return hs.GaussianMeasure(self.model_space, covariance, expectation=expectation)
 
 
 class BayesianInference(BayesianInversion):
