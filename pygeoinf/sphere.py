@@ -3,7 +3,7 @@ Module for Sobolev spaces on the two-sphere.
 """
 
 import numpy as np
-from scipy.sparse import diags
+from scipy.sparse import diags, coo_array
 import pyshtools as sh
 
 
@@ -36,6 +36,34 @@ class SHToolsHelper:
         self._extend = True
         self._normalization = "ortho"
         self._csphase = 1
+
+        # Set up the spare matrix that maps flattened coefficient vectors
+        # to the corresponding component vector.
+        row_dim = (lmax + 1) ** 2
+        col_dim = 2 * (lmax + 1) ** 2
+
+        row = 0
+        rows = []
+        cols = []
+        for l in range(lmax + 1):
+            col = l * (lmax + 1)
+            for _ in range(l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        for l in range(lmax + 1):
+            col = (lmax + 1) ** 2 + l * (lmax + 1) + 1
+            for _ in range(1, l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        data = [1] * row_dim
+        s = coo_array((data, (rows, cols)), shape=(row_dim, col_dim))
+        self._sparse_coeffs_to_component = s.tocsc()
 
     @property
     def lmax(self):
@@ -82,17 +110,8 @@ class SHToolsHelper:
 
     def _to_components_from_coeffs(self, coeffs):
         """Return component vector from coefficient array."""
-        c = np.empty(self.dim)
-        i = 0
-        for l in range(self.lmax + 1):
-            j = i + l + 1
-            c[i:j] = coeffs[0, l, : l + 1]
-            i = j
-        for l in range(1, self.lmax + 1):
-            j = i + l
-            c[i:j] = coeffs[1, l, 1 : l + 1]
-            i = j
-        return c
+        f = coeffs.flatten(order="C")
+        return self._sparse_coeffs_to_component @ f
 
     def _to_components_from_SHCoeffs(self, ulm):
         """Return component vector from SHCoeffs object."""
@@ -105,22 +124,11 @@ class SHToolsHelper:
 
     def _from_components_to_SHCoeffs(self, c):
         """Return SHCoeffs object from its component vector."""
-        coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
-        i = 0
-        if len(c.shape) == 2:
-            c = c.reshape(-1)
-        for l in range(self.lmax + 1):
-            j = i + l + 1
-            coeffs[0, l, : l + 1] = c[i:j]
-            i = j
-        for l in range(1, self.lmax + 1):
-            j = i + l
-            coeffs[1, l, 1 : l + 1] = c[i:j]
-            i = j
-        ulm = sh.SHCoeffs.from_array(
+        f = self._sparse_coeffs_to_component.T @ c
+        coeffs = f.reshape((2, self._lmax + 1, self._lmax + 1))
+        return sh.SHCoeffs.from_array(
             coeffs, normalization=self.normalization, csphase=self.csphase
         )
-        return ulm
 
     def _from_components_to_SHGrid(self, c):
         """Return SHGrid object from its component vector."""

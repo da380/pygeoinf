@@ -1,22 +1,22 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import uniform
-from pygeoinf.hilbert import CholeskySolver
+from pygeoinf.hilbert import CGSolver
 from pygeoinf.sphere import Sobolev
 from pygeoinf.optimisation import LeastSquaresInversion
 import time
 
 
 # Set the model space.
-X = Sobolev(64, 2.0, 0.25)
+X = Sobolev(128, 2.0, 0.1)
 
 
 # Set up the prior distribution.
-mu = X.sobolev_gaussian_measure(2.0, 0.25, 1)
+mu = X.sobolev_gaussian_measure(3.0, 0.1, 1)
 
 
 # Set up the forward operator.
-n = 10
+n = 500
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -35,7 +35,9 @@ damping = 0.1
 least_squares_inversion = LeastSquaresInversion(A, nu)
 
 
-B = least_squares_inversion.least_squares_operator(damping)
+B = least_squares_inversion.least_squares_operator(
+    damping, solver=CGSolver(rtol=1.0e-7)
+)
 
 w = B(v)
 
