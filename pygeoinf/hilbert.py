@@ -122,7 +122,7 @@ class HilbertSpace:
         return self.from_components(np.zeros((self.dim)))
 
     @property
-    def inclusion(self):
+    def coordinate_inclusion(self):
         """
         Returns the linear operator that maps coordinate vectors
         to elements of the sapce.
@@ -146,7 +146,7 @@ class HilbertSpace:
         )
 
     @property
-    def projection(self):
+    def coordinate_projection(self):
         """
         Returns the linear operator that maps vectors to their coordinates.
         """
@@ -264,8 +264,7 @@ class HilbertSpace:
             xbar = self.axpy(1 / n, x, xbar)
         return xbar
 
-    @property
-    def identity(self):
+    def identity_operator(self):
         """Returns identity operator on the space."""
         return LinearOperator(
             self,
@@ -273,6 +272,17 @@ class HilbertSpace:
             lambda x: x,
             dual_mapping=lambda yp: yp,
             adjoint_mapping=lambda y: y,
+        )
+
+    def zero_operator(self, codomain=None):
+        """Returns zero operator into another space."""
+        codomain = self if codomain is None else codomain
+        return LinearOperator(
+            self,
+            codomain,
+            lambda x: codomain.zero,
+            dual_mapping=lambda yp: self.dual.zero,
+            adjoint_mapping=lambda y: self.zero,
         )
 
     def _dual_to_components(self, xp):
@@ -302,6 +312,171 @@ class HilbertSpace:
         return x.copy()
 
 
+class HilbertSpaceDirectSum(HilbertSpace):
+    """
+    Class for Hilbert spaces formed from a direct sum of a list of Hilbert spaces.
+
+    Instances are formed by providing a list of HilbertSpaces. Along with the usual
+    HilbertSpace methods, this class implements projection and inclusion operators
+    onto the subspaces. And also the canonical injection from the direct sum of
+    the dual spaces into the dual of the direct sum.
+    """
+
+    def __init__(self, spaces):
+        """
+        Args:
+            spaces ([HilbertSpaces]): A list of Hilbert spaces whos direct sum is to be formed.
+        """
+        self._spaces = spaces
+        dim = sum([space.dim for space in spaces])
+        super().__init__(
+            dim,
+            self.__to_components,
+            self.__from_components,
+            self.__inner_product,
+            self.__to_dual,
+            self.__from_dual,
+            add=self.__add,
+            subtract=self.__subtract,
+            multiply=self.__multiply,
+            axpy=self.__axpy,
+            copy=self.__copy,
+        )
+
+    #######################################################
+    #                    Public methods                   #
+    #######################################################
+
+    @property
+    def number_of_subspaces(self):
+        """
+        Returns the number of subspaces in the direct sum.
+        """
+        return len(self._spaces)
+
+    def subspace(self, i):
+        """
+        Returns the ith subspace.
+        """
+        return self._spaces[i]
+
+    def subspace_projection(self, i):
+        """
+        Returns the projection operator onto the ith subspace.
+        """
+        return LinearOperator(
+            self,
+            self._spaces[i],
+            lambda xs: self._subspace_projection_mapping(i, xs),
+            adjoint_mapping=lambda x: self._subspace_inclusion_mapping(i, x),
+        )
+
+    def subspace_inclusion(self, i):
+        """
+        Returns the inclusion operator from the ith space.
+        """
+        return LinearOperator(
+            self._spaces[i],
+            self,
+            lambda x: self._subspace_inclusion_mapping(i, x),
+            adjoint_mapping=lambda xs: self._subspace_projection_mapping(i, xs),
+        )
+
+    def canonical_dual_isomorphism(self, xps):
+        """
+        Maps a direct sum of dual-subspace vectors to the dual vector.
+        """
+        assert len(xps) == self.number_of_subspaces
+        return LinearForm(
+            self,
+            mapping=lambda x: sum(
+                [xp(self.subspace_projection(i)(x)) for i, xp in enumerate(xps)]
+            ),
+        )
+
+    def canonical_dual_inverse_isomorphism(self, xp):
+        """
+        Maps a dual vector to the direct sum of the dual-subspace vectors.
+        """
+        return [
+            LinearForm(space, mapping=lambda x: xp(self.subspace_inclusion(i)(x)))
+            for i, space in enumerate(self._spaces)
+        ]
+
+    #######################################################
+    #                   Private methods                   #
+    #######################################################
+
+    def __to_components(self, xs):
+        # Local implementation of to component mapping.
+        cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
+        return np.concatenate(cs, 0)
+
+    def __from_components(self, c):
+        # Local implementation of from component mapping.
+        xs = []
+        i = 0
+        for space in self._spaces:
+            j = i + space.dim
+            x = space.from_components(c[i:j])
+            xs.append(x)
+            i = j
+        return xs
+
+    def __inner_product(self, x1s, x2s):
+        return sum(
+            [
+                space.inner_product(x1, x2)
+                for space, x1, x2 in zip(self._spaces, x1s, x2s)
+            ]
+        )
+
+    def __to_dual(self, xs):
+        # Local implementation of the mapping to the dual space.
+        assert len(xs) == self.number_of_subspaces
+        return self.canonical_dual_isomorphism(
+            [space.to_dual(x) for space, x in zip(self._spaces, xs)]
+        )
+
+    def __from_dual(self, xp):
+        # Local implementation of the mapping from the dual space.
+        xps = self.canonical_dual_inverse_isomorphism(xp)
+        return [space.from_dual(xip) for space, xip in zip(self._spaces, xps)]
+
+    def __add(self, xs, ys):
+        # Local implementation of add.
+        return [space.add(x, y) for space, x, y in zip(self._spaces, xs, ys)]
+
+    def __subtract(self, xs, ys):
+        # Local implementation of subtract.
+        return [space.subtract(x, y) for space, x, y in zip(self._spaces, xs, ys)]
+
+    def __multiply(self, a, xs):
+        # Local implementation of multiply.
+        return [space.multiply(a, x) for space, x in zip(self._spaces, xs)]
+
+    def __axpy(self, a, xs, ys):
+        # Local implementation of axpy.
+        return [space.axpy(a, x, y) for space, x, y in zip(self._spaces, xs, ys)]
+
+    def __copy(self, xs):
+        return [space.copy(x) for space, x in zip(self._spaces, xs)]
+
+    def _subspace_projection_mapping(self, i, xs):
+        # Implementation of the projection mapping onto ith space.
+        return xs[i]
+
+    def _subspace_inclusion_mapping(self, i, x):
+        # Implementation of the inclusion mapping from ith space.
+        xs = []
+        for j in range(0, i):
+            xs.append(self._spaces[j].zero)
+        xs.append(x)
+        for j in range(i + 1, self.number_of_subspaces):
+            xs.append(self._spaces[j].zero)
+        return xs
+
+
 class EuclideanSpace(HilbertSpace):
     """
     Euclidean space implemented as an instance of HilbertSpace."""
@@ -329,8 +504,8 @@ class EuclideanSpace(HilbertSpace):
         Args:
             standard_deviation (float): The standard deviation for each component.
         """
-        factor = standard_deviation * self.identity
-        inverse_factor = (1 / standard_deviation) * self.identity
+        factor = standard_deviation * self.identity_operator()
+        inverse_factor = (1 / standard_deviation) * self.identity_operator()
         return GaussianMeasure.from_factored_covariance(
             factor, inverse_factor=inverse_factor
         )
@@ -870,7 +1045,7 @@ class LinearOperator(Operator):
 
         A^{-1} = V D^{-1} V*
 
-        where V = I I* U with I the inclusion mapping on the Hilbert space.
+        where V = I I* U with I the coordinate_inclusion mapping on the Hilbert space.
 
 
         Args:
@@ -965,9 +1140,11 @@ class LinearOperator(Operator):
         U, D = self.random_eig(rank, power=power)
         sigma = 1
         F = U @ D.sqrt
-        M = F.domain.identity + (1 / sigma) * F.adjoint @ F
+        M = F.domain.identity_operator() + (1 / sigma) * F.adjoint @ F
         N = CholeskySolver()(M)
-        return (1 / sigma) * self.domain.identity - (1 / sigma**2) * F @ N @ F.adjoint
+        return (1 / sigma) * self.domain.identity_operator() - (
+            1 / sigma**2
+        ) * F @ N @ F.adjoint
 
     def _dual_mapping_default(self, yp):
         # Default implementation of the dual mapping.
@@ -1117,6 +1294,22 @@ class LinearOperator(Operator):
     def __str__(self):
         """Print the operator as its dense matrix representation."""
         return self.matrix(dense=True).__str__()
+
+
+class BlockLinearOperator(LinearOperator):
+    """
+    Class for linear operators acting between direct sums of Hilbert spaces that are defined
+    in a blockwise manner.
+
+    Instances are formed from lists of list of LinearOperators. Methods to return the subblock
+    operators are provided.
+    """
+
+    def __init__(self, blocks):
+
+        for row in block:
+            dims = [operator.domain.dim for operator in row]
+            print(dims)
 
 
 class DiagonalLinearOperator(LinearOperator):
@@ -1504,7 +1697,7 @@ class GaussianMeasure:
         """
 
         if operator is None:
-            _operator = self.domain.identity
+            _operator = self.domain.identity_operator()
         else:
             _operator = operator
 
@@ -2195,6 +2388,8 @@ def random_cholesky(matrix, qr_factor):
     small_matrix_1 = matrix @ qr_factor
     small_matrix_2 = qr_factor.T @ small_matrix_1
     factor, lower = cho_factor(small_matrix_2, overwrite_a=True)
-    identity = np.identity(factor.shape[0])
-    inverse_factor = solve_triangular(factor, identity, overwrite_b=True, lower=lower)
+    identity_operator = np.identity(factor.shape[0])
+    inverse_factor = solve_triangular(
+        factor, identity_operator, overwrite_b=True, lower=lower
+    )
     return small_matrix_1 @ inverse_factor

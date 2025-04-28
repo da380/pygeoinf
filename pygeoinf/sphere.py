@@ -39,6 +39,7 @@ class SHToolsHelper:
 
         # Set up the spare matrix that maps flattened coefficient vectors
         # to the corresponding component vector.
+
         row_dim = (lmax + 1) ** 2
         col_dim = 2 * (lmax + 1) ** 2
 
@@ -62,7 +63,7 @@ class SHToolsHelper:
                 col += 1
 
         data = [1] * row_dim
-        s = coo_array((data, (rows, cols)), shape=(row_dim, col_dim))
+        s = coo_array((data, (rows, cols)), shape=(row_dim, col_dim), dtype=int)
         self._sparse_coeffs_to_component = s.tocsc()
 
     @property

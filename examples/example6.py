@@ -15,7 +15,7 @@ mu = X.sobolev_gaussian_measure(2.0, 0.25, 1)
 
 
 # Set up the forward operator.
-n = 50
+n = 20
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -23,8 +23,8 @@ A = X.point_evaluation_operator(lats, lons)
 
 # Set up the error distribution.
 Y = A.codomain
-sigma = 0.1
-nu = Y.standard_gaussisan_measure(sigma)
+stds = np.random.uniform(0.05, 0.05, Y.dim)
+nu = Y.diagonal_gaussian_measure(stds)
 
 # Set up the inference problem
 problem = BayesianInversion(A, mu, nu)
@@ -63,11 +63,11 @@ plt.plot(lons, lats, "ko")
 plt.clim([0, umax])
 plt.colorbar()
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), np.abs((ubar - u).data), cmap="Reds")
-plt.plot(lons, lats, "ko")
-plt.clim([0, umax])
-plt.colorbar()
+# plt.figure()
+# plt.pcolormesh(u.lons(), u.lats(), np.abs((ubar - u).data), cmap="Reds")
+# plt.plot(lons, lats, "ko")
+# plt.clim([0, umax])
+# plt.colorbar()
 
 
 plt.show()
