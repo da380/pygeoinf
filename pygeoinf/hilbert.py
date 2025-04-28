@@ -348,17 +348,24 @@ class HilbertSpaceDirectSum(HilbertSpace):
     #######################################################
 
     @property
+    def subspaces(self):
+        """
+        Return a list of the subspaces.
+        """
+        return self._spaces
+
+    @property
     def number_of_subspaces(self):
         """
         Returns the number of subspaces in the direct sum.
         """
-        return len(self._spaces)
+        return len(self.subspaces)
 
     def subspace(self, i):
         """
         Returns the ith subspace.
         """
-        return self._spaces[i]
+        return self.subspaces[i]
 
     def subspace_projection(self, i):
         """
@@ -366,7 +373,7 @@ class HilbertSpaceDirectSum(HilbertSpace):
         """
         return LinearOperator(
             self,
-            self._spaces[i],
+            self.subspaces[i],
             lambda xs: self._subspace_projection_mapping(i, xs),
             adjoint_mapping=lambda x: self._subspace_inclusion_mapping(i, x),
         )
@@ -376,7 +383,7 @@ class HilbertSpaceDirectSum(HilbertSpace):
         Returns the inclusion operator from the ith space.
         """
         return LinearOperator(
-            self._spaces[i],
+            self.subspaces[i],
             self,
             lambda x: self._subspace_inclusion_mapping(i, x),
             adjoint_mapping=lambda xs: self._subspace_projection_mapping(i, xs),
@@ -399,8 +406,8 @@ class HilbertSpaceDirectSum(HilbertSpace):
         Maps a dual vector to the direct sum of the dual-subspace vectors.
         """
         return [
-            LinearForm(space, mapping=lambda x: xp(self.subspace_inclusion(i)(x)))
-            for i, space in enumerate(self._spaces)
+            LinearForm(space, mapping=lambda x, j=i: xp(self.subspace_inclusion(j)(x)))
+            for i, space in enumerate(self.subspaces)
         ]
 
     #######################################################
@@ -468,13 +475,7 @@ class HilbertSpaceDirectSum(HilbertSpace):
 
     def _subspace_inclusion_mapping(self, i, x):
         # Implementation of the inclusion mapping from ith space.
-        xs = []
-        for j in range(0, i):
-            xs.append(self._spaces[j].zero)
-        xs.append(x)
-        for j in range(i + 1, self.number_of_subspaces):
-            xs.append(self._spaces[j].zero)
-        return xs
+        return [x if j == i else space.zero for j, space in enumerate(self._spaces)]
 
 
 class EuclideanSpace(HilbertSpace):
@@ -1307,9 +1308,71 @@ class BlockLinearOperator(LinearOperator):
 
     def __init__(self, blocks):
 
-        for row in block:
-            dims = [operator.domain.dim for operator in row]
-            print(dims)
+        # Check and form the list of domains and codomains.
+        domains = [operator.domain for operator in blocks[0]]
+        codomains = []
+        for row in blocks:
+            assert domains == [operator.domain for operator in row]
+            codomain = row[0].codomain
+            assert all([operator.codomain == codomain for operator in row])
+            codomains.append(codomain)
+
+        domain = HilbertSpaceDirectSum(domains)
+        codomain = HilbertSpaceDirectSum(codomains)
+
+        self._domains = domains
+        self._codomains = codomains
+        self._blocks = blocks
+        self._row_dim = len(blocks)
+        self._col_dim = len(blocks[0])
+
+        super().__init__(
+            domain, codomain, self.__mapping, adjoint_mapping=self.__adjoint_mapping
+        )
+
+    @property
+    def row_dim(self):
+        """
+        Returns the number of rows in block operator.
+        """
+        return self._row_dim
+
+    @property
+    def col_dim(self):
+        """
+        Returns the number of columns in block operator.
+        """
+        return self._col_dim
+
+    def block(self, i, j):
+        """
+        Returns the operator in the (i,j)th sub-block.
+        """
+        assert i >= 0 and i < self.row_dim
+        assert j >= 0 and j < self.col_dim
+        return self._blocks[i][j]
+
+    def __mapping(self, xs):
+        ys = []
+        for i in range(self.row_dim):
+            codomain = self._codomains[i]
+            y = codomain.zero
+            for j in range(self.col_dim):
+                a = self.block(i, j)
+                y = codomain.axpy(1, a(xs[j]), y)
+            ys.append(y)
+        return ys
+
+    def __adjoint_mapping(self, ys):
+        xs = []
+        for j in range(self.col_dim):
+            domain = self._domains[j]
+            x = domain.zero
+            for i in range(self.row_dim):
+                a = self.block(i, j)
+                x = domain.axpy(1, a.adjoint(ys[i]), x)
+            xs.append(x)
+        return xs
 
 
 class DiagonalLinearOperator(LinearOperator):
