@@ -1348,8 +1348,8 @@ class BlockLinearOperator(LinearOperator):
         """
         Returns the operator in the (i,j)th sub-block.
         """
-        assert i >= 0 and i < self.row_dim
-        assert j >= 0 and j < self.col_dim
+        assert 0 <= i < self.row_dim
+        assert 0 <= j < self.col_dim
         return self._blocks[i][j]
 
     def __mapping(self, xs):
@@ -2306,8 +2306,6 @@ class CGSolver(IterativeLinearSolver):
                 maxiter = self._maxiter
 
             for _ in range(maxiter):
-
-                print(domain.norm(r))
 
                 if domain.norm(r) <= tol:
                     break

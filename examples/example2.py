@@ -1,20 +1,39 @@
-from pygeoinf.sphere import Sobolev
 import matplotlib.pyplot as plt
+import numpy as np
+from pygeoinf.sphere import Sobolev, LowPassFilter
 
-X = Sobolev(2, 2, 0.1)
 
-u = X.random()
+X = Sobolev(64, 2, 0.1)
 
-c = X.to_components(u)
+mu = X.sobolev_gaussian_measure(2, 0.5, 1)
 
-u2 = X.from_components(c)
+u = mu.sample()
+
+uc = X.to_components(u)
+
+
+P = X.low_degree_projection(
+    32,
+    smoother=LowPassFilter(28, 32),
+)
+
+Y = P.codomain
+
+v = P(u)
+
+w = P.adjoint(v)
+
 
 plt.figure()
 plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
 plt.colorbar()
 
 plt.figure()
-plt.pcolormesh(u2.lons(), u2.lats(), u2.data, cmap="seismic")
+plt.pcolormesh(v.lons(), v.lats(), v.data, cmap="seismic")
+plt.colorbar()
+
+plt.figure()
+plt.pcolormesh(w.lons(), w.lats(), w.data, cmap="seismic")
 plt.colorbar()
 
 plt.show()

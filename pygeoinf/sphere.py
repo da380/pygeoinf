@@ -19,14 +19,14 @@ from pygeoinf.hilbert import (
 class SHToolsHelper:
     """Helper class for working with pyshtool grid functions and coefficients."""
 
-    def __init__(self, lmax, /, *, radius=1, grid="DH"):
+    def __init__(self, max_degree, /, *, radius=1, grid="DH"):
         """
         Args:
-            lmax (int): Maximum degree for spherical harmonic expansions.
+            max_degree (int): Maximum degree for spherical harmonic expansions.
             radius (float): radius of the sphere.
             grid (str): Grid type for spatial functions.
         """
-        self._lmax = lmax
+        self._max_degree = max_degree
         self._radius = radius
         self._grid = grid
         if self.grid == "DH2":
@@ -36,45 +36,17 @@ class SHToolsHelper:
         self._extend = True
         self._normalization = "ortho"
         self._csphase = 1
-
-        # Set up the spare matrix that maps flattened coefficient vectors
-        # to the corresponding component vector.
-
-        row_dim = (lmax + 1) ** 2
-        col_dim = 2 * (lmax + 1) ** 2
-
-        row = 0
-        rows = []
-        cols = []
-        for l in range(lmax + 1):
-            col = l * (lmax + 1)
-            for _ in range(l + 1):
-                rows.append(row)
-                row += 1
-                cols.append(col)
-                col += 1
-
-        for l in range(lmax + 1):
-            col = (lmax + 1) ** 2 + l * (lmax + 1) + 1
-            for _ in range(1, l + 1):
-                rows.append(row)
-                row += 1
-                cols.append(col)
-                col += 1
-
-        data = [1] * row_dim
-        s = coo_array((data, (rows, cols)), shape=(row_dim, col_dim), dtype=int)
-        self._sparse_coeffs_to_component = s.tocsc()
+        self._sparse_coeffs_to_component = self._coefficient_to_component_mapping()
 
     @property
-    def lmax(self):
+    def max_degree(self):
         """Returns truncation degree."""
-        return self._lmax
+        return self._max_degree
 
     @property
     def dim(self):
         """Returns dimension of vector space."""
-        return (self.lmax + 1) ** 2
+        return (self.max_degree + 1) ** 2
 
     @property
     def radius(self):
@@ -101,12 +73,43 @@ class SHToolsHelper:
         """Condon Shortley phase option."""
         return self._csphase
 
+    def _coefficient_to_component_mapping(self):
+        # returns a sparse matrix that maps from flattended pyshtools
+        # coefficients to component vectors.
+
+        row_dim = (self.max_degree + 1) ** 2
+        col_dim = 2 * (self.max_degree + 1) ** 2
+
+        row = 0
+        rows = []
+        cols = []
+        for l in range(self.max_degree + 1):
+            col = l * (self.max_degree + 1)
+            for _ in range(l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        for l in range(self.max_degree + 1):
+            col = (self.max_degree + 1) ** 2 + l * (self.max_degree + 1) + 1
+            for _ in range(1, l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        data = [1] * row_dim
+        return coo_array(
+            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=int
+        ).tocsc()
+
     def spherical_harmonic_index(self, l, m):
         """Return the component index for given spherical harmonic degree and order."""
         if m >= 0:
             return int(l * (l + 1) / 2) + m
         else:
-            offset = int((self.lmax + 1) * (self.lmax + 2) / 2)
+            offset = int((self.max_degree + 1) * (self.max_degree + 2) / 2)
             return offset + int((l - 1) * l / 2) - m - 1
 
     def _to_components_from_coeffs(self, coeffs):
@@ -126,7 +129,7 @@ class SHToolsHelper:
     def _from_components_to_SHCoeffs(self, c):
         """Return SHCoeffs object from its component vector."""
         f = self._sparse_coeffs_to_component.T @ c
-        coeffs = f.reshape((2, self._lmax + 1, self._lmax + 1))
+        coeffs = f.reshape((2, self.max_degree + 1, self.max_degree + 1))
         return sh.SHCoeffs.from_array(
             coeffs, normalization=self.normalization, csphase=self.csphase
         )
@@ -139,11 +142,11 @@ class SHToolsHelper:
     def _degree_dependent_scaling_to_diagonal_matrix(self, f):
         values = np.zeros(self.dim)
         i = 0
-        for l in range(self.lmax + 1):
+        for l in range(self.max_degree + 1):
             j = i + l + 1
             values[i:j] = f(l)
             i = j
-        for l in range(1, self.lmax + 1):
+        for l in range(1, self.max_degree + 1):
             j = i + l
             values[i:j] = f(l)
             i = j
@@ -154,11 +157,11 @@ class Sobolev(SHToolsHelper, HilbertSpace):
     """Sobolev spaces on a two-sphere as an instance of HilbertSpace."""
 
     def __init__(
-        self, lmax, order, scale, /, *, vector_as_SHGrid=True, radius=1, grid="DH"
+        self, max_degree, order, scale, /, *, vector_as_SHGrid=True, radius=1, grid="DH"
     ):
         """
         Args:
-            lmax (int): Truncation degree for spherical harmoincs.
+            max_degree (int): Truncation degree for spherical harmoincs.
             order (float): Order of the Sobolev space.
             scale (float): Non-dimensional length-scale for the space.
             vector_as_SHGrid (bool): If true, elements of the space are
@@ -168,7 +171,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         """
         self._order = order
         self._scale = scale
-        SHToolsHelper.__init__(self, lmax, radius=radius, grid=grid)
+        SHToolsHelper.__init__(self, max_degree, radius=radius, grid=grid)
         self._metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
             self._sobolev_function
         )
@@ -216,12 +219,77 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         """
         Returns the Laplace Beltrami operator on the space.
         """
-        codomain = Sobolev(self.lmax, self.order - 2, self.scale)
+        codomain = Sobolev(self.max_degree, self.order - 2, self.scale)
         return self.invariant_operator(codomain, lambda l: l * (l + 1) / self.radius**2)
 
     # ==============================================#
     #                 Public methods                #
     # ==============================================#
+
+    def low_degree_projection(self, truncation_degree, /, *, smoother=None):
+        """
+        Returns a LinearOperator that maps the space onto a Sobolev space with
+        the same parameters but based on a lower truncation degree.
+        """
+        truncation_degree = (
+            truncation_degree
+            if truncation_degree <= self.max_degree
+            else self.max_degree
+        )
+        f = smoother if smoother is not None else lambda l: l
+
+        # construct the spare matrix that performs the coordinate projection.
+        row_dim = (truncation_degree + 1) ** 2
+        col_dim = (self.max_degree + 1) ** 2
+
+        row = 0
+        col = 0
+        rows = []
+        cols = []
+        data = []
+        for l in range(self.max_degree + 1):
+            fac = f(l)
+            for _ in range(l + 1):
+                if l <= truncation_degree:
+                    rows.append(row)
+                    row += 1
+                    cols.append(col)
+                    data.append(fac)
+                col += 1
+
+        for l in range(truncation_degree + 1):
+            fac = f(l)
+            for _ in range(1, l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                data.append(fac)
+                col += 1
+
+        smat = coo_array(
+            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=int
+        ).tocsc()
+
+        codomain = Sobolev(
+            truncation_degree,
+            self.order,
+            self.scale,
+            vector_as_SHGrid=self._vector_as_SHGrid,
+            radius=self.radius,
+            grid=self._grid,
+        )
+
+        def mapping(u):
+            uc = self.to_components(u)
+            vc = smat @ uc
+            return codomain.from_components(vc)
+
+        def adjoint_mapping(v):
+            vc = codomain.to_components(v)
+            uc = smat.T @ vc
+            return self.from_components(uc)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
     def dirac(self, latitude, longitude, /, *, degrees=True):
         """
@@ -245,7 +313,11 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         else:
             colatitude = np.pi / 2 - latitude
         coeffs = sh.expand.spharm(
-            self.lmax, colatitude, longitude, normalization="ortho", degrees=degrees
+            self.max_degree,
+            colatitude,
+            longitude,
+            normalization="ortho",
+            degrees=degrees,
         )
         c = self._to_components_from_coeffs(coeffs)
         return self.dual.from_components(c)
@@ -510,7 +582,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         # the associated invariant Gaussian measure has standard deviation
         # for point values equal to amplitude.
         norm = 0
-        for l in range(self.lmax + 1):
+        for l in range(self.max_degree + 1):
             norm += (
                 f(l)
                 * (2 * l + 1)
@@ -526,15 +598,57 @@ class Lebesgue(Sobolev):
     Implemented as a special case of the Sobolev class with order = 0.
     """
 
-    def __init__(self, lmax, /, *, vector_as_SHGrid=True, radius=1, grid="DH"):
+    def __init__(self, max_degree, /, *, vector_as_SHGrid=True, radius=1, grid="DH"):
         """
         Args:
-            lmax (int): Truncation degree for spherical harmoincs.
+            max_degree (int): Truncation degree for spherical harmoincs.
             vector_as_SHGrid (bool): If true, elements of the space are
                 instances of the SHGrid class, otherwise they are SHCoeffs.
             radius (float): Radius of the two sphere.
             grid (str): pyshtools grid type.
         """
         super().__init__(
-            lmax, 0, 0, vector_as_SHGrid=vector_as_SHGrid, radius=radius, grid=grid
+            max_degree,
+            0,
+            0,
+            vector_as_SHGrid=vector_as_SHGrid,
+            radius=radius,
+            grid=grid,
         )
+
+
+###############################################################
+#                      Utility classes                        #
+###############################################################
+
+
+class LowPassFilter:
+    """
+    Class implementing a simple Hann-type low-pass filter in
+    the spherical harmonic domain
+    """
+
+    def __init__(self, lower_degree, upper_degree):
+        """
+        Args:
+            lower_degree (int): Below this degree, the filter returns one.
+            upper_degree (int): Above this degree, the filter returns zero.
+                Its value between the lower and upper degrees decreases smoothly.
+        """
+        self._lower_degree = lower_degree
+        self._upper_degree = upper_degree
+
+    def __call__(self, l):
+        if l <= self._lower_degree:
+            return 1
+        elif self._lower_degree <= l <= self._upper_degree:
+            return 0.5 * (
+                1
+                - np.cos(
+                    np.pi
+                    * (self._upper_degree - l)
+                    / (self._upper_degree - self._lower_degree)
+                )
+            )
+        else:
+            return 0
