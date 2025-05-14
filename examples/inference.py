@@ -101,17 +101,6 @@ m_true = predefined_functions.Random_1D(domain, seed=44)
 ###################
 # PROFILING AREA 1
 ###################
-# Create a LineProfiler object
-profiler = LineProfiler()
-
-# Add functions from linalg.py to the profiler
-profiler.add_function(linalg.LinearOperator.__init__)
-profiler.add_function(linalg.LinearOperator.__call__)
-profiler.add_function(G_mapping)
-profiler.add_function(M_inner_product)
-
-# Enable the profiler
-profiler.enable()
 
 # Define the linear operator G
 # This operator maps from the model space (M) to the data space (D) using the G_mapping function.
@@ -120,29 +109,13 @@ G = linalg.LinearOperator(M, D, lambda f: G_mapping(f, kernels))
 # Fake data
 d = G(m_true)
 
-# Disable the profiler
-profiler.disable()
-
-# Save the profiling results to a file
-with open('linalg_profile_results_1.txt', 'w') as f:
-    sys.stdout = f
-    profiler.print_stats(output_unit=1e-6)  # Output in microseconds
-    sys.stdout = sys.__stdout__
-
 #################
 # POFILING AREA 2
 #################
-
 GG_star = G @ G.adjoint
 solver = linalg.CGSolver(rtol=1e-8, atol=1e-10, maxiter=1000)  # Conjugate Gradient Solver
 GG_star_inverse = solver(GG_star)
 
-profiler.enable()
-a = GG_star_inverse(d)
-profiler.disable()
 
-# Save the profiling results to a file
-with open('linalg_profile_results_2.txt', 'w') as f:
-    sys.stdout = f
-    profiler.print_stats(output_unit=1e-6)  # Output in microseconds
-    sys.stdout = sys.__stdout__
+a = GG_star_inverse(d)
+

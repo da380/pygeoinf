@@ -1,5 +1,5 @@
 '''
-Module for classes related to the solution of inverse problems via optimisation methods. 
+Module for classes related to the solution of inverse problems via optimisation methods.
 '''
 
 
@@ -121,29 +121,29 @@ class LeastSquaresInversion(ForwardProblem):
                             preconditioning_method=None,
                             initial_model=None):
         """
-        Returns the measure on the model space induced by the data errors under the least-squares solution. 
+        Returns the measure on the model space induced by the data errors under the least-squares solution.
 
         Args:
-            damping (float): The norm damping parameter. Must be non-negative. 
+            damping (float): The norm damping parameter. Must be non-negative.
             solver (LinearSolver): Linear solver for solvint the normal equations.
                 The default is conjugate-gradients.
-            preconditioner (LinearOperator): Preconditioner for use in 
+            preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is the identity.
             preconditioning_method (PreconditioningMethod): If a preconditioner is not
                 provided, this method is used to generate a preconditioner from the given
-                operator. The default is the identity preconditioner.                
-            initial_model (model-space vector): Initial guess within an iterative solution. 
+                operator. The default is the identity preconditioner.
+            initial_model (model-space vector): Initial guess within an iterative solution.
                 The default is zero.
 
         Returns:
-            GaussianMeasure: Measure on the model space induced by the 
-                least-squares solution. Note that this measure only 
-                accounts for uncertainty due to the propagation of 
-                uncertainties within the data. 
+            GaussianMeasure: Measure on the model space induced by the
+                least-squares solution. Note that this measure only
+                accounts for uncertainty due to the propagation of
+                uncertainties within the data.
 
         Raises:
-            ValueError: If damping is not non-negative. 
-            ValueError: If solver is not a instance of LinearSolver.         
+            ValueError: If damping is not non-negative.
+            ValueError: If solver is not a instance of LinearSolver.
         """
         B = self.least_squares_operator(damping,
                                         solver=solver,
@@ -156,27 +156,27 @@ class LeastSquaresInversion(ForwardProblem):
                       preconditioning_method=None,
                       initial_model=None):
         """
-        Returns the measure on the model space induced by the observed data under the least-squares solution. 
+        Returns the measure on the model space induced by the observed data under the least-squares solution.
 
         Args:
-            damping (float): The norm damping parameter. Must be non-negative. 
+            damping (float): The norm damping parameter. Must be non-negative.
             data (data vector): Observed data
             solver (LinearSolver): Linear solver for solvint the normal equations.
                 The default is conjugate-gradients.
-            preconditioner (LinearOperator): Preconditioner for use in 
+            preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is the identity.
-            initial_model (model-space vector): Initial guess within an iterative solution. 
+            initial_model (model-space vector): Initial guess within an iterative solution.
                 The default is zero.
 
         Returns:
-            GaussianMeasure: Measure on the model space induced by the 
-                least-squares solution for given data. Note that this measure only 
-                accounts for uncertainty due to the propagation of 
-                uncertainties within the data. 
+            GaussianMeasure: Measure on the model space induced by the
+                least-squares solution for given data. Note that this measure only
+                accounts for uncertainty due to the propagation of
+                uncertainties within the data.
 
         Raises:
-            ValueError: If damping is not non-negative. 
-            ValueError: If solver is not a instance of LinearSolver.         
+            ValueError: If damping is not non-negative.
+            ValueError: If solver is not a instance of LinearSolver.
         """
         B = self.least_squares_operator(damping,
                                         solver=solver,
@@ -191,25 +191,25 @@ class LeastSquaresInversion(ForwardProblem):
                             preconditioning_method=None,
                             initial_model=None):
         """
-        Returns the resolution operator for the least-squares problem. 
+        Returns the resolution operator for the least-squares problem.
 
         Args:
-            damping (float): The norm damping parameter. Must be non-negative. 
+            damping (float): The norm damping parameter. Must be non-negative.
             solver (LinearSolver): Linear solver for solvint the normal equations.
                 The default is conjugate-gradients.
-            preconditioner (LinearOperator): Preconditioner for use in 
+            preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is the identity.
-            initial_model (model-space vector): Initial guess within an iterative solution. 
+            initial_model (model-space vector): Initial guess within an iterative solution.
                 The default is zero.
 
         Returns:
-            LinearOperator: The resolution operator for the problem, 
-                with this operator mapping a known model into the 
-                result of its inversion in the absence of data errors. 
+            LinearOperator: The resolution operator for the problem,
+                with this operator mapping a known model into the
+                result of its inversion in the absence of data errors.
 
         Raises:
-            ValueError: If damping is not non-negative. 
-            ValueError: If solver is not a instance of LinearSolver.         
+            ValueError: If damping is not non-negative.
+            ValueError: If solver is not a instance of LinearSolver.
         """
         A = self.forward_operator
         B = self.least_squares_operator(damping,
@@ -229,7 +229,7 @@ class LeastSquaresInversion(ForwardProblem):
 
         Args:
             dampings (range): Damping values to plot.
-            data (data-space vector): Observed data. 
+            data (data-space vector): Observed data.
         """
 
         dampings = np.linspace(damping1, damping2, ndamping)
@@ -256,7 +256,7 @@ class LeastSquaresInversion(ForwardProblem):
 class OccamInversion(ForwardProblem):
     """
     Class for performing the Occam inversions of Constable, Parker and Constable (1987)
-    for a linear problem with Gaussian errors. 
+    for a linear problem with Gaussian errors.
     """
 
     def __init__(self, forward_operator, data_error_measure, /, *, rtol=1.e-5, damping_min=1.e-5):
@@ -348,22 +348,22 @@ class OccamInversion(ForwardProblem):
                             preconditioner=None,
                             preconditioning_method=None):
         """
-        Returns the resolution operator for the least-squares problem. 
+        Returns the resolution operator for the least-squares problem.
 
         Args:
             confidence_level (float): The confidence level used to define the data-space confidence set.
             solver (LinearSolver): Linear solver for solvint the normal equations.
                 The default is conjugate-gradients.
-            preconditioner (LinearOperator): Preconditioner for use in 
-                solving the normal equations. The default is the identity.            
+            preconditioner (LinearOperator): Preconditioner for use in
+                solving the normal equations. The default is the identity.
 
         Returns:
-            Operator: The resolution operator for the problem, 
-                with this operator mapping a known model into the 
-                result of its inversion in the absence of data errors. 
+            Operator: The resolution operator for the problem,
+                with this operator mapping a known model into the
+                result of its inversion in the absence of data errors.
 
-        Raises:            
-            ValueError: If solver is not a instance of LinearSolver.         
+        Raises:
+            ValueError: If solver is not a instance of LinearSolver.
         """
         A = self.forward_operator
         B = self.minimum_norm_operator(

@@ -1,5 +1,5 @@
 """
-Module defined the forward problem class. 
+Module defined the forward problem class.
 """
 import numpy as np
 import pygeoinf.linalg as la
@@ -7,14 +7,14 @@ import pygeoinf.linalg as la
 
 class ForwardProblem:
     """
-    Class for forward problems. A class instance is defined by 
-    setting the forward operator and the data error measure. 
+    Class for forward problems. A class instance is defined by
+    setting the forward operator and the data error measure.
     """
 
     def __init__(self, forward_operator, data_error_measure):
         """
         Args:
-            forward_operator (LinearOperator): Mapping from the model to data space. 
+            forward_operator (LinearOperator): Mapping from the model to data space.
             data_error_measure (GaussianMeasure): Gaussian measure from which data errors
                 are assumed to be drawn.
         """

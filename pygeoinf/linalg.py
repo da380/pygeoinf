@@ -373,7 +373,7 @@ class LinearOperator(Operator):
     def _compute_dense_matrix(self, galerkin=False):
         # Compute the matrix representation in dense form.
         matrix = np.zeros((self.codomain.dim, self.domain.dim))
-        a = self.matrix(galerkin=galerkin) # this sets dense to false and the lower lines never execute
+        a = self.matrix(galerkin=galerkin)
         cx = np.zeros(self.domain.dim)
         for i in range(self.domain.dim):
             cx[i] = 1
@@ -1492,7 +1492,6 @@ class CGSolver(IterativeLinearSolver):
                 maxiter = self._maxiter
 
             for iteration in range(maxiter):
-
                 if (domain.norm(r) <= tol):
                     break
 
