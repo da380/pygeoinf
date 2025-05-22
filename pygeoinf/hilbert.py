@@ -1,23 +1,20 @@
 """
-Module for linear algebra on Hilbert spaces. 
+Module defining classes for Hilbert spaces, linear operators and linear forms. 
+
+The classes within this module have interdependencies and so cannot be split 
+into separate modules. 
 """
 
-from abc import ABC, abstractmethod
 import numpy as np
-from scipy.linalg import (
-    cho_factor,
-    cho_solve,
-    lu_factor,
-    lu_solve,
-    solve_triangular,
-    eigh,
-    svd,
-    qr,
-)
-from scipy.stats import norm
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 from scipy.sparse import diags
+
+from pygeoinf.random_matrix import (
+    fixed_rank_random_range,
+    random_svd,
+    random_cholesky,
+    random_eig,
+)
 
 
 class HilbertSpace:
@@ -29,7 +26,7 @@ class HilbertSpace:
             finite-dimensional approximating space.
         (2) A mapping from elements of the space to their components.
             These components must be expressed as numpy arrays with
-            shape (dim) with dim the spaces dimension.
+            shape (dim) with dim the space's dimension.
         (3) A mapping from components back to the vectors. This
             needs to be the inverse of the mapping in (2), but
             this requirement is not automatically checked.
@@ -37,11 +34,6 @@ class HilbertSpace:
         (5) The mapping from the space to its dual.
         (5) The mapping from a dual vector to its representation
             within the space.
-
-    Note that this class does *not* define elements of the
-    vector space. These must be pre-defined separately. It
-    is also assumed that the usual vector operations are
-    available for this latter space.
     """
 
     def __init__(
@@ -119,6 +111,9 @@ class HilbertSpace:
 
     @property
     def zero(self):
+        """
+        Returns the zero vector for the space.
+        """
         return self.from_components(np.zeros((self.dim)))
 
     @property
@@ -230,9 +225,15 @@ class HilbertSpace:
         return self.multiply(-1, x)
 
     def axpy(self, a, x, y):
+        """
+        Sets y = y + a * x.
+        """
         return self._axpy(a, x, y)
 
     def copy(self, x):
+        """
+        Returns a copy of x.
+        """
         return self._copy(x)
 
     def to_components(self, x):
@@ -251,7 +252,7 @@ class HilbertSpace:
 
     def random(self):
         """Returns a random vector with components drwn from a standard Gaussian distribution."""
-        return self.from_components(norm().rvs(size=self.dim))
+        return self.from_components(np.random.randn(self.dim))
 
     def sample_expectation(self, vectors):
         """
@@ -312,172 +313,6 @@ class HilbertSpace:
         return x.copy()
 
 
-class HilbertSpaceDirectSum(HilbertSpace):
-    """
-    Class for Hilbert spaces formed from a direct sum of a list of Hilbert spaces.
-
-    Instances are formed by providing a list of HilbertSpaces. Along with the usual
-    HilbertSpace methods, this class implements projection and inclusion operators
-    onto the subspaces. And also the canonical injection from the direct sum of
-    the dual spaces into the dual of the direct sum.
-    """
-
-    def __init__(self, spaces):
-        """
-        Args:
-            spaces ([HilbertSpaces]): A list of Hilbert spaces whos direct sum is to be formed.
-        """
-        self._spaces = spaces
-        dim = sum([space.dim for space in spaces])
-        super().__init__(
-            dim,
-            self.__to_components,
-            self.__from_components,
-            self.__inner_product,
-            self.__to_dual,
-            self.__from_dual,
-            add=self.__add,
-            subtract=self.__subtract,
-            multiply=self.__multiply,
-            axpy=self.__axpy,
-            copy=self.__copy,
-        )
-
-    #######################################################
-    #                    Public methods                   #
-    #######################################################
-
-    @property
-    def subspaces(self):
-        """
-        Return a list of the subspaces.
-        """
-        return self._spaces
-
-    @property
-    def number_of_subspaces(self):
-        """
-        Returns the number of subspaces in the direct sum.
-        """
-        return len(self.subspaces)
-
-    def subspace(self, i):
-        """
-        Returns the ith subspace.
-        """
-        return self.subspaces[i]
-
-    def subspace_projection(self, i):
-        """
-        Returns the projection operator onto the ith subspace.
-        """
-        return LinearOperator(
-            self,
-            self.subspaces[i],
-            lambda xs: self._subspace_projection_mapping(i, xs),
-            adjoint_mapping=lambda x: self._subspace_inclusion_mapping(i, x),
-        )
-
-    def subspace_inclusion(self, i):
-        """
-        Returns the inclusion operator from the ith space.
-        """
-        return LinearOperator(
-            self.subspaces[i],
-            self,
-            lambda x: self._subspace_inclusion_mapping(i, x),
-            adjoint_mapping=lambda xs: self._subspace_projection_mapping(i, xs),
-        )
-
-    def canonical_dual_isomorphism(self, xps):
-        """
-        Maps a direct sum of dual-subspace vectors to the dual vector.
-        """
-        assert len(xps) == self.number_of_subspaces
-        return LinearForm(
-            self,
-            mapping=lambda x: sum(
-                [xp(self.subspace_projection(i)(x)) for i, xp in enumerate(xps)]
-            ),
-        )
-
-    def canonical_dual_inverse_isomorphism(self, xp):
-        """
-        Maps a dual vector to the direct sum of the dual-subspace vectors.
-        """
-        return [
-            LinearForm(space, mapping=lambda x, j=i: xp(self.subspace_inclusion(j)(x)))
-            for i, space in enumerate(self.subspaces)
-        ]
-
-    #######################################################
-    #                   Private methods                   #
-    #######################################################
-
-    def __to_components(self, xs):
-        # Local implementation of to component mapping.
-        cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
-        return np.concatenate(cs, 0)
-
-    def __from_components(self, c):
-        # Local implementation of from component mapping.
-        xs = []
-        i = 0
-        for space in self._spaces:
-            j = i + space.dim
-            x = space.from_components(c[i:j])
-            xs.append(x)
-            i = j
-        return xs
-
-    def __inner_product(self, x1s, x2s):
-        return sum(
-            [
-                space.inner_product(x1, x2)
-                for space, x1, x2 in zip(self._spaces, x1s, x2s)
-            ]
-        )
-
-    def __to_dual(self, xs):
-        # Local implementation of the mapping to the dual space.
-        assert len(xs) == self.number_of_subspaces
-        return self.canonical_dual_isomorphism(
-            [space.to_dual(x) for space, x in zip(self._spaces, xs)]
-        )
-
-    def __from_dual(self, xp):
-        # Local implementation of the mapping from the dual space.
-        xps = self.canonical_dual_inverse_isomorphism(xp)
-        return [space.from_dual(xip) for space, xip in zip(self._spaces, xps)]
-
-    def __add(self, xs, ys):
-        # Local implementation of add.
-        return [space.add(x, y) for space, x, y in zip(self._spaces, xs, ys)]
-
-    def __subtract(self, xs, ys):
-        # Local implementation of subtract.
-        return [space.subtract(x, y) for space, x, y in zip(self._spaces, xs, ys)]
-
-    def __multiply(self, a, xs):
-        # Local implementation of multiply.
-        return [space.multiply(a, x) for space, x in zip(self._spaces, xs)]
-
-    def __axpy(self, a, xs, ys):
-        # Local implementation of axpy.
-        return [space.axpy(a, x, y) for space, x, y in zip(self._spaces, xs, ys)]
-
-    def __copy(self, xs):
-        return [space.copy(x) for space, x in zip(self._spaces, xs)]
-
-    def _subspace_projection_mapping(self, i, xs):
-        # Implementation of the projection mapping onto ith space.
-        return xs[i]
-
-    def _subspace_inclusion_mapping(self, i, x):
-        # Implementation of the inclusion mapping from ith space.
-        return [x if j == i else space.zero for j, space in enumerate(self._spaces)]
-
-
 class EuclideanSpace(HilbertSpace):
     """
     Euclidean space implemented as an instance of HilbertSpace."""
@@ -495,33 +330,6 @@ class EuclideanSpace(HilbertSpace):
             self.__inner_product,
             self.__to_dual,
             self.__from_dual,
-        )
-
-    def standard_gaussisan_measure(self, standard_deviation):
-        """
-        Returns a Gaussian measure on the space with covariance proportional
-        to the identity operator and with zero expectation.
-
-        Args:
-            standard_deviation (float): The standard deviation for each component.
-        """
-        factor = standard_deviation * self.identity_operator()
-        inverse_factor = (1 / standard_deviation) * self.identity_operator()
-        return GaussianMeasure.from_factored_covariance(
-            factor, inverse_factor=inverse_factor
-        )
-
-    def diagonal_gaussian_measure(self, standard_deviations):
-        """
-        Returns a Gaussian measure on the space with a diagonal
-        covariance and with zero expectation.
-
-        Args:
-            standard_deviations (vector): Vector of the standard deviations.
-        """
-        factor = DiagonalLinearOperator(self, self, standard_deviations)
-        return GaussianMeasure.from_factored_covariance(
-            factor, inverse_factor=factor.inverse
         )
 
     def __inner_product(self, x1, x2):
@@ -664,7 +472,7 @@ class LinearOperator(Operator):
         """
         domain = forms[0].domain
         codomain = EuclideanSpace(len(forms))
-        if not all([form.domain == domain for form in forms]):
+        if not all(form.domain == domain for form in forms):
             raise ValueError("Forms need to be defined on a common domain")
 
         matrix = np.zeros((codomain.dim, domain.dim))
@@ -740,7 +548,7 @@ class LinearOperator(Operator):
     @staticmethod
     def self_adjoint_from_matrix(domain, matrix):
         """
-        Forms a self-adjoint operator from its Galerkin G matrix representation.
+        Forms a self-adjoint operator from its Galerkin matrix representation.
         """
 
         def mapping(x):
@@ -754,20 +562,20 @@ class LinearOperator(Operator):
     @staticmethod
     def from_tensor_product(domain, codomain, vector_pairs, /, *, weights=None):
         """
-        Forms a LinearOperator between Hilbert spaces from
-        the tensor product of a list of pairs of vectors.
+        Forms a LinearOperator between Hilbert spaces from the tensor product
+        of a list of pairs of vectors.
 
         Args:
             domain (HilbertSpace): Domain for the linear operator.
             codomain (HilbertSpace): Codomain for the linear operator.
             vector_pairs ([[codomain vector, domain vector]]): A list of pairs of vectors
                 from which the tensor product is to be constructed.
-            weights [float]: Optional list of weights for the terms in the tensor
+            weights ([float]): Optional list of weights for the terms in the tensor
                product. If none is provided default weights of one are used.
         """
 
-        assert all([domain.is_element(vector) for _, vector in vector_pairs])
-        assert all([codomain.is_element(vector) for vector, _ in vector_pairs])
+        assert all(domain.is_element(vector) for _, vector in vector_pairs)
+        assert all(codomain.is_element(vector) for vector, _ in vector_pairs)
 
         if weights is None:
             _weights = [1 for _ in vector_pairs]
@@ -806,7 +614,7 @@ class LinearOperator(Operator):
                 product. If none is provided default weights of one are used.
         """
 
-        assert all([domain.is_element(vector) for vector in vectors])
+        assert all(domain.is_element(vector) for vector in vectors)
 
         if weights is None:
             _weights = [1 for _ in vectors]
@@ -1127,26 +935,6 @@ class LinearOperator(Operator):
             EuclideanSpace(rank), self.domain, mapping, adjoint_mapping=adjoint_mapping
         )
 
-    def random_preconditioner(self, rank, /, *, power=0):
-        """
-        Returns an approximate inverse of a self-adjoint operator
-        based on a random Cholesky factorisation.
-
-        Args:
-            rank (int) : rank for the decomposition.
-            sigma (float | None): The shift to apply in forming the inverse.
-            power (int) : exponent within the power iterations.
-        """
-        assert self.domain == self.codomain
-        U, D = self.random_eig(rank, power=power)
-        sigma = 1
-        F = U @ D.sqrt
-        M = F.domain.identity_operator() + (1 / sigma) * F.adjoint @ F
-        N = CholeskySolver()(M)
-        return (1 / sigma) * self.domain.identity_operator() - (
-            1 / sigma**2
-        ) * F @ N @ F.adjoint
-
     def _dual_mapping_default(self, yp):
         # Default implementation of the dual mapping.
         return LinearForm(self.domain, mapping=lambda x: yp(self(x)))
@@ -1168,7 +956,7 @@ class LinearOperator(Operator):
         matrix = np.zeros((self.codomain.dim, self.domain.dim))
         a = self.matrix(galerkin=galerkin)
         cx = np.zeros(self.domain.dim)
-        for i in range(self.domain.dim):  # todo: parellise?
+        for i in range(self.domain.dim):
             cx[i] = 1
             matrix[:, i] = (a @ cx)[:]
             cx[i] = 0
@@ -1297,84 +1085,6 @@ class LinearOperator(Operator):
         return self.matrix(dense=True).__str__()
 
 
-class BlockLinearOperator(LinearOperator):
-    """
-    Class for linear operators acting between direct sums of Hilbert spaces that are defined
-    in a blockwise manner.
-
-    Instances are formed from lists of list of LinearOperators. Methods to return the subblock
-    operators are provided.
-    """
-
-    def __init__(self, blocks):
-
-        # Check and form the list of domains and codomains.
-        domains = [operator.domain for operator in blocks[0]]
-        codomains = []
-        for row in blocks:
-            assert domains == [operator.domain for operator in row]
-            codomain = row[0].codomain
-            assert all([operator.codomain == codomain for operator in row])
-            codomains.append(codomain)
-
-        domain = HilbertSpaceDirectSum(domains)
-        codomain = HilbertSpaceDirectSum(codomains)
-
-        self._domains = domains
-        self._codomains = codomains
-        self._blocks = blocks
-        self._row_dim = len(blocks)
-        self._col_dim = len(blocks[0])
-
-        super().__init__(
-            domain, codomain, self.__mapping, adjoint_mapping=self.__adjoint_mapping
-        )
-
-    @property
-    def row_dim(self):
-        """
-        Returns the number of rows in block operator.
-        """
-        return self._row_dim
-
-    @property
-    def col_dim(self):
-        """
-        Returns the number of columns in block operator.
-        """
-        return self._col_dim
-
-    def block(self, i, j):
-        """
-        Returns the operator in the (i,j)th sub-block.
-        """
-        assert 0 <= i < self.row_dim
-        assert 0 <= j < self.col_dim
-        return self._blocks[i][j]
-
-    def __mapping(self, xs):
-        ys = []
-        for i in range(self.row_dim):
-            codomain = self._codomains[i]
-            y = codomain.zero
-            for j in range(self.col_dim):
-                a = self.block(i, j)
-                y = codomain.axpy(1, a(xs[j]), y)
-            ys.append(y)
-        return ys
-
-    def __adjoint_mapping(self, ys):
-        xs = []
-        for j in range(self.col_dim):
-            domain = self._domains[j]
-            x = domain.zero
-            for i in range(self.row_dim):
-                a = self.block(i, j)
-                x = domain.axpy(1, a.adjoint(ys[i]), x)
-            xs.append(x)
-        return xs
-
-
 class DiagonalLinearOperator(LinearOperator):
     """
     Class for Linear operators whose matrix representation is diagonal.
@@ -1412,15 +1122,22 @@ class DiagonalLinearOperator(LinearOperator):
         """
         return self._diagonal_values
 
+    def function(self, f):
+        """
+        Returns a function, f, of the operator. It is assumed that the
+        function is well-defined on the diagonal values.
+        """
+        diagonal_values = np.array([f(x) for x in self.diagonal_values])
+        return DiagonalLinearOperator(self.domain, self.codomain, diagonal_values)
+
     @property
     def inverse(self):
         """
         return the inverse operator. Valid only if diagonal values
         are non-zero.
         """
-        assert all([val != 0 for val in self._diagonal_values])
-        diagonal_values = np.reciprocal(self._diagonal_values.copy())
-        return DiagonalLinearOperator(self.codomain, self.domain, diagonal_values)
+        assert all(val != 0 for val in self.diagonal_values)
+        return self.function(lambda x: 1 / x)
 
     @property
     def sqrt(self):
@@ -1428,10 +1145,8 @@ class DiagonalLinearOperator(LinearOperator):
         Returns the square root of the operator. Valid only if diagonal values
         are non-negative.
         """
-        assert all([val >= 0 for val in self._diagonal_values])
-        return DiagonalLinearOperator(
-            self.domain, self.codomain, np.sqrt(self._diagonal_values)
-        )
+        assert all(val >= 0 for val in self._diagonal_values)
+        return self.function(np.sqrt)
 
 
 class LinearForm:
@@ -1565,892 +1280,3 @@ class LinearForm:
     def _mapping_from_components(self, x):
         # Implement the action of the form using its components.
         return np.dot(self._components, self.domain.to_components(x))
-
-
-class GaussianMeasure:
-    """
-    Class for Gaussian measures on a Hilbert space.
-    """
-
-    def __init__(
-        self,
-        domain,
-        covariance,
-        /,
-        *,
-        expectation=None,
-        sample=None,
-        inverse_covariance=None,
-    ):
-        """
-        Args:
-            domain (HilbertSpace): The Hilbert space on which the measure is defined.
-            covariance (LinearOperator): A self-adjoint and non-negative linear operator on the domain
-            expectation (vector | zero): The expectation value of the measure.
-            sample (callable | None): A functor that returns a random sample from the measure.
-            inverse_covariance (LinearOperator | None): The inverse of the covaraiance.
-
-        Notes:
-            If the inverse of the covariance is not provided, it is computed internally
-            using a matrix-free CG solver.
-        """
-        self._domain = domain
-        self._covariance = covariance
-
-        if expectation is None:
-            self._expectation = self.domain.zero
-        else:
-            self._expectation = expectation
-
-        self._sample = sample
-
-        if inverse_covariance is None:
-            self._inverse_covariance = CGSolver()(covariance)
-        else:
-            self._inverse_covariance = inverse_covariance
-
-    @staticmethod
-    def from_factored_covariance(factor, /, *, inverse_factor=None, expectation=None):
-        """
-        For a Gaussian measure whos covariance, C, is approximated in the form C = LL*,
-        with L a mapping into the domain from Euclidean space.
-
-        Args:
-            factor (LinearOperator): Linear operator from Euclidean space into the
-                domain of the measure.
-            expectation (vector | zero): expected value of the measure.
-            inverse factor (LinearOperator): An analgous factorisation of the inverse covariance.
-
-        Returns:
-            GassianMeasure: The measure with the required covariance and expectation.
-        """
-
-        def sample():
-            value = factor(norm().rvs(size=factor.domain.dim))
-            if expectation is None:
-                return value
-            else:
-                return factor.codomain.add(value, expectation)
-
-        covariance = factor @ factor.adjoint
-
-        _inverse_covariance = (
-            inverse_factor.adjoint @ inverse_factor
-            if inverse_factor is not None
-            else None
-        )
-
-        return GaussianMeasure(
-            factor.codomain,
-            covariance,
-            expectation=expectation,
-            sample=sample,
-            inverse_covariance=_inverse_covariance,
-        )
-
-    @staticmethod
-    def from_samples(domain, samples):
-        """
-        Forms a Gaussian measure from a set of samples based on
-        the sample expectation and sample variance.
-
-        Args:
-            domain (HilbertSpace): The space the measure is defined on.
-            samples ([vectors]): A list of samples.
-
-        Notes:
-            :
-        """
-        assert all([domain.is_element(x) for x in samples])
-
-        n = len(samples)
-        expectation = domain.zero
-        for x in samples:
-            expectation = domain.axpy(1 / n, x, expectation)
-
-        if n == 1:
-            covariance = LinearOperator.self_adjoint(domain, lambda x: domain.zero)
-
-            def sample():
-                return expectation
-
-        else:
-            offsets = [domain.subtract(x, expectation) for x in samples]
-            covariance = LinearOperator.self_adjoint_from_tensor_product(
-                domain, offsets
-            ) / (n - 1)
-
-            def sample():
-                x = expectation
-                randoms = np.random.randn(len(offsets))
-                for y, r in zip(offsets, randoms):
-                    x = domain.axpy(r / np.sqrt(n - 1), y, x)
-                return x
-
-        return GaussianMeasure(
-            domain, covariance, expectation=expectation, sample=sample
-        )
-
-    @property
-    def domain(self):
-        """The Hilbert space the measure is defined on."""
-        return self._domain
-
-    @property
-    def covariance(self):
-        """The covariance operator as an instance of LinearOperator."""
-        return self._covariance
-
-    @property
-    def inverse_covariance(self):
-        """The covariance operator as an instance of LinearOperator."""
-        return self._inverse_covariance
-
-    @property
-    def expectation(self):
-        """The expectation of the measure."""
-        return self._expectation
-
-    def sample(self):
-        """
-        Returns a random sample drawn from the measure.
-        """
-        if self._sample is None:
-            raise NotImplementedError("Sample method is not set.")
-        else:
-            return self._sample()
-
-    def samples(self, n):
-        """
-        Returns a list of n samples form the measure.
-        """
-        assert n >= 1
-        return [self.sample() for _ in range(n)]
-
-    def sample_expectation(self, n):
-        """
-        Returns the sample expectation using n > 1 samples.
-        """
-        assert n >= 1
-        expectation = self.domain.zero
-        for _ in range(n):
-            sample = self.sample()
-            expectation = self.domain.axpy(1 / n, sample, expectation)
-        return expectation
-
-    def affine_mapping(self, /, *, operator=None, translation=None):
-        """
-        Returns the push forward of the measure under an affine mapping.
-
-        Args:
-            operator (LinearOperator): The operator part of the mapping.
-            translation (vector): The translational part of the mapping.
-
-        Returns:
-            Gaussian Measure: The transformed measure defined on the
-                codomain of the operator.
-
-        Raises:
-            ValueError: If the domain of the operator domain is not
-                the domain of the measure.
-
-        Notes:
-            If operator is not set, it defaults to the identity.
-            It translation is not set, it defaults to zero.
-        """
-
-        if operator is None:
-            _operator = self.domain.identity_operator()
-        else:
-            _operator = operator
-
-        if translation is None:
-            _translation = _operator.codomain.zero
-        else:
-            _translation = translation
-
-        covariance = _operator @ self.covariance @ _operator.adjoint
-        expectation = _operator.codomain.add(_operator(self.expectation), _translation)
-
-        def sample():
-            return _operator.codomain.add(_operator(self.sample()), _translation)
-
-        return GaussianMeasure(
-            _operator.codomain, covariance, expectation=expectation, sample=sample
-        )
-
-    def low_rank_approximation(self, rank, /, *, power=0):
-        """
-        Returns an approximation to the measure with the covariance operator
-        replaced by a low-rank Cholesky decomposition along with the associated
-        sampling method.
-        """
-        F = self.covariance.random_cholesky(rank, power=power)
-        return GaussianMeasure.from_factored_covariance(F, expectation=self.expectation)
-
-    def __neg__(self):
-        """Negative of the measure."""
-        return GaussianMeasure(
-            self.domain,
-            -self.covariance,
-            expectation=self.domain.negative(self.expectation),
-            sample=lambda: self.domain.negative(self.sample()),
-        )
-
-    def __mul__(self, alpha):
-        """Multiply the measure by a scalar."""
-        return GaussianMeasure(
-            self.domain,
-            alpha * alpha * self.covariance,
-            expectation=self.domain.multiply(alpha, self.expectation),
-            sample=lambda: self.domain.multiply(alpha, self.sample()),
-        )
-
-    def __rmul__(self, alpha):
-        """Multiply the measure by a scalar."""
-        return self * alpha
-
-    def __add__(self, other):
-        """Add two measures on the same domain."""
-        return GaussianMeasure(
-            self.domain,
-            self.covariance + other.covariance,
-            expectation=self.domain.add(self.expectation, other.expectation),
-            sample=lambda: self.domain.add(self.sample(), other.sample()),
-        )
-
-    def __sub__(self, other):
-        """Subtract two measures on the same domain."""
-        return GaussianMeasure(
-            self.domain,
-            self.covariance + other.covariance,
-            expectation=self.domain.subtract(self.expectation, other.expectation),
-            sample=lambda: self.domain.subtract(self.sample(), other.sample()),
-        )
-
-
-class LinearSolver(ABC):
-    """
-    Abstract base class for linear solvers.
-    """
-
-
-class DirectLinearSolver(LinearSolver):
-    """
-    Abstract base class for direct linear solvers.
-    """
-
-
-class LUSolver(DirectLinearSolver):
-    """
-    Direct Linear solver class based on LU decomposition of the
-    matrix representation.
-    """
-
-    def __init__(self, /, *, galerkin=False):
-        """
-        Args:
-            galerkin (bool): If true, the Galerkin matrix representation is used.
-        """
-        self._galerkin = galerkin
-
-    def __call__(self, operator):
-        """
-        Returns the inverse of a LinearOperator based on the LU factorisation
-        of its dense matrix representation.
-        """
-
-        assert operator.domain.dim == operator.codomain.dim
-        matrix = operator.matrix(dense=True, galerkin=self._galerkin)
-        factor = lu_factor(matrix, overwrite_a=True)
-
-        def matvec(cy):
-            return lu_solve(factor, cy, 0)
-
-        def rmatvec(cx):
-            return lu_solve(factor, cx, 1)
-
-        inverse_matrix = ScipyLinOp(
-            (operator.domain.dim, operator.codomain.dim),
-            matvec=matvec,
-            rmatvec=rmatvec,
-        )
-
-        return LinearOperator.from_matrix(
-            operator.codomain, operator.domain, inverse_matrix, galerkin=self._galerkin
-        )
-
-
-class CholeskySolver(DirectLinearSolver):
-    """
-    Direct Linear solver class based on Cholesky decomposition of the
-    matrix representation. It is assumed that the operator's matrix
-    representation is self-adjoint and positive-definite.
-    """
-
-    def __init__(self, /, *, galerkin=False):
-        """
-        galerkin (bool): If true, use the Galerkin matrix representation.
-        """
-        self._galerkin = galerkin
-
-    def __call__(self, operator):
-        """
-        Returns the inverse of a LinearOperator based on the LU factorisation
-        of its dense matrix representation.
-        """
-
-        assert operator.is_automorphism
-
-        matrix = operator.matrix(dense=True, galerkin=self._galerkin)
-        factor = cho_factor(matrix, overwrite_a=False)
-
-        def matvec(cy):
-            return cho_solve(factor, cy)
-
-        inverse_matrix = ScipyLinOp(
-            (operator.domain.dim, operator.codomain.dim), matvec=matvec, rmatvec=matvec
-        )
-
-        return LinearOperator.from_matrix(
-            operator.domain, operator.domain, inverse_matrix, galerkin=self._galerkin
-        )
-
-
-class IterativeLinearSolver(LinearSolver):
-    """
-    Abstract base class for direct linear solvers.
-    """
-
-
-class CGMatrixSolver(IterativeLinearSolver):
-    """
-    Linear solver for self-adjoint operators based on the application
-    of the conjugate gradient algorithm to the matrix representation.
-
-    It is assumed that the matrix representation of the operator
-    is also self-adjoint. This will hold automatically when the
-    Galerkin representation is used.
-    """
-
-    def __init__(
-        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
-    ):
-        """
-        Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
-        """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._maxiter = maxiter
-        self._callback = callback
-
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
-
-        Args:
-            operator (LinearOperator): The operator to invert.
-
-        """
-        assert operator.is_automorphism
-        domain = operator.codomain
-        matrix = operator.matrix(galerkin=self._galerkin)
-
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
-
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = cg(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                xp = domain.dual.from_components(cxp)
-                return domain.from_dual(xp)
-            else:
-                return domain.from_components(cxp)
-
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
-
-
-class BICGMatrixSolver(IterativeLinearSolver):
-    """
-    Linear solver for general operators based on the application
-    of the biconjugate gradient algorithm to the matrix representation.
-    """
-
-    def __init__(
-        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
-    ):
-        """
-        Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
-        """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._maxiter = maxiter
-        self._callback = callback
-
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
-
-        Args:
-            operator (LinearOperator): The operator to invert.
-        """
-        assert operator.is_square
-        domain = operator.codomain
-        codomain = operator.domain
-        matrix = operator.matrix(galerkin=self._galerkin)
-
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
-
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = bicg(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                xp = codomain.dual.from_components(cxp)
-                return codomain.from_dual(xp)
-            else:
-                return codomain.from_components(cxp)
-
-        def adjoint_mapping(x):
-            cx = codomain.to_components(x)
-            cyp = bicg(
-                matrix.T,
-                cx,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                yp = domain.dual.from_components(cyp)
-                return domain.from_dual(yp)
-            else:
-                return domain.from_components(cyp)
-
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=adjoint_mapping)
-
-
-class BICGStabMatrixSolver(IterativeLinearSolver):
-    """
-    Linear solver for general operators based on the application
-    of the biconjugate gradient stabilised algorithm to the matrix representation.
-    """
-
-    def __init__(
-        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
-    ):
-        """
-        Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
-        """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._maxiter = maxiter
-        self._callback = callback
-
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
-
-        Args:
-            operator (LinearOperator): The operator to invert.
-        """
-        assert operator.is_square
-        domain = operator.codomain
-        codomain = operator.domain
-        matrix = operator.matrix(galerkin=self._galerkin)
-
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
-
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = bicgstab(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                xp = codomain.dual.from_components(cxp)
-                return codomain.from_dual(xp)
-            else:
-                return codomain.from_components(cxp)
-
-        def adjoint_mapping(x):
-            cx = codomain.to_components(x)
-            cyp = bicgstab(
-                matrix.T,
-                cx,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                yp = domain.dual.from_components(cyp)
-                return domain.from_dual(yp)
-            else:
-                return domain.from_components(cyp)
-
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=adjoint_mapping)
-
-
-class GMRESMatrixSolver(IterativeLinearSolver):
-    """
-    Linear solver for general operators based on the application
-    of the GMRES algorithm to the matrix representation.
-    """
-
-    def __init__(
-        self,
-        /,
-        *,
-        galerkin=False,
-        rtol=1.0e-5,
-        atol=0,
-        restart=None,
-        maxiter=None,
-        callback=None,
-        callback_type=None,
-    ):
-        """
-        Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            restart (int): Number of iterations between restarts.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. Signature
-                of this function is determined by callback_type.
-            callback_type ("x", "pr_norm", "legacy"): If "x" the current solution is
-                passed to the callback function, if "pr_norm" it is the preconditioned
-                residual norm. The default is "legacy" which means the same as "pr_norm",
-                but changes the meaning of maxiter to count inner iterations instead of
-                restart cycles.
-        """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._restart = restart
-        self._maxiter = maxiter
-        self._callback = callback
-        self._callback_type = callback_type
-
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
-
-        Args:
-            operator (LinearOperator): The operator to invert.
-            galerkin (bool): True if the Galerkin matrix representation is used.
-        """
-        assert operator.is_square
-        domain = operator.codomain
-        codomain = operator.domain
-        matrix = operator.matrix(galerkin=self._galerkin)
-
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
-
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = gmres(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                restart=self._restart,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-                callback_type=self._callback_type,
-            )[0]
-            if self._galerkin:
-                xp = codomain.dual.from_components(cxp)
-                return codomain.from_dual(xp)
-            else:
-                return codomain.from_components(cxp)
-
-        def adjoint_mapping(x):
-            cx = codomain.to_components(x)
-            cyp = gmres(
-                matrix.T,
-                cx,
-                rtol=self._rtol,
-                atol=self._atol,
-                restart=self._restart,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-                callback_type=self._callback_type,
-            )[0]
-            if self._galerkin:
-                yp = domain.dual.from_components(cyp)
-                return domain.from_dual(yp)
-            else:
-                return domain.from_components(cyp)
-
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=adjoint_mapping)
-
-
-class CGSolver(IterativeLinearSolver):
-    """
-    LinearSolver class using the conjugate gradient algorithm without
-    use of the matrix representation. Can be applied to self-adjoint
-    operators on a general Hilbert space.
-    """
-
-    def __init__(self, /, *, rtol=1.0e-5, atol=0, maxiter=None, callback=None):
-        """
-        Args:
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
-        """
-        if rtol > 0:
-            self._rtol = rtol
-        else:
-            raise ValueError("rtol must be positive")
-        if atol >= 0:
-            self._atol = atol
-        else:
-            raise ValueError("atol must be non-negative!")
-        if maxiter is None:
-            self._maxiter = maxiter
-        else:
-            if maxiter >= 0:
-                self._maxiter = maxiter
-            else:
-                raise ValueError("maxiter must be None or positive")
-
-        self._callback = callback
-
-    def __call__(self, operator, /, *, preconditioner=None):
-
-        assert operator.is_automorphism
-
-        def mapping(y):
-
-            domain = operator.domain
-            x = domain.zero
-
-            r = domain.subtract(y, operator(x))
-            if preconditioner is None:
-                z = domain.copy(r)
-            else:
-                z = preconditioner(r)
-            p = domain.copy(z)
-
-            y_squared_norm = domain.squared_norm(y)
-            if y_squared_norm <= self._atol:
-                return y
-
-            tol = np.max([self._atol, self._rtol * y_squared_norm])
-
-            if self._maxiter is None:
-                maxiter = 10 * domain.dim
-            else:
-                maxiter = self._maxiter
-
-            for _ in range(maxiter):
-
-                if domain.norm(r) <= tol:
-                    break
-
-                q = operator(p)
-                num = domain.inner_product(r, z)
-                den = domain.inner_product(p, q)
-                alpha = num / den
-
-                x = domain.axpy(alpha, p, x)
-                r = domain.axpy(-alpha, q, r)
-
-                if preconditioner is None:
-                    z = domain.copy(r)
-                else:
-                    z = preconditioner(r)
-
-                den = num
-                num = operator.domain.inner_product(r, z)
-                beta = num / den
-
-                p = domain.multiply(beta, p)
-                p = domain.add(p, z)
-
-                if self._callback is not None:
-                    self._callback(x)
-
-            return x
-
-        return LinearOperator.self_adjoint(operator.domain, mapping)
-
-
-###########################################################################
-#        Utility functions linked to random matrix decomposition          #
-###########################################################################
-
-
-def fixed_rank_random_range(matrix, rank, power=0):
-    """
-    Forms the fixed-rank approximation to the range of a matrix using
-    a random-matrix method.
-
-    Args:
-        matrix (matrix-like): (m,n)-matrix whose range is to be approximated.
-        rank (int): The desired rank. Must be greater than 1.
-        power (int): The exponent to use within the power iterations.
-
-    Returns:
-        matrix: A (m,rank)-matrix whose columns are orthonormal and
-            whose span approximates the desired range.
-
-    Notes:
-        The input matrix can be a numpy array or a scipy LinearOperator. In the latter case,
-        it requires the the matmat, and rmatmat methods have been implemented.
-
-        This method is based on Algorithm 4.4 in Halko et. al. 2011
-    """
-
-    m, n = matrix.shape
-    random_matrix = np.random.rand(n, rank)
-
-    product_matrix = matrix @ random_matrix
-    qr_factor, _ = qr(product_matrix, overwrite_a=True, mode="economic")
-
-    for _ in range(power):
-        tilde_product_matrix = matrix.T @ qr_factor
-        tilde_qr_factor, _ = qr(tilde_product_matrix, overwrite_a=True, mode="economic")
-        product_matrix = matrix @ tilde_qr_factor
-        qr_factor, _ = qr(product_matrix, overwrite_a=True, mode="economic")
-
-    return qr_factor
-
-
-def variable_rank_random_range(matrix, rtol, /, *, rank=None, power=0):
-    """
-    Forms the variable-rank approximation to the range of a matrix using
-    a random-matrix method.
-
-    Args:
-        matrix (matrix-like): (m,n)-matrix whose range is to be approximated.
-        rtol (float): The desired relative accuracy.
-        rank (int): Starting rank for the decomposition. If none, then
-            determined from the dimension of the matrix.
-        power (int): The exponent to use within the power iterations.
-
-    Returns:
-        matrix: A (m,rank)-matrix whose columns are orthonormal and
-            whose span approximates the desired range.
-
-    Notes:
-        The input matrix can be a numpy array or a scipy LinearOperator. In the latter case,
-        it requires the the matmat, and rmatmat methods have been implemented.
-
-        This method is based on Algorithm 4.5 in Halko et. al. 2011
-    """
-    raise NotImplementedError
-
-
-def random_svd(matrix, qr_factor):
-    """
-    Given a matrix, A,  and a low-rank approximation to its range, Q,
-    this function returns the approximate SVD factors, (U, S, Vh)
-    such that A ~ U @ S @ VT where S is diagonal.
-
-    Based on Algorithm 5.1 of Halko et al. 2011
-    """
-    small_matrix = qr_factor.T @ matrix
-    left_factor, diagonal_factor, right_factor_transposed = svd(
-        small_matrix, full_matrices=False, overwrite_a=True
-    )
-    return (
-        qr_factor @ left_factor,
-        diagonal_factor,
-        right_factor_transposed,
-    )
-
-
-def random_eig(matrix, qr_factor):
-    """
-    Given a symmetric matrix, A,  and a low-rank approximation to its range, Q,
-    this function returns the approximate eigen-decomposition, (U, S)
-    such that A ~ U @ S @ U.T where S is diagonal.
-
-    Based on Algorithm 5.3 of Halko et al. 2011
-    """
-    m, n = matrix.shape
-    assert m == n
-    small_matrix = qr_factor.T @ matrix @ qr_factor
-    eigenvalues, eigenvectors = eigh(small_matrix, overwrite_a=True)
-    return qr_factor @ eigenvectors, eigenvalues
-
-
-def random_cholesky(matrix, qr_factor):
-    """
-    Given a symmetric and positive-definite matrix, A,  along with a low-rank
-    approximation to its range, Q, this function returns the approximate
-    Cholesky factorisation A ~ F F*.
-
-    Based on Algorithm 5.5 of Halko et al. 2011
-    """
-    small_matrix_1 = matrix @ qr_factor
-    small_matrix_2 = qr_factor.T @ small_matrix_1
-    factor, lower = cho_factor(small_matrix_2, overwrite_a=True)
-    identity_operator = np.identity(factor.shape[0])
-    inverse_factor = solve_triangular(
-        factor, identity_operator, overwrite_b=True, lower=lower
-    )
-    return small_matrix_1 @ inverse_factor

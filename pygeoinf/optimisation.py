@@ -2,35 +2,30 @@
 Module for classes related to the solution of inverse problems via optimisation methods. 
 """
 
-import numpy as np
-from scipy.stats import chi2
-import pygeoinf.hilbert as hs
-from pygeoinf.forward_problem import ForwardProblem
-from pygeoinf.utils import plot_colourline
+from pygeoinf.linear_solvers import IterativeLinearSolver
 
 
-class LeastSquaresInversion(ForwardProblem):
+class LinearLeastSquaresInversion:
     """
     Class for the solution of regularised least-squares
     problems within a Hilbert space.
     """
 
-    def __init__(self, forward_operator, data_error_measure):
-        """
-        Args:
-            forward_operator (LinearOperator): The forward operator for the problem.
-            data_error_measure (GaussianMeasure): The error measure on the data.
-        """
-        super().__init__(forward_operator, data_error_measure)
+    def __init__(self, forward_problem):
 
-    @staticmethod
-    def from_forward_problem(forward_problem):
+        if not forward_problem.data_error_measure.inverse_covariance_set:
+            raise ValueError(
+                "data error measure does not have its inverse covariance set."
+            )
+
+        self._forward_problem = forward_problem
+
+    @property
+    def forward_problem(self):
         """
-        Construct a least-squares problem from a forward problem.
+        Returns the forward problem.
         """
-        return LeastSquaresInversion(
-            forward_problem.forward_operator, forward_problem.data_error_measure
-        )
+        return self._forward_problem
 
     def normal_operator(self, damping):
         """
@@ -47,22 +42,23 @@ class LeastSquaresInversion(ForwardProblem):
         """
         if damping < 0:
             raise ValueError("Damping parameter must be non-negative.")
-        forward_operator = self.forward_operator
-        inverse_data_covariance = self.data_error_measure.inverse_covariance
-        identity = self.model_space.identity
+        forward_operator = self.forward_problem.forward_operator
+        inverse_data_covariance = (
+            self.forward_problem.data_error_measure.inverse_covariance
+        )
+        identity = self.forward_problem.model_space.identity_operator()
         return (
             forward_operator.adjoint @ inverse_data_covariance @ forward_operator
             + damping * identity
         )
 
-    def least_squares_operator(self, damping, /, *, solver=None, preconditioner=None):
+    def least_squares_operator(self, damping, solver, /, *, preconditioner=None):
         """
         Returns a linear operator that solves the least-squares problem.
 
         Args:
             damping (float): The norm damping parameter. Must be non-negative.
-            solver (LinearSolver): Linear solver for the normal equations. If none
-                is provided, matrix-free CG is used.
+            solver (LinearSolver): Linear solver for the normal equations.
             preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is None.
 
@@ -74,21 +70,18 @@ class LeastSquaresInversion(ForwardProblem):
             ValueError: If solver is not a instance of LinearSolver.
         """
 
-        forward_operator = self.forward_operator
-        inverse_data_covariance = self.data_error_measure.inverse_covariance
+        forward_operator = self.forward_problem.forward_operator
+        inverse_data_covariance = (
+            self.forward_problem.data_error_measure.inverse_covariance
+        )
         normal_operator = self.normal_operator(damping)
 
-        if solver is None:
-            _solver = hs.CGSolver()
-        else:
-            _solver = solver
-
-        if isinstance(_solver, hs.IterativeLinearSolver):
-            inverse_normal_operator = _solver(
+        if isinstance(solver, IterativeLinearSolver):
+            inverse_normal_operator = solver(
                 normal_operator, preconditioner=preconditioner
             )
         else:
-            inverse_normal_operator = _solver(normal_operator)
+            inverse_normal_operator = solver(normal_operator)
 
         return (
             inverse_normal_operator @ forward_operator.adjoint @ inverse_data_covariance
@@ -98,9 +91,9 @@ class LeastSquaresInversion(ForwardProblem):
         self,
         damping,
         data,
+        solver,
         /,
         *,
-        solver=None,
         preconditioner=None,
     ):
         """
@@ -110,7 +103,6 @@ class LeastSquaresInversion(ForwardProblem):
             damping (float): The norm damping parameter. Must be non-negative.
             data (data vector): Observed data
             solver (LinearSolver): Linear solver for solvint the normal equations.
-                The default is conjugate-gradients.
             preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is the identity.
 
@@ -126,22 +118,21 @@ class LeastSquaresInversion(ForwardProblem):
         """
         least_squares_operator = self.least_squares_operator(
             damping,
-            solver=solver,
+            solver,
             preconditioner=preconditioner,
         )
         model = least_squares_operator(data)
-        return self.data_error_measure.affine_mapping(
+        return self.forward_problem.data_error_measure.affine_mapping(
             operator=least_squares_operator, translation=model
         )
 
-    def resolution_operator(self, damping, /, *, solver=None, preconditioner=None):
+    def resolution_operator(self, damping, solver, /, *, preconditioner=None):
         """
         Returns the resolution operator for the least-squares problem.
 
         Args:
             damping (float): The norm damping parameter. Must be non-negative.
             solver (LinearSolver): Linear solver for solvint the normal equations.
-                The default is conjugate-gradients.
             preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is the identity.
 
@@ -154,10 +145,10 @@ class LeastSquaresInversion(ForwardProblem):
             ValueError: If damping is not non-negative.
             ValueError: If solver is not a instance of LinearSolver.
         """
-        forward_operator = self.forward_operator
+        forward_operator = self.forward_problem.forward_operator
         least_squares_operator = self.least_squares_operator(
             damping,
-            solver=solver,
+            solver,
             preconditioner=preconditioner,
         )
         return least_squares_operator @ forward_operator

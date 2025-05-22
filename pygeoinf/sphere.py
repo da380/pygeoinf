@@ -10,10 +10,11 @@ import pyshtools as sh
 from pygeoinf.hilbert import (
     HilbertSpace,
     LinearOperator,
-    GaussianMeasure,
     EuclideanSpace,
     LinearForm,
 )
+
+from pygeoinf.gaussian_measure import GaussianMeasure
 
 
 class SHToolsHelper:
