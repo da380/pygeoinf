@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "pygeoinf"
 version = "0.1.4"
-description = "A package for solving inference and inverse problems, with a focus on geophysical applications"
+description = "A package for solving geophysical inference and inverse problems"
 authors = ["David Al-Attar and Dan Heathcote"]
 readme = "README.md"
 license = "MIT"
@@ -12,8 +12,22 @@ numpy = ">=1.26.0"
 scipy = ">=1.0.0"
 pyshtools = ">=4.0.0"
 matplotlib = ">=3.0.0"
-pytest = ">=8.0.0"
 pyqt6 = ">=6.0.0"
+
+
+[tool.poetry.group.tests]
+optional = true
+
+[tool.poetry.group.tests.dependencies]
+pytest = "^8.3.5"
+
+
+[tool.poetry.group.tutorials]
+optional = true
+
+[tool.poetry.group.tutorials.dependencies]
+jupyter = "^1.1.1"
+
 
 
 [build-system]

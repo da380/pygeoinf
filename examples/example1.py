@@ -42,9 +42,7 @@ least_squares_inversion = LinearLeastSquaresInversion(forward_problem)
 
 
 damping = 0.1
-B = least_squares_inversion.least_squares_operator(
-    damping, solver=CGSolver(rtol=1.0e-7)
-)
+B = least_squares_inversion.least_squares_operator(damping, CGSolver(rtol=1.0e-7))
 
 w = B(v)
 

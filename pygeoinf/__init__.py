@@ -15,6 +15,8 @@ from pygeoinf.hilbert import (
     LinearForm,
 )
 
+from pygeoinf.hilbert_check import HilbertSpaceChecks
+
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 from pygeoinf.direct_sum import (

@@ -1,19 +1,10 @@
-import numpy as np
-from pygeoinf.hilbert import EuclideanSpace, LinearOperator
-from pygeoinf.direct_sum import (
-    HilbertSpaceDirectSum,
-    BlockLinearOperator,
-    BlockDiagonalLinearOperator,
-)
-from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf import EuclideanSpace, HilbertSpaceChecks
 
 X = EuclideanSpace(2)
-Y = EuclideanSpace(3)
 
-mu = GaussianMeasure.from_standard_deviation(X, 1)
-nu = GaussianMeasure.from_standard_deviation(Y, 2)
-
-pi = GaussianMeasure.from_direct_sum([mu, nu])
+check = HilbertSpaceChecks(X)
 
 
-print(pi.samples(2))
+print(check.passed_checks())
+
+print(check.failed_checks())
