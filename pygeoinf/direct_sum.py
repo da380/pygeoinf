@@ -2,6 +2,7 @@
 Module for direct sums of Hilbert spaces and related constructions. 
 """
 
+from abc import ABC, abstractmethod, abstractproperty
 import numpy as np
 from pygeoinf.hilbert import HilbertSpace, LinearOperator, LinearForm
 
@@ -172,7 +173,49 @@ class HilbertSpaceDirectSum(HilbertSpace):
         return [x if j == i else space.zero for j, space in enumerate(self._spaces)]
 
 
-class BlockLinearOperator(LinearOperator):
+class BlockStructure(ABC):
+    """
+    Base class for block operators.
+    """
+
+    def __init__(self, row_dim, col_dim):
+        """
+        Args:
+
+            row_dim (int): Number of rows in block structure.
+            col_dim (int): Number of columns in row structure.
+        """
+        self._row_dim = row_dim
+        self._col_dim = col_dim
+
+    @property
+    def row_dim(self):
+        """
+        Returns the number of rows in block operator.
+        """
+        return self._row_dim
+
+    @property
+    def col_dim(self):
+        """
+        Returns the number of columns in block operator.
+        """
+        return self._col_dim
+
+    @abstractmethod
+    def block(self, i, j):
+        """
+        Return the ith block
+        """
+        pass
+
+    def _check_block_indices(self, i, j):
+        # Check block indices are in range.
+        assert 0 <= i < self.row_dim
+        assert 0 <= j < self.col_dim
+
+
+class BlockLinearOperator(LinearOperator, BlockStructure):
     """
     Class for linear operators acting between direct sums of Hilbert spaces that are defined
     in a blockwise manner.
@@ -198,26 +241,16 @@ class BlockLinearOperator(LinearOperator):
         self._domains = domains
         self._codomains = codomains
         self._blocks = blocks
-        self._row_dim = len(blocks)
-        self._col_dim = len(blocks[0])
+        row_dim = len(blocks)
+        col_dim = len(blocks[0])
 
         super().__init__(
-            domain, codomain, self.__mapping, adjoint_mapping=self.__adjoint_mapping
+            domain,
+            codomain,
+            self.__mapping,
+            adjoint_mapping=self.__adjoint_mapping,
         )
-
-    @property
-    def row_dim(self):
-        """
-        Returns the number of rows in block operator.
-        """
-        return self._row_dim
-
-    @property
-    def col_dim(self):
-        """
-        Returns the number of columns in block operator.
-        """
-        return self._col_dim
+        BlockStructure.__init__(self, row_dim, col_dim)
 
     def block(self, i, j):
         """
@@ -250,7 +283,7 @@ class BlockLinearOperator(LinearOperator):
         return xs
 
 
-class BlockDiagonalLinearOperator(LinearOperator):
+class BlockDiagonalLinearOperator(LinearOperator, BlockStructure):
     """
     Class for linear operators acting between direct sums of Hilbert spaces that are defined
     in a blockwise diagonal manner.
@@ -276,19 +309,9 @@ class BlockDiagonalLinearOperator(LinearOperator):
 
         super().__init__(domain, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
-    @property
-    def row_dim(self):
-        """
-        Returns the number of rows in block operator.
-        """
-        return len(self._operators)
-
-    @property
-    def col_dim(self):
-        """
-        Returns the number of columns in block operator.
-        """
-        return self.row_dim
+        row_dim = len(self._operators)
+        col_dim = row_dim
+        BlockStructure.__init__(self, row_dim, col_dim)
 
     def block(self, i, j):
         """

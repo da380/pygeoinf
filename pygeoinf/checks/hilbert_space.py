@@ -61,15 +61,20 @@ class HilbertSpaceChecks:
         ]
         return [check for value, check in results_and_checks if not value]
 
-    def all_checks_passed(self):
+    def all_checks_passed(self, /, *, trials=1):
         """
-        True is all tests have passed.
+        True if all tests have passed. By default one random trial
+        of the tests is performed. Optionally, multiple random trials
+        can be run by setting the trials variable > 1.
         """
-        return len(self.failed_checks()) == 0
+        okay = True
+        for _ in range(trials):
+            okay = okay and len(self.failed_checks()) == 0
+        return okay
 
     def check_norm_non_negativity(self):
         """
-        True is the norm returns non-negative values.
+        True if the norm returns non-negative values.
         """
         x = self.space.random()
         return self.space.norm(x) >= 0

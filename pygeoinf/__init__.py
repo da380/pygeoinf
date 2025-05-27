@@ -15,12 +15,11 @@ from pygeoinf.hilbert import (
     LinearForm,
 )
 
-from pygeoinf.hilbert_check import HilbertSpaceChecks
-
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 from pygeoinf.direct_sum import (
     HilbertSpaceDirectSum,
+    BlockStructure,
     BlockLinearOperator,
     BlockDiagonalLinearOperator,
 )
@@ -42,5 +41,6 @@ from pygeoinf.forward_problem import ForwardProblem, LinearForwardProblem
 
 from pygeoinf.optimisation import LinearLeastSquaresInversion
 
-
 from pygeoinf.bayesian import LinearBayesianInversion, LinearBayesianInference
+
+from pygeoinf.checks.hilbert_space import HilbertSpaceChecks
