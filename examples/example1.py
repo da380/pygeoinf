@@ -7,6 +7,8 @@ from pygeoinf import (
     LinearForwardProblem,
     LinearLeastSquaresInversion,
     CGSolver,
+    CholeskySolver,
+    CGMatrixSolver,
 )
 
 from pygeoinf.geometry.sphere import Sobolev
@@ -43,7 +45,6 @@ least_squares_inversion = LinearLeastSquaresInversion(forward_problem)
 
 damping = 0.1
 B = least_squares_inversion.least_squares_operator(damping, CGSolver(rtol=1.0e-7))
-
 w = B(v)
 
 

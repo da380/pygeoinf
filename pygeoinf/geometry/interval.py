@@ -197,7 +197,6 @@ class Sobolev(HilbertSpace):
         codomain = EuclideanSpace(dim)
 
         matrix = np.zeros((self.dim, dim))
-
         for i, x in enumerate(points):
             up = self.dirac_measure(x)
             matrix[:, i] = up.components
