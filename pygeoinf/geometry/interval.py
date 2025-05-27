@@ -7,7 +7,7 @@ import math
 import numpy as np
 from scipy.fft import rfft, irfft
 from scipy.sparse import diags
-from pygeoinf.hilbert import HilbertSpace, LinearForm
+from pygeoinf.hilbert import HilbertSpace, LinearForm, LinearOperator
 
 
 class Sobolev(HilbertSpace):
@@ -140,6 +140,13 @@ class Sobolev(HilbertSpace):
         """
         return self._sample_point_spacing
 
+    @property
+    def exponent(self):
+        """
+        Return the Sobolev exponent.
+        """
+        return self._exponent
+
     def sample_points(self):
         """
         Returns a numpy array of the sample points.
@@ -149,7 +156,7 @@ class Sobolev(HilbertSpace):
                 self.left_boundary_point + i * self._sample_point_spacing
                 for i in range(self.number_of_sample_points)
             ],
-            np.double,
+            float,
         )
 
     def project_function(self, f):
@@ -157,7 +164,59 @@ class Sobolev(HilbertSpace):
         Returns an element of the space formed by projecting a given function
         on the sample points.
         """
-        return np.fromiter([f(x) for x in self.sample_points()], np.double)
+        return np.fromiter([f(x) for x in self.sample_points()], float)
+
+    def dirac_measure(self, x):
+        """
+        Return the Dirac measure at the point x as a linear form on the space.
+
+        ValueError is raised if Sobolev exponent is not > 0.5
+        """
+        if self._exponent <= 0.5:
+            raise ValueError("Dirac measure not well-defined")
+
+        coeff = np.zeros(self.number_of_sample_points // 2 + 1, dtype=complex)
+        fac = np.exp(-2 * np.pi * 1j * x / self.interval_width)
+        coeff[0] = 1
+        for k in range(1, coeff.size):
+            coeff[k] = coeff[k - 1] * fac
+        cp = irfft(coeff, self.number_of_sample_points)
+        return LinearForm(self, components=cp)
+
+    def dirac_representation(self, x):
+        """
+        Returns the represenation of the Dirac measure at the given point.
+
+        ValueError is raised if Sobolev exponent is not > 0.5
+        """
+        return self.from_dual(self.dirac_measure(x))
+
+    def derivative_operator(self):
+        """
+        Returns as a LinearOperator the derative mapping from the space onto
+        one whose Sobolev index is one lower.
+        """
+
+        codomain = Sobolev(
+            self.left_boundary_point,
+            self.right_boundary_point,
+            self.sample_point_spacing,
+            self.exponent - 1,
+            self._scale,
+        )
+
+        fac = 2 * np.pi * 1j / self.interval_width
+        values = np.fromiter(
+            [fac * i for i in range(self.number_of_sample_points // 2 + 1)],
+            dtype=complex,
+        )
+        matrix = diags([values], [0])
+
+        def mapping(u):
+            coeff = matrix @ rfft(u)
+            return irfft(coeff, n=self.number_of_sample_points)
+
+        return LinearOperator(self, codomain, mapping)
 
     def plot(self, u):
         """

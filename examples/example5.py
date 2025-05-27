@@ -1,19 +1,22 @@
 import numpy as np
+from numpy import pi
 import matplotlib.pyplot as plt
 from pygeoinf.geometry.interval import Sobolev
 from pygeoinf import LinearForm
 
-X = Sobolev(0, np.pi, 0.01, 2, 0.1)
+X = Sobolev(0, pi, 0.001, 2, 0.05)
 
 
-u = X.project_function(np.sin)
-v = X.project_function(lambda x: 1)
-
-up = X.to_dual(u)
+f = lambda x: np.exp(-10 * (x - pi / 2) ** 2)
 
 
-print(X.inner_product(u, v))
-print(up(v))
+u = X.project_function(f)
+X.plot(u)
 
-w = X.from_dual(up)
-print(X.norm(u - w))
+A = X.derivative_operator()
+
+v = A(u)
+
+X.plot(v)
+
+plt.show()
