@@ -5,9 +5,10 @@ Module for Lebesgue and Sobolev spaces on the real line based around FFT methods
 import matplotlib.pyplot as plt
 import math
 import numpy as np
+from scipy.stats import uniform
 from scipy.fft import rfft, irfft
 from scipy.sparse import diags
-from pygeoinf.hilbert import HilbertSpace, LinearForm, LinearOperator
+from pygeoinf.hilbert import HilbertSpace, LinearForm, LinearOperator, EuclideanSpace
 
 
 class Sobolev(HilbertSpace):
@@ -30,7 +31,7 @@ class Sobolev(HilbertSpace):
         Args:
             left_boundary_point (float): left end of the interval.
             right_boundary_point (float): right end of the interval.
-            sample_point_spacing (float): upper bound on spacing of sample points.
+            sample_point_spacing (float): the spacing of the sample points.
             exponent (float): Sobolev exponent.
             scale (float): Sobolev scale.
             power_of_two (bool): Make the number of sample points a power of two. Default is false.
@@ -54,12 +55,9 @@ class Sobolev(HilbertSpace):
             self._left_boundary_point = right_boundary_point
             self._right_boundary_point = left_boundary_point
 
-        self._number_of_sample_points = (
-            math.ceil(
-                (self._right_boundary_point - self._left_boundary_point)
-                / sample_point_spacing
-            )
-            + 1
+        self._number_of_sample_points = math.ceil(
+            (self._right_boundary_point - self._left_boundary_point)
+            / sample_point_spacing
         )
 
         if power_of_two:
@@ -76,18 +74,13 @@ class Sobolev(HilbertSpace):
         # Set up the metric tensor
         values = np.zeros(self.number_of_sample_points // 2 + 1)
         values[0] = 1
-        outer_fac = (
-            2
-            * np.pi
-            * self._scale
-            / (self.right_boundary_point - self.left_boundary_point)
-        )
+        outer_fac = 2 * np.pi * self._scale / self.interval_width
         for k in range(1, values.size):
             values[k] = 2 * (1 + (outer_fac * k) ** 2) ** (self._exponent)
         values *= self.sample_point_spacing / self.number_of_sample_points
         self._metric = diags([values], [0])
 
-        # Set up the matrix needed in the inverse Riesz mapping and its inverse.
+        # Set up the matrix needed in the Riesz mapping and its inverse.
         values = np.zeros(self.number_of_sample_points // 2 + 1)
         for k in range(values.size):
             values[k] = (1 + (outer_fac * k) ** 2) ** (self._exponent)
@@ -191,6 +184,26 @@ class Sobolev(HilbertSpace):
         """
         return self.from_dual(self.dirac_measure(x))
 
+    def point_evaluation_operator(self, points):
+        """
+        Returns as a linear opearator the mapping from the space
+        to a specified set of point values.
+
+        Args:
+            points([float]): A list of the points.
+        """
+
+        dim = len(points)
+        codomain = EuclideanSpace(dim)
+
+        matrix = np.zeros((self.dim, dim))
+
+        for i, x in enumerate(points):
+            up = self.dirac_measure(x)
+            matrix[:, i] = up.components
+
+        return LinearOperator.from_matrix(self, codomain, matrix.T)
+
     def derivative_operator(self):
         """
         Returns as a LinearOperator the derative mapping from the space onto
@@ -216,7 +229,42 @@ class Sobolev(HilbertSpace):
             coeff = matrix @ rfft(u)
             return irfft(coeff, n=self.number_of_sample_points)
 
-        return LinearOperator(self, codomain, mapping)
+        def adjoint_mapping(u):
+            return -1 * mapping(u)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def laplacian_operator(self):
+        """
+        Returns the Laplacian as a LinearOperator between Sobolev spaces.
+        """
+
+        codomain = Sobolev(
+            self.left_boundary_point,
+            self.right_boundary_point,
+            self.sample_point_spacing,
+            self.exponent - 2,
+            self._scale,
+        )
+
+        fac = -((2 * np.pi / self.interval_width) ** 2)
+        values = np.fromiter(
+            [fac * i for i in range(self.number_of_sample_points // 2 + 1)],
+            dtype=complex,
+        )
+        matrix = diags([values], [0])
+
+        def mapping(u):
+            coeff = matrix @ rfft(u)
+            return irfft(coeff, n=self.number_of_sample_points)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=mapping)
+
+    def random_points(self, n):
+        """
+        Returns a list of n random points in the interval drawn from  uniform distribution.
+        """
+        return np.random.uniform(self.left_boundary_point, self.right_boundary_point, n)
 
     def plot(self, u):
         """
@@ -248,4 +296,4 @@ class Sobolev(HilbertSpace):
         # local implementation of inverse Riesz mapping.
         coef = self._inverse_riesz_matrix @ rfft(x)
         cp = irfft(coef, n=self.number_of_sample_points)
-        return LinearForm(self, components=cp)
+        return self.dual.from_components(cp)
