@@ -9,7 +9,7 @@ from pygeoinf import (
     CGSolver,
 )
 
-from pygeoinf.sphere import Sobolev
+from pygeoinf.geometry.sphere import Sobolev
 
 
 # Set the model space.
