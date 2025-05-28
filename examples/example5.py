@@ -1,39 +1,58 @@
 import numpy as np
-from numpy import pi
 import matplotlib.pyplot as plt
-from pygeoinf.geometry.interval import Sobolev
+from pygeoinf.homogeneous_space.line import Sobolev
 from pygeoinf import (
-    LinearOperator,
-    LinearForm,
-    LinearForwardProblem,
-    LinearLeastSquaresInversion,
     GaussianMeasure,
+    LinearForwardProblem,
+    LinearBayesianInversion,
     CholeskySolver,
-    GMRESMatrixSolver,
-    CGSolver,
-    CGMatrixSolver,
-    LUSolver,
+    sample_variance,
 )
 
+# Set the model space
+X = Sobolev(0, 2, 0.001, 2, 0.01)
 
-X = Sobolev(0, pi, 0.001, 2, 0.05)
-u = X.project_function(lambda x: (x - pi / 2) * np.exp(-5 * (x - pi / 2) ** 2))
+# Set the model prior
+mu = X.sobolev_measure(2, 0.01)
 
-x = X.random_points(20)
+# Generate model and plot
+u = mu.sample()
+X.plot(u, "k--")
+
+# Set up the forward operator
+n = 30
+x = X.random_points(n)
 A = X.point_evaluation_operator(x)
-Y = A.codomain
 
-nu = GaussianMeasure.from_standard_deviation(Y, 0.001)
+# Set up the data error measure
+sigma = 0.2
+nu = GaussianMeasure.from_standard_deviation(A.codomain, sigma)
 
+# Set up the forward problem
 forward_problem = LinearForwardProblem(A, nu)
 
+# Generate and plot synthetic data.
 v = forward_problem.data_measure(u).sample()
+plt.errorbar(x, v, sigma, fmt="ko")
 
-inversion = LinearLeastSquaresInversion(forward_problem)
+# Set up the inverse problem
+inversion = LinearBayesianInversion(forward_problem, mu)
 
-w = inversion.least_squares_operator(0.1, CGSolver(rtol=1.0e-12))(v)
+# Get the posterior model distribtution.
+pi = inversion.model_posterior_measure(v, CholeskySolver()).low_rank_approximation(50)
 
-plt.plot(x, v, ".")
-X.plot(u)
-X.plot(w)
+
+uvar = sample_variance(pi, 20)
+ustd = np.sqrt(uvar)
+
+umax = np.max(np.abs(u))
+
+# Plot the posterior expectation.
+ubar = pi.expectation
+X.plot(ubar, "b")
+plt.fill_between(X.sample_points(), ubar - ustd, ubar + ustd, alpha=0.2)
+plt.ylim([-1.1 * umax, 1.1 * umax])
+plt.grid()
+
+
 plt.show()

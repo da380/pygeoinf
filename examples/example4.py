@@ -8,8 +8,9 @@ from pygeoinf import (
     CholeskySolver,
     GaussianMeasure,
     LinearForwardProblem,
+    sample_variance,
 )
-from pygeoinf.sphere import Sobolev
+from pygeoinf.homogeneous_space.sphere import Sobolev
 
 
 # Set the model space.
@@ -49,7 +50,11 @@ pi = inverse_problem.model_posterior_measure(v, solver).low_rank_approximation(
 )
 
 ubar = pi.expectation
-ustd = X.sample_std(pi.samples(100), expectation=ubar)
+# ustd = X.sample_std(pi.samples(100), expectation=ubar)
+
+uvar = sample_variance(pi, 20)
+ustd = uvar.copy()
+ustd.data = np.sqrt(uvar.data)
 
 
 umax = np.max(np.abs(u.data))

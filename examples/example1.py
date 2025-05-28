@@ -11,7 +11,7 @@ from pygeoinf import (
     CGMatrixSolver,
 )
 
-from pygeoinf.geometry.sphere import Sobolev
+from pygeoinf.homogeneous_space.sphere import Sobolev
 
 
 # Set the model space.

@@ -367,3 +367,27 @@ class GaussianMeasure:
             expectation=self.domain.subtract(self.expectation, other.expectation),
             sample=lambda: self.domain.subtract(self.sample(), other.sample()),
         )
+
+
+def sample_variance(measure, n):
+    """
+    Returns a sample-based estimate for the the pointwise variance
+    for Gaussian measures whose elements can be multiplied. The measure
+    must have a sample method defined.
+    """
+
+    if not measure.sample_set:
+        raise ValueError("Measure does not have a sample method")
+
+    if n < 1:
+        raise ValueError("Number of samples must be greater than 1")
+
+    samples = measure.samples(n)
+    expectation = measure.expectation
+    variance = measure.domain.zero
+    for sample in samples:
+        diff = sample - expectation
+        prod = diff * diff
+        variance += (1 / n) * prod
+
+    return variance

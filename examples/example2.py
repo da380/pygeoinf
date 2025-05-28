@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from pygeoinf.geometry.sphere import Sobolev, LowPassFilter
+from pygeoinf.homogeneous_space.sphere import Sobolev, LowPassFilter
 
 
 X = Sobolev(64, 2, 0.1)
