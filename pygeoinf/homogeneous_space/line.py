@@ -188,6 +188,15 @@ class Sobolev(HilbertSpace):
         """
         plt.plot(self.sample_points(), u, *args, **kwargs)
 
+    def plot_error_bounds(self, ubar, ustd, *args, **kwargs):
+        """
+        Make a plot of an element of the space bounded above and below by a standard
+        deviation curve.
+        """
+        plt.fill_between(
+            self.sample_points(), ubar - ustd, ubar + ustd, *args, **kwargs
+        )
+
     def invariant_automorphism(self, f):
         """
         Returns a linear operator on the space of the form f(\Delta) with \Delta the Laplacian.
@@ -266,11 +275,15 @@ class Sobolev(HilbertSpace):
             self, EuclideanSpace(dim), matrix, galerkin=True
         )
 
-    def random_points(self, n):
+    def random_points(self, n, /, *, left=None, right=None):
         """
         Returns n random points in the line drawn from a uniform distribution.
         """
-        return np.random.uniform(self.left_boundary_point, self.right_boundary_point, n)
+        if left is None:
+            left = self.left_boundary_point
+        if right is None:
+            right = self.right_boundary_point
+        return np.random.uniform(left, right, n)
 
     # ================================================================#
     #                           Private methods                      #
@@ -331,3 +344,27 @@ class Sobolev(HilbertSpace):
         cp = self.dual.to_components(xp)
         c = self._inverse_metric @ cp
         return self.from_components(c)
+
+
+class Lebesgue(Sobolev):
+    """
+    L2 space on a line. Instance of the Sobolev spcae class when the exponent vanishes.
+    """
+
+    def __init__(
+        self,
+        left_boundary_point,
+        right_boundary_point,
+        sample_point_spacing,
+        /,
+        *,
+        power_of_two=False,
+    ):
+        super().__init__(
+            left_boundary_point,
+            right_boundary_point,
+            sample_point_spacing,
+            0,
+            0,
+            power_of_two=power_of_two,
+        )

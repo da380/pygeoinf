@@ -9,6 +9,7 @@ from pygeoinf import (
     sample_variance,
 )
 
+
 # Set the model space
 X = Sobolev(0, 2, 0.001, 2, 0.01)
 
@@ -17,15 +18,15 @@ mu = X.sobolev_measure(2, 0.01)
 
 # Generate model and plot
 u = mu.sample()
-X.plot(u, "k--")
+X.plot(u, "k")
 
 # Set up the forward operator
-n = 30
+n = 50
 x = X.random_points(n)
 A = X.point_evaluation_operator(x)
 
 # Set up the data error measure
-sigma = 0.2
+sigma = 0.01
 nu = GaussianMeasure.from_standard_deviation(A.codomain, sigma)
 
 # Set up the forward problem
@@ -33,25 +34,29 @@ forward_problem = LinearForwardProblem(A, nu)
 
 # Generate and plot synthetic data.
 v = forward_problem.data_measure(u).sample()
-plt.errorbar(x, v, sigma, fmt="ko")
+plt.errorbar(x, v, 2 * sigma, fmt="ko", capsize=2)
 
 # Set up the inverse problem
 inversion = LinearBayesianInversion(forward_problem, mu)
 
 # Get the posterior model distribtution.
-pi = inversion.model_posterior_measure(v, CholeskySolver()).low_rank_approximation(50)
+pi = inversion.model_posterior_measure(v, CholeskySolver())
 
 
-uvar = sample_variance(pi, 20)
+# Estimate the pointwise standard deviation.
+uvar = sample_variance(pi.low_rank_approximation(20, power=2), 100)
 ustd = np.sqrt(uvar)
 
-umax = np.max(np.abs(u))
 
 # Plot the posterior expectation.
 ubar = pi.expectation
 X.plot(ubar, "b")
-plt.fill_between(X.sample_points(), ubar - ustd, ubar + ustd, alpha=0.2)
-plt.ylim([-1.1 * umax, 1.1 * umax])
+X.plot_error_bounds(ubar, 2 * ustd, alpha=0.2, color="b")
+
+
+umax = np.max(np.abs(ubar + 2 * ustd))
+plt.ylim([-1.3 * umax, 1.3 * umax])
+plt.xlim([0, 2])
 plt.grid()
 
 

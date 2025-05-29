@@ -15,11 +15,11 @@ from pygeoinf.homogeneous_space.sphere import Sobolev
 
 
 # Set the model space.
-X = Sobolev(128, 2.0, 0.4)
+X = Sobolev(128, 2.0, 0.2)
 
 
 # Set up the prior distribution.
-mu = X.sobolev_gaussian_measure(3.0, 0.1, 1)
+mu = X.sobolev_gaussian_measure(3.0, 0.2, 1)
 
 
 # Set up the forward operator.
