@@ -3,7 +3,6 @@ Module for classes related to the solution of inverse problems via optimisation 
 """
 
 from scipy.stats import chi2
-from scipy.optimize import root_scalar
 from pygeoinf.hilbert import Operator
 from pygeoinf.inversion import Inversion
 from pygeoinf.linear_solvers import IterativeLinearSolver
@@ -261,10 +260,12 @@ class LinearMinimumNormInversion(Inversion):
                 damping_upper = damping if chi_squared > critical_value else None
 
                 if damping_lower is None:
+                    it = 0
                     while chi_squared > critical_value:
+                        it += 1
                         damping /= 2
                         chi_squared, _ = least_squares_mapping(damping, data)
-                        if chi_squared < minimum_damping:
+                        if chi_squared < minimum_damping or it == maxiter:
                             raise RuntimeError("Crtical value cannot be obtained")
                     damping_lower = damping
 

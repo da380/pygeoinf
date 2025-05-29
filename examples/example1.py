@@ -16,23 +16,22 @@ from pygeoinf.homogeneous_space.sphere import Sobolev
 
 
 # Set the model space.
-X = Sobolev(64, 2.0, 0.2)
-
+X = Sobolev(64, 2.0, 0.1)
 
 # Set up the prior distribution.
-mu = X.sobolev_gaussian_measure(3.0, 0.2, 1)
+mu = X.sobolev_gaussian_measure(2.0, 0.1, 1)
 
 
 # Set up the forward operator.
-n = 20
+n = 50
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
 Y = A.codomain
 
 # Set the error distribution
-sigma = 0.1
-nu = GaussianMeasure.from_standard_deviation(Y, sigma)
+sigma = 0.0
+nu = GaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
 
 
 # Set up forward problem.
@@ -48,7 +47,7 @@ u, v = forward_problem.synthetic_model_and_data(mu)
 # w = B(v)
 
 inversion = LinearMinimumNormInversion(forward_problem)
-B = inversion.minimum_norm_operator(CGSolver())
+B = inversion.minimum_norm_operator(CGSolver() if sigma > 0 else CholeskySolver())
 w = B(v)
 
 
