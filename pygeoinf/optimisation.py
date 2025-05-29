@@ -2,10 +2,14 @@
 Module for classes related to the solution of inverse problems via optimisation methods. 
 """
 
+from scipy.stats import chi2
+from scipy.optimize import root_scalar
+from pygeoinf.hilbert import Operator
+from pygeoinf.inversion import Inversion
 from pygeoinf.linear_solvers import IterativeLinearSolver
 
 
-class LinearLeastSquaresInversion:
+class LinearLeastSquaresInversion(Inversion):
     """
     Class for the solution of regularised linear least-squares problems within a Hilbert space.
     """
@@ -17,21 +21,8 @@ class LinearLeastSquaresInversion:
                 a data errror measure, then this measure must have its inverse covariance
                 operator set.
         """
-
-        if forward_problem.data_error_measure_set:
-            if not forward_problem.data_error_measure.inverse_covariance_set:
-                raise NotImplementedError(
-                    "Inversion class not avaialble as data error measure \
-                     does not have an inverse covariance set"
-                )
-        self._forward_problem = forward_problem
-
-    @property
-    def forward_problem(self):
-        """
-        Returns the forward problem.
-        """
-        return self._forward_problem
+        super().__init__(forward_problem)
+        self.assert_inverse_data_covariance()
 
     def normal_operator(self, damping):
         """
@@ -174,35 +165,34 @@ class LinearLeastSquaresInversion:
         return least_squares_operator @ forward_operator
 
 
-class LinearMinimumNormInversion:
+class LinearMinimumNormInversion(Inversion):
     """
     Class for the solution of linear minimum norm problems in a Hilbert space.
     """
 
-    def __init__(self, forward_problem):
+    def __init__(self, forward_problem, /, *, significance_level=0.05):
         """
         Args:
             forward_problem (LinearForwardProblem): The forward problem. If the problem has
                 a data errror measure, then this measure must have its inverse covariance
                 operator set.
+            significance_level (float): Significance level used to determine the critical chi
+                squared valued. Only used if a data error measure is present.
         """
+        super().__init__(forward_problem)
+        self.assert_inverse_data_covariance()
 
-        if forward_problem.data_error_measure_set:
-            if not forward_problem.data_error_measure.inverse_covariance_set:
-                raise NotImplementedError(
-                    "Inversion class not avaialble as data error measure \
-                     does not have an inverse covariance set"
-                )
-        self._forward_problem = forward_problem
-
-    @property
-    def forward_problem(self):
-        """
-        Returns the forward problem.
-        """
-        return self._forward_problem
-
-    def minimum_norm_operator(self, solver):
+    def minimum_norm_operator(
+        self,
+        solver,
+        /,
+        *,
+        significance_level=0.05,
+        minimum_damping=0,
+        maxiter=100,
+        rtol=1.0e-6,
+        atol=0,
+    ):
         """
         Return the operator that maps data to the minimum norm solution.
         In the case of error-free data this operator is linear, but once
@@ -210,10 +200,75 @@ class LinearMinimumNormInversion:
 
         Args:
             solver (LinearSolver): Solver for solution of the necessary linear systems.
+            significance_level (float): Significance level used to set the crtical value
+                for chi-squared. Must lie in the interval (0,1). Default is 0.05 which
+                corresponds to 95% acceptance.
+            minimum_damping (float): Minimum value of the damping when looking for a
+                lower bound on the damping. Default is 0.
+            maxiter (int): Maximum number of iterations within the bracketing method.
+                Default is 100.
+            rtol (float): Relative tolerance within the bracketing step. Default is 1e-6
+            atyol (float): Absolute tolerance within the bracketing step. Default is 0.
         """
 
         if self.forward_problem.data_error_measure_set:
-            raise NotImplementedError("Case with data errors yet to be written!")
+
+            # get the critical value.
+            critical_value = chi2.ppf(1 - significance_level, self.data_space_dim)
+
+            # Set up the least squares problem
+            least_squares_inversion = LinearLeastSquaresInversion(self.forward_problem)
+
+            def least_squares_mapping(damping, data):
+                least_squares_operator = least_squares_inversion.least_squares_operator(
+                    damping, solver
+                )
+                model = least_squares_operator(data)
+                chi_squared = self.forward_problem.chi_squared(model, data)
+                return chi_squared, model
+
+            def mapping(data):
+
+                # Look for lower and upper bounds on damping.
+                damping = 1
+                chi_squared, _ = least_squares_mapping(damping, data)
+
+                damping_lower = damping if chi_squared <= critical_value else None
+                damping_upper = damping if chi_squared > critical_value else None
+
+                if damping_lower is None:
+                    while chi_squared > critical_value:
+                        damping /= 2
+                        chi_squared, _ = least_squares_mapping(damping, data)
+                        if chi_squared < minimum_damping:
+                            raise RuntimeError("Crtical value cannot be obtained")
+                    damping_lower = damping
+
+                if damping_upper is None:
+                    while chi_squared < critical_value:
+                        damping *= 2
+                        chi_squared, _ = least_squares_mapping(damping, data)
+                    damping_upper = damping
+
+                # Now bracket to find the critical damping.
+                for _ in range(maxiter):
+
+                    damping = 0.5 * (damping_lower + damping_upper)
+                    chi_squared, model = least_squares_mapping(damping, data)
+
+                    if chi_squared < critical_value:
+                        damping_lower = damping
+                    else:
+                        damping_upper = damping
+
+                    if damping_upper - damping_lower < atol + rtol * (
+                        damping_lower + damping_upper
+                    ):
+                        return model
+
+                raise RuntimeError("Bracketing has failed")
+
+            return Operator(self.model_space, self.data_space, mapping)
 
         else:
             forward_operator = self.forward_problem.forward_operator

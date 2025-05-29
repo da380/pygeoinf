@@ -24,15 +24,21 @@ mu = X.sobolev_gaussian_measure(3.0, 0.2, 1)
 
 
 # Set up the forward operator.
-n = 25
+n = 100
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
+Y = A.codomain
+
+# Set the error distribution
+sigma = 0.1
+nu = GaussianMeasure.from_standard_deviation(Y, sigma)
 
 
 # Set up forward problem.
-forward_problem = LinearForwardProblem(A)
+forward_problem = LinearForwardProblem(A, nu)
 
+# Make synthetic data
 u, v = forward_problem.synthetic_model_and_data(mu)
 
 
@@ -41,9 +47,7 @@ u, v = forward_problem.synthetic_model_and_data(mu)
 # B = least_squares_inversion.least_squares_operator(damping, CGSolver(rtol=1.0e-7))
 
 inversion = LinearMinimumNormInversion(forward_problem)
-
-
-B = inversion.minimum_norm_operator(CholeskySolver())
+B = inversion.minimum_norm_operator(CGSolver())
 w = B(v)
 
 
