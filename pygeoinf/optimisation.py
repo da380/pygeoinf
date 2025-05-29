@@ -187,6 +187,7 @@ class LinearMinimumNormInversion(Inversion):
         solver,
         /,
         *,
+        preconditioner=None,
         significance_level=0.05,
         minimum_damping=0,
         maxiter=100,
@@ -200,6 +201,7 @@ class LinearMinimumNormInversion(Inversion):
 
         Args:
             solver (LinearSolver): Solver for solution of the necessary linear systems.
+            preconditioner (LinearOperator): Preconditioner for use with iterative solvers.
             significance_level (float): Significance level used to set the crtical value
                 for chi-squared. Must lie in the interval (0,1). Default is 0.05 which
                 corresponds to 95% acceptance.
@@ -219,11 +221,33 @@ class LinearMinimumNormInversion(Inversion):
             # Set up the least squares problem
             least_squares_inversion = LinearLeastSquaresInversion(self.forward_problem)
 
-            def least_squares_mapping(damping, data):
-                least_squares_operator = least_squares_inversion.least_squares_operator(
-                    damping, solver
+            def least_squares_mapping(damping, data, model0=None):
+
+                forward_operator = self.forward_problem.forward_operator
+                normal_operator = least_squares_inversion.normal_operator(damping)
+                inverse_data_covariance = (
+                    self.forward_problem.data_error_measure.inverse_covariance
                 )
-                model = least_squares_operator(data)
+
+                if isinstance(solver, IterativeLinearSolver):
+                    model_in = (forward_operator.adjoint @ inverse_data_covariance)(
+                        data
+                    )
+                    model = solver.solve_linear_system(
+                        normal_operator,
+                        preconditioner,
+                        model_in,
+                        x0=model0,
+                    )
+
+                else:
+                    inverse_normal_operator = solver(normal_operator)
+                    model = (
+                        inverse_normal_operator
+                        @ forward_operator.adjoint
+                        @ inverse_data_covariance
+                    )(data)
+
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 return chi_squared, model
 
@@ -251,10 +275,12 @@ class LinearMinimumNormInversion(Inversion):
                     damping_upper = damping
 
                 # Now bracket to find the critical damping.
+                model0 = None
                 for _ in range(maxiter):
 
                     damping = 0.5 * (damping_lower + damping_upper)
-                    chi_squared, model = least_squares_mapping(damping, data)
+                    chi_squared, model = least_squares_mapping(damping, data, model0)
+                    model0 = self.model_space.copy(model)
 
                     if chi_squared < critical_value:
                         damping_lower = damping

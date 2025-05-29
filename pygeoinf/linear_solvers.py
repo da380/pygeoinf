@@ -2,7 +2,7 @@
 Module for linear solvers. 
 """
 
-from abc import ABC
+from abc import ABC, abstractmethod
 import numpy as np
 
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
@@ -110,6 +110,29 @@ class IterativeLinearSolver(LinearSolver):
     Abstract base class for direct linear solvers.
     """
 
+    @abstractmethod
+    def solve_linear_system(self, operator, preconditioner, y, x0):
+        """
+        Returns the solution of the linear system.
+        """
+
+    def solve_adjoint_linear_system(self, operator, preconditioner, x, y0):
+        """
+        Returns the solution of the adjoint linear system.
+        """
+        return self.solve_linear_system(operator.adjoint, preconditioner, x, y0)
+
+    def __call__(self, operator, /, *, preconditioner=None):
+        assert operator.is_automorphism
+        return LinearOperator(
+            operator.codomain,
+            operator.domain,
+            lambda y: self.solve_linear_system(operator, preconditioner, y, None),
+            adjoint_mapping=lambda x: self.solve_adjoint_linear_system(
+                operator, preconditioner, x, None
+            ),
+        )
+
 
 class CGMatrixSolver(IterativeLinearSolver):
     """
@@ -139,15 +162,8 @@ class CGMatrixSolver(IterativeLinearSolver):
         self._maxiter = maxiter
         self._callback = callback
 
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
+    def solve_linear_system(self, operator, preconditioner, y, x0):
 
-        Args:
-            operator (LinearOperator): The operator to invert.
-
-        """
-        assert operator.is_automorphism
         domain = operator.codomain
         matrix = operator.matrix(galerkin=self._galerkin)
 
@@ -156,24 +172,24 @@ class CGMatrixSolver(IterativeLinearSolver):
         else:
             matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = cg(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                xp = domain.dual.from_components(cxp)
-                return domain.from_dual(xp)
-            else:
-                return domain.from_components(cxp)
+        cx0 = None if x0 is None else domain.to_components(x0)
+        cy = domain.to_components(y)
 
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
+        cxp = cg(
+            matrix,
+            cy,
+            x0=cx0,
+            rtol=self._rtol,
+            atol=self._atol,
+            maxiter=self._maxiter,
+            M=matrix_preconditioner,
+            callback=self._callback,
+        )[0]
+        if self._galerkin:
+            xp = domain.dual.from_components(cxp)
+            return domain.from_dual(xp)
+        else:
+            return domain.from_components(cxp)
 
 
 class BICGMatrixSolver(IterativeLinearSolver):
@@ -200,14 +216,8 @@ class BICGMatrixSolver(IterativeLinearSolver):
         self._maxiter = maxiter
         self._callback = callback
 
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
+    def solve_linear_system(self, operator, preconditioner, y, x0):
 
-        Args:
-            operator (LinearOperator): The operator to invert.
-        """
-        assert operator.is_square
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
@@ -217,41 +227,24 @@ class BICGMatrixSolver(IterativeLinearSolver):
         else:
             matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = bicg(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                xp = codomain.dual.from_components(cxp)
-                return codomain.from_dual(xp)
-            else:
-                return codomain.from_components(cxp)
+        cx0 = None if x0 is None else domain.to_components(x0)
+        cy = domain.to_components(y)
 
-        def adjoint_mapping(x):
-            cx = codomain.to_components(x)
-            cyp = bicg(
-                matrix.T,
-                cx,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                yp = domain.dual.from_components(cyp)
-                return domain.from_dual(yp)
-            else:
-                return domain.from_components(cyp)
-
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=adjoint_mapping)
+        cxp = bicg(
+            matrix,
+            cy,
+            x0=cx0,
+            rtol=self._rtol,
+            atol=self._atol,
+            maxiter=self._maxiter,
+            M=matrix_preconditioner,
+            callback=self._callback,
+        )[0]
+        if self._galerkin:
+            xp = codomain.dual.from_components(cxp)
+            return codomain.from_dual(xp)
+        else:
+            return codomain.from_components(cxp)
 
 
 class BICGStabMatrixSolver(IterativeLinearSolver):
@@ -278,14 +271,8 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
         self._maxiter = maxiter
         self._callback = callback
 
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
+    def solve_linear_system(self, operator, preconditioner, y, x0):
 
-        Args:
-            operator (LinearOperator): The operator to invert.
-        """
-        assert operator.is_square
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
@@ -295,41 +282,24 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
         else:
             matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = bicgstab(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                xp = codomain.dual.from_components(cxp)
-                return codomain.from_dual(xp)
-            else:
-                return codomain.from_components(cxp)
+        cx0 = None if x0 is None else domain.to_components(x0)
+        cy = domain.to_components(y)
 
-        def adjoint_mapping(x):
-            cx = codomain.to_components(x)
-            cyp = bicgstab(
-                matrix.T,
-                cx,
-                rtol=self._rtol,
-                atol=self._atol,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-            )[0]
-            if self._galerkin:
-                yp = domain.dual.from_components(cyp)
-                return domain.from_dual(yp)
-            else:
-                return domain.from_components(cyp)
-
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=adjoint_mapping)
+        cxp = bicgstab(
+            matrix,
+            cy,
+            x0=cx0,
+            rtol=self._rtol,
+            atol=self._atol,
+            maxiter=self._maxiter,
+            M=matrix_preconditioner,
+            callback=self._callback,
+        )[0]
+        if self._galerkin:
+            xp = codomain.dual.from_components(cxp)
+            return codomain.from_dual(xp)
+        else:
+            return codomain.from_components(cxp)
 
 
 class GMRESMatrixSolver(IterativeLinearSolver):
@@ -373,15 +343,8 @@ class GMRESMatrixSolver(IterativeLinearSolver):
         self._callback = callback
         self._callback_type = callback_type
 
-    def __call__(self, operator, /, *, preconditioner=None):
-        """
-        Returns the IterativeLinearOperator corresponding to the given operator.
+    def solve_linear_system(self, operator, preconditioner, y, x0):
 
-        Args:
-            operator (LinearOperator): The operator to invert.
-            galerkin (bool): True if the Galerkin matrix representation is used.
-        """
-        assert operator.is_square
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
@@ -391,45 +354,27 @@ class GMRESMatrixSolver(IterativeLinearSolver):
         else:
             matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
 
-        def mapping(y):
-            cy = domain.to_components(y)
-            cxp = gmres(
-                matrix,
-                cy,
-                rtol=self._rtol,
-                atol=self._atol,
-                restart=self._restart,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-                callback_type=self._callback_type,
-            )[0]
-            if self._galerkin:
-                xp = codomain.dual.from_components(cxp)
-                return codomain.from_dual(xp)
-            else:
-                return codomain.from_components(cxp)
+        cx0 = None if x0 is None else domain.to_components(x0)
+        cy = domain.to_components(y)
 
-        def adjoint_mapping(x):
-            cx = codomain.to_components(x)
-            cyp = gmres(
-                matrix.T,
-                cx,
-                rtol=self._rtol,
-                atol=self._atol,
-                restart=self._restart,
-                maxiter=self._maxiter,
-                M=matrix_preconditioner,
-                callback=self._callback,
-                callback_type=self._callback_type,
-            )[0]
-            if self._galerkin:
-                yp = domain.dual.from_components(cyp)
-                return domain.from_dual(yp)
-            else:
-                return domain.from_components(cyp)
+        cxp = gmres(
+            matrix,
+            cy,
+            x0=cx0,
+            rtol=self._rtol,
+            atol=self._atol,
+            restart=self._restart,
+            maxiter=self._maxiter,
+            M=matrix_preconditioner,
+            callback=self._callback,
+            callback_type=self._callback_type,
+        )[0]
 
-        return LinearOperator(domain, domain, mapping, adjoint_mapping=adjoint_mapping)
+        if self._galerkin:
+            xp = codomain.dual.from_components(cxp)
+            return codomain.from_dual(xp)
+        else:
+            return codomain.from_components(cxp)
 
 
 class CGSolver(IterativeLinearSolver):
@@ -466,61 +411,58 @@ class CGSolver(IterativeLinearSolver):
 
         self._callback = callback
 
-    def __call__(self, operator, /, *, preconditioner=None):
+    def solve_linear_system(self, operator, preconditioner, y, x0):
 
-        assert operator.is_automorphism
-
-        def mapping(y):
-
-            domain = operator.domain
+        domain = operator.domain
+        if x0 is None:
             x = domain.zero
+        else:
+            x = domain.copy(x0)
 
-            r = domain.subtract(y, operator(x))
+        r = domain.subtract(y, operator(x))
+        if preconditioner is None:
+            z = domain.copy(r)
+        else:
+            z = preconditioner(r)
+        p = domain.copy(z)
+
+        y_squared_norm = domain.squared_norm(y)
+        if y_squared_norm <= self._atol:
+            return y
+
+        tol = np.max([self._atol, self._rtol * y_squared_norm])
+
+        if self._maxiter is None:
+            maxiter = 10 * domain.dim
+        else:
+            maxiter = self._maxiter
+
+        for _ in range(maxiter):
+
+            if domain.norm(r) <= tol:
+                break
+
+            q = operator(p)
+            num = domain.inner_product(r, z)
+            den = domain.inner_product(p, q)
+            alpha = num / den
+
+            x = domain.axpy(alpha, p, x)
+            r = domain.axpy(-alpha, q, r)
+
             if preconditioner is None:
                 z = domain.copy(r)
             else:
                 z = preconditioner(r)
-            p = domain.copy(z)
 
-            y_squared_norm = domain.squared_norm(y)
-            if y_squared_norm <= self._atol:
-                return y
+            den = num
+            num = operator.domain.inner_product(r, z)
+            beta = num / den
 
-            tol = np.max([self._atol, self._rtol * y_squared_norm])
+            p = domain.multiply(beta, p)
+            p = domain.add(p, z)
 
-            if self._maxiter is None:
-                maxiter = 10 * domain.dim
-            else:
-                maxiter = self._maxiter
+            if self._callback is not None:
+                self._callback(x)
 
-            for _ in range(maxiter):
-
-                if domain.norm(r) <= tol:
-                    break
-
-                q = operator(p)
-                num = domain.inner_product(r, z)
-                den = domain.inner_product(p, q)
-                alpha = num / den
-
-                x = domain.axpy(alpha, p, x)
-                r = domain.axpy(-alpha, q, r)
-
-                if preconditioner is None:
-                    z = domain.copy(r)
-                else:
-                    z = preconditioner(r)
-
-                den = num
-                num = operator.domain.inner_product(r, z)
-                beta = num / den
-
-                p = domain.multiply(beta, p)
-                p = domain.add(p, z)
-
-                if self._callback is not None:
-                    self._callback(x)
-
-            return x
-
-        return LinearOperator.self_adjoint(operator.domain, mapping)
+        return x
