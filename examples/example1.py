@@ -6,6 +6,7 @@ from pygeoinf import (
     GaussianMeasure,
     LinearForwardProblem,
     LinearLeastSquaresInversion,
+    LinearMinimumNormInversion,
     CGSolver,
     CholeskySolver,
     CGMatrixSolver,
@@ -28,23 +29,21 @@ lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
 
-# Set up the error distribution.
-Y = A.codomain
-standard_deviation = 0.1
-nu = GaussianMeasure.from_standard_deviation(Y, standard_deviation)
+
+# Set up forward problem.
+forward_problem = LinearForwardProblem(A)
+
+u, v = forward_problem.synthetic_model_and_data(mu)
 
 
-forward_problem = LinearForwardProblem(A, nu)
+# damping = 0.1
+# least_squares_inversion = LinearLeastSquaresInversion(forward_problem)
+# B = least_squares_inversion.least_squares_operator(damping, CGSolver(rtol=1.0e-7))
 
-u = mu.sample()
-v = forward_problem.data_measure(u).sample()
-
-
-least_squares_inversion = LinearLeastSquaresInversion(forward_problem)
+inversion = LinearMinimumNormInversion(forward_problem)
 
 
-damping = 0.1
-B = least_squares_inversion.least_squares_operator(damping, CGSolver(rtol=1.0e-7))
+B = inversion.minimum_norm_operator(CholeskySolver())
 w = B(v)
 
 

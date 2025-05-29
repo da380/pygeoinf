@@ -39,7 +39,10 @@ from pygeoinf.linear_solvers import (
 
 from pygeoinf.forward_problem import ForwardProblem, LinearForwardProblem
 
-from pygeoinf.optimisation import LinearLeastSquaresInversion
+from pygeoinf.optimisation import (
+    LinearLeastSquaresInversion,
+    LinearMinimumNormInversion,
+)
 
 from pygeoinf.bayesian import LinearBayesianInversion, LinearBayesianInference
 

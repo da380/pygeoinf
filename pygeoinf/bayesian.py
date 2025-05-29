@@ -39,22 +39,31 @@ class LinearBayesianInversion:
         """
         forward_operator = self.forward_problem.forward_operator
         prior_model_covariance = self.model_prior_measure.covariance
-        data_covariance = self.forward_problem.data_error_measure.covariance
-        return (
-            forward_operator @ prior_model_covariance @ forward_operator.adjoint
-            + data_covariance
-        )
+
+        if self.forward_problem.data_error_measure_set:
+            data_covariance = self.forward_problem.data_error_measure.covariance
+            return (
+                forward_operator @ prior_model_covariance @ forward_operator.adjoint
+                + data_covariance
+            )
+        else:
+            return forward_operator @ prior_model_covariance @ forward_operator.adjoint
 
     def data_prior_measure(self):
         """
         Return the prior distribution on the data
         """
-        return (
-            self.model_prior_measure.affine_mapping(
+        if self.forward_problem.data_error_measure_set:
+            return (
+                self.model_prior_measure.affine_mapping(
+                    operator=self.forward_problem.forward_operator
+                )
+                + self.forward_problem.data_error_measure
+            )
+        else:
+            return self.model_prior_measure.affine_mapping(
                 operator=self.forward_problem.forward_operator
             )
-            + self.forward_problem.data_error_measure
-        )
 
     def model_posterior_measure(self, data, solver, /, *, preconditioner=None):
         """

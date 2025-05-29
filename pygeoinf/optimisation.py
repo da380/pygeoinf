@@ -7,17 +7,23 @@ from pygeoinf.linear_solvers import IterativeLinearSolver
 
 class LinearLeastSquaresInversion:
     """
-    Class for the solution of regularised least-squares
-    problems within a Hilbert space.
+    Class for the solution of regularised linear least-squares problems within a Hilbert space.
     """
 
     def __init__(self, forward_problem):
+        """
+        Args:
+            forward_problem (LinearForwardProblem): The forward problem. If the problem has
+                a data errror measure, then this measure must have its inverse covariance
+                operator set.
+        """
 
-        if not forward_problem.data_error_measure.inverse_covariance_set:
-            raise ValueError(
-                "data error measure does not have its inverse covariance set."
-            )
-
+        if forward_problem.data_error_measure_set:
+            if not forward_problem.data_error_measure.inverse_covariance_set:
+                raise NotImplementedError(
+                    "Inversion class not avaialble as data error measure \
+                     does not have an inverse covariance set"
+                )
         self._forward_problem = forward_problem
 
     @property
@@ -43,14 +49,19 @@ class LinearLeastSquaresInversion:
         if damping < 0:
             raise ValueError("Damping parameter must be non-negative.")
         forward_operator = self.forward_problem.forward_operator
-        inverse_data_covariance = (
-            self.forward_problem.data_error_measure.inverse_covariance
-        )
         identity = self.forward_problem.model_space.identity_operator()
-        return (
-            forward_operator.adjoint @ inverse_data_covariance @ forward_operator
-            + damping * identity
-        )
+
+        if self.forward_problem.data_error_measure_set:
+
+            inverse_data_covariance = (
+                self.forward_problem.data_error_measure.inverse_covariance
+            )
+            return (
+                forward_operator.adjoint @ inverse_data_covariance @ forward_operator
+                + damping * identity
+            )
+        else:
+            return forward_operator.adjoint @ forward_operator + damping * identity
 
     def least_squares_operator(self, damping, solver, /, *, preconditioner=None):
         """
@@ -71,9 +82,6 @@ class LinearLeastSquaresInversion:
         """
 
         forward_operator = self.forward_problem.forward_operator
-        inverse_data_covariance = (
-            self.forward_problem.data_error_measure.inverse_covariance
-        )
         normal_operator = self.normal_operator(damping)
 
         if isinstance(solver, IterativeLinearSolver):
@@ -83,9 +91,17 @@ class LinearLeastSquaresInversion:
         else:
             inverse_normal_operator = solver(normal_operator)
 
-        return (
-            inverse_normal_operator @ forward_operator.adjoint @ inverse_data_covariance
-        )
+        if self.forward_problem.data_error_measure_set:
+            inverse_data_covariance = (
+                self.forward_problem.data_error_measure.inverse_covariance
+            )
+            return (
+                inverse_normal_operator
+                @ forward_operator.adjoint
+                @ inverse_data_covariance
+            )
+        else:
+            return inverse_normal_operator @ forward_operator.adjoint
 
     def model_measure(
         self,
@@ -116,6 +132,10 @@ class LinearLeastSquaresInversion:
             ValueError: If damping is not non-negative.
             ValueError: If solver is not a instance of LinearSolver.
         """
+
+        if not self.forward_problem.data_error_measure_set:
+            raise NotImplementedError("Data error measure not set")
+
         least_squares_operator = self.least_squares_operator(
             damping,
             solver,
@@ -152,3 +172,51 @@ class LinearLeastSquaresInversion:
             preconditioner=preconditioner,
         )
         return least_squares_operator @ forward_operator
+
+
+class LinearMinimumNormInversion:
+    """
+    Class for the solution of linear minimum norm problems in a Hilbert space.
+    """
+
+    def __init__(self, forward_problem):
+        """
+        Args:
+            forward_problem (LinearForwardProblem): The forward problem. If the problem has
+                a data errror measure, then this measure must have its inverse covariance
+                operator set.
+        """
+
+        if forward_problem.data_error_measure_set:
+            if not forward_problem.data_error_measure.inverse_covariance_set:
+                raise NotImplementedError(
+                    "Inversion class not avaialble as data error measure \
+                     does not have an inverse covariance set"
+                )
+        self._forward_problem = forward_problem
+
+    @property
+    def forward_problem(self):
+        """
+        Returns the forward problem.
+        """
+        return self._forward_problem
+
+    def minimum_norm_operator(self, solver):
+        """
+        Return the operator that maps data to the minimum norm solution.
+        In the case of error-free data this operator is linear, but once
+        data errors are present it is a non-linear opearator.
+
+        Args:
+            solver (LinearSolver): Solver for solution of the necessary linear systems.
+        """
+
+        if self.forward_problem.data_error_measure_set:
+            raise NotImplementedError("Case with data errors yet to be written!")
+
+        else:
+            forward_operator = self.forward_problem.forward_operator
+            normal_operator = forward_operator @ forward_operator.adjoint
+            inverse_normal_operator = solver(normal_operator)
+            return forward_operator.adjoint @ inverse_normal_operator
