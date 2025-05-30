@@ -411,6 +411,7 @@ class LinearOperator(Operator):
         *,
         dual_mapping=None,
         adjoint_mapping=None,
+        thread_safe=False,
         dual_base=None,
         adjoint_base=None,
     ):
@@ -419,10 +420,12 @@ class LinearOperator(Operator):
             domain (HilbertSpace): The domain of the operator.
             codomain (HilbertSpace): The codomain of the operator.
             mapping (callable): Mapping from the domain to codomain.
-            dual_mapping (callable | None): Optional implementation of
+            dual_mapping (callable): Optional implementation of
                 dual operator's action.
-            adjoint_mapping (callable | None): Optional implementation
+            adjoint_mapping (callable): Optional implementation
                 of the adjoint operator's action.
+            thread_safe (bool): True if the operators action can be
+                safely called in parallel. Default is false.
             dual_base (LinearOperator) : Used internally when defining
                 dual operators. Should not be set manually.
             adjoint_base (LinearOperator): Used internally when defining
@@ -444,6 +447,8 @@ class LinearOperator(Operator):
                 self.__adjoint_mapping = self._adjoint_mapping_from_dual
             else:
                 self.__adjoint_mapping = adjoint_mapping
+
+        self._thread_safe = thread_safe
 
     @staticmethod
     def self_dual(domain, mapping):
@@ -662,6 +667,10 @@ class LinearOperator(Operator):
             )
         else:
             return self._adjoint_base
+
+    @property
+    def thread_safe(self):
+        return thread_safe
 
     def matrix(self, /, *, dense=False, galerkin=False):
         """Return matrix representation of the operator."""

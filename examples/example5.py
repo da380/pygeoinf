@@ -11,20 +11,20 @@ from pygeoinf import (
 
 
 # Set the model space
-X = Sobolev(0, 2, 0.001, 2, 0.01)
+X = Sobolev(0, 2, 0.0001, 2, 0.1)
 
 # Set the model prior
 mu = X.sobolev_measure(2, 0.01)
 
 
 # Set up the forward operator
-n = 50
+n = 2
 x = X.random_points(n)
 A = X.point_evaluation_operator(x)
 
 # Set up the data error measure
-sigma = 0.1
-nu = GaussianMeasure.from_standard_deviation(A.codomain, sigma)
+sigma = 0.4
+nu = GaussianMeasure.from_standard_deviation(A.codomain, sigma) if sigma > 0 else None
 
 # Set up the forward problem
 forward_problem = LinearForwardProblem(A, nu)
@@ -43,7 +43,7 @@ pi = inversion.model_posterior_measure(v, CholeskySolver())
 
 
 # Estimate the pointwise standard deviation.
-uvar = sample_variance(pi.low_rank_approximation(20, power=2), 100)
+uvar = sample_variance(pi.low_rank_approximation(50, power=2), 100)
 ustd = np.sqrt(uvar)
 
 

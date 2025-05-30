@@ -41,10 +41,9 @@ class LinearBayesianInversion:
         prior_model_covariance = self.model_prior_measure.covariance
 
         if self.forward_problem.data_error_measure_set:
-            data_covariance = self.forward_problem.data_error_measure.covariance
             return (
                 forward_operator @ prior_model_covariance @ forward_operator.adjoint
-                + data_covariance
+                + self.forward_problem.data_error_measure.covariance
             )
         else:
             return forward_operator @ prior_model_covariance @ forward_operator.adjoint

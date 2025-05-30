@@ -2,8 +2,6 @@
 Module containing the base class for inversion methods
 """
 
-from pygeoinf.forward_problem import ForwardProblem, LinearForwardProblem
-
 
 class Inversion:
     """

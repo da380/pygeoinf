@@ -373,6 +373,59 @@ class GaussianMeasure:
         )
 
 
+class FactoredGaussianMeasure(GaussianMeasure):
+    """
+    Class for Gaussian measures whose covariance is expressed in a Cholesky form C = LL*.
+    """
+
+    def __init__(
+        self,
+        domain,
+        covariance_factor,
+        /,
+        *,
+        expectation=None,
+        sample=None,
+        inverse_covariance_factor=None,
+    ):
+        """
+        Args:
+            domain (HilbertSpace): The Hilbert space on which the measure is defined.
+            covariance_factor (LinearOperator): The operator L in the factorisation C = LL*.
+                The codomain of L is the domain of the measure, while L's domain is Euclidean
+                space of an appropriate dimension.
+            expectation (vector): The expectation value of the measure. Default is zero.
+            inverse_covariance_factor (LinearOperator): The inverse of the covariance factor. Used to
+                implement the inverse covariance. Default is none.
+        """
+        self._domain = domain
+        self._covariance_factor = covariance_factor
+        self._inverse_covariance_factor = inverse_covariance_factor
+
+        domain = covariance_factor.codomain
+        covariance = covariance_factor @ c.adjoint
+        inverse_covariance = (
+            inverse_covariance_factor.adjoint @ inverse_covariance_factor
+            if inverse_covariance_factor is not None
+            else None
+        )
+
+        def _sample():
+            value = covariance_factor(np.random.randn(covariance_factor.domain.dim))
+            if expectation is None:
+                return value
+            else:
+                return domain.add(value, expectation)
+
+        super().__init__(
+            domain,
+            covariance,
+            expectation=expectation,
+            sample=_sample,
+            inverse_covariance=inverse_covariance,
+        )
+
+
 def sample_variance(measure, n):
     """
     Returns a sample-based estimate for the the pointwise variance

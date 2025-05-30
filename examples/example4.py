@@ -14,15 +14,15 @@ from pygeoinf.homogeneous_space.sphere import Sobolev
 
 
 # Set the model space.
-X = Sobolev(64, 1.1, 0.1)
+X = Sobolev(128, 2, 0.1)
 
 
 # Set up the prior distribution.
-mu = X.sobolev_gaussian_measure(2.0, 0.25, 1)
+mu = X.sobolev_gaussian_measure(2.0, 0.1, 1)
 
 
 # Set up the forward operator.
-n = 50
+n = 25
 lats = uniform(loc=-90, scale=180).rvs(size=n)
 lons = uniform(loc=0, scale=360).rvs(size=n)
 A = X.point_evaluation_operator(lats, lons)
@@ -30,8 +30,10 @@ A = X.point_evaluation_operator(lats, lons)
 
 # Set up the error distribution.
 Y = A.codomain
-stds = np.random.uniform(0.05, 0.2, Y.dim)
-nu = GaussianMeasure.from_standard_deviations(Y, stds)
+# stds = np.random.uniform(0.05, 0.2, Y.dim)
+# nu = GaussianMeasure.from_standard_deviations(Y, stds)
+sigma = 0.1
+nu = GaussianMeasure.from_standard_deviation(Y, sigma)
 
 
 forward_problem = LinearForwardProblem(A, nu)
@@ -45,14 +47,12 @@ v = forward_problem.data_measure(u).sample()
 
 
 solver = CholeskySolver()
-pi = inverse_problem.model_posterior_measure(v, solver).low_rank_approximation(
-    20, power=2
-)
+pi = inverse_problem.model_posterior_measure(v, solver)
 
 ubar = pi.expectation
 # ustd = X.sample_std(pi.samples(100), expectation=ubar)
 
-uvar = sample_variance(pi, 20)
+uvar = sample_variance(pi.low_rank_approximation(50, power=2), 20)
 ustd = uvar.copy()
 ustd.data = np.sqrt(uvar.data)
 
@@ -78,11 +78,7 @@ plt.plot(lons, lats, "ko")
 plt.clim([0, umax])
 plt.colorbar()
 
-# plt.figure()
-# plt.pcolormesh(u.lons(), u.lats(), np.abs((ubar - u).data), cmap="Reds")
-# plt.plot(lons, lats, "ko")
-# plt.clim([0, umax])
-# plt.colorbar()
+w = X.dirac_representation(lats[0], lons[0])
 
 
 plt.show()
