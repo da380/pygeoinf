@@ -2,9 +2,9 @@
 Module for direct sums of Hilbert spaces and related constructions. 
 """
 
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 import numpy as np
-from pygeoinf.hilbert import HilbertSpace, LinearOperator, LinearForm
+from pygeoinf.hilbert_space import HilbertSpace, LinearOperator, LinearForm
 
 
 class HilbertSpaceDirectSum(HilbertSpace):

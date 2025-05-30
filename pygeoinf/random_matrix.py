@@ -2,22 +2,14 @@
 Module for random matrix factorisations. 
 """
 
-from abc import ABC, abstractmethod
 import numpy as np
 from scipy.linalg import (
     cho_factor,
-    cho_solve,
-    lu_factor,
-    lu_solve,
     solve_triangular,
     eigh,
     svd,
     qr,
 )
-from scipy.stats import norm
-from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
-from scipy.sparse import diags
 
 
 def fixed_rank_random_range(matrix, rank, power=0):

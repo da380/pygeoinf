@@ -9,7 +9,6 @@ from pygeoinf import (
     LinearMinimumNormInversion,
     CGSolver,
     CholeskySolver,
-    CGMatrixSolver,
 )
 
 from pygeoinf.homogeneous_space.sphere import Sobolev

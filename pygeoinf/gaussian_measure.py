@@ -3,7 +3,11 @@ Module for Gaussian measures on Hilbert spaces.
 """
 
 import numpy as np
-from pygeoinf.hilbert import LinearOperator, DiagonalLinearOperator, EuclideanSpace
+from pygeoinf.hilbert_space import (
+    LinearOperator,
+    DiagonalLinearOperator,
+    EuclideanSpace,
+)
 from pygeoinf.direct_sum import (
     HilbertSpaceDirectSum,
     BlockDiagonalLinearOperator,

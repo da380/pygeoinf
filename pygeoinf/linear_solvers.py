@@ -4,9 +4,7 @@ Module for linear solvers.
 
 from abc import ABC, abstractmethod
 import numpy as np
-
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-
 from scipy.linalg import (
     cho_factor,
     cho_solve,
@@ -14,7 +12,7 @@ from scipy.linalg import (
     lu_solve,
 )
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
-from pygeoinf.hilbert import LinearOperator
+from pygeoinf.hilbert_space import LinearOperator
 
 
 class LinearSolver(ABC):

@@ -7,7 +7,7 @@ from scipy.sparse import diags, coo_array
 import pyshtools as sh
 
 
-from pygeoinf.hilbert import (
+from pygeoinf.hilbert_space import (
     HilbertSpace,
     LinearOperator,
     EuclideanSpace,

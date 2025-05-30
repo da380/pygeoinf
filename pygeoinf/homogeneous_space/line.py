@@ -8,7 +8,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.fft import rfft, irfft
 from scipy.sparse import diags
-from pygeoinf.hilbert import HilbertSpace, LinearOperator, LinearForm, EuclideanSpace
+from pygeoinf.hilbert_space import (
+    HilbertSpace,
+    LinearOperator,
+    LinearForm,
+    EuclideanSpace,
+)
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 

@@ -6,7 +6,7 @@ from pygeoinf.random_matrix import (
     random_cholesky,
 )
 
-from pygeoinf.hilbert import (
+from pygeoinf.hilbert_space import (
     HilbertSpace,
     EuclideanSpace,
     Operator,
