@@ -15,7 +15,11 @@ from pygeoinf.hilbert_space import (
     LinearForm,
 )
 
-from pygeoinf.gaussian_measure import GaussianMeasure, sample_variance
+from pygeoinf.gaussian_measure import (
+    GaussianMeasure,
+    FactoredGaussianMeasure,
+    sample_variance,
+)
 
 from pygeoinf.direct_sum import (
     HilbertSpaceDirectSum,

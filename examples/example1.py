@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import uniform
 
 from pygeoinf import (
-    GaussianMeasure,
+    FactoredGaussianMeasure,
     LinearForwardProblem,
     LinearLeastSquaresInversion,
     LinearMinimumNormInversion,
@@ -30,7 +30,7 @@ Y = A.codomain
 
 # Set the error distribution
 sigma = 0.0
-nu = GaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
+nu = FactoredGaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
 
 
 # Set up forward problem.

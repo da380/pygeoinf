@@ -14,7 +14,7 @@ from pygeoinf.hilbert_space import (
     LinearForm,
 )
 
-from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf.gaussian_measure import FactoredGaussianMeasure
 
 
 class SHToolsHelper:
@@ -468,9 +468,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             self, domain, inverse_mapping, adjoint_mapping=inverse_adjoint_mapping
         )
 
-        return GaussianMeasure.from_factored_covariance(
-            factor, expectation=expectation, inverse_factor=inverse_factor
-        )
+        return FactoredGaussianMeasure(factor, inverse_covariance_factor=inverse_factor)
 
     def sobolev_gaussian_measure(self, order, scale, amplitude, /, *, expectation=None):
         """

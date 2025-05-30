@@ -50,97 +50,6 @@ class GaussianMeasure:
         self._inverse_covariance = inverse_covariance
 
     @staticmethod
-    def from_factored_covariance(factor, /, *, inverse_factor=None, expectation=None):
-        """
-        For a Gaussian measure whos covariance, C, is approximated in the form C = LL*,
-        with L a mapping into the domain from Euclidean space.
-
-        Args:
-            factor (LinearOperator): Linear operator from Euclidean space into the
-                domain of the measure.
-            expectation (vector | zero): expected value of the measure.
-            inverse factor (LinearOperator): An analgous factorisation of the inverse covariance.
-
-        Returns:
-            GassianMeasure: The measure with the required covariance and expectation.
-        """
-
-        def sample():
-            value = factor(np.random.randn(factor.domain.dim))
-            if expectation is None:
-                return value
-            else:
-                return factor.codomain.add(value, expectation)
-
-        covariance = factor @ factor.adjoint
-
-        _inverse_covariance = (
-            inverse_factor.adjoint @ inverse_factor
-            if inverse_factor is not None
-            else None
-        )
-
-        return GaussianMeasure(
-            factor.codomain,
-            covariance,
-            expectation=expectation,
-            sample=sample,
-            inverse_covariance=_inverse_covariance,
-        )
-
-    @staticmethod
-    def from_standard_deviation(domain, standard_deviation):
-        """
-        Forms a Gaussian measure on a Hilbert space with zero
-        expectation and whose covariance is proportional to the
-        identity operator.
-
-        Args:
-            domain (HilbertSpace): The Hilbert space on which the measure
-                is defined.
-            standard_devitation (float): The standard deviation by which the
-                identity is scaled to form the covariance.
-
-        Notes:
-            This measure is only well-defined for finite-dimensional spaces and not
-            for finite-dimensional approximations to infinite-dimensional spaces.
-        """
-        factor = standard_deviation * domain.identity_operator()
-        inverse_factor = (1 / standard_deviation) * domain.identity_operator()
-        return GaussianMeasure.from_factored_covariance(
-            factor, inverse_factor=inverse_factor
-        )
-
-    @staticmethod
-    def from_standard_deviations(domain, standard_deviations):
-        """
-        Forms a Gaussian measure on a Hilbert space with zero
-        expectation and whose covariance is diagonal within the
-        Galerkin representation.
-
-        Args: domain (HilbertSpace): The Hilbert space on which the measure
-                is defined.
-        standard_devitations (numpy vector): The diagonal values of the covariance
-            within its Galerkin representation.
-
-        Raises:
-            ValueError: If the dimension of the standard deviation vector does not
-                match that of the Hilbert space.
-
-        """
-        if standard_deviations.size != domain.dim:
-            raise ValueError(
-                "Standard deviation vector does not have the correct length"
-            )
-        euclidean = EuclideanSpace(domain.dim)
-        factor = DiagonalLinearOperator(
-            euclidean, domain, standard_deviations, galerkin=True
-        )
-        return GaussianMeasure.from_factored_covariance(
-            factor, inverse_factor=factor.inverse
-        )
-
-    @staticmethod
     def from_samples(domain, samples):
         """
         Forms a Gaussian measure from a set of samples based on
@@ -291,7 +200,7 @@ class GaussianMeasure:
             translation (vector): The translational part of the mapping.
 
         Returns:
-            Gaussian Measure: The transformed measure defined on the
+            GaussianMeasure: The transformed measure defined on the
                 codomain of the operator.
 
         Raises:
@@ -330,13 +239,13 @@ class GaussianMeasure:
         sampling method.
         """
         F = self.covariance.random_cholesky(rank, power=power)
-        return GaussianMeasure.from_factored_covariance(F, expectation=self.expectation)
+        return FactoredGaussianMeasure(F)
 
     def __neg__(self):
         """Negative of the measure."""
         return GaussianMeasure(
             self.domain,
-            -self.covariance,
+            self.covariance,
             expectation=self.domain.negative(self.expectation),
             sample=lambda: self.domain.negative(self.sample()),
         )
@@ -380,12 +289,10 @@ class FactoredGaussianMeasure(GaussianMeasure):
 
     def __init__(
         self,
-        domain,
         covariance_factor,
         /,
         *,
         expectation=None,
-        sample=None,
         inverse_covariance_factor=None,
     ):
         """
@@ -398,12 +305,12 @@ class FactoredGaussianMeasure(GaussianMeasure):
             inverse_covariance_factor (LinearOperator): The inverse of the covariance factor. Used to
                 implement the inverse covariance. Default is none.
         """
-        self._domain = domain
+
         self._covariance_factor = covariance_factor
         self._inverse_covariance_factor = inverse_covariance_factor
 
         domain = covariance_factor.codomain
-        covariance = covariance_factor @ c.adjoint
+        covariance = covariance_factor @ covariance_factor.adjoint
         inverse_covariance = (
             inverse_covariance_factor.adjoint @ inverse_covariance_factor
             if inverse_covariance_factor is not None
@@ -424,6 +331,135 @@ class FactoredGaussianMeasure(GaussianMeasure):
             sample=_sample,
             inverse_covariance=inverse_covariance,
         )
+
+    @staticmethod
+    def from_standard_deviation(domain, standard_deviation):
+        """
+        Forms a Gaussian measure on a Hilbert space with zero
+        expectation and whose covariance is proportional to the
+        identity operator.
+
+        Args:
+            domain (HilbertSpace): The Hilbert space on which the measure
+                is defined.
+            standard_devitation (float): The standard deviation by which the
+                identity is scaled to form the covariance.
+
+        Notes:
+            This measure is only well-defined for finite-dimensional spaces and not
+            for finite-dimensional approximations to infinite-dimensional spaces.
+        """
+        factor = standard_deviation * domain.identity_operator()
+        inverse_factor = (1 / standard_deviation) * domain.identity_operator()
+        return FactoredGaussianMeasure(factor, inverse_covariance_factor=inverse_factor)
+
+    @staticmethod
+    def from_standard_deviations(domain, standard_deviations):
+        """
+        Forms a Gaussian measure on a Hilbert space with zero
+        expectation and whose covariance is diagonal within the
+        Galerkin representation.
+
+        Args: domain (HilbertSpace): The Hilbert space on which the measure
+                is defined.
+        standard_devitations (numpy vector): The diagonal values of the covariance
+            within its Galerkin representation.
+
+        Raises:
+            ValueError: If the dimension of the standard deviation vector does not
+                match that of the Hilbert space.
+
+        """
+        if standard_deviations.size != domain.dim:
+            raise ValueError(
+                "Standard deviation vector does not have the correct length"
+            )
+        euclidean = EuclideanSpace(domain.dim)
+        factor = DiagonalLinearOperator(
+            euclidean, domain, standard_deviations, galerkin=True
+        )
+        return FactoredGaussianMeasure(factor, inverse_covariance_factor=factor.inverse)
+
+    @property
+    def covariance_factor(self):
+        """
+        Return the covariance factor.
+        """
+        return self._covariance_factor
+
+    @property
+    def inverse_covariance_factor_set(self):
+        """
+        True is inverse covariance factor has been set.
+        """
+        return self._inverse_covariance_factor is not None
+
+    @property
+    def inverse_covariance_factor(self):
+        """
+        Return the inverse covariance factor.
+
+        Raises:
+            NotImplementedError: If inverse factor has not been set.
+        """
+        if not self.inverse_covariance_factor_set:
+            raise NotImplementedError("Inverse covariance factor has not been set")
+        return self._inverse_covariance_factor
+
+    def affine_mapping(self, /, *, operator=None, translation=None):
+        """
+        Returns the push forward of the measure under an affine mapping.
+        Overrides method in the base class.
+
+        Args:
+            operator (LinearOperator): The operator part of the mapping.
+            translation (vector): The translational part of the mapping.
+
+        Returns:
+            FactoredGaussianMeasure: The transformed measure defined on the
+                codomain of the operator.
+
+        Raises:
+            ValueError: If the domain of the operator domain is not
+                the domain of the measure.
+
+        Notes:
+            If operator is not set, it defaults to the identity.
+            It translation is not set, it defaults to zero.
+        """
+
+        if operator is None:
+            _operator = self.domain.identity_operator()
+        else:
+            _operator = operator
+
+        if translation is None:
+            _translation = _operator.codomain.zero
+        else:
+            _translation = translation
+
+        covariance_factor = _operator @ self.covariance_factor
+        expectation = _operator.codomain.add(_operator(self.expectation), _translation)
+
+        return FactoredGaussianMeasure(covariance_factor, expectation=expectation)
+
+    def __neg__(self):
+        """Negative of the measure."""
+        return FactoredGaussianMeasure(
+            self.covariance_factor,
+            expectation=self.domain.negative(self.expectation),
+        )
+
+    def __mul__(self, alpha):
+        """Multiply the measure by a scalar."""
+        return FactoredGaussianMeasure(
+            alpha * self.covariance_factor,
+            expectation=self.domain.multiply(alpha, self.expectation),
+        )
+
+    def __rmul__(self, alpha):
+        """Multiply the measure by a scalar."""
+        return self * alpha
 
 
 def sample_variance(measure, n):

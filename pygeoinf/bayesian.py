@@ -2,11 +2,15 @@
 Module for the Bayesian approaches to Bayesian inverse problems.
 """
 
+import numpy as np
+from scipy.linalg import cho_factor, solve_triangular
+from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
 from pygeoinf.linear_solvers import IterativeLinearSolver
-from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf.gaussian_measure import GaussianMeasure, FactoredGaussianMeasure
+from pygeoinf.inversion import Inversion
 
 
-class LinearBayesianInversion:
+class LinearBayesianInversion(Inversion):
     """
     Class for solving a linear inverse problem Bayesian methods assuming Gaussian priors and errors.
     """
@@ -17,7 +21,7 @@ class LinearBayesianInversion:
             forward_problem (LinearForwardProblem): The forward problem.
             model_prior_measure (GaussianMeasure): The prior measure on the data.
         """
-        self._forward_problem = forward_problem
+        super().__init__(forward_problem)
         self._model_prior_measure = model_prior_measure
 
     @property
@@ -47,6 +51,23 @@ class LinearBayesianInversion:
             )
         else:
             return forward_operator @ prior_model_covariance @ forward_operator.adjoint
+
+    def inverse_cholesky_factored_normal_operator(self):
+        """
+        Returns a Cholesky factorisation of the inverse normal operator. Calculations
+        based on the dense matrix representation, and hence this is an expensive
+        method if the data space is large.
+        """
+
+        normal_matrix = self.normal_operator.matrix(dense=True, galerkin=True)
+        factor, lower = cho_factor(normal_matrix)
+        identity_operator = np.identity(self.data_space_dim)
+        inverse_factor = solve_triangular(
+            factor, identity_operator, overwrite_b=True, lower=lower
+        )
+        domain = self.data_space
+        codomain = EuclideanSpace(self.data_space_dim)
+        return LinearOperator.from_matrix(domain, codomain, inverse_factor)
 
     def data_prior_measure(self):
         """

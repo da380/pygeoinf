@@ -14,7 +14,7 @@ from pygeoinf.hilbert_space import (
     LinearForm,
     EuclideanSpace,
 )
-from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf.gaussian_measure import FactoredGaussianMeasure
 
 
 class Sobolev(HilbertSpace):
@@ -222,7 +222,7 @@ class Sobolev(HilbertSpace):
         factor = LinearOperator.from_matrix(
             EuclideanSpace(self.dim), self, matrix, galerkin=True
         )
-        return GaussianMeasure.from_factored_covariance(factor)
+        return FactoredGaussianMeasure(factor)
 
     def sobolev_measure(self, exponent, scale, /, *, amplitude=1):
         """
