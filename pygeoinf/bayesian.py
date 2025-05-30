@@ -6,7 +6,7 @@ import numpy as np
 from scipy.linalg import cho_factor, solve_triangular
 from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
 from pygeoinf.linear_solvers import IterativeLinearSolver
-from pygeoinf.gaussian_measure import GaussianMeasure, FactoredGaussianMeasure
+from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.inversion import Inversion
 
 
@@ -126,9 +126,7 @@ class LinearBayesianInversion(Inversion):
             @ prior_model_covariance
         )
 
-        return GaussianMeasure(
-            self.forward_problem.model_space, covariance, expectation=expectation
-        )
+        return GaussianMeasure(covariance=covariance, expectation=expectation)
 
 
 class LinearBayesianInference(LinearBayesianInversion):

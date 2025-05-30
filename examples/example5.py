@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pygeoinf.homogeneous_space.line import Sobolev
 from pygeoinf import (
-    FactoredGaussianMeasure,
+    GaussianMeasure,
     LinearForwardProblem,
     LinearBayesianInversion,
     CholeskySolver,
@@ -11,31 +11,24 @@ from pygeoinf import (
 
 
 # Set the model space
-X = Sobolev(0, 2, 0.001, 2, 0.01)
+X = Sobolev(0, 2, 0.001, 0, 0.03)
+print(X.dim)
 
 # Set the model prior
-mu = X.sobolev_measure(2, 0.01)
+mu = X.sobolev_measure(2, 0.2)
 
 
 # Set up the forward operator
-n = 100
+n = 25
 x = X.random_points(n)
 A = X.point_evaluation_operator(x)
 Y = A.codomain
 
 # Set up the data error measure
-"""
-sigma = 0.3
-nu = (
-    FactoredGaussianMeasure.from_standard_deviation(A.codomain, sigma)
-    if sigma > 0
-    else None
-)
-"""
-sigma0 = 0.05
-sigma1 = 0.4
+sigma0 = 0.01
+sigma1 = 0.1
 standard_deviations = sigma0 + np.random.rand(Y.dim) * (sigma1 - sigma0)
-nu = FactoredGaussianMeasure.from_standard_deviations(Y, standard_deviations)
+nu = GaussianMeasure.from_standard_deviations(Y, standard_deviations)
 
 # Set up the forward problem
 forward_problem = LinearForwardProblem(A, nu)

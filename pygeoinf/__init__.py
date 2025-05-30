@@ -17,7 +17,6 @@ from pygeoinf.hilbert_space import (
 
 from pygeoinf.gaussian_measure import (
     GaussianMeasure,
-    FactoredGaussianMeasure,
     sample_variance,
 )
 

@@ -6,7 +6,7 @@ from scipy.stats import uniform
 from pygeoinf import (
     LinearBayesianInversion,
     CholeskySolver,
-    FactoredGaussianMeasure,
+    GaussianMeasure,
     LinearForwardProblem,
     sample_variance,
 )
@@ -33,7 +33,7 @@ Y = A.codomain
 # stds = np.random.uniform(0.05, 0.2, Y.dim)
 # nu = GaussianMeasure.from_standard_deviations(Y, stds)
 sigma = 0.0
-nu = FactoredGaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
+nu = GaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
 
 
 forward_problem = LinearForwardProblem(A, nu)

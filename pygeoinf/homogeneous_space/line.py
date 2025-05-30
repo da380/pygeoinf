@@ -14,7 +14,7 @@ from pygeoinf.hilbert_space import (
     LinearForm,
     EuclideanSpace,
 )
-from pygeoinf.gaussian_measure import FactoredGaussianMeasure
+from pygeoinf.gaussian_measure import GaussianMeasure
 
 
 class Sobolev(HilbertSpace):
@@ -219,10 +219,10 @@ class Sobolev(HilbertSpace):
         """
 
         matrix = self._sparse_matrix_from_function_of_laplacian(lambda k: np.sqrt(f(k)))
-        factor = LinearOperator.from_matrix(
+        covariance_factor = LinearOperator.from_matrix(
             EuclideanSpace(self.dim), self, matrix, galerkin=True
         )
-        return FactoredGaussianMeasure(factor)
+        return GaussianMeasure(covariance_factor=covariance_factor)
 
     def sobolev_measure(self, exponent, scale, /, *, amplitude=1):
         """
@@ -266,8 +266,8 @@ class Sobolev(HilbertSpace):
         at the given list, xs, of points.
         """
 
-        if self.exponent <= 0.5:
-            raise ValueError("Point evaluation not well-defined on the space")
+        # if self.exponent <= 0.5:
+        #    raise ValueError("Point evaluation not well-defined on the space")
 
         dim = len(xs)
         matrix = np.zeros((dim, self.dim))
