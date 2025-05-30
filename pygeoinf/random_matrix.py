@@ -34,7 +34,7 @@ def fixed_rank_random_range(matrix, rank, power=0):
     """
 
     m, n = matrix.shape
-    random_matrix = np.random.rand(n, rank)
+    random_matrix = np.random.randn(n, rank)
 
     product_matrix = matrix @ random_matrix
     qr_factor, _ = qr(product_matrix, overwrite_a=True, mode="economic")
