@@ -9,7 +9,6 @@ from pygeoinf.hilbert_space import (
     EuclideanSpace,
 )
 from pygeoinf.direct_sum import (
-    HilbertSpaceDirectSum,
     BlockDiagonalLinearOperator,
 )
 
@@ -53,28 +52,23 @@ class GaussianMeasure:
                 "Neither covariance or covariance factor has been provided"
             )
 
-        if covariance is not None and covariance_factor is not None:
-            raise ValueError(
-                "Only one of the covariance and covariance factor can be provided."
+        self._domain = covariance_factor.codomain
+        self._covariance_factor = covariance_factor
+        self._covariance = (
+            covariance_factor @ covariance_factor.adjoint
+            if covariance is None
+            else covariance
+        )
+        self._sample = sample if covariance_factor is None else self._sample_from_factor
+        self._inverse_covariance_factor = inverse_covariance_factor
+        if inverse_covariance_factor is not None:
+            self._inverse_covariance = (
+                inverse_covariance_factor.adjoint @ inverse_covariance_factor
             )
-
-        if covariance is not None:
-
-            self._domain = covariance.domain
-            self._covariance = covariance
-            self._covariance_factor = None
-            self._sample = sample
+        elif inverse_covariance is not None:
             self._inverse_covariance = inverse_covariance
-            self._inverse_covariance_factor = None
-
-        if covariance_factor is not None:
-
-            self._domain = covariance_factor.codomain
-            self._covariance = covariance_factor @ covariance_factor.adjoint
-            self._covariance_factor = covariance_factor
-            self._sample = self._sample_from_factor
+        else:
             self._inverse_covariance = None
-            self._inverse_covariance_factor = inverse_covariance_factor
 
         if expectation is None:
             self._expectation = self.domain.zero
@@ -186,8 +180,6 @@ class GaussianMeasure:
         Forms the direct sum of a list of Gaussian measures.
         """
 
-        domain = HilbertSpaceDirectSum([measure.domain for measure in measures])
-
         expectation = [measure.expectation for measure in measures]
 
         covariance = BlockDiagonalLinearOperator(
@@ -251,8 +243,8 @@ class GaussianMeasure:
         """
         Return the covariance factor if set.
         """
-        if not self.covariance_factor_set:
-            raise NotImplementedError("Covariance factor has not been set")
+        # if not self.covariance_factor_set:
+        #    raise NotImplementedError("Covariance factor has not been set")
         return self._covariance_factor
 
     @property
@@ -384,14 +376,26 @@ class GaussianMeasure:
 
     def __neg__(self):
         """Negative of the measure."""
-        return GaussianMeasure(
-            covariance=self.covariance,
-            expectation=self.domain.negative(self.expectation),
-            sample=lambda: self.domain.negative(self.sample()),
-        )
+
+        if self.covariance_factor_set:
+            return GaussianMeasure(
+                covariance_factor=self.covariance_factor,
+                expectation=self.domain.negative(self.expectation),
+            )
+        else:
+            return GaussianMeasure(
+                covariance=self.covariance,
+                expectation=self.domain.negative(self.expectation),
+                sample=lambda: self.domain.negative(self.sample()),
+            )
 
     def __mul__(self, alpha):
         """Multiply the measure by a scalar."""
+        if self.covariance_factor_set:
+            return GaussianMeasure(
+                covariance_factor=alpha * self.covariance_factor,
+                expectation=self.domain.multiply(alpha, self.expectation),
+            )
         return GaussianMeasure(
             covariance=alpha * alpha * self.covariance,
             expectation=self.domain.multiply(alpha, self.expectation),

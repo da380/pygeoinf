@@ -128,6 +128,69 @@ class LinearBayesianInversion(Inversion):
 
         return GaussianMeasure(covariance=covariance, expectation=expectation)
 
+    def model_posterior_measure_using_random_factorisation(
+        self, data, rank, /, *, power=0
+    ):
+        """
+        Returns the posterior model measure based on a low rank factorisation
+        of the posteriori covariance. This method assumes that the prior model
+        covariance is in a factored form.
+
+        To use this method, the prior covariance must be provided in a factored form.
+        """
+
+        if not self.model_prior_measure.covariance_factor_set:
+            raise NotImplementedError(
+                "This method requires the model prior covariance to be in factored form"
+            )
+
+        # Set up the necessary operators.
+        forward_operator = self.forward_problem.forward_operator
+        prior_covariance_factor = self.model_prior_measure.covariance_factor
+        inverse_data_covariance = (
+            self.forward_problem.data_error_measure.inverse_covariance
+        )
+        identity = prior_covariance_factor.domain.identity_operator()
+        normal_operator = (
+            prior_covariance_factor.adjoint
+            @ forward_operator.adjoint
+            @ inverse_data_covariance
+            @ forward_operator
+            @ prior_covariance_factor
+            + identity
+        )
+
+        # Perform the random eigen-decomposition.
+        eigenvectors, eigenvalues = normal_operator.random_eig(rank, power=power)
+        inverse_normal_operator = (
+            eigenvectors @ eigenvalues.inverse @ eigenvectors.adjoint
+        )
+
+        # Form the posterior covariance and its factor.
+        posterior_covariance = (
+            prior_covariance_factor
+            @ inverse_normal_operator
+            @ prior_covariance_factor.adjoint
+        )
+
+        posterior_covariance_factor = (
+            prior_covariance_factor @ eigenvectors @ eigenvalues.inverse.sqrt
+        )
+
+        # Now the posterior expectation.
+        prior_expectation = self.model_prior_measure.expectation
+        expectation = self.model_space.add(
+            prior_expectation,
+            (posterior_covariance @ forward_operator.adjoint @ inverse_data_covariance)(
+                self.data_space.subtract(data, forward_operator(prior_expectation))
+            ),
+        )
+
+        # Return the measure.
+        return GaussianMeasure(
+            covariance_factor=posterior_covariance_factor, expectation=expectation
+        )
+
 
 class LinearBayesianInference(LinearBayesianInversion):
     """Class for solving Bayesian inference problems."""

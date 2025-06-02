@@ -217,7 +217,6 @@ class Sobolev(HilbertSpace):
         \Delta the Laplacian. The trace-class condition for the measure to be well-defined implies
         that the sequence {f(k)} must be summable.
         """
-
         matrix = self._sparse_matrix_from_function_of_laplacian(lambda k: np.sqrt(f(k)))
         covariance_factor = LinearOperator.from_matrix(
             EuclideanSpace(self.dim), self, matrix, galerkin=True
