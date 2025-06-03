@@ -11,6 +11,7 @@ from scipy.sparse import diags
 
 from pygeoinf.random_matrix import (
     fixed_rank_random_range,
+    variable_rank_random_range,
     random_svd,
     random_cholesky,
     random_eig,
@@ -190,6 +191,26 @@ class HilbertSpace:
     def norm(self, x):
         """Return the norm of a vector."""
         return np.sqrt(self.squared_norm(x))
+
+    def gram_schmidt(self, vectors):
+        """
+        Given a list of elements of the space, returns a set
+        of orthonormal vectors spanning the same sub-space.
+        """
+
+        if not all(self.is_element(vector) for vector in vectors):
+            raise ValueError("Not all vectors are elements of the space")
+
+        orthonormalised_vectors = []
+        for i, vector in enumerate(vectors):
+            for j in range(i):
+                product = self.inner_product(vector, orthonormalised_vectors[j])
+                vector = self.axpy(-product, orthonormalised_vectors[j], vector)
+            norm = self.norm(vector)
+            vector = self.multiply(1 / norm, vector)
+            orthonormalised_vectors.append(vector)
+
+        return orthonormalised_vectors
 
     def to_dual(self, x):
         """Map a vector to cannonically associated dual vector."""
@@ -733,7 +754,27 @@ class LinearOperator(Operator):
                 rmatmat=rmatmat,
             )
 
-    def random_svd(self, rank, /, *, power=0, galerkin=False):
+    def fixed_rank_random_range(self, rank, /, *, measure=None):
+        """
+        Returns an approximation to the range of the operator of the specified rank.
+        If a measure is provided, random samples are drawn from it. Otherwise a standard
+        Gaussian on the sample space is used.
+        """
+
+        if measure is None:
+            us = [self.domain.random() for _ in range(rank)]
+
+        else:
+            assert self.domain == measure.domain
+            us = measure.samples(rank)
+
+        vs = [self(u) for u in us]
+
+        return self.codomain.gram_schmidt(vs)
+
+    def random_svd(
+        self, rank, /, *, power=0, galerkin=False, rtol=1e-3, method="fixed"
+    ):
         """
         Returns an approximate singular value decomposition of an operator using
         the randomised method of Halko et al. 2011.
@@ -768,12 +809,19 @@ class LinearOperator(Operator):
         m, n = matrix.shape
         k = min(m, n)
         rank = rank if rank <= k else k
-        qr_factor = fixed_rank_random_range(matrix, rank, power)
+
+        if method == "fixed":
+            qr_factor = fixed_rank_random_range(matrix, rank, power=power)
+        elif method == "variable":
+            qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
+        else:
+            raise ValueError("Invalid method selected")
+
         left_factor, singular_values, right_factor_transposed = random_svd(
             matrix, qr_factor
         )
 
-        euclidean = EuclideanSpace(rank)
+        euclidean = EuclideanSpace(qr_factor.shape[1])
         diagonal = DiagonalLinearOperator(euclidean, euclidean, singular_values)
 
         if galerkin:
@@ -841,7 +889,7 @@ class LinearOperator(Operator):
         # Return the factors.
         return left, diagonal, right
 
-    def random_eig(self, rank, /, *, power=0):
+    def random_eig(self, rank, /, *, power=0, rtol=1e-3, method="fixed"):
         """
         Returns an approximate eigenvalue decomposition of a self-adjoint operator using
         the randomised method of Halko et al. 2011.
@@ -882,9 +930,16 @@ class LinearOperator(Operator):
         m, n = matrix.shape
         k = min(m, n)
         rank = rank if rank <= k else k
-        qr_factor = fixed_rank_random_range(matrix, rank, power)
+
+        if method == "fixed":
+            qr_factor = fixed_rank_random_range(matrix, rank, power=power)
+        elif method == "variable":
+            qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
+        else:
+            raise ValueError("Invalid method selected")
+
         eigenvectors, eigenvalues = random_eig(matrix, qr_factor)
-        euclidean = EuclideanSpace(rank)
+        euclidean = EuclideanSpace(qr_factor.shape[1])
         diagonal = DiagonalLinearOperator(euclidean, euclidean, eigenvalues)
 
         def mapping(c):
@@ -902,7 +957,7 @@ class LinearOperator(Operator):
 
         return expansion, diagonal
 
-    def random_cholesky(self, rank, /, *, power=0):
+    def random_cholesky(self, rank, /, *, power=0, rtol=1e-3, method="fixed"):
         """
         Returns an approximate Cholesky decomposition of a positive-definite and
         self-adjoint operator using the randomised method of Halko et al. 2011.
@@ -928,7 +983,14 @@ class LinearOperator(Operator):
         m, n = matrix.shape
         k = min(m, n)
         rank = rank if rank <= k else k
-        qr_factor = fixed_rank_random_range(matrix, rank, power)
+
+        if method == "fixed":
+            qr_factor = fixed_rank_random_range(matrix, rank, power=power)
+        elif method == "variable":
+            qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
+        else:
+            raise ValueError("Invalid method selected")
+
         cholesky_factor = random_cholesky(matrix, qr_factor)
 
         def mapping(x):
@@ -941,7 +1003,10 @@ class LinearOperator(Operator):
             return cholesky_factor.T @ x
 
         return LinearOperator(
-            EuclideanSpace(rank), self.domain, mapping, adjoint_mapping=adjoint_mapping
+            EuclideanSpace(qr_factor.shape[1]),
+            self.domain,
+            mapping,
+            adjoint_mapping=adjoint_mapping,
         )
 
     def _dual_mapping_default(self, yp):

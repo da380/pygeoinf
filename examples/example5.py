@@ -6,26 +6,26 @@ from pygeoinf import (
     LinearForwardProblem,
     LinearBayesianInversion,
     CholeskySolver,
-    sample_variance,
+    pointwise_variance,
 )
 
 
 # Set the model space
-X = Sobolev(0, 2, 0.001, 0, 0.1)
+X = Sobolev(0, 2, 0.001, 0, 1)
 print(X.dim)
 
 # Set the model prior
-mu = X.sobolev_measure(2, 0.01)
+mu = X.sobolev_gaussian_measure(2, 0.1)
 
 
 # Set up the forward operator
-n = 4
+n = 10
 x = X.random_points(n)
 A = X.point_evaluation_operator(x)
 Y = A.codomain
 
 # Set up the data error measure
-sigma0 = 0.01
+sigma0 = 0.1
 sigma1 = 0.1
 standard_deviations = sigma0 + np.random.rand(Y.dim) * (sigma1 - sigma0)
 nu = GaussianMeasure.from_standard_deviations(Y, standard_deviations)
@@ -45,12 +45,14 @@ inversion = LinearBayesianInversion(forward_problem, mu)
 
 # Get the posterior model distribtution.
 # pi = inversion.model_posterior_measure(v, CholeskySolver())
-pi = inversion.model_posterior_measure_using_random_factorisation(v, 1000, power=2)
+
+
+pi = inversion.model_posterior_measure_using_random_factorisation(v, X.dim // 5)
 
 
 # Estimate the pointwise standard deviation.
-# uvar = sample_variance(pi.low_rank_approximation(300, power=2), 200)
-uvar = sample_variance(pi, 200)
+
+uvar = pointwise_variance(pi, 200)
 ustd = np.sqrt(uvar)
 
 

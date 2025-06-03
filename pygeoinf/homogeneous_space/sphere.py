@@ -2,6 +2,7 @@
 Module for Sobolev spaces on the two-sphere.
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.sparse import diags, coo_array
 import pyshtools as sh
@@ -556,6 +557,15 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         ustd = self.sample_variance(vectors, expectation=expectation)
         ustd.data = np.sqrt(ustd.data)
         return ustd
+
+    def plot(self, u, *args, **kwargs):
+        """
+        Make a simple plot of an element of the space.
+        """
+        if self._vector_as_SHGrid:
+            plt.pcolormesh(u.lons(), u.lats(), u.data, *args, **kwargs)
+        else:
+            self.plot(u.expand(grid=self.grid, extend=self.extend), *args, **kwargs)
 
     # ==============================================#
     #                Private methods               #

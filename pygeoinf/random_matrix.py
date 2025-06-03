@@ -48,17 +48,13 @@ def fixed_rank_random_range(matrix, rank, power=0):
     return qr_factor
 
 
-def variable_rank_random_range(matrix, rtol, /, *, rank=None, power=0):
+def variable_rank_random_range(matrix, rank, /, *, power=0, rtol=1e-6):
     """
     Forms the variable-rank approximation to the range of a matrix using
     a random-matrix method.
 
     Args:
         matrix (matrix-like): (m,n)-matrix whose range is to be approximated.
-        rtol (float): The desired relative accuracy.
-        rank (int): Starting rank for the decomposition. If none, then
-            determined from the dimension of the matrix.
-        power (int): The exponent to use within the power iterations.
 
     Returns:
         matrix: A (m,rank)-matrix whose columns are orthonormal and
@@ -70,7 +66,48 @@ def variable_rank_random_range(matrix, rtol, /, *, rank=None, power=0):
 
         This method is based on Algorithm 4.5 in Halko et. al. 2011
     """
-    raise NotImplementedError
+
+    m, n = matrix.shape
+
+    random_vectors = [np.random.randn(n) for _ in range(rank)]
+    ys = [matrix @ x for x in random_vectors]
+    basis_vectors = []
+
+    def projection(xs, y):
+        ps = [np.dot(x, y) for x in xs]
+        for p, x in zip(ps, xs):
+            y -= p * x
+        return y
+
+    norm = max(np.linalg.norm(y) for y in ys)
+
+    tol = rtol * norm / (10 * np.sqrt(2 / np.pi))
+    error = 2 * tol
+    j = -1
+    while error > tol:
+        j += 1
+
+        ys[j] = projection(basis_vectors, ys[j])
+        ys[j] /= np.linalg.norm(ys[j])
+        basis_vectors.append(ys[j])
+
+        y = matrix @ np.random.randn(n)
+        y = projection(basis_vectors, y)
+        ys.append(y)
+
+        for i in range(j + 1, j + rank):
+            p = np.dot(basis_vectors[j], ys[i])
+            ys[i] -= p * basis_vectors[j]
+
+        error = max(np.linalg.norm(ys[i]) for i in range(j + 1, j + rank))
+        print(j, error / tol)
+
+        if j > min(n, m):
+            raise RuntimeError("Convergence has failed")
+
+    qr_factor = np.column_stack(basis_vectors)
+
+    return qr_factor
 
 
 def random_svd(matrix, qr_factor):

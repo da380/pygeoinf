@@ -17,7 +17,7 @@ from pygeoinf.hilbert_space import (
 
 from pygeoinf.gaussian_measure import (
     GaussianMeasure,
-    sample_variance,
+    pointwise_variance,
 )
 
 from pygeoinf.direct_sum import (

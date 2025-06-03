@@ -129,7 +129,7 @@ class LinearBayesianInversion(Inversion):
         return GaussianMeasure(covariance=covariance, expectation=expectation)
 
     def model_posterior_measure_using_random_factorisation(
-        self, data, rank, /, *, power=0
+        self, data, rank, /, *, power=0, method="fixed", rtol=1e-3
     ):
         """
         Returns the posterior model measure based on a low rank factorisation
@@ -139,6 +139,11 @@ class LinearBayesianInversion(Inversion):
         To use this method, the prior covariance must be provided in a factored form.
         """
 
+        if not self.forward_problem.data_error_measure_set:
+            raise NotImplementedError(
+                "This method requires a prior data measure to be set."
+            )
+
         if not self.model_prior_measure.covariance_factor_set:
             raise NotImplementedError(
                 "This method requires the model prior covariance to be in factored form"
@@ -147,10 +152,11 @@ class LinearBayesianInversion(Inversion):
         # Set up the necessary operators.
         forward_operator = self.forward_problem.forward_operator
         prior_covariance_factor = self.model_prior_measure.covariance_factor
+        identity = prior_covariance_factor.domain.identity_operator()
         inverse_data_covariance = (
             self.forward_problem.data_error_measure.inverse_covariance
         )
-        identity = prior_covariance_factor.domain.identity_operator()
+
         normal_operator = (
             prior_covariance_factor.adjoint
             @ forward_operator.adjoint
@@ -161,9 +167,13 @@ class LinearBayesianInversion(Inversion):
         )
 
         # Perform the random eigen-decomposition.
-        eigenvectors, eigenvalues = normal_operator.random_eig(rank, power=power)
+        eigenvectors, eigenvalues = normal_operator.random_eig(
+            rank, power=power, method=method, rtol=rtol
+        )
+        inclusion = self.model_space.coordinate_inclusion
+        inverse_eigenvectors = inclusion @ inclusion.adjoint @ eigenvectors
         inverse_normal_operator = (
-            eigenvectors @ eigenvalues.inverse @ eigenvectors.adjoint
+            inverse_eigenvectors @ eigenvalues.inverse @ inverse_eigenvectors.adjoint
         )
 
         # Form the posterior covariance and its factor.
@@ -174,7 +184,7 @@ class LinearBayesianInversion(Inversion):
         )
 
         posterior_covariance_factor = (
-            prior_covariance_factor @ eigenvectors @ eigenvalues.inverse.sqrt
+            prior_covariance_factor @ inverse_eigenvectors @ eigenvalues.inverse.sqrt
         )
 
         # Now the posterior expectation.

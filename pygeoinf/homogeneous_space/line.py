@@ -223,7 +223,7 @@ class Sobolev(HilbertSpace):
         )
         return GaussianMeasure(covariance_factor=covariance_factor)
 
-    def sobolev_measure(self, exponent, scale, /, *, amplitude=1):
+    def sobolev_gaussian_measure(self, exponent, scale, /, *, amplitude=1):
         """
         Returns a Gaussian measure with Sobolev covariance. The measure is
         scaled such that the its pointwise standard deviation is equal
