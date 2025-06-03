@@ -45,16 +45,11 @@ u, v = forward_problem.synthetic_model_and_data(mu)
 
 
 solver = CholeskySolver()
-# pi = inverse_problem.model_posterior_measure(v, solver)
-pi = inverse_problem.model_posterior_measure_using_random_factorisation(
-    v, 10, power=1, method="fixed", rtol=0.01
-)
+pi = inverse_problem.model_posterior_measure(v, solver)
+
 
 ubar = pi.expectation
-# ustd = X.sample_std(pi.samples(100), expectation=ubar)
-
-
-uvar = pointwise_variance(pi, 20)
+uvar = pointwise_variance(pi.low_rank_approximation(50, power=3), 20)
 ustd = uvar.copy()
 ustd.data = np.sqrt(uvar.data)
 

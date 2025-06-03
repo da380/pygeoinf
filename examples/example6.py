@@ -1,19 +1,33 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from pygeoinf.homogeneous_space.sphere import Sobolev
+from scipy.sparse import diags
+from pygeoinf import variable_rank_random_range, random_eig, fixed_rank_random_range
+
+n = 100
+m = 100
 
 
-X = Sobolev(64, 2, 0.1)
+A = np.zeros((n, n))
+for i in range(m):
+    x = np.random.randn(n, 1)
+    A += (1 / (i + 1) ** 5) * x @ x.T
 
-mu = X.sobolev_gaussian_measure(2, 0.1, 1)
 
-Q = mu.covariance
+Q = variable_rank_random_range(A, 4, rtol=1e-3)
 
-us = Q.fixed_rank_random_range(10)
+U, eval = random_eig(A, Q)
 
-for u in us:
-    print(X.norm(u))
+D = diags([eval], [0])
+Di = diags([np.reciprocal(eval)], [0])
 
-X.plot(us[0])
+B = U @ D @ U.T
+C = U @ Di @ U.T
+
+plt.matshow(A - B)
 plt.colorbar()
+
+plt.matshow(A @ C)
+plt.colorbar()
+
+
 plt.show()

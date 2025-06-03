@@ -754,24 +754,6 @@ class LinearOperator(Operator):
                 rmatmat=rmatmat,
             )
 
-    def fixed_rank_random_range(self, rank, /, *, measure=None):
-        """
-        Returns an approximation to the range of the operator of the specified rank.
-        If a measure is provided, random samples are drawn from it. Otherwise a standard
-        Gaussian on the sample space is used.
-        """
-
-        if measure is None:
-            us = [self.domain.random() for _ in range(rank)]
-
-        else:
-            assert self.domain == measure.domain
-            us = measure.samples(rank)
-
-        vs = [self(u) for u in us]
-
-        return self.codomain.gram_schmidt(vs)
-
     def random_svd(
         self, rank, /, *, power=0, galerkin=False, rtol=1e-3, method="fixed"
     ):

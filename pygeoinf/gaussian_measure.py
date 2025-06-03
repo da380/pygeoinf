@@ -52,13 +52,13 @@ class GaussianMeasure:
                 "Neither covariance or covariance factor has been provided"
             )
 
-        self._domain = covariance_factor.codomain
         self._covariance_factor = covariance_factor
         self._covariance = (
             covariance_factor @ covariance_factor.adjoint
             if covariance is None
             else covariance
         )
+        self._domain = self._covariance.domain
         self._sample = sample if covariance_factor is None else self._sample_from_factor
         self._inverse_covariance_factor = inverse_covariance_factor
         if inverse_covariance_factor is not None:
@@ -354,14 +354,16 @@ class GaussianMeasure:
                 covariance=covariance, expectation=expectation, sample=sample
             )
 
-    def low_rank_approximation(self, rank, /, *, power=0):
+    def low_rank_approximation(self, rank, /, *, power=0, method="fixed", rtol=1e-2):
         """
         Returns an approximation to the measure with the covariance operator
         replaced by a low-rank Cholesky decomposition along with the associated
         sampling method.
         """
         return GaussianMeasure(
-            covariance_factor=self.covariance.random_cholesky(rank, power=power),
+            covariance_factor=self.covariance.random_cholesky(
+                rank, power=power, method=method, rtol=rtol
+            ),
             expectation=self.expectation,
         )
 

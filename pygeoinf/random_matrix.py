@@ -99,7 +99,7 @@ def variable_rank_random_range(matrix, rank, /, *, power=0, rtol=1e-6):
             p = np.dot(basis_vectors[j], ys[i])
             ys[i] -= p * basis_vectors[j]
 
-        error = max(np.linalg.norm(ys[i]) for i in range(j + 1, j + rank))
+        error = max(np.linalg.norm(ys[i]) for i in range(j + 1, j + rank + 1))
         print(j, error / tol)
 
         if j > min(n, m):
