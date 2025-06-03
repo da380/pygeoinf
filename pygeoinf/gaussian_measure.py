@@ -354,16 +354,38 @@ class GaussianMeasure:
                 covariance=covariance, expectation=expectation, sample=sample
             )
 
-    def low_rank_approximation(self, rank, /, *, power=0, method="fixed", rtol=1e-2):
+    def low_rank_approximation(
+        self,
+        rank,
+        /,
+        *,
+        power=0,
+        method="fixed",
+        rtol=1e-2,
+        scaling=None,
+    ):
         """
         Returns an approximation to the measure with the covariance operator
         replaced by a low-rank Cholesky decomposition along with the associated
         sampling method.
         """
-        return GaussianMeasure(
-            covariance_factor=self.covariance.random_cholesky(
+
+        covariance = self.covariance
+
+        if scaling is None:
+            covariance_factor = covariance.random_cholesky(
                 rank, power=power, method=method, rtol=rtol
-            ),
+            )
+
+        else:
+            covariance = scaling @ covariance @ scaling
+            covariance_factor = covariance.random_cholesky(
+                rank, power=power, method=method, rtol=rtol
+            )
+            covariance_factor = scaling.inverse @ covariance_factor
+
+        return GaussianMeasure(
+            covariance_factor=covariance_factor,
             expectation=self.expectation,
         )
 

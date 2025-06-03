@@ -13,6 +13,7 @@ from pygeoinf.hilbert_space import (
     LinearOperator,
     LinearForm,
     EuclideanSpace,
+    DiagonalLinearOperator,
 )
 from pygeoinf.gaussian_measure import GaussianMeasure
 
@@ -221,7 +222,16 @@ class Sobolev(HilbertSpace):
         covariance_factor = LinearOperator.from_matrix(
             EuclideanSpace(self.dim), self, matrix, galerkin=True
         )
-        return GaussianMeasure(covariance_factor=covariance_factor)
+        inverse_matrix = self._sparse_matrix_from_function_of_laplacian(
+            lambda k: 1 / np.sqrt(f(k))
+        )
+        inverse_covariance_factor = LinearOperator.from_matrix(
+            self, EuclideanSpace(self.dim), inverse_matrix, galerkin=True
+        )
+        return GaussianMeasure(
+            covariance_factor=covariance_factor,
+            inverse_covariance=inverse_covariance_factor,
+        )
 
     def sobolev_gaussian_measure(self, exponent, scale, /, *, amplitude=1):
         """
