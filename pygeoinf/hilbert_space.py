@@ -482,6 +482,37 @@ class LinearOperator(Operator):
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
     @staticmethod
+    def from_formal_adjoint(
+        domain, mapping, codomain=None, formal_adjoint_mapping=None
+    ):
+        """
+        Forms a Linear operator given its mapping and the mapping for its formal
+        adjoint (i.e., its adjoint relative to an L2 inner product).
+
+        Args:
+            domain (HilbertSpace): The domain of the operator.
+            mapping (callable): The action of the operator.
+            codomain (HilbertSpace): The codomain of the operator. Default is None,
+                in which case this is taken to equal the domain.
+            formal_adjoint_mapping (callable): The action of the formal adjoint.
+        """
+
+        _codomain = domain if codomain is None else codomain
+
+        def dual_mapping(yp):
+            cyp = codomain.dual.to_components(yp)
+            y = codomain.from_components(cyp)
+            x = (
+                mapping(y)
+                if formal_adjoint_mapping is None
+                else formal_adjoint_mapping(y)
+            )
+            cx = domain.to_components(x)
+            return domain.dual.from_components(cx)
+
+        return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+
+    @staticmethod
     def from_linear_forms(forms):
         """
         Returns a linear operator into Euclidiean space defined by the tensor
