@@ -430,8 +430,8 @@ class LinearOperator(Operator):
         mapping,
         /,
         *,
-        dual_mapping=None,
         adjoint_mapping=None,
+        dual_mapping=None,
         thread_safe=False,
         dual_base=None,
         adjoint_base=None,
@@ -445,6 +445,7 @@ class LinearOperator(Operator):
                 dual operator's action.
             adjoint_mapping (callable): Optional implementation
                 of the adjoint operator's action.
+
             thread_safe (bool): True if the operators action can be
                 safely called in parallel. Default is false.
             dual_base (LinearOperator) : Used internally when defining
@@ -455,6 +456,8 @@ class LinearOperator(Operator):
         super().__init__(domain, codomain, mapping)
         self._dual_base = dual_base
         self._adjoint_base = adjoint_base
+        self._thread_safe = thread_safe
+
         if dual_mapping is None:
             if adjoint_mapping is None:
                 self.__dual_mapping = self._dual_mapping_default
@@ -469,8 +472,6 @@ class LinearOperator(Operator):
             else:
                 self.__adjoint_mapping = adjoint_mapping
 
-        self._thread_safe = thread_safe
-
     @staticmethod
     def self_dual(domain, mapping):
         """Returns a self-dual operator in terms of its domain and mapping."""
@@ -482,35 +483,30 @@ class LinearOperator(Operator):
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
     @staticmethod
-    def from_formal_adjoint(
-        domain, mapping, codomain=None, formal_adjoint_mapping=None
-    ):
+    def from_formal_adjoint(domain, codomain, mapping, formal_adjoint):
         """
-        Forms a Linear operator given its mapping and the mapping for its formal
-        adjoint (i.e., its adjoint relative to an L2 inner product).
-
-        Args:
-            domain (HilbertSpace): The domain of the operator.
-            mapping (callable): The action of the operator.
-            codomain (HilbertSpace): The codomain of the operator. Default is None,
-                in which case this is taken to equal the domain.
-            formal_adjoint_mapping (callable): The action of the formal adjoint.
+        Forms a LinearOperator mapping the domain to the codomain. The
+        action of the mapping is provided along with that of its formal
+        adjoint. The formal adjoint is a mapping from the codomain to the
+        domain and is the adjoint of the operator relative to an L2 inner product.
         """
-
-        _codomain = domain if codomain is None else codomain
 
         def dual_mapping(yp):
             cyp = codomain.dual.to_components(yp)
             y = codomain.from_components(cyp)
-            x = (
-                mapping(y)
-                if formal_adjoint_mapping is None
-                else formal_adjoint_mapping(y)
-            )
+            x = formal_adjoint(y)
             cx = domain.to_components(x)
             return domain.dual.from_components(cx)
 
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+
+    @staticmethod
+    def formally_self_adjoint(domain, mapping):
+        """
+        Forms a LinearOperator on the domain given the mapping
+        on the assumption that the operator is formally self-adjoint.
+        """
+        return LinearOperator.from_formal_adjoint(domain, domain, mapping, mapping)
 
     @staticmethod
     def from_linear_forms(forms):
@@ -722,7 +718,10 @@ class LinearOperator(Operator):
 
     @property
     def thread_safe(self):
-        return thread_safe
+        """
+        Returns True if operator is thread safe.
+        """
+        return self._thread_safe
 
     def matrix(self, /, *, dense=False, galerkin=False):
         """Return matrix representation of the operator."""
@@ -1057,9 +1056,6 @@ class LinearOperator(Operator):
         def mapping(x):
             return codomain.negative(self(x))
 
-        def dual_mapping(yp):
-            return domain.dual.negative(self.dual(yp))
-
         def adjoint_mapping(y):
             return domain.negative(self.adjoint(y))
 
@@ -1067,7 +1063,6 @@ class LinearOperator(Operator):
             domain,
             codomain,
             mapping,
-            dual_mapping=dual_mapping,
             adjoint_mapping=adjoint_mapping,
         )
 
@@ -1079,9 +1074,6 @@ class LinearOperator(Operator):
         def mapping(x):
             return codomain.multiply(a, self(x))
 
-        def dual_mapping(yp):
-            return domain.dual.multiply(a, self.dual(yp))
-
         def adjoint_mapping(y):
             return domain.multiply(a, self.adjoint(y))
 
@@ -1089,7 +1081,6 @@ class LinearOperator(Operator):
             domain,
             codomain,
             mapping,
-            dual_mapping=dual_mapping,
             adjoint_mapping=adjoint_mapping,
         )
 
@@ -1109,9 +1100,6 @@ class LinearOperator(Operator):
         def mapping(x):
             return codomain.add(self(x), other(x))
 
-        def dual_mapping(yp):
-            return domain.dual.add(self.dual(yp), other.dual(yp))
-
         def adjoint_mapping(y):
             return domain.add(self.adjoint(y), other.adjoint(y))
 
@@ -1119,7 +1107,6 @@ class LinearOperator(Operator):
             domain,
             codomain,
             mapping,
-            dual_mapping=dual_mapping,
             adjoint_mapping=adjoint_mapping,
         )
 
@@ -1131,9 +1118,6 @@ class LinearOperator(Operator):
         def mapping(x):
             return codomain.subtract(self(x), other(x))
 
-        def dual_mapping(yp):
-            return domain.dual.subtract(self.dual(yp), other.dual(yp))
-
         def adjoint_mapping(y):
             return domain.subtract(self.adjoint(y), other.adjoint(y))
 
@@ -1141,7 +1125,6 @@ class LinearOperator(Operator):
             domain,
             codomain,
             mapping,
-            dual_mapping=dual_mapping,
             adjoint_mapping=adjoint_mapping,
         )
 
@@ -1153,9 +1136,6 @@ class LinearOperator(Operator):
         def mapping(x):
             return self(other(x))
 
-        def dual_mapping(yp):
-            return other.dual(self.dual(yp))
-
         def adjoint_mapping(y):
             return other.adjoint(self.adjoint(y))
 
@@ -1163,7 +1143,6 @@ class LinearOperator(Operator):
             domain,
             codomain,
             mapping,
-            dual_mapping=dual_mapping,
             adjoint_mapping=adjoint_mapping,
         )
 
@@ -1198,7 +1177,6 @@ class DiagonalLinearOperator(LinearOperator):
             operator.domain,
             operator.codomain,
             operator,
-            dual_mapping=operator.dual,
             adjoint_mapping=operator.adjoint,
         )
 

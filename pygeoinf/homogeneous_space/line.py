@@ -212,7 +212,7 @@ class Sobolev(HilbertSpace):
         matrix = self._sparse_matrix_from_function_of_laplacian(f)
         return LinearOperator.from_matrix(self, self, matrix, galerkin=True)
 
-    def invariant_measure(self, f):
+    def invariant_measure(self, f, /, *, expectation=None):
         """
         Returns a Gaussian measure on the space whose covariance takes the form f(\Delta) with
         \Delta the Laplacian. The trace-class condition for the measure to be well-defined implies
@@ -231,20 +231,24 @@ class Sobolev(HilbertSpace):
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance=inverse_covariance_factor,
+            expectation=expectation,
         )
 
-    def sobolev_gaussian_measure(self, exponent, scale, /, *, amplitude=1):
+    def sobolev_gaussian_measure(
+        self, exponent, scale, amplitude, /, *, expectation=None
+    ):
         """
         Returns a Gaussian measure with Sobolev covariance. The measure is
         scaled such that the its pointwise standard deviation is equal
         to the optional amplitude (default value 1).
         """
         mu = self.invariant_measure(lambda k: (1 + (scale * k) ** 2) ** -exponent)
+        Q = mu.covariance
         x = self.left_boundary_point + 0.5 * self.line_width
         u = self.dirac_representation(x)
-        var = self.inner_product(mu.covariance(u), u)
+        var = self.inner_product(Q(u), u)
         mu *= amplitude / np.sqrt(var)
-        return mu
+        return mu.affine_mapping(translation=expectation)
 
     def dirac(self, x):
         """

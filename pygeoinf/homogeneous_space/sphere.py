@@ -472,6 +472,7 @@ class Sobolev(SHToolsHelper, HilbertSpace):
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
+            expectation=expectation,
         )
 
     def sobolev_gaussian_measure(self, order, scale, amplitude, /, *, expectation=None):

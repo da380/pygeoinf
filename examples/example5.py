@@ -12,11 +12,11 @@ from pygeoinf import (
 
 
 # Set the model space
-X = Sobolev(0, 10, 0.0001, 0, 0.01)
+X = Sobolev(0, 1, 0.0001, 0, 0.01)
 print(X.dim)
 
 # Set the model prior
-mu = X.sobolev_gaussian_measure(2, 0.1)
+mu = X.sobolev_gaussian_measure(2, 0.1, 1)
 
 
 # Set up the forward operator
@@ -27,7 +27,7 @@ Y = A.codomain
 
 # Set up the data error measure
 sigma0 = 0.01
-sigma1 = 0.3
+sigma1 = 0.1
 standard_deviations = sigma0 + np.random.rand(Y.dim) * (sigma1 - sigma0)
 nu = GaussianMeasure.from_standard_deviations(Y, standard_deviations)
 
@@ -52,7 +52,7 @@ pi = inversion.model_posterior_measure(v, CholeskySolver())
 pi_approx = pi.low_rank_approximation(
     20,
     method="variable",
-    rtol=1e-2,
+    rtol=1e-4,
 )
 uvar = pointwise_variance(pi_approx, 200)
 ustd = np.sqrt(uvar)
@@ -66,7 +66,6 @@ X.plot_error_bounds(ubar, 2 * ustd, alpha=0.2, color="b")
 
 umax = np.max(np.abs(ubar) + 2 * ustd)
 plt.ylim([-1.3 * umax, 1.3 * umax])
-plt.xlim([0, 2])
 plt.grid()
 
 
