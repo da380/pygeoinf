@@ -29,7 +29,7 @@ A = X.point_evaluation_operator(lats, lons)
 Y = A.codomain
 
 # Set the error distribution
-sigma = 0.0
+sigma = 0.1
 nu = GaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
 
 

@@ -20,7 +20,7 @@ mu = X.sobolev_gaussian_measure(2, 0.1, 1)
 
 
 # Set up the forward operator
-n = 10
+n = 1
 x = X.random_points(n)
 A = X.point_evaluation_operator(x)
 Y = A.codomain
@@ -50,7 +50,7 @@ pi = inversion.model_posterior_measure(v, CholeskySolver())
 
 # Estimate the pointwise standard deviation.
 pi_approx = pi.low_rank_approximation(
-    20,
+    3,
     method="variable",
     rtol=1e-4,
 )

@@ -3,6 +3,7 @@ Module for Gaussian measures on Hilbert spaces.
 """
 
 import numpy as np
+from scipy.stats import multivariate_normal
 from pygeoinf.hilbert_space import (
     LinearOperator,
     DiagonalLinearOperator,
@@ -353,6 +354,22 @@ class GaussianMeasure:
             return GaussianMeasure(
                 covariance=covariance, expectation=expectation, sample=sample
             )
+
+    def as_multivariate_normal(self):
+        """
+        Returns the measure in the form of a scipy.stats multivariate_normal
+        distribution. This method is available only if the measure is
+        defined on a EuclideanSpace.
+        """
+
+        if not isinstance(self.domain, EuclideanSpace):
+            raise NotImplementedError(
+                "Method only defined for measures on Euclidean space"
+            )
+
+        return multivariate_normal(
+            mean=self.expectation, cov=self.covariance.matrix(dense=True)
+        )
 
     def low_rank_approximation(
         self,
