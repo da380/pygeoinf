@@ -101,7 +101,6 @@ def variable_rank_random_range(matrix, rank, /, *, power=0, rtol=1e-6):
 
         error = max(np.linalg.norm(ys[i]) for i in range(j + 1, j + rank + 1))
 
-        print(j, error)
         if j > min(n, m):
             raise RuntimeError("Convergence has failed")
 
