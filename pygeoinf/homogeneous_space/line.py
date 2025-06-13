@@ -187,21 +187,38 @@ class Sobolev(HilbertSpace):
         """
         return np.fromiter([f(x) for x in self.sample_points()], float)
 
-    def plot(self, u, *args, **kwargs):
+    def plot(self, u, fig=None, ax=None, **kwargs):
         """
         Make a simple plot of an element of the space on the computational domain.
-        Optional arguements are forwarded through to the pylot.plot method.
         """
-        plt.plot(self.sample_points(), u, *args, **kwargs)
 
-    def plot_error_bounds(self, ubar, ustd, *args, **kwargs):
+        figsize = kwargs.pop("figsize", (10, 8))
+
+        if fig is None:
+            fig = plt.figure(figsize=figsize)
+        if ax is None:
+            ax = fig.add_subplot()
+
+        line = ax.plot(self.sample_points(), u, **kwargs)
+
+        return fig, ax, line[0]
+
+    def plot_error_bounds(self, u, u_bound, fig=None, ax=None, **kwargs):
         """
         Make a plot of an element of the space bounded above and below by a standard
         deviation curve.
         """
-        plt.fill_between(
-            self.sample_points(), ubar - ustd, ubar + ustd, *args, **kwargs
-        )
+
+        figsize = kwargs.pop("figsize", (10, 8))
+
+        if fig is None:
+            fig = plt.figure(figsize=figsize)
+        if ax is None:
+            ax = fig.add_subplot()
+
+        obj = ax.fill_between(self.sample_points(), u - u_bound, u + u_bound, **kwargs)
+
+        return fig, ax, obj
 
     def invariant_automorphism(self, f):
         """
