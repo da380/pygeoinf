@@ -303,6 +303,24 @@ class GaussianMeasure:
             expectation = self.domain.axpy(1 / n, sample, expectation)
         return expectation
 
+    def sample_variance(self, n):
+        """
+        Returns the sample variance using n > 1 samples.
+        """
+        if not self.domain.has_vector_multiply:
+            raise NotImplementedError("Method not defined for this measure")
+
+        samples = self.samples(n)
+        expectation = self.expectation
+        variance = self.domain.zero
+
+        for sample in samples:
+            diff = self.domain.subtract(sample, expectation)
+            prod = self.domain.vector_multiply(diff, diff)
+            variance = self.domain.axpy(1 / n, prod, variance)
+
+        return variance
+
     def affine_mapping(self, /, *, operator=None, translation=None):
         """
         Returns the push forward of the measure under an affine mapping.

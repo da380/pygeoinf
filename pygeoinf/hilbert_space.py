@@ -33,8 +33,11 @@ class HilbertSpace:
             this requirement is not automatically checked.
         (4) The inner product on the space.
         (5) The mapping from the space to its dual.
-        (5) The mapping from a dual vector to its representation
+        (6) The mapping from a dual vector to its representation
             within the space.
+
+    Optinally, custom implementations for the basic vector operations can
+    be provided.
     """
 
     def __init__(
@@ -52,6 +55,7 @@ class HilbertSpace:
         multiply=None,
         axpy=None,
         copy=None,
+        vector_multiply=None,
         base=None,
     ):
         """
@@ -88,11 +92,19 @@ class HilbertSpace:
         self._multiply = self.__multiply if multiply is None else multiply
         self._axpy = self.__axpy if axpy is None else axpy
         self._copy = self.__copy if copy is None else copy
+        self._vector_multiply = vector_multiply
 
     @property
     def dim(self):
         """The dimension of the space."""
         return self._dim
+
+    @property
+    def has_vector_multiply(self):
+        """
+        True if multiplication of elements is defined.
+        """
+        return self._vector_multiply is not None
 
     @property
     def dual(self):
@@ -257,6 +269,16 @@ class HilbertSpace:
         """
         return self._copy(x)
 
+    def vector_multiply(self, x1, x2):
+        """
+        Returns the product of two elements of the space.
+        """
+        if not self.has_vector_multiply:
+            raise NotImplementedError(
+                "Vector multiplication not defined on this space."
+            )
+        return self._vector_multiply(x1, x2)
+
     def to_components(self, x):
         """Maps vectors to components."""
         return self.__to_components(x)
@@ -332,6 +354,170 @@ class HilbertSpace:
 
     def __copy(self, x):
         return x.copy()
+
+
+class HilbertModule(HilbertSpace):
+    """
+    Class for HilbertSpaces that are  modules with respect a ring. To define
+    an instance, the user must provide:
+
+    (1) The dimension of the space, or the dimension of the
+            finite-dimensional approximating space.
+    (2) A mapping from elements of the space to their components.
+            These components must be expressed as numpy arrays with
+            shape (dim) with dim the space's dimension.
+    (3) A mapping from components back to the vectors. This
+            needs to be the inverse of the mapping in (2), but
+            this requirement is not automatically checked.
+    (4) The inner product on the space.
+    (5) The mapping from the space to its dual.
+    (6) The mapping from a dual vector to its representation
+            within the space.
+    (7) The ring for which multiplication with elements is defined.
+    (8) One or both of the left and right ring multiplications.
+
+    Optinally, custom implementations for the basic vector operations can
+    be provided.
+    """
+
+    def __init__(
+        self,
+        dim,
+        to_components,
+        from_components,
+        inner_product,
+        to_dual,
+        from_dual,
+        /,
+        *,
+        add=None,
+        subtract=None,
+        multiply=None,
+        axpy=None,
+        copy=None,
+        ring_left_multiply=None,
+        ring_right_multiply=None,
+    ):
+
+        super().__init__(
+            dim,
+            to_components,
+            from_components,
+            inner_product,
+            to_dual,
+            from_dual,
+            add=add,
+            subtract=subtract,
+            multiply=multiply,
+            axpy=axpy,
+            copy=copy,
+        )
+
+        if ring_left_multiply is None and ring_right_multiply is None:
+            raise ValueError(
+                "For a HilbertModule either left or right ring multiplication must be defined"
+            )
+
+        self._ring = ring
+        self._ring_left_multiply = ring_left_multiply
+        self._ring_right_multiply = ring_right_multiply
+
+    @staticmethod
+    def from_commutative_ring(
+        dim,
+        to_components,
+        from_components,
+        inner_product,
+        to_dual,
+        from_dual,
+        ring,
+        ring_multiply,
+        /,
+        *,
+        add=None,
+        subtract=None,
+        multiply=None,
+        axpy=None,
+        copy=None,
+    ):
+        """
+        Forms a commutative Hilbert module.
+        """
+        return HilbertModule(
+            dim,
+            to_components,
+            from_components,
+            inner_product,
+            to_dual,
+            from_dual,
+            ring,
+            add=add,
+            subtract=subtract,
+            multiply=multiply,
+            axpy=axpy,
+            copy=copy,
+            ring_left_multiply=ring_multiply,
+            ring_right_multiply=ring_multiply,
+        )
+
+    @property
+    def ring(self):
+        """
+        Return the ring.
+        """
+        return self._ring
+
+    @property
+    def is_left_module(self):
+        """
+        True if space is an L-module wrt to the ring.
+        """
+        return self._ring_left_multiply is not None
+
+    @property
+    def is_right_module(self):
+        """
+        True if space is an R-module wrt to the ring.
+        """
+        return self._ring_right_multiply is not None
+
+    @property
+    def is_commutative_module(self):
+        """
+        True is space is a commutative module wrt to the ring.
+        """
+        return (
+            self.is_left_module
+            and self.is_right_module
+            and self._ring_left_multiply == self._ring_right_multiply
+        )
+
+    def ring_left_multiply(self, r, x):
+        """
+        Return the left multiplicatoin of an element, r, in the
+        ring with an element, x, of the space.
+        """
+        if not self.is_left_module:
+            raise NotImplementedError("Method only implemented for L-modules")
+        return self._ring_left_multiply(r, x)
+
+    def ring_right_multiply(self, r, x):
+        """
+        Return the right multiplication of an element, r, in the
+        ring with an element, x, of the space.
+        """
+        if not self.is_right_module:
+            raise NotImplementedError("Method only implemented for R-modules")
+        return self._ring_right_multiply(r, x)
+
+    def ring_multiply(self, r, x):
+        """
+        Returns the multiplication of an element, r, of the ring with
+        an element, x, of the space.
+        """
+        if not self.is_commutative_module:
+            raise NotImplementedError("Method only implemented for commutative modules")
+        return self._ring_left_multiply(r, x)
 
 
 class EuclideanSpace(HilbertSpace):

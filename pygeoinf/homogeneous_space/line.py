@@ -78,6 +78,7 @@ class Sobolev(HilbertSpace):
             self._inner_product,
             self._to_dual,
             self._from_dual,
+            vector_multiply=lambda u1, u2: u1 * u2,
         )
 
         self._sample_point_spacing = (
@@ -321,7 +322,7 @@ class Sobolev(HilbertSpace):
         return np.random.uniform(left, right, n)
 
     # ================================================================#
-    #                           Private methods                      #
+    #                           Private methods                       #
     # ================================================================#
 
     def _sobolev_function(self, k):
