@@ -30,13 +30,7 @@ Once installed, the virtual environment can be activated by typing:
 $(poetry env activate)
 ```
 
-Alternative, you can use ```poetry run``` to directly execute commands without starting up the virtual environment. For example, if the tutorials have been installed, then you can type:
-```
-poetry run jupyter notebook
-```
-
-will launch in a browser a juptyer notebook from which you can navigate to
-and run the tutorials. 
+Alternative, you can use ```poetry run``` to directly execute commands without starting up the virtual environment.
 
 
 
