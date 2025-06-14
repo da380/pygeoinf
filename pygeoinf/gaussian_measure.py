@@ -303,9 +303,11 @@ class GaussianMeasure:
             expectation = self.domain.axpy(1 / n, sample, expectation)
         return expectation
 
-    def sample_variance(self, n):
+    def sample_pointwise_variance(self, n):
         """
         Returns the sample variance using n > 1 samples.
+        Available only if multiplication of vectors is defined
+        on the domain of the measure.
         """
         if not self.domain.has_vector_multiply:
             raise NotImplementedError("Method not defined for this measure")
