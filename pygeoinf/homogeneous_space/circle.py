@@ -24,7 +24,7 @@ class Sobolev(HilbertSpace):
         self,
         kmax,
         exponent,
-        scale,
+        length_scale,
         /,
         *,
         radius=1,
@@ -33,13 +33,13 @@ class Sobolev(HilbertSpace):
         Args:
             kmax (float): The maximum Fourier degree.
             exponent (float): Sobolev exponent.
-            scale (float): Sobolev length-scale relative to radius.
+            length_scale (float): Sobolev length-scale.
             radius (float): Radius of the circle. Default is 1.
         """
 
         self._kmax = kmax
         self._exponent = exponent
-        self._scale = scale
+        self._length_scale = length_scale
         self._radius = radius
 
         super().__init__(
@@ -52,18 +52,9 @@ class Sobolev(HilbertSpace):
             vector_multiply=lambda u1, u2: u1 * u2,
         )
 
-        self._fft_factor = np.sqrt(2 * np.pi) / self.dim
+        self._fft_factor = np.sqrt(2 * np.pi * radius) / self.dim
         self._inverse_fft_factor = 1 / self._fft_factor
 
-        # indexing information for component vectors
-        self._real_start = 0
-        self._real_finish = self.dim // 2 + 1
-        self._real_k_start = 0
-        self._imag_start = self._real_finish
-        self._imag_finish = self.dim
-        self._imag_k_start = 1
-
-        # Set up sparse matrices for inner product and Riesz mappings
         values = np.zeros(self.kmax + 1)
         values[0] = 1
         for k in range(1, self.kmax + 1):
@@ -74,31 +65,44 @@ class Sobolev(HilbertSpace):
 
     @staticmethod
     def from_sobolev_parameters(
-        exponent, scale, /, *, radius=1, rtol=1e-8, power_of_two=False
+        exponent, length_scale, /, *, radius=1, rtol=1e-8, power_of_two=False
     ):
         """
         Returns a instance of the class with the maximum Fourier degree
-        chosen based on the Sobolev parameters. The criteria is based on
-        convergence of the Dirac representation.
+        chosen based on the Sobolev parameters. The method is based on
+        an estimate of truncation error for the Dirac measure, and is
+        only applicable in spaces with exponents > 0.5.
+
+        Args:
+            exponent (float): The Sobolev exponent.
+            length_scale (float): The Sobolev length-scale.
+            radius (float): The radius for the circle. Default is 1.
+            rtol (float): Relative tolerance used in assessing
+                truncation error. Default is 1e-8
+            power_of_two (bool): If True, truncation degree set to optimal
+                power of two.
+
+        Raises:
+            ValueError: If exponent is <= 0.5.
         """
 
         if exponent <= 0.5:
             raise ValueError("This method is only applicable for exponents > 0.5")
 
-        sum = 1
+        summation = 1
         k = 0
         err = 1
         while err > rtol:
             k += 1
-            term = (1 + (scale * k) ** 2) ** -exponent
-            sum += term
-            err = term / sum
+            term = (1 + (length_scale * k) ** 2) ** -exponent
+            summation += term
+            err = term / summation
 
         if power_of_two:
             n = int(np.log2(k))
             k = 2 ** (n + 1)
 
-        return Sobolev(k, exponent, scale, radius=radius)
+        return Sobolev(k, exponent, length_scale, radius=radius)
 
     @property
     def kmax(self):
@@ -122,11 +126,11 @@ class Sobolev(HilbertSpace):
         return self._exponent
 
     @property
-    def scale(self):
+    def length_scale(self):
         """
-        Return the relative Sobolev scale.
+        Return the relative Sobolev length_scale.
         """
-        return self._scale
+        return self._length_scale
 
     @property
     def angle_spacing(self):
@@ -137,7 +141,7 @@ class Sobolev(HilbertSpace):
 
     def angles(self):
         """
-        Returns a numpy array of the angles points.
+        Returns a numpy array of the angles.
         """
         return np.fromiter(
             [i * self.angle_spacing for i in range(self.dim)],
@@ -146,14 +150,23 @@ class Sobolev(HilbertSpace):
 
     def project_function(self, f):
         """
-        Returns an element of the space formed by projecting a given function
-        on the sample points.
+        Returns an element of the space formed by projecting a given function.
         """
-        return np.fromiter([f(x) for x in self.angles()], float)
+        return np.fromiter([f(theta) for theta in self.angles()], float)
 
     def plot(self, u, fig=None, ax=None, **kwargs):
         """
         Make a simple plot of an element of the space on the computational domain.
+
+        Args:
+            u (vector): The element of the space to be plotted.
+            fig (Figure): An existing Figure object to use. Default is None.
+            ax (Axes): An existing Axes object to use. Default is None.
+            kwargs: Keyword arguments forwarded to plot.
+
+        Returns
+            Figure: The figure object, either that given or newly created.
+            Axes: The axes object, either that given or newly created.
         """
 
         figsize = kwargs.pop("figsize", (10, 8))
@@ -163,14 +176,25 @@ class Sobolev(HilbertSpace):
         if ax is None:
             ax = fig.add_subplot()
 
-        line = ax.plot(self.angles(), u, **kwargs)
+        ax.plot(self.angles(), u, **kwargs)
 
-        return fig, ax, line[0]
+        return fig, ax
 
     def plot_error_bounds(self, u, u_bound, fig=None, ax=None, **kwargs):
         """
         Make a plot of an element of the space bounded above and below by a standard
         deviation curve.
+
+        Args:
+            u (vector): The element of the space to be plotted.
+            u_bounds (vector): A second element giving point-wise bounds.
+            fig (Figure): An existing Figure object to use. Default is None.
+            ax (Axes): An existing Axes object to use. Default is None.
+            kwargs: Keyword arguments forwarded to plot.
+
+        Returns
+            Figure: The figure object, either that given or newly created.
+            Axes: The axes object, either that given or newly created.
         """
 
         figsize = kwargs.pop("figsize", (10, 8))
@@ -180,17 +204,19 @@ class Sobolev(HilbertSpace):
         if ax is None:
             ax = fig.add_subplot()
 
-        obj = ax.fill_between(self.angles(), u - u_bound, u + u_bound, **kwargs)
+        ax.fill_between(self.angles(), u - u_bound, u + u_bound, **kwargs)
 
-        return fig, ax, obj
+        return fig, ax
 
     def invariant_automorphism(self, f):
         """
-        Returns a linear operator on the space of the form f(\Delta) with \Delta the Laplacian.
+        Returns a linear operator on the space of the form f(Delta) with Delta the Laplacian.
         The resulting operator is only well-defined as a continuous automorphism if f is bounded.
         """
 
-        values = np.fromiter([f(k) for k in range(self.kmax + 1)], dtype=float)
+        values = np.fromiter(
+            [f(k * k / self.radius**2) for k in range(self.kmax + 1)], dtype=float
+        )
         matrix = diags([values], [0])
 
         def mapping(u):
@@ -207,7 +233,10 @@ class Sobolev(HilbertSpace):
         that the sequence {f(k)} must be summable.
         """
 
-        values = np.fromiter([np.sqrt(f(k)) for k in range(self.kmax + 1)], dtype=float)
+        values = np.fromiter(
+            [np.sqrt(f(k * k / self.radius**2)) for k in range(self.kmax + 1)],
+            dtype=float,
+        )
         matrix = diags([values], [0])
 
         domain = EuclideanSpace(self.dim)
@@ -233,7 +262,7 @@ class Sobolev(HilbertSpace):
         )
 
     def sobolev_gaussian_measure(
-        self, exponent, scale, amplitude, /, *, expectation=None
+        self, exponent, length_scale, amplitude, /, *, expectation=None
     ):
         """
         Returns a Gaussian measure with Sobolev covariance. The measure is
@@ -241,8 +270,22 @@ class Sobolev(HilbertSpace):
         to the optional amplitude (default value 1).
         """
         mu = self.invariant_gaussian_measure(
-            lambda k: (1 + (scale * k) ** 2) ** -exponent
+            lambda k: (1 + length_scale**2 * k) ** -exponent
         )
+        Q = mu.covariance
+        th = np.pi
+        u = self.dirac_representation(th)
+        var = self.inner_product(Q(u), u)
+        mu *= amplitude / np.sqrt(var)
+        return mu.affine_mapping(translation=expectation)
+
+    def heat_gaussian_measure(self, length_scale, amplitude, /, *, expectation=None):
+        """
+        Returns a Gaussian measure with heat kernel covariance. The measure is
+        scaled such that the its pointwise standard deviation is equal
+        to the optional amplitude (default value 1).
+        """
+        mu = self.invariant_gaussian_measure(lambda k: np.exp(-(length_scale**2) * k))
         Q = mu.covariance
         th = np.pi
         u = self.dirac_representation(th)
@@ -259,14 +302,14 @@ class Sobolev(HilbertSpace):
         coeff[0] = 1
         for k in range(1, coeff.size):
             coeff[k] = coeff[k - 1] * fac
-        coeff *= 1 / np.sqrt(2 * np.pi)
+        coeff *= 1 / np.sqrt(2 * np.pi * self.radius)
         coeff[1:] *= 2
         cp = self._coefficient_to_component(coeff)
         return LinearForm(self, components=cp)
 
     def dirac_representation(self, angle):
         """
-        Returns the representation of the dirac measure based at x.
+        Returns the representation of the dirac measure based at the angle.
         """
         return self.from_dual(self.dirac(angle))
 
@@ -297,7 +340,7 @@ class Sobolev(HilbertSpace):
     # ================================================================#
 
     def _sobolev_function(self, k):
-        return (1 + (self.scale * k) ** 2) ** self.exponent
+        return (1 + (self.length_scale * k) ** 2) ** self.exponent
 
     def _to_coefficient(self, u):
         return rfft(u) * self._fft_factor
@@ -312,16 +355,6 @@ class Sobolev(HilbertSpace):
         coeff_real = c[: self.kmax + 1]
         coeff_imag = np.concatenate([[0], c[self.kmax + 1 :], [0]])
         return coeff_real + 1j * coeff_imag
-
-    def _sparse_matrix_from_function_of_laplacian(self, f):
-        """
-        Returns as a sparse matrix acting on components the
-        a function of the Laplacian.
-        """
-        values = np.zeros(self.dim // 2 + 1)
-        for k in range(self.dim // 2 + 1):
-            values[k] = f(k)
-        return diags([values], [0])
 
     def _to_componets(self, u):
         coeff = self._to_coefficient(u)
@@ -350,7 +383,7 @@ class Sobolev(HilbertSpace):
 
 class Lebesgue(Sobolev):
     """
-    L2 space on a circle. Instance of the Sobolev spcae class when the exponent vanishes.
+    Implementation of the Lebesgue space L2 on a circle.
     """
 
     def __init__(
@@ -360,4 +393,9 @@ class Lebesgue(Sobolev):
         *,
         radius=1,
     ):
+        """
+        Args:
+            kmax (float): The maximum Fourier degree.
+            radius (float): Radius of the circle. Default is 1.
+        """
         super().__init__(kmax, 0, 0, radius=radius)

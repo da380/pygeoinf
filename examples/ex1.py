@@ -2,13 +2,15 @@ import numpy as np
 from numpy import pi, sqrt, sin, cos
 import matplotlib.pyplot as plt
 
-from pygeoinf.homogeneous_space.circle import Sobolev
+from pygeoinf.homogeneous_space.line import Sobolev
+
+X = Sobolev(0, 10, 256, 2, 0.1)
 
 
-X = Sobolev.from_sobolev_parameters(1, 0.1, power_of_two=True)
-print(X.dim)
+u = X.project_function(lambda x: x)
 
-u = X.dirac_representation(pi)
-
-X.plot(u)
-plt.show()
+x = 2
+vp = X.dirac(x)
+v = X.dirac_representation(x)
+print(vp(u))
+print(X.inner_product(v, u))
