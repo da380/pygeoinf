@@ -4,7 +4,12 @@ Sobolev spaces for functions on a line.
 
 import matplotlib.pyplot as plt
 import numpy as np
-from pygeoinf.hilbert_space import HilbertSpace, LinearOperator, EuclideanSpace
+from pygeoinf.hilbert_space import (
+    HilbertSpace,
+    LinearOperator,
+    EuclideanSpace,
+)
+from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.homogeneous_space.circle import Sobolev as CicleSobolev
 
 
@@ -15,24 +20,29 @@ class Sobolev(HilbertSpace):
 
     def __init__(
         self,
-        x0,
-        x1,
         kmax,
         exponent,
         length_scale,
+        /,
+        *,
+        x0=0,
+        x1=1,
     ):
         """
         Args:
             kmax (float): The maximum Fourier degree.
-            x0 (float): The left boudary of the interval.
-            x1 (float): The right boundary of the interval.
             exponent (float): Sobolev exponent.
             length_scale (float): Sobolev length-scale.
             radius (float): Radius of the circle. Default is 1.
+            x0 (float): The left boudary of the interval, Default is 0.
+            x1 (float): The right boundary of the interval. Default is 1.
         """
 
         if x0 >= x1:
             raise ValueError("Invalid interval parameters")
+
+        if exponent != 0 and length_scale <= 0:
+            raise ValueError("Length-scale must be positive")
 
         self._kmax = kmax
         self._x0 = x0
@@ -40,8 +50,8 @@ class Sobolev(HilbertSpace):
         self._exponent = exponent
         self._length_scale = length_scale
 
-        # Work out the transformation from a circle.
-        padding_scale = 5 * length_scale
+        # Work out transformation from a unit circle.
+        padding_scale = 5 * length_scale if length_scale > 0 else 0.1 * (x1 - x0)
         number_of_points = 2 * kmax
         width = x1 - x0
         self._start_index = int(
@@ -57,7 +67,7 @@ class Sobolev(HilbertSpace):
         self._sqrt_jac = np.sqrt(self._jac)
         self._isqrt_jac = 1 / self._sqrt_jac
 
-        # Form the Sobolev space on the circle.
+        # Set up the related Sobolev space on the unit circle.
         circle_length_scale = length_scale * self._ijac
         self._circle_space = CicleSobolev(kmax, exponent, circle_length_scale)
 
@@ -218,10 +228,8 @@ class Sobolev(HilbertSpace):
         Returns a linear operator on the space of the form f(Delta) with Delta the Laplacian.
         The resulting operator is only well-defined as a continuous automorphism if f is bounded.
         """
-        P = self._to_circle()
-        I = self._from_circle()
         A = self._circle_space.invariant_automorphism(lambda k: self._ijac * k)
-        return I @ A @ P
+        return LinearOperator.formally_self_adjoint(self, A)
 
     def invariant_gaussian_measure(self, f, /, *, expectation=None):
         """
@@ -232,7 +240,10 @@ class Sobolev(HilbertSpace):
         mu = self._circle_space.invariant_gaussian_measure(
             lambda k: self._ijac * k, expectation=expectation
         )
-        return mu.affine_mapping(operator=self._from_circle())
+        covariance = LinearOperator.self_adjoint(self, mu.covariance)
+        return GaussianMeasure(
+            covariance=covariance, expectation=expectation, sample=mu.sample
+        )
 
     def sobolev_gaussian_measure(
         self, exponent, length_scale, amplitude, /, *, expectation=None
@@ -245,7 +256,10 @@ class Sobolev(HilbertSpace):
         mu = self._circle_space.sobolev_gaussian_measure(
             exponent, length_scale * self._ijac, amplitude, expectation=expectation
         )
-        return mu.affine_mapping(operator=self._from_circle())
+        covariance = LinearOperator.self_adjoint(self, mu.covariance)
+        return GaussianMeasure(
+            covariance=covariance, expectation=expectation, sample=mu.sample
+        )
 
     def heat_gaussian_measure(self, length_scale, amplitude, /, *, expectation=None):
         """
@@ -256,7 +270,10 @@ class Sobolev(HilbertSpace):
         mu = self._circle_space.heat_gaussian_measure(
             length_scale * self._ijac, amplitude, expectation=expectation
         )
-        return mu.affine_mapping(operator=self._from_circle())
+        covariance = LinearOperator.self_adjoint(self, mu.covariance)
+        return GaussianMeasure(
+            covariance=covariance, expectation=expectation, sample=mu.sample
+        )
 
     def dirac(self, x):
         """
@@ -264,7 +281,8 @@ class Sobolev(HilbertSpace):
         """
         theta = self._inverse_transformation(x)
         up = self._circle_space.dirac(theta)
-        return self._to_circle().dual(up) * self._ijac
+        cp = self._circle_space.dual.to_components(up) * self._isqrt_jac
+        return self.dual.from_components(cp)
 
     def dirac_representation(self, x):
         """
@@ -319,22 +337,6 @@ class Sobolev(HilbertSpace):
     def _inverse_transformation(self, x):
         return (x - self._x0 + self._padding_length) * self._ijac
 
-    def _to_circle(self):
-        return LinearOperator(
-            self,
-            self._circle_space,
-            lambda u: u,
-            dual_mapping=lambda up: self._jac * up,
-        )
-
-    def _from_circle(self):
-        return LinearOperator(
-            self._circle_space,
-            self,
-            lambda u: u,
-            dual_mapping=lambda up: self._ijac * up,
-        )
-
     def _to_components(self, u):
         c = self._circle_space.to_components(u)
         c *= self._sqrt_jac
@@ -349,11 +351,11 @@ class Sobolev(HilbertSpace):
         return self._jac * self._circle_space.inner_product(u1, u2)
 
     def _to_dual(self, u):
-        v = self._to_circle()(u)
-        vp = self._circle_space.to_dual(v)
-        return self._to_circle().dual(vp)
+        up = self._circle_space.to_dual(u)
+        cp = self._circle_space.dual.to_components(up) * self._sqrt_jac
+        return self.dual.from_components(cp)
 
     def _from_dual(self, up):
-        vp = self._from_circle().dual(up)
-        v = self._circle_space.from_dual(vp)
-        return self._from_circle()(v)
+        cp = self.dual.to_components(up)
+        vp = self._circle_space.dual.from_components(cp) * self._isqrt_jac
+        return self._circle_space.from_dual(vp)

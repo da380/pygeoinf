@@ -2,15 +2,17 @@ import numpy as np
 from numpy import pi, sqrt, sin, cos
 import matplotlib.pyplot as plt
 
+
 from pygeoinf.homogeneous_space.line import Sobolev
 
-X = Sobolev(0, 10, 256, 2, 0.1)
+X = Sobolev(512, 2, 0.5, x1=10)
 
 
-u = X.project_function(lambda x: x)
+mu = X.heat_gaussian_measure(0.1, 1)
 
-x = 2
-vp = X.dirac(x)
-v = X.dirac_representation(x)
-print(vp(u))
-print(X.inner_product(v, u))
+
+u = mu.sample()
+
+
+X.plot(u)
+plt.show()
