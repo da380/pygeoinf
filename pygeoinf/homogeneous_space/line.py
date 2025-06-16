@@ -181,7 +181,7 @@ class Sobolev(HilbertSpace):
 
         return fig, ax
 
-    def plot_error_bounds(
+    def plot_pointwise_bounds(
         self, u, u_bound, fig=None, ax=None, computational_domain=False, **kwargs
     ):
         """
