@@ -252,6 +252,12 @@ class LinearMinimumNormInversion(Inversion):
 
             def mapping(data):
 
+                # Check whether the zero-model solves the problem.
+                model = self.model_space.zero
+                chi_squared = self.forward_problem.chi_squared(model, data)
+                if chi_squared <= critical_value:
+                    return model
+
                 # Look for lower and upper bounds on damping.
                 damping = 1
                 chi_squared, _ = least_squares_mapping(damping, data)
