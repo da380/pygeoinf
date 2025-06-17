@@ -1,5 +1,5 @@
 """
-Sobolev spaces for functions on a circle. 
+ Sobolev spaces for functions on a circle. 
 """
 
 import matplotlib.pyplot as plt
@@ -220,7 +220,7 @@ class Sobolev(HilbertSpace):
         matrix = diags([values], [0])
 
         def mapping(u):
-            coeff = self._to_coefficient(u)
+            coeff = self.to_coefficient(u)
             coeff = matrix @ coeff
             return self._from_coefficient(coeff)
 
@@ -245,10 +245,10 @@ class Sobolev(HilbertSpace):
         def mapping(c):
             coeff = self._component_to_coefficient(c)
             coeff = matrix @ coeff
-            return self._from_coefficient(coeff)
+            return self.from_coefficient(coeff)
 
         def formal_adjoint(u):
-            coeff = self._to_coefficient(u)
+            coeff = self.to_coefficient(u)
             coeff = matrix @ coeff
             return self._coefficient_to_component(coeff)
 
@@ -335,18 +335,24 @@ class Sobolev(HilbertSpace):
         """
         return np.random.uniform(0, 2 * np.pi, n)
 
+    def to_coefficient(self, u):
+        """
+        Maps an element to its Fourier coefficients.
+        """
+        return rfft(u) * self._fft_factor
+
+    def from_coefficient(self, coeff):
+        """
+        Maps Fourier coefficients to an element.
+        """
+        return irfft(coeff, n=self.dim) * self._inverse_fft_factor
+
     # ================================================================#
     #                         Private methods                         #
     # ================================================================#
 
     def _sobolev_function(self, k):
         return (1 + (self.length_scale * k) ** 2) ** self.exponent
-
-    def _to_coefficient(self, u):
-        return rfft(u) * self._fft_factor
-
-    def _from_coefficient(self, coeff):
-        return irfft(coeff, n=self.dim) * self._inverse_fft_factor
 
     def _coefficient_to_component(self, coeff):
         return np.concatenate([coeff.real, coeff.imag[1 : self.kmax]])
@@ -357,20 +363,20 @@ class Sobolev(HilbertSpace):
         return coeff_real + 1j * coeff_imag
 
     def _to_componets(self, u):
-        coeff = self._to_coefficient(u)
+        coeff = self.to_coefficient(u)
         return self._coefficient_to_component(coeff)
 
     def _from_componets(self, c):
         coeff = self._component_to_coefficient(c)
-        return self._from_coefficient(coeff)
+        return self.from_coefficient(coeff)
 
     def _inner_product(self, u1, u2):
-        coeff1 = self._to_coefficient(u1)
-        coeff2 = self._to_coefficient(u2)
+        coeff1 = self.to_coefficient(u1)
+        coeff2 = self.to_coefficient(u2)
         return np.real(np.vdot(self._metric @ coeff1, coeff2))
 
     def _to_dual(self, u):
-        coeff = self._to_coefficient(u)
+        coeff = self.to_coefficient(u)
         cp = self._coefficient_to_component(self._metric @ coeff)
         return self.dual.from_components(cp)
 
