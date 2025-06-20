@@ -3,6 +3,8 @@ Module for Gaussian measures on Hilbert spaces.
 """
 
 import numpy as np
+from scipy.linalg import eigh
+from scipy.sparse import diags
 from scipy.stats import multivariate_normal
 from pygeoinf.hilbert_space import (
     LinearOperator,
@@ -77,7 +79,7 @@ class GaussianMeasure:
             self._expectation = expectation
 
     @staticmethod
-    def from_standard_deviation(domain, standard_deviation):
+    def from_standard_deviation(domain, standard_deviation, /, *, expectation=None):
         """
         Forms a Gaussian measure on a Hilbert space with zero
         expectation and whose covariance is proportional to the
@@ -88,6 +90,8 @@ class GaussianMeasure:
                 is defined.
             standard_devitation (float): The standard deviation by which the
                 identity is scaled to form the covariance.
+            expectation (vector): The expectation of the measure, Default is
+                None which corresponds to the zero-vector.
 
         Notes:
             This measure is only well-defined for finite-dimensional spaces and not
@@ -100,10 +104,11 @@ class GaussianMeasure:
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
+            expectation=expectation,
         )
 
     @staticmethod
-    def from_standard_deviations(domain, standard_deviations):
+    def from_standard_deviations(domain, standard_deviations, /, *, expectation=None):
         """
         Forms a Gaussian measure on a Hilbert space with zero
         expectation and whose covariance is diagonal within the
@@ -113,6 +118,8 @@ class GaussianMeasure:
                 is defined.
         standard_devitations (numpy vector): The diagonal values of the covariance
             within its Galerkin representation.
+        expectation (vector): The expectation of the measure, Default is
+                None which corresponds to the zero-vector.
 
         Raises:
             ValueError: If the dimension of the standard deviation vector does not
@@ -130,6 +137,37 @@ class GaussianMeasure:
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=covariance_factor.inverse,
+            expectation=expectation,
+        )
+
+    @staticmethod
+    def from_covariance_matrix(domain, covariance_matrix, /, *, expectation=None):
+        """
+        Forms a Gaussian measure from the Galerking representation
+        of the covariance matrix.
+        """
+
+        eval, U = eigh(covariance_matrix)
+        if any(val < 0 for val in eval):
+            raise ValueError("Covariance matrix is not non-negative")
+
+        values = np.fromiter([np.sqrt(val) for val in eval], dtype=float)
+        D = diags([values], [0])
+        Di = diags([np.reciprocal(values)], [0])
+        L = U @ D
+        Li = Di @ U.T
+
+        covariance_factor = LinearOperator.from_matrix(
+            EuclideanSpace(domain.dim), domain, L
+        )
+        inverse_covariance_factor = LinearOperator.from_matrix(
+            domain, EuclideanSpace(domain.dim), Li
+        )
+
+        return GaussianMeasure(
+            covariance_factor=covariance_factor,
+            inverse_covariance_factor=inverse_covariance_factor,
+            expectation=expectation,
         )
 
     @staticmethod

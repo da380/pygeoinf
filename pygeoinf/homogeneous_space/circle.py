@@ -222,7 +222,7 @@ class Sobolev(HilbertSpace):
         def mapping(u):
             coeff = self.to_coefficient(u)
             coeff = matrix @ coeff
-            return self._from_coefficient(coeff)
+            return self.from_coefficient(coeff)
 
         return LinearOperator.formally_self_adjoint(self, mapping)
 
