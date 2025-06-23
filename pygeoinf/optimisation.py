@@ -55,7 +55,7 @@ class LinearLeastSquaresInversion(Inversion):
 
     def least_squares_operator(self, damping, solver, /, *, preconditioner=None):
         """
-        Returns a linear operator that solves the least-squares problem.
+        Returns an operator that maps data to the least squares solution.
 
         Args:
             damping (float): The norm damping parameter. Must be non-negative.
@@ -64,11 +64,13 @@ class LinearLeastSquaresInversion(Inversion):
                 solving the normal equations. The default is None.
 
         Returns:
-            LinearOperator: Mapping from data space to least-squares solution.
+            Operator: Mapping from data space to least-squares solution.
 
         Raises:
             ValueError: If damping is not non-negative.
             ValueError: If solver is not a instance of LinearSolver.
+
+        Notes. If the data is error-free the object returned is a LinearOperator.
         """
 
         forward_operator = self.forward_problem.forward_operator
@@ -85,11 +87,19 @@ class LinearLeastSquaresInversion(Inversion):
             inverse_data_covariance = (
                 self.forward_problem.data_error_measure.inverse_covariance
             )
-            return (
-                inverse_normal_operator
-                @ forward_operator.adjoint
-                @ inverse_data_covariance
-            )
+
+            def mapping(data):
+                shifted_data = self.forward_problem.data_space.subtract(
+                    data, self.forward_problem.data_error_measure.expectation
+                )
+                return (
+                    inverse_normal_operator
+                    @ forward_operator.adjoint
+                    @ inverse_data_covariance
+                )(shifted_data)
+
+            return Operator(self.data_space, self.model_space, mapping)
+
         else:
             return inverse_normal_operator @ forward_operator.adjoint
 
@@ -136,47 +146,18 @@ class LinearLeastSquaresInversion(Inversion):
             operator=least_squares_operator, translation=model
         )
 
-    def resolution_operator(self, damping, solver, /, *, preconditioner=None):
-        """
-        Returns the resolution operator for the least-squares problem.
-
-        Args:
-            damping (float): The norm damping parameter. Must be non-negative.
-            solver (LinearSolver): Linear solver for solvint the normal equations.
-            preconditioner (LinearOperator): Preconditioner for use in
-                solving the normal equations. The default is the identity.
-
-        Returns:
-            LinearOperator: The resolution operator for the problem,
-                with this operator mapping a known model into the
-                result of its inversion in the absence of data errors.
-
-        Raises:
-            ValueError: If damping is not non-negative.
-            ValueError: If solver is not a instance of LinearSolver.
-        """
-        forward_operator = self.forward_problem.forward_operator
-        least_squares_operator = self.least_squares_operator(
-            damping,
-            solver,
-            preconditioner=preconditioner,
-        )
-        return least_squares_operator @ forward_operator
-
 
 class LinearMinimumNormInversion(Inversion):
     """
     Class for the solution of linear minimum norm problems in a Hilbert space.
     """
 
-    def __init__(self, forward_problem, /, *, significance_level=0.05):
+    def __init__(self, forward_problem):
         """
         Args:
             forward_problem (LinearForwardProblem): The forward problem. If the problem has
                 a data errror measure, then this measure must have its inverse covariance
                 operator set.
-            significance_level (float): Significance level used to determine the critical chi
-                squared valued. Only used if a data error measure is present.
         """
         super().__init__(forward_problem)
         self.assert_inverse_data_covariance()
@@ -214,10 +195,9 @@ class LinearMinimumNormInversion(Inversion):
 
         if self.forward_problem.data_error_measure_set:
 
-            # get the critical value.
-            critical_value = chi2.ppf(1 - significance_level, self.data_space_dim)
-
-            # Set up the least squares problem
+            critical_value = self.forward_problem.crtical_chi_squared(
+                significance_level
+            )
             least_squares_inversion = LinearLeastSquaresInversion(self.forward_problem)
 
             def least_squares_mapping(damping, data, model0=None):
@@ -228,9 +208,13 @@ class LinearMinimumNormInversion(Inversion):
                     self.forward_problem.data_error_measure.inverse_covariance
                 )
 
+                shifted_data = self.data_space.subtract(
+                    data, self.forward_problem.data_error_measure.expectation
+                )
+
                 if isinstance(solver, IterativeLinearSolver):
                     model_in = (forward_operator.adjoint @ inverse_data_covariance)(
-                        data
+                        shifted_data
                     )
                     model = solver.solve_linear_system(
                         normal_operator,
@@ -245,20 +229,18 @@ class LinearMinimumNormInversion(Inversion):
                         inverse_normal_operator
                         @ forward_operator.adjoint
                         @ inverse_data_covariance
-                    )(data)
+                    )(shifted_data)
 
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 return chi_squared, model
 
             def mapping(data):
 
-                # Check whether the zero-model solves the problem.
                 model = self.model_space.zero
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 if chi_squared <= critical_value:
                     return model
 
-                # Look for lower and upper bounds on damping.
                 damping = 1
                 chi_squared, _ = least_squares_mapping(damping, data)
 
@@ -281,7 +263,6 @@ class LinearMinimumNormInversion(Inversion):
                         chi_squared, _ = least_squares_mapping(damping, data)
                     damping_upper = damping
 
-                # Now bracket to find the critical damping.
                 model0 = None
                 for _ in range(maxiter):
 

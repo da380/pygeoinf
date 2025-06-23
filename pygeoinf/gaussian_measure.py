@@ -147,11 +147,11 @@ class GaussianMeasure:
         of the covariance matrix.
         """
 
-        eval, U = eigh(covariance_matrix)
-        if any(val < 0 for val in eval):
+        eigenvalues, U = eigh(covariance_matrix)
+        if any(val < 0 for val in eigenvalues):
             raise ValueError("Covariance matrix is not non-negative")
 
-        values = np.fromiter([np.sqrt(val) for val in eval], dtype=float)
+        values = np.fromiter([np.sqrt(val) for val in eigenvalues], dtype=float)
         D = diags([values], [0])
         Di = diags([np.reciprocal(values)], [0])
         L = U @ D
@@ -282,8 +282,8 @@ class GaussianMeasure:
         """
         Return the covariance factor if set.
         """
-        # if not self.covariance_factor_set:
-        #    raise NotImplementedError("Covariance factor has not been set")
+        if not self.covariance_factor_set:
+            raise NotImplementedError("Covariance factor has not been set")
         return self._covariance_factor
 
     @property

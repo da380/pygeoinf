@@ -2,6 +2,7 @@
 Module defined the forward problem class. 
 """
 
+from scipy.stats import chi2
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.direct_sum import BlockLinearOperator
 
@@ -101,6 +102,10 @@ class LinearForwardProblem(ForwardProblem):
             translation=self.forward_operator(model)
         )
 
+    def synthetic_data(self, model):
+        """Returns synthetic data corresponding to a given model."""
+        return self.data_measure(model).sample()
+
     def synthetic_model_and_data(self, mu):
         """
         Given a Gaussian measure on the model space, returns a random model and
@@ -111,6 +116,12 @@ class LinearForwardProblem(ForwardProblem):
             return u, self.data_measure(u).sample()
         else:
             return u, self.forward_operator(u)
+
+    def crtical_chi_squared(self, significance_level):
+        """
+        Returns the crtical value of chi-squared for a given significance level.
+        """
+        return chi2.ppf(significance_level, self.data_space.dim)
 
     def chi_squared(self, model, data):
         """
@@ -129,6 +140,9 @@ class LinearForwardProblem(ForwardProblem):
                 raise NotImplementedError("Inverse covariance has not been implemented")
 
             difference = self.data_space.subtract(data, self.forward_operator(model))
+            difference = self.data_space.subtract(
+                difference, self.data_error_measure.expectation
+            )
             inverse_data_covariance = self.data_error_measure.inverse_covariance
             return self.data_space.inner_product(
                 inverse_data_covariance(difference), difference
@@ -138,3 +152,12 @@ class LinearForwardProblem(ForwardProblem):
 
             difference = self.data_space.subtract(data, self.forward_operator(model))
             return self.data_space.squared_norm(difference)
+
+    def chi_squared_test(self, significance_level, model, data):
+        """
+        Returns True if the model is compatible the given data at the
+        specified significance level.
+        """
+        return self.chi_squared(model, data) < self.crtical_chi_squared(
+            significance_level
+        )
