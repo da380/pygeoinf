@@ -1,18 +1,27 @@
 import numpy as np
-from numpy import pi, sqrt, sin, cos
 import matplotlib.pyplot as plt
+import pygeoinf as inf
+from pygeoinf.homogeneous_space.circle import Sobolev
 
-
-from pygeoinf.homogeneous_space.line import Sobolev
-
-X = Sobolev(512, 2, 0.5, x1=10)
-
-
+X = Sobolev.from_sobolev_parameters(2, 0.1)
 mu = X.heat_gaussian_measure(0.1, 1)
 
+A = X.invariant_automorphism(lambda k: 1)
+B = X.invariant_automorphism(lambda k: -1)
 
-u = mu.sample()
+Y = inf.HilbertSpaceDirectSum([X, X])
+nu = inf.GaussianMeasure.from_direct_sum([mu, mu])
 
+C = inf.ColumnLinearOperator([A, B])
+D = inf.RowLinearOperator([A, A])
 
-X.plot(u)
+x = mu.sample()
+y = C(x)
+x0, x1 = y
+
+z = D(y)
+
+fig, ax = X.plot(x0)
+X.plot(x1, fig=fig, ax=ax)
+X.plot(z, fig=fig, ax=ax)
 plt.show()

@@ -88,11 +88,12 @@ class HilbertSpaceDirectSum(HilbertSpace):
         """
         Maps a direct sum of dual-subspace vectors to the dual vector.
         """
-        assert len(xps) == self.number_of_subspaces
+        if len(xps) != self.number_of_subspaces:
+            raise ValueError("Not a valid vector")
         return LinearForm(
             self,
             mapping=lambda x: sum(
-                [xp(self.subspace_projection(i)(x)) for i, xp in enumerate(xps)]
+                xp(self.subspace_projection(i)(x)) for i, xp in enumerate(xps)
             ),
         )
 
@@ -126,16 +127,15 @@ class HilbertSpaceDirectSum(HilbertSpace):
         return xs
 
     def __inner_product(self, x1s, x2s):
+        # Local implementation of inner product.
         return sum(
-            [
-                space.inner_product(x1, x2)
-                for space, x1, x2 in zip(self._spaces, x1s, x2s)
-            ]
+            space.inner_product(x1, x2) for space, x1, x2 in zip(self._spaces, x1s, x2s)
         )
 
     def __to_dual(self, xs):
         # Local implementation of the mapping to the dual space.
-        assert len(xs) == self.number_of_subspaces
+        if len(xs) != self.number_of_subspaces:
+            raise ValueError("Not a valid vector")
         return self.canonical_dual_isomorphism(
             [space.to_dual(x) for space, x in zip(self._spaces, xs)]
         )
@@ -207,12 +207,13 @@ class BlockStructure(ABC):
         """
         Return the ith block
         """
-        pass
 
     def _check_block_indices(self, i, j):
         # Check block indices are in range.
-        assert 0 <= i < self.row_dim
-        assert 0 <= j < self.col_dim
+        if not (0 <= i < self.row_dim):
+            raise ValueError("Row index out of range.")
+        if not (0 <= j < self.col_dim):
+            raise ValueError("Column index out of range.")
 
 
 class BlockLinearOperator(LinearOperator, BlockStructure):
@@ -232,7 +233,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         for row in blocks:
             assert domains == [operator.domain for operator in row]
             codomain = row[0].codomain
-            assert all([operator.codomain == codomain for operator in row])
+            assert all(operator.codomain == codomain for operator in row)
             codomains.append(codomain)
 
         domain = HilbertSpaceDirectSum(domains)
@@ -281,6 +282,98 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
                 x = domain.axpy(1, a.adjoint(ys[i]), x)
             xs.append(x)
         return xs
+
+
+class ColumnLinearOperator(LinearOperator, BlockStructure):
+    """
+    Class for linear operators acting between a space and a direct sum of spaces.
+    """
+
+    def __init__(self, operators):
+        """
+        Args:
+            operators ([LinearOperator]): List of operators all with a common domain.
+        """
+
+        self._operators = operators
+
+        domains = [operator.domain for operator in operators]
+        codomains = [operator.codomain for operator in operators]
+
+        domain = domains[0]
+        assert all(operator.domain == domain for operator in operators)
+
+        codomain = HilbertSpaceDirectSum(codomains)
+
+        blocks = [[operator] for operator in operators]
+
+        block_operator = BlockLinearOperator(blocks)
+
+        def mapping(x):
+            return block_operator([x])
+
+        def adjoint_mapping(ys):
+            return block_operator.adjoint(ys)[0]
+
+        super().__init__(domain, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+        row_dim = len(self._operators)
+        BlockStructure.__init__(self, row_dim, 1)
+
+    def block(self, i, j):
+        """
+        Returns the operator in the (i,j)th sub-block.
+        """
+        assert 0 <= i < self.row_dim
+        assert j == 0
+
+        return self._operators[i]
+
+
+class RowLinearOperator(LinearOperator, BlockStructure):
+    """
+    Class for linear operators acting between a direct sum of spaces and a space.
+    """
+
+    def __init__(self, operators):
+        """
+        Args:
+            operators ([LinearOperator]): List of operators all with a common codomain.
+        """
+
+        self._operators = operators
+
+        domains = [operator.domain for operator in operators]
+        codomains = [operator.codomain for operator in operators]
+
+        codomain = codomains[0]
+        assert all(operator.codomain == codomain for operator in operators)
+
+        domain = HilbertSpaceDirectSum(domains)
+
+        blocks = [operators]
+
+        block_operator = BlockLinearOperator(blocks)
+
+        def mapping(xs):
+            return block_operator(xs)[0]
+
+        def adjoint_mapping(y):
+            return block_operator.adjoint([y])
+
+        super().__init__(domain, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+        col_dim = len(self._operators)
+        BlockStructure.__init__(self, 1, col_dim)
+
+    def block(self, i, j):
+        """
+        Returns the operator in the (i,j)th sub-block.
+        """
+        assert i == 0
+        assert 0 <= j < self.col_dim
+
+        return self._operators[j]
 
 
 class BlockDiagonalLinearOperator(LinearOperator, BlockStructure):

@@ -32,5 +32,12 @@ $(poetry env activate)
 
 Alternative, you can use ```poetry run``` to directly execute commands without starting up the virtual environment.
 
+The library can be added as a dependency within a separate poetry project using:
+
+```
+poetry add git+https://github.com/da380/pygeoinf
+```
+
+
 
 

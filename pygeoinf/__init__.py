@@ -23,6 +23,8 @@ from pygeoinf.direct_sum import (
     HilbertSpaceDirectSum,
     BlockStructure,
     BlockLinearOperator,
+    ColumnLinearOperator,
+    RowLinearOperator,
     BlockDiagonalLinearOperator,
 )
 
