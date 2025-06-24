@@ -87,6 +87,7 @@ class LinearBayesianInversion(Inversion):
         """
 
         data_space = self.data_space
+        model_space = self.model_space
         forward_operator = self.forward_problem.forward_operator
         prior_model_covariance = self.model_prior_measure.covariance
         normal_operator = self.normal_operator
@@ -108,6 +109,7 @@ class LinearBayesianInversion(Inversion):
         expectation = (
             prior_model_covariance @ forward_operator.adjoint @ inverse_normal_operator
         )(shifted_data)
+        expectation = model_space.add(expectation, self.model_prior_measure.expectation)
 
         covariance = (
             prior_model_covariance
