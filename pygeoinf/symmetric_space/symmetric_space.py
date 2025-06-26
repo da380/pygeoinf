@@ -1,5 +1,5 @@
 """
-Module containing the base class for Sobolev spaces defined on homogeneous spaces. 
+Module containing the base class for Sobolev spaces defined on symmetric spaces. 
 """
 
 from abc import ABC, abstractmethod
@@ -7,9 +7,9 @@ import numpy as np
 from pygeoinf.hilbert_space import HilbertSpace, LinearOperator, EuclideanSpace
 
 
-class HomogeneousSpaceSobolev(HilbertSpace, ABC):
+class SymmetricSpaceSobolev(HilbertSpace, ABC):
     """
-    Base class for Sobolev spaces of scalar fields on a homogeneous space.
+    Base class for Sobolev spaces of scalar fields on a symmetric space.
     """
 
     def __init__(
@@ -92,7 +92,7 @@ class HomogeneousSpaceSobolev(HilbertSpace, ABC):
     @abstractmethod
     def random_point(self):
         """
-        Returns a random point within the homogeneous space.
+        Returns a random point within the symmetric space.
         """
 
     def random_points(self, n):

@@ -14,11 +14,11 @@ from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 
 
 from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
-from pygeoinf.homogeneous_space.homogeneous_space import HomogeneousSpaceSobolev
+from pygeoinf.symmetric_space.symmetric_space import SymmetricSpaceSobolev
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 
-class Sobolev(HomogeneousSpaceSobolev):
+class Sobolev(SymmetricSpaceSobolev):
     """Sobolev spaces on a two-sphere as an instance of HilbertSpace."""
 
     def __init__(
@@ -51,7 +51,7 @@ class Sobolev(HomogeneousSpaceSobolev):
 
         self._vector_as_SHGrid = vector_as_SHGrid
         if vector_as_SHGrid:
-            HomogeneousSpaceSobolev.__init__(
+            SymmetricSpaceSobolev.__init__(
                 self,
                 order,
                 scale,
@@ -64,7 +64,7 @@ class Sobolev(HomogeneousSpaceSobolev):
                 vector_multiply=self._vector_multiply_impl,
             )
         else:
-            HomogeneousSpaceSobolev.__init__(
+            SymmetricSpaceSobolev.__init__(
                 self,
                 order,
                 scale,

@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.homogeneous_space.line import Sobolev
+from pygeoinf.symmetric_space.line import Sobolev
 
 X = Sobolev.from_sobolev_parameters(3, 0.1, x1=10)
 print(X.dim)

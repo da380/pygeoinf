@@ -12,7 +12,7 @@ from pygeoinf import (
     CholeskySolver,
 )
 
-from pygeoinf.homogeneous_space.sphere import Sobolev
+from pygeoinf.symmetric_space.sphere import Sobolev
 
 
 # Set the model space.

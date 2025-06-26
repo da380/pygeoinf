@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pygeoinf.hilbert_space import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.homogeneous_space.homogeneous_space import HomogeneousSpaceSobolev
-from pygeoinf.homogeneous_space.circle import Sobolev as CicleSobolev
+from pygeoinf.symmetric_space.symmetric_space import SymmetricSpaceSobolev
+from pygeoinf.symmetric_space.circle import Sobolev as CicleSobolev
 
 
-class Sobolev(HomogeneousSpaceSobolev):
+class Sobolev(SymmetricSpaceSobolev):
     """
     Implementation of the Sobolev space H^s on a line.
     """

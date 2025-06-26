@@ -12,10 +12,10 @@ from pygeoinf.hilbert_space import (
     EuclideanSpace,
 )
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.homogeneous_space.homogeneous_space import HomogeneousSpaceSobolev
+from pygeoinf.symmetric_space.symmetric_space import SymmetricSpaceSobolev
 
 
-class Sobolev(HomogeneousSpaceSobolev):
+class Sobolev(SymmetricSpaceSobolev):
     """
     Implementation of the Sobolev space H^s on a circle.
     """
