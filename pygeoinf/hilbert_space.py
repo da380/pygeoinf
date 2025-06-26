@@ -452,8 +452,9 @@ class LinearOperator(Operator):
         mapping,
         /,
         *,
-        adjoint_mapping=None,
         dual_mapping=None,
+        adjoint_mapping=None,
+        formal_adjoint_mapping=None,
         thread_safe=False,
         dual_base=None,
         adjoint_base=None,
@@ -467,6 +468,8 @@ class LinearOperator(Operator):
                 dual operator's action.
             adjoint_mapping (callable): Optional implementation
                 of the adjoint operator's action.
+            formal_adjoint_mapping (callable): Optional implementation
+                of the operator's formal adjoint.
 
             thread_safe (bool): True if the operators action can be
                 safely called in parallel. Default is false.
@@ -481,8 +484,15 @@ class LinearOperator(Operator):
         self._thread_safe = thread_safe
 
         if dual_mapping is None:
+
             if adjoint_mapping is None:
-                self.__dual_mapping = self._dual_mapping_default
+
+                if formal_adjoint_mapping is None:
+                    self.__dual_mapping = self._dual_mapping_default
+                else:
+                    self.__formal_adjoint_mapping = formal_adjoint_mapping
+                    self.__dual_mapping = self._dual_mapping_from_formal_adjoint
+
                 self.__adjoint_mapping = self._adjoint_mapping_from_dual
             else:
                 self.__adjoint_mapping = adjoint_mapping
@@ -505,30 +515,12 @@ class LinearOperator(Operator):
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
     @staticmethod
-    def from_formal_adjoint(domain, codomain, mapping, formal_adjoint):
-        """
-        Forms a LinearOperator mapping the domain to the codomain. The
-        action of the mapping is provided along with that of its formal
-        adjoint. The formal adjoint is a mapping from the codomain to the
-        domain and is the adjoint of the operator relative to an L2 inner product.
-        """
-
-        def dual_mapping(yp):
-            cyp = codomain.dual.to_components(yp)
-            y = codomain.from_components(cyp)
-            x = formal_adjoint(y)
-            cx = domain.to_components(x)
-            return domain.dual.from_components(cx)
-
-        return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
-
-    @staticmethod
     def formally_self_adjoint(domain, mapping):
         """
         Forms a LinearOperator on the domain given the mapping
         on the assumption that the operator is formally self-adjoint.
         """
-        return LinearOperator.from_formal_adjoint(domain, domain, mapping, mapping)
+        return LinearOperator(domain, domain, mapping, formal_adjoint_mapping=mapping)
 
     @staticmethod
     def from_linear_forms(forms):
@@ -1052,6 +1044,14 @@ class LinearOperator(Operator):
         y = self.codomain.from_dual(yp)
         x = self.__adjoint_mapping(y)
         return self.domain.to_dual(x)
+
+    def _dual_mapping_from_formal_adjoint(self, yp):
+        # Dual mapping from the formal adjoint.
+        cyp = self.codomain.dual.to_components(yp)
+        y = self.codomain.from_components(cyp)
+        x = self.__formal_adjoint_mapping(y)
+        cx = self.domain.to_components(x)
+        return self.domain.dual.from_components(cx)
 
     def _adjoint_mapping_from_dual(self, y):
         # Adjoing mapping in terms of the dual.

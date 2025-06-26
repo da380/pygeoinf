@@ -230,8 +230,8 @@ class Sobolev(SymmetricSpaceSobolev):
             coeff = matrix @ coeff
             return self._coefficient_to_component(coeff)
 
-        covariance_factor = LinearOperator.from_formal_adjoint(
-            domain, codomain, mapping, formal_adjoint
+        covariance_factor = LinearOperator(
+            domain, codomain, mapping, formal_adjoint_mapping=formal_adjoint
         )
 
         return GaussianMeasure(
