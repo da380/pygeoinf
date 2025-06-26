@@ -1,38 +1,39 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from scipy.stats import uniform
+
+from cartopy import crs as ccrs
 
 from pygeoinf import (
     LinearBayesianInversion,
     CholeskySolver,
     GaussianMeasure,
     LinearForwardProblem,
-    pointwise_variance,
 )
 from pygeoinf.homogeneous_space.sphere import Sobolev
 
 
 # Set the model space.
-X = Sobolev(64, 2, 0.1)
+X = Sobolev(64, 2, 0.25)
 
 
 # Set up the prior distribution.
-mu = X.sobolev_gaussian_measure(2.0, 0.1, 1)
+mu = X.heat_gaussian_measure(0.4, 1)
 
 
-# Set up the forward operator.
-n = 25
-lats = uniform(loc=-90, scale=180).rvs(size=n)
-lons = uniform(loc=0, scale=360).rvs(size=n)
-A = X.point_evaluation_operator(lats, lons)
+# Set the observation points
+n = 50
+points = X.random_points(n)
+lats = [point[0] for point in points]
+lons = [point[1] for point in points]
+
+# Set the forward operator.
+A = X.point_evaluation_operator(points)
+Y = A.codomain
 
 
 # Set up the error distribution.
-Y = A.codomain
-# stds = np.random.uniform(0.05, 0.2, Y.dim)
-# nu = GaussianMeasure.from_standard_deviations(Y, stds)
-sigma = 0.01
+sigma = 0.1
 nu = GaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
 
 
@@ -47,35 +48,31 @@ u, v = forward_problem.synthetic_model_and_data(mu)
 solver = CholeskySolver()
 pi = inverse_problem.model_posterior_measure(v, solver)
 
-
-ubar = pi.expectation
-uvar = pointwise_variance(pi.low_rank_approximation(50, power=3), 20)
-ustd = uvar.copy()
-ustd.data = np.sqrt(uvar.data)
-
-
 umax = np.max(np.abs(u.data))
-uvmax = np.max(np.abs(ustd.data))
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
-plt.plot(lons, lats, "ko")
-plt.clim([-umax, umax])
-plt.colorbar()
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), ubar.data, cmap="seismic")
-plt.plot(lons, lats, "ko")
-plt.clim([-umax, umax])
-plt.colorbar()
+fig, ax, im = X.plot(u, vmin=-umax, vmax=umax)
+fig.colorbar(im, ax=ax, orientation="horizontal")
+ax.plot(
+    lons,
+    lats,
+    "o",
+    color="k",
+    markersize=4,
+    transform=ccrs.PlateCarree(),
+)
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), 2 * ustd.data, cmap="Reds")
-plt.plot(lons, lats, "ko")
-plt.clim([0, 2 * uvmax])
-plt.colorbar()
 
-w = X.dirac_representation(lats[0], lons[0])
+fig, ax, im = X.plot(pi.expectation, vmin=-umax, vmax=umax)
+fig.colorbar(im, ax=ax, orientation="horizontal")
+ax.plot(
+    lons,
+    lats,
+    "o",
+    color="k",
+    markersize=4,
+    transform=ccrs.PlateCarree(),
+)
 
 
 plt.show()

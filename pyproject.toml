@@ -1,10 +1,10 @@
 [tool.poetry]
 name = "pygeoinf"
-version = "1.0.0"
+version = "1.0.4"
 description = "A package for solving geophysical inference and inverse problems"
 authors = ["David Al-Attar and Dan Heathcote"]
 readme = "README.md"
-license = "MIT"
+license = "BSD-3-Clause"
 
 [tool.poetry.dependencies]
 python = ">=3.9"

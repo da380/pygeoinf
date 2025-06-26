@@ -437,7 +437,6 @@ class GaussianMeasure:
         power=0,
         method="fixed",
         rtol=1e-2,
-        scaling=None,
     ):
         """
         Returns an approximation to the measure with the covariance operator
@@ -445,32 +444,13 @@ class GaussianMeasure:
         sampling method.
         """
 
-        covariance = self.covariance
-
-        if scaling is None:
-            covariance_factor = covariance.random_cholesky(
-                rank, power=power, method=method, rtol=rtol
-            )
-
-        else:
-            covariance = scaling @ covariance @ scaling
-            covariance_factor = covariance.random_cholesky(
-                rank, power=power, method=method, rtol=rtol
-            )
-            covariance_factor = scaling.inverse @ covariance_factor
+        covariance_factor = self.covariance.random_cholesky(
+            rank, power=power, method=method, rtol=rtol
+        )
 
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             expectation=self.expectation,
-        )
-
-    def _sample_from_factor(self):
-        covariance_factor = self.covariance_factor
-        value = covariance_factor(np.random.randn(self.covariance_factor.domain.dim))
-        return (
-            self.domain.add(value, self.expectation)
-            if self.expectation is not None
-            else value
         )
 
     def two_point_covariance(self, point):
@@ -532,4 +512,13 @@ class GaussianMeasure:
             covariance=self.covariance + other.covariance,
             expectation=self.domain.subtract(self.expectation, other.expectation),
             sample=lambda: self.domain.subtract(self.sample(), other.sample()),
+        )
+
+    def _sample_from_factor(self):
+        covariance_factor = self.covariance_factor
+        value = covariance_factor(np.random.randn(self.covariance_factor.domain.dim))
+        return (
+            self.domain.add(value, self.expectation)
+            if self.expectation is not None
+            else value
         )

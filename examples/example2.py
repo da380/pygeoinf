@@ -22,17 +22,15 @@ v = P(u)
 
 w = P.adjoint(v)
 
+fig, ax, im = X.plot(u)
+fig.colorbar(im, ax=ax, orientation="horizontal")
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
-plt.colorbar()
+fig, ax, im = Y.plot(v)
+fig.colorbar(im, ax=ax, orientation="horizontal")
 
-plt.figure()
-plt.pcolormesh(v.lons(), v.lats(), v.data, cmap="seismic")
-plt.colorbar()
 
-plt.figure()
-plt.pcolormesh(w.lons(), w.lats(), w.data, cmap="seismic")
-plt.colorbar()
+fig, ax, im = X.plot(w)
+fig.colorbar(im, ax=ax, orientation="horizontal")
+
 
 plt.show()

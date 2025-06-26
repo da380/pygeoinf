@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import uniform
 
 from cartopy import crs as ccrs
 
@@ -23,12 +22,13 @@ X = Sobolev(128, 2.0, 0.4)
 mu = X.sobolev_gaussian_measure(2.0, 0.1, 1)
 
 
-# Set up the forward operator.
+# Set the observation points
 n = 50
 points = X.random_points(n)
 lats = [point[0] for point in points]
 lons = [point[1] for point in points]
 
+# Set the forward operator.
 A = X.point_evaluation_operator(points)
 Y = A.codomain
 

@@ -7,11 +7,15 @@ This is a package for solving inverse and inference problems with an emphasis on
 
 ### Using pip
 
-To be done...
+The package can be installed using pip through:
+
+```
+pip install pygeoinf
+```
 
 ### Using poetry
 
-This package is most easily installed using poetry (https://python-poetry.org/). Clone the repository and from within that director type:
+This package can also be installed using poetry (https://python-poetry.org/). Clone the repository and from within that director type:
 
 ```
 poetry install
@@ -35,8 +39,16 @@ Alternative, you can use ```poetry run``` to directly execute commands without s
 The library can be added as a dependency within a separate poetry project using:
 
 ```
+poetry add pygeoinf
+```
+
+or using 
+
+```
 poetry add git+https://github.com/da380/pygeoinf
 ```
+
+to link directly to the git repository.
 
 
 
