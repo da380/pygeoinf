@@ -58,7 +58,7 @@ You can run our interactive tutorials directly in Google Colab:
 
 | Tutorial Name          | Link to Colab                                                                                                                                                                                                                                    |
 | :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tutorial 1        | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t1.ipynb)                                                  |
+| Tutorial 1        | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/develop/tutorials/t1.ipynb)                                                  |
 | Advanced Features      | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/your_github_username/my_python_package/blob/main/examples/advanced_tutorial.ipynb)                                            |
 
 Alternatively, you can install the package locally and run the notebooks.
