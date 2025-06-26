@@ -1,6 +1,7 @@
 # pygeoinf
 
-This is a package for solving inverse and inference problems with an emphasis on problems posed on infinite-dimensional Hilbert spaces. Currently, only methods for linear problems have been implemented, but the addition of functionality for non-linear problems is planned for the future. 
+This is a package for solving inverse and inference problems with an emphasis on problems posed on infinite-dimensional Hilbert spaces. Currently the methods are restricted to linear problems.
+
 
 ## Installation
 
@@ -54,12 +55,18 @@ to link directly to the git repository.
 
 ## Tutorials
 
-You can run our interactive tutorials directly in Google Colab:
+You can run the interactive tutorials directly in Google Colab:
 
 | Tutorial Name          | Link to Colab                                                                                                                                                                                                                                    |
 | :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tutorial 1        | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/develop/tutorials/t1.ipynb)                                                  |
-| Advanced Features      | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/your_github_username/my_python_package/blob/main/examples/advanced_tutorial.ipynb)                                            |
+| Tutorial 1 - A first example       | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t1.ipynb)                                                  |
+| Tutorial 2 - Hilbert spaces       | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t2.ipynb)                                       |
+| Tutorial 3 - Dual spaces       | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t3.ipynb)                                       |
+| Tutorial 4 - Linear operators       | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t4.ipynb)                                       |
+| Tutorial 5 - Gaussian measures       | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t5.ipynb)                                       |
+| Tutorial 6 - Minumum norm inversions      | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t6.ipynb)                                       |
+| Tutorial 7 - Bayesian inversions     | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t7.ipynb)                                       |
+
 
 Alternatively, you can install the package locally and run the notebooks.
 
