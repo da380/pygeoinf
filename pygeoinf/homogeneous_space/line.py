@@ -4,16 +4,13 @@ Sobolev spaces for functions on a line.
 
 import matplotlib.pyplot as plt
 import numpy as np
-from pygeoinf.hilbert_space import (
-    HilbertSpace,
-    LinearOperator,
-    EuclideanSpace,
-)
+from pygeoinf.hilbert_space import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf.homogeneous_space.homogeneous_space import HomogeneousSpaceSobolev
 from pygeoinf.homogeneous_space.circle import Sobolev as CicleSobolev
 
 
-class Sobolev(HilbertSpace):
+class Sobolev(HomogeneousSpaceSobolev):
     """
     Implementation of the Sobolev space H^s on a line.
     """
@@ -21,8 +18,8 @@ class Sobolev(HilbertSpace):
     def __init__(
         self,
         kmax,
-        exponent,
-        length_scale,
+        order,
+        scale,
         /,
         *,
         x0=0,
@@ -31,8 +28,8 @@ class Sobolev(HilbertSpace):
         """
         Args:
             kmax (float): The maximum Fourier degree.
-            exponent (float): Sobolev exponent.
-            length_scale (float): Sobolev length-scale.
+            order (float): Sobolev order.
+            scale (float): Sobolev length-scale.
             radius (float): Radius of the circle. Default is 1.
             x0 (float): The left boudary of the interval, Default is 0.
             x1 (float): The right boundary of the interval. Default is 1.
@@ -41,17 +38,15 @@ class Sobolev(HilbertSpace):
         if x0 >= x1:
             raise ValueError("Invalid interval parameters")
 
-        if exponent != 0 and length_scale <= 0:
+        if order != 0 and scale <= 0:
             raise ValueError("Length-scale must be positive")
 
         self._kmax = kmax
         self._x0 = x0
         self._x1 = x1
-        self._exponent = exponent
-        self._length_scale = length_scale
 
-        # Work out transformation from a unit circle.
-        padding_scale = 5 * length_scale if length_scale > 0 else 0.1 * (x1 - x0)
+        # Work out the padding.
+        padding_scale = 5 * scale if scale > 0 else 0.1 * (x1 - x0)
         number_of_points = 2 * kmax
         width = x1 - x0
         self._start_index = int(
@@ -68,10 +63,12 @@ class Sobolev(HilbertSpace):
         self._isqrt_jac = 1 / self._sqrt_jac
 
         # Set up the related Sobolev space on the unit circle.
-        circle_length_scale = length_scale * self._ijac
-        self._circle_space = CicleSobolev(kmax, exponent, circle_length_scale)
+        circle_scale = scale * self._ijac
+        self._circle_space = CicleSobolev(kmax, order, circle_scale)
 
         super().__init__(
+            order,
+            scale,
             self._circle_space.dim,
             self._to_components,
             self._from_components,
@@ -80,6 +77,24 @@ class Sobolev(HilbertSpace):
             self._from_dual,
             vector_multiply=lambda u1, u2: u1 * u2,
         )
+
+    @staticmethod
+    def from_sobolev_parameters(
+        order, scale, /, *, x0=0, x1=1, rtol=1e-8, power_of_two=False
+    ):
+        """
+        Returns an instance of the space with $kmax selected based on the Sobolev parameters.
+        """
+
+        if x0 >= x1:
+            raise ValueError("Invalid interval parameters")
+
+        circle_scale = scale / (x1 - x0)
+        circle_space = CicleSobolev.from_sobolev_parameters(
+            order, circle_scale, rtol=rtol, power_of_two=power_of_two
+        )
+        kmax = circle_space.kmax
+        return Sobolev(kmax, order, scale, x0=x0, x1=x1)
 
     @property
     def kmax(self):
@@ -110,20 +125,6 @@ class Sobolev(HilbertSpace):
         return self._x1 - self._x0
 
     @property
-    def exponent(self):
-        """
-        Return the Sobolev exponent.
-        """
-        return self._exponent
-
-    @property
-    def length_scale(self):
-        """
-        Return the relative Sobolev length_scale.
-        """
-        return self._length_scale
-
-    @property
     def point_spacing(self):
         """
         Return the point spacing.
@@ -149,6 +150,9 @@ class Sobolev(HilbertSpace):
         return np.fromiter(
             [f(x) * self._taper(x) for x in self.computational_points()], float
         )
+
+    def random_point(self):
+        return np.random.uniform(self._x0, self._x1)
 
     def plot(self, u, fig=None, ax=None, computational_domain=False, **kwargs):
         """
@@ -224,87 +228,23 @@ class Sobolev(HilbertSpace):
         return fig, ax
 
     def invariant_automorphism(self, f):
-        """
-        Returns a linear operator on the space of the form f(Delta) with Delta the Laplacian.
-        The resulting operator is only well-defined as a continuous automorphism if f is bounded.
-        """
-        A = self._circle_space.invariant_automorphism(lambda k: self._ijac * k)
+        A = self._circle_space.invariant_automorphism(lambda k: f(self._ijac * k))
         return LinearOperator.formally_self_adjoint(self, A)
 
     def invariant_gaussian_measure(self, f, /, *, expectation=None):
-        """
-        Returns a Gaussian measure on the space whose covariance takes the form f(Delta) with
-        Delta the Laplacian. The trace-class condition for the measure to be well-defined implies
-        that the sequence {f(k)} must be summable.
-        """
         mu = self._circle_space.invariant_gaussian_measure(
-            lambda k: self._ijac * k, expectation=expectation
+            lambda k: f(self._ijac * k), expectation=expectation
         )
         covariance = LinearOperator.self_adjoint(self, mu.covariance)
         return GaussianMeasure(
             covariance=covariance, expectation=expectation, sample=mu.sample
         )
 
-    def sobolev_gaussian_measure(
-        self, exponent, length_scale, amplitude, /, *, expectation=None
-    ):
-        """
-        Returns a Gaussian measure with Sobolev covariance. The measure is
-        scaled such that the its pointwise standard deviation is equal
-        to the optional amplitude (default value 1).
-        """
-        mu = self._circle_space.sobolev_gaussian_measure(
-            exponent, length_scale * self._ijac, amplitude, expectation=expectation
-        )
-        covariance = LinearOperator.self_adjoint(self, mu.covariance)
-        return GaussianMeasure(
-            covariance=covariance, expectation=expectation, sample=mu.sample
-        )
-
-    def heat_gaussian_measure(self, length_scale, amplitude, /, *, expectation=None):
-        """
-        Returns a Gaussian measure with heat kernel covariance. The measure is
-        scaled such that the its pointwise standard deviation is equal
-        to the optional amplitude (default value 1).
-        """
-        mu = self._circle_space.heat_gaussian_measure(
-            length_scale * self._ijac, amplitude, expectation=expectation
-        )
-        covariance = LinearOperator.self_adjoint(self, mu.covariance)
-        return GaussianMeasure(
-            covariance=covariance, expectation=expectation, sample=mu.sample
-        )
-
-    def dirac(self, x):
-        """
-        Returns a dirac measure as a LinearForm on the space.
-        """
-        theta = self._inverse_transformation(x)
+    def dirac(self, point):
+        theta = self._inverse_transformation(point)
         up = self._circle_space.dirac(theta)
         cp = self._circle_space.dual.to_components(up) * self._isqrt_jac
         return self.dual.from_components(cp)
-
-    def dirac_representation(self, x):
-        """
-        Returns the representation of the dirac measure based at the point.
-        """
-        return self.from_dual(self.dirac(x))
-
-    def point_evaluation_operator(self, points):
-        """
-        Returns the point evaluation operator on the space
-        at the given list, xs, of points.
-        """
-        dim = len(points)
-        matrix = np.zeros((dim, self.dim))
-
-        for i, point in enumerate(points):
-            cp = self.dirac(point).components
-            matrix[i, :] = cp
-
-        return LinearOperator.from_matrix(
-            self, EuclideanSpace(dim), matrix, galerkin=True
-        )
 
     # =============================================================#
     #                        Private methods                       #
@@ -359,3 +299,24 @@ class Sobolev(HilbertSpace):
         cp = self.dual.to_components(up)
         vp = self._circle_space.dual.from_components(cp) * self._isqrt_jac
         return self._circle_space.from_dual(vp)
+
+
+class Lebesgue(Sobolev):
+    """
+    Implementation of the Lebesgue space L2 on a line.
+    """
+
+    def __init__(
+        self,
+        kmax,
+        /,
+        *,
+        x0=0,
+        x1=1,
+    ):
+        """
+        Args:
+            kmax (float): The maximum Fourier degree.
+            radius (float): Radius of the circle. Default is 1.
+        """
+        super().__init__(kmax, 0, 1, x0=x0, x1=x1)

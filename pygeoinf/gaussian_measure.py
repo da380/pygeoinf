@@ -473,6 +473,19 @@ class GaussianMeasure:
             else value
         )
 
+    def two_point_covariance(self, point):
+        """
+        For measures on spaces where point evaluation is defined, return the
+        two point covariance function with second argument fixed at the given point.
+        """
+
+        if not hasattr(self.domain, "dirac"):
+            raise NotImplementedError("Method not defined for this measure")
+
+        u = self.domain.dirac_representation(point)
+        cov = self.covariance
+        return cov(u)
+
     def __neg__(self):
         """Negative of the measure."""
 

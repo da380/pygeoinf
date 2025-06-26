@@ -7,15 +7,15 @@ import numpy as np
 from scipy.fft import rfft, irfft
 from scipy.sparse import diags
 from pygeoinf.hilbert_space import (
-    HilbertSpace,
     LinearOperator,
     LinearForm,
     EuclideanSpace,
 )
 from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf.homogeneous_space.homogeneous_space import HomogeneousSpaceSobolev
 
 
-class Sobolev(HilbertSpace):
+class Sobolev(HomogeneousSpaceSobolev):
     """
     Implementation of the Sobolev space H^s on a circle.
     """
@@ -23,8 +23,8 @@ class Sobolev(HilbertSpace):
     def __init__(
         self,
         kmax,
-        exponent,
-        length_scale,
+        order,
+        scale,
         /,
         *,
         radius=1,
@@ -32,17 +32,17 @@ class Sobolev(HilbertSpace):
         """
         Args:
             kmax (float): The maximum Fourier degree.
-            exponent (float): Sobolev exponent.
-            length_scale (float): Sobolev length-scale.
+            order (float): Sobolev order.
+            scale (float): Sobolev length-scale.
             radius (float): Radius of the circle. Default is 1.
         """
 
         self._kmax = kmax
-        self._exponent = exponent
-        self._length_scale = length_scale
         self._radius = radius
 
         super().__init__(
+            order,
+            scale,
             2 * kmax,
             self._to_componets,
             self._from_componets,
@@ -65,17 +65,17 @@ class Sobolev(HilbertSpace):
 
     @staticmethod
     def from_sobolev_parameters(
-        exponent, length_scale, /, *, radius=1, rtol=1e-8, power_of_two=False
+        order, scale, /, *, radius=1, rtol=1e-8, power_of_two=False
     ):
         """
         Returns a instance of the class with the maximum Fourier degree
         chosen based on the Sobolev parameters. The method is based on
         an estimate of truncation error for the Dirac measure, and is
-        only applicable in spaces with exponents > 0.5.
+        only applicable in spaces with orders > 0.5.
 
         Args:
-            exponent (float): The Sobolev exponent.
-            length_scale (float): The Sobolev length-scale.
+            order (float): The Sobolev order.
+            scale (float): The Sobolev length-scale.
             radius (float): The radius for the circle. Default is 1.
             rtol (float): Relative tolerance used in assessing
                 truncation error. Default is 1e-8
@@ -83,18 +83,18 @@ class Sobolev(HilbertSpace):
                 power of two.
 
         Raises:
-            ValueError: If exponent is <= 0.5.
+            ValueError: If order is <= 0.5.
         """
 
-        if exponent <= 0.5:
-            raise ValueError("This method is only applicable for exponents > 0.5")
+        if order <= 0.5:
+            raise ValueError("This method is only applicable for orders > 0.5")
 
         summation = 1
         k = 0
         err = 1
         while err > rtol:
             k += 1
-            term = (1 + (length_scale * k) ** 2) ** -exponent
+            term = (1 + (scale * k / radius) ** 2) ** -order
             summation += term
             err = term / summation
 
@@ -102,7 +102,7 @@ class Sobolev(HilbertSpace):
             n = int(np.log2(k))
             k = 2 ** (n + 1)
 
-        return Sobolev(k, exponent, length_scale, radius=radius)
+        return Sobolev(k, order, scale, radius=radius)
 
     @property
     def kmax(self):
@@ -119,25 +119,14 @@ class Sobolev(HilbertSpace):
         return self._radius
 
     @property
-    def exponent(self):
-        """
-        Return the Sobolev exponent.
-        """
-        return self._exponent
-
-    @property
-    def length_scale(self):
-        """
-        Return the relative Sobolev length_scale.
-        """
-        return self._length_scale
-
-    @property
     def angle_spacing(self):
         """
         Return the angle spacing.
         """
         return 2 * np.pi / self.dim
+
+    def random_point(self):
+        return np.random.uniform(0, 2 * np.pi)
 
     def angles(self):
         """
@@ -209,11 +198,6 @@ class Sobolev(HilbertSpace):
         return fig, ax
 
     def invariant_automorphism(self, f):
-        """
-        Returns a linear operator on the space of the form f(Delta) with Delta the Laplacian.
-        The resulting operator is only well-defined as a continuous automorphism if f is bounded.
-        """
-
         values = np.fromiter(
             [f(k * k / self.radius**2) for k in range(self.kmax + 1)], dtype=float
         )
@@ -227,12 +211,6 @@ class Sobolev(HilbertSpace):
         return LinearOperator.formally_self_adjoint(self, mapping)
 
     def invariant_gaussian_measure(self, f, /, *, expectation=None):
-        """
-        Returns a Gaussian measure on the space whose covariance takes the form f(Delta) with
-        Delta the Laplacian. The trace-class condition for the measure to be well-defined implies
-        that the sequence {f(k)} must be summable.
-        """
-
         values = np.fromiter(
             [np.sqrt(f(k * k / self.radius**2)) for k in range(self.kmax + 1)],
             dtype=float,
@@ -261,44 +239,9 @@ class Sobolev(HilbertSpace):
             expectation=expectation,
         )
 
-    def sobolev_gaussian_measure(
-        self, exponent, length_scale, amplitude, /, *, expectation=None
-    ):
-        """
-        Returns a Gaussian measure with Sobolev covariance. The measure is
-        scaled such that the its pointwise standard deviation is equal
-        to the optional amplitude (default value 1).
-        """
-        mu = self.invariant_gaussian_measure(
-            lambda k: (1 + length_scale**2 * k) ** -exponent
-        )
-        Q = mu.covariance
-        th = np.pi
-        u = self.dirac_representation(th)
-        var = self.inner_product(Q(u), u)
-        mu *= amplitude / np.sqrt(var)
-        return mu.affine_mapping(translation=expectation)
-
-    def heat_gaussian_measure(self, length_scale, amplitude, /, *, expectation=None):
-        """
-        Returns a Gaussian measure with heat kernel covariance. The measure is
-        scaled such that the its pointwise standard deviation is equal
-        to the optional amplitude (default value 1).
-        """
-        mu = self.invariant_gaussian_measure(lambda k: np.exp(-(length_scale**2) * k))
-        Q = mu.covariance
-        th = np.pi
-        u = self.dirac_representation(th)
-        var = self.inner_product(Q(u), u)
-        mu *= amplitude / np.sqrt(var)
-        return mu.affine_mapping(translation=expectation)
-
-    def dirac(self, angle):
-        """
-        Returns a dirac measure as a LinearForm on the space.
-        """
+    def dirac(self, point):
         coeff = np.zeros(self.kmax + 1, dtype=complex)
-        fac = np.exp(-1j * angle)
+        fac = np.exp(-1j * point)
         coeff[0] = 1
         for k in range(1, coeff.size):
             coeff[k] = coeff[k - 1] * fac
@@ -306,34 +249,6 @@ class Sobolev(HilbertSpace):
         coeff[1:] *= 2
         cp = self._coefficient_to_component(coeff)
         return LinearForm(self, components=cp)
-
-    def dirac_representation(self, angle):
-        """
-        Returns the representation of the dirac measure based at the angle.
-        """
-        return self.from_dual(self.dirac(angle))
-
-    def point_evaluation_operator(self, angles):
-        """
-        Returns the point evaluation operator on the space
-        at the given list, xs, of points.
-        """
-        dim = len(angles)
-        matrix = np.zeros((dim, self.dim))
-
-        for i, angle in enumerate(angles):
-            cp = self.dirac(angle).components
-            matrix[i, :] = cp
-
-        return LinearOperator.from_matrix(
-            self, EuclideanSpace(dim), matrix, galerkin=True
-        )
-
-    def random_angles(self, n):
-        """
-        Returns n random angles from a uniform distribution.
-        """
-        return np.random.uniform(0, 2 * np.pi, n)
 
     def to_coefficient(self, u):
         """
@@ -352,7 +267,7 @@ class Sobolev(HilbertSpace):
     # ================================================================#
 
     def _sobolev_function(self, k):
-        return (1 + (self.length_scale * k) ** 2) ** self.exponent
+        return (1 + (self.scale * k) ** 2) ** self.order
 
     def _coefficient_to_component(self, coeff):
         return np.concatenate([coeff.real, coeff.imag[1 : self.kmax]])
@@ -404,4 +319,4 @@ class Lebesgue(Sobolev):
             kmax (float): The maximum Fourier degree.
             radius (float): Radius of the circle. Default is 1.
         """
-        super().__init__(kmax, 0, 0, radius=radius)
+        super().__init__(kmax, 0, 1, radius=radius)

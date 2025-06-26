@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import uniform
 
+from cartopy import crs as ccrs
+
 from pygeoinf import (
     GaussianMeasure,
     LinearForwardProblem,
@@ -15,7 +17,7 @@ from pygeoinf.homogeneous_space.sphere import Sobolev
 
 
 # Set the model space.
-X = Sobolev(64, 2.0, 0.1)
+X = Sobolev(128, 2.0, 0.4)
 
 # Set up the prior distribution.
 mu = X.sobolev_gaussian_measure(2.0, 0.1, 1)
@@ -23,9 +25,11 @@ mu = X.sobolev_gaussian_measure(2.0, 0.1, 1)
 
 # Set up the forward operator.
 n = 50
-lats = uniform(loc=-90, scale=180).rvs(size=n)
-lons = uniform(loc=0, scale=360).rvs(size=n)
-A = X.point_evaluation_operator(lats, lons)
+points = X.random_points(n)
+lats = [point[0] for point in points]
+lons = [point[1] for point in points]
+
+A = X.point_evaluation_operator(points)
 Y = A.codomain
 
 # Set the error distribution
@@ -40,11 +44,6 @@ forward_problem = LinearForwardProblem(A, nu)
 u, v = forward_problem.synthetic_model_and_data(mu)
 
 
-# damping = 0.1
-# least_squares_inversion = LinearLeastSquaresInversion(forward_problem)
-# B = least_squares_inversion.least_squares_operator(damping, CGSolver(rtol=1.0e-7))
-# w = B(v)
-
 inversion = LinearMinimumNormInversion(forward_problem)
 B = inversion.minimum_norm_operator(CGSolver() if sigma > 0 else CholeskySolver())
 w = B(v)
@@ -52,16 +51,29 @@ w = B(v)
 
 umax = np.max(np.abs(u.data))
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
-plt.plot(lons, lats, "ko")
-plt.clim([-umax, umax])
-plt.colorbar()
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), w.data, cmap="seismic")
-plt.plot(lons, lats, "ko")
-plt.clim([-umax, umax])
-plt.colorbar()
+fig, ax, im = X.plot(u, vmin=-umax, vmax=umax)
+fig.colorbar(im, ax=ax, orientation="horizontal")
+ax.plot(
+    lons,
+    lats,
+    "o",
+    color="k",
+    markersize=4,
+    transform=ccrs.PlateCarree(),
+)
+
+
+fig, ax, im = X.plot(w, vmin=-umax, vmax=umax)
+fig.colorbar(im, ax=ax, orientation="horizontal")
+ax.plot(
+    lons,
+    lats,
+    "o",
+    color="k",
+    markersize=4,
+    transform=ccrs.PlateCarree(),
+)
+
 
 plt.show()

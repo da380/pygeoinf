@@ -7,27 +7,34 @@ import numpy as np
 from scipy.sparse import diags, coo_array
 import pyshtools as sh
 
+import matplotlib.ticker as mticker
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 
-from pygeoinf.hilbert_space import (
-    HilbertSpace,
-    LinearOperator,
-    EuclideanSpace,
-    LinearForm,
-)
 
+from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
+from pygeoinf.homogeneous_space.homogeneous_space import HomogeneousSpaceSobolev
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 
-class SHToolsHelper:
-    """Helper class for working with pyshtool grid functions and coefficients."""
+class Sobolev(HomogeneousSpaceSobolev):
+    """Sobolev spaces on a two-sphere as an instance of HilbertSpace."""
 
-    def __init__(self, lmax, /, *, radius=1, grid="DH"):
+    def __init__(
+        self, lmax, order, scale, /, *, vector_as_SHGrid=True, radius=1, grid="DH"
+    ):
         """
         Args:
-            lmax (int): Maximum degree for spherical harmonic expansions.
-            radius (float): radius of the sphere.
-            grid (str): Grid type for spatial functions.
+            lmax (int): Truncation degree for spherical harmoincs.
+            order (float): Order of the Sobolev space.
+            scale (float): Non-dimensional length-scale for the space.
+            vector_as_SHGrid (bool): If true, elements of the space are
+                instances of the SHGrid class, otherwise they are SHCoeffs.
+            radius (float): Radius of the two sphere.
+            grid (str): pyshtools grid type.
         """
+
         self._lmax = lmax
         self._radius = radius
         self._grid = grid
@@ -40,15 +47,51 @@ class SHToolsHelper:
         self._csphase = 1
         self._sparse_coeffs_to_component = self._coefficient_to_component_mapping()
 
+        dim = (lmax + 1) ** 2
+
+        self._vector_as_SHGrid = vector_as_SHGrid
+        if vector_as_SHGrid:
+            HomogeneousSpaceSobolev.__init__(
+                self,
+                order,
+                scale,
+                dim,
+                self._to_components_from_SHGrid,
+                self._from_components_to_SHGrid,
+                self._inner_product_impl,
+                self._to_dual_impl,
+                self._from_dual_impl,
+                vector_multiply=self._vector_multiply_impl,
+            )
+        else:
+            HomogeneousSpaceSobolev.__init__(
+                self,
+                order,
+                scale,
+                dim,
+                self._to_components_from_SHCoeffs,
+                self._from_components_to_SHCoeffs,
+                self._inner_product_impl,
+                self._to_dual_impl,
+                self._from_dual_impl,
+                vector_multiply=self._vector_multiply_impl,
+            )
+
+        self._metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
+            self._sobolev_function
+        )
+        self._inverse_metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
+            lambda l: 1 / self._sobolev_function(l)
+        )
+
+    # ===============================================#
+    #                   Properties                  #
+    # ===============================================#
+
     @property
     def lmax(self):
         """Returns truncation degree."""
         return self._lmax
-
-    @property
-    def dim(self):
-        """Returns dimension of vector space."""
-        return (self.lmax + 1) ** 2
 
     @property
     def radius(self):
@@ -74,6 +117,258 @@ class SHToolsHelper:
     def csphase(self):
         """Condon Shortley phase option."""
         return self._csphase
+
+    # ==============================================#
+    #                 Public methods                #
+    # ==============================================#
+
+    def random_point(self):
+        latitude = np.random.uniform(-90, 90)
+        longitude = np.random.uniform(0, 360)
+        return [latitude, longitude]
+
+    def low_degree_projection(self, truncation_degree, /, *, smoother=None):
+        """
+        Returns a LinearOperator that maps the space onto a Sobolev space with
+        the same parameters but based on a lower truncation degree.
+        """
+        truncation_degree = (
+            truncation_degree if truncation_degree <= self.lmax else self.lmax
+        )
+        f = smoother if smoother is not None else lambda l: l
+
+        # construct the spare matrix that performs the coordinate projection.
+        row_dim = (truncation_degree + 1) ** 2
+        col_dim = (self.lmax + 1) ** 2
+
+        row = 0
+        col = 0
+        rows = []
+        cols = []
+        data = []
+        for l in range(self.lmax + 1):
+            fac = f(l)
+            for _ in range(l + 1):
+                if l <= truncation_degree:
+                    rows.append(row)
+                    row += 1
+                    cols.append(col)
+                    data.append(fac)
+                col += 1
+
+        for l in range(truncation_degree + 1):
+            fac = f(l)
+            for _ in range(1, l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                data.append(fac)
+                col += 1
+
+        smat = coo_array(
+            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=int
+        ).tocsc()
+
+        codomain = Sobolev(
+            truncation_degree,
+            self.order,
+            self.scale,
+            vector_as_SHGrid=self._vector_as_SHGrid,
+            radius=self.radius,
+            grid=self._grid,
+        )
+
+        def mapping(u):
+            uc = self.to_components(u)
+            vc = smat @ uc
+            return codomain.from_components(vc)
+
+        def adjoint_mapping(v):
+            vc = codomain.to_components(v)
+            uc = smat.T @ vc
+            return self.from_components(uc)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def dirac(self, point):
+
+        latitude, longitude = point
+        colatitude = 90 - latitude
+
+        coeffs = sh.expand.spharm(
+            self.lmax,
+            colatitude,
+            longitude,
+            normalization="ortho",
+            degrees=True,
+        )
+        c = self._to_components_from_coeffs(coeffs)
+        return self.dual.from_components(c)
+
+    def invariant_automorphism(self, f):
+        matrix = self._degree_dependent_scaling_to_diagonal_matrix(f)
+
+        def mapping(x):
+            return self.from_components(matrix @ self.to_components(x))
+
+        return LinearOperator.self_adjoint(self, mapping)
+
+    def invariant_gaussian_measure(self, f, /, *, expectation=None):
+
+        def g(l):
+            return np.sqrt(f(l) / (self.radius**2 * self._sobolev_function(l)))
+
+        def h(l):
+            return np.sqrt(self.radius**2 * self._sobolev_function(l) * f(l))
+
+        matrix = self._degree_dependent_scaling_to_diagonal_matrix(g)
+        adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(h)
+        domain = EuclideanSpace(self.dim)
+
+        def mapping(c):
+            return self.from_components(matrix @ c)
+
+        def adjoint_mapping(u):
+            return adjoint_matrix @ self.to_components(u)
+
+        inverse_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
+            lambda l: 1 / g(l)
+        )
+
+        inverse_adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
+            lambda l: 1 / h(l)
+        )
+
+        def inverse_mapping(u):
+            return inverse_matrix @ self.to_components(u)
+
+        def inverse_adjoint_mapping(c):
+            return self.from_components(inverse_adjoint_matrix @ c)
+
+        covariance_factor = LinearOperator(
+            domain, self, mapping, adjoint_mapping=adjoint_mapping
+        )
+
+        inverse_covariance_factor = LinearOperator(
+            self, domain, inverse_mapping, adjoint_mapping=inverse_adjoint_mapping
+        )
+
+        return GaussianMeasure(
+            covariance_factor=covariance_factor,
+            inverse_covariance_factor=inverse_covariance_factor,
+            expectation=expectation,
+        )
+
+    def plot(
+        self,
+        f,
+        /,
+        *,
+        projection=ccrs.PlateCarree(),
+        contour=False,
+        cmap="RdBu",
+        coasts=False,
+        rivers=False,
+        borders=False,
+        map_extent=None,
+        gridlines=True,
+        symmetric=False,
+        **kwargs,
+    ):
+        """
+        Return a plot of a function.
+
+        Args:
+            f (vector): Function to be plotted.
+            projection: cartopy projection to be used. Default is Robinson.
+            contour (bool): If True, a contour plot is made, otherwise a pcolor plot.
+            cmap (string): colormap. Default is RdBu.
+            coasts (bool): If True, coast lines plotted. Default is True.
+            rivers (bool): If True, major rivers plotted. Default is False.
+            borders (bool): If True, country borders are plotted. Default is False.
+            map_extent ([float]): Sets the (lon, lat) range for plotting.
+            Tuple of [lon_min, lon_max, lat_min, lat_max]. Default is None.
+            gridlines (bool): If True, gridlines are included. Default is True.
+            symmetric (bool): If True, clim values set symmetrically based on the fields maximum absolute value.
+                Option overridden if vmin or vmax are set.
+            kwargs: Keyword arguments for forwarding to the plotting functions.
+        """
+
+        if self._vector_as_SHGrid:
+            field = f
+        else:
+            field = f.expand(normalization=self.normalization, csphase=self.csphase)
+
+        lons = field.lons()
+        lats = field.lats()
+
+        figsize = kwargs.pop("figsize", (10, 8))
+        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": projection})
+
+        if map_extent is not None:
+            ax.set_extent(map_extent, crs=ccrs.PlateCarree())
+
+        if coasts:
+            ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+
+        if rivers:
+            ax.add_feature(cfeature.RIVERS, linewidth=0.8)
+
+        if borders:
+            ax.add_feature(cfeature.BORDERS, linewidth=0.8)
+
+        kwargs.setdefault("cmap", cmap)
+
+        lat_interval = kwargs.pop("lat_interval", 30)
+        lon_interval = kwargs.pop("lon_interval", 30)
+
+        if symmetric:
+            data_max = 1.2 * np.nanmax(np.abs(f.data))
+            kwargs.setdefault("vmin", -data_max)
+            kwargs.setdefault("vmax", data_max)
+
+        levels = kwargs.pop("levels", 10)
+
+        if contour:
+
+            im = ax.contourf(
+                lons,
+                lats,
+                field.data,
+                transform=ccrs.PlateCarree(),
+                levels=levels,
+                **kwargs,
+            )
+
+        else:
+
+            im = ax.pcolormesh(
+                lons,
+                lats,
+                field.data,
+                transform=ccrs.PlateCarree(),
+                **kwargs,
+            )
+
+        if gridlines:
+            gl = ax.gridlines(
+                linestyle="--",
+                draw_labels=True,
+                dms=True,
+                x_inline=False,
+                y_inline=False,
+            )
+
+            gl.xlocator = mticker.MultipleLocator(lon_interval)
+            gl.ylocator = mticker.MultipleLocator(lat_interval)
+            gl.xformatter = LongitudeFormatter()
+            gl.yformatter = LatitudeFormatter()
+
+        return fig, ax, im
+
+    # ==============================================#
+    #                Private methods                #
+    # ==============================================#
 
     def _coefficient_to_component_mapping(self):
         # returns a sparse matrix that maps from flattended pyshtools
@@ -154,422 +449,6 @@ class SHToolsHelper:
             i = j
         return diags([values], [0])
 
-
-class Sobolev(SHToolsHelper, HilbertSpace):
-    """Sobolev spaces on a two-sphere as an instance of HilbertSpace."""
-
-    def __init__(
-        self, lmax, order, scale, /, *, vector_as_SHGrid=True, radius=1, grid="DH"
-    ):
-        """
-        Args:
-            lmax (int): Truncation degree for spherical harmoincs.
-            order (float): Order of the Sobolev space.
-            scale (float): Non-dimensional length-scale for the space.
-            vector_as_SHGrid (bool): If true, elements of the space are
-                instances of the SHGrid class, otherwise they are SHCoeffs.
-            radius (float): Radius of the two sphere.
-            grid (str): pyshtools grid type.
-        """
-        self._order = order
-        self._scale = scale
-        SHToolsHelper.__init__(self, lmax, radius=radius, grid=grid)
-        self._metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
-            self._sobolev_function
-        )
-        self._inverse_metric_tensor = self._degree_dependent_scaling_to_diagonal_matrix(
-            lambda l: 1 / self._sobolev_function(l)
-        )
-        self._vector_as_SHGrid = vector_as_SHGrid
-        if vector_as_SHGrid:
-            HilbertSpace.__init__(
-                self,
-                self.dim,
-                self._to_components_from_SHGrid,
-                self._from_components_to_SHGrid,
-                self._inner_product_impl,
-                self._to_dual_impl,
-                self._from_dual_impl,
-            )
-        else:
-            HilbertSpace.__init__(
-                self,
-                self.dim,
-                self._to_components_from_SHCoeffs,
-                self._from_components_to_SHCoeffs,
-                self._inner_product_impl,
-                self._to_dual_impl,
-                self._from_dual_impl,
-            )
-
-    # =============================================#
-    #                   Properties                 #
-    # =============================================#
-
-    @property
-    def order(self):
-        """Order of the Sobolev space."""
-        return self._order
-
-    @property
-    def scale(self):
-        """Non-dimensional length-scale."""
-        return self._scale
-
-    @property
-    def laplace_beltrami_operator(self):
-        """
-        Returns the Laplace Beltrami operator on the space.
-        """
-        codomain = Sobolev(self.lmax, self.order - 2, self.scale)
-        return self.invariant_operator(codomain, lambda l: l * (l + 1) / self.radius**2)
-
-    # ==============================================#
-    #                 Public methods                #
-    # ==============================================#
-
-    def low_degree_projection(self, truncation_degree, /, *, smoother=None):
-        """
-        Returns a LinearOperator that maps the space onto a Sobolev space with
-        the same parameters but based on a lower truncation degree.
-        """
-        truncation_degree = (
-            truncation_degree if truncation_degree <= self.lmax else self.lmax
-        )
-        f = smoother if smoother is not None else lambda l: l
-
-        # construct the spare matrix that performs the coordinate projection.
-        row_dim = (truncation_degree + 1) ** 2
-        col_dim = (self.lmax + 1) ** 2
-
-        row = 0
-        col = 0
-        rows = []
-        cols = []
-        data = []
-        for l in range(self.lmax + 1):
-            fac = f(l)
-            for _ in range(l + 1):
-                if l <= truncation_degree:
-                    rows.append(row)
-                    row += 1
-                    cols.append(col)
-                    data.append(fac)
-                col += 1
-
-        for l in range(truncation_degree + 1):
-            fac = f(l)
-            for _ in range(1, l + 1):
-                rows.append(row)
-                row += 1
-                cols.append(col)
-                data.append(fac)
-                col += 1
-
-        smat = coo_array(
-            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=int
-        ).tocsc()
-
-        codomain = Sobolev(
-            truncation_degree,
-            self.order,
-            self.scale,
-            vector_as_SHGrid=self._vector_as_SHGrid,
-            radius=self.radius,
-            grid=self._grid,
-        )
-
-        def mapping(u):
-            uc = self.to_components(u)
-            vc = smat @ uc
-            return codomain.from_components(vc)
-
-        def adjoint_mapping(v):
-            vc = codomain.to_components(v)
-            uc = smat.T @ vc
-            return self.from_components(uc)
-
-        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
-    def dirac(self, latitude, longitude, /, *, degrees=True):
-        """
-        Returns the Dirac measure at the given point as an
-        instance of LinearForm.
-
-        Args:
-            latitude (float): Latitude for the Dirac measure.
-            longitude (float): Longitude for the Dirac measure.
-            degrees (bool): If true, angles in degrees, otherwise
-                they are in radians.
-        Returns:
-            LinearForm: The Dirac measure as a linear form on the space.
-
-        Notes:
-            The form is only well-defined mathematically if the order of the
-            space is greater than 1.
-        """
-        if degrees:
-            colatitude = 90 - latitude
-        else:
-            colatitude = np.pi / 2 - latitude
-        coeffs = sh.expand.spharm(
-            self.lmax,
-            colatitude,
-            longitude,
-            normalization="ortho",
-            degrees=degrees,
-        )
-        c = self._to_components_from_coeffs(coeffs)
-        return self.dual.from_components(c)
-
-    def dirac_representation(self, latitude, longitude, /, *, degrees=True):
-        """
-        Returns representation of the Dirac measure at the given point
-        within the Sobolev space.
-
-        Args:
-            latitude (float): Latitude for the Dirac measure.
-            longitude (float): Longitude for the Dirac measure.
-            degrees (bool): If true, angles in degrees, otherwise
-                they are in radians.
-        Returns:
-            LinearForm: The Dirac measure as a linear form on the space.
-
-        Notes:
-            The form is only well-defined mathematically if the order of the
-            space is greater than 1.
-        """
-        up = self.dirac(latitude, longitude, degrees=degrees)
-        return self.from_dual(up)
-
-    def point_evaluation_operator(self, lats, lons, /, *, degrees=True):
-        """
-        Returns a LinearOperator instance that maps an element of the
-        space to its values at the given set of latitudes and longitudes.
-
-        Args:
-            lats (ArrayLike): Array of latitudes.
-            lons (ArrayLike): Array of longitudes.
-            degrees (bool): If true, angles input as degrees, else in radians.
-
-        Returns:
-            LinearOperator: The operator on the space.
-
-        Raises:
-            ValueError: If the number of latitudes and longitudes are not equal.
-
-        Notes:
-            The operator is only well-defined mathematically if the order of the
-            space is greater than 1.
-        """
-
-        if lats.size != lons.size:
-            raise ValueError("Must have the same number of latitudes and longitudes.")
-        codomain = EuclideanSpace(lats.size)
-
-        def mapping(u):
-            ulm = u.expand(normalization=self.normalization, csphase=self.csphase)
-            return ulm.expand(lat=lats, lon=lons, degrees=degrees)
-
-        def dual_mapping(vp):
-            cvp = codomain.dual.to_components(vp)
-            cup = np.zeros(self.dim)
-            for c, lat, lon in zip(cvp, lats, lons):
-                dirac = self.dirac(lat, lon, degrees=degrees)
-                cup += c * self.dual.to_components(dirac)
-            return LinearForm(self, components=cup)
-
-        return LinearOperator(self, codomain, mapping, dual_mapping=dual_mapping)
-
-    def invariant_operator(self, codomain, f):
-        """
-        Returns a rotationally invariant linear operator from the
-        Sobolev space to another one.
-
-        Args:
-            codoaim (Sobolev): The codomain of the operator.
-            f (callable): The degree-dependent scaling-function.
-
-        Returns:
-            LinearOperator: The linear operator.
-
-        Raises:
-            ValueError: If the codomain is not another Sobolev on a two-sphere.
-        """
-        if not isinstance(codomain, Sobolev):
-            raise ValueError("Codomain must be another Sobolev space on a sphere.")
-        matrix = self._degree_dependent_scaling_to_diagonal_matrix(f)
-        if codomain == self:
-
-            def mapping(x):
-                return self.from_components(matrix @ self.to_components(x))
-
-            return LinearOperator.self_adjoint(self, mapping)
-        else:
-
-            def mapping(x):
-                return codomain.from_components(matrix @ self.to_components(x))
-
-            def dual_mapping(yp):
-                return self.dual.from_components(
-                    matrix @ codomain.dual.to_components(yp)
-                )
-
-            return LinearOperator(self, codomain, mapping, dual_mapping=dual_mapping)
-
-    def invariant_gaussian_measure(self, f, /, *, expectation=None):
-        """
-        Returns an invariant Gaussian measure on the space.
-
-        Args:
-            f (callable): Degree-dependent scaling function that defines the
-                covariance operator.
-            expectation (Sobolev vector | None): The expected value of the measure.
-
-        Returns:
-            GaussianMeasure: The Gaussian measure on the space.
-
-        """
-
-        def g(l):
-            return np.sqrt(f(l) / (self.radius**2 * self._sobolev_function(l)))
-
-        def h(l):
-            return np.sqrt(self.radius**2 * self._sobolev_function(l) * f(l))
-
-        matrix = self._degree_dependent_scaling_to_diagonal_matrix(g)
-        adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(h)
-        domain = EuclideanSpace(self.dim)
-
-        def mapping(c):
-            return self.from_components(matrix @ c)
-
-        def adjoint_mapping(u):
-            return adjoint_matrix @ self.to_components(u)
-
-        inverse_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
-            lambda l: 1 / g(l)
-        )
-
-        inverse_adjoint_matrix = self._degree_dependent_scaling_to_diagonal_matrix(
-            lambda l: 1 / h(l)
-        )
-
-        def inverse_mapping(u):
-            return inverse_matrix @ self.to_components(u)
-
-        def inverse_adjoint_mapping(c):
-            return self.from_components(inverse_adjoint_matrix @ c)
-
-        covariance_factor = LinearOperator(
-            domain, self, mapping, adjoint_mapping=adjoint_mapping
-        )
-
-        inverse_covariance_factor = LinearOperator(
-            self, domain, inverse_mapping, adjoint_mapping=inverse_adjoint_mapping
-        )
-
-        return GaussianMeasure(
-            covariance_factor=covariance_factor,
-            inverse_covariance_factor=inverse_covariance_factor,
-            expectation=expectation,
-        )
-
-    def sobolev_gaussian_measure(self, order, scale, amplitude, /, *, expectation=None):
-        """
-        Returns an invariant Gaussian measure on the space whose covariance
-        operator takes the Sobolev form:
-
-        Args:
-            order (float): The Sobolev order for the covariance.
-            scale (float): The non-dimensional length-scale for the covariance.
-            amplitude (float): The standard deviation of point values.
-            expectation (Sobolev vector | None): The expected value of the measure.
-
-        Returns:
-            GaussianMeasures: The Gaussian measure on the space.
-        """
-
-        def f(l):
-            return (1 + scale**2 * l * (l + 1)) ** (-order)
-
-        return self.invariant_gaussian_measure(
-            self._normalise_covariance_function(f, amplitude), expectation=expectation
-        )
-
-    def heat_kernel_gaussian_measure(self, scale, amplitude, /, *, expectation=None):
-        """
-        Returns an invariant Gaussian measure on the space whose covariance
-        operator takes the form of a heat kernel.
-
-        Args:
-            scale (float): The non-dimensional length-scale for the covariance.
-            amplitude (float): The standard deviation of point values.
-            expectation (Sobolev vector | None): The expected value of the measure.
-
-        Returns:
-            GaussianMeasures: The Gaussian measure on the space.
-        """
-
-        def f(l):
-            return np.exp(-0.5 * l * (l + 1) * scale**2)
-
-        return self.invariant_gaussian_measure(
-            self._normalise_covariance_function(f, amplitude), expectation=expectation
-        )
-
-    def sample_variance(self, vectors, /, *, expectation=None):
-        """
-        Given a list of elements in the space, forms a field
-        of point-wise sample variances.
-
-        Args:
-            vectors ([vector]): A list of vectors.
-            expectation (vector): The expected value that can be provided.
-                If not, the sample expectation is used.
-        """
-        n = len(vectors)
-        if expectation is None:
-            assert n > 1
-            fac = 1 / (n - 1)
-            ubar = self.sample_expectation(vectors)
-        else:
-            assert n > 0
-            fac = 1 / n
-            ubar = expectation
-        uvar = self.zero
-        for u in vectors:
-            u = (u - ubar) * (u - ubar)
-            uvar = self.axpy(fac, u, uvar)
-        return uvar
-
-    def sample_std(self, vectors, /, *, expectation=None):
-        """
-        Given a list of elements in the space, forms a field
-        of point-wise sample standard deviations.
-
-        Args:
-            vectors ([vector]): A list of vectors.
-            expectation (vector): The expected value that can be provided.
-                If not, the sample expectation is used.
-        """
-        ustd = self.sample_variance(vectors, expectation=expectation)
-        ustd.data = np.sqrt(ustd.data)
-        return ustd
-
-    def plot(self, u, *args, **kwargs):
-        """
-        Make a simple plot of an element of the space.
-        """
-        if self._vector_as_SHGrid:
-            plt.pcolormesh(u.lons(), u.lats(), u.data, *args, **kwargs)
-        else:
-            self.plot(u.expand(grid=self.grid, extend=self.extend), *args, **kwargs)
-
-    # ==============================================#
-    #                Private methods               #
-    # ==============================================#
-
     def _sobolev_function(self, l):
         # Degree-dependent scaling that defines the Sobolev inner product.
         return (1 + self.scale**2 * l * (l + 1)) ** self.order
@@ -603,6 +482,18 @@ class Sobolev(SHToolsHelper, HilbertSpace):
             )
         return lambda l: amplitude**2 * f(l) / norm
 
+    def _vector_multiply_impl(self, u1, u2):
+
+        if self._vector_as_SHGrid:
+            return u1 * u2
+        else:
+            u1_field = u1.expand(grid=self.grid, extend=self.extend)
+            u2_field = u2.expand(grid=self.grid, extend=self.extend)
+            u3_field = u1_field * u2_field
+            return u3_field.expand(
+                normalization=self.normalization, csphase=self.csphase
+            )
+
 
 class Lebesgue(Sobolev):
     """
@@ -623,7 +514,7 @@ class Lebesgue(Sobolev):
         super().__init__(
             lmax,
             0,
-            0,
+            1,
             vector_as_SHGrid=vector_as_SHGrid,
             radius=radius,
             grid=grid,
