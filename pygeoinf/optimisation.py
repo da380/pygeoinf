@@ -1,39 +1,27 @@
-'''
+"""
 Module for classes related to the solution of inverse problems via optimisation methods.
-'''
+"""
 
-
-import numpy as np
-import numpy as np
-import matplotlib.pyplot as plt
 from scipy.stats import chi2
-from scipy.optimize import brentq
-import pygeoinf.linalg as la
-from pygeoinf.forward_problem import ForwardProblem
-from pygeoinf.utils import plot_colourline
+from pygeoinf.hilbert_space import Operator
+from pygeoinf.inversion import Inversion
+from pygeoinf.linear_solvers import IterativeLinearSolver
 
 
-class LeastSquaresInversion(ForwardProblem):
+class LinearLeastSquaresInversion(Inversion):
     """
-    Class for the solution of regularised least-squares
-    problems within a Hilbert space.
+    Class for the solution of regularised linear least-squares problems within a Hilbert space.
     """
 
-    def __init__(self, forward_operator, data_error_measure):
-        """, /, *, solver=None
+    def __init__(self, forward_problem):
+        """
         Args:
-            forward_operator (LinearOperator): The forward operator for the problem.
-            data_error_measure (GaussianMeasure): The error measure on the data.
+            forward_problem (LinearForwardProblem): The forward problem. If the problem has
+                a data errror measure, then this measure must have its inverse covariance
+                operator set.
         """
-        super().__init__(forward_operator, data_error_measure)
-
-    @staticmethod
-    def from_forward_problem(forward_problem):
-        """
-        Construct a least-squares problem from a forward problem.
-        """
-        return LeastSquaresInversion(forward_problem.forward_operator,
-                                     forward_problem.data_error_measure)
+        super().__init__(forward_problem)
+        self.assert_inverse_data_covariance()
 
     def normal_operator(self, damping):
         """
@@ -50,111 +38,80 @@ class LeastSquaresInversion(ForwardProblem):
         """
         if damping < 0:
             raise ValueError("Damping parameter must be non-negative.")
-        A = self.forward_operator
-        Ci = self.data_error_measure.inverse_covariance
-        I = self.model_space.identity()
-        return A.adjoint @ Ci @ A + damping * I
+        forward_operator = self.forward_problem.forward_operator
+        identity = self.forward_problem.model_space.identity_operator()
 
-    def least_squares_operator(self, damping, /, *,
-                               solver=None,
-                               preconditioner=None,
-                               preconditioning_method=None,
-                               initial_model=None):
+        if self.forward_problem.data_error_measure_set:
+
+            inverse_data_covariance = (
+                self.forward_problem.data_error_measure.inverse_covariance
+            )
+            return (
+                forward_operator.adjoint @ inverse_data_covariance @ forward_operator
+                + damping * identity
+            )
+        else:
+            return forward_operator.adjoint @ forward_operator + damping * identity
+
+    def least_squares_operator(self, damping, solver, /, *, preconditioner=None):
         """
-        Returns a linear operator that solves the least-squares problem.
+        Returns an operator that maps data to the least squares solution.
 
         Args:
             damping (float): The norm damping parameter. Must be non-negative.
-            solver (LinearSolver): Linear solver for solvint the normal equations.
-                The default is conjugate-gradients.
+            solver (LinearSolver): Linear solver for the normal equations.
             preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is None.
-            preconditioning_method (PreconditioningMethod): If a preconditioner is not
-                provided, this method is used to generate a preconditioner from the given
-                operator. The default is the identity preconditioner.
-            initial_model (model-space vector): Initial guess within an iterative solution.
-                The default is zero.
 
         Returns:
-            LinearOperator: Mapping from data space to least-squares solution.
+            Operator: Mapping from data space to least-squares solution.
 
         Raises:
             ValueError: If damping is not non-negative.
             ValueError: If solver is not a instance of LinearSolver.
+
+        Notes. If the data is error-free the object returned is a LinearOperator.
         """
 
-        # Set the operators.
-        A = self.forward_operator
-        Ci = self.data_error_measure.inverse_covariance
-        N = self.normal_operator(damping)
+        forward_operator = self.forward_problem.forward_operator
+        normal_operator = self.normal_operator(damping)
 
-        if solver is None:
-            _solver = la.CGSolver()
+        if isinstance(solver, IterativeLinearSolver):
+            inverse_normal_operator = solver(
+                normal_operator, preconditioner=preconditioner
+            )
         else:
-            _solver = solver
+            inverse_normal_operator = solver(normal_operator)
 
-        if preconditioner is None:
-            if preconditioning_method is None:
-                _preconditioner = la.IdentityPreconditioner()(N)
-            else:
-                _preconditioner = preconditioning_method(N)
+        if self.forward_problem.data_error_measure_set:
+            inverse_data_covariance = (
+                self.forward_problem.data_error_measure.inverse_covariance
+            )
+
+            def mapping(data):
+                shifted_data = self.forward_problem.data_space.subtract(
+                    data, self.forward_problem.data_error_measure.expectation
+                )
+                return (
+                    inverse_normal_operator
+                    @ forward_operator.adjoint
+                    @ inverse_data_covariance
+                )(shifted_data)
+
+            return Operator(self.data_space, self.model_space, mapping)
+
         else:
-            _preconditioner = preconditioner
+            return inverse_normal_operator @ forward_operator.adjoint
 
-        if initial_model is None:
-            _initial_model = self.model_space.zero
-        else:
-            _initial_model = initial_model.copy()
-
-        if isinstance(_solver, la.IterativeLinearSolver):
-            Ni = _solver(N, preconditioner=_preconditioner, x0=_initial_model)
-        elif isinstance(_solver, la.DirectLinearSolver):
-            Ni = _solver(N)
-        else:
-            raise ValueError("input solver is of the wrong type.")
-
-        return Ni @ A.adjoint @ Ci
-
-    def model_error_measure(self, damping, /, *,
-                            solver=None,
-                            preconditioner=None,
-                            preconditioning_method=None,
-                            initial_model=None):
-        """
-        Returns the measure on the model space induced by the data errors under the least-squares solution.
-
-        Args:
-            damping (float): The norm damping parameter. Must be non-negative.
-            solver (LinearSolver): Linear solver for solvint the normal equations.
-                The default is conjugate-gradients.
-            preconditioner (LinearOperator): Preconditioner for use in
-                solving the normal equations. The default is the identity.
-            preconditioning_method (PreconditioningMethod): If a preconditioner is not
-                provided, this method is used to generate a preconditioner from the given
-                operator. The default is the identity preconditioner.
-            initial_model (model-space vector): Initial guess within an iterative solution.
-                The default is zero.
-
-        Returns:
-            GaussianMeasure: Measure on the model space induced by the
-                least-squares solution. Note that this measure only
-                accounts for uncertainty due to the propagation of
-                uncertainties within the data.
-
-        Raises:
-            ValueError: If damping is not non-negative.
-            ValueError: If solver is not a instance of LinearSolver.
-        """
-        B = self.least_squares_operator(damping,
-                                        solver=solver,
-                                        preconditioner=preconditioner,
-                                        initial_model=initial_model)
-        return self.data_error_measure.affine_mapping(operator=B)
-
-    def model_measure(self, damping, data, /, *,
-                      solver=None,  preconditioner=None,
-                      preconditioning_method=None,
-                      initial_model=None):
+    def model_measure(
+        self,
+        damping,
+        data,
+        solver,
+        /,
+        *,
+        preconditioner=None,
+    ):
         """
         Returns the measure on the model space induced by the observed data under the least-squares solution.
 
@@ -162,11 +119,8 @@ class LeastSquaresInversion(ForwardProblem):
             damping (float): The norm damping parameter. Must be non-negative.
             data (data vector): Observed data
             solver (LinearSolver): Linear solver for solvint the normal equations.
-                The default is conjugate-gradients.
             preconditioner (LinearOperator): Preconditioner for use in
                 solving the normal equations. The default is the identity.
-            initial_model (model-space vector): Initial guess within an iterative solution.
-                The default is zero.
 
         Returns:
             GaussianMeasure: Measure on the model space induced by the
@@ -178,196 +132,160 @@ class LeastSquaresInversion(ForwardProblem):
             ValueError: If damping is not non-negative.
             ValueError: If solver is not a instance of LinearSolver.
         """
-        B = self.least_squares_operator(damping,
-                                        solver=solver,
-                                        preconditioner=preconditioner,
-                                        preconditioning_method=preconditioning_method,
-                                        initial_model=initial_model)
-        model = B(data)
-        return self.data_error_measure.affine_mapping(operator=B, translation=model)
 
-    def resolution_operator(self, damping, /, *, solver=None,
-                            preconditioner=None,
-                            preconditioning_method=None,
-                            initial_model=None):
-        """
-        Returns the resolution operator for the least-squares problem.
+        if not self.forward_problem.data_error_measure_set:
+            raise NotImplementedError("Data error measure not set")
 
-        Args:
-            damping (float): The norm damping parameter. Must be non-negative.
-            solver (LinearSolver): Linear solver for solvint the normal equations.
-                The default is conjugate-gradients.
-            preconditioner (LinearOperator): Preconditioner for use in
-                solving the normal equations. The default is the identity.
-            initial_model (model-space vector): Initial guess within an iterative solution.
-                The default is zero.
-
-        Returns:
-            LinearOperator: The resolution operator for the problem,
-                with this operator mapping a known model into the
-                result of its inversion in the absence of data errors.
-
-        Raises:
-            ValueError: If damping is not non-negative.
-            ValueError: If solver is not a instance of LinearSolver.
-        """
-        A = self.forward_operator
-        B = self.least_squares_operator(damping,
-                                        solver=solver,
-                                        preconditioner=preconditioner,
-                                        preconditioning_method=preconditioning_method,
-                                        initial_model=initial_model)
-
-        return B @ A
-
-    def trade_off_curve(self, damping1, damping2, ndamping, data, /, *, solver=None,
-                        preconditioner=None,
-                        preconditioning_method=None,
-                        initial_model=None):
-        """
-        Plots a trade-off curve of squared model norm against chi-squared.
-
-        Args:
-            dampings (range): Damping values to plot.
-            data (data-space vector): Observed data.
-        """
-
-        dampings = np.linspace(damping1, damping2, ndamping)
-
-        squared_norms = []
-        chi_squares = []
-
-        if initial_model is None:
-            model = self.model_space.zero
-        else:
-            model = initial_model.copy()
-
-        for damping in dampings:
-            B = self.least_squares_operator(
-                damping, solver=solver, preconditioner=preconditioner,
-                preconditioning_method=preconditioning_method, initial_model=model)
-            model = B(data)
-            squared_norms.append(self.model_space.inner_product(model, model))
-            chi_squares.append(self.chi_squared(model, data))
-
-        plot_colourline(squared_norms, chi_squares, dampings)
-
-
-class OccamInversion(ForwardProblem):
-    """
-    Class for performing the Occam inversions of Constable, Parker and Constable (1987)
-    for a linear problem with Gaussian errors.
-    """
-
-    def __init__(self, forward_operator, data_error_measure, /, *, rtol=1.e-5, damping_min=1.e-5):
-        super().__init__(forward_operator, data_error_measure)
-        self._least_squares_inversion = LeastSquaresInversion(
-            forward_operator, data_error_measure)
-        self._rtol = rtol
-        self._damping_min = damping_min
-
-    def minimum_norm_operator(self, confidence_level, /, *,
-                              solver=None,
-                              preconditioner=None,
-                              preconditioning_method=None):
-        """
-        Returns the operator that maps data to the minimum norm solution for the
-        given confidence level.
-
-        Args:
-            confidence_level (float): The confidence level used to define the data-space confidence set.
-            solver (LinearSolver): Linear solver for the least-squares problems.
-            preconditioner (LinearOperator): Preconditioner for the least-squares problems. Note that
-                currently the same preconditioner is applied to all linear systems.
-
-        Returns:
-            Operator: A non-linear operator mapping the data to the minimum norm solution.
-        """
-
-        # Compute the critical value for chi-squared.
-        critical_chi_squared = chi2.isf(
-            1-confidence_level, self.data_space.dim)
-
-        def mapping(data):
-
-            # check to see if zero-model is the solution.
-            model = self.model_space.zero
-            chi_squared = self.chi_squared(model, data)
-            if chi_squared <= critical_chi_squared:
-                return model
-
-            # Local function for solving the least-squares problem
-            def compute_model_chi_squared(damping, initial_model=None):
-                B = self._least_squares_inversion.least_squares_operator(
-                    damping, solver=solver, preconditioner=preconditioner,
-                    preconditioning_method=preconditioning_method, initial_model=initial_model)
-                model = B(data)
-                return model, self.chi_squared(model, data)
-
-            # Bound the damping.
-            damping = 1
-            model, chi_squared = compute_model_chi_squared(damping)
-            if chi_squared >= critical_chi_squared:
-                damping_low = None
-                damping_high = damping
-            else:
-                damping_low = damping
-                damping_high = None
-
-            if damping_low is None:
-                damping_low = damping_high
-                while (chi_squared > critical_chi_squared):
-                    damping_low /= 2
-                    model, chi_squared = compute_model_chi_squared(
-                        damping_low, model)
-                    if damping_low < self._damping_min:
-                        break
-
-            if damping_high is None:
-                damping_high = damping_low
-                while (chi_squared <= critical_chi_squared):
-                    damping_high *= 2
-                    model, chi_squared = compute_model_chi_squared(
-                        damping_high, model)
-
-            # Use bisection to determine the damping.
-            damping = 0.5*(damping_high + damping_low)
-            while (np.abs(damping-damping_low) > self._rtol * damping):
-                model, chi_squared = compute_model_chi_squared(damping, model)
-                if chi_squared >= critical_chi_squared:
-                    damping_high = damping
-                else:
-                    damping_low = damping
-                damping = 0.5*(damping_high + damping_low)
-
-            return model
-
-        return la.Operator(self.data_space, self.model_space, mapping)
-
-    def resolution_operator(self, confidence_level, /, *, solver=None,
-                            preconditioner=None,
-                            preconditioning_method=None):
-        """
-        Returns the resolution operator for the least-squares problem.
-
-        Args:
-            confidence_level (float): The confidence level used to define the data-space confidence set.
-            solver (LinearSolver): Linear solver for solvint the normal equations.
-                The default is conjugate-gradients.
-            preconditioner (LinearOperator): Preconditioner for use in
-                solving the normal equations. The default is the identity.
-
-        Returns:
-            Operator: The resolution operator for the problem,
-                with this operator mapping a known model into the
-                result of its inversion in the absence of data errors.
-
-        Raises:
-            ValueError: If solver is not a instance of LinearSolver.
-        """
-        A = self.forward_operator
-        B = self.minimum_norm_operator(
-            confidence_level, solver=solver,
+        least_squares_operator = self.least_squares_operator(
+            damping,
+            solver,
             preconditioner=preconditioner,
-            preconditioning_method=preconditioning_method)
-        return la.Operator(self.model_space, self.model_space, lambda x: B(A(x)))
+        )
+        model = least_squares_operator(data)
+        return self.forward_problem.data_error_measure.affine_mapping(
+            operator=least_squares_operator, translation=model
+        )
+
+
+class LinearMinimumNormInversion(Inversion):
+    """
+    Class for the solution of linear minimum norm problems in a Hilbert space.
+    """
+
+    def __init__(self, forward_problem):
+        """
+        Args:
+            forward_problem (LinearForwardProblem): The forward problem. If the problem has
+                a data errror measure, then this measure must have its inverse covariance
+                operator set.
+        """
+        super().__init__(forward_problem)
+        self.assert_inverse_data_covariance()
+
+    def minimum_norm_operator(
+        self,
+        solver,
+        /,
+        *,
+        preconditioner=None,
+        significance_level=0.05,
+        minimum_damping=0,
+        maxiter=100,
+        rtol=1.0e-6,
+        atol=0,
+    ):
+        """
+        Return the operator that maps data to the minimum norm solution.
+        In the case of error-free data this operator is linear, but once
+        data errors are present it is a non-linear opearator.
+
+        Args:
+            solver (LinearSolver): Solver for solution of the necessary linear systems.
+            preconditioner (LinearOperator): Preconditioner for use with iterative solvers.
+            significance_level (float): Significance level used to set the crtical value
+                for chi-squared. Must lie in the interval (0,1). Default is 0.05 which
+                corresponds to 95% acceptance.
+            minimum_damping (float): Minimum value of the damping when looking for a
+                lower bound on the damping. Default is 0.
+            maxiter (int): Maximum number of iterations within the bracketing method.
+                Default is 100.
+            rtol (float): Relative tolerance within the bracketing step. Default is 1e-6
+            atyol (float): Absolute tolerance within the bracketing step. Default is 0.
+        """
+
+        if self.forward_problem.data_error_measure_set:
+
+            critical_value = self.forward_problem.crtical_chi_squared(
+                significance_level
+            )
+            least_squares_inversion = LinearLeastSquaresInversion(self.forward_problem)
+
+            def least_squares_mapping(damping, data, model0=None):
+
+                forward_operator = self.forward_problem.forward_operator
+                normal_operator = least_squares_inversion.normal_operator(damping)
+                inverse_data_covariance = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+
+                shifted_data = self.data_space.subtract(
+                    data, self.forward_problem.data_error_measure.expectation
+                )
+
+                if isinstance(solver, IterativeLinearSolver):
+                    model_in = (forward_operator.adjoint @ inverse_data_covariance)(
+                        shifted_data
+                    )
+                    model = solver.solve_linear_system(
+                        normal_operator,
+                        preconditioner,
+                        model_in,
+                        x0=model0,
+                    )
+
+                else:
+                    inverse_normal_operator = solver(normal_operator)
+                    model = (
+                        inverse_normal_operator
+                        @ forward_operator.adjoint
+                        @ inverse_data_covariance
+                    )(shifted_data)
+
+                chi_squared = self.forward_problem.chi_squared(model, data)
+                return chi_squared, model
+
+            def mapping(data):
+
+                model = self.model_space.zero
+                chi_squared = self.forward_problem.chi_squared(model, data)
+                if chi_squared <= critical_value:
+                    return model
+
+                damping = 1
+                chi_squared, _ = least_squares_mapping(damping, data)
+
+                damping_lower = damping if chi_squared <= critical_value else None
+                damping_upper = damping if chi_squared > critical_value else None
+
+                if damping_lower is None:
+                    it = 0
+                    while chi_squared > critical_value:
+                        it += 1
+                        damping /= 2
+                        chi_squared, _ = least_squares_mapping(damping, data)
+                        if chi_squared < minimum_damping or it == maxiter:
+                            raise RuntimeError("Crtical value cannot be obtained")
+                    damping_lower = damping
+
+                if damping_upper is None:
+                    while chi_squared < critical_value:
+                        damping *= 2
+                        chi_squared, _ = least_squares_mapping(damping, data)
+                    damping_upper = damping
+
+                model0 = None
+                for _ in range(maxiter):
+
+                    damping = 0.5 * (damping_lower + damping_upper)
+                    chi_squared, model = least_squares_mapping(damping, data, model0)
+                    model0 = self.model_space.copy(model)
+
+                    if chi_squared < critical_value:
+                        damping_lower = damping
+                    else:
+                        damping_upper = damping
+
+                    if damping_upper - damping_lower < atol + rtol * (
+                        damping_lower + damping_upper
+                    ):
+                        return model
+
+                raise RuntimeError("Bracketing has failed")
+
+            return Operator(self.model_space, self.data_space, mapping)
+
+        else:
+            forward_operator = self.forward_problem.forward_operator
+            normal_operator = forward_operator @ forward_operator.adjoint
+            inverse_normal_operator = solver(normal_operator)
+            return forward_operator.adjoint @ inverse_normal_operator
