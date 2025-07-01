@@ -1,19 +1,17 @@
-import numpy as np
-from scipy.stats import norm
-from pygeoinf import linalg as la
+from pygeoinf import EuclideanSpace, HilbertSpaceChecks, BlockLinearOperator
 
-dim = 10
-X = la.EuclideanSpace(dim)
+X = EuclideanSpace(2)
+Y = EuclideanSpace(3)
 
-a = norm().rvs(size=(dim, dim))
-b = a @ a.T + 0.00 * np.identity(dim)
-A = la.LinearOperator(X, X, lambda x: b @ x)
+check = HilbertSpaceChecks(X)
+
+print(check.all_checks_passed())
+
+A = X.identity_operator()
+B = Y.zero_operator(X)
 
 
-solver = la.CGSolver()
+C = BlockLinearOperator([[A, B]])
 
-B = solver(A)
-
-x = X.random()
-
-B(x)
+print(C)
+print(C.adjoint)

@@ -1,73 +1,78 @@
 import numpy as np
-import pygeoinf.linalg as la
-from pygeoinf.forward_problem import ForwardProblem
-from pygeoinf.optimisation import LeastSquaresInversion
-from pygeoinf.sphere import Sobolev
-from scipy.stats import norm, uniform
 import matplotlib.pyplot as plt
 
 
+from cartopy import crs as ccrs
+
+from pygeoinf import (
+    LinearBayesianInversion,
+    CholeskySolver,
+    GaussianMeasure,
+    LinearForwardProblem,
+)
+from pygeoinf.symmetric_space.sphere import Sobolev
+
+
 # Set the model space.
-X = Sobolev(256, 2, 0.2)
-
-mu = X.sobolev_gaussian_measure(2, 0.1, 1)
-u = mu.sample()
-
-print(u.lons())
+X = Sobolev(64, 2, 0.25)
 
 
-# Set up the forward operator.
-n = 500
-lats = uniform(loc=-90, scale=180).rvs(size=n)
-lons = uniform(loc=0, scale=360).rvs(size=n)
-A = X.point_evaluation_operator(lats, lons)
+# Set up the prior distribution.
+mu = X.heat_gaussian_measure(0.4, 1)
+
+
+# Set the observation points
+n = 50
+points = X.random_points(n)
+lats = [point[0] for point in points]
+lons = [point[1] for point in points]
+
+# Set the forward operator.
+A = X.point_evaluation_operator(points)
+Y = A.codomain
 
 
 # Set up the error distribution.
-Y = A.codomain
 sigma = 0.1
-nu = Y.standard_gaussisan_measure(sigma)
+nu = GaussianMeasure.from_standard_deviation(Y, sigma) if sigma > 0 else None
 
-problem = LeastSquaresInversion(A, nu)
 
-v = problem.data_measure(u).sample()
+forward_problem = LinearForwardProblem(A, nu)
+inverse_problem = LinearBayesianInversion(forward_problem, mu)
 
-# problem.trade_off_curve(0.1, 10.0, 100, v)
 
-damping = 1.0
-B = problem.least_squares_operator(damping)
+# Generate synthetic data.
+u, v = forward_problem.synthetic_model_and_data(mu)
 
-u2 = B(v)
 
-plt.figure()
-plt.pcolormesh(u.lons(), u.lats(), u.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
+solver = CholeskySolver()
+pi = inverse_problem.model_posterior_measure(v, solver)
 
-plt.colorbar()
+umax = np.max(np.abs(u.data))
 
-plt.figure()
-plt.pcolormesh(u2.lons(), u2.lats(), u2.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
 
-plt.colorbar()
-plt.show()
+fig, ax, im = X.plot(u, vmin=-umax, vmax=umax)
+fig.colorbar(im, ax=ax, orientation="horizontal")
+ax.plot(
+    lons,
+    lats,
+    "o",
+    color="k",
+    markersize=4,
+    transform=ccrs.PlateCarree(),
+)
 
-'''
-w = X.dirac_representation(20, 180)
 
-R = problem.resolution_operator(damping)
-z = R.adjoint(w)
-
-plt.figure()
-plt.pcolormesh(z.lons(), z.lats(), w.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
-plt.colorbar()
-
-plt.figure()
-plt.pcolormesh(z.lons(), z.lats(), z.data, cmap="seismic")
-plt.plot(lons, lats, 'ko')
-plt.colorbar()
+fig, ax, im = X.plot(pi.expectation, vmin=-umax, vmax=umax)
+fig.colorbar(im, ax=ax, orientation="horizontal")
+ax.plot(
+    lons,
+    lats,
+    "o",
+    color="k",
+    markersize=4,
+    transform=ccrs.PlateCarree(),
+)
 
 
 plt.show()
-'''
