@@ -1,5 +1,5 @@
 """
-Module defined the forward problem class. 
+Module defined the forward problem class.
 """
 
 from scipy.stats import chi2

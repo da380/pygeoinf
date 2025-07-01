@@ -1,79 +1,90 @@
 Timer unit: 1e-06 s
 
-Total time: 6.40731 s
-File: /disks/data/PhD/Inferences/pygeoinf/examples/inference.py
-Function: M_inner_product at line 39
-
-Line #      Hits         Time  Per Hit   % Time  Line Contents
-==============================================================
-    39                                           def M_inner_product(f: functions.Function, g: functions.Function):
-    40       855    6407104.8   7493.7    100.0      return spi.quad(
-    41       285         44.5      0.2      0.0          lambda x: f.evaluate(x) * g.evaluate(x),
-    42       285         63.9      0.2      0.0          f.domain.bounds[0][0],
-    43       285         41.0      0.1      0.0          f.domain.bounds[0][1]
-    44       285         54.6      0.2      0.0      )[0]
-
-Total time: 6.40807 s
-File: /disks/data/PhD/Inferences/pygeoinf/examples/inference.py
+Total time: 18.4797 s
+File: /home/adrian/PhD/Inferences/pygeoinf/examples/inference.py
 Function: G_mapping at line 79
 
 Line #      Hits         Time  Per Hit   % Time  Line Contents
 ==============================================================
     79                                           def G_mapping(f: functions.Function, kernels):
-    80        57    6408070.0 112422.3    100.0      return np.array([M.inner_product(f, kernel) for kernel in kernels])
+    80        63   18479742.2 293329.2    100.0      return np.array([M.inner_product(f, kernel) for kernel in kernels])
 
-Total time: 6.40874 s
-File: /disks/data/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Total time: 18.4818 s
+File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
 Function: __call__ at line 201
 
 Line #      Hits         Time  Per Hit   % Time  Line Contents
 ==============================================================
    201                                               def __call__(self, x):
    202                                                   """Action of the operator on a vector."""
-   203       170    6408742.7  37698.5    100.0          return self.__mapping(x)
+   203       190   18481757.9  97272.4    100.0          return self.__mapping(x)
 
-Total time: 4.3108e-05 s
-File: /disks/data/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
-Function: __init__ at line 226
+Total time: 0 s
+File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Function: __call__ at line 1462
 
 Line #      Hits         Time  Per Hit   % Time  Line Contents
 ==============================================================
-   226                                               def __init__(self, domain, codomain, mapping, /, *,
-   227                                                            dual_mapping=None, adjoint_mapping=None,
-   228                                                            dual_base=None, adjoint_base=None):
-   229                                                   """
-   230                                                   Args:
-   231                                                       domain (VectorSpace): The domain of the operator.
-   232                                                       codomain (VectorSpace): The codomain of the operator.
-   233                                                       mapping (callable | None): A functor that implements the
-   234                                                           action of the operator.
-   235                                                       dual_mapping (callable | None): A functor that implements
-   236                                                           the action of the dual operator.
-   237                                                       adjoint_mapping (callable | None): A functor that implements
-   238                                                           the action of the adjoint operator.
-   239                                                   """
-   240        17         14.0      0.8     32.5          super().__init__(domain, codomain, mapping)
-   241        17          2.1      0.1      4.8          self._dual_base = dual_base
-   242        17          1.8      0.1      4.1          self._adjoint_base = adjoint_base
-   243        17          1.9      0.1      4.5          self._matrix = None
-   244        17          1.5      0.1      3.4          if dual_mapping is None:
-   245        17         16.6      1.0     38.4              if self.hilbert_operator:
-   246         1          0.1      0.1      0.2                  if adjoint_mapping is None:
-   247         1          0.2      0.2      0.4                      self.__dual_mapping = self._dual_mapping_default
-   248         1          0.1      0.1      0.3                      self.__adjoint_mapping = self._adjoint_mapping_from_dual
-   249                                                           else:
-   250                                                               self.__adjoint_mapping = adjoint_mapping
-   251                                                               self.__dual_mapping = self._dual_mapping_from_adjoint
-   252                                                       else:
-   253        16          2.9      0.2      6.7                  self.__dual_mapping = self._dual_mapping_default
-   254        16          2.0      0.1      4.7                  self.__adjoint_mapping = None
-   255                                                   else:
-   256                                                       self.__dual_mapping = dual_mapping
-   257                                                       if self.hilbert_operator:
-   258                                                           if adjoint_mapping is None:
-   259                                                               self.__adjoint_mapping = self._adjoint_mapping_from_dual
-   260                                                           else:
-   261                                                               self.__adjoint_mapping = adjoint_mapping
-   262                                                       else:
-   263                                                           self.__adjoint_mapping = None
+  1462                                               def __call__(self, operator, /, *, preconditioner=None, x0=None):
+  1463                                           
+  1464                                                   if operator.domain != operator.codomain:
+  1465                                                       raise ValueError("Operator is not self-adjoint!")
+  1466                                           
+  1467                                                   def mapping(y):
+  1468                                           
+  1469                                                       domain = operator.domain
+  1470                                           
+  1471                                                       if x0 is None:
+  1472                                                           x = domain.zero
+  1473                                                       else:
+  1474                                                           x = domain.copy(x0)
+  1475                                           
+  1476                                                       r = domain.subtract(y, operator(x))
+  1477                                                       if preconditioner is None:
+  1478                                                           z = domain.copy(r)
+  1479                                                       else:
+  1480                                                           z = preconditioner(r)
+  1481                                                       p = domain.copy(z)
+  1482                                           
+  1483                                                       y_squared_norm = domain.squared_norm(y)
+  1484                                                       if y_squared_norm <= self._atol:
+  1485                                                           return y
+  1486                                           
+  1487                                                       tol = np.max([self._atol, self._rtol * y_squared_norm])
+  1488                                           
+  1489                                                       if self._maxiter is None:
+  1490                                                           maxiter = 10 * domain.dim
+  1491                                                       else:
+  1492                                                           maxiter = self._maxiter
+  1493                                           
+  1494                                                       for iteration in range(maxiter):
+  1495                                                           if (domain.norm(r) <= tol):
+  1496                                                               break
+  1497                                           
+  1498                                                           q = operator(p)
+  1499                                                           num = domain.inner_product(r, z)
+  1500                                                           den = domain.inner_product(p, q)
+  1501                                                           alpha = num / den
+  1502                                           
+  1503                                                           x = domain.axpy(alpha, p, x)
+  1504                                                           r = domain.axpy(-alpha, q, r)
+  1505                                           
+  1506                                                           if preconditioner is None:
+  1507                                                               z = domain.copy(r)
+  1508                                                           else:
+  1509                                                               z = preconditioner(r)
+  1510                                           
+  1511                                                           den = num
+  1512                                                           num = operator.domain.inner_product(r, z)
+  1513                                                           beta = num / den
+  1514                                           
+  1515                                                           p = domain.multiply(beta, p)
+  1516                                                           p = domain.add(p, z)
+  1517                                           
+  1518                                                           if self._callback is not None:
+  1519                                                               self._callback(x)
+  1520                                           
+  1521                                                       return x
+  1522                                           
+  1523                                                   return LinearOperator.self_adjoint(operator.domain, mapping)
 
