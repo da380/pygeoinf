@@ -1,5 +1,5 @@
 """
-Module containing the base class for Sobolev spaces defined on symmetric spaces. 
+Module containing the base class for Sobolev spaces defined on symmetric spaces.
 """
 
 from abc import ABC, abstractmethod
