@@ -1,5 +1,5 @@
 """
- Sobolev spaces for functions on a circle. 
+ Sobolev spaces for functions on a circle.
 """
 
 import matplotlib.pyplot as plt
