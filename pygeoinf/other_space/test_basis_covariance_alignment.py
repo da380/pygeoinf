@@ -7,7 +7,7 @@ align with different covariance structures for optimal Bayesian inversion.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from interval import Sobolev
+from pygeoinf.pygeoinf.other_space.interval_space import Sobolev
 
 
 def demo_basis_alignment():

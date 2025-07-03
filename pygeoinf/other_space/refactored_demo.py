@@ -10,7 +10,7 @@ structure and eliminating redundancy.
 import numpy as np
 import matplotlib.pyplot as plt
 from interval_domain import IntervalDomain
-from interval import Sobolev
+from pygeoinf.pygeoinf.other_space.interval_space import Sobolev
 from sobolev_functions import SobolevFunction, create_sobolev_function
 
 

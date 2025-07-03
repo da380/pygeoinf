@@ -131,7 +131,7 @@ def create_optimal_sobolev_space():
         return eigenval**1.0  # H¹ Sobolev space
 
     # Create optimally aligned Sobolev space
-    from interval import Sobolev
+    from pygeoinf.pygeoinf.other_space.interval_space import Sobolev
     space = Sobolev(dim, to_coefficient, from_coefficient, sobolev_scaling)
 
     # Covariance function aligned with diffusion operator

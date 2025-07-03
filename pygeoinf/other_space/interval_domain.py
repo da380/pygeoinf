@@ -8,7 +8,6 @@ Sobolev spaces and function analysis.
 
 import numpy as np
 from typing import Union, Callable, Optional, Tuple
-from abc import ABC, abstractmethod
 
 
 class IntervalDomain:

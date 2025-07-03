@@ -12,7 +12,7 @@ import os
 # Add the parent directory to the path to import our module
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from interval import Sobolev
+from pygeoinf.pygeoinf.other_space.interval_space import Sobolev
 from interval_domain import IntervalDomain, BoundaryConditions
 from sobolev_functions import create_sobolev_function
 

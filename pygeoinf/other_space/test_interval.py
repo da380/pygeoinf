@@ -1,4 +1,4 @@
-from pygeoinf.other_space.interval import Sobolev
+from pygeoinf.pygeoinf.other_space.interval_space import Sobolev
 
 
 Sobolev_Interval = Sobolev(100, 1, 0.1, interval=(0, 1))

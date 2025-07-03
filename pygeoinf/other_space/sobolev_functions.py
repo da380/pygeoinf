@@ -9,7 +9,7 @@ mathematical abstraction and computational representation.
 import numpy as np
 from typing import Union, Callable, Optional
 from .interval_domain import IntervalDomain
-from .interval import Sobolev
+from .interval_space import Sobolev
 
 
 class SobolevFunction:
@@ -104,44 +104,31 @@ class SobolevFunction:
             return self.evaluate_callable(x)
         elif self.coefficients is not None:
             # Use the space's from_coefficient method to evaluate
-            # Note: This assumes the space can evaluate at arbitrary points
-            # For now, we'll use interpolation or direct evaluation if available
             return self._evaluate_from_coefficients(x)
         else:
             raise RuntimeError("No evaluation method available")
 
     def _evaluate_from_coefficients(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """Helper method to evaluate from coefficients using the space's methods."""
-        # Get function values on the space's grid
-        try:
-            # Get function values from coefficients
-            function_values = self.space.from_coefficient(self.coefficients)
+        """Evaluate the function at x using the basis and coefficients."""
+        # Get the basis functions from the parent space
+        basis_functions = self.space.basis_functions
+        coeffs = self.coefficients
+        if coeffs is None or basis_functions is None:
+            raise RuntimeError("Coefficients or basis functions not available for evaluation.")
+        if len(coeffs) != len(basis_functions):
+            raise ValueError(f"Coefficient length {len(coeffs)} does not match number of basis functions {len(basis_functions)}.")
 
-            # For proper evaluation, we need to know the grid points
-            # This is a simplified implementation that assumes uniform grid
-            # In practice, this would depend on the specific basis used
+        x_array = np.asarray(x)
+        is_scalar = x_array.ndim == 0
+        if is_scalar:
+            x_array = x_array.reshape(1)
 
-            # Create a uniform grid (should match the space's grid)
-            x_grid = np.linspace(
-                self.domain.a, self.domain.b, len(function_values)
-            )
-
-            # Interpolate to requested points
-            x_array = np.asarray(x)
-            is_scalar = x_array.ndim == 0
-            if is_scalar:
-                x_array = x_array.reshape(1)
-
-            # Simple linear interpolation
-            interpolated = np.interp(x_array, x_grid, function_values)
-
-            return interpolated[0] if is_scalar else interpolated
-
-        except Exception as e:
-            raise NotImplementedError(
-                "Point evaluation from coefficients not yet fully "
-                f"implemented: {e}. Use evaluate_callable for now."
-            )
+        # Evaluate each basis function at x_array
+        basis_evals = np.array([bf.evaluate(x_array, check_domain=False) for bf in basis_functions])
+        # basis_evals shape: (n_basis, n_points)
+        # Linear combination: sum_k c_k * phi_k(x)
+        result = np.tensordot(coeffs, basis_evals, axes=([0], [0]))
+        return result[0] if is_scalar else result
 
     def __call__(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
         """Allow f(x) syntax."""
@@ -347,49 +334,3 @@ class SobolevFunction:
     def __repr__(self) -> str:
         return (f"SobolevFunction(domain={self.domain}, "
                 f"order={self.sobolev_order}, name={self.name})")
-
-
-def create_sobolev_function(space: Sobolev,
-                            *,
-                            coefficients: Optional[np.ndarray] = None,
-                            evaluate_callable: Optional[Callable] = None,
-                            **kwargs) -> SobolevFunction:
-    """
-    Factory function to create Sobolev functions in an existing Sobolev space.
-
-    Args:
-        space: Existing Sobolev space from interval.py
-        coefficients: Optional coefficient representation
-        evaluate_callable: Optional callable defining function rule
-        **kwargs: Additional arguments
-
-    Returns:
-        SobolevFunction instance
-
-    Examples:
-        # Create Sobolev space first
-        space = Sobolev.create_standard_sobolev(
-            order=1.5, scale=0.1, dim=50, interval=(0, np.pi)
-        )
-
-        # Using a callable (like SOLA_DLI approach)
-        f = create_sobolev_function(
-            space,
-            evaluate_callable=lambda x: x**2 * np.sin(x)
-        )
-
-        # Using basis coefficients
-        coeffs = np.random.randn(space.dim) * np.exp(
-            -np.arange(space.dim) * 0.1
-        )
-        f = create_sobolev_function(
-            space,
-            coefficients=coeffs
-        )
-    """
-    return SobolevFunction(
-        space,
-        coefficients=coefficients,
-        evaluate_callable=evaluate_callable,
-        **kwargs
-    )
