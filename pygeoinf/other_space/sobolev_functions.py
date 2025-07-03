@@ -174,18 +174,8 @@ class SobolevFunction:
         # This is a simplified implementation
         # In practice, you'd need to handle the basis transformation properly
         # Create a new Sobolev space for the subdomain (simplified)
-        new_space = Sobolev.create_standard_sobolev(
-            order=self.sobolev_order,
-            scale=0.1,  # Default scale - should be parameterized
-            dim=self.space.dim,
-            interval=(subdomain.a, subdomain.b)
-        )
-
-        return SobolevFunction(
-            new_space,
-            coefficients=self.coefficients.copy() if self.coefficients is not None else None,
-            evaluate_callable=self.evaluate_callable
-        )
+        print("Restricting to subdomain is not implemented yet.")
+        pass
 
     def extend_to(self, larger_domain: IntervalDomain,
                  method: str = 'zero') -> 'SobolevFunction':
@@ -199,24 +189,8 @@ class SobolevFunction:
         Returns:
             Extended function
         """
-        if not (larger_domain.a <= self.domain.a and
-                self.domain.b <= larger_domain.b):
-            raise ValueError("Target domain must contain current domain")
-
-        # Simplified implementation - proper extension depends on basis
-        # Create a new Sobolev space for the larger domain
-        new_space = Sobolev.create_standard_sobolev(
-            order=self.sobolev_order,
-            scale=0.1,  # Default scale - should be parameterized
-            dim=self.space.dim,
-            interval=(larger_domain.a, larger_domain.b)
-        )
-
-        return SobolevFunction(
-            new_space,
-            coefficients=self.coefficients.copy() if self.coefficients is not None else None,
-            evaluate_callable=self.evaluate_callable
-        )
+        print("Extending to larger domain is not implemented yet.")
+        pass
 
     def weak_derivative(self, order: int = 1) -> 'SobolevFunction':
         """
