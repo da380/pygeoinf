@@ -293,10 +293,12 @@ class SobolevFunction:
                     evaluate_callable=new_callable
                 )
         elif isinstance(other, SobolevFunction):
-            # Function multiplication - complex, depends on basis
-            raise NotImplementedError(
-                "Function multiplication not yet implemented"
-            )
+            # Function multiplication: always use pointwise multiplication
+            if self.space != other.space:
+                raise ValueError("Functions must be in the same Sobolev space for multiplication")
+            def new_callable(x):
+                return self.evaluate(x) * other.evaluate(x)
+            return SobolevFunction(self.space, evaluate_callable=new_callable)
         else:
             raise TypeError(
                 f"Cannot multiply SobolevFunction with {type(other)}"

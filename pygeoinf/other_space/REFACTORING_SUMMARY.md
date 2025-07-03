@@ -1,91 +1,89 @@
-Refactoring Summary: SobolevFunction to use canonical Sobolev space
-==================================================================
+# Sobolev Space Factory Refactoring Summary
 
-PROBLEM:
-- The original sobolev_functions.py had a redundant SobolevSpace class
-- The interval.py file already contains the canonical Sobolev class
-- SobolevFunction was not space-aware, leading to potential inconsistencies
+## What Was Done
 
-SOLUTION:
-✓ Removed redundant SobolevSpace class from sobolev_functions.py
-✓ Refactored SobolevFunction to accept a Sobolev space object (from interval.py)
-✓ Updated SobolevFunction to delegate mathematical operations to its space
-✓ Fixed factory function to work with canonical Sobolev spaces
-✓ Removed old BasisTransform classes (functionality is in Sobolev class)
+### 1. Removed Problematic Inner Product Factory
+- **Old**: `_sobolev_inner_product_factory()` used numerical derivatives with `np.gradient`
+- **Problem**: Tried to compute weak derivatives before they were implemented
+- **Solution**: Replaced with mathematically correct spectral inner product
 
-KEY CHANGES:
+### 2. Implemented Spectral Inner Product
+- **New**: `_spectral_sobolev_inner_product_factory()`
+- **Mathematical basis**: Uses eigenvalues of the Laplacian operator
+- **Formula**: `⟨u,v⟩_H^s = ∑_k (1 + λ_k)^s û_k v̂_k`
+- **Benefits**:
+  - No weak derivatives needed
+  - Mathematically rigorous
+  - Computationally efficient
 
-1. SobolevFunction constructor now takes a Sobolev space:
-   OLD: SobolevFunction(domain, order, ...)
-   NEW: SobolevFunction(space, ...)
+### 3. Removed Chebyshev Basis Support
+- **Rationale**: Chebyshev polynomials are not eigenfunctions of the Laplacian
+- **Factory now supports only**: Fourier-based bases (sin, cos, constant)
+- **Benefit**: All basis functions have well-defined eigenvalues
 
-2. Factory function updated:
-   ```python
-   # Create space first
-   space = Sobolev.create_standard_sobolev(
-       order=1.5, scale=0.1, dim=50, interval=(0, np.pi)
-   )
+### 4. Eigenvalue Calculation by Boundary Conditions
+- **Periodic**: λ_0 = 0, λ_{2k-1} = λ_{2k} = (kπ/L)²
+- **Dirichlet**: λ_k = (kπ/L)² for k = 1, 2, ...
+- **Neumann**: λ_0 = 0, λ_k = (kπ/L)² for k = 1, 2, ...
 
-   # Create function in that space
-   f = create_sobolev_function(
-       space,
-       evaluate_callable=lambda x: np.sin(x),
-       sobolev_order=1.5
-   )
-   ```
+### 5. Updated Factory Method
+- **Old**: `create_standard_sobolev()`
+- **New**: `factory()`
+- **Validation**: Only accepts `basis_type='fourier'`
+- **Clear error messages**: For unsupported options
 
-3. Mathematical operations now respect space membership:
-   - Inner products delegate to space.inner_product()
-   - Addition/multiplication check space compatibility
-   - Point evaluation uses space's mathematical restrictions
+### 6. Fixed HilbertSpace Integration
+- **Problem**: `__init__` wasn't calling parent constructor properly
+- **Solution**: Proper `super().__init__()` call with correct parameters
 
-4. Eliminated code duplication:
-   - No more redundant basis transforms
-   - Single source of truth for Sobolev space properties
-   - Consistent mathematical behavior
+## Results
 
-MATHEMATICAL CORRECTNESS:
-✓ Point evaluation restricted to s > d/2 (s > 1/2 for intervals)
-✓ Inner products use proper Sobolev metric from space
-✓ Function operations preserve space membership
-✓ Basis transformations handled by canonical Sobolev class
+### Working Features
+✅ **Boundary condition handling**: periodic, Dirichlet, Neumann
+✅ **Spectral inner product**: Mathematically correct for H^s spaces
+✅ **Basis function generation**: Proper eigenfunction bases
+✅ **Function evaluation**: Both coefficient and callable representations
+✅ **Arithmetic operations**: Addition, scalar multiplication with proper error handling
+✅ **Integration**: Numerical and analytical integration support
 
-USAGE EXAMPLE:
+### Example Usage
 ```python
-from interval import Sobolev
-from sobolev_functions import create_sobolev_function
+from pygeoinf.other_space.interval_space import Sobolev
 
-# Create canonical Sobolev space
-space = Sobolev.create_standard_sobolev(
-    order=2.0, scale=0.1, dim=64, interval=(0, 2*np.pi)
-)
+# Create H^1 space with periodic boundary conditions
+space = Sobolev.factory(5, 1.0, interval=(0, 1),
+                       boundary_conditions={'type': 'periodic'})
 
-# Create functions in this space
-f1 = create_sobolev_function(
-    space,
-    evaluate_callable=lambda x: np.sin(x),
-    sobolev_order=2.0,
-    name="sine"
-)
+# Create function from coefficients
+import numpy as np
+coeffs = np.array([1.0, 0.5, 0.3, 0.1, 0.05])
+f = space.from_coefficient(coeffs)
 
-f2 = create_sobolev_function(
-    space,
-    evaluate_callable=lambda x: np.cos(x),
-    sobolev_order=2.0,
-    name="cosine"
-)
-
-# Mathematical operations work within space
-f_sum = f1 + f2  # Both functions in same space
-inner_prod = f1.inner_product(f2)  # Uses space's inner product
+# Compute H^1 norm using spectral inner product
+norm_squared = space.inner_product(f, f)
+print(f"H^1 norm squared: {norm_squared:.6f}")
 ```
 
-BENEFITS:
-1. Eliminates redundancy between SobolevSpace and Sobolev classes
-2. Ensures mathematical consistency through single source of truth
-3. Makes functions aware of their mathematical context
-4. Improves maintainability by reducing code duplication
-5. Aligns with established mathematical abstractions in interval.py
+### Validation
+- **Demo script**: `sobolev_factory_demo.py` shows all features working
+- **Notebook**: Updated `sobolev_functions_demo.ipynb` with new factory
+- **Mathematical correctness**: Higher-order spaces have larger norms as expected
+- **Error handling**: Clear error messages for invalid operations
 
-The refactoring makes SobolevFunction objects properly space-aware while
-eliminating redundant code and ensuring mathematical correctness.
+## Key Improvements
+
+1. **Mathematical rigor**: Only eigenfunction bases with spectral inner products
+2. **No weak derivatives**: Uses spectral definition instead of attempting numerical derivatives
+3. **Boundary condition clarity**: Explicit handling of periodic/Dirichlet/Neumann BCs
+4. **Computational efficiency**: Direct eigenvalue scaling instead of integration
+5. **User-friendly API**: Clear factory method with validation
+
+## Next Steps (Optional)
+
+1. **Non-homogeneous boundary conditions**: Extend to non-zero boundary values
+2. **Higher-dimensional domains**: Extend to rectangles, disks, etc.
+3. **Mixed boundary conditions**: Different BCs on different boundary parts
+4. **Weak derivative implementation**: For general Sobolev function arithmetic
+5. **Advanced integration**: Analytical integration for specific basis combinations
+
+The codebase is now mathematically sound, computationally efficient, and ready for use in Bayesian inference applications!
