@@ -10,6 +10,7 @@ import numpy as np
 from typing import Union, Callable, Optional
 from .interval_domain import IntervalDomain
 from .interval_space import Sobolev
+import numbers
 
 
 class SobolevFunction:
@@ -208,17 +209,8 @@ class SobolevFunction:
                 f"for H^{self.sobolev_order} function"
             )
 
-        # This is simplified - would need proper implementation based on basis
-        if self.coefficients is not None:
-            # For now, just return a copy with reduced order
-            return SobolevFunction(
-                self.space,
-                coefficients=self.coefficients.copy()
-            )
-        else:
-            raise NotImplementedError(
-                "Weak derivative for callable functions not implemented"
-            )
+        print("Weak derivative is not implemented yet.")
+        pass
 
     def plot(self, n_points: int = 1000, **kwargs):
         """
@@ -242,7 +234,7 @@ class SobolevFunction:
         plt.grid(True, alpha=0.3)
 
     def __add__(self, other):
-        """Addition of Sobolev functions."""
+        """Addition of Sobolev functions or with a scalar."""
         if isinstance(other, SobolevFunction):
             if other.space != self.space:
                 raise ValueError("Functions must be in the same Sobolev space")
@@ -260,7 +252,7 @@ class SobolevFunction:
                 return SobolevFunction(
                     self.space, evaluate_callable=new_callable
                 )
-        else:
+        elif isinstance(other, numbers.Number):
             # Adding a constant
             if self.coefficients is not None:
                 new_coeffs = self.coefficients.copy()
@@ -274,6 +266,15 @@ class SobolevFunction:
                 return SobolevFunction(
                     self.space, evaluate_callable=new_callable
                 )
+        else:
+            raise TypeError(
+                f"Can only add SobolevFunction or scalar (int, float, numbers.Number), "
+                f"not {type(other)}"
+            )
+
+    def __radd__(self, other):
+        """Right addition to support scalar + SobolevFunction."""
+        return self.__add__(other)
 
     def __mul__(self, other):
         """Multiplication of Sobolev functions or by scalars."""
