@@ -41,6 +41,7 @@ class Sobolev(HilbertSpace):
         /,
         *,
         interval=(0, 1),
+        order=None,
         inner_product=None,
         to_dual=None,
         from_dual=None,
@@ -68,29 +69,21 @@ class Sobolev(HilbertSpace):
         self._to_coefficient = to_coefficient
         self._from_coefficient = from_coefficient
         self._sobolev_scaling = sobolev_scaling
+        # Store order if provided (for canonical spaces)
+        self._order = order
+        # Store IntervalDomain object
+        from .interval_domain import IntervalDomain
+        self._interval_domain = IntervalDomain(self._a, self._b, boundary_type='closed', name=f'[{self._a}, {self._b}]')
 
-        # Create Sobolev metric based on user-provided scaling
-        values = np.fromiter(
-            [sobolev_scaling(k) for k in range(dim)], dtype=float
-        )
-        self._metric = diags([values], [0])
-        self._inverse_metric = diags([np.reciprocal(values)], [0])
+    @property
+    def order(self):
+        """Sobolev order (if available)."""
+        return self._order
 
-        # Use custom methods if provided, otherwise use defaults
-        inner_product = inner_product or self._default_inner_product
-        to_dual = to_dual or self._default_to_dual
-        from_dual = from_dual or self._default_from_dual
-        vector_multiply = vector_multiply or (lambda u1, u2: u1 * u2)
-
-        super().__init__(
-            dim,
-            to_coefficient,
-            from_coefficient,
-            inner_product,
-            to_dual,
-            from_dual,
-            vector_multiply=vector_multiply,
-        )
+    @property
+    def interval_domain(self):
+        """Return the IntervalDomain object for this space."""
+        return self._interval_domain
 
     @staticmethod
     def create_standard_sobolev(
@@ -119,10 +112,42 @@ class Sobolev(HilbertSpace):
 
         if basis_type == 'fourier':
             # Cosine basis with DCT
+            # Grid for function evaluation
+            x_grid = np.linspace(interval[0], interval[1], dim)
+
             def to_coeff(u):
-                return dct(u, type=2, norm='ortho')
+                """Convert SobolevFunction to Fourier coefficients."""
+                # Import here to avoid circular imports
+                from .sobolev_functions import SobolevFunction
+
+                if isinstance(u, SobolevFunction):
+                    # If u is a SobolevFunction, evaluate it on the grid
+                    u_vals = u.evaluate(x_grid, check_domain=False)
+                elif callable(u):
+                    # If u is a callable, evaluate it on the grid
+                    u_vals = u(x_grid)
+                else:
+                    # If u is already an array, use it directly
+                    u_vals = np.asarray(u)
+
+                # Ensure we have the right number of points
+                if len(u_vals) != dim:
+                    raise ValueError(
+                        f"Function values must have length {dim}, "
+                        f"got {len(u_vals)}"
+                    )
+
+                return dct(u_vals, type=2, norm='ortho')
 
             def from_coeff(coeff):
+                """Convert Fourier coefficients back to function values."""
+                coeff = np.asarray(coeff)
+                if len(coeff) != dim:
+                    raise ValueError(
+                        f"Coefficients must have length {dim}, "
+                        f"got {len(coeff)}"
+                    )
+
                 return idct(coeff, type=2, norm='ortho')
 
             def scaling(k):
@@ -130,25 +155,92 @@ class Sobolev(HilbertSpace):
                 return (1 + (scale * freq) ** 2) ** order
 
         elif basis_type == 'sine':
-            # Sine basis with DST
+            # Sine basis with DST (zero boundary conditions)
+            # Grid excludes endpoints for sine basis
+            x_grid = np.linspace(interval[0], interval[1], dim + 2)[1:-1]
+
             def to_coeff(u):
-                return dst(u, type=1, norm='ortho')
+                """Convert SobolevFunction to sine coefficients."""
+                # Import here to avoid circular imports
+                from .sobolev_functions import SobolevFunction
+
+                if isinstance(u, SobolevFunction):
+                    # If u is a SobolevFunction, evaluate it on the grid
+                    u_vals = u.evaluate(x_grid, check_domain=False)
+                elif callable(u):
+                    # If u is a callable, evaluate it on the grid
+                    u_vals = u(x_grid)
+                else:
+                    # If u is already an array, use it directly
+                    u_vals = np.asarray(u)
+
+                # Ensure we have the right number of points
+                if len(u_vals) != dim:
+                    raise ValueError(
+                        f"Function values must have length {dim}, "
+                        f"got {len(u_vals)}"
+                    )
+
+                return dst(u_vals, type=1, norm='ortho')
 
             def from_coeff(coeff):
+                """Convert sine coefficients back to function values."""
+                coeff = np.asarray(coeff)
+                if len(coeff) != dim:
+                    raise ValueError(
+                        f"Coefficients must have length {dim}, "
+                        f"got {len(coeff)}"
+                    )
+
                 return idst(coeff, type=1, norm='ortho')
 
             def scaling(k):
-                freq = k * np.pi / length
+                freq = (k + 1) * np.pi / length  # k+1 for sine modes
                 return (1 + (scale * freq) ** 2) ** order
 
         elif basis_type == 'chebyshev':
-            # Chebyshev polynomials
+            # Chebyshev polynomials on [-1, 1], mapped to [a, b]
+            # Chebyshev-Gauss-Lobatto points
+            cheb_points = np.cos(np.pi * np.arange(dim) / (dim - 1))
+            # Map to interval [a, b]
+            x_grid = (0.5 * (interval[1] - interval[0]) * cheb_points +
+                      0.5 * (interval[1] + interval[0]))
+
             def to_coeff(u):
-                # Simple Chebyshev coefficients (can be improved)
-                return u  # Placeholder - implement properly if needed
+                """Convert SobolevFunction to Chebyshev coefficients."""
+                # Import here to avoid circular imports
+                from .sobolev_functions import SobolevFunction
+
+                if isinstance(u, SobolevFunction):
+                    # If u is a SobolevFunction, evaluate on Chebyshev points
+                    u_vals = u.evaluate(x_grid, check_domain=False)
+                elif callable(u):
+                    # If u is a callable, evaluate it on Chebyshev points
+                    u_vals = u(x_grid)
+                else:
+                    # If u is already an array, use it directly
+                    u_vals = np.asarray(u)
+
+                # Ensure we have the right number of points
+                if len(u_vals) != dim:
+                    raise ValueError(
+                        f"Function values must have length {dim}, "
+                        f"got {len(u_vals)}"
+                    )
+
+                # Simple Chebyshev transform (can be improved with proper DCT)
+                return dct(u_vals, type=1, norm='ortho')
 
             def from_coeff(coeff):
-                return coeff  # Placeholder
+                """Convert Chebyshev coefficients back to function values."""
+                coeff = np.asarray(coeff)
+                if len(coeff) != dim:
+                    raise ValueError(
+                        f"Coefficients must have length {dim}, "
+                        f"got {len(coeff)}"
+                    )
+
+                return idct(coeff, type=1, norm='ortho')
 
             def scaling(k):
                 return (1 + (scale * k) ** 2) ** order
@@ -157,7 +249,7 @@ class Sobolev(HilbertSpace):
             raise ValueError(f"Unknown basis type: {basis_type}")
 
         return Sobolev(
-            dim, to_coeff, from_coeff, scaling, interval=interval
+            dim, to_coeff, from_coeff, scaling, interval=interval, order=order
         )
 
     @property

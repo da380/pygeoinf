@@ -98,11 +98,19 @@ class IntervalDomain:
         Returns:
             Array of mesh points
         """
-        if self.boundary_type in ['closed', 'right_open']:
-            return np.linspace(self.a, self.b, n, endpoint=(self.boundary_type == 'closed'))
-        else:  # open or left_open
-            # Avoid boundary points for open intervals
+        if self.boundary_type == 'closed':
+            return np.linspace(self.a, self.b, n, endpoint=True)
+        elif self.boundary_type == 'open':
+            # Exclude both endpoints
             return np.linspace(self.a, self.b, n + 2)[1:-1]
+        elif self.boundary_type == 'left_open':
+            # Exclude left endpoint, include right endpoint
+            return np.linspace(self.a, self.b, n + 1)[1:]
+        elif self.boundary_type == 'right_open':
+            # Include left endpoint, exclude right endpoint
+            return np.linspace(self.a, self.b, n, endpoint=False)
+        else:
+            raise ValueError(f"Unknown boundary_type: {self.boundary_type}")
 
     def adaptive_mesh(self, f: Callable, tol: float = 1e-6, max_points: int = 1000) -> np.ndarray:
         """
