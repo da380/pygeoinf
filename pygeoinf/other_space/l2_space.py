@@ -13,7 +13,8 @@ from pygeoinf.hilbert_space import HilbertSpace
 
 class L2Space(HilbertSpace):
     """
-    L² Hilbert space on an interval [a,b] with inner product ⟨u,v⟩ = ∫_a^b u(x)v(x) dx.
+    L² Hilbert space on an interval [a,b] with inner product
+    ⟨u,v⟩ = ∫_a^b u(x)v(x) dx.
 
     This class provides the foundation for Sobolev spaces and manages:
     - L² inner product and norm via integration
@@ -38,8 +39,8 @@ class L2Space(HilbertSpace):
             dim (int): Dimension of the space.
             basis_type (str): Type of basis functions ('fourier').
             interval (tuple): Interval endpoints (a, b). Default is (0, 1).
-            boundary_conditions (dict, optional): Boundary conditions specification.
-                If None, defaults to periodic for Fourier basis.
+            boundary_conditions (dict, optional): Boundary conditions
+                specification. If None, defaults to periodic for Fourier basis.
         """
         self._dim = dim
         self._interval = interval
@@ -109,7 +110,9 @@ class L2Space(HilbertSpace):
         """The Gram matrix of basis functions."""
         return self._gram_matrix
 
-    def create_function(self, *, coefficients=None, evaluate_callable=None, name=None):
+    def create_function(
+        self, *, coefficients=None, evaluate_callable=None, name=None
+    ):
         """
         Create an L2Function instance in this space.
 
@@ -157,10 +160,13 @@ class L2Space(HilbertSpace):
 
     def _create_basis_functions(self, basis_type):
         """
-        Create basis functions based on the specified type and boundary conditions.
+        Create basis functions based on the specified type and boundary
+        conditions.
         """
         if basis_type != 'fourier':
-            raise ValueError(f"Only 'fourier' basis is supported. Got: {basis_type}")
+            raise ValueError(
+                f"Only 'fourier' basis is supported. Got: {basis_type}"
+            )
 
         # Import here to avoid circular imports
         from .l2_functions import L2Function
@@ -178,7 +184,7 @@ class L2Space(HilbertSpace):
                     def make_constant_func():
                         def constant_func(x):
                             return (normalization_factor *
-                                   np.ones_like(x) / np.sqrt(2))
+                                    np.ones_like(x) / np.sqrt(2))
                         return constant_func
                     basis_func = L2Function(
                         self, evaluate_callable=make_constant_func(),
@@ -190,7 +196,7 @@ class L2Space(HilbertSpace):
                     def make_cosine_func(frequency):
                         def cosine_func(x):
                             return (normalization_factor *
-                                   np.cos(frequency * (x - self._a)))
+                                    np.cos(frequency * (x - self._a)))
                         return cosine_func
                     basis_func = L2Function(
                         self, evaluate_callable=make_cosine_func(freq),
@@ -202,7 +208,7 @@ class L2Space(HilbertSpace):
                         def make_sine_func(frequency):
                             def sine_func(x):
                                 return (normalization_factor *
-                                       np.sin(frequency * (x - self._a)))
+                                        np.sin(frequency * (x - self._a)))
                             return sine_func
                         basis_func = L2Function(
                             self, evaluate_callable=make_sine_func(freq),
@@ -211,7 +217,10 @@ class L2Space(HilbertSpace):
                         basis_functions.append(basis_func)
                 k += 1
         else:
-            raise NotImplementedError(f"Boundary condition type '{bc.get('type')}' not implemented yet")
+            raise NotImplementedError(
+                f"Boundary condition type '{bc.get('type')}' "
+                "not implemented yet"
+            )
 
         return basis_functions
 
@@ -233,7 +242,8 @@ class L2Space(HilbertSpace):
 
     def _to_components(self, u):
         """
-        Convert a function to coefficients using inner products with basis functions.
+        Convert a function to coefficients using inner products with basis
+        functions.
         """
         # Compute right-hand side: b_i = <u, φ_i>_L²
         rhs = np.zeros(self.dim)
@@ -246,7 +256,8 @@ class L2Space(HilbertSpace):
 
     def _from_components(self, coeff):
         """
-        Convert coefficients to a function using linear combination of basis functions.
+        Convert coefficients to a function using linear combination of
+        basis functions.
         """
         coeff = np.asarray(coeff)
         if len(coeff) != self.dim:

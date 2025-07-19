@@ -2,12 +2,12 @@
 L² functions on interval domains.
 
 This module provides function objects that live on IntervalDomain in L² spaces,
-serving as the base class for more specialized function spaces like Sobolev spaces.
+serving as the base class for more specialized function spaces
+like Sobolev spaces.
 """
 
 import numpy as np
 from typing import Union, Callable, Optional
-from .interval_domain import IntervalDomain
 import numbers
 
 
@@ -33,7 +33,8 @@ class L2Function:
 
         Args:
             space: The L²Space this function belongs to
-            coefficients: Optional finite-dimensional coefficient representation
+            coefficients: Optional finite-dimensional coefficient
+                representation
             evaluate_callable: Optional callable defining the function rule
             name: Optional function name
 
@@ -86,7 +87,8 @@ class L2Function:
         import warnings
         warnings.warn(
             "Point evaluation is not well-defined for general L² functions. "
-            "Consider using a Sobolev space with s > 1/2 for point evaluation.",
+            "Consider using a Sobolev space with s > 1/2 for point "
+            "evaluation.",
             UserWarning
         )
 
@@ -105,7 +107,9 @@ class L2Function:
         else:
             raise RuntimeError("No evaluation method available")
 
-    def _evaluate_from_coefficients(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+    def _evaluate_from_coefficients(
+        self, x: Union[float, np.ndarray]
+    ) -> Union[float, np.ndarray]:
         """Evaluate the function at x using the basis and coefficients."""
         # Get the basis functions from the parent space
         basis_functions = self.space.basis_functions
@@ -114,8 +118,10 @@ class L2Function:
             raise RuntimeError("Coefficients or basis functions not available "
                                "for evaluation.")
         if len(coeffs) != len(basis_functions):
-            raise ValueError(f"Coefficient length {len(coeffs)} does not match "
-                             f"number of basis functions {len(basis_functions)}.")
+            raise ValueError(
+                f"Coefficient length {len(coeffs)} does not match "
+                f"number of basis functions {len(basis_functions)}."
+            )
 
         x_array = np.asarray(x)
         is_scalar = x_array.ndim == 0
@@ -130,7 +136,9 @@ class L2Function:
         result = np.tensordot(coeffs, basis_evals, axes=([0], [0]))
         return result[0] if is_scalar else result
 
-    def __call__(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+    def __call__(
+        self, x: Union[float, np.ndarray]
+    ) -> Union[float, np.ndarray]:
         """Allow f(x) syntax."""
         return self.evaluate(x)
 

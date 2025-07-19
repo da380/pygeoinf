@@ -6,9 +6,8 @@ Sobolev regularity properties, specialized from the base L2Function class.
 """
 
 import numpy as np
-from typing import Union, Callable, Optional
+from typing import Union, Optional
 from .l2_functions import L2Function
-import numbers
 
 
 class SobolevFunction(L2Function):
@@ -16,8 +15,9 @@ class SobolevFunction(L2Function):
     A function in H^s([a,b]) with Sobolev regularity properties.
 
     This class represents a function with Sobolev regularity that knows about
-    the Sobolev space it belongs to. It extends L2Function with Sobolev-specific
-    functionality such as regularity constraints and weak derivatives.
+    the Sobolev space it belongs to. It extends L2Function with
+    Sobolev-specific functionality such as regularity constraints and weak
+    derivatives.
 
     Note: Point evaluation is only well-defined for s > d/2 where s is the
     Sobolev order and d is the spatial dimension. For intervals (d=1),
@@ -45,8 +45,9 @@ class SobolevFunction(L2Function):
         Point evaluation: f(x).
 
         This is mathematically well-defined for Sobolev functions with s > d/2
-        due to the Sobolev embedding theorem. For intervals (d=1), this requires s > 1/2,
-        which ensures the function has a continuous representative.
+        due to the Sobolev embedding theorem. For intervals (d=1), this
+        requires s > 1/2, which ensures the function has a continuous
+        representative.
 
         Args:
             x: Point(s) at which to evaluate
@@ -82,17 +83,21 @@ class SobolevFunction(L2Function):
         else:
             raise RuntimeError("No evaluation method available")
 
-    def _evaluate_from_coefficients(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+    def _evaluate_from_coefficients(
+        self, x: Union[float, np.ndarray]
+    ) -> Union[float, np.ndarray]:
         """Evaluate the function at x using the basis and coefficients."""
         # Get the basis functions from the parent space
         basis_functions = self.space.basis_functions
         coeffs = self.coefficients
         if coeffs is None or basis_functions is None:
             raise RuntimeError("Coefficients or basis functions not available "
-                             "for evaluation.")
+                               "for evaluation.")
         if len(coeffs) != len(basis_functions):
-            raise ValueError(f"Coefficient length {len(coeffs)} does not match "
-                           f"number of basis functions {len(basis_functions)}.")
+            raise ValueError(
+                f"Coefficient length {len(coeffs)} does not match "
+                f"number of basis functions {len(basis_functions)}."
+            )
 
         x_array = np.asarray(x)
         is_scalar = x_array.ndim == 0
@@ -100,10 +105,10 @@ class SobolevFunction(L2Function):
             x_array = x_array.reshape(1)
 
         # Evaluate each basis function at x_array
-        # Note: basis functions are themselves SobolevFunctions, so this is recursive
-        # but basis functions should have evaluate_callable defined
+        # Note: basis functions are themselves SobolevFunctions, so this is
+        # recursive but basis functions should have evaluate_callable defined
         basis_evals = np.array([bf.evaluate(x_array, check_domain=False)
-                              for bf in basis_functions])
+                                for bf in basis_functions])
         # basis_evals shape: (n_basis, n_points)
         # Linear combination: sum_k c_k * phi_k(x)
         result = np.tensordot(coeffs, basis_evals, axes=([0], [0]))
@@ -117,10 +122,11 @@ class SobolevFunction(L2Function):
         """Sobolev inner product with another Sobolev function."""
         if not isinstance(other, SobolevFunction):
             raise TypeError("Can only compute Sobolev inner product with "
-                          "another SobolevFunction")
+                            "another SobolevFunction")
         if self.space != other.space:
             raise ValueError("Functions must be in the same Sobolev space")
         return self.space.inner_product(self, other)
+
     def weak_derivative(self, order: int = 1) -> 'SobolevFunction':
         """
         Compute weak derivative of given order.
