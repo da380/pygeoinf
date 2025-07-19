@@ -463,6 +463,24 @@ class Sobolev(HilbertSpace):
     #                       Default methods                          #
     # ================================================================#
 
+    @property
+    def metric_tensor(self):
+        """The metric tensor for the space (Gram matrix)."""
+        if hasattr(self, '_gram_matrix'):
+            return self._gram_matrix
+        else:
+            # Fallback: identity matrix
+            return np.eye(self.dim)
+
+    @property
+    def _inverse_metric(self):
+        """The inverse metric tensor."""
+        if hasattr(self, '_gram_matrix'):
+            return np.linalg.inv(self._gram_matrix)
+        else:
+            # Fallback: identity matrix
+            return np.eye(self.dim)
+
     def _default_inner_product(self, u1, u2):
         """Default Sobolev inner product."""
         coeff1 = self.to_coefficient(u1)

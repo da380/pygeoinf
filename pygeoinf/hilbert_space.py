@@ -1,8 +1,8 @@
 """
-Module defining classes for Hilbert spaces, linear operators and linear forms. 
+Module defining classes for Hilbert spaces, linear operators and linear forms.
 
-The classes within this module have interdependencies and so cannot be split 
-into separate modules. 
+The classes within this module have interdependencies and so cannot be split
+into separate modules.
 """
 
 import numpy as np
