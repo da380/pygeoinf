@@ -81,6 +81,9 @@ class Sobolev(HilbertSpace):
         # Initialize basis functions storage
         self._basis_functions = None
 
+        # Not all basis functions have eigenvalues
+        self._eigenvalues = None
+
         # Initialize the parent HilbertSpace
         super().__init__(
             dim,
@@ -107,8 +110,76 @@ class Sobolev(HilbertSpace):
         """Return the IntervalDomain object for this space."""
         return self._interval_domain
 
+    @property
+    def dim(self):
+        """
+        Return the dimension of the space.
+        """
+        return self._dim
+
+    @property
+    def basis_functions(self):
+        """Property to access basis functions."""
+        if self._basis_functions is not None:
+            return self._basis_functions
+        else:
+            raise ValueError(
+                "Basis functions not available. Use Sobolev.create_standard_sobolev() to create "
+                "a space with basis functions."
+            )
+
+    def to_coefficient(self, u):
+        """Maps an element to its coefficient representation."""
+        return self._to_coefficient(u)
+
+    def from_coefficient(self, coeff):
+        """Maps coefficients back to function values."""
+        return self._from_coefficient(coeff)
+
     @staticmethod
-    def _spectral_sobolev_inner_product_factory(order, length, boundary_conditions):
+    def _default_spectrum(dim, boundary_conditions, length):
+        """
+        Return the default spectrum for this Sobolev space.
+        This is a placeholder and should be overridden in subclasses.
+        """
+        import math
+
+        # Compute eigenvalues based on boundary conditions
+        eigenvalues = []
+        bc_type = boundary_conditions.get('type', 'periodic')
+
+        if bc_type == 'periodic':
+            # Full Fourier basis: λ_0 = 0, λ_{2k-1} = λ_{2k} = (kπ/L)^2
+            for k in range(dim):
+                if k == 0:
+                    eigenvalues.append(0.0)  # Constant term
+                else:
+                    # For both cos and sin terms at frequency k
+                    freq_index = 2 * ((k + 1) // 2)
+                    eigenval = (freq_index * math.pi / length) ** 2
+                    eigenvalues.append(eigenval)
+
+        elif bc_type == 'dirichlet':
+            # Sine basis: λ_k = (kπ/L)^2 for k = 1, 2, ...
+            for k in range(dim):
+                eigenval = ((k + 1) * math.pi / length) ** 2
+                eigenvalues.append(eigenval)
+
+        elif bc_type == 'neumann':
+            # Cosine basis + constant: λ_0 = 0, λ_k = (kπ/L)^2 for k = 1, 2, ...
+            for k in range(dim):
+                if k == 0:
+                    eigenvalues.append(0.0)  # Constant term
+                else:
+                    eigenval = (k * math.pi / length) ** 2
+                    eigenvalues.append(eigenval)
+        else:
+            raise ValueError(f"Unknown boundary condition type: {bc_type}")
+
+        return np.array(eigenvalues)
+
+    @staticmethod
+    def _spectral_sobolev_inner_product_factory(order, eigenvalues):
         """
         Returns a function that computes the H^s inner product using the spectral
         definition for Laplacian eigenfunction bases.
@@ -125,48 +196,14 @@ class Sobolev(HilbertSpace):
         Returns:
             callable: Inner product function for SobolevFunction instances
         """
-        import math
 
         def inner_product(u, v):
             # Get coefficients of both functions
             u_coeff = u.space.to_coefficient(u)
             v_coeff = v.space.to_coefficient(v)
 
-            # Compute eigenvalues based on boundary conditions
-            eigenvalues = []
-            bc_type = boundary_conditions.get('type', 'periodic')
-
-            if bc_type == 'periodic':
-                # Full Fourier basis: λ_0 = 0, λ_{2k-1} = λ_{2k} = (kπ/L)^2
-                for k in range(len(u_coeff)):
-                    if k == 0:
-                        eigenvalues.append(0.0)  # Constant term
-                    else:
-                        # For both cos and sin terms at frequency k
-                        freq_index = 2 * ((k + 1) // 2)
-                        eigenval = (freq_index * math.pi / length) ** 2
-                        eigenvalues.append(eigenval)
-
-            elif bc_type == 'dirichlet':
-                # Sine basis: λ_k = (kπ/L)^2 for k = 1, 2, ...
-                for k in range(len(u_coeff)):
-                    eigenval = ((k + 1) * math.pi / length) ** 2
-                    eigenvalues.append(eigenval)
-
-            elif bc_type == 'neumann':
-                # Cosine basis + constant: λ_0 = 0, λ_k = (kπ/L)^2 for k = 1, 2, ...
-                for k in range(len(u_coeff)):
-                    if k == 0:
-                        eigenvalues.append(0.0)  # Constant term
-                    else:
-                        eigenval = (k * math.pi / length) ** 2
-                        eigenvalues.append(eigenval)
-            else:
-                raise ValueError(f"Unknown boundary condition type: {bc_type}")
-
             # Compute spectral inner product: ∑_k (1 + λ_k)^s û_k v̂_k
             result = 0.0
-            print(eigenvalues)
             for k in range(len(u_coeff)):
                 sobolev_weight = (1.0 + eigenvalues[k]) ** order
                 result += sobolev_weight * u_coeff[k] * v_coeff[k]
@@ -189,7 +226,7 @@ class Sobolev(HilbertSpace):
         inner product.
 
         Args:
-            dim (int): Dimension of the space (number of basis functions)
+            dim (int): Dimension of the approximating space (number of basis functions)
             order (float): Sobolev order (s in H^s)
             interval (tuple): Interval (a, b) for the domain
             basis_type (str): Type of basis ('fourier' only)
@@ -206,7 +243,7 @@ class Sobolev(HilbertSpace):
         """
         if basis_type != 'fourier':
             raise ValueError(f"Only 'fourier' basis is supported. "
-                           f"Got: {basis_type}")
+                             f"Got: {basis_type}")
 
         # Set default boundary conditions
         if boundary_conditions is None:
@@ -226,10 +263,15 @@ class Sobolev(HilbertSpace):
             """Placeholder method - will be replaced with basis functions."""
             return coeff
 
-        # Create spectral inner product
+        # Create basis functions and eigenvalues
         length = interval[1] - interval[0]
+        eigenvalues = Sobolev._default_spectrum(
+            dim, boundary_conditions, length
+        )
+
+        # Create spectral inner product
         inner_product = Sobolev._spectral_sobolev_inner_product_factory(
-            order, length, boundary_conditions
+            order, eigenvalues
         )
 
         # Create the Sobolev space with placeholder methods
@@ -242,7 +284,7 @@ class Sobolev(HilbertSpace):
 
         # Create basis functions as SobolevFunction instances
         space._basis_functions = space._create_basis_functions(basis_type)
-
+        space._eigenvalues = eigenvalues
         # Replace coefficient methods with ones that use the basis functions
         space._replace_coefficient_methods_with_basis()
 
@@ -344,6 +386,7 @@ class Sobolev(HilbertSpace):
                 # Cosine terms
                 for k in range(1, self.dim):
                     freq = k * math.pi / length
+
                     def make_cosine_func(frequency):
                         def cosine_func(x):
                             return np.cos(frequency * (x - self._a))
@@ -363,50 +406,6 @@ class Sobolev(HilbertSpace):
             )
 
         return basis_functions
-
-    def get_basis_functions(self):
-        """
-        Get the basis functions as SobolevFunction instances.
-
-        Returns:
-            list: List of SobolevFunction instances representing the basis
-
-        Raises:
-            ValueError: If basis functions are not available
-        """
-        if hasattr(self, '_basis_functions'):
-            return self._basis_functions
-        else:
-            raise ValueError(
-                "Basis functions not available. Use Sobolev.create_standard_sobolev() to create "
-                "a space with basis functions."
-            )
-
-    @property
-    def basis_functions(self):
-        """Property to access basis functions."""
-        return self.get_basis_functions()
-
-    @property
-    def dim(self):
-        """
-        Return the dimension of the space.
-        """
-        return self._dim
-
-    @property
-    def interval(self):
-        """
-        Return the interval endpoints.
-        """
-        return self._interval
-
-    @property
-    def length(self):
-        """
-        Return the interval length.
-        """
-        return self._length
 
     def random_point(self):
         """Generate a random point in the interval."""
@@ -468,12 +467,12 @@ class Sobolev(HilbertSpace):
         """Default Sobolev inner product."""
         coeff1 = self.to_coefficient(u1)
         coeff2 = self.to_coefficient(u2)
-        return np.dot(self._metric @ coeff1, coeff2)
+        return np.dot(self.metric_tensor @ coeff1, coeff2)
 
     def _default_to_dual(self, u):
         """Default mapping to dual space."""
         coeff = self.to_coefficient(u)
-        dual_coeff = self._metric @ coeff
+        dual_coeff = self.metric_tensor @ coeff
         return self.dual.from_components(dual_coeff)
 
     def _default_from_dual(self, up):
@@ -481,14 +480,6 @@ class Sobolev(HilbertSpace):
         dual_coeff = self.dual.to_components(up)
         coeff = self._inverse_metric @ dual_coeff
         return self.from_coefficient(coeff)
-
-    def to_coefficient(self, u):
-        """Maps an element to its coefficient representation."""
-        return self._to_coefficient(u)
-
-    def from_coefficient(self, coeff):
-        """Maps coefficients back to function values."""
-        return self._from_coefficient(coeff)
 
     def _replace_coefficient_methods_with_basis(self):
         """
@@ -508,41 +499,34 @@ class Sobolev(HilbertSpace):
 
     def _to_coefficient_with_basis(self, u):
         """
-        Convert a function to coefficients using inner products with basis
+        Convert a SobolevFunction to coefficients using inner products with basis
         functions.
 
         Args:
-            u: A SobolevFunction, callable, or array
+            u: A SobolevFunction instance
 
         Returns:
             np.ndarray: Coefficients in the basis representation
         """
         from .sobolev_functions import SobolevFunction
 
-        if isinstance(u, SobolevFunction):
-            # If u is a SobolevFunction, use the L2 inner product
-            # Compute right-hand side: b_i = <u, φ_i>
-            rhs = np.zeros(self.dim)
-            for k, basis_func in enumerate(self._basis_functions):
-                rhs[k] = self._l2_inner_product(u, basis_func)
+        if not isinstance(u, SobolevFunction):
+            raise TypeError("_to_coefficient_with_basis only accepts SobolevFunction instances")
 
-            # Solve the linear system: G * c = rhs
-            # where G is the Gram matrix and c are the coefficients
-            coeffs = np.linalg.solve(self._gram_matrix, rhs)
-            return coeffs
-        elif callable(u):
-            # If u is a callable, create a temporary SobolevFunction
-            temp_func = SobolevFunction(self, evaluate_callable=u)
-            return self._to_coefficient_with_basis(temp_func)
-        else:
-            # If u is an array, assume it's already function values on grid
-            # Fall back to original method
-            return self._original_to_coefficient(u)
+        # Compute right-hand side: b_i = <u, φ_i>
+        rhs = np.zeros(self.dim)
+        for k, basis_func in enumerate(self._basis_functions):
+            rhs[k] = self._l2_inner_product(u, basis_func)
+
+        # Solve the linear system: G * c = rhs
+        # where G is the Gram matrix and c are the coefficients
+        coeffs = np.linalg.solve(self._gram_matrix, rhs)
+        return coeffs
 
     def _from_coefficient_with_basis(self, coeff):
         """
         Convert coefficients to a SobolevFunction using linear combination
-        of basis.
+        of basis functions.
 
         Args:
             coeff: Array of coefficients
@@ -550,30 +534,25 @@ class Sobolev(HilbertSpace):
         Returns:
             SobolevFunction: Linear combination of basis functions
         """
-        from .sobolev_functions import SobolevFunction
-
         coeff = np.asarray(coeff)
         if len(coeff) != self.dim:
             raise ValueError(f"Coefficients must have length {self.dim}")
 
-        # Create a function that evaluates the linear combination
-        def linear_combination(x):
-            result = 0.0
-            for k, c in enumerate(coeff):
-                if c != 0:  # Skip zero coefficients for efficiency
-                    basis_val = self._basis_functions[k].evaluate(
-                        x, check_domain=False
-                    )
-                    result += c * basis_val
-            return result
+        # Use arithmetic operations on SobolevFunction instances
+        result = None
+        for k, c in enumerate(coeff):
+            if c != 0:  # Skip zero coefficients for efficiency
+                term = c * self._basis_functions[k]
+                if result is None:
+                    result = term
+                else:
+                    result = result + term
 
-        # Return as a SobolevFunction
-        return SobolevFunction(
-            self,
-            evaluate_callable=linear_combination,
-            coefficients=coeff.copy(),
-            name=f"linear_combination_{len(coeff)}_basis_functions"
-        )
+        # Handle the case where all coefficients are zero
+        if result is None:
+            result = 0.0 * self._basis_functions[0]
+
+        return result
 
     def _compute_gram_matrix(self):
         """
