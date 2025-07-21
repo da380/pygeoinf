@@ -77,7 +77,7 @@ class L2Space(HilbertSpace):
             dim,
             self._to_components,
             self._from_components,
-            self._l2_inner_product,
+            self.l2_inner_product,
             self._default_to_dual,
             self._default_from_dual,
         )
@@ -112,29 +112,6 @@ class L2Space(HilbertSpace):
         """The Gram matrix of basis functions."""
         return self._gram_matrix
 
-    def create_function(
-        self, *, coefficients=None, evaluate_callable=None, name=None
-    ):
-        """
-        Create an L2Function instance in this space.
-
-        Args:
-            coefficients: Optional coefficient array
-            evaluate_callable: Optional evaluation function
-            name: Optional function name
-
-        Returns:
-            L2Function: Function in this L² space
-        """
-        # Import here to avoid circular imports
-        from .l2_functions import L2Function
-        return L2Function(
-            self,
-            coefficients=coefficients,
-            evaluate_callable=evaluate_callable,
-            name=name
-        )
-
     def l2_inner_product(self, u, v):
         """
         L² inner product: ⟨u,v⟩_L² = ∫_a^b u(x)v(x) dx
@@ -144,12 +121,6 @@ class L2Space(HilbertSpace):
 
         Returns:
             float: L² inner product
-        """
-        return self._l2_inner_product(u, v)
-
-    def _l2_inner_product(self, u, v):
-        """
-        Implementation of L² inner product using integration.
 
         For L² functions, we compute ⟨u,v⟩_L² = ∫_a^b u(x)v(x) dx through
         numerical integration, not pointwise evaluation (which is not
@@ -235,7 +206,7 @@ class L2Space(HilbertSpace):
 
         for i in range(n):
             for j in range(i, n):  # Only compute upper triangle
-                inner_prod = self._l2_inner_product(
+                inner_prod = self.l2_inner_product(
                     self._basis_functions[i],
                     self._basis_functions[j]
                 )
@@ -250,7 +221,7 @@ class L2Space(HilbertSpace):
         # Compute right-hand side: b_i = <u, φ_i>_L²
         rhs = np.zeros(self.dim)
         for k, basis_func in enumerate(self._basis_functions):
-            rhs[k] = self._l2_inner_product(u, basis_func)
+            rhs[k] = self.l2_inner_product(u, basis_func)
 
         # Solve the linear system: G * c = rhs
         coeffs = np.linalg.solve(self._gram_matrix, rhs)
@@ -284,7 +255,7 @@ class L2Space(HilbertSpace):
     # Default dual space mappings
     def _default_to_dual(self, u: L2Function):
         """Default mapping to dual space using Gram matrix."""
-        return LinearForm(self, mapping=lambda v: self._l2_inner_product(u, v))
+        return LinearForm(self, mapping=lambda v: self.l2_inner_product(u, v))
 
     def _default_from_dual(self, up: LinearForm):
         """Default mapping from dual space using inverse Gram matrix."""
