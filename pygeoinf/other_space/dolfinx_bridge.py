@@ -32,7 +32,7 @@ except ImportError:
             class Mesh:
                 pass
 
-from .interval_space import Sobolev
+from .sobolev_space import Sobolev
 from .sobolev_functions import SobolevFunction
 
 
@@ -364,7 +364,7 @@ def demo_bridge():
     print("=" * 40)
 
     # Create a Sobolev space
-    from .interval_space import Sobolev
+    from .sobolev_space import Sobolev
 
     interval = (0.0, 1.0)
     sobolev_dim = 16

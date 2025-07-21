@@ -24,7 +24,7 @@ Classes:
 """
 
 # Core Sobolev space functionality
-from .interval_space import Sobolev
+from .sobolev_space import Sobolev
 from .sobolev_functions import SobolevFunction
 from .interval_domain import IntervalDomain
 
