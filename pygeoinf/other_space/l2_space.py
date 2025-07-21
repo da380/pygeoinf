@@ -29,17 +29,21 @@ class L2Space(HilbertSpace):
 
     def __init__(
         self,
-        dim,
-        basis_type='fourier',
+        dim: int,
         /,
         *,
+        basis_functions=None,
+        basis_type='fourier',
         interval=(0, 1),
         boundary_conditions=None,
     ):
         """
         Args:
             dim (int): Dimension of the space.
+            basis_functions (list, optional): Custom list of basis functions.
+                If provided, basis_type is ignored.
             basis_type (str): Type of basis functions ('fourier').
+                Only used if basis_functions is None.
             interval (tuple): Interval endpoints (a, b). Default is (0, 1).
             boundary_conditions (dict, optional): Boundary conditions
                 specification. If None, defaults to periodic for Fourier basis.
@@ -48,11 +52,22 @@ class L2Space(HilbertSpace):
         self._interval = interval
         self._a, self._b = interval
         self._length = self._b - self._a
-        self._basis_type = basis_type
+
+        # Determine basis type from either explicit type or existing functions
+        if basis_functions is not None:
+            self._basis_type = 'custom'
+            # Validate dimension
+            if len(basis_functions) != dim:
+                raise ValueError(
+                    f"basis_functions length ({len(basis_functions)}) "
+                    f"must match dim ({dim})"
+                )
+        else:
+            self._basis_type = basis_type
 
         # Store boundary conditions
         if boundary_conditions is None:
-            if basis_type == 'fourier':
+            if basis_type == 'fourier' or self._basis_type == 'fourier':
                 self._boundary_conditions = {'type': 'periodic'}
             else:
                 self._boundary_conditions = None
@@ -61,13 +76,17 @@ class L2Space(HilbertSpace):
 
         # Store IntervalDomain object
         from .interval_domain import IntervalDomain
-        self._interval_domain = IntervalDomain(
+        self._domain = IntervalDomain(
             self._a, self._b, boundary_type='closed',
             name=f'[{self._a}, {self._b}]'
         )
 
-        # Create basis functions
-        self._basis_functions = self._create_basis_functions(basis_type)
+        # Create or store basis functions
+        if basis_functions is not None:
+            self._basis_functions = basis_functions
+        else:
+            # Create basis functions from basis_type
+            self._basis_functions = self._create_basis_functions(basis_type)
 
         # Compute Gram matrix for L² inner products
         self._compute_gram_matrix()
@@ -77,7 +96,7 @@ class L2Space(HilbertSpace):
             dim,
             self._to_components,
             self._from_components,
-            self.l2_inner_product,
+            self.inner_product,
             self._default_to_dual,
             self._default_from_dual,
         )
@@ -88,9 +107,9 @@ class L2Space(HilbertSpace):
         return self._dim
 
     @property
-    def interval_domain(self):
+    def domain(self):
         """Return the IntervalDomain object for this space."""
-        return self._interval_domain
+        return self._domain
 
     @property
     def interval(self):
@@ -112,7 +131,12 @@ class L2Space(HilbertSpace):
         """The Gram matrix of basis functions."""
         return self._gram_matrix
 
-    def l2_inner_product(self, u, v):
+    @property
+    def basis_type(self):
+        """The type of basis functions used."""
+        return self._basis_type
+
+    def inner_product(self, u, v):
         """
         L² inner product: ⟨u,v⟩_L² = ∫_a^b u(x)v(x) dx
 
@@ -135,6 +159,9 @@ class L2Space(HilbertSpace):
         """
         Create basis functions based on the specified type and boundary
         conditions.
+
+        This method is only called when basis_functions are not provided
+        explicitly to the constructor.
         """
         if basis_type != 'fourier':
             raise ValueError(
@@ -206,7 +233,7 @@ class L2Space(HilbertSpace):
 
         for i in range(n):
             for j in range(i, n):  # Only compute upper triangle
-                inner_prod = self.l2_inner_product(
+                inner_prod = self.inner_product(
                     self._basis_functions[i],
                     self._basis_functions[j]
                 )
@@ -221,7 +248,7 @@ class L2Space(HilbertSpace):
         # Compute right-hand side: b_i = <u, φ_i>_L²
         rhs = np.zeros(self.dim)
         for k, basis_func in enumerate(self._basis_functions):
-            rhs[k] = self.l2_inner_product(u, basis_func)
+            rhs[k] = self.inner_product(u, basis_func)
 
         # Solve the linear system: G * c = rhs
         coeffs = np.linalg.solve(self._gram_matrix, rhs)
@@ -255,7 +282,7 @@ class L2Space(HilbertSpace):
     # Default dual space mappings
     def _default_to_dual(self, u: L2Function):
         """Default mapping to dual space using Gram matrix."""
-        return LinearForm(self, mapping=lambda v: self.l2_inner_product(u, v))
+        return LinearForm(self, mapping=lambda v: self.inner_product(u, v))
 
     def _default_from_dual(self, up: LinearForm):
         """Default mapping from dual space using inverse Gram matrix."""

@@ -9,6 +9,9 @@ like Sobolev spaces.
 import numpy as np
 from typing import Union, Callable, Optional
 import numbers
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .l2_space import L2Space  # type: ignore[import]
 
 
 class L2Function:
@@ -23,7 +26,7 @@ class L2Function:
     """
 
     def __init__(self,
-                 space,
+                 space: "L2Space",
                  *,
                  coefficients: Optional[np.ndarray] = None,
                  evaluate_callable: Optional[Callable] = None,
@@ -33,30 +36,26 @@ class L2Function:
 
         Args:
             space: The L²Space this function belongs to
-            coefficients: Optional finite-dimensional coefficient
-                representation
+            coefficients: Optional finite-dimensional coefficient representation
             evaluate_callable: Optional callable defining the function rule
             name: Optional function name
 
         Note:
-            Either coefficients or evaluate_callable must be provided.
+            Exactly one of coefficients or evaluate_callable must be provided.
         """
+        if (coefficients is None and evaluate_callable is None) or \
+           (coefficients is not None and evaluate_callable is not None):
+            raise ValueError("Exactly one of 'coefficients' or 'evaluate_callable' must be provided.")
         self.space = space
         self.name = name
         # Function representation
-        self.coefficients = (coefficients.copy()
-                             if coefficients is not None else None)
+        self.coefficients = coefficients.copy() if coefficients is not None else None
         self.evaluate_callable = evaluate_callable
-
-        # Validate that we have a way to evaluate the function
-        if self.coefficients is None and self.evaluate_callable is None:
-            raise ValueError("Must provide either coefficients or "
-                             "evaluate_callable")
 
     @property
     def domain(self):
         """Get the IntervalDomain from the space."""
-        return self.space.interval_domain
+        return self.space.domain
 
     @property
     def space_type(self):
@@ -172,19 +171,34 @@ class L2Function:
                 return self.evaluate(x, check_domain=False) * weight(x)
             return self.domain.integrate(integrand, method=method)
 
-    def plot(self, n_points: int = 1000, **kwargs):
+    def plot(self, n_points: int = 1000, figsize=(10, 6),
+             use_seaborn: bool = True, **kwargs):
         """
         Plot the function.
 
         Args:
             n_points: Number of plot points
+            figsize: Figure size as (width, height)
+            use_seaborn: Whether to use seaborn styling
             **kwargs: Additional plotting arguments
         """
         import matplotlib.pyplot as plt
 
+        if use_seaborn:
+            try:
+                import seaborn as sns
+                if 'color' not in kwargs:
+                    palette = sns.color_palette("muted", 1)
+                    kwargs['color'] = palette[0]
+                if 'linewidth' not in kwargs:
+                    kwargs['linewidth'] = 2
+            except ImportError:
+                pass  # Fall back to matplotlib defaults
+
         x = self.domain.uniform_mesh(n_points)
         y = self.evaluate(x)
 
+        plt.figure(figsize=figsize)
         plt.plot(x, y, label=self.name or "L² function", **kwargs)
         plt.xlabel('x')
         plt.ylabel('f(x)')
@@ -192,25 +206,28 @@ class L2Function:
         if self.name:
             plt.legend()
         plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        return plt.gca()  # Return axes for further customization
 
     def __add__(self, other):
         """Addition of L² functions or with a scalar."""
         if isinstance(other, L2Function):
-            if other.space != self.space:
-                raise ValueError("Functions must be in the same space")
-
             if (self.coefficients is not None and
-                    other.coefficients is not None):
+                    other.coefficients is not None and
+                    len(self.coefficients) == len(other.coefficients)):
+                # Only use coefficient addition if both functions have
+                # coefficients of the same length
                 new_coeffs = self.coefficients + other.coefficients
                 return self.__class__(
                     self.space, coefficients=new_coeffs
                 )
             else:
-                # For callable functions, create a new callable
-                def new_callable(x):
+                # For callable functions or mismatched coefficients,
+                # create a new callable
+                def add_callable(x):
                     return self.evaluate(x) + other.evaluate(x)
                 return self.__class__(
-                    self.space, evaluate_callable=new_callable
+                    self.space, evaluate_callable=add_callable
                 )
         elif isinstance(other, numbers.Number):
             # Adding a constant
@@ -221,10 +238,10 @@ class L2Function:
                     self.space, coefficients=new_coeffs
                 )
             else:
-                def new_callable(x):
-                    return self.evaluate(x) + other
+                def scalar_add_callable(x):
+                    return self.evaluate(x) + other  # type: ignore
                 return self.__class__(
-                    self.space, evaluate_callable=new_callable
+                    self.space, evaluate_callable=scalar_add_callable
                 )
         else:
             raise TypeError(
@@ -254,13 +271,11 @@ class L2Function:
                 )
         elif isinstance(other, L2Function):
             # Function multiplication: always use pointwise multiplication
-            if self.space != other.space:
-                raise ValueError("Functions must be in the same space for "
-                                 "multiplication")
-
-            def new_callable(x):
+            def product_callable(x):
                 return self.evaluate(x) * other.evaluate(x)
-            return self.__class__(self.space, evaluate_callable=new_callable)
+            return self.__class__(
+                self.space, evaluate_callable=product_callable
+            )
         else:
             raise TypeError(
                 f"Cannot multiply L2Function with {type(other)}"
