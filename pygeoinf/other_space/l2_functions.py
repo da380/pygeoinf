@@ -66,12 +66,15 @@ class L2Function:
     def evaluate(self, x: Union[float, np.ndarray],
                  check_domain: bool = True) -> Union[float, np.ndarray]:
         """
-        Point evaluation: f(x).
+        Point evaluation of representative: f(x).
 
         WARNING: Point evaluation is not mathematically well-defined for
         general L² functions, which are only defined almost everywhere.
-        This method is provided only for computational convenience when
-        working with smooth approximations.
+        Elements of L² spaces are equivalence classes of functions
+        that are equal almost everywhere, so pointwise evaluation may not
+        yield meaningful results. However, some equivalence classes have
+        a useful representative, and this method can be used to
+        evaluate such representatives.
 
         Args:
             x: Point(s) at which to evaluate

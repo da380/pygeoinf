@@ -9,6 +9,8 @@ import numpy as np
 import math
 
 from pygeoinf.hilbert_space import HilbertSpace
+from pygeoinf.hilbert_space import LinearForm
+from pygeoinf.other_space.l2_functions import L2Function
 
 
 class L2Space(HilbertSpace):
@@ -280,14 +282,17 @@ class L2Space(HilbertSpace):
         return result
 
     # Default dual space mappings
-    def _default_to_dual(self, u):
+    def _default_to_dual(self, u: L2Function):
         """Default mapping to dual space using Gram matrix."""
-        coeff = self._to_components(u)
-        dual_coeff = self._gram_matrix @ coeff
-        return self.dual.from_components(dual_coeff)
+        return LinearForm(self, mapping=lambda v: self._l2_inner_product(u, v))
 
-    def _default_from_dual(self, up):
+    def _default_from_dual(self, up: LinearForm):
         """Default mapping from dual space using inverse Gram matrix."""
-        dual_coeff = self.dual.to_components(up)
-        coeff = np.linalg.solve(self._gram_matrix, dual_coeff)
-        return self._from_components(coeff)
+        dual_components = np.zeros(self.dim)
+        for i in range(self.dim):
+            dual_components[i] = up(self._basis_functions[i])
+        components = np.linalg.solve(self._gram_matrix, dual_components)
+        return L2Function(
+            self,
+            coefficients=components,
+        )
