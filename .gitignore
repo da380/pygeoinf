@@ -4,3 +4,4 @@ __pycache__
 *~
 dist/*
 poetry.lock
+pygeoinf/interval/Inferences.code-workspace
