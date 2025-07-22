@@ -332,3 +332,18 @@ class L2Function:
     def __repr__(self) -> str:
         return (f"L2Function(domain={self.domain}, "
                 f"space_type={self.space_type}, name={self.name})")
+
+    def copy(self):
+        """Custom copy implementation for L2Functions."""
+        if self.coefficients is not None:
+            return self.__class__(
+                self.space,
+                coefficients=self.coefficients.copy(),
+                name=self.name
+            )
+        else:
+            return self.__class__(
+                self.space,
+                evaluate_callable=self.evaluate_callable,
+                name=self.name
+            )
