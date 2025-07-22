@@ -47,7 +47,3 @@ __all__ = [
 
 if LAPLACIAN_OPERATOR_AVAILABLE:
     __all__.append('LaplacianInverseOperator')
-
-# Version info
-__version__ = "0.1.0"
-__author__ = "Adrian-Mag"
