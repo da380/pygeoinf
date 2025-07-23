@@ -359,7 +359,7 @@ class L2Function:
                 if self.evaluate_callable is not None:
                     return self.domain.integrate(
                         self.evaluate_callable, method=method,
-                        subinterval=self.support
+                        support=self.support
                     )
                 elif self.coefficients is not None:
                     # For basis representations
@@ -367,7 +367,7 @@ class L2Function:
                         return self.evaluate(x, check_domain=False)
                     return self.domain.integrate(
                         integrand_coeffs, method=method,
-                        subinterval=self.support
+                        support=self.support
                     )
                 else:
                     return 0.0
@@ -377,7 +377,7 @@ class L2Function:
                     return self.evaluate(x, check_domain=False) * weight(x)
                 return self.domain.integrate(
                     weighted_integrand, method=method,
-                    subinterval=self.support
+                    support=self.support
                 )
         else:
             # No compact support - integrate over entire domain

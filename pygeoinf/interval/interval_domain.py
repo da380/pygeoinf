@@ -169,6 +169,7 @@ class IntervalDomain:
         method: str = 'adaptive',
         support: Optional[Union[Tuple[float, float],
                                 "list[Tuple[float, float]]"]] = None,
+        n_points: int = 1000,
         **kwargs
     ) -> float:
         """
@@ -186,6 +187,7 @@ class IntervalDomain:
                 - (a, b): integrate over single subinterval [a, b]
                 - [(a1, b1), (a2, b2), ...]: integrate over multiple
                   disjoint subintervals (for compact support functions)
+            n_points: Number of points for 'simpson' and 'trapz' methods
             **kwargs: Additional arguments for integration method
                 - n: number of points for 'simpson' and 'trapz' methods
                 - other scipy.integrate parameters for 'adaptive' method
@@ -228,6 +230,8 @@ class IntervalDomain:
                 )
         else:
             a, b = self.a, self.b
+        # Update number of n_points based on length of the interval
+        n_points_interval = int(n_points * (b - a) / (self.b - self.a))
 
         if method == 'adaptive':
             try:
@@ -243,29 +247,25 @@ class IntervalDomain:
         elif method == 'simpson':
             try:
                 from scipy.integrate import simpson
-                n = kwargs.get('n', 1000)
-                x = np.linspace(a, b, n)
+                x = np.linspace(a, b, n_points_interval)
                 y = f(x)
                 return float(simpson(y, x=x))
             except ImportError:
                 # Fallback to numpy trapz
-                n = kwargs.get('n', 1000)
-                x = np.linspace(a, b, n)
+                x = np.linspace(a, b, n_points_interval)
                 y = f(x)
-                return float(np.trapz(y, x))
+                return float(np.trapz(y, x=x))
         elif method == 'trapz':
             try:
                 from scipy.integrate import trapezoid
-                n = kwargs.get('n', 1000)
-                x = np.linspace(a, b, n)
+                x = np.linspace(a, b, n_points_interval)
                 y = f(x)
                 return float(trapezoid(y, x=x))
             except ImportError:
                 # Fallback to numpy trapz
-                n = kwargs.get('n', 1000)
-                x = np.linspace(a, b, n)
+                x = np.linspace(a, b, n_points_interval)
                 y = f(x)
-                return float(np.trapz(y, x))
+                return float(np.trapz(y, x=x))
         else:
             raise ValueError(f"Unknown integration method: {method}")
 
