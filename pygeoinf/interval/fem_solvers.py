@@ -9,8 +9,11 @@ Users can choose between:
 
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, Union
 import warnings
+
+from .interval_domain import IntervalDomain
+from .l2_functions import L2Function
 
 try:
     import dolfinx
@@ -23,21 +26,153 @@ except ImportError:
     DOLFINX_AVAILABLE = False
 
 
+class FEMBasisFunction(L2Function):
+    """
+    A single FEM basis function as an L2Function with compact support.
+
+    Represents a piecewise linear basis function φᵢ with support on
+    at most two adjacent elements.
+    """
+
+    def __init__(self, space, node_index: int, nodes: np.ndarray,
+                 element_size: float):
+        """
+        Initialize a FEM basis function.
+
+        Args:
+            space: L2Space this function belongs to
+            node_index: Index of the node (0 to len(nodes)-1)
+            nodes: Array of all mesh nodes
+            element_size: Mesh element size h
+        """
+        self.node_index = node_index
+        self.nodes = nodes
+        self.element_size = element_size
+
+        # Determine compact support
+        support_elements = []
+
+        # Left element (if exists)
+        if node_index > 0:
+            support_elements.append((node_index - 1, node_index))
+
+        # Right element (if exists)
+        if node_index < len(nodes) - 1:
+            support_elements.append((node_index, node_index + 1))
+
+        # Compact support is union of support elements
+        if support_elements:
+            left_nodes = [elem[0] for elem in support_elements]
+            right_nodes = [elem[1] for elem in support_elements]
+            support_a = nodes[min(left_nodes)]
+            support_b = nodes[max(right_nodes)]
+            support = (support_a, support_b)
+        else:
+            # Single node (shouldn't happen in practice)
+            support = (nodes[node_index], nodes[node_index])
+
+        # Create the basis function callable
+        def basis_callable(x):
+            x_array = np.asarray(x)
+            is_scalar = x_array.ndim == 0
+            if is_scalar:
+                x_array = x_array.reshape(1)
+
+            result = np.zeros_like(x_array, dtype=float)
+
+            # Evaluate on each element in support
+            for left_idx, right_idx in support_elements:
+                x_left = nodes[left_idx]
+                x_right = nodes[right_idx]
+
+                # Find points in this element
+                in_element = (x_array >= x_left) & (x_array <= x_right)
+
+                if np.any(in_element):
+                    x_elem = x_array[in_element]
+
+                    if left_idx == node_index:
+                        # Decreasing from 1 to 0
+                        result[in_element] = (x_right - x_elem) / element_size
+                    elif right_idx == node_index:
+                        # Increasing from 0 to 1
+                        result[in_element] = (x_elem - x_left) / element_size
+
+            return result.item() if is_scalar else result
+
+        super().__init__(
+            space,
+            evaluate_callable=basis_callable,
+            name=f'φ_{node_index}',
+            support=support
+        )
+
+
+class LazyFEMBasisProvider:
+    """
+    Lazy provider for FEM basis functions.
+
+    Creates basis functions on demand and caches them.
+    """
+
+    def __init__(self, space, nodes: np.ndarray, element_size: float):
+        """
+        Initialize the basis provider.
+
+        Args:
+            space: L2Space for the basis functions
+            nodes: Array of mesh nodes
+            element_size: Mesh element size h
+        """
+        self.space = space
+        self.nodes = nodes
+        self.element_size = element_size
+        self._cache = {}
+
+    def get_basis_function(self, node_index: int) -> FEMBasisFunction:
+        """
+        Get basis function for given node index.
+
+        Args:
+            node_index: Index of the node
+
+        Returns:
+            FEMBasisFunction for that node
+        """
+        if node_index not in self._cache:
+            if not (0 <= node_index < len(self.nodes)):
+                raise ValueError(
+                    f"Node index {node_index} out of range [0, {len(self.nodes)-1}]"
+                )
+            self._cache[node_index] = FEMBasisFunction(
+                self.space, node_index, self.nodes, self.element_size
+            )
+        return self._cache[node_index]
+
+    def __getitem__(self, node_index: int) -> FEMBasisFunction:
+        """Allow indexing syntax: provider[i]."""
+        return self.get_basis_function(node_index)
+
+    def get_interior_basis_functions(self) -> list:
+        """Get all interior (non-boundary) basis functions."""
+        return [self.get_basis_function(i) for i in range(1, len(self.nodes) - 1)]
+
+
 class FEMSolverBase(ABC):
     """Abstract base class for FEM solvers."""
 
-    def __init__(self, interval: Tuple[float, float], mesh_resolution: int,
+    def __init__(self, interval: Tuple[float, float], dof: int,
                  boundary_conditions: str):
         """
         Initialize FEM solver.
 
         Args:
             interval: Domain interval [a, b]
-            mesh_resolution: Number of elements in mesh
+            dof: Number of elements in mesh
             boundary_conditions: Type of BCs ('dirichlet', 'neumann', 'periodic')
         """
         self.interval = interval
-        self.mesh_resolution = mesh_resolution
+        self.dof = dof
         self.boundary_conditions = boundary_conditions
 
         # Validate boundary conditions
@@ -87,7 +222,7 @@ class FEMSolverBase(ABC):
 class DOLFINxSolver(FEMSolverBase):
     """DOLFINx-based FEM solver."""
 
-    def __init__(self, interval: Tuple[float, float], mesh_resolution: int,
+    def __init__(self, interval: Tuple[float, float], dof: int,
                  boundary_conditions: str):
         if not DOLFINX_AVAILABLE:
             raise ImportError(
@@ -95,7 +230,7 @@ class DOLFINxSolver(FEMSolverBase):
                 "conda install -c conda-forge fenics-dolfinx"
             )
 
-        super().__init__(interval, mesh_resolution, boundary_conditions)
+        super().__init__(interval, dof, boundary_conditions)
         self._mesh = None
         self._V = None
         self._bcs = None
@@ -108,7 +243,7 @@ class DOLFINxSolver(FEMSolverBase):
         # Create 1D interval mesh
         self._mesh = mesh.create_interval(
             comm=PETSc.COMM_WORLD,
-            nx=self.mesh_resolution,
+            nx=self.dof,
             points=np.array([self.interval[0], self.interval[1]])
         )
 
@@ -306,110 +441,132 @@ class DOLFINxSolver(FEMSolverBase):
 
 
 class NativeFEMSolver(FEMSolverBase):
-    """Native Python FEM solver - no external dependencies."""
+    """Native Python FEM solver - only supports Dirichlet BCs."""
 
-    def __init__(self, interval: Tuple[float, float], mesh_resolution: int,
-                 boundary_conditions: str):
-        super().__init__(interval, mesh_resolution, boundary_conditions)
+    def __init__(self, interval: Union[Tuple[float, float], IntervalDomain],
+                 dof: int, boundary_conditions: str):
+        if boundary_conditions != 'dirichlet':
+            raise ValueError(
+                "NativeFEMSolver only supports 'dirichlet' boundary conditions"
+            )
+
+        # Convert interval to IntervalDomain if needed
+        if isinstance(interval, tuple):
+            self.domain = IntervalDomain(interval[0], interval[1])
+            interval_tuple = interval
+        else:
+            self.domain = interval
+            interval_tuple = (interval.a, interval.b)
+
+        super().__init__(interval_tuple, dof, boundary_conditions)
         self._nodes = None
         self._elements = None
         self._boundary_nodes = None
+        self._dof = dof
+        self._basis_provider = None  # Lazy basis function provider
 
     def setup(self):
         """Set up native FEM mesh and structures."""
         # Create uniform 1D mesh
-        self._nodes = np.linspace(self.interval[0], self.interval[1],
-                                 self.mesh_resolution + 1)
+        self._nodes = np.linspace(self.domain.a, self.domain.b,
+                                  self._dof + 2)
+
+        self._h = self._nodes[1] - self._nodes[0]  # Element size
 
         # Create elements (pairs of consecutive nodes)
         self._elements = np.column_stack([
-            np.arange(self.mesh_resolution),
-            np.arange(1, self.mesh_resolution + 1)
+            np.arange(self._dof),
+            np.arange(1, self._dof + 1)
         ])
 
         # Identify boundary nodes
+        n_nodes = len(self._nodes)
         self._boundary_nodes = {
             'left': 0,
-            'right': self.mesh_resolution
+            'right': n_nodes - 1  # Last node index
         }
 
+        # Create lazy basis function provider
+        # We need an L2Space for the basis functions
+        from .l2_space import L2Space  # Import here to avoid circular imports
+        # For FEM, we use as many basis functions as we have nodes
+        basis_space = L2Space(
+            len(self._nodes),
+            interval=(self.domain.a, self.domain.b)
+        )
+        self._basis_provider = LazyFEMBasisProvider(
+            basis_space, self._nodes, self._h
+        )
+
     def _assemble_stiffness_matrix(self) -> np.ndarray:
-        """Assemble global stiffness matrix."""
+        """Assemble global stiffness matrix for all nodes."""
         n_nodes = len(self._nodes)
         K = np.zeros((n_nodes, n_nodes))
 
-        for elem in self._elements:
-            i, j = elem[0], elem[1]
-            h = self._nodes[j] - self._nodes[i]  # Element length
+        # Assemble element contributions
+        for i in range(n_nodes - 1):  # Each element
+            # Element stiffness matrix (2x2)
+            K_elem = (1.0 / self._h) * np.array([[1, -1], [-1, 1]])
 
-            # Local stiffness matrix for 1D Laplacian
-            k_local = (1.0 / h) * np.array([[1, -1], [-1, 1]])
-
-            # Add to global matrix
-            K[i, i] += k_local[0, 0]
-            K[i, j] += k_local[0, 1]
-            K[j, i] += k_local[1, 0]
-            K[j, j] += k_local[1, 1]
+            # Assemble into global matrix
+            K[i:i+2, i:i+2] += K_elem
 
         return K
 
-    def _assemble_mass_matrix(self) -> np.ndarray:
-        """Assemble mass matrix for RHS integration."""
-        n_nodes = len(self._nodes)
-        M = np.zeros((n_nodes, n_nodes))
+    def _assemble_load_vector_l2(self, rhs_function: Union[Callable, L2Function]) -> np.ndarray:
+        """
+        Assemble load vector using L2Function operations.
 
-        for elem in self._elements:
-            i, j = elem[0], elem[1]
-            h = self._nodes[j] - self._nodes[i]
+        This method leverages L2Function multiplication and integration
+        with automatic compact support handling.
 
-            # Local mass matrix
-            m_local = (h / 6.0) * np.array([[2, 1], [1, 2]])
+        Args:
+            rhs_function: RHS function (callable or L2Function)
 
-            # Add to global matrix
-            M[i, i] += m_local[0, 0]
-            M[i, j] += m_local[0, 1]
-            M[j, i] += m_local[1, 0]
-            M[j, j] += m_local[1, 1]
+        Returns:
+            Load vector
+        """
+        if self._basis_provider is None:
+            raise RuntimeError("Must call setup() first")
 
-        return M
-
-    def _assemble_rhs(self, rhs_function: Callable[[np.ndarray], np.ndarray]) -> np.ndarray:
-        """Assemble right-hand side vector."""
         n_nodes = len(self._nodes)
         f_vec = np.zeros(n_nodes)
 
-        # Evaluate RHS function at nodes
-        f_vals = rhs_function(self._nodes)
+        # Convert RHS to L2Function if needed
+        if not isinstance(rhs_function, L2Function):
+            # Create L2Function from callable
+            from .l2_space import L2Space
+            # Create a space for the RHS function (can be different dimension)
+            rhs_space = L2Space(1, interval=(self.domain.a, self.domain.b))
+            if callable(rhs_function):
+                rhs_l2 = L2Function(rhs_space, evaluate_callable=rhs_function)
+            else:
+                raise TypeError("rhs_function must be callable or L2Function")
+        else:
+            rhs_l2 = rhs_function
 
-        # Simple lumped mass approach (sufficient for uniform mesh)
+        # For each node, compute ∫ f(x) φᵢ(x) dx using L2Function operations
         for i in range(n_nodes):
-            if i == 0:  # Left boundary
-                h = self._nodes[1] - self._nodes[0]
-                f_vec[i] = f_vals[i] * h / 2.0
-            elif i == n_nodes - 1:  # Right boundary
-                h = self._nodes[i] - self._nodes[i-1]
-                f_vec[i] = f_vals[i] * h / 2.0
-            else:  # Interior nodes
-                h_left = self._nodes[i] - self._nodes[i-1]
-                h_right = self._nodes[i+1] - self._nodes[i]
-                f_vec[i] = f_vals[i] * (h_left + h_right) / 2.0
+            # Get basis function as L2Function
+            phi_i = self._basis_provider.get_basis_function(i)
+
+            # Multiply f * φᵢ using L2Function multiplication
+            # This automatically handles compact support intersection
+            integrand = rhs_l2 * phi_i
+
+            # Integrate using L2Function integration (leverages compact support)
+            f_vec[i] = integrand.integrate(method='simpson')
 
         return f_vec
 
-    def solve_poisson(self, rhs_function: Callable[[np.ndarray], np.ndarray]) -> np.ndarray:
-        """Solve Poisson equation with native FEM."""
-        # Assemble system
+    def solve_poisson(self, rhs_function: Union[Callable[[np.ndarray],
+                                                     np.ndarray], L2Function]) -> np.ndarray:
+        """Solve Poisson equation with Dirichlet BCs using L2Function operations."""
+        # Assemble system using L2Function operations
         K = self._assemble_stiffness_matrix()
-        f = self._assemble_rhs(rhs_function)
+        f = self._assemble_load_vector_l2(rhs_function)
 
-        if self.boundary_conditions == 'dirichlet':
-            return self._solve_dirichlet(K, f)
-        elif self.boundary_conditions == 'neumann':
-            return self._solve_neumann(K, f)
-        elif self.boundary_conditions == 'periodic':
-            return self._solve_periodic(K, f)
-        else:
-            raise ValueError(f"Unsupported boundary condition: {self.boundary_conditions}")
+        return self._solve_dirichlet(K, f)
 
     def _solve_dirichlet(self, K: np.ndarray, f: np.ndarray) -> np.ndarray:
         """Solve with homogeneous Dirichlet BCs."""
@@ -429,53 +586,148 @@ class NativeFEMSolver(FEMSolverBase):
         # Solve
         return np.linalg.solve(K, f)
 
-    def _solve_neumann(self, K: np.ndarray, f: np.ndarray) -> np.ndarray:
-        """Solve with Neumann BCs (natural BCs)."""
-        # Check solvability condition
-        total_rhs = np.sum(f)
-        if abs(total_rhs) > 1e-12:
-            # Project to solvable subspace
-            f = f - total_rhs / len(f)
+    def get_basis_function(self, node_index: int) -> FEMBasisFunction:
+        """
+        Get basis function for given node index as an L2Function.
 
-        # Solve singular system with constraint
-        n = len(f)
+        Args:
+            node_index: Index of the node (0 to num_nodes-1)
 
-        # Add constraint equation: ∑u_i = 0
-        K_aug = np.block([[K, np.ones((n, 1))],
-                          [np.ones((1, n)), np.zeros((1, 1))]])
-        f_aug = np.append(f, 0)
+        Returns:
+            FEMBasisFunction (L2Function with compact support)
+        """
+        if self._basis_provider is None:
+            raise RuntimeError("Must call setup() first")
+        return self._basis_provider.get_basis_function(node_index)
 
-        # Solve augmented system
-        solution_aug = np.linalg.solve(K_aug, f_aug)
+    def get_interior_basis_functions(self) -> list:
+        """Get all interior (non-boundary) basis functions as L2Functions."""
+        if self._basis_provider is None:
+            raise RuntimeError("Must call setup() first")
+        return self._basis_provider.get_interior_basis_functions()
 
-        return solution_aug[:n]
+    def visualize_basis_functions_l2(self, indices: Optional[list] = None,
+                                   n_plot_points: int = 1000):
+        """
+        Visualize FEM basis functions using their L2Function plot methods.
 
-    def _solve_periodic(self, K: np.ndarray, f: np.ndarray) -> np.ndarray:
-        """Solve with periodic BCs."""
-        left_idx = self._boundary_nodes['left']
-        right_idx = self._boundary_nodes['right']
+        Args:
+            indices: Which basis functions to plot (default: first few)
+            n_plot_points: Number of points for smooth plotting
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+            sns.set_style("whitegrid")
+        except ImportError:
+            raise ImportError("matplotlib and seaborn required for plotting")
 
-        # Apply periodic constraint: u_left = u_right
-        # Replace right equation with constraint equation
-        K[right_idx, :] = 0
-        K[right_idx, left_idx] = -1
-        K[right_idx, right_idx] = 1
-        f[right_idx] = 0
+        if self._basis_provider is None:
+            raise RuntimeError("Must call setup() before visualizing")
 
-        # Check solvability condition
-        total_rhs = np.sum(f)
-        if abs(total_rhs) > 1e-12:
-            f = f - total_rhs / len(f)
+        if indices is None:
+            # Show first few interior basis functions
+            interior_funcs = self.get_interior_basis_functions()
+            indices = list(range(min(5, len(interior_funcs))))
 
-        # Solve with constraint
-        n = len(f)
-        K_aug = np.block([[K, np.ones((n, 1))],
-                          [np.ones((1, n)), np.zeros((1, 1))]])
-        f_aug = np.append(f, 0)
+        plt.figure(figsize=(12, 8))
 
-        solution_aug = np.linalg.solve(K_aug, f_aug)
+        for i, idx in enumerate(indices):
+            if idx >= len(self._nodes):
+                continue
 
-        return solution_aug[:n]
+            # Get basis function as L2Function
+            phi = self.get_basis_function(idx)
+
+            # Use L2Function's plot method but customize
+            ax = phi.plot(n_points=n_plot_points, use_seaborn=True)
+
+            # Highlight compact support
+            if phi.has_compact_support:
+                support_a, support_b = phi.support
+                plt.axvspan(support_a, support_b, alpha=0.1,
+                           color=plt.gca().lines[-1].get_color())
+
+        # Mark all nodes
+        plt.scatter(self._nodes, np.zeros_like(self._nodes),
+                   color='red', s=60, zorder=5, alpha=0.8,
+                   label='Mesh nodes')
+
+        plt.xlabel('x')
+        plt.ylabel('φᵢ(x)')
+        plt.title('FEM Basis Functions (L2Functions with Compact Support)')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
+    def visualize_basis_functions(self, indices: Optional[list] = None,
+                                 n_plot_points: int = 1000):
+        """
+        Visualize FEM basis functions using domain's mesh.
+
+        Args:
+            indices: Which basis functions to plot (default: first few)
+            n_plot_points: Number of points for smooth plotting
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+            sns.set_style("whitegrid")
+        except ImportError:
+            raise ImportError("matplotlib and seaborn required for plotting")
+
+        if self._nodes is None:
+            raise RuntimeError("Must call setup() before visualizing")
+
+        if indices is None:
+            # Show first few basis functions
+            indices = list(range(min(5, self._dof)))
+
+        # Use domain's uniform mesh for plotting
+        x_plot = self.domain.uniform_mesh(n_plot_points)
+
+        plt.figure(figsize=(10, 6))
+
+        for idx in indices:
+            if idx >= self._dof:
+                continue
+
+            node_idx = idx + 1  # Skip left boundary
+            y_plot = np.zeros_like(x_plot)
+
+            # Evaluate basis function at plot points
+            for i, x in enumerate(x_plot):
+                if not self.domain.contains(x):
+                    continue
+
+                # Find which element contains x
+                for elem_idx in range(len(self._nodes) - 1):
+                    x_left = self._nodes[elem_idx]
+                    x_right = self._nodes[elem_idx + 1]
+
+                    if x_left <= x <= x_right:
+                        # Check if basis function is active on this element
+                        if elem_idx == node_idx - 1:
+                            # Right side of basis function (decreasing)
+                            y_plot[i] = (x_right - x) / self._h
+                        elif elem_idx == node_idx:
+                            # Left side of basis function (increasing)
+                            y_plot[i] = (x - x_left) / self._h
+                        break
+
+            plt.plot(x_plot, y_plot, label=f'φ_{idx}', linewidth=2)
+
+        # Mark nodes
+        plt.scatter(self._nodes, np.zeros_like(self._nodes),
+                   color='red', s=50, zorder=5, alpha=0.7)
+
+        plt.xlabel('x')
+        plt.ylabel('φᵢ(x)')
+        plt.title('FEM Basis Functions (Linear Elements)')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.show()
 
     def get_coordinates(self) -> np.ndarray:
         """Get mesh node coordinates."""
@@ -487,23 +739,30 @@ class NativeFEMSolver(FEMSolverBase):
         return np.interp(eval_points, self._nodes, solution_values)
 
 
-def create_fem_solver(solver_type: str, interval: Tuple[float, float],
-                      mesh_resolution: int, boundary_conditions: str) -> FEMSolverBase:
+def create_fem_solver(solver_type: str,
+                      interval: Union[Tuple[float, float], IntervalDomain],
+                      dof: int, boundary_conditions: str) -> FEMSolverBase:
     """
     Factory function to create FEM solvers.
 
     Args:
         solver_type: 'dolfinx' or 'native'
-        interval: Domain interval
-        mesh_resolution: Mesh resolution
+        interval: Domain interval (tuple or IntervalDomain)
+        dof: Mesh resolution
         boundary_conditions: Boundary condition type
 
     Returns:
         FEM solver instance
     """
+    # Convert IntervalDomain to tuple for DOLFINx solver compatibility
+    if isinstance(interval, IntervalDomain):
+        interval_tuple = (interval.a, interval.b)
+    else:
+        interval_tuple = interval
+
     if solver_type == 'dolfinx':
-        return DOLFINxSolver(interval, mesh_resolution, boundary_conditions)
+        return DOLFINxSolver(interval_tuple, dof, boundary_conditions)
     elif solver_type == 'native':
-        return NativeFEMSolver(interval, mesh_resolution, boundary_conditions)
+        return NativeFEMSolver(interval, dof, boundary_conditions)
     else:
         raise ValueError(f"Unknown solver type: {solver_type}")
