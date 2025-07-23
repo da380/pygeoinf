@@ -167,50 +167,128 @@ class IntervalDomain:
         self,
         f: Callable,
         method: str = 'adaptive',
+        support: Optional[Union[Tuple[float, float],
+                                "list[Tuple[float, float]]"]] = None,
         **kwargs
     ) -> float:
         """
-        Integrate function over the domain.
+        Integrate function over the domain or subinterval(s).
+
+        This method supports efficient integration over multiple disjoint
+        subintervals, making it ideal for functions with compact support.
 
         Args:
             f: Function to integrate
             method: Integration method
                 ('adaptive', 'gauss', 'simpson', 'trapz')
+            subinterval: Optional integration bounds. Can be:
+                - None: integrate over entire domain [self.a, self.b]
+                - (a, b): integrate over single subinterval [a, b]
+                - [(a1, b1), (a2, b2), ...]: integrate over multiple
+                  disjoint subintervals (for compact support functions)
             **kwargs: Additional arguments for integration method
+                - n: number of points for 'simpson' and 'trapz' methods
+                - other scipy.integrate parameters for 'adaptive' method
 
         Returns:
             Integral value
+
+        Examples:
+            >>> domain = IntervalDomain(0.0, 2.0)
+            >>> f = lambda x: x**2
+            >>> # Full domain integration
+            >>> domain.integrate(f)
+            >>> # Single subinterval
+            >>> domain.integrate(f, subinterval=(0.5, 1.5))
+            >>> # Multiple subintervals (compact support)
+            >>> domain.integrate(f, subinterval=[(0.2, 0.8), (1.2, 1.8)])
         """
+        # Handle multiple subintervals (compact support)
+        if support is not None and isinstance(support, list):
+            total_integral = 0.0
+            for a, b in support:
+                if not (self.a <= a < b <= self.b):
+                    raise ValueError(
+                        f"support [{a}, {b}] not contained in "
+                        f"domain [{self.a}, {self.b}]"
+                    )
+                # Recursively integrate over each subinterval
+                integral_part = self.integrate(f, method=method,
+                                               support=(a, b), **kwargs)
+                total_integral += integral_part
+            return total_integral
+
+        # Handle single subinterval or full domain
+        if support is not None:
+            a, b = support
+            if not (self.a <= a < b <= self.b):
+                raise ValueError(
+                    f"Support [{a}, {b}] not contained in "
+                    f"domain [{self.a}, {self.b}]"
+                )
+        else:
+            a, b = self.a, self.b
+
         if method == 'adaptive':
-            from scipy.integrate import quad
-            return quad(f, self.a, self.b, **kwargs)[0]
+            try:
+                from scipy.integrate import quad
+                return quad(f, a, b, **kwargs)[0]
+            except ImportError:
+                raise ImportError(
+                    "scipy is required for adaptive integration. "
+                    "Install with: pip install scipy"
+                )
         elif method == 'gauss':
-            return self._gauss_legendre_integrate(f, **kwargs)
+            return self._gauss_legendre_integrate(f, a, b, **kwargs)
         elif method == 'simpson':
-            n = kwargs.get('n', 1000)
-            x = self.uniform_mesh(n)
-            y = f(x)
-            return np.trapz(y, x)  # Simpson's rule via trapz
+            try:
+                from scipy.integrate import simpson
+                n = kwargs.get('n', 1000)
+                x = np.linspace(a, b, n)
+                y = f(x)
+                return float(simpson(y, x=x))
+            except ImportError:
+                # Fallback to numpy trapz
+                n = kwargs.get('n', 1000)
+                x = np.linspace(a, b, n)
+                y = f(x)
+                return float(np.trapz(y, x))
         elif method == 'trapz':
-            n = kwargs.get('n', 1000)
-            x = self.uniform_mesh(n)
-            y = f(x)
-            return np.trapz(y, x)
+            try:
+                from scipy.integrate import trapezoid
+                n = kwargs.get('n', 1000)
+                x = np.linspace(a, b, n)
+                y = f(x)
+                return float(trapezoid(y, x=x))
+            except ImportError:
+                # Fallback to numpy trapz
+                n = kwargs.get('n', 1000)
+                x = np.linspace(a, b, n)
+                y = f(x)
+                return float(np.trapz(y, x))
         else:
             raise ValueError(f"Unknown integration method: {method}")
 
-    def _gauss_legendre_integrate(self, f: Callable, n: int = 50) -> float:
-        """Gauss-Legendre quadrature."""
-        from scipy.special import roots_legendre
+    def _gauss_legendre_integrate(
+        self, f: Callable, a: float, b: float, n: int = 50
+    ) -> float:
+        """Gauss-Legendre quadrature over [a, b]."""
+        try:
+            from scipy.special import roots_legendre
+        except ImportError:
+            raise ImportError(
+                "scipy is required for Gauss-Legendre quadrature. "
+                "Install with: pip install scipy"
+            )
 
         # Get Gauss-Legendre nodes and weights on [-1, 1]
         nodes, weights = roots_legendre(n)
 
         # Transform to [a, b]
-        x = self.a + (self.b - self.a) * (nodes + 1) / 2
-        w = weights * (self.b - self.a) / 2
+        x = a + (b - a) * (nodes + 1) / 2
+        w = weights * (b - a) / 2
 
-        return np.sum(w * f(x))
+        return float(np.sum(w * f(x)))
 
     def point_evaluation_functional(self, x: float) -> Callable:
         """

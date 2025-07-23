@@ -354,35 +354,31 @@ class L2Function:
         # If function has compact support, integrate only over support
         # intervals
         if self.has_compact_support:
-            total_integral = 0.0
-            for support_a, support_b in self.support:  # type: ignore
-                if weight is None:
-                    # Direct integration over this support interval
-                    if self.evaluate_callable is not None:
-                        integral_part = self.domain.integrate_on_subinterval(
-                            self.evaluate_callable, support_a, support_b,
-                            method=method
-                        )
-                    elif self.coefficients is not None:
-                        # For basis representations
-                        def integrand_coeffs(x):
-                            result = self.evaluate(x, check_domain=False)
-                            return np.asarray(result)
-                        integral_part = self.domain.integrate_on_subinterval(
-                            integrand_coeffs, support_a, support_b,
-                            method=method
-                        )
-                    else:
-                        integral_part = 0.0
-                else:
-                    # Weighted integration over this support interval
-                    def weighted_integrand(x):
-                        return self.evaluate(x, check_domain=False) * weight(x)
-                    integral_part = self.domain.integrate_on_subinterval(
-                        weighted_integrand, support_a, support_b, method=method
+            if weight is None:
+                # Direct integration over all support intervals
+                if self.evaluate_callable is not None:
+                    return self.domain.integrate(
+                        self.evaluate_callable, method=method,
+                        subinterval=self.support
                     )
-                total_integral += integral_part
-            return total_integral
+                elif self.coefficients is not None:
+                    # For basis representations
+                    def integrand_coeffs(x):
+                        return self.evaluate(x, check_domain=False)
+                    return self.domain.integrate(
+                        integrand_coeffs, method=method,
+                        subinterval=self.support
+                    )
+                else:
+                    return 0.0
+            else:
+                # Weighted integration over all support intervals
+                def weighted_integrand(x):
+                    return self.evaluate(x, check_domain=False) * weight(x)
+                return self.domain.integrate(
+                    weighted_integrand, method=method,
+                    subinterval=self.support
+                )
         else:
             # No compact support - integrate over entire domain
             if weight is None:
