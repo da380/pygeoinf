@@ -350,11 +350,99 @@ class IntervalDomain:
 
 class BoundaryConditions:
     """
-    Boundary condition specifications for Sobolev spaces on intervals.
+    Boundary condition specifications for function spaces on intervals.
+
+    This class provides a unified interface for all boundary condition types
+    used across L² spaces, Sobolev spaces, and FEM solvers.
     """
 
-    @staticmethod
-    def dirichlet(left_value: float = 0, right_value: float = 0):
+    def __init__(self, bc_type: str, **kwargs):
+        """
+        Initialize boundary conditions.
+
+        Args:
+            bc_type: Type of boundary condition. One of:
+                - 'dirichlet':
+                    left (float, optional): Value at left boundary
+                        (default 0.0)
+                    right (float, optional): Value at right boundary
+                        (default 0.0)
+                - 'neumann':
+                    left (float, optional): Derivative at left boundary
+                        (default 0.0)
+                    right (float, optional): Derivative at right boundary
+                        (default 0.0)
+                - 'robin':
+                    left_alpha (float): Coefficient for u(a)
+                    left_beta (float): Coefficient for u'(a)
+                    left_value (float): Value at left boundary
+                    right_alpha (float): Coefficient for u(b)
+                    right_beta (float): Coefficient for u'(b)
+                    right_value (float): Value at right boundary
+                - 'periodic':
+                    (no additional parameters)
+            **kwargs: See above for valid keyword arguments for each type.
+        """
+        self.type = bc_type
+        self._params = kwargs
+        self._validate()
+
+    def _validate(self):
+        """Validate boundary condition parameters."""
+        valid_types = {'dirichlet', 'neumann', 'robin', 'periodic'}
+
+        if self.type not in valid_types:
+            raise ValueError(
+                f"Invalid boundary condition type '{self.type}'. "
+                f"Valid types: {valid_types}"
+            )
+
+        # Type-specific validation
+        if self.type == 'dirichlet':
+            # Default values if not provided
+            self._params.setdefault('left', 0.0)
+            self._params.setdefault('right', 0.0)
+
+        elif self.type == 'neumann':
+            self._params.setdefault('left', 0.0)
+            self._params.setdefault('right', 0.0)
+
+        elif self.type == 'robin':
+            required = [
+                'left_alpha', 'left_beta', 'left_value',
+                'right_alpha', 'right_beta', 'right_value'
+            ]
+            for param in required:
+                if param not in self._params:
+                    raise ValueError(
+                        f"Robin boundary conditions require '{param}'"
+                    )
+
+        elif self.type == 'periodic':
+            # No additional parameters needed
+            pass
+
+    @property
+    def is_homogeneous(self) -> bool:
+        """Check if boundary conditions are homogeneous."""
+        if self.type == 'dirichlet':
+            return (self._params.get('left', 0) == 0 and
+                    self._params.get('right', 0) == 0)
+        elif self.type == 'neumann':
+            return (self._params.get('left', 0) == 0 and
+                    self._params.get('right', 0) == 0)
+        elif self.type == 'periodic':
+            return True  # Periodic BCs are considered homogeneous
+        else:
+            return False
+
+    def get_parameter(self, name: str, default=None):
+        """Get a boundary condition parameter."""
+        return self._params.get(name, default)
+
+    @classmethod
+    def dirichlet(cls, left_value: float = 0,
+                  right_value: float = 0) -> 'BoundaryConditions':
         """
         Dirichlet boundary conditions: u(a) = left_value, u(b) = right_value.
 
@@ -362,14 +450,11 @@ class BoundaryConditions:
             left_value: Value at left boundary
             right_value: Value at right boundary
         """
-        return {
-            'type': 'dirichlet',
-            'left': left_value,
-            'right': right_value
-        }
+        return cls('dirichlet', left=left_value, right=right_value)
 
-    @staticmethod
-    def neumann(left_derivative: float = 0, right_derivative: float = 0):
+    @classmethod
+    def neumann(cls, left_derivative: float = 0,
+                right_derivative: float = 0) -> 'BoundaryConditions':
         """
         Neumann boundary conditions:
         u'(a) = left_derivative, u'(b) = right_derivative.
@@ -378,15 +463,12 @@ class BoundaryConditions:
             left_derivative: Derivative value at left boundary
             right_derivative: Derivative value at right boundary
         """
-        return {
-            'type': 'neumann',
-            'left': left_derivative,
-            'right': right_derivative
-        }
+        return cls('neumann', left=left_derivative, right=right_derivative)
 
-    @staticmethod
-    def robin(left_alpha: float, left_beta: float, left_value: float,
-              right_alpha: float, right_beta: float, right_value: float):
+    @classmethod
+    def robin(cls, left_alpha: float, left_beta: float, left_value: float,
+              right_alpha: float, right_beta: float,
+              right_value: float) -> 'BoundaryConditions':
         """
         Robin boundary conditions: αu + βu' = value at boundaries.
 
@@ -394,27 +476,33 @@ class BoundaryConditions:
             left_alpha, left_beta, left_value: Left boundary coefficients
             right_alpha, right_beta, right_value: Right boundary coefficients
         """
-        return {
-            'type': 'robin',
-            'left': {
-                'alpha': left_alpha,
-                'beta': left_beta,
-                'value': left_value
-            },
-            'right': {
-                'alpha': right_alpha,
-                'beta': right_beta,
-                'value': right_value
-            }
-        }
+        return cls('robin',
+                   left_alpha=left_alpha, left_beta=left_beta,
+                   left_value=left_value, right_alpha=right_alpha,
+                   right_beta=right_beta, right_value=right_value)
 
-    @staticmethod
-    def periodic():
+    @classmethod
+    def periodic(cls) -> 'BoundaryConditions':
         """
         Periodic boundary conditions: u(a) = u(b), u'(a) = u'(b).
         """
-        return {'type': 'periodic'}
+        return cls('periodic')
 
+    def __str__(self) -> str:
+        """String representation."""
+        if self.type == 'periodic':
+            return f"{self.type}"
+        else:
+            params_str = ', '.join(f"{k}={v}" for k, v in self._params.items())
+            return f"{self.type}({params_str})"
 
-# Alias for backward compatibility
-Interval = IntervalDomain
+    def __repr__(self) -> str:
+        """Representation."""
+        return f"BoundaryConditions('{self.type}', {self._params})"
+
+    def __eq__(self, other) -> bool:
+        """Equality comparison."""
+        if isinstance(other, BoundaryConditions):
+            return (self.type == other.type and
+                    self._params == other._params)
+        return False
