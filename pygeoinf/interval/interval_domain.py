@@ -21,7 +21,8 @@ class IntervalDomain:
 
     def __init__(self, a: float, b: float, *,
                  boundary_type: str = 'closed',
-                 name: Optional[str] = None):
+                 name: Optional[str] = None,
+                 boundary_conditions: Optional['BoundaryConditions'] = None):
         """
         Initialize an interval domain.
 
@@ -31,6 +32,8 @@ class IntervalDomain:
             boundary_type: Type of interval
                 ('closed', 'open', 'left_open', 'right_open')
             name: Optional name for the domain
+            boundary_conditions: Optional boundary conditions for function
+                spaces
         """
         if a >= b:
             raise ValueError(
@@ -41,6 +44,7 @@ class IntervalDomain:
         self.b = float(b)
         self.boundary_type = boundary_type
         self.name = name or f"[{a}, {b}]"
+        self.boundary_conditions = boundary_conditions
 
     @property
     def length(self) -> float:
@@ -328,6 +332,36 @@ class IntervalDomain:
 
         return IntervalDomain(c, d, boundary_type=self.boundary_type)
 
+    def with_boundary_conditions(
+        self, boundary_conditions: 'BoundaryConditions'
+    ) -> 'IntervalDomain':
+        """
+        Create a new IntervalDomain with specified boundary conditions.
+
+        Args:
+            boundary_conditions: Boundary conditions to attach
+
+        Returns:
+            New IntervalDomain with boundary conditions
+        """
+        return IntervalDomain(
+            self.a, self.b,
+            boundary_type=self.boundary_type,
+            name=self.name,
+            boundary_conditions=boundary_conditions
+        )
+
+    def set_boundary_conditions(
+        self, boundary_conditions: Optional['BoundaryConditions']
+    ) -> None:
+        """
+        Set boundary conditions on this IntervalDomain instance (in-place).
+
+        Args:
+            boundary_conditions: Boundary conditions to set, or None to clear
+        """
+        self.boundary_conditions = boundary_conditions
+
     def __repr__(self) -> str:
         if self.boundary_type in ['closed', 'right_open']:
             bracket_left = '['
@@ -345,7 +379,8 @@ class IntervalDomain:
         if not isinstance(other, IntervalDomain):
             return False
         return (self.a == other.a and self.b == other.b and
-                self.boundary_type == other.boundary_type)
+                self.boundary_type == other.boundary_type and
+                self.boundary_conditions == other.boundary_conditions)
 
 
 class BoundaryConditions:
