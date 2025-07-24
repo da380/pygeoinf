@@ -71,7 +71,7 @@ class LazyL2BasisProvider:
     def _create_fourier_basis_function(self, index: int):
         """Create a single Fourier basis function."""
         bc = self.space.boundary_conditions
-        domain = self.space.domain
+        domain = self.space._function_domain
         length = domain.b - domain.a
 
         if bc is None or bc.type == 'periodic':
@@ -123,7 +123,7 @@ class LazyL2BasisProvider:
         These are interior hat functions that vanish at the boundaries,
         suitable for homogeneous Dirichlet boundary conditions.
         """
-        domain = self.space.domain
+        domain = self.space._function_domain
 
         # Create uniform mesh for hat functions
         # For dim basis functions, we need dim+2 nodes (including boundaries)
@@ -180,7 +180,7 @@ class LazyL2BasisProvider:
         These include boundary functions and interior functions,
         forming a complete basis without boundary conditions.
         """
-        domain = self.space.domain
+        domain = self.space._function_domain
 
         # For full hat functions, we have dim nodes from a to b
         nodes = np.linspace(domain.a, domain.b, self.space.dim)
@@ -326,7 +326,7 @@ class L2Space(HilbertSpace):
         *,
         basis_functions: list = None,
         basis_type: str = 'fourier',
-        domain: IntervalDomain,
+        function_domain: IntervalDomain,
     ):
         """
         Args:
@@ -336,14 +336,14 @@ class L2Space(HilbertSpace):
             basis_type (str): Type of basis functions
                 ('fourier', 'hat', 'hat_homogeneous').
                 Only used if basis_functions is None.
-            domain (IntervalDomain): Domain object with optional boundary
-                conditions. If boundary conditions are not specified in the
-                domain, defaults will be applied based on basis_type:
+            function_domain (IntervalDomain): Domain object with optional
+                boundary conditions. If boundary conditions are not specified
+                in the domain, defaults will be applied based on basis_type:
                 periodic for Fourier, dirichlet for hat, and homogeneous
                 dirichlet for hat_homogeneous.
         """
         self._dim = dim
-        self._domain = domain
+        self._function_domain = function_domain
 
         # Determine basis type from either explicit type or existing functions
         if basis_functions is not None:
@@ -358,7 +358,7 @@ class L2Space(HilbertSpace):
             self._basis_type = basis_type
 
         # Store boundary conditions with validation and conversion
-        boundary_conditions = domain.boundary_conditions
+        boundary_conditions = function_domain.boundary_conditions
         if boundary_conditions is None:
             if basis_type == 'fourier' or self._basis_type == 'fourier':
                 self._boundary_conditions = BoundaryConditions.periodic()
@@ -464,14 +464,14 @@ class L2Space(HilbertSpace):
         return self._dim
 
     @property
-    def domain(self):
+    def function_domain(self):
         """Return the IntervalDomain object for this space."""
-        return self._domain
+        return self._function_domain
 
     @property
     def interval(self):
         """Return the interval endpoints from domain."""
-        return (self._domain.a, self._domain.b)
+        return (self._function_domain.a, self._function_domain.b)
 
     def get_basis_function(self, index: int):
         """Get basis function by index, works with both lazy and explicit."""

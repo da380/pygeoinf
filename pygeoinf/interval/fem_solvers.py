@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from typing import Tuple, Optional, Callable, Union
 import warnings
 
-from .interval_domain import IntervalDomain
+from .interval_domain import IntervalDomain, BoundaryConditions
 from .l2_functions import L2Function
 
 try:
@@ -32,23 +32,42 @@ class FEMSolverBase(ABC):
     """Abstract base class for FEM solvers."""
 
     def __init__(self, interval: Tuple[float, float], dof: int,
-                 boundary_conditions: str):
+                 boundary_conditions: Union[str, BoundaryConditions]):
         """
         Initialize FEM solver.
 
         Args:
             interval: Domain interval [a, b]
             dof: Number of elements in mesh
-            boundary_conditions: Type of BCs ('dirichlet', 'neumann', 'periodic')
+            boundary_conditions: BoundaryConditions object or str
         """
         self.interval = interval
         self.dof = dof
-        self.boundary_conditions = boundary_conditions
 
-        # Validate boundary conditions
-        valid_bcs = ['dirichlet', 'neumann', 'periodic']
-        if boundary_conditions not in valid_bcs:
-            raise ValueError(f"boundary_conditions must be one of {valid_bcs}")
+        # Convert string to BoundaryConditions object if needed
+        if isinstance(boundary_conditions, str):
+            if boundary_conditions == 'dirichlet':
+                self.boundary_conditions = BoundaryConditions.dirichlet()
+            elif boundary_conditions == 'neumann':
+                self.boundary_conditions = BoundaryConditions.neumann()
+            elif boundary_conditions == 'periodic':
+                self.boundary_conditions = BoundaryConditions.periodic()
+            else:
+                raise ValueError(f"Unknown boundary condition string: {boundary_conditions}")
+        elif isinstance(boundary_conditions, BoundaryConditions):
+            self.boundary_conditions = boundary_conditions
+        else:
+            raise ValueError(f"boundary_conditions must be BoundaryConditions or str, got {type(boundary_conditions)}")
+
+        # Validate boundary conditions (basic check for FEM compatibility)
+        valid_types = ['dirichlet', 'neumann', 'periodic']
+        if self.boundary_conditions.type not in valid_types:
+            raise ValueError(f"FEM solver only supports boundary condition types: {valid_types}")
+
+    @property
+    def bc_type(self) -> str:
+        """Get the boundary condition type as string for backward compatibility."""
+        return self.boundary_conditions.type
 
     @abstractmethod
     def setup(self):
@@ -127,7 +146,7 @@ class DOLFINxSolver(FEMSolverBase):
         """Set up boundary conditions."""
         self._bcs = []
 
-        if self.boundary_conditions == 'dirichlet':
+        if self.bc_type == 'dirichlet':
             # Homogeneous Dirichlet: u = 0 on boundary
             def boundary_all(x):
                 return np.logical_or(
@@ -141,11 +160,11 @@ class DOLFINxSolver(FEMSolverBase):
             )
             self._bcs = [bc_dirichlet]
 
-        elif self.boundary_conditions == 'neumann':
+        elif self.bc_type == 'neumann':
             # Natural boundary conditions (no explicit BCs needed)
             self._bcs = []
 
-        elif self.boundary_conditions == 'periodic':
+        elif self.bc_type == 'periodic':
             # Set up periodic constraint
             self._setup_periodic_bcs()
 
@@ -186,7 +205,7 @@ class DOLFINxSolver(FEMSolverBase):
         # Linear form: L(v) = ∫ f·v dx
         L = ufl.inner(f, v) * ufl.dx
 
-        if self.boundary_conditions == 'periodic':
+        if self.bc_type == 'periodic':
             # Handle periodic BCs with custom matrix modification
             return self._solve_periodic(a, L, f)
         else:
@@ -195,7 +214,7 @@ class DOLFINxSolver(FEMSolverBase):
 
     def _solve_standard(self, a, L, f):
         """Standard DOLFINx solve."""
-        if self.boundary_conditions == 'neumann':
+        if self.bc_type == 'neumann':
             # Singular system - use iterative solver
             petsc_options = {
                 "ksp_type": "cg",
@@ -228,7 +247,7 @@ class DOLFINxSolver(FEMSolverBase):
         solution_func = problem.solve()
 
         # Enforce zero mean for Neumann
-        if self.boundary_conditions == 'neumann':
+        if self.bc_type == 'neumann':
             dx = ufl.dx
             volume = dolfinx.fem.assemble_scalar(
                 dolfinx.fem.form(dolfinx.fem.Constant(self._mesh, 1.0) * dx)
@@ -311,14 +330,24 @@ class DOLFINxSolver(FEMSolverBase):
 
 
 class NativeFEMSolver(FEMSolverBase):
-    """Native Python FEM solver - only supports Dirichlet BCs."""
+    """Native Python FEM solver - supports Dirichlet BCs."""
 
     def __init__(self, interval: Union[Tuple[float, float], IntervalDomain],
-                 dof: int, boundary_conditions: str):
-        if boundary_conditions != 'dirichlet':
-            raise ValueError(
-                "NativeFEMSolver only supports 'dirichlet' boundary conditions"
-            )
+                 dof: int, boundary_conditions: Union[str, BoundaryConditions]):
+        # Check boundary conditions before calling parent constructor
+        if isinstance(boundary_conditions, str):
+            if boundary_conditions == 'dirichlet':
+                temp_bc = BoundaryConditions.dirichlet()
+            else:
+                raise ValueError(f"Unknown boundary condition string: {boundary_conditions}")
+        elif isinstance(boundary_conditions, BoundaryConditions):
+            temp_bc = boundary_conditions
+        else:
+            raise ValueError(f"boundary_conditions must be BoundaryConditions or str, got {type(boundary_conditions)}")
+
+        # Validate that native solver can handle this boundary condition type
+        if temp_bc.type != 'dirichlet':
+            raise ValueError(f"NativeFEMSolver only supports 'dirichlet' boundary conditions, got '{temp_bc.type}'")
 
         # Convert interval to IntervalDomain if needed
         if isinstance(interval, tuple):
@@ -364,7 +393,7 @@ class NativeFEMSolver(FEMSolverBase):
             self._dof,  # Interior nodes only (exclude boundaries)
             basis_type='hat',
             interval=(self.domain.a, self.domain.b),
-            boundary_conditions={'type': 'dirichlet'}
+            boundary_conditions=BoundaryConditions.dirichlet()
         )
 
     def _assemble_stiffness_matrix(self) -> np.ndarray:

@@ -95,7 +95,8 @@ class L2Function:
                 )
 
             # Ensure all support intervals are within domain
-            domain_a, domain_b = self.space.domain.a, self.space.domain.b
+            domain_a = self.space.function_domain.a
+            domain_b = self.space.function_domain.b
             for i, (a, b) in enumerate(support):
                 if not (
                     domain_a <= a < b <= domain_b
@@ -114,9 +115,9 @@ class L2Function:
         self.evaluate_callable = evaluate_callable
 
     @property
-    def domain(self):
+    def function_domain(self):
         """Get the IntervalDomain from the space."""
-        return self.space.domain
+        return self.space._function_domain
 
     @property
     def space_type(self):
@@ -256,8 +257,10 @@ class L2Function:
         # Check domain membership if requested
         if check_domain:
             x_array = np.asarray(x)
-            if not np.all(self.domain.contains(x_array)):
-                raise ValueError(f"Some points not in domain {self.domain}")
+            if not np.all(self.space.function_domain.contains(x_array)):
+                raise ValueError(
+                    f"Some points not in domain {self.space.function_domain}"
+                )
 
         # Check compact support first - return zero outside support
         if self.has_compact_support:
@@ -357,7 +360,7 @@ class L2Function:
             if weight is None:
                 # Direct integration over all support intervals
                 if self.evaluate_callable is not None:
-                    return self.domain.integrate(
+                    return self._function_domain.integrate(
                         self.evaluate_callable, method=method,
                         support=self.support
                     )
@@ -365,7 +368,7 @@ class L2Function:
                     # For basis representations
                     def integrand_coeffs(x):
                         return self.evaluate(x, check_domain=False)
-                    return self.domain.integrate(
+                    return self._function_domain.integrate(
                         integrand_coeffs, method=method,
                         support=self.support
                     )
@@ -375,7 +378,7 @@ class L2Function:
                 # Weighted integration over all support intervals
                 def weighted_integrand(x):
                     return self.evaluate(x, check_domain=False) * weight(x)
-                return self.domain.integrate(
+                return self._function_domain.integrate(
                     weighted_integrand, method=method,
                     support=self.support
                 )
@@ -384,18 +387,24 @@ class L2Function:
             if weight is None:
                 # Direct integration based on representation
                 if self.evaluate_callable is not None:
-                    return self.domain.integrate(self.evaluate_callable,
-                                                 method=method)
+                    return self.space.function_domain.integrate(
+                        self.evaluate_callable,
+                        method=method
+                    )
                 elif self.coefficients is not None:
                     # For basis representations, might have analytical formulas
                     def integrand_full(x):
                         return self.evaluate(x, check_domain=False)
-                    return self.domain.integrate(integrand_full, method=method)
+                    return self.space.function_domain.integrate(
+                        integrand_full, method=method
+                    )
             else:
                 def weighted_integrand_full(x):
                     return self.evaluate(x, check_domain=False) * weight(x)
-                return self.domain.integrate(weighted_integrand_full,
-                                             method=method)
+                return self.space.function_domain.integrate(
+                    weighted_integrand_full,
+                    method=method
+                )
 
         raise RuntimeError("No integration method available")
 
@@ -423,14 +432,14 @@ class L2Function:
             except ImportError:
                 pass  # Fall back to matplotlib defaults
 
-        x = self.domain.uniform_mesh(n_points)
+        x = self._function_domain.uniform_mesh(n_points)
         y = self.evaluate(x)
 
         plt.figure(figsize=figsize)
         plt.plot(x, y, label=self.name or "L² function", **kwargs)
         plt.xlabel('x')
         plt.ylabel('f(x)')
-        plt.title(f'Function on {self.domain}')
+        plt.title(f'Function on {self.space.function_domain}')
         if self.name:
             plt.legend()
         plt.grid(True, alpha=0.3)
@@ -564,7 +573,7 @@ class L2Function:
         return self.__mul__(other)
 
     def __repr__(self) -> str:
-        return (f"L2Function(domain={self.domain}, "
+        return (f"L2Function(domain={self.space.function_domain}, "
                 f"space_type={self.space_type}, name={self.name})")
 
     def copy(self):

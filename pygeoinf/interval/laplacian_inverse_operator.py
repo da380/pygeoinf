@@ -6,8 +6,9 @@ FEM solvers as backends (DOLFINx or native Python implementation).
 """
 
 import numpy as np
-from typing import Callable
+from typing import Callable, Union
 from .fem_solvers import create_fem_solver
+from .interval_domain import BoundaryConditions
 from pygeoinf.hilbert_space import LinearOperator
 from pygeoinf.interval.l2_functions import L2Function
 
@@ -25,7 +26,7 @@ class LaplacianInverseOperator(LinearOperator):
     """
 
     def __init__(self, domain, mesh_resolution: int = 100,
-                 boundary_conditions: str = "dirichlet",
+                 boundary_conditions: Union[str, BoundaryConditions] = "dirichlet",
                  solver_type: str = "auto"):
         """
         Initialize the Laplacian inverse operator.
@@ -33,12 +34,27 @@ class LaplacianInverseOperator(LinearOperator):
         Args:
             domain: The L2Space or SobolevSpace where functions live
             mesh_resolution: Number of FEM elements
-            boundary_conditions: 'dirichlet', 'neumann', or 'periodic'
+            boundary_conditions: BoundaryConditions object or str for backward compatibility
             solver_type: 'dolfinx', 'native', or 'auto'
         """
         self._domain = domain
         self._mesh_resolution = mesh_resolution
-        self._boundary_conditions = boundary_conditions
+
+        # Convert string to BoundaryConditions object if needed
+        if isinstance(boundary_conditions, str):
+            if boundary_conditions == 'dirichlet':
+                self._boundary_conditions = BoundaryConditions.dirichlet()
+            elif boundary_conditions == 'neumann':
+                self._boundary_conditions = BoundaryConditions.neumann()
+            elif boundary_conditions == 'periodic':
+                self._boundary_conditions = BoundaryConditions.periodic()
+            else:
+                raise ValueError(f"Unknown boundary condition string: {boundary_conditions}")
+        elif isinstance(boundary_conditions, BoundaryConditions):
+            self._boundary_conditions = boundary_conditions
+        else:
+            raise ValueError(f"boundary_conditions must be BoundaryConditions or str, got {type(boundary_conditions)}")
+
         self._interval = (domain.domain.a, domain.domain.b)
 
         # Choose solver type
@@ -71,7 +87,7 @@ class LaplacianInverseOperator(LinearOperator):
             self._solver_type,
             self._interval,
             mesh_resolution,
-            boundary_conditions
+            self._boundary_conditions
         )
         self._fem_solver.setup()
 
@@ -126,8 +142,8 @@ class LaplacianInverseOperator(LinearOperator):
         return self._solver_type
 
     @property
-    def boundary_conditions(self) -> str:
-        """Get the boundary condition type."""
+    def boundary_conditions(self) -> BoundaryConditions:
+        """Get the boundary conditions object."""
         return self._boundary_conditions
 
     @property
