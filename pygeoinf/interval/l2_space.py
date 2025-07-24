@@ -11,6 +11,9 @@ import math
 from pygeoinf.hilbert_space import HilbertSpace
 from pygeoinf.hilbert_space import LinearForm
 from pygeoinf.interval.l2_functions import L2Function
+from pygeoinf.interval.interval_domain import (
+    BoundaryConditions, IntervalDomain
+)
 
 
 class LazyL2BasisProvider:
@@ -21,7 +24,7 @@ class LazyL2BasisProvider:
     memory issues with high-dimensional spaces.
     """
 
-    def __init__(self, space, basis_type: str, dim: int):
+    def __init__(self, space, basis_type: str):
         """
         Initialize the lazy basis provider.
 
@@ -33,7 +36,6 @@ class LazyL2BasisProvider:
         """
         self.space = space
         self.basis_type = basis_type
-        self.dim = dim
         self._cache = {}
 
     def get_basis_function(self, index: int):
@@ -46,9 +48,9 @@ class LazyL2BasisProvider:
         Returns:
             L2Function for that index
         """
-        if not (0 <= index < self.dim):
+        if not (0 <= index < self.space.dim):
             raise IndexError(
-                f"Basis index {index} out of range [0, {self.dim})"
+                f"Basis index {index} out of range [0, {self.space.dim})"
             )
 
         if index not in self._cache:
@@ -69,10 +71,10 @@ class LazyL2BasisProvider:
     def _create_fourier_basis_function(self, index: int):
         """Create a single Fourier basis function."""
         bc = self.space.boundary_conditions
-        interval = self.space.interval
-        length = interval[1] - interval[0]
+        domain = self.space.domain
+        length = domain.b - domain.a
 
-        if bc is None or bc.get('type') == 'periodic':
+        if bc is None or bc.type == 'periodic':
             # Periodic boundary conditions: full Fourier basis
             normalization_factor = math.sqrt(2 / length)
 
@@ -94,7 +96,7 @@ class LazyL2BasisProvider:
                 if index % 2 == 1:  # Odd indices are cosine
                     def cosine_func(x):
                         return (normalization_factor *
-                                np.cos(freq * (x - interval[0])))
+                                np.cos(freq * (x - domain.a)))
                     return L2Function(
                         self.space,
                         evaluate_callable=cosine_func,
@@ -103,7 +105,7 @@ class LazyL2BasisProvider:
                 else:  # Even indices > 0 are sine
                     def sine_func(x):
                         return (normalization_factor *
-                                np.sin(freq * (x - interval[0])))
+                                np.sin(freq * (x - domain.a)))
                     return L2Function(
                         self.space,
                         evaluate_callable=sine_func,
@@ -111,7 +113,7 @@ class LazyL2BasisProvider:
                     )
         else:
             raise NotImplementedError(
-                f"Boundary condition type '{bc.get('type')}' "
+                f"Boundary condition type '{bc.type}' "
                 "not implemented yet"
             )
 
@@ -121,11 +123,11 @@ class LazyL2BasisProvider:
         These are interior hat functions that vanish at the boundaries,
         suitable for homogeneous Dirichlet boundary conditions.
         """
-        interval = self.space.interval
+        domain = self.space.domain
 
         # Create uniform mesh for hat functions
         # For dim basis functions, we need dim+2 nodes (including boundaries)
-        nodes = np.linspace(interval[0], interval[1], self.dim + 2)
+        nodes = np.linspace(domain.a, domain.b, self.space.dim + 2)
         element_size = nodes[1] - nodes[0]
 
         # Hat function φᵢ has support on [nodes[i], nodes[i+2]]
@@ -178,12 +180,12 @@ class LazyL2BasisProvider:
         These include boundary functions and interior functions,
         forming a complete basis without boundary conditions.
         """
-        interval = self.space.interval
+        domain = self.space.domain
 
         # For full hat functions, we have dim nodes from a to b
-        nodes = np.linspace(interval[0], interval[1], self.dim)
+        nodes = np.linspace(domain.a, domain.b, self.space.dim)
 
-        if self.dim == 1:
+        if self.space.dim == 1:
             # Special case: single node (constant function)
             def constant_hat_func(x):
                 x_array = np.asarray(x)
@@ -193,7 +195,7 @@ class LazyL2BasisProvider:
                 self.space,
                 evaluate_callable=constant_hat_func,
                 name=f'φ_{index}',
-                support=interval
+                support=(domain.a, domain.b)
             )
 
         element_size = nodes[1] - nodes[0]
@@ -202,7 +204,7 @@ class LazyL2BasisProvider:
         # Determine support based on position
         if index == 0:
             # Left boundary: half-hat from left boundary to first interior
-            support = (interval[0], nodes[1])
+            support = (domain.a, nodes[1])
 
             def left_boundary_hat_func(x):
                 x_array = np.asarray(x)
@@ -222,9 +224,9 @@ class LazyL2BasisProvider:
 
             hat_func = left_boundary_hat_func
 
-        elif index == self.dim - 1:
+        elif index == self.space.dim - 1:
             # Right boundary: half-hat from last interior to right boundary
-            support = (nodes[-2], interval[1])
+            support = (nodes[-2], domain.b)
 
             def right_boundary_hat_func(x):
                 x_array = np.asarray(x)
@@ -295,11 +297,11 @@ class LazyL2BasisProvider:
 
     def __len__(self):
         """Return the dimension of the space."""
-        return self.dim
+        return self.space.dim
 
     def __iter__(self):
         """Allow iteration over basis functions."""
-        for i in range(self.dim):
+        for i in range(self.space.dim):
             yield self.get_basis_function(i)
 
 
@@ -322,10 +324,9 @@ class L2Space(HilbertSpace):
         dim: int,
         /,
         *,
-        basis_functions=None,
-        basis_type='fourier',
-        interval=(0, 1),
-        boundary_conditions=None,
+        basis_functions: list = None,
+        basis_type: str = 'fourier',
+        domain: IntervalDomain,
     ):
         """
         Args:
@@ -335,16 +336,14 @@ class L2Space(HilbertSpace):
             basis_type (str): Type of basis functions
                 ('fourier', 'hat', 'hat_homogeneous').
                 Only used if basis_functions is None.
-            interval (tuple): Interval endpoints (a, b). Default is (0, 1).
-            boundary_conditions (dict, optional): Boundary conditions
-                specification. If None, defaults to periodic for Fourier,
-                dirichlet for hat, and homogeneous_dirichlet for
-                hat_homogeneous.
+            domain (IntervalDomain): Domain object with optional boundary
+                conditions. If boundary conditions are not specified in the
+                domain, defaults will be applied based on basis_type:
+                periodic for Fourier, dirichlet for hat, and homogeneous
+                dirichlet for hat_homogeneous.
         """
         self._dim = dim
-        self._interval = interval
-        self._a, self._b = interval
-        self._length = self._b - self._a
+        self._domain = domain
 
         # Determine basis type from either explicit type or existing functions
         if basis_functions is not None:
@@ -358,29 +357,33 @@ class L2Space(HilbertSpace):
         else:
             self._basis_type = basis_type
 
-        # Store boundary conditions with validation
+        # Store boundary conditions with validation and conversion
+        boundary_conditions = domain.boundary_conditions
         if boundary_conditions is None:
             if basis_type == 'fourier' or self._basis_type == 'fourier':
-                self._boundary_conditions = {'type': 'periodic'}
+                self._boundary_conditions = BoundaryConditions.periodic()
             elif basis_type == 'hat' or self._basis_type == 'hat':
-                self._boundary_conditions = {'type': 'dirichlet'}
+                self._boundary_conditions = BoundaryConditions.dirichlet()
             elif (basis_type == 'hat_homogeneous' or
                   self._basis_type == 'hat_homogeneous'):
-                self._boundary_conditions = {'type': 'homogeneous_dirichlet'}
+                self._boundary_conditions = (
+                    BoundaryConditions.dirichlet(0.0, 0.0)
+                )
             else:
                 self._boundary_conditions = None
-        else:
+        elif isinstance(boundary_conditions, BoundaryConditions) or (
+            hasattr(boundary_conditions, '__class__') and
+            boundary_conditions.__class__.__name__ == 'BoundaryConditions'
+        ):
             self._boundary_conditions = boundary_conditions
+        else:
+            raise ValueError(
+                "domain.boundary_conditions must be BoundaryConditions "
+                "object or None"
+            )
 
         # Validate boundary condition and basis type compatibility
         self._validate_basis_boundary_compatibility()
-
-        # Store IntervalDomain object
-        from .interval_domain import IntervalDomain
-        self._domain = IntervalDomain(
-            self._a, self._b, boundary_type='closed',
-            name=f'[{self._a}, {self._b}]'
-        )
 
         # Create or store basis functions
         if basis_functions is not None:
@@ -389,7 +392,7 @@ class L2Space(HilbertSpace):
         else:
             # Create lazy basis provider instead of all functions upfront
             self._basis_provider = LazyL2BasisProvider(
-                self, basis_type, dim
+                self, basis_type
             )
             self._basis_functions = None  # Will be created on demand
 
@@ -412,14 +415,18 @@ class L2Space(HilbertSpace):
         if self._boundary_conditions is None:
             return
 
-        bc_type = self._boundary_conditions.get('type')
+        bc_type = self._boundary_conditions.type
 
         # Define compatibility rules
         if self._basis_type == 'hat_homogeneous':
-            if bc_type != 'homogeneous_dirichlet':
+            is_homogeneous_dirichlet = (
+                bc_type == 'dirichlet' and
+                self._boundary_conditions.is_homogeneous
+            )
+            if not is_homogeneous_dirichlet:
                 raise ValueError(
                     f"Basis type 'hat_homogeneous' requires "
-                    f"'homogeneous_dirichlet' boundary conditions, "
+                    f"homogeneous Dirichlet boundary conditions, "
                     f"got '{bc_type}'"
                 )
 
@@ -427,7 +434,7 @@ class L2Space(HilbertSpace):
         valid_combinations = {
             'fourier': ['periodic'],
             'hat': ['dirichlet', 'neumann'],
-            'hat_homogeneous': ['homogeneous_dirichlet']
+            'hat_homogeneous': ['dirichlet']  # Only homogeneous dirichlet
         }
 
         if self._basis_type in valid_combinations:
@@ -436,7 +443,19 @@ class L2Space(HilbertSpace):
                 raise ValueError(
                     f"Basis type '{self._basis_type}' is not compatible "
                     f"with boundary condition '{bc_type}'. "
-                    f"Valid options: {valid_bcs}"
+                    f"Valid boundary conditions: {valid_bcs}"
+                )
+
+            # Special check for hat_homogeneous: must be homogeneous dirichlet
+            is_hat_homogeneous_special_case = (
+                self._basis_type == 'hat_homogeneous' and
+                bc_type == 'dirichlet' and
+                not self._boundary_conditions.is_homogeneous
+            )
+            if is_hat_homogeneous_special_case:
+                raise ValueError(
+                    "Basis type 'hat_homogeneous' requires "
+                    "homogeneous Dirichlet boundary conditions"
                 )
 
     @property
@@ -451,8 +470,8 @@ class L2Space(HilbertSpace):
 
     @property
     def interval(self):
-        """Return the interval endpoints."""
-        return self._interval
+        """Return the interval endpoints from domain."""
+        return (self._domain.a, self._domain.b)
 
     def get_basis_function(self, index: int):
         """Get basis function by index, works with both lazy and explicit."""
