@@ -16,12 +16,13 @@ from pygeoinf.interval.interval_domain import (
 )
 
 
-class LazyL2BasisProvider:
+class LazyBasisProvider:
     """
-    Lazy provider for L2 basis functions.
+    Base lazy provider for basis functions.
 
     Creates basis functions on demand and caches them to avoid
-    memory issues with high-dimensional spaces.
+    memory issues with high-dimensional spaces. This is the base
+    class that provides only basis functions, no eigenvalue information.
     """
 
     def __init__(self, space, basis_type: str):
@@ -29,10 +30,9 @@ class LazyL2BasisProvider:
         Initialize the lazy basis provider.
 
         Args:
-            space: L2Space that owns this provider
+            space: Space that owns this provider (L2Space or Sobolev)
             basis_type: Type of basis functions
                 ('fourier', 'hat', 'hat_homogeneous')
-            dim: Dimension of the space
         """
         self.space = space
         self.basis_type = basis_type
@@ -68,10 +68,23 @@ class LazyL2BasisProvider:
         else:
             raise ValueError(f"Unsupported basis type: {self.basis_type}")
 
+    def __getitem__(self, index: int):
+        """Allow indexing syntax: provider[i]."""
+        return self.get_basis_function(index)
+
+    def __len__(self):
+        """Return the dimension of the space."""
+        return self.space.dim
+
+    def __iter__(self):
+        """Allow iteration over basis functions."""
+        for i in range(self.space.dim):
+            yield self.get_basis_function(i)
+
     def _create_fourier_basis_function(self, index: int):
         """Create a single Fourier basis function."""
         bc = self.space.boundary_conditions
-        domain = self.space._function_domain
+        domain = self.space.function_domain
         length = domain.b - domain.a
 
         if bc is None or bc.type == 'periodic':
@@ -291,18 +304,112 @@ class LazyL2BasisProvider:
             support=support
         )
 
-    def __getitem__(self, index: int):
-        """Allow indexing syntax: provider[i]."""
+
+class LazySpectrumProvider(LazyBasisProvider):
+    """
+    Lazy provider for eigenfunctions and eigenvalues (spectral information).
+
+    Extends LazyBasisProvider to include eigenvalue information needed
+    for spectral inner products in Sobolev spaces.
+    """
+
+    def __init__(self, space, basis_type: str, operator=None):
+        """
+        Initialize the lazy spectrum provider.
+
+        Args:
+            space: Space that owns this provider
+            basis_type: Type of basis functions (must be eigenfunctions)
+            operator: Optional operator whose spectrum defines eigenvalues
+        """
+        super().__init__(space, basis_type)
+        self.operator = operator
+        self._eigenvalue_cache = {}
+
+    def get_eigenvalue(self, index: int):
+        """
+        Get eigenvalue for given basis function index.
+
+        Args:
+            index: Index of the eigenfunction (0 to dim-1)
+
+        Returns:
+            float: Eigenvalue corresponding to the eigenfunction
+        """
+        if not (0 <= index < self.space.dim):
+            raise IndexError(
+                f"Eigenvalue index {index} out of range [0, {self.space.dim})"
+            )
+
+        if index not in self._eigenvalue_cache:
+            self._eigenvalue_cache[index] = self._compute_eigenvalue(index)
+        return self._eigenvalue_cache[index]
+
+    def get_eigenfunction(self, index: int):
+        """
+        Get eigenfunction for given index.
+
+        This is the same as get_basis_function but emphasizes that
+        these are eigenfunctions of some operator.
+        """
         return self.get_basis_function(index)
 
-    def __len__(self):
-        """Return the dimension of the space."""
-        return self.space.dim
+    def _compute_eigenvalue(self, index: int):
+        """
+        Compute eigenvalue for given index.
 
-    def __iter__(self):
-        """Allow iteration over basis functions."""
-        for i in range(self.space.dim):
-            yield self.get_basis_function(i)
+        Uses the cached computation from _compute_all_eigenvalues()
+        to ensure consistency and efficiency.
+        """
+        # Compute all eigenvalues and cache them
+        if not hasattr(self, '_all_eigenvalues'):
+            self._all_eigenvalues = self._compute_all_eigenvalues()
+        return self._all_eigenvalues[index]
+
+    def _compute_all_eigenvalues(self):
+        """Compute all eigenvalues at once."""
+        # This will be implemented differently for different spaces
+        # For now, implement Fourier basis with periodic boundary conditions
+        if self.basis_type == 'fourier':
+            return self._compute_fourier_eigenvalues()
+        else:
+            # For non-Fourier bases, return zeros as placeholder
+            return np.zeros(self.space.dim)
+
+    def _compute_fourier_eigenvalues(self):
+        """
+        Compute eigenvalues for Fourier basis with periodic boundary
+        conditions.
+
+        For the negative Laplacian operator -Δ with periodic BCs on [a,b]:
+        - Eigenfunction φ₀ = 1 (constant) → eigenvalue λ₀ = 0
+        - Eigenfunctions φ₂ₖ₋₁ = cos(2πkx/L), φ₂ₖ = sin(2πkx/L)
+          → eigenvalue λₖ = (2πk/L)² for both cos and sin modes
+
+        where L = b - a is the domain length.
+        """
+        domain = self.space.function_domain
+        length = domain.b - domain.a
+        dim = self.space.dim
+
+        eigenvalues = np.zeros(dim)
+
+        for index in range(dim):
+            if index == 0:
+                # Constant term has eigenvalue 0
+                eigenvalues[index] = 0.0
+            else:
+                # For index > 0, we alternate between cosine and sine
+                k = (index + 1) // 2  # Frequency index
+                # Both cos and sin modes have the same eigenvalue
+                eigenval = (2 * k * math.pi / length) ** 2
+                eigenvalues[index] = eigenval
+
+        return eigenvalues
+
+
+# Keep backward compatibility alias
+LazyL2BasisProvider = LazyBasisProvider
 
 
 class L2Space(HilbertSpace):
@@ -391,7 +498,7 @@ class L2Space(HilbertSpace):
             self._basis_provider = None  # No lazy provider needed
         else:
             # Create lazy basis provider instead of all functions upfront
-            self._basis_provider = LazyL2BasisProvider(
+            self._basis_provider = LazyBasisProvider(
                 self, basis_type
             )
             self._basis_functions = None  # Will be created on demand
