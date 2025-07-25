@@ -27,6 +27,7 @@ from .l2_space import L2Space
 from .l2_functions import L2Function
 from .sobolev_space import Sobolev
 from .interval_domain import IntervalDomain
+from .boundary_conditions import BoundaryConditions
 
 # LaplacianInverseOperator (requires DOLFINx)
 try:
@@ -43,6 +44,7 @@ __all__ = [
     'L2Function',
     'Sobolev',
     'IntervalDomain',
+    'BoundaryConditions',
 ]
 
 if LAPLACIAN_OPERATOR_AVAILABLE:

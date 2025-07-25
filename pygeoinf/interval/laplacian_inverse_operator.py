@@ -8,7 +8,7 @@ FEM solvers as backends (DOLFINx or native Python implementation).
 import numpy as np
 from typing import Callable, Union
 from .fem_solvers import create_fem_solver
-from .interval_domain import BoundaryConditions
+from .boundary_conditions import BoundaryConditions
 from pygeoinf.hilbert_space import LinearOperator
 from pygeoinf.interval.l2_functions import L2Function
 

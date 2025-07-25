@@ -14,7 +14,8 @@ from abc import ABC, abstractmethod
 from typing import Tuple, Optional, Callable, Union
 import warnings
 
-from .interval_domain import IntervalDomain, BoundaryConditions
+from .interval_domain import IntervalDomain
+from .boundary_conditions import BoundaryConditions
 from .l2_functions import L2Function
 
 try:

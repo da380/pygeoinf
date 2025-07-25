@@ -14,9 +14,8 @@ from pygeoinf.interval.l2_space import L2Space
 from pygeoinf.interval.providers import (
     LazyBasisProvider, LazySpectrumProvider, CustomSpectrumProvider
 )
-from pygeoinf.interval.interval_domain import (
-    IntervalDomain, BoundaryConditions
-)
+from pygeoinf.interval.interval_domain import IntervalDomain
+from pygeoinf.interval.boundary_conditions import BoundaryConditions
 
 
 class Sobolev(L2Space):
