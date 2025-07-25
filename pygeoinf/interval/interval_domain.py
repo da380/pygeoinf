@@ -21,8 +21,7 @@ class IntervalDomain:
 
     def __init__(self, a: float, b: float, *,
                  boundary_type: str = 'closed',
-                 name: Optional[str] = None,
-                 boundary_conditions: Optional['BoundaryConditions'] = None):
+                 name: Optional[str] = None):
         """
         Initialize an interval domain.
 
@@ -32,8 +31,6 @@ class IntervalDomain:
             boundary_type: Type of interval
                 ('closed', 'open', 'left_open', 'right_open')
             name: Optional name for the domain
-            boundary_conditions: Optional boundary conditions for function
-                spaces
         """
         if a >= b:
             raise ValueError(
@@ -44,7 +41,6 @@ class IntervalDomain:
         self.b = float(b)
         self.boundary_type = boundary_type
         self.name = name or f"[{a}, {b}]"
-        self.boundary_conditions = boundary_conditions
 
     @property
     def length(self) -> float:
@@ -332,36 +328,6 @@ class IntervalDomain:
 
         return IntervalDomain(c, d, boundary_type=self.boundary_type)
 
-    def with_boundary_conditions(
-        self, boundary_conditions: 'BoundaryConditions'
-    ) -> 'IntervalDomain':
-        """
-        Create a new IntervalDomain with specified boundary conditions.
-
-        Args:
-            boundary_conditions: Boundary conditions to attach
-
-        Returns:
-            New IntervalDomain with boundary conditions
-        """
-        return IntervalDomain(
-            self.a, self.b,
-            boundary_type=self.boundary_type,
-            name=self.name,
-            boundary_conditions=boundary_conditions
-        )
-
-    def set_boundary_conditions(
-        self, boundary_conditions: Optional['BoundaryConditions']
-    ) -> None:
-        """
-        Set boundary conditions on this IntervalDomain instance (in-place).
-
-        Args:
-            boundary_conditions: Boundary conditions to set, or None to clear
-        """
-        self.boundary_conditions = boundary_conditions
-
     def __repr__(self) -> str:
         if self.boundary_type in ['closed', 'right_open']:
             bracket_left = '['
@@ -379,165 +345,4 @@ class IntervalDomain:
         if not isinstance(other, IntervalDomain):
             return False
         return (self.a == other.a and self.b == other.b and
-                self.boundary_type == other.boundary_type and
-                self.boundary_conditions == other.boundary_conditions)
-
-
-class BoundaryConditions:
-    """
-    Boundary condition specifications for function spaces on intervals.
-
-    This class provides a unified interface for all boundary condition types
-    used across L² spaces, Sobolev spaces, and FEM solvers.
-    """
-
-    def __init__(self, bc_type: str, **kwargs):
-        """
-        Initialize boundary conditions.
-
-        Args:
-            bc_type: Type of boundary condition. One of:
-                - 'dirichlet':
-                    left (float, optional): Value at left boundary
-                        (default 0.0)
-                    right (float, optional): Value at right boundary
-                        (default 0.0)
-                - 'neumann':
-                    left (float, optional): Derivative at left boundary
-                        (default 0.0)
-                    right (float, optional): Derivative at right boundary
-                        (default 0.0)
-                - 'robin':
-                    left_alpha (float): Coefficient for u(a)
-                    left_beta (float): Coefficient for u'(a)
-                    left_value (float): Value at left boundary
-                    right_alpha (float): Coefficient for u(b)
-                    right_beta (float): Coefficient for u'(b)
-                    right_value (float): Value at right boundary
-                - 'periodic':
-                    (no additional parameters)
-            **kwargs: See above for valid keyword arguments for each type.
-        """
-        self.type = bc_type
-        self._params = kwargs
-        self._validate()
-
-    def _validate(self):
-        """Validate boundary condition parameters."""
-        valid_types = {'dirichlet', 'neumann', 'robin', 'periodic'}
-
-        if self.type not in valid_types:
-            raise ValueError(
-                f"Invalid boundary condition type '{self.type}'. "
-                f"Valid types: {valid_types}"
-            )
-
-        # Type-specific validation
-        if self.type == 'dirichlet':
-            # Default values if not provided
-            self._params.setdefault('left', 0.0)
-            self._params.setdefault('right', 0.0)
-
-        elif self.type == 'neumann':
-            self._params.setdefault('left', 0.0)
-            self._params.setdefault('right', 0.0)
-
-        elif self.type == 'robin':
-            required = [
-                'left_alpha', 'left_beta', 'left_value',
-                'right_alpha', 'right_beta', 'right_value'
-            ]
-            for param in required:
-                if param not in self._params:
-                    raise ValueError(
-                        f"Robin boundary conditions require '{param}'"
-                    )
-
-        elif self.type == 'periodic':
-            # No additional parameters needed
-            pass
-
-    @property
-    def is_homogeneous(self) -> bool:
-        """Check if boundary conditions are homogeneous."""
-        if self.type == 'dirichlet':
-            return (self._params.get('left', 0) == 0 and
-                    self._params.get('right', 0) == 0)
-        elif self.type == 'neumann':
-            return (self._params.get('left', 0) == 0 and
-                    self._params.get('right', 0) == 0)
-        elif self.type == 'periodic':
-            return True  # Periodic BCs are considered homogeneous
-        else:
-            return False
-
-    def get_parameter(self, name: str, default=None):
-        """Get a boundary condition parameter."""
-        return self._params.get(name, default)
-
-    @classmethod
-    def dirichlet(cls, left_value: float = 0,
-                  right_value: float = 0) -> 'BoundaryConditions':
-        """
-        Dirichlet boundary conditions: u(a) = left_value, u(b) = right_value.
-
-        Args:
-            left_value: Value at left boundary
-            right_value: Value at right boundary
-        """
-        return cls('dirichlet', left=left_value, right=right_value)
-
-    @classmethod
-    def neumann(cls, left_derivative: float = 0,
-                right_derivative: float = 0) -> 'BoundaryConditions':
-        """
-        Neumann boundary conditions:
-        u'(a) = left_derivative, u'(b) = right_derivative.
-
-        Args:
-            left_derivative: Derivative value at left boundary
-            right_derivative: Derivative value at right boundary
-        """
-        return cls('neumann', left=left_derivative, right=right_derivative)
-
-    @classmethod
-    def robin(cls, left_alpha: float, left_beta: float, left_value: float,
-              right_alpha: float, right_beta: float,
-              right_value: float) -> 'BoundaryConditions':
-        """
-        Robin boundary conditions: αu + βu' = value at boundaries.
-
-        Args:
-            left_alpha, left_beta, left_value: Left boundary coefficients
-            right_alpha, right_beta, right_value: Right boundary coefficients
-        """
-        return cls('robin',
-                   left_alpha=left_alpha, left_beta=left_beta,
-                   left_value=left_value, right_alpha=right_alpha,
-                   right_beta=right_beta, right_value=right_value)
-
-    @classmethod
-    def periodic(cls) -> 'BoundaryConditions':
-        """
-        Periodic boundary conditions: u(a) = u(b), u'(a) = u'(b).
-        """
-        return cls('periodic')
-
-    def __str__(self) -> str:
-        """String representation."""
-        if self.type == 'periodic':
-            return f"{self.type}"
-        else:
-            params_str = ', '.join(f"{k}={v}" for k, v in self._params.items())
-            return f"{self.type}({params_str})"
-
-    def __repr__(self) -> str:
-        """Representation."""
-        return f"BoundaryConditions('{self.type}', {self._params})"
-
-    def __eq__(self, other) -> bool:
-        """Equality comparison."""
-        if isinstance(other, BoundaryConditions):
-            return (self.type == other.type and
-                    self._params == other._params)
-        return False
+                self.boundary_type == other.boundary_type)

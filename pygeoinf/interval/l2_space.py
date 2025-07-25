@@ -6,406 +6,12 @@ for more specialized function spaces like Sobolev spaces.
 """
 
 import numpy as np
-import math
 
 from pygeoinf.hilbert_space import HilbertSpace
 from pygeoinf.hilbert_space import LinearForm
 from pygeoinf.interval.l2_functions import L2Function
-from pygeoinf.interval.interval_domain import (
-    BoundaryConditions, IntervalDomain
-)
-
-
-class LazyBasisProvider:
-    """
-    Base lazy provider for basis functions.
-
-    Creates basis functions on demand and caches them to avoid
-    memory issues with high-dimensional spaces. This is the base
-    class that provides only basis functions, no eigenvalue information.
-    """
-
-    def __init__(self, space, basis_type: str):
-        """
-        Initialize the lazy basis provider.
-
-        Args:
-            space: Space that owns this provider (L2Space or Sobolev)
-            basis_type: Type of basis functions
-                ('fourier', 'hat', 'hat_homogeneous')
-        """
-        self.space = space
-        self.basis_type = basis_type
-        self._cache = {}
-
-    def get_basis_function(self, index: int):
-        """
-        Get basis function for given index.
-
-        Args:
-            index: Index of the basis function (0 to dim-1)
-
-        Returns:
-            L2Function for that index
-        """
-        if not (0 <= index < self.space.dim):
-            raise IndexError(
-                f"Basis index {index} out of range [0, {self.space.dim})"
-            )
-
-        if index not in self._cache:
-            self._cache[index] = self._create_basis_function(index)
-        return self._cache[index]
-
-    def _create_basis_function(self, index: int):
-        """Create a single basis function for the given index."""
-        if self.basis_type == 'fourier':
-            return self._create_fourier_basis_function(index)
-        elif self.basis_type == 'hat':
-            return self._create_full_hat_basis_function(index)
-        elif self.basis_type == 'hat_homogeneous':
-            return self._create_homogeneous_hat_basis_function(index)
-        else:
-            raise ValueError(f"Unsupported basis type: {self.basis_type}")
-
-    def __getitem__(self, index: int):
-        """Allow indexing syntax: provider[i]."""
-        return self.get_basis_function(index)
-
-    def __len__(self):
-        """Return the dimension of the space."""
-        return self.space.dim
-
-    def __iter__(self):
-        """Allow iteration over basis functions."""
-        for i in range(self.space.dim):
-            yield self.get_basis_function(i)
-
-    def _create_fourier_basis_function(self, index: int):
-        """Create a single Fourier basis function."""
-        bc = self.space.boundary_conditions
-        domain = self.space.function_domain
-        length = domain.b - domain.a
-
-        if bc is None or bc.type == 'periodic':
-            # Periodic boundary conditions: full Fourier basis
-            normalization_factor = math.sqrt(2 / length)
-
-            if index == 0:
-                # Constant term
-                def constant_func(x):
-                    return (normalization_factor *
-                            np.ones_like(x) / np.sqrt(2))
-                return L2Function(
-                    self.space,
-                    evaluate_callable=constant_func,
-                    name='constant'
-                )
-            else:
-                # For index > 0, we alternate between cosine and sine
-                k = (index + 1) // 2  # Frequency index
-                freq = 2 * k * math.pi / length
-
-                if index % 2 == 1:  # Odd indices are cosine
-                    def cosine_func(x):
-                        return (normalization_factor *
-                                np.cos(freq * (x - domain.a)))
-                    return L2Function(
-                        self.space,
-                        evaluate_callable=cosine_func,
-                        name=f'cos_{k}'
-                    )
-                else:  # Even indices > 0 are sine
-                    def sine_func(x):
-                        return (normalization_factor *
-                                np.sin(freq * (x - domain.a)))
-                    return L2Function(
-                        self.space,
-                        evaluate_callable=sine_func,
-                        name=f'sin_{k}'
-                    )
-        else:
-            raise NotImplementedError(
-                f"Boundary condition type '{bc.type}' "
-                "not implemented yet"
-            )
-
-    def _create_homogeneous_hat_basis_function(self, index: int):
-        """Create a single homogeneous hat (piecewise linear) basis function.
-
-        These are interior hat functions that vanish at the boundaries,
-        suitable for homogeneous Dirichlet boundary conditions.
-        """
-        domain = self.space._function_domain
-
-        # Create uniform mesh for hat functions
-        # For dim basis functions, we need dim+2 nodes (including boundaries)
-        nodes = np.linspace(domain.a, domain.b, self.space.dim + 2)
-        element_size = nodes[1] - nodes[0]
-
-        # Hat function φᵢ has support on [nodes[i], nodes[i+2]]
-        # and has value 1 at nodes[i+1]
-        node_index = index + 1  # Interior node index
-        support = (nodes[index], nodes[index + 2])
-
-        def hat_func(x):
-            x_array = np.asarray(x)
-            is_scalar = x_array.ndim == 0
-            if is_scalar:
-                x_array = x_array.reshape(1)
-
-            result = np.zeros_like(x_array, dtype=float)
-
-            # Left element: increasing from 0 to 1
-            in_left_element = (
-                (x_array >= support[0]) &
-                (x_array <= nodes[node_index])
-            )
-            if np.any(in_left_element):
-                x_left = x_array[in_left_element]
-                result[in_left_element] = (
-                    (x_left - support[0]) / element_size
-                )
-
-            # Right element: decreasing from 1 to 0
-            in_right_element = (
-                (x_array > nodes[node_index]) &
-                (x_array <= support[1])
-            )
-            if np.any(in_right_element):
-                x_right = x_array[in_right_element]
-                result[in_right_element] = (
-                    (support[1] - x_right) / element_size
-                )
-
-            return result.item() if is_scalar else result
-
-        return L2Function(
-            self.space,
-            evaluate_callable=hat_func,
-            name=f'φ_{index}',
-            support=support
-        )
-
-    def _create_full_hat_basis_function(self, index: int):
-        """Create a single full hat (piecewise linear) basis function.
-
-        These include boundary functions and interior functions,
-        forming a complete basis without boundary conditions.
-        """
-        domain = self.space._function_domain
-
-        # For full hat functions, we have dim nodes from a to b
-        nodes = np.linspace(domain.a, domain.b, self.space.dim)
-
-        if self.space.dim == 1:
-            # Special case: single node (constant function)
-            def constant_hat_func(x):
-                x_array = np.asarray(x)
-                return np.ones_like(x_array, dtype=float)
-
-            return L2Function(
-                self.space,
-                evaluate_callable=constant_hat_func,
-                name=f'φ_{index}',
-                support=(domain.a, domain.b)
-            )
-
-        element_size = nodes[1] - nodes[0]
-        node_x = nodes[index]
-
-        # Determine support based on position
-        if index == 0:
-            # Left boundary: half-hat from left boundary to first interior
-            support = (domain.a, nodes[1])
-
-            def left_boundary_hat_func(x):
-                x_array = np.asarray(x)
-                is_scalar = x_array.ndim == 0
-                if is_scalar:
-                    x_array = x_array.reshape(1)
-
-                result = np.zeros_like(x_array, dtype=float)
-
-                # Decreasing from 1 to 0
-                in_support = (x_array >= support[0]) & (x_array <= support[1])
-                if np.any(in_support):
-                    x_support = x_array[in_support]
-                    result[in_support] = (nodes[1] - x_support) / element_size
-
-                return result.item() if is_scalar else result
-
-            hat_func = left_boundary_hat_func
-
-        elif index == self.space.dim - 1:
-            # Right boundary: half-hat from last interior to right boundary
-            support = (nodes[-2], domain.b)
-
-            def right_boundary_hat_func(x):
-                x_array = np.asarray(x)
-                is_scalar = x_array.ndim == 0
-                if is_scalar:
-                    x_array = x_array.reshape(1)
-
-                result = np.zeros_like(x_array, dtype=float)
-
-                # Increasing from 0 to 1
-                in_support = (x_array >= support[0]) & (x_array <= support[1])
-                if np.any(in_support):
-                    x_support = x_array[in_support]
-                    result[in_support] = (x_support - nodes[-2]) / element_size
-
-                return result.item() if is_scalar else result
-
-            hat_func = right_boundary_hat_func
-
-        else:
-            # Interior: full triangle hat
-            support = (nodes[index-1], nodes[index+1])
-
-            def interior_hat_func(x):
-                x_array = np.asarray(x)
-                is_scalar = x_array.ndim == 0
-                if is_scalar:
-                    x_array = x_array.reshape(1)
-
-                result = np.zeros_like(x_array, dtype=float)
-
-                # Left element: increasing from 0 to 1
-                in_left_element = (
-                    (x_array >= support[0]) &
-                    (x_array <= node_x)
-                )
-                if np.any(in_left_element):
-                    x_left = x_array[in_left_element]
-                    result[in_left_element] = (
-                        (x_left - support[0]) / element_size
-                    )
-
-                # Right element: decreasing from 1 to 0
-                in_right_element = (
-                    (x_array > node_x) &
-                    (x_array <= support[1])
-                )
-                if np.any(in_right_element):
-                    x_right = x_array[in_right_element]
-                    result[in_right_element] = (
-                        (support[1] - x_right) / element_size
-                    )
-
-                return result.item() if is_scalar else result
-
-            hat_func = interior_hat_func
-
-        return L2Function(
-            self.space,
-            evaluate_callable=hat_func,
-            name=f'φ_{index}',
-            support=support
-        )
-
-
-class LazySpectrumProvider(LazyBasisProvider):
-    """
-    Lazy provider for eigenfunctions and eigenvalues (spectral information).
-
-    Extends LazyBasisProvider to include eigenvalue information needed
-    for spectral inner products in Sobolev spaces.
-    """
-
-    def __init__(self, space, basis_type: str, operator=None):
-        """
-        Initialize the lazy spectrum provider.
-
-        Args:
-            space: Space that owns this provider
-            basis_type: Type of basis functions (must be eigenfunctions)
-            operator: Optional operator whose spectrum defines eigenvalues
-        """
-        super().__init__(space, basis_type)
-        self.operator = operator
-        self._eigenvalue_cache = {}
-
-    def get_eigenvalue(self, index: int):
-        """
-        Get eigenvalue for given basis function index.
-
-        Args:
-            index: Index of the eigenfunction (0 to dim-1)
-
-        Returns:
-            float: Eigenvalue corresponding to the eigenfunction
-        """
-        if not (0 <= index < self.space.dim):
-            raise IndexError(
-                f"Eigenvalue index {index} out of range [0, {self.space.dim})"
-            )
-
-        if index not in self._eigenvalue_cache:
-            self._eigenvalue_cache[index] = self._compute_eigenvalue(index)
-        return self._eigenvalue_cache[index]
-
-    def get_eigenfunction(self, index: int):
-        """
-        Get eigenfunction for given index.
-
-        This is the same as get_basis_function but emphasizes that
-        these are eigenfunctions of some operator.
-        """
-        return self.get_basis_function(index)
-
-    def _compute_eigenvalue(self, index: int):
-        """
-        Compute eigenvalue for given index.
-
-        Uses the cached computation from _compute_all_eigenvalues()
-        to ensure consistency and efficiency.
-        """
-        # Compute all eigenvalues and cache them
-        if not hasattr(self, '_all_eigenvalues'):
-            self._all_eigenvalues = self._compute_all_eigenvalues()
-        return self._all_eigenvalues[index]
-
-    def _compute_all_eigenvalues(self):
-        """Compute all eigenvalues at once."""
-        # This will be implemented differently for different spaces
-        # For now, implement Fourier basis with periodic boundary conditions
-        if self.basis_type == 'fourier':
-            return self._compute_fourier_eigenvalues()
-        else:
-            # For non-Fourier bases, return zeros as placeholder
-            return np.zeros(self.space.dim)
-
-    def _compute_fourier_eigenvalues(self):
-        """
-        Compute eigenvalues for Fourier basis with periodic boundary
-        conditions.
-
-        For the negative Laplacian operator -Δ with periodic BCs on [a,b]:
-        - Eigenfunction φ₀ = 1 (constant) → eigenvalue λ₀ = 0
-        - Eigenfunctions φ₂ₖ₋₁ = cos(2πkx/L), φ₂ₖ = sin(2πkx/L)
-          → eigenvalue λₖ = (2πk/L)² for both cos and sin modes
-
-        where L = b - a is the domain length.
-        """
-        domain = self.space.function_domain
-        length = domain.b - domain.a
-        dim = self.space.dim
-
-        eigenvalues = np.zeros(dim)
-
-        for index in range(dim):
-            if index == 0:
-                # Constant term has eigenvalue 0
-                eigenvalues[index] = 0.0
-            else:
-                # For index > 0, we alternate between cosine and sine
-                k = (index + 1) // 2  # Frequency index
-                # Both cos and sin modes have the same eigenvalue
-                eigenval = (2 * k * math.pi / length) ** 2
-                eigenvalues[index] = eigenval
-
-        return eigenvalues
+from pygeoinf.interval.interval_domain import IntervalDomain
+from pygeoinf.interval.providers import LazyBasisProvider
 
 
 # Keep backward compatibility alias
@@ -429,79 +35,78 @@ class L2Space(HilbertSpace):
     def __init__(
         self,
         dim: int,
+        function_domain: IntervalDomain,
         /,
         *,
-        basis_functions: list = None,
-        basis_type: str = 'fourier',
-        function_domain: IntervalDomain,
+        basis_type: str = None,
+        basis_callables: list = None,
+        basis_provider: LazyBasisProvider = None,
     ):
         """
         Args:
             dim (int): Dimension of the space.
-            basis_functions (list, optional): Custom list of basis functions.
-                If provided, basis_type is ignored.
-            basis_type (str): Type of basis functions
-                ('fourier', 'hat', 'hat_homogeneous').
-                Only used if basis_functions is None.
             function_domain (IntervalDomain): Domain object with optional
-                boundary conditions. If boundary conditions are not specified
-                in the domain, defaults will be applied based on basis_type:
-                periodic for Fourier, dirichlet for hat, and homogeneous
-                dirichlet for hat_homogeneous.
+                boundary conditions.
+            basis_type (str, optional): Type of basis functions to auto-gen
+                ('fourier', 'hat', 'hat_homogeneous'). Creates a lazy provider.
+            basis_callables (list, optional): List of callable functions that
+                will be converted to L2Function basis functions on this space.
+                Solves the circular dependency problem.
+            basis_provider (LazyBasisProvider, optional): Custom lazy provider
+                for basis functions.
+
+        Note:
+            Exactly one of basis_type, basis_callables, or basis_provider
+            must be provided. If none are provided, defaults to 'fourier'.
+
+            The three options correspond to:
+            1. basis_type: Auto-generate standard basis (Fourier, hat, etc.)
+            2. basis_callables: User-provided callable functions
+            3. basis_provider: Custom lazy provider implementation
         """
         self._dim = dim
         self._function_domain = function_domain
 
-        # Determine basis type from either explicit type or existing functions
-        if basis_functions is not None:
-            self._basis_type = 'custom'
-            # Validate dimension
-            if len(basis_functions) != dim:
-                raise ValueError(
-                    f"basis_functions length ({len(basis_functions)}) "
-                    f"must match dim ({dim})"
-                )
-        else:
-            self._basis_type = basis_type
+        # Validate that exactly one basis option is provided
+        basis_options = [basis_type, basis_callables, basis_provider]
+        non_none_count = sum(1 for opt in basis_options if opt is not None)
 
-        # Store boundary conditions with validation and conversion
-        boundary_conditions = function_domain.boundary_conditions
-        if boundary_conditions is None:
-            if basis_type == 'fourier' or self._basis_type == 'fourier':
-                self._boundary_conditions = BoundaryConditions.periodic()
-            elif basis_type == 'hat' or self._basis_type == 'hat':
-                self._boundary_conditions = BoundaryConditions.dirichlet()
-            elif (basis_type == 'hat_homogeneous' or
-                  self._basis_type == 'hat_homogeneous'):
-                self._boundary_conditions = (
-                    BoundaryConditions.dirichlet(0.0, 0.0)
-                )
-            else:
-                self._boundary_conditions = None
-        elif isinstance(boundary_conditions, BoundaryConditions) or (
-            hasattr(boundary_conditions, '__class__') and
-            boundary_conditions.__class__.__name__ == 'BoundaryConditions'
-        ):
-            self._boundary_conditions = boundary_conditions
-        else:
+        if non_none_count == 0:
+            # Default to fourier if nothing specified
+            basis_type = 'fourier'
+        elif non_none_count > 1:
             raise ValueError(
-                "domain.boundary_conditions must be BoundaryConditions "
-                "object or None"
+                "Exactly one of basis_type, basis_callables, or "
+                "basis_provider must be provided, but multiple were given"
             )
 
-        # Validate boundary condition and basis type compatibility
-        self._validate_basis_boundary_compatibility()
-
-        # Create or store basis functions
-        if basis_functions is not None:
-            self._basis_functions = basis_functions
-            self._basis_provider = None  # No lazy provider needed
+        # Handle the three basis options
+        if basis_callables is not None:
+            if len(basis_callables) != dim:
+                raise ValueError(
+                    f"basis_callables length ({len(basis_callables)}) "
+                    f"must match dimension ({dim})"
+                )
+            self._basis_type = 'custom'
+            # Convert callables to L2Function objects after space is created
+            self._pending_callables = basis_callables
+            self._basis_functions = None  # Will be created after init
+            self._basis_provider = None
+        elif basis_provider is not None:
+            self._basis_type = 'custom_provider'
+            self._basis_functions = None
+            self._basis_provider = basis_provider
+            self._pending_callables = None
         else:
-            # Create lazy basis provider instead of all functions upfront
-            self._basis_provider = LazyBasisProvider(
-                self, basis_type
-            )
-            self._basis_functions = None  # Will be created on demand
+            # basis_type is specified (or defaulted to 'fourier')
+            self._basis_type = basis_type
+            self._basis_functions = None
+            self._basis_provider = None  # Will be created below
+            self._pending_callables = None
+
+        # Create basis provider for standard basis types
+        if basis_type in ['fourier', 'hat', 'hat_homogeneous']:
+            self._basis_provider = LazyBasisProvider(self, basis_type)
 
         # Initialize Gram matrix as None - computed lazily when needed
         self._gram_matrix = None
@@ -517,53 +122,16 @@ class L2Space(HilbertSpace):
             copy=self._copy,
         )
 
-    def _validate_basis_boundary_compatibility(self):
-        """Validate that basis type and boundary conditions are compatible."""
-        if self._boundary_conditions is None:
-            return
-
-        bc_type = self._boundary_conditions.type
-
-        # Define compatibility rules
-        if self._basis_type == 'hat_homogeneous':
-            is_homogeneous_dirichlet = (
-                bc_type == 'dirichlet' and
-                self._boundary_conditions.is_homogeneous
-            )
-            if not is_homogeneous_dirichlet:
-                raise ValueError(
-                    f"Basis type 'hat_homogeneous' requires "
-                    f"homogeneous Dirichlet boundary conditions, "
-                    f"got '{bc_type}'"
-                )
-
-        # Additional validation rules can be added here
-        valid_combinations = {
-            'fourier': ['periodic'],
-            'hat': ['dirichlet', 'neumann'],
-            'hat_homogeneous': ['dirichlet']  # Only homogeneous dirichlet
-        }
-
-        if self._basis_type in valid_combinations:
-            valid_bcs = valid_combinations[self._basis_type]
-            if bc_type not in valid_bcs:
-                raise ValueError(
-                    f"Basis type '{self._basis_type}' is not compatible "
-                    f"with boundary condition '{bc_type}'. "
-                    f"Valid boundary conditions: {valid_bcs}"
-                )
-
-            # Special check for hat_homogeneous: must be homogeneous dirichlet
-            is_hat_homogeneous_special_case = (
-                self._basis_type == 'hat_homogeneous' and
-                bc_type == 'dirichlet' and
-                not self._boundary_conditions.is_homogeneous
-            )
-            if is_hat_homogeneous_special_case:
-                raise ValueError(
-                    "Basis type 'hat_homogeneous' requires "
-                    "homogeneous Dirichlet boundary conditions"
-                )
+        # Now that the space is fully initialized, convert pending callables
+        # to L2Function objects (this solves the circular dependency)
+        if hasattr(self, '_pending_callables') and self._pending_callables:
+            from .l2_functions import L2Function
+            self._basis_functions = []
+            for i, callable_func in enumerate(self._pending_callables):
+                l2_func = L2Function(self, evaluate_callable=callable_func)
+                self._basis_functions.append(l2_func)
+            # Clear the pending callables
+            self._pending_callables = None
 
     @property
     def dim(self):
@@ -574,11 +142,6 @@ class L2Space(HilbertSpace):
     def function_domain(self):
         """Return the IntervalDomain object for this space."""
         return self._function_domain
-
-    @property
-    def interval(self):
-        """Return the interval endpoints from domain."""
-        return (self._function_domain.a, self._function_domain.b)
 
     def get_basis_function(self, index: int):
         """Get basis function by index, works with both lazy and explicit."""
@@ -597,12 +160,11 @@ class L2Space(HilbertSpace):
         if self._basis_functions is not None:
             return self._basis_functions
         else:
-            # Return the lazy provider which supports indexing and iteration
-            # This provides a consistent interface whether using explicit
-            # or lazy functions
-            return self._basis_provider
+            # Use the lazy provider to get all basis functions as a list
+            # This ensures consistent interface - always returns a list
+            return self._basis_provider.get_all_basis_functions()
 
-    def basis_vector(self, i):
+    def basis_function(self, i):
         """Return the ith basis function directly."""
         if i < 0 or i >= self.dim:
             raise IndexError(f"Basis index {i} out of range [0, {self.dim})")
@@ -610,9 +172,12 @@ class L2Space(HilbertSpace):
         return self.get_basis_function(i)
 
     @property
-    def boundary_conditions(self):
-        """Boundary conditions for this space."""
-        return self._boundary_conditions
+    def basis_provider(self):
+        """Return the lazy basis provider for this space."""
+        if self._basis_provider is not None:
+            return self._basis_provider
+        else:
+            raise RuntimeError("No basis provider available for this space")
 
     @property
     def gram_matrix(self):

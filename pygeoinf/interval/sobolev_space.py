@@ -10,8 +10,12 @@ from pygeoinf.hilbert_space import (
     EuclideanSpace,
 )
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.interval.l2_space import L2Space, LazySpectrumProvider
+from pygeoinf.interval.l2_space import L2Space
+from pygeoinf.interval.providers import (
+    LazyBasisProvider, LazySpectrumProvider, CustomSpectrumProvider
+)
 from pygeoinf.interval.interval_domain import IntervalDomain
+from pygeoinf.interval.boundary_conditions import BoundaryConditions
 
 
 class Sobolev(L2Space):
@@ -52,48 +56,55 @@ class Sobolev(L2Space):
     def __init__(
         self,
         dim: int,
-        order: int,
+        function_domain: IntervalDomain,
+        order: float,
+        inner_product_type: str,
         /,
         *,
-        basis_functions=None,
-        eigenvalues=None,
-        basis_type='fourier',
-        function_domain: 'IntervalDomain',
-        inner_product_type='spectral',
-        spectrum_provider=None,
-        operator=None,
+        basis_type: str = None,
+        basis_callables: list = None,
+        eigenvalues: np.ndarray = None,
+        basis_provider: LazyBasisProvider = None,
+        spectrum_provider: LazySpectrumProvider = None,
+        boundary_conditions: BoundaryConditions = None,
     ):
         """
+        Create a Sobolev space H^s on an interval.
+
         Args:
             dim (int): Dimension of the space.
+            function_domain (IntervalDomain): Domain object specifying the
+                geometric interval [a,b].
             order (float): Sobolev order s.
-            basis_functions (list, optional): Custom list of L2Function basis
-                functions. If provided, eigenvalues must also be provided.
-            eigenvalues (array, optional): Eigenvalues corresponding to the
-                basis functions. Required if basis_functions is provided.
-                These should be eigenvalues of the self-adjoint operator
-                defining the spectral Sobolev inner product.
-            basis_type (str): Type of basis functions ('fourier').
-                Only used if basis_functions is None.
-            function_domain (IntervalDomain): Domain object with optional
-                boundary conditions. The boundary conditions determine the
-                self-adjoint operator whose spectrum defines this Sobolev
-                space.
             inner_product_type (str): Type of inner product to use:
-                'spectral' - Uses spectral definition with eigenvalues
-                'weak_derivative' - Uses classical weak derivative definition
-            spectrum_provider (LazySpectrumProvider, optional): Provider for
-                eigenfunctions and eigenvalues. Only used with spectral
-                inner product.
-            operator (optional): Operator whose spectrum defines the space.
-                Only used with spectral inner product.
+                'spectral' - Uses spectral definition ⟨u,v⟩ = ∑(1+λₖ)ˢûₖv̂ₖ
+                'weak_derivative' - Uses weak derivative definition
+
+            For weak_derivative inner product:
+                basis_type (str, optional): Basis type ('fourier', 'hat', etc.)
+                basis_callables (list, optional): Custom basis functions
+                basis_provider (LazyBasisProvider, optional): Basis provider
+
+            For spectral inner product:
+                basis_type (str, optional): Basis type (creates
+                    spectrum_provider automatically)
+                basis_callables (list, optional): Custom basis + eigenvalues
+                eigenvalues (array, optional): Required with basis_callables
+                spectrum_provider (LazySpectrumProvider, optional): Full
+                    provider for eigenfunctions and eigenvalues
+
+            boundary_conditions (BoundaryConditions, optional): Boundary
+                conditions that determine the operator spectrum. Must be
+                explicitly provided if needed for the spectral inner product.
 
         Note:
-            The eigenvalues λ_k correspond to the spectrum of the negative
-            Laplacian operator -Δ with the specified boundary conditions:
-            - Periodic: eigenfunctions are Fourier modes
-            - Dirichlet: eigenfunctions are sine modes
-            - Neumann: eigenfunctions are cosine modes + constant
+            - Exactly one basis specification method must be provided
+            - For spectral inner product with basis_callables, eigenvalues
+              are required
+            - For spectral inner product with basis_type, a spectrum_provider
+              is automatically created
+            - Boundary conditions are not automatically resolved - users must
+              ensure consistency between their basis and boundary conditions
         """
 
         self._dim = dim
@@ -108,62 +119,120 @@ class Sobolev(L2Space):
                 f"got '{inner_product_type}'"
             )
 
-        # For spectral inner product, we need eigenvalue information
-        if inner_product_type == 'spectral':
-            # For custom basis functions, eigenvalues must be provided
-            if basis_functions is not None and eigenvalues is None:
-                raise ValueError(
-                    "When providing custom basis_functions for spectral "
-                    "inner product, you must also provide the corresponding "
-                    "eigenvalues"
-                )
+        # Handle boundary conditions (this is where they belong!)
+        self._boundary_conditions = boundary_conditions
 
-            # Validate eigenvalues if provided
-            if eigenvalues is not None:
-                eigenvalues = np.asarray(eigenvalues)
-                if len(eigenvalues) != dim:
-                    raise ValueError(
-                        f"eigenvalues length ({len(eigenvalues)}) "
-                        f"must match dim ({dim})"
-                    )
-                self._eigenvalues = eigenvalues
-                self._spectrum_provider = spectrum_provider
-            else:
-                # For spectral inner product, use LazySpectrumProvider
-                # which can compute eigenvalues
-                if spectrum_provider is None:
-                    # Create LazySpectrumProvider for eigenvalue computation
-                    self._spectrum_provider = LazySpectrumProvider(
-                        self, basis_type, operator
-                    )
-                else:
-                    self._spectrum_provider = spectrum_provider
-                self._eigenvalues = None  # Will be computed lazily
-        else:
-            # For weak derivative inner product, eigenvalues not needed
-            self._eigenvalues = None
-            self._spectrum_provider = spectrum_provider
-
-        # Store operator for spectral case
-        self._operator = operator
-
-        # Initialize parent L2Space (handles basis creation via lazy provider)
-        super().__init__(
-            dim,
-            basis_functions=basis_functions,
-            basis_type=basis_type,
-            function_domain=function_domain,
-        )
-
-        # Override the parent's basis provider if we need spectral information
-        if (inner_product_type == 'spectral' and
-                basis_functions is None and
-                self._spectrum_provider is not None):
-            # Replace LazyBasisProvider with LazySpectrumProvider
-            self._basis_provider = self._spectrum_provider
+        # Different validation and initialization based on inner product type
+        if inner_product_type == 'weak_derivative':
+            self._init_weak_derivative(
+                dim, function_domain, basis_type, basis_callables,
+                basis_provider
+            )
+        elif inner_product_type == 'spectral':
+            self._init_spectral(
+                dim, function_domain, basis_type, basis_callables,
+                eigenvalues, spectrum_provider
+            )
 
         # Don't compute Gram matrix here - will be computed lazily
         self._gram_matrix = None
+
+    def _init_weak_derivative(self, dim, function_domain, basis_type,
+                              basis_callables, basis_provider):
+        """Initialize for weak derivative inner product."""
+        # For weak derivative, only allow basis_type, basis_callables,
+        # or basis_provider
+        options = [basis_type, basis_callables, basis_provider]
+        provided_options = [opt for opt in options if opt is not None]
+        if len(provided_options) != 1:
+            raise ValueError(
+                "For weak_derivative inner product, exactly one of "
+                "basis_type, basis_callables, or basis_provider must be "
+                "provided"
+            )
+
+        # Initialize parent L2Space with the provided option
+        if basis_type is not None:
+            super().__init__(dim, function_domain, basis_type=basis_type)
+        elif basis_callables is not None:
+            super().__init__(
+                dim, function_domain, basis_callables=basis_callables
+            )
+        elif basis_provider is not None:
+            super().__init__(
+                dim, function_domain, basis_provider=basis_provider
+            )
+
+        # No spectrum provider for weak derivative
+        self._spectrum_provider = None
+
+    def _init_spectral(self, dim, function_domain, basis_type, basis_callables,
+                       eigenvalues, spectrum_provider):
+        """Initialize for spectral inner product."""
+        # For spectral, allow basis_type, (basis_callables + eigenvalues),
+        # or spectrum_provider
+        basic_options = [basis_type, basis_callables, spectrum_provider]
+        provided_options = [opt for opt in basic_options if opt is not None]
+        if len(provided_options) != 1:
+            raise ValueError(
+                "For spectral inner product, exactly one of basis_type, "
+                "basis_callables, or spectrum_provider must be provided"
+            )
+
+        # Special validation for basis_callables: eigenvalues are required
+        if basis_callables is not None and eigenvalues is None:
+            raise ValueError(
+                "For spectral inner product with basis_callables, "
+                "eigenvalues must also be provided"
+            )
+
+        # Validate eigenvalues if provided
+        if eigenvalues is not None:
+            eigenvalues = np.asarray(eigenvalues)
+            if len(eigenvalues) != dim:
+                raise ValueError(
+                    f"eigenvalues length ({len(eigenvalues)}) "
+                    f"must match dim ({dim})"
+                )
+
+        # Initialize based on the provided option
+        if basis_type is not None:
+            # For basis_type with spectral inner product, create and use
+            # LazySpectrumProvider
+            super().__init__(dim, function_domain, basis_type=basis_type)
+            self._spectrum_provider = LazySpectrumProvider(
+                self, basis_type, None
+            )
+            # Replace the L2Space's basis provider with spectrum provider
+            self._basis_provider = self._spectrum_provider
+
+        elif basis_callables is not None:
+            # For basis_callables with spectral, we need to create a custom
+            # spectrum provider that stores the eigenvalues
+            super().__init__(
+                dim, function_domain, basis_callables=basis_callables
+            )
+            # Create a custom spectrum provider that wraps the basis provider
+            # and stores eigenvalues
+            self._spectrum_provider = self._create_custom_spectrum_provider(
+                eigenvalues
+            )
+
+        elif spectrum_provider is not None:
+            # Use the provided spectrum provider
+            super().__init__(
+                dim, function_domain, basis_provider=spectrum_provider
+            )
+            self._spectrum_provider = spectrum_provider
+
+    def _create_custom_spectrum_provider(self, eigenvalues):
+        """Create custom spectrum provider for basis_callables + eigenvals."""
+        return CustomSpectrumProvider(self._basis_provider, eigenvalues)
+
+    @property
+    def boundary_conditions(self):
+        """Boundary conditions for this Sobolev space."""
+        return self._boundary_conditions
 
     @property
     def order(self):
@@ -178,10 +247,8 @@ class Sobolev(L2Space):
     @property
     def eigenvalues(self):
         """Eigenvalues of the basis functions (if available)."""
-        if self._eigenvalues is not None:
-            return self._eigenvalues
-        elif (self._inner_product_type == 'spectral' and
-              self._spectrum_provider is not None):
+        if (self._inner_product_type == 'spectral' and
+                self._spectrum_provider is not None):
             # Get eigenvalues from LazySpectrumProvider
             eigenvals = np.zeros(self.dim)
             for i in range(self.dim):
@@ -200,16 +267,16 @@ class Sobolev(L2Space):
                 spectral Sobolev inner product, including operator type,
                 boundary conditions, and domain.
         """
-        boundary_conditions = self._function_domain.boundary_conditions
-        bc_type = (boundary_conditions.type if boundary_conditions
-                   else 'periodic')
+        bc_type = (self._boundary_conditions.type
+                   if self._boundary_conditions is not None
+                   else 'unspecified')
 
         return {
             'type': 'negative_laplacian',
             'symbol': '-Δ',
             'boundary_conditions': bc_type,
-            'domain': (f'[{self._function_domain.left}, '
-                       f'{self._function_domain.right}]'),
+            'domain': (f'[{self._function_domain.a}, '
+                       f'{self._function_domain.b}]'),
             'description': (f'Negative Laplacian operator with {bc_type} '
                             f'boundary conditions'),
             'eigenfunction_basis': self._get_eigenfunction_description(bc_type)
@@ -223,6 +290,8 @@ class Sobolev(L2Space):
             return 'Sine modes: sin(πkx/L) for k=1,2,...'
         elif bc_type == 'neumann':
             return 'Cosine modes + constant: 1, cos(πkx/L) for k=1,2,...'
+        elif bc_type == 'unspecified':
+            return 'Custom basis (boundary conditions not specified)'
         else:
             return f'Custom basis for {bc_type} boundary conditions'
 
@@ -465,9 +534,8 @@ class Lebesgue(Sobolev):
     def __init__(
         self,
         dim,
-        /,
-        *,
         function_domain: IntervalDomain,
+        /,
     ):
         """
         Args:
@@ -475,6 +543,9 @@ class Lebesgue(Sobolev):
             function_domain (IntervalDomain): Domain object.
         """
         # Create L2 space with order=0 (no Sobolev scaling)
+        # For Lebesgue space, we use periodic boundary conditions as default
+        from pygeoinf.interval.interval_domain import BoundaryConditions
         super().__init__(
-            dim, 0.0, basis_type='fourier', function_domain=function_domain
+            dim, function_domain, 0.0, 'spectral', basis_type='fourier',
+            boundary_conditions=BoundaryConditions.periodic()
         )
