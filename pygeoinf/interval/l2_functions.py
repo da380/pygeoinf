@@ -432,7 +432,7 @@ class L2Function:
             except ImportError:
                 pass  # Fall back to matplotlib defaults
 
-        x = self._function_domain.uniform_mesh(n_points)
+        x = self.function_domain.uniform_mesh(n_points)
         y = self.evaluate(x)
 
         plt.figure(figsize=figsize)

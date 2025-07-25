@@ -29,7 +29,7 @@ class LaplacianInverseOperator(LinearOperator):
         domain: Sobolev,
         /,
         *,
-        mesh_resolution: int = 100,
+        dofs: int = 100,
         solver_type: str = "auto"
     ):
         """
@@ -37,7 +37,7 @@ class LaplacianInverseOperator(LinearOperator):
 
         Args:
             domain: The Sobolev space where functions live (positional-only)
-            mesh_resolution: Number of FEM elements (default: 100)
+            dofs: Number of degrees of freedom (default: 100)
             solver_type: 'dolfinx', 'native', or 'auto'
         """
         # Check that domain is a Sobolev space
@@ -47,14 +47,14 @@ class LaplacianInverseOperator(LinearOperator):
             )
 
         self._domain = domain
-        self._mesh_resolution = mesh_resolution
+        self._dofs = dofs
 
         # Get boundary conditions from the Sobolev space
         self._boundary_conditions = domain.boundary_conditions
 
-        # Get interval from domain (works for both L2Space and SobolevSpace)
-        domain_obj = domain.function_domain
-        self._interval = (domain_obj.a, domain_obj.b)
+        # Get function domain from domain (L2Space and SobolevSpace)
+        self._function_domain = domain.function_domain
+        self._interval = (self._function_domain.a, self._function_domain.b)
 
         # Choose solver type
         if solver_type == "auto":
@@ -64,8 +64,9 @@ class LaplacianInverseOperator(LinearOperator):
                 if DOLFINX_AVAILABLE:
                     # Try to create DOLFINx solver to test compatibility
                     try:
+                        test_bc = BoundaryConditions('dirichlet')
                         test_solver = create_fem_solver(
-                            "dolfinx", self._interval, 10, "dirichlet"
+                            "dolfinx", self._function_domain, 10, test_bc
                         )
                         test_solver.setup()
                         self._solver_type = "dolfinx"
@@ -84,8 +85,8 @@ class LaplacianInverseOperator(LinearOperator):
         # Create and setup FEM solver
         self._fem_solver = create_fem_solver(
             self._solver_type,
-            self._interval,
-            mesh_resolution,
+            self._function_domain,
+            dofs,
             self._boundary_conditions
         )
         self._fem_solver.setup()
@@ -111,12 +112,9 @@ class LaplacianInverseOperator(LinearOperator):
         Returns:
             L2Function representing (-Δ)⁻¹f
         """
-        # Convert hilbert space function to evaluation function
-        def rhs_function(x):
-            return f.evaluate(x)
 
-        # Solve PDE using FEM solver
-        solution_values = self._fem_solver.solve_poisson(rhs_function)
+        # Solve PDE using FEM solver with L2Function
+        solution_values = self._fem_solver.solve_poisson(f)
 
         # Convert back to hilbert space function
         return self._fem_to_hilbert_function(solution_values)
@@ -146,16 +144,16 @@ class LaplacianInverseOperator(LinearOperator):
         return self._boundary_conditions
 
     @property
-    def mesh_resolution(self) -> int:
+    def dofs(self) -> int:
         """Get the mesh resolution."""
-        return self._mesh_resolution
+        return self._dofs
 
     def get_solver_info(self) -> dict:
         """Get information about the current solver."""
         return {
             'solver_type': self._solver_type,
             'boundary_conditions': self._boundary_conditions,
-            'mesh_resolution': self._mesh_resolution,
+            'dofs': self._dofs,
             'interval': self._interval,
             'fem_coordinates': self._fem_solver.get_coordinates()
         }
@@ -175,8 +173,8 @@ class LaplacianInverseOperator(LinearOperator):
         self._solver_type = new_solver_type
         self._fem_solver = create_fem_solver(
             self._solver_type,
-            self._interval,
-            self._mesh_resolution,
+            self._function_domain,
+            self._dofs,
             self._boundary_conditions
         )
         self._fem_solver.setup()

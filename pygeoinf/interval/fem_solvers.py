@@ -11,7 +11,7 @@ The native FEM solver leverages the L2Space hat basis functions for all operatio
 
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Tuple, Optional, Callable, Union
+from typing import Optional, Callable
 import warnings
 
 from .interval_domain import IntervalDomain
@@ -32,38 +32,39 @@ except ImportError:
 class FEMSolverBase(ABC):
     """Abstract base class for FEM solvers."""
 
-    def __init__(self, interval: Tuple[float, float], dof: int,
-                 boundary_conditions: Union[str, BoundaryConditions]):
+    def __init__(self, function_domain: IntervalDomain, dofs: int,
+                 boundary_conditions: BoundaryConditions):
         """
         Initialize FEM solver.
 
         Args:
-            interval: Domain interval [a, b]
-            dof: Number of elements in mesh
-            boundary_conditions: BoundaryConditions object or str
+            function_domain: IntervalDomain object
+            dofs: Number of elements in mesh
+            boundary_conditions: BoundaryConditions object
         """
-        self.interval = interval
-        self.dof = dof
+        if not isinstance(function_domain, IntervalDomain):
+            raise TypeError(
+                f"function_domain must be IntervalDomain object, "
+                f"got {type(function_domain)}"
+            )
 
-        # Convert string to BoundaryConditions object if needed
-        if isinstance(boundary_conditions, str):
-            if boundary_conditions == 'dirichlet':
-                self.boundary_conditions = BoundaryConditions.dirichlet()
-            elif boundary_conditions == 'neumann':
-                self.boundary_conditions = BoundaryConditions.neumann()
-            elif boundary_conditions == 'periodic':
-                self.boundary_conditions = BoundaryConditions.periodic()
-            else:
-                raise ValueError(f"Unknown boundary condition string: {boundary_conditions}")
-        elif isinstance(boundary_conditions, BoundaryConditions):
-            self.boundary_conditions = boundary_conditions
-        else:
-            raise ValueError(f"boundary_conditions must be BoundaryConditions or str, got {type(boundary_conditions)}")
+        self.function_domain = function_domain
+        self.dofs = dofs
+
+        if not isinstance(boundary_conditions, BoundaryConditions):
+            raise TypeError(
+                f"boundary_conditions must be BoundaryConditions object, "
+                f"got {type(boundary_conditions)}"
+            )
+
+        self.boundary_conditions = boundary_conditions
 
         # Validate boundary conditions (basic check for FEM compatibility)
         valid_types = ['dirichlet', 'neumann', 'periodic']
         if self.boundary_conditions.type not in valid_types:
-            raise ValueError(f"FEM solver only supports boundary condition types: {valid_types}")
+            raise ValueError(
+                f"FEM solver only supports boundary condition types: {valid_types}"
+            )
 
     @property
     def bc_type(self) -> str:
@@ -112,15 +113,15 @@ class FEMSolverBase(ABC):
 class DOLFINxSolver(FEMSolverBase):
     """DOLFINx-based FEM solver."""
 
-    def __init__(self, interval: Tuple[float, float], dof: int,
-                 boundary_conditions: str):
+    def __init__(self, function_domain: IntervalDomain, dofs: int,
+                 boundary_conditions: BoundaryConditions):
         if not DOLFINX_AVAILABLE:
             raise ImportError(
                 "DOLFINx is not available. Install with: "
                 "conda install -c conda-forge fenics-dolfinx"
             )
 
-        super().__init__(interval, dof, boundary_conditions)
+        super().__init__(function_domain, dofs, boundary_conditions)
         self._mesh = None
         self._V = None
         self._bcs = None
@@ -133,8 +134,8 @@ class DOLFINxSolver(FEMSolverBase):
         # Create 1D interval mesh
         self._mesh = mesh.create_interval(
             comm=PETSc.COMM_WORLD,
-            nx=self.dof,
-            points=np.array([self.interval[0], self.interval[1]])
+            nx=self.dofs,
+            points=np.array([self.function_domain.a, self.function_domain.b])
         )
 
         # Create function space (P1 Lagrange elements)
@@ -151,8 +152,8 @@ class DOLFINxSolver(FEMSolverBase):
             # Homogeneous Dirichlet: u = 0 on boundary
             def boundary_all(x):
                 return np.logical_or(
-                    np.isclose(x[0], self.interval[0]),
-                    np.isclose(x[0], self.interval[1])
+                    np.isclose(x[0], self.function_domain.a),
+                    np.isclose(x[0], self.function_domain.b)
                 )
 
             boundary_dofs = dolfinx.fem.locate_dofs_geometrical(self._V, boundary_all)
@@ -178,9 +179,9 @@ class DOLFINxSolver(FEMSolverBase):
         right_dofs = []
 
         for i, coord in enumerate(dof_coords):
-            if np.isclose(coord, self.interval[0]):
+            if np.isclose(coord, self.function_domain.a):
                 left_dofs.append(i)
-            elif np.isclose(coord, self.interval[1]):
+            elif np.isclose(coord, self.function_domain.b):
                 right_dofs.append(i)
 
         if len(left_dofs) != 1 or len(right_dofs) != 1:
@@ -333,67 +334,44 @@ class DOLFINxSolver(FEMSolverBase):
 class NativeFEMSolver(FEMSolverBase):
     """Native Python FEM solver - supports Dirichlet BCs."""
 
-    def __init__(self, interval: Union[Tuple[float, float], IntervalDomain],
-                 dof: int, boundary_conditions: Union[str, BoundaryConditions]):
-        # Check boundary conditions before calling parent constructor
-        if isinstance(boundary_conditions, str):
-            if boundary_conditions == 'dirichlet':
-                temp_bc = BoundaryConditions.dirichlet()
-            else:
-                raise ValueError(f"Unknown boundary condition string: {boundary_conditions}")
-        elif isinstance(boundary_conditions, BoundaryConditions):
-            temp_bc = boundary_conditions
-        else:
-            raise ValueError(f"boundary_conditions must be BoundaryConditions or str, got {type(boundary_conditions)}")
+    def __init__(self, function_domain: IntervalDomain,
+                 dofs: int, boundary_conditions: BoundaryConditions):
+        # Validate that boundary_conditions is a BoundaryConditions object
+        if not isinstance(boundary_conditions, BoundaryConditions):
+            raise TypeError(
+                f"boundary_conditions must be BoundaryConditions object, "
+                f"got {type(boundary_conditions)}"
+            )
 
         # Validate that native solver can handle this boundary condition type
-        if temp_bc.type != 'dirichlet':
-            raise ValueError(f"NativeFEMSolver only supports 'dirichlet' boundary conditions, got '{temp_bc.type}'")
+        if boundary_conditions.type != 'dirichlet':
+            raise ValueError(
+                f"NativeFEMSolver only supports 'dirichlet' boundary "
+                f"conditions, got '{boundary_conditions.type}'"
+            )
 
-        # Convert interval to IntervalDomain if needed
-        if isinstance(interval, tuple):
-            self.domain = IntervalDomain(interval[0], interval[1])
-            interval_tuple = interval
-        else:
-            self.domain = interval
-            interval_tuple = (interval.a, interval.b)
-
-        super().__init__(interval_tuple, dof, boundary_conditions)
+        super().__init__(function_domain, dofs, boundary_conditions)
         self._nodes = None
-        self._elements = None
-        self._boundary_nodes = None
-        self._dof = dof
+        self._dofs = dofs
         self._l2_space = None  # L2Space with hat basis functions
 
     def setup(self):
         """Set up native FEM mesh and structures using L2Space hat basis."""
         # Create uniform 1D mesh
-        self._nodes = np.linspace(self.domain.a, self.domain.b,
-                                  self._dof + 2)
+        self._nodes = np.linspace(
+            self.function_domain.a, self.function_domain.b, self._dofs + 2
+        )
 
         self._h = self._nodes[1] - self._nodes[0]  # Element size
 
-        # Create elements (pairs of consecutive nodes)
-        self._elements = np.column_stack([
-            np.arange(self._dof),
-            np.arange(1, self._dof + 1)
-        ])
-
-        # Identify boundary nodes
-        n_nodes = len(self._nodes)
-        self._boundary_nodes = {
-            'left': 0,
-            'right': n_nodes - 1  # Last node index
-        }
-
         # Create L2Space with hat basis functions for FEM
         from .l2_space import L2Space  # Import here to avoid circular imports
-        # Use hat basis with Dirichlet boundary conditions for FEM
+        # Use homogeneous hat basis for Dirichlet boundary conditions
         # Number of basis functions = number of interior nodes
         self._l2_space = L2Space(
-            self._dof,  # Interior nodes only (exclude boundaries)
-            self.domain,  # IntervalDomain object
-            basis_type='hat'
+            self._dofs,  # Interior nodes only (exclude boundaries)
+            self.function_domain,  # IntervalDomain object
+            basis_type='hat_homogeneous'
         )
 
     def _assemble_stiffness_matrix(self) -> np.ndarray:
@@ -402,15 +380,12 @@ class NativeFEMSolver(FEMSolverBase):
             raise RuntimeError("Must call setup() first")
 
         # Get interior basis functions (exclude boundary)
-        n_interior = self._dof  # Number of interior nodes
+        n_interior = self._dofs  # Number of interior nodes
         K = np.zeros((n_interior, n_interior))
 
         # Assemble using L2Function operations
         for i in range(n_interior):
-            phi_i = self._l2_space._basis_provider.get_basis_function(i)
             for j in range(i, n_interior):  # Symmetric matrix
-                phi_j = self._l2_space._basis_provider.get_basis_function(j)
-
                 # Compute ∫ φ'ᵢ φ'ⱼ dx using finite differences
                 # For hat functions, this gives the standard FEM stiffness
                 if i == j:
@@ -432,9 +407,7 @@ class NativeFEMSolver(FEMSolverBase):
         # The mass matrix is exactly the gram matrix of the L2Space
         return self._l2_space.gram_matrix
 
-    def _assemble_load_vector_l2(self,
-                                 rhs_function: Union[Callable, L2Function]
-                                 ) -> np.ndarray:
+    def _assemble_load_vector(self, rhs_function: L2Function) -> np.ndarray:
         """
         Assemble load vector using L2Space basis functions.
 
@@ -442,7 +415,7 @@ class NativeFEMSolver(FEMSolverBase):
         with automatic compact support handling.
 
         Args:
-            rhs_function: RHS function (callable or L2Function)
+            rhs_function: L2Function to use as right-hand side
 
         Returns:
             Load vector for interior nodes only
@@ -450,44 +423,32 @@ class NativeFEMSolver(FEMSolverBase):
         if self._l2_space is None:
             raise RuntimeError("Must call setup() first")
 
-        n_interior = self._dof  # Number of interior nodes
-        f_vec = np.zeros(n_interior)
-
-        # Convert RHS to L2Function if needed
         if not isinstance(rhs_function, L2Function):
-            # Create L2Function from callable
-            from .l2_space import L2Space
-            # Create a space for the RHS function
-            rhs_space = L2Space(1, self.domain)
-            if callable(rhs_function):
-                rhs_l2 = L2Function(rhs_space, evaluate_callable=rhs_function)
-            else:
-                raise TypeError("rhs_function must be callable or L2Function")
-        else:
-            rhs_l2 = rhs_function
+            raise TypeError(
+                f"rhs_function must be L2Function, got {type(rhs_function)}"
+            )
+
+        f_vec = np.zeros(self._dofs)
 
         # For each interior node, compute ∫ f(x) φᵢ(x) dx using L2Function
-        for i in range(n_interior):
+        for i in range(self._dofs):
             # Get basis function as L2Function
             phi_i = self._l2_space._basis_provider.get_basis_function(i)
 
             # Multiply f * φᵢ using L2Function multiplication
             # This automatically handles compact support intersection
-            integrand = rhs_l2 * phi_i
+            integrand = rhs_function * phi_i
 
             # Integrate using L2Function integration
             f_vec[i] = integrand.integrate(method='simpson')
 
         return f_vec
 
-    def solve_poisson(self,
-                      rhs_function: Union[Callable[[np.ndarray], np.ndarray],
-                                          L2Function]
-                      ) -> np.ndarray:
+    def solve_poisson(self, rhs_function: L2Function) -> np.ndarray:
         """Solve Poisson equation with Dirichlet BCs using L2Space basis."""
         # Assemble system using L2Space operations
         K = self._assemble_stiffness_matrix()
-        f = self._assemble_load_vector_l2(rhs_function)
+        f = self._assemble_load_vector(rhs_function)
 
         # Solve interior system (boundary conditions already incorporated)
         u_interior = np.linalg.solve(K, f)
@@ -518,7 +479,7 @@ class NativeFEMSolver(FEMSolverBase):
         if self._l2_space is None:
             raise RuntimeError("Must call setup() first")
         return [self._l2_space._basis_provider.get_basis_function(i)
-                for i in range(self._dof)]
+                for i in range(self._dofs)]
 
     def get_coordinates(self) -> np.ndarray:
         """Get mesh node coordinates."""
@@ -535,29 +496,25 @@ class NativeFEMSolver(FEMSolverBase):
 
 
 def create_fem_solver(solver_type: str,
-                      interval: Union[Tuple[float, float], IntervalDomain],
-                      dof: int, boundary_conditions: str) -> FEMSolverBase:
+                      function_domain: IntervalDomain,
+                      dofs: int,
+                      boundary_conditions: BoundaryConditions
+                      ) -> FEMSolverBase:
     """
     Factory function to create FEM solvers.
 
     Args:
         solver_type: 'dolfinx' or 'native'
-        interval: Domain interval (tuple or IntervalDomain)
-        dof: Mesh resolution
-        boundary_conditions: Boundary condition type
+        function_domain: IntervalDomain object
+        dofs: Mesh resolution
+        boundary_conditions: BoundaryConditions object
 
     Returns:
         FEM solver instance
     """
-    # Convert IntervalDomain to tuple for DOLFINx solver compatibility
-    if isinstance(interval, IntervalDomain):
-        interval_tuple = (interval.a, interval.b)
-    else:
-        interval_tuple = interval
-
     if solver_type == 'dolfinx':
-        return DOLFINxSolver(interval_tuple, dof, boundary_conditions)
+        return DOLFINxSolver(function_domain, dofs, boundary_conditions)
     elif solver_type == 'native':
-        return NativeFEMSolver(interval, dof, boundary_conditions)
+        return NativeFEMSolver(function_domain, dofs, boundary_conditions)
     else:
         raise ValueError(f"Unknown solver type: {solver_type}")
