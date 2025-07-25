@@ -392,9 +392,8 @@ class NativeFEMSolver(FEMSolverBase):
         # Number of basis functions = number of interior nodes
         self._l2_space = L2Space(
             self._dof,  # Interior nodes only (exclude boundaries)
-            basis_type='hat',
-            interval=(self.domain.a, self.domain.b),
-            boundary_conditions=BoundaryConditions.dirichlet()
+            self.domain,  # IntervalDomain object
+            basis_type='hat'
         )
 
     def _assemble_stiffness_matrix(self) -> np.ndarray:
@@ -459,7 +458,7 @@ class NativeFEMSolver(FEMSolverBase):
             # Create L2Function from callable
             from .l2_space import L2Space
             # Create a space for the RHS function
-            rhs_space = L2Space(1, interval=(self.domain.a, self.domain.b))
+            rhs_space = L2Space(1, self.domain)
             if callable(rhs_function):
                 rhs_l2 = L2Function(rhs_space, evaluate_callable=rhs_function)
             else:
