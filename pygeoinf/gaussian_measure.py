@@ -1,5 +1,5 @@
 """
-Module for Gaussian measures on Hilbert spaces. 
+Module for Gaussian measures on Hilbert spaces.
 """
 
 import numpy as np

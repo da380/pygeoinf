@@ -18,14 +18,8 @@ class LinearBayesianInversion(Inversion):
     def __init__(self, forward_problem, model_prior_measure):
         """
         Args:
-<<<<<<< HEAD
-            forward_operator (LinearOperator): The forward operator for the problem.
-            model_prior_measure (GaussianMeasure): The prior measure on the data.
-            data_error_measure (GaussianMeasure): The error measure on the data.
-=======
             forward_problem (LinearForwardProblem): The forward problem.
             model_prior_measure (GaussianMeasure): The prior measure on the data.
->>>>>>> 3fca7c75cb78f197953848bd9d6ffac179153b7b
         """
         super().__init__(forward_problem)
         self._model_prior_measure = model_prior_measure
@@ -83,11 +77,6 @@ class LinearBayesianInversion(Inversion):
             solver (LinearSolver): A linear solver for the normal equations.
             preconditioner (LinearSolver): A preconditioner for use in solving
                 the normal equations.
-<<<<<<< HEAD
-            preconditioning_method (PreconditioningMethod): A preconditioning
-                method that constructs a preconditioner from the normal operator.
-=======
->>>>>>> 3fca7c75cb78f197953848bd9d6ffac179153b7b
 
         Returns:
             GaussianMeasure: The posterior measure.
@@ -140,12 +129,7 @@ class LinearBayesianInference(LinearBayesianInversion):
     def __init__(self, forward_problem, model_prior_measure, property_operator):
         """
         Args:
-<<<<<<< HEAD
-            forward_operator (LinearOperator): The forward operator.
-            property_operator (LinearOperator): The property operator.
-=======
             forward_problem (LinearForwardProblem): The forward problem.
->>>>>>> 3fca7c75cb78f197953848bd9d6ffac179153b7b
             model_prior_measure (GaussianMeasure): The prior measure on the data.
             property_operator (LinearOperator): The property operator.
 
@@ -177,22 +161,12 @@ class LinearBayesianInference(LinearBayesianInversion):
             solver (LinearSolver): A linear solver for the normal equations.
             preconditioner (LinearSolver): A preconditioner for use in solving
                 the normal equations.
-<<<<<<< HEAD
-            preconditioning_method (PreconditioningMethod): A preconditioning
-                method that constructs a preconditioner from the normal operator.
-=======
->>>>>>> 3fca7c75cb78f197953848bd9d6ffac179153b7b
 
         Returns:
             GaussianMeasure: The posterior measure.
 
         Notes:
-<<<<<<< HEAD
-            The posterior measure does not have a sampling method set. If required,
-            this should be set directly afterwards.
-=======
             The posterior measure does not have a sampling method set.
->>>>>>> 3fca7c75cb78f197953848bd9d6ffac179153b7b
         """
         pi = self.model_posterior_measure(
             data,

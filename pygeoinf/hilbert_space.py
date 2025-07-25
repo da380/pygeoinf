@@ -133,7 +133,7 @@ class HilbertSpace:
     def coordinate_inclusion(self):
         """
         Returns the linear operator that maps coordinate vectors
-        to elements of the space.
+        to elements of the sapce.
         """
         domain = EuclideanSpace(self.dim)
 

@@ -114,10 +114,8 @@ class LinearLeastSquaresInversion(Inversion):
     ):
         """
         Returns the measure on the model space induced by the observed data under the least-squares solution.
-        Returns the measure on the model space induced by the observed data under the least-squares solution.
 
         Args:
-            damping (float): The norm damping parameter. Must be non-negative.
             damping (float): The norm damping parameter. Must be non-negative.
             data (data vector): Observed data
             solver (LinearSolver): Linear solver for solvint the normal equations.
@@ -129,14 +127,8 @@ class LinearLeastSquaresInversion(Inversion):
                 least-squares solution for given data. Note that this measure only
                 accounts for uncertainty due to the propagation of
                 uncertainties within the data.
-            GaussianMeasure: Measure on the model space induced by the
-                least-squares solution for given data. Note that this measure only
-                accounts for uncertainty due to the propagation of
-                uncertainties within the data.
 
         Raises:
-            ValueError: If damping is not non-negative.
-            ValueError: If solver is not a instance of LinearSolver.
             ValueError: If damping is not non-negative.
             ValueError: If solver is not a instance of LinearSolver.
         """
