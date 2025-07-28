@@ -1,9 +1,8 @@
 """
-L² functions on interval domains.
+Functions on interval domains.
 
-This module provides function objects that live on IntervalDomain in L² spaces,
-serving as the base class for more specialized function spaces
-like Sobolev spaces.
+This module provides function objects that live on IntervalDomain in function spaces,
+including L² spaces and Sobolev spaces.
 """
 
 import numpy as np
@@ -14,7 +13,7 @@ if TYPE_CHECKING:
     from .l2_space import L2Space  # type: ignore[import]
 
 
-class L2Function:
+class Function:
     """
     A function in L²([a,b]) with both mathematical and computational aspects.
 
@@ -122,7 +121,14 @@ class L2Function:
     @property
     def space_type(self):
         """Get the type of space this function belongs to."""
-        return "L2"
+        # Check if the space is a Sobolev space
+        if hasattr(self.space, 'order') and hasattr(self.space, 'inner_product_type'):
+            if self.space.order == 0.0:
+                return "L2"
+            else:
+                return f"H{self.space.order}"
+        else:
+            return "L2"
 
     @property
     def has_compact_support(self) -> bool:
@@ -247,12 +253,14 @@ class L2Function:
             is mathematically justified (e.g., Sobolev functions with s > 1/2).
         """
         import warnings
-        warnings.warn(
-            "Point evaluation is not well-defined for general L² functions. "
-            "Consider using a Sobolev space with s > 1/2 for point "
-            "evaluation.",
-            UserWarning
-        )
+        if self.space_type == "L2":
+            # Warn about point evaluation in L² space
+            warnings.warn(
+                "Point evaluation is not well-defined for general L² functions. "
+                "Consider using a Sobolev space with s > 1/2 for point "
+                "evaluation.",
+                UserWarning
+            )
 
         # Check domain membership if requested
         if check_domain:
@@ -447,8 +455,8 @@ class L2Function:
         return plt.gca()  # Return axes for further customization
 
     def __add__(self, other):
-        """Addition of L² functions or with a scalar."""
-        if isinstance(other, L2Function):
+        """Addition of functions or with a scalar."""
+        if isinstance(other, Function):
             # Support of sum is union of supports
             new_support = self._union_supports(self.support, other.support)
 
@@ -479,17 +487,17 @@ class L2Function:
             )
         else:
             raise TypeError(
-                f"Can only add L2Function or scalar "
+                f"Can only add Function or scalar "
                 f"(int, float, numbers.Number), not {type(other)}"
             )
 
     def __radd__(self, other):
-        """Right addition to support scalar + L2Function."""
+        """Right addition to support scalar + Function."""
         return self.__add__(other)
 
     def __sub__(self, other):
-        """Subtraction of L² functions or with a scalar."""
-        if isinstance(other, L2Function):
+        """Subtraction of functions or with a scalar."""
+        if isinstance(other, Function):
             # Support of difference is union of supports
             new_support = self._union_supports(self.support, other.support)
 
@@ -518,16 +526,16 @@ class L2Function:
             )
         else:
             raise TypeError(
-                f"Can only subtract L2Function or scalar "
+                f"Can only subtract Function or scalar "
                 f"(int, float), not {type(other)}"
             )
 
     def __mul__(self, other):
-        """Multiplication of L² functions or by scalars."""
+        """Multiplication of functions or by scalars."""
         if isinstance(other, (int, float)):
             # Scalar multiplication - preserves compact support
             if self.coefficients is not None:
-                return L2Function(  # Use base class
+                return Function(  # Use base class
                     self.space,
                     coefficients=other * self.coefficients,
                     support=self.support
@@ -535,12 +543,12 @@ class L2Function:
             else:
                 def new_callable(x):
                     return other * self.evaluate(x)
-                return L2Function(  # Use base class
+                return Function(  # Use base class
                     self.space,
                     evaluate_callable=new_callable,
                     support=self.support
                 )
-        elif isinstance(other, L2Function):
+        elif isinstance(other, Function):
             # Function multiplication: compact support is intersection
             new_support = self._intersect_supports(self.support, other.support)
 
@@ -550,7 +558,7 @@ class L2Function:
                 def zero_callable(x):
                     return np.zeros_like(np.asarray(x), dtype=float)
                 # For zero function, no compact support
-                return L2Function(
+                return Function(
                     self.space,
                     evaluate_callable=zero_callable
                 )
@@ -558,14 +566,14 @@ class L2Function:
             # Create product function
             def product_callable(x):
                 return self.evaluate(x) * other.evaluate(x)
-            return L2Function(  # Use base class, not self.__class__
+            return Function(  # Use base class, not self.__class__
                 self.space,
                 evaluate_callable=product_callable,
                 support=new_support
             )
         else:
             raise TypeError(
-                f"Cannot multiply L2Function with {type(other)}"
+                f"Cannot multiply Function with {type(other)}"
             )
 
     def __rmul__(self, other):
@@ -573,7 +581,7 @@ class L2Function:
         return self.__mul__(other)
 
     def __repr__(self) -> str:
-        return (f"L2Function(domain={self.space.function_domain}, "
+        return (f"Function(domain={self.space.function_domain}, "
                 f"space_type={self.space_type}, name={self.name})")
 
     def copy(self):

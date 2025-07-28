@@ -16,7 +16,7 @@ import warnings
 
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
-from .l2_functions import L2Function
+from .l2_functions import Function
 
 try:
     import dolfinx
@@ -383,7 +383,7 @@ class NativeFEMSolver(FEMSolverBase):
         n_interior = self._dofs  # Number of interior nodes
         K = np.zeros((n_interior, n_interior))
 
-        # Assemble using L2Function operations
+        # Assemble using Function operations
         for i in range(n_interior):
             for j in range(i, n_interior):  # Symmetric matrix
                 # Compute ∫ φ'ᵢ φ'ⱼ dx using finite differences
@@ -407,15 +407,15 @@ class NativeFEMSolver(FEMSolverBase):
         # The mass matrix is exactly the gram matrix of the L2Space
         return self._l2_space.gram_matrix
 
-    def _assemble_load_vector(self, rhs_function: L2Function) -> np.ndarray:
+    def _assemble_load_vector(self, rhs_function: Function) -> np.ndarray:
         """
-        Assemble load vector using L2Space basis functions.
+        Assemble the load vector for the FEM system.
 
-        This method leverages L2Function multiplication and integration
+        This method leverages Function multiplication and integration
         with automatic compact support handling.
 
         Args:
-            rhs_function: L2Function to use as right-hand side
+            rhs_function: Function to use as right-hand side
 
         Returns:
             Load vector for interior nodes only
@@ -423,28 +423,28 @@ class NativeFEMSolver(FEMSolverBase):
         if self._l2_space is None:
             raise RuntimeError("Must call setup() first")
 
-        if not isinstance(rhs_function, L2Function):
+        if not isinstance(rhs_function, Function):
             raise TypeError(
-                f"rhs_function must be L2Function, got {type(rhs_function)}"
+                f"rhs_function must be Function, got {type(rhs_function)}"
             )
 
         f_vec = np.zeros(self._dofs)
 
-        # For each interior node, compute ∫ f(x) φᵢ(x) dx using L2Function
+        # For each interior node, compute ∫ f(x) φᵢ(x) dx using Function
         for i in range(self._dofs):
-            # Get basis function as L2Function
+            # Get basis function as Function
             phi_i = self._l2_space._basis_provider.get_basis_function(i)
 
-            # Multiply f * φᵢ using L2Function multiplication
+            # Multiply f * φᵢ using Function multiplication
             # This automatically handles compact support intersection
             integrand = rhs_function * phi_i
 
-            # Integrate using L2Function integration
+            # Integrate using Function integration
             f_vec[i] = integrand.integrate(method='simpson')
 
         return f_vec
 
-    def solve_poisson(self, rhs_function: L2Function) -> np.ndarray:
+    def solve_poisson(self, rhs_function: Function) -> np.ndarray:
         """Solve Poisson equation with Dirichlet BCs using L2Space basis."""
         # Assemble system using L2Space operations
         K = self._assemble_stiffness_matrix()
@@ -460,22 +460,22 @@ class NativeFEMSolver(FEMSolverBase):
 
         return u_full
 
-    def get_basis_function(self, dof_index: int) -> L2Function:
+    def get_basis_function(self, dof_index: int) -> Function:
         """
-        Get basis function for given dof as an L2Function.
+        Get basis function for given dof as a Function.
 
         Args:
             dof_index: Degree of freedom (0 to num_interior_dofs-1)
 
         Returns:
-            L2Function (hat basis function with compact support)
+            Function (hat basis function with compact support)
         """
         if self._l2_space is None:
             raise RuntimeError("Must call setup() first")
         return self._l2_space._basis_provider.get_basis_function(dof_index)
 
     def get_basis_functions(self) -> list:
-        """Get all interior basis functions as L2Functions."""
+        """Get all interior basis functions as Functions."""
         if self._l2_space is None:
             raise RuntimeError("Must call setup() first")
         return [self._l2_space._basis_provider.get_basis_function(i)

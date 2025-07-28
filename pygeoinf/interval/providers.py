@@ -39,7 +39,7 @@ class BasisProvider(ABC):
             index: Index of the basis function (0 to dim-1)
 
         Returns:
-            L2Function: The basis function at the given index
+            Function: The basis function at the given index
 
         Raises:
             IndexError: If index is out of range [0, space.dim)
@@ -64,7 +64,7 @@ class BasisProvider(ABC):
         Return all basis functions as a list.
 
         Returns:
-            list: List of all L2Function basis functions
+            list: List of all Function basis functions
         """
         return [self.get_basis_function(i) for i in range(self.space.dim)]
 
@@ -146,7 +146,7 @@ class LazyBasisProvider(BasisProvider):
             index: Index of the basis function (0 to dim-1)
 
         Returns:
-            L2Function for that index
+            Function for that index
         """
         if not (0 <= index < self.space.dim):
             raise IndexError(
@@ -174,7 +174,7 @@ class LazyBasisProvider(BasisProvider):
         For L2Space, we create the full Fourier basis (periodic case)
         without boundary condition considerations.
         """
-        from .l2_functions import L2Function
+        from .l2_functions import Function
 
         domain = self.space.function_domain
         length = domain.b - domain.a
@@ -187,7 +187,7 @@ class LazyBasisProvider(BasisProvider):
             def constant_func(x):
                 return (normalization_factor *
                         np.ones_like(x) / np.sqrt(2))
-            return L2Function(
+            return Function(
                 self.space,
                 evaluate_callable=constant_func,
                 name='constant'
@@ -201,7 +201,7 @@ class LazyBasisProvider(BasisProvider):
                 def cosine_func(x):
                     return (normalization_factor *
                             np.cos(freq * (x - domain.a)))
-                return L2Function(
+                return Function(
                     self.space,
                     evaluate_callable=cosine_func,
                     name=f'cos_{k}'
@@ -210,7 +210,7 @@ class LazyBasisProvider(BasisProvider):
                 def sine_func(x):
                     return (normalization_factor *
                             np.sin(freq * (x - domain.a)))
-                return L2Function(
+                return Function(
                     self.space,
                     evaluate_callable=sine_func,
                     name=f'sin_{k}'
@@ -222,7 +222,7 @@ class LazyBasisProvider(BasisProvider):
         These are interior hat functions that vanish at the boundaries,
         suitable for homogeneous Dirichlet boundary conditions.
         """
-        from .l2_functions import L2Function
+        from .l2_functions import Function
 
         domain = self.space._function_domain
 
@@ -268,7 +268,7 @@ class LazyBasisProvider(BasisProvider):
 
             return result.item() if is_scalar else result
 
-        return L2Function(
+        return Function(
             self.space,
             evaluate_callable=hat_func,
             name=f'φ_{index}',
@@ -281,7 +281,7 @@ class LazyBasisProvider(BasisProvider):
         These include boundary functions and interior functions,
         forming a complete basis without boundary conditions.
         """
-        from .l2_functions import L2Function
+        from .l2_functions import Function
 
         domain = self.space._function_domain
 
@@ -294,7 +294,7 @@ class LazyBasisProvider(BasisProvider):
                 x_array = np.asarray(x)
                 return np.ones_like(x_array, dtype=float)
 
-            return L2Function(
+            return Function(
                 self.space,
                 evaluate_callable=constant_hat_func,
                 name=f'φ_{index}',
@@ -387,7 +387,7 @@ class LazyBasisProvider(BasisProvider):
 
             hat_func = interior_hat_func
 
-        return L2Function(
+        return Function(
             self.space,
             evaluate_callable=hat_func,
             name=f'φ_{index}',

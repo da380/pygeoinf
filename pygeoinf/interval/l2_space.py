@@ -6,16 +6,14 @@ for more specialized function spaces like Sobolev spaces.
 """
 
 import numpy as np
+from typing import Optional
 
-from pygeoinf.hilbert_space import HilbertSpace
+
+from pygeoinf.hilbert_space import HilbertSpace, LinearOperator
 from pygeoinf.hilbert_space import LinearForm
-from pygeoinf.interval.l2_functions import L2Function
+from pygeoinf.interval.l2_functions import Function
 from pygeoinf.interval.interval_domain import IntervalDomain
 from pygeoinf.interval.providers import LazyBasisProvider
-
-
-# Keep backward compatibility alias
-LazyL2BasisProvider = LazyBasisProvider
 
 
 class L2Space(HilbertSpace):
@@ -38,9 +36,9 @@ class L2Space(HilbertSpace):
         function_domain: IntervalDomain,
         /,
         *,
-        basis_type: str = None,
-        basis_callables: list = None,
-        basis_provider: LazyBasisProvider = None,
+        basis_type: Optional[str] = None,
+        basis_callables: Optional[list] = None,
+        basis_provider: Optional[LazyBasisProvider] = None,
     ):
         """
         Args:
@@ -122,16 +120,13 @@ class L2Space(HilbertSpace):
             copy=self._copy,
         )
 
-        # Now that the space is fully initialized, convert pending callables
-        # to L2Function objects (this solves the circular dependency)
-        if hasattr(self, '_pending_callables') and self._pending_callables:
-            from .l2_functions import L2Function
-            self._basis_functions = []
-            for i, callable_func in enumerate(self._pending_callables):
-                l2_func = L2Function(self, evaluate_callable=callable_func)
-                self._basis_functions.append(l2_func)
-            # Clear the pending callables
-            self._pending_callables = None
+        # to Function objects (this solves the circular dependency)
+        if basis_callables:
+            l2_funcs = []
+            for callable_func in basis_callables:
+                l2_func = Function(self, evaluate_callable=callable_func)
+                l2_funcs.append(l2_func)
+            self._manual_basis_functions = l2_funcs
 
     @property
     def dim(self):
@@ -238,8 +233,8 @@ class L2Space(HilbertSpace):
             L2Function: The projection of f onto this space
         """
         if callable(f):
-            # Create L2Function from callable
-            func = L2Function(self, evaluate_callable=f)
+            # Create Function from callable
+            func = Function(self, evaluate_callable=f)
         else:
             func = f
 
@@ -274,11 +269,11 @@ class L2Space(HilbertSpace):
         if len(coeff) != self.dim:
             raise ValueError(f"Coefficients must have length {self.dim}")
 
-        # Create L2Function directly with coefficients
-        return L2Function(self, coefficients=coeff)
+        # Create Function directly with coefficients
+        return Function(self, coefficients=coeff)
 
     # Default dual space mappings
-    def _default_to_dual(self, u: L2Function):
+    def _default_to_dual(self, u: Function):
         """Default mapping to dual space using Gram matrix."""
         return LinearForm(self, mapping=lambda v: self.inner_product(u, v))
 
@@ -293,15 +288,249 @@ class L2Space(HilbertSpace):
         if gram is None:
             raise ValueError("Gram matrix not computed")
         components = np.linalg.solve(gram, dual_components)
-        return L2Function(
+        return Function(
             self,
             coefficients=components,
         )
 
     def _copy(self, x):
-        """Custom copy implementation for L2Functions."""
-        return L2Function(
+        """Custom copy implementation for Functions."""
+        return Function(
             self,
             coefficients=self.to_components(x).copy(),
             name=getattr(x, 'name', None)
         )
+
+    # ========================================================================
+    # Gaussian Measure Methods
+    # ========================================================================
+
+    def gaussian_measure_kl(self, covariance: LinearOperator,
+                            expectation: Optional[Function] = None):
+        """
+        Create a Gaussian measure using Karhunen-Loève expansion.
+
+        For a Gaussian measure μ = N(m, C), samples are generated as:
+        X = m + Σⱼ₌₁^N √λⱼ ξⱼ φⱼ
+
+        where {(λⱼ, φⱼ)} are eigenpairs of the covariance operator C,
+        and ξⱼ ~ N(0,1) are i.i.d. standard normal variables.
+
+        Args:
+            covariance (LinearOperator): Covariance operator that should have
+                a spectrum provider available. If the operator has a
+                spectrum_provider attribute, it will be used for KL expansion.
+                Otherwise, raises an error.
+            expectation (Function, optional): Mean function. Defaults to zero.
+
+        Returns:
+            GaussianMeasure: Gaussian measure with spectral covariance
+
+        Example:
+            >>> # Using LaplacianInverseOperator with spectrum
+            >>> lap_inv = LaplacianInverseOperator(l2_space, bc)
+            >>> measure = l2_space.gaussian_measure_kl(lap_inv)
+            >>> sample = measure.sample()
+        """
+        from pygeoinf.gaussian_measure import GaussianMeasure
+        from pygeoinf.interval.providers import SpectrumProvider
+
+        # Check if the operator has a spectrum provider
+        if not hasattr(covariance, 'spectrum_provider'):
+            raise ValueError(
+                f"Covariance operator {type(covariance).__name__} does not "
+                f"have a spectrum_provider attribute. KL expansion requires "
+                f"analytical spectrum information."
+            )
+
+        def sample_gaussian_kl(covariance, expectation=None, n_samples=1):
+            """
+            Sample from Gaussian measure using Karhunen-Loève expansion.
+
+            Generates samples directly without creating a GaussianMeasure object.
+            Useful for one-off sampling or when you need direct control.
+
+            Args:
+                covariance (LinearOperator): Covariance operator that should have
+                    a spectrum provider available. If the operator has a
+                    spectrum_provider attribute, it will be used for KL expansion.
+                    Otherwise, raises an error.
+                expectation (Function, optional): Mean function. Defaults to zero.
+                n_samples (int): Number of samples to generate. Default 1.
+
+            Returns:
+                Function or list[Function]: Generated sample(s)
+
+            Mathematical formula:
+                X = m + Σⱼ₌₁^N √λⱼ ξⱼ φⱼ
+            """
+            # Check if the operator has a spectrum provider
+            if not hasattr(covariance, 'spectrum_provider'):
+                raise ValueError(
+                    f"Covariance operator {type(covariance).__name__} does not "
+                    f"have a spectrum_provider attribute. KL expansion requires "
+                    f"analytical spectrum information."
+                )
+
+            samples = []
+            eigenvalues = covariance.get_all_eigenvalues()
+            sqrt_eigenvalues = np.sqrt(np.maximum(eigenvalues, 1e-12))
+
+            for _ in range(n_samples):
+                # Generate i.i.d. standard normal variables ξⱼ
+                xi = np.random.randn(len(eigenvalues))
+
+                # Compute coefficients: cⱼ = √λⱼ ξⱼ
+                coefficients = sqrt_eigenvalues * xi
+
+                # Create sample as linear combination: Σⱼ cⱼ φⱼ
+                for j in range(len(eigenvalues)):
+                    basis_func = covariance.get_basis_function(j)
+                    if j == 0:
+                        sample = coefficients[j] * basis_func
+                    else:
+                        sample = sample + coefficients[j] * basis_func
+
+                # Add expectation (mean)
+                if expectation is not None:
+                    sample = sample + expectation
+
+                samples.append(sample)
+
+            return samples[0] if n_samples == 1 else samples
+
+        return GaussianMeasure(
+            covariance=covariance,
+            expectation=expectation,
+            sample=sample_gaussian_kl
+        )
+
+    def gaussian_measure_spde(self, precision_operator, expectation=None):
+        """
+        Create a Gaussian measure using SPDE/precision operator approach.
+
+        For precision operator A = C^(-1), samples are generated by solving:
+        A^(1/2) u = ξ
+
+        where ξ is Gaussian white noise. This avoids explicit
+        eigendecomposition and scales well with modern linear solvers.
+
+        Args:
+            precision_operator (LinearOperator): Precision operator A = C^(-1).
+                Should map from this L2Space to some target space
+                (often Sobolev). Must be self-adjoint and positive definite.
+            expectation (Function, optional): Mean function. Defaults to zero.
+
+        Returns:
+            GaussianMeasure: Gaussian measure with operator-based covariance
+
+        Example:
+            >>> # Using Laplacian inverse as covariance
+            >>> laplacian_inv = LaplacianInverseOperator(
+            ...     sobolev_space, l2_space
+            ... )
+            >>> measure = l2_space.gaussian_measure_spde(laplacian_inv)
+            >>> sample = measure.sample_spde()
+        """
+        from pygeoinf.gaussian_measure import GaussianMeasure
+
+        # For SPDE approach, we store the precision operator directly
+        # The actual sampling will be done via custom method
+        return GaussianMeasure(
+            covariance=precision_operator,
+            expectation=expectation
+        )
+
+    def sample_gaussian_spde(
+        self, precision_operator, expectation=None, n_samples=1
+    ):
+        """
+        Sample from Gaussian measure using SPDE/precision operator approach.
+
+        Solves the SPDE: A^(1/2) u = ξ where A is the precision operator.
+        In practice, this often means: u = A^(-1) ξ
+        (apply covariance to noise).
+
+        Args:
+            precision_operator (LinearOperator): Precision operator A = C^(-1)
+            expectation (Function, optional): Mean function. Defaults to zero.
+            n_samples (int): Number of samples to generate. Default 1.
+
+        Returns:
+            Function or list[Function]: Generated sample(s)
+
+        Note:
+            This assumes precision_operator actually represents the covariance
+            operator C (i.e., A^(-1)), not the precision operator A itself.
+            This is consistent with the LaplacianInverseOperator usage.
+        """
+        samples = []
+
+        for _ in range(n_samples):
+            # Generate white noise ξ in the domain space
+            noise_coeffs = np.random.randn(self.dim)
+            white_noise = self.from_components(noise_coeffs)
+
+            # Apply covariance operator: u = C ξ
+            # Note: precision_operator is actually the covariance operator here
+            sample = precision_operator(white_noise)
+
+            # Add expectation (mean)
+            if expectation is not None:
+                # Need to ensure both sample and expectation are in
+                # the same space
+                if hasattr(sample, 'space') and hasattr(expectation, 'space'):
+                    if sample.space == expectation.space:
+                        sample = sample.space.add(sample, expectation)
+                    else:
+                        # Handle case where sample is in codomain,
+                        # expectation in domain
+                        # This would need more sophisticated handling
+                        pass
+
+            samples.append(sample)
+
+        return samples[0] if n_samples == 1 else samples
+
+    def create_gaussian_measure(self, method='kl', **kwargs):
+        """
+        Unified interface for creating Gaussian measures with different
+        methods.
+
+        Args:
+            method (str): Sampling method - 'kl' for Karhunen-Loève,
+                         'spde' for SPDE/precision operator
+            **kwargs: Method-specific arguments
+
+        For method='kl':
+            covariance (LinearOperator): Covariance operator that should have
+                a spectrum provider available (e.g., LaplacianInverseOperator)
+            expectation (Function, optional): Mean function
+
+        For method='spde':
+            precision_operator (LinearOperator): Precision/covariance operator
+            expectation (Function, optional): Mean function
+
+        Returns:
+            GaussianMeasure: Configured Gaussian measure
+
+        Example:
+            >>> # Karhunen-Loève method
+            >>> lap_inv = LaplacianInverseOperator(l2_space, bc)
+            >>> measure1 = l2_space.create_gaussian_measure(
+            ...     method='kl',
+            ...     covariance=lap_inv
+            ... )
+            >>>
+            >>> # SPDE method
+            >>> measure2 = l2_space.create_gaussian_measure(
+            ...     method='spde',
+            ...     precision_operator=laplacian_inv
+            ... )
+        """
+        if method == 'kl':
+            return self.gaussian_measure_kl(**kwargs)
+        elif method == 'spde':
+            return self.gaussian_measure_spde(**kwargs)
+        else:
+            raise ValueError(f"Unknown method '{method}'. Use 'kl' or 'spde'.")

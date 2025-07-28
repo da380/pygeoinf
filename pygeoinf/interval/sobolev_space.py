@@ -4,6 +4,7 @@ Sobolev spaces on a segment/interval [a, b].
 
 import numpy as np
 from scipy.sparse import diags
+from typing import Optional
 
 from pygeoinf.hilbert_space import (
     LinearOperator,
@@ -60,13 +61,12 @@ class Sobolev(L2Space):
         order: float,
         inner_product_type: str,
         /,
-        *,
-        basis_type: str = None,
-        basis_callables: list = None,
-        eigenvalues: np.ndarray = None,
-        basis_provider: LazyBasisProvider = None,
-        spectrum_provider: LazySpectrumProvider = None,
-        boundary_conditions: BoundaryConditions = None,
+        basis_type: Optional[str] = None,
+        basis_callables: Optional[list] = None,
+        eigenvalues: Optional[np.ndarray] = None,
+        basis_provider: Optional[LazyBasisProvider] = None,
+        spectrum_provider: Optional[LazySpectrumProvider] = None,
+        boundary_conditions: Optional[BoundaryConditions] = None,
     ):
         """
         Create a Sobolev space H^s on an interval.
@@ -119,7 +119,7 @@ class Sobolev(L2Space):
                 f"got '{inner_product_type}'"
             )
 
-        # Handle boundary conditions (this is where they belong!)
+        # Handle boundary conditions
         self._boundary_conditions = boundary_conditions
 
         # Different validation and initialization based on inner product type
@@ -322,17 +322,17 @@ class Sobolev(L2Space):
 
     def _from_components(self, coeff):
         """
-        Convert coefficients to an L2Function using linear combination
+        Convert coefficients to a Function using linear combination
         of basis functions.
         """
-        from .l2_functions import L2Function
+        from .l2_functions import Function
 
         coeff = np.asarray(coeff)
         if len(coeff) != self.dim:
             raise ValueError(f"Coefficients must have length {self.dim}")
 
-        # Create L2Function directly with coefficients (same as L2Space)
-        return L2Function(self, coefficients=coeff)
+        # Create Function directly with coefficients (same as L2Space)
+        return Function(self, coefficients=coeff)
 
     def inner_product(self, u, v):
         """
@@ -379,11 +379,11 @@ class Sobolev(L2Space):
         Returns:
             float: Spectral Sobolev inner product value
         """
-        from .l2_functions import L2Function
+        from .l2_functions import Function
 
-        if not isinstance(u, L2Function) or not isinstance(v, L2Function):
+        if not isinstance(u, Function) or not isinstance(v, Function):
             raise TypeError(
-                "Spectral Sobolev inner product requires L2Function instances"
+                "Spectral Sobolev inner product requires Function instances"
             )
 
         eigenvalues = self.eigenvalues

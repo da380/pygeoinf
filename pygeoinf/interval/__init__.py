@@ -24,7 +24,7 @@ Classes:
 
 # Core functionality that exists
 from .l2_space import L2Space
-from .l2_functions import L2Function
+from .l2_functions import Function
 from .sobolev_space import Sobolev
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
@@ -41,7 +41,7 @@ except ImportError:
 
 __all__ = [
     'L2Space',
-    'L2Function',
+    'Function',
     'Sobolev',
     'IntervalDomain',
     'BoundaryConditions',
