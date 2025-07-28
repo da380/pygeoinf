@@ -158,7 +158,7 @@ class L2Space(HilbertSpace):
         else:
             # Use the lazy provider to get all basis functions as a list
             # This ensures consistent interface - always returns a list
-            return self._basis_provider.get_all_basis_functions()
+            return self._basis_provider.get_all_basis_functions(self.dim)
 
     def basis_function(self, i):
         """Return the ith basis function directly."""

@@ -106,14 +106,20 @@ class SpectrumProvider(BasisProvider):
         """
         return self.get_basis_function(index)
 
-    def get_all_eigenvalues(self, n: int = 1):
+    def get_all_eigenvalues(self, n=None):
         """
         Return all eigenvalues as an array.
+
         Args:
-            n (int): Number of eigenvalues to return (default 1)
+            n: Number of eigenvalues to return. If None, returns space.dim
+               eigenvalues for space-based computations.
+
         Returns:
-            np.ndarray: Array of all eigenvalues
+            np.ndarray: Array of eigenvalues
         """
+        if n is None:
+            n = self.space.dim
+
         return np.array([
             self.get_eigenvalue(i) for i in range(n)
         ])
@@ -448,18 +454,29 @@ class LazySpectrumProvider(SpectrumProvider, LazyBasisProvider):
         """
         # Compute all eigenvalues and cache them
         if not hasattr(self, '_all_eigenvalues'):
-            self._all_eigenvalues = self._compute_all_eigenvalues()
+            # For space-based computations, compute enough eigenvalues for the space
+            self._all_eigenvalues = self._compute_all_eigenvalues(self.space.dim)
         return self._all_eigenvalues[index]
 
-    def _compute_all_eigenvalues(self, n: int = 1):
-        """Compute the first n eigenvalues."""
+    def _compute_all_eigenvalues(self, n=None):
+        """
+        Compute the first n eigenvalues.
+
+        Args:
+            n: Number of eigenvalues to compute. If None, uses space.dim for
+               space-based computations, but users can override for operator
+               eigenvalue computations.
+        """
+        if n is None:
+            n = self.space.dim
+
         # This will be implemented differently for different spaces
         # For now, implement Fourier basis with periodic boundary conditions
         if self.basis_type == 'fourier':
             return self._compute_fourier_eigenvalues(n)
         else:
             # For non-Fourier bases, return zeros as placeholder
-            return np.zeros(self.space.dim)
+            return np.zeros(n)
 
     def _compute_fourier_eigenvalues(self, n: int):
         """
@@ -501,18 +518,49 @@ class CustomSpectrumProvider(SpectrumProvider):
     SobolevSpace for spectral inner products.
     """
 
-    def __init__(self, basis_provider: BasisProvider, eigenvalues: np.ndarray):
+    def __init__(self, basis_provider: BasisProvider, eigenvalues: np.ndarray,
+                 space=None):
         """
         Initialize with a basis provider and eigenvalues.
 
         Args:
-            basis_provider: Provider for the basis functions
+            basis_provider: Provider for the basis functions (can be None for
+                           basis_callables case)
             eigenvalues: Array of eigenvalues corresponding to basis functions
+            space: Space object (required if basis_provider is None)
         """
-        super().__init__(basis_provider.space)
         self.basis_provider = basis_provider
         self.eigenvalues = np.asarray(eigenvalues)
 
+        if basis_provider is not None:
+            # Normal case: use the space from the basis provider
+            super().__init__(basis_provider.space)
+            self._validate_eigenvalues()
+        else:
+            # Special case: temporarily set space for super().__init__
+            # We'll properly set it later via _set_space
+            if space is not None:
+                super().__init__(space)
+                self._validate_eigenvalues()
+            else:
+                # Create a dummy space attribute to satisfy super().__init__
+                # This will be overwritten by _set_space
+                class DummySpace:
+                    dim = len(eigenvalues)
+
+                super().__init__(DummySpace())
+                # Mark as needing proper initialization
+                self._needs_space_init = True
+
+    def _set_space(self, space):
+        """Internal method to set space and complete initialization."""
+        self.space = space
+        if hasattr(self, '_needs_space_init'):
+            self._validate_eigenvalues()
+            del self._needs_space_init
+
+    def _validate_eigenvalues(self):
+        """Check that eigenvalues array matches space dimension."""
         if len(self.eigenvalues) != self.space.dim:
             raise ValueError(
                 f"eigenvalues length ({len(self.eigenvalues)}) "
@@ -520,8 +568,15 @@ class CustomSpectrumProvider(SpectrumProvider):
             )
 
     def get_basis_function(self, index: int):
-        """Get basis function from the wrapped provider."""
-        return self.basis_provider.get_basis_function(index)
+        """Get basis function from the wrapped provider or space."""
+        if hasattr(self, '_needs_space_init'):
+            raise RuntimeError("Provider needs proper space initialization")
+
+        if self.basis_provider is not None:
+            return self.basis_provider.get_basis_function(index)
+        else:
+            # For basis_callables case, delegate to the space
+            return self.space.get_basis_function(index)
 
     def get_eigenvalue(self, index: int):
         """Get eigenvalue for given index."""

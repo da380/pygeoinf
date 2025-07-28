@@ -227,7 +227,14 @@ class Sobolev(L2Space):
 
     def _create_custom_spectrum_provider(self, eigenvalues):
         """Create custom spectrum provider for basis_callables + eigenvals."""
-        return CustomSpectrumProvider(self._basis_provider, eigenvalues)
+        # For basis_callables, we need to create a custom spectrum provider
+        # that doesn't rely on a basis_provider but stores eigenvalues directly
+        from .providers import CustomSpectrumProvider
+        # Create the provider without space initially to avoid circular dependency
+        provider = CustomSpectrumProvider(None, eigenvalues, space=None)
+        # Set space after creation to complete initialization
+        provider._set_space(self)
+        return provider
 
     @property
     def boundary_conditions(self):
