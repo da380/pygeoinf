@@ -64,7 +64,7 @@ class L2Space(HilbertSpace):
         """
         self._dim = dim
         self._function_domain = function_domain
-        self.gaussian_measure = None
+        self._gaussian_measure = None
 
         # Validate that exactly one basis option is provided
         basis_options = [basis_type, basis_callables, basis_provider]
@@ -306,8 +306,21 @@ class L2Space(HilbertSpace):
     # Gaussian Measure Methods
     # ========================================================================
 
+    @property
+    def gaussian_measure(self):
+        """
+        Property to access the Gaussian measure for this L2 space.
+        This is a convenience method that allows using the same interface
+        for both KL and SPDE methods.
+        """
+        if self._gaussian_measure is None:
+            raise ValueError("Gaussian measure not created yet. "
+                             "Use create_gaussian_measure() first.")
+        return self._gaussian_measure
+
     def gaussian_measure_kl(self, covariance: LinearOperator,
-                            expectation: Optional[Function] = None):
+                            expectation: Optional[Function] = None,
+                            kl_expansion: int = 100):
         """
         Create a Gaussian measure using Karhunen-Loève expansion.
 
@@ -323,6 +336,7 @@ class L2Space(HilbertSpace):
                 spectrum_provider attribute, it will be used for KL expansion.
                 Otherwise, raises an error.
             expectation (Function, optional): Mean function. Defaults to zero.
+            kl_expansion (int): Number of modes for KL expansion (default 100).
 
         Returns:
             GaussianMeasure: Gaussian measure with spectral covariance
@@ -348,7 +362,7 @@ class L2Space(HilbertSpace):
             Sample from Gaussian measure using Karhunen-Loève expansion.
             """
             # Get eigenvalues using the spectrum provider
-            eigenvalues = covariance.get_all_eigenvalues()
+            eigenvalues = covariance.get_all_eigenvalues(n=kl_expansion)
             eigenvalues = np.array(eigenvalues)
             sqrt_eigenvalues = np.sqrt(np.maximum(eigenvalues, 1e-12))
 
@@ -372,7 +386,7 @@ class L2Space(HilbertSpace):
 
             return sample
 
-        self.gaussian_measure = GaussianMeasure(
+        self._gaussian_measure = GaussianMeasure(
             covariance=covariance,
             expectation=expectation,
             sample=sample_gaussian_kl
@@ -465,7 +479,8 @@ class L2Space(HilbertSpace):
 
         return samples[0] if n_samples == 1 else samples
 
-    def create_gaussian_measure(self, method='kl', **kwargs):
+    def create_gaussian_measure(self, method='kl', kl_expansion: int = 100,
+                                **kwargs):
         """
         Unified interface for creating Gaussian measures with different
         methods.
@@ -473,6 +488,7 @@ class L2Space(HilbertSpace):
         Args:
             method (str): Sampling method - 'kl' for Karhunen-Loève,
                          'spde' for SPDE/precision operator
+            kl_expansion (int): Number of modes for KL expansion (default 100)
             **kwargs: Method-specific arguments
 
         For method='kl':
@@ -502,8 +518,8 @@ class L2Space(HilbertSpace):
             ... )
         """
         if method == 'kl':
-            return self.gaussian_measure_kl(**kwargs)
+            self.gaussian_measure_kl(kl_expansion=kl_expansion, **kwargs)
         elif method == 'spde':
-            return self.gaussian_measure_spde(**kwargs)
+            self.gaussian_measure_spde(**kwargs)
         else:
             raise ValueError(f"Unknown method '{method}'. Use 'kl' or 'spde'.")

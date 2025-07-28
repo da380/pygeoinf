@@ -54,10 +54,6 @@ class LaplacianInverseSpectrumProvider(SpectrumProvider):
         For periodic boundary conditions:
         λ₀ = ∞ (constant mode), λₖ = (b-a)²/(2πk)² for k ≥ 1
         """
-        if not (0 <= index < self.space.dim):
-            raise IndexError(
-                f"Eigenvalue index {index} out of range [0, {self.space.dim})"
-            )
 
         if index not in self._eigenvalue_cache:
             self._eigenvalue_cache[index] = self._compute_eigenvalue(index)
@@ -102,10 +98,6 @@ class LaplacianInverseSpectrumProvider(SpectrumProvider):
         These are the same as the eigenfunctions of -Δ, since
         (-Δ)^(-1) and -Δ have the same eigenfunctions.
         """
-        if not (0 <= index < self.space.dim):
-            raise IndexError(
-                f"Eigenfunction index {index} out of range [0, {self.space.dim})"
-            )
 
         if index not in self._eigenfunction_cache:
             self._eigenfunction_cache[index] = self._compute_eigenfunction(index)
@@ -203,11 +195,11 @@ class LaplacianInverseSpectrumProvider(SpectrumProvider):
             raise ValueError(f"Unsupported boundary condition type: "
                              f"{self.boundary_conditions.type}")
 
-    def get_all_eigenvalues(self):
+    def get_all_eigenvalues(self, n: int = 1):
         """Return all eigenvalues as an array."""
         if self._all_eigenvalues is None:
             self._all_eigenvalues = np.array([
-                self.get_eigenvalue(i) for i in range(self.space.dim)
+                self.get_eigenvalue(i) for i in range(n)
             ])
         return self._all_eigenvalues
 
@@ -402,14 +394,15 @@ class LaplacianInverseOperator(LinearOperator):
         """
         return self._spectrum_provider.get_basis_function(index)
 
-    def get_all_eigenvalues(self) -> np.ndarray:
+    def get_all_eigenvalues(self, n: int = 1) -> np.ndarray:
         """
         Get all eigenvalues of the inverse Laplacian operator.
-
+        Args:
+            n: Number of eigenvalues to compute (default: 1)
         Returns:
             np.ndarray: Array of all eigenvalues
         """
-        return self._spectrum_provider.get_all_eigenvalues()
+        return self._spectrum_provider.get_all_eigenvalues(n)
 
     def clear_spectrum_cache(self):
         """Clear cached spectrum computations."""

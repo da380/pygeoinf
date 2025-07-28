@@ -59,14 +59,17 @@ class BasisProvider(ABC):
         for i in range(self.space.dim):
             yield self.get_basis_function(i)
 
-    def get_all_basis_functions(self):
+    def get_all_basis_functions(self, n: int = 1):
         """
         Return all basis functions as a list.
+
+        Args:
+            n (int): Number of basis functions to return (default 1)
 
         Returns:
             list: List of all Function basis functions
         """
-        return [self.get_basis_function(i) for i in range(self.space.dim)]
+        return [self.get_basis_function(i) for i in range(n)]
 
 
 class SpectrumProvider(BasisProvider):
@@ -103,15 +106,16 @@ class SpectrumProvider(BasisProvider):
         """
         return self.get_basis_function(index)
 
-    def get_all_eigenvalues(self):
+    def get_all_eigenvalues(self, n: int = 1):
         """
         Return all eigenvalues as an array.
-
+        Args:
+            n (int): Number of eigenvalues to return (default 1)
         Returns:
             np.ndarray: Array of all eigenvalues
         """
         return np.array([
-            self.get_eigenvalue(i) for i in range(self.space.dim)
+            self.get_eigenvalue(i) for i in range(n)
         ])
 
 
@@ -447,17 +451,17 @@ class LazySpectrumProvider(SpectrumProvider, LazyBasisProvider):
             self._all_eigenvalues = self._compute_all_eigenvalues()
         return self._all_eigenvalues[index]
 
-    def _compute_all_eigenvalues(self):
-        """Compute all eigenvalues at once."""
+    def _compute_all_eigenvalues(self, n: int = 1):
+        """Compute the first n eigenvalues."""
         # This will be implemented differently for different spaces
         # For now, implement Fourier basis with periodic boundary conditions
         if self.basis_type == 'fourier':
-            return self._compute_fourier_eigenvalues()
+            return self._compute_fourier_eigenvalues(n)
         else:
             # For non-Fourier bases, return zeros as placeholder
             return np.zeros(self.space.dim)
 
-    def _compute_fourier_eigenvalues(self):
+    def _compute_fourier_eigenvalues(self, n: int):
         """
         Compute eigenvalues for Fourier basis with periodic boundary
         conditions.
@@ -471,11 +475,10 @@ class LazySpectrumProvider(SpectrumProvider, LazyBasisProvider):
         """
         domain = self.space.function_domain
         length = domain.b - domain.a
-        dim = self.space.dim
 
-        eigenvalues = np.zeros(dim)
+        eigenvalues = np.zeros(n)
 
-        for index in range(dim):
+        for index in range(n):
             if index == 0:
                 # Constant term has eigenvalue 0
                 eigenvalues[index] = 0.0
@@ -527,7 +530,3 @@ class CustomSpectrumProvider(SpectrumProvider):
                 f"Eigenvalue index {index} out of range [0, {self.space.dim})"
             )
         return self.eigenvalues[index]
-
-
-# Backward compatibility aliases
-LazyL2BasisProvider = LazyBasisProvider
