@@ -64,6 +64,7 @@ class L2Space(HilbertSpace):
         """
         self._dim = dim
         self._function_domain = function_domain
+        self.gaussian_measure = None
 
         # Validate that exactly one basis option is provided
         basis_options = [basis_type, basis_callables, basis_provider]
@@ -333,7 +334,6 @@ class L2Space(HilbertSpace):
             >>> sample = measure.sample()
         """
         from pygeoinf.gaussian_measure import GaussianMeasure
-        from pygeoinf.interval.providers import SpectrumProvider
 
         # Check if the operator has a spectrum provider
         if not hasattr(covariance, 'spectrum_provider'):
@@ -343,63 +343,36 @@ class L2Space(HilbertSpace):
                 f"analytical spectrum information."
             )
 
-        def sample_gaussian_kl(covariance, expectation=None, n_samples=1):
+        def sample_gaussian_kl():
             """
             Sample from Gaussian measure using Karhunen-Loève expansion.
-
-            Generates samples directly without creating a GaussianMeasure object.
-            Useful for one-off sampling or when you need direct control.
-
-            Args:
-                covariance (LinearOperator): Covariance operator that should have
-                    a spectrum provider available. If the operator has a
-                    spectrum_provider attribute, it will be used for KL expansion.
-                    Otherwise, raises an error.
-                expectation (Function, optional): Mean function. Defaults to zero.
-                n_samples (int): Number of samples to generate. Default 1.
-
-            Returns:
-                Function or list[Function]: Generated sample(s)
-
-            Mathematical formula:
-                X = m + Σⱼ₌₁^N √λⱼ ξⱼ φⱼ
             """
-            # Check if the operator has a spectrum provider
-            if not hasattr(covariance, 'spectrum_provider'):
-                raise ValueError(
-                    f"Covariance operator {type(covariance).__name__} does not "
-                    f"have a spectrum_provider attribute. KL expansion requires "
-                    f"analytical spectrum information."
-                )
-
-            samples = []
+            # Get eigenvalues using the spectrum provider
             eigenvalues = covariance.get_all_eigenvalues()
+            eigenvalues = np.array(eigenvalues)
             sqrt_eigenvalues = np.sqrt(np.maximum(eigenvalues, 1e-12))
 
-            for _ in range(n_samples):
-                # Generate i.i.d. standard normal variables ξⱼ
-                xi = np.random.randn(len(eigenvalues))
+            # Generate i.i.d. standard normal variables ξⱼ
+            xi = np.random.randn(len(eigenvalues))
 
-                # Compute coefficients: cⱼ = √λⱼ ξⱼ
-                coefficients = sqrt_eigenvalues * xi
+            # Compute coefficients: cⱼ = √λⱼ ξⱼ
+            coefficients = sqrt_eigenvalues * xi
 
-                # Create sample as linear combination: Σⱼ cⱼ φⱼ
-                for j in range(len(eigenvalues)):
-                    basis_func = covariance.get_basis_function(j)
-                    if j == 0:
-                        sample = coefficients[j] * basis_func
-                    else:
-                        sample = sample + coefficients[j] * basis_func
+            # Create sample as linear combination: Σⱼ cⱼ φⱼ
+            for j in range(len(eigenvalues)):
+                basis_func = covariance.get_eigenfunction(j)
+                if j == 0:
+                    sample = coefficients[j] * basis_func
+                else:
+                    sample = sample + coefficients[j] * basis_func
 
-                # Add expectation (mean)
-                if expectation is not None:
-                    sample = sample + expectation
+            # Add expectation (mean)
+            if expectation is not None:
+                sample = sample + expectation
 
-                samples.append(sample)
+            return sample
 
-            return samples[0] if n_samples == 1 else samples
-
-        return GaussianMeasure(
+        self.gaussian_measure = GaussianMeasure(
             covariance=covariance,
             expectation=expectation,
             sample=sample_gaussian_kl
