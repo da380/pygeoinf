@@ -11,11 +11,11 @@ from pygeoinf.hilbert_space import (
 )
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.interval.l2_space import L2Space
+from pygeoinf.interval.boundary_conditions import BoundaryConditions
 from pygeoinf.interval.providers import (
     LazyBasisProvider, LazySpectrumProvider, CustomSpectrumProvider
 )
 from pygeoinf.interval.interval_domain import IntervalDomain
-from pygeoinf.interval.boundary_conditions import BoundaryConditions
 
 
 class Sobolev(L2Space):
@@ -544,7 +544,6 @@ class Lebesgue(Sobolev):
         """
         # Create L2 space with order=0 (no Sobolev scaling)
         # For Lebesgue space, we use periodic boundary conditions as default
-        from pygeoinf.interval.interval_domain import BoundaryConditions
         super().__init__(
             dim, function_domain, 0.0, 'spectral', basis_type='fourier',
             boundary_conditions=BoundaryConditions.periodic()
