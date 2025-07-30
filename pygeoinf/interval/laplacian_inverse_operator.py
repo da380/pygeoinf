@@ -6,208 +6,13 @@ FEM solvers as backends (DOLFINx or native Python implementation).
 """
 
 import numpy as np
-import math
 from .fem_solvers import create_fem_solver
 from .l2_space import L2Space
 from .sobolev_space import Sobolev
 from .boundary_conditions import BoundaryConditions
 from pygeoinf.hilbert_space import LinearOperator
 from .l2_functions import Function
-from .providers import SpectrumProvider
-
-
-class LaplacianInverseSpectrumProvider(SpectrumProvider):
-    """
-    Spectrum provider for the inverse Laplacian operator.
-
-    Computes eigenvalues and eigenfunctions of (-Δ)^(-1) based on the
-    boundary conditions and domain. Uses lazy evaluation to compute
-    spectral information only when needed.
-    """
-
-    def __init__(self, space, boundary_conditions):
-        """
-        Initialize the spectrum provider.
-
-        Args:
-            space: Hilbert space (domain for the operator)
-            boundary_conditions: Boundary conditions determining the spectrum
-        """
-        super().__init__(space)
-        self.space = space
-        self.function_domain = space.function_domain
-        self.boundary_conditions = boundary_conditions
-        self._eigenvalue_cache = {}
-        self._eigenfunction_cache = {}
-        self._all_eigenvalues = None
-
-    def get_eigenvalue(self, index: int):
-        """
-        Get eigenvalue of (-Δ)^(-1) for given index.
-
-        For Dirichlet boundary conditions on [a,b]:
-        λₖ = 1 / (kπ/(b-a))² = (b-a)²/(kπ)²
-
-        For Neumann boundary conditions:
-        λ₀ = ∞ (constant mode), λₖ = (b-a)²/(kπ)² for k ≥ 1
-
-        For periodic boundary conditions:
-        λ₀ = ∞ (constant mode), λₖ = (b-a)²/(2πk)² for k ≥ 1
-        """
-
-        if index not in self._eigenvalue_cache:
-            self._eigenvalue_cache[index] = self._compute_eigenvalue(index)
-        return self._eigenvalue_cache[index]
-
-    def _compute_eigenvalue(self, index: int):
-        """Compute single eigenvalue."""
-        length = self.function_domain.b - self.function_domain.a
-
-        if self.boundary_conditions.type == 'dirichlet':
-            # For Dirichlet: λₖ = L²/(kπ)² where k = index + 1
-            k = index + 1
-            return (length / (k * math.pi))**2
-
-        elif self.boundary_conditions.type == 'neumann':
-            if index == 0:
-                # Constant mode for Neumann has infinite eigenvalue
-                # In practice, we use a very large value or handle separately
-                return float('inf')
-            else:
-                # For k ≥ 1: λₖ = L²/(kπ)²
-                k = index
-                return (length / (k * math.pi))**2
-
-        elif self.boundary_conditions.type == 'periodic':
-            if index == 0:
-                # Constant mode for periodic has infinite eigenvalue
-                return float('inf')
-            else:
-                # For periodic: both cos and sin modes have λₖ = L²/(2πk)²
-                k = (index + 1) // 2  # Frequency index
-                return (length / (2 * k * math.pi))**2
-
-        else:
-            raise ValueError(f"Unsupported boundary condition type: "
-                             f"{self.boundary_conditions.type}")
-
-    def get_basis_function(self, index: int):
-        """
-        Get eigenfunction of (-Δ)^(-1) for given index.
-
-        These are the same as the eigenfunctions of -Δ, since
-        (-Δ)^(-1) and -Δ have the same eigenfunctions.
-        """
-
-        if index not in self._eigenfunction_cache:
-            self._eigenfunction_cache[index] = self._compute_eigenfunction(index)
-        return self._eigenfunction_cache[index]
-
-    def _compute_eigenfunction(self, index: int):
-        """Compute eigenfunction based on boundary conditions."""
-        a, b = self.function_domain.a, self.function_domain.b
-        length = b - a
-
-        if self.boundary_conditions.type == 'dirichlet':
-            # sin(kπ(x-a)/L) for k = index + 1
-            k = index + 1
-
-            def eigenfunction(x):
-                if isinstance(x, np.ndarray):
-                    return np.sin(k * np.pi * (x - a) / length)
-                else:
-                    return math.sin(k * math.pi * (x - a) / length)
-
-            return Function(
-                self.space,
-                evaluate_callable=eigenfunction,
-                name=f"sin({k}π(x-{a})/{length})"
-            )
-
-        elif self.boundary_conditions.type == 'neumann':
-            if index == 0:
-                # Constant mode
-                def constant_func(x):
-                    return np.ones_like(x) if isinstance(x, np.ndarray) else 1.0
-
-                return Function(
-                    self.space,
-                    evaluate_callable=constant_func,
-                    name="1 (constant)"
-                )
-            else:
-                # cos(kπ(x-a)/L) for k = index
-                k = index
-
-                def eigenfunction(x):
-                    if isinstance(x, np.ndarray):
-                        return np.cos(k * np.pi * (x - a) / length)
-                    else:
-                        return math.cos(k * math.pi * (x - a) / length)
-
-                return Function(
-                    self.space,
-                    evaluate_callable=eigenfunction,
-                    name=f"cos({k}π(x-{a})/{length})"
-                )
-
-        elif self.boundary_conditions.type == 'periodic':
-            if index == 0:
-                # Constant mode
-                def constant_func(x):
-                    return np.ones_like(x) if isinstance(x, np.ndarray) else 1.0
-
-                return Function(
-                    self.space,
-                    evaluate_callable=constant_func,
-                    name="1 (constant)"
-                )
-            else:
-                # Alternate between cos and sin modes
-                k = (index + 1) // 2  # Frequency index
-                is_sin = (index % 2 == 0)  # Even indices are sin, odd are cos
-
-                if is_sin:
-                    def eigenfunction(x):
-                        if isinstance(x, np.ndarray):
-                            return np.sin(2 * k * np.pi * (x - a) / length)
-                        else:
-                            return math.sin(2 * k * math.pi * (x - a) / length)
-
-                    return Function(
-                        self.space,
-                        evaluate_callable=eigenfunction,
-                        name=f"sin(2π{k}(x-{a})/{length})"
-                    )
-                else:
-                    def eigenfunction(x):
-                        if isinstance(x, np.ndarray):
-                            return np.cos(2 * k * np.pi * (x - a) / length)
-                        else:
-                            return math.cos(2 * k * math.pi * (x - a) / length)
-
-                    return Function(
-                        self.space,
-                        evaluate_callable=eigenfunction,
-                        name=f"cos(2π{k}(x-{a})/{length})"
-                    )
-        else:
-            raise ValueError(f"Unsupported boundary condition type: "
-                             f"{self.boundary_conditions.type}")
-
-    def get_all_eigenvalues(self, n: int = 1):
-        """Return all eigenvalues as an array."""
-        if self._all_eigenvalues is None:
-            self._all_eigenvalues = np.array([
-                self.get_eigenvalue(i) for i in range(n)
-            ])
-        return self._all_eigenvalues
-
-    def clear_cache(self):
-        """Clear all cached computations."""
-        self._eigenvalue_cache.clear()
-        self._eigenfunction_cache.clear()
-        self._all_eigenvalues = None
+from .providers import create_laplacian_spectrum_provider
 
 
 class LaplacianInverseOperator(LinearOperator):
@@ -269,8 +74,8 @@ class LaplacianInverseOperator(LinearOperator):
         self._interval = (self._function_domain.a, self._function_domain.b)
 
         # Initialize spectrum provider for lazy eigenvalue computation
-        self._spectrum_provider = LaplacianInverseSpectrumProvider(
-            domain, self._boundary_conditions
+        self._spectrum_provider = create_laplacian_spectrum_provider(
+            domain, self._boundary_conditions, inverse=True
         )
 
         # Choose solver type
@@ -366,7 +171,7 @@ class LaplacianInverseOperator(LinearOperator):
         return self._dofs
 
     @property
-    def spectrum_provider(self) -> LaplacianInverseSpectrumProvider:
+    def spectrum_provider(self):
         """Get the spectrum provider for eigenvalue computations."""
         return self._spectrum_provider
 
@@ -394,19 +199,17 @@ class LaplacianInverseOperator(LinearOperator):
         """
         return self._spectrum_provider.get_basis_function(index)
 
-    def get_all_eigenvalues(self, n: int = 1) -> np.ndarray:
+    def get_all_eigenvalues(self, n: int | None = None) -> np.ndarray:
         """
         Get all eigenvalues of the inverse Laplacian operator.
         Args:
-            n: Number of eigenvalues to compute (default: 1)
+            n: Number of eigenvalues to compute (default: space.dim)
         Returns:
             np.ndarray: Array of all eigenvalues
         """
+        if n is None:
+            n = self._domain.dim
         return self._spectrum_provider.get_all_eigenvalues(n)
-
-    def clear_spectrum_cache(self):
-        """Clear cached spectrum computations."""
-        self._spectrum_provider.clear_cache()
 
     def get_solver_info(self) -> dict:
         """Get information about the current solver."""

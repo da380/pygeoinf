@@ -14,7 +14,8 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.interval.l2_space import L2Space
 from pygeoinf.interval.boundary_conditions import BoundaryConditions
 from pygeoinf.interval.providers import (
-    LazyBasisProvider, LazySpectrumProvider, CustomSpectrumProvider
+    BasisProvider, SpectrumProvider, EigenvalueProvider,
+    CustomEigenvalueProvider, create_spectrum_provider
 )
 from pygeoinf.interval.interval_domain import IntervalDomain
 
@@ -64,8 +65,8 @@ class Sobolev(L2Space):
         basis_type: Optional[str] = None,
         basis_callables: Optional[list] = None,
         eigenvalues: Optional[np.ndarray] = None,
-        basis_provider: Optional[LazyBasisProvider] = None,
-        spectrum_provider: Optional[LazySpectrumProvider] = None,
+        basis_provider: Optional[BasisProvider] = None,
+        spectrum_provider: Optional[SpectrumProvider] = None,
         boundary_conditions: Optional[BoundaryConditions] = None,
     ):
         """
@@ -83,7 +84,7 @@ class Sobolev(L2Space):
             For weak_derivative inner product:
                 basis_type (str, optional): Basis type ('fourier', 'hat', etc.)
                 basis_callables (list, optional): Custom basis functions
-                basis_provider (LazyBasisProvider, optional): Basis provider
+                basis_provider (BasisProvider, optional): Basis provider
 
             For spectral inner product:
                 basis_type (str, optional): Basis type (creates
@@ -198,10 +199,13 @@ class Sobolev(L2Space):
         # Initialize based on the provided option
         if basis_type is not None:
             # For basis_type with spectral inner product, create and use
-            # LazySpectrumProvider
+            # SpectrumProvider
             super().__init__(dim, function_domain, basis_type=basis_type)
-            self._spectrum_provider = LazySpectrumProvider(
-                self, basis_type, None
+            # Create eigenvalue provider based on basis type
+            eigenvalue_provider = self._create_eigenvalue_provider(basis_type)
+            self._spectrum_provider = SpectrumProvider(
+                self, self._basis_provider.function_provider,
+                eigenvalue_provider
             )
             # Replace the L2Space's basis provider with spectrum provider
             self._basis_provider = self._spectrum_provider
@@ -225,13 +229,27 @@ class Sobolev(L2Space):
             )
             self._spectrum_provider = spectrum_provider
 
+    def _create_eigenvalue_provider(self, basis_type):
+        """Create eigenvalue provider for a given basis type."""
+        from .providers import (
+            FourierEigenvalueProvider, ZeroEigenvalueProvider
+        )
+
+        if basis_type == 'fourier':
+            return FourierEigenvalueProvider(self._function_domain.length)
+        else:
+            # For other basis types, use zero eigenvalues for now
+            # This can be extended with specific eigenvalue calculations
+            return ZeroEigenvalueProvider()
+
     def _create_custom_spectrum_provider(self, eigenvalues):
         """Create custom spectrum provider for basis_callables + eigenvals."""
         # For basis_callables, we need to create a custom spectrum provider
         # that doesn't rely on a basis_provider but stores eigenvalues directly
-        from .providers import CustomSpectrumProvider
+        from .providers import SpectrumProvider, CustomEigenvalueProvider
         # Create the provider without space initially to avoid circular dependency
-        provider = CustomSpectrumProvider(None, eigenvalues, space=None)
+        eigenvalue_provider = CustomEigenvalueProvider(eigenvalues)
+        provider = SpectrumProvider(self, None, eigenvalue_provider)
         # Set space after creation to complete initialization
         provider._set_space(self)
         return provider

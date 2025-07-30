@@ -229,7 +229,7 @@ class Function:
         return outside_support.item() if is_scalar else outside_support
 
     def evaluate(self, x: Union[float, np.ndarray],
-                 check_domain: bool = True) -> Union[float, np.ndarray]:
+                 check_domain: Optional[bool] = None) -> Union[float, np.ndarray]:
         """
         Point evaluation of representative: f(x).
 
@@ -253,6 +253,11 @@ class Function:
             is mathematically justified (e.g., Sobolev functions with s > 1/2).
         """
         import warnings
+
+        # Default check_domain behavior: True only if space is provided
+        if check_domain is None:
+            check_domain = self.space is not None
+
         if self.space_type == "L2":
             # Warn about point evaluation in L² space
             warnings.warn(
@@ -263,7 +268,7 @@ class Function:
             )
 
         # Check domain membership if requested
-        if check_domain:
+        if check_domain and self.space is not None:
             x_array = np.asarray(x)
             if not np.all(self.space.function_domain.contains(x_array)):
                 raise ValueError(
@@ -346,7 +351,7 @@ class Function:
         self, x: Union[float, np.ndarray]
     ) -> Union[float, np.ndarray]:
         """Allow f(x) syntax."""
-        return self.evaluate(x)
+        return self.evaluate(x, check_domain=None)
 
     def integrate(self, weight: Optional[Callable] = None,
                   method: str = 'simpson') -> float:

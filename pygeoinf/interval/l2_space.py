@@ -13,7 +13,7 @@ from pygeoinf.hilbert_space import HilbertSpace, LinearOperator
 from pygeoinf.hilbert_space import LinearForm
 from pygeoinf.interval.l2_functions import Function
 from pygeoinf.interval.interval_domain import IntervalDomain
-from pygeoinf.interval.providers import LazyBasisProvider
+from pygeoinf.interval.providers import BasisProvider
 
 
 class L2Space(HilbertSpace):
@@ -38,7 +38,7 @@ class L2Space(HilbertSpace):
         *,
         basis_type: Optional[str] = None,
         basis_callables: Optional[list] = None,
-        basis_provider: Optional[LazyBasisProvider] = None,
+        basis_provider: Optional[BasisProvider] = None,
     ):
         """
         Args:
@@ -50,7 +50,7 @@ class L2Space(HilbertSpace):
             basis_callables (list, optional): List of callable functions that
                 will be converted to L2Function basis functions on this space.
                 Solves the circular dependency problem.
-            basis_provider (LazyBasisProvider, optional): Custom lazy provider
+            basis_provider (BasisProvider, optional): Custom basis provider
                 for basis functions.
 
         Note:
@@ -105,7 +105,8 @@ class L2Space(HilbertSpace):
 
         # Create basis provider for standard basis types
         if basis_type in ['fourier', 'hat', 'hat_homogeneous']:
-            self._basis_provider = LazyBasisProvider(self, basis_type)
+            from .providers import create_basis_provider
+            self._basis_provider = create_basis_provider(self, basis_type)
 
         # Initialize Gram matrix as None - computed lazily when needed
         self._gram_matrix = None
@@ -158,7 +159,7 @@ class L2Space(HilbertSpace):
         else:
             # Use the lazy provider to get all basis functions as a list
             # This ensures consistent interface - always returns a list
-            return self._basis_provider.get_all_basis_functions(self.dim)
+            return self._basis_provider.get_all_basis_functions()
 
     def basis_function(self, i):
         """Return the ith basis function directly."""
@@ -361,8 +362,11 @@ class L2Space(HilbertSpace):
             """
             Sample from Gaussian measure using Karhunen-Loève expansion.
             """
+            # Ensure kl_expansion doesn't exceed space dimension
+            effective_expansion = min(kl_expansion, self.dim)
+
             # Get eigenvalues using the spectrum provider
-            eigenvalues = covariance.get_all_eigenvalues(n=kl_expansion)
+            eigenvalues = covariance.get_all_eigenvalues(n=effective_expansion)
             eigenvalues = np.array(eigenvalues)
             sqrt_eigenvalues = np.sqrt(np.maximum(eigenvalues, 1e-12))
 
