@@ -294,7 +294,8 @@ def create_basis_provider(space, basis_type: str):
     Returns:
         BasisProvider: Provider configured for the specified basis type
     """
-    from .function_providers import FourierFunctionProvider, HatFunctionProvider
+    from .function_providers import (FourierFunctionProvider,
+                                     HatFunctionProvider)
 
     if basis_type == 'fourier':
         func_provider = FourierFunctionProvider(space)
@@ -340,7 +341,8 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
 
         Args:
             function_domain: Interval domain
-            boundary_conditions: Boundary conditions ('dirichlet', 'neumann', 'periodic')
+            boundary_conditions: Boundary conditions ('dirichlet', 'neumann',
+                                 'periodic')
             inverse: If True, compute eigenvalues of (-Δ)^(-1), else of -Δ
         """
         self.function_domain = function_domain
@@ -395,7 +397,8 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             return eigenval
 
 
-def create_laplacian_spectrum_provider(space, boundary_conditions, inverse=False):
+def create_laplacian_spectrum_provider(space, boundary_conditions,
+                                       inverse=False):
     """
     Factory function to create spectrum provider for Laplacian eigenfunctions.
 

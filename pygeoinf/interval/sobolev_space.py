@@ -14,8 +14,7 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.interval.l2_space import L2Space
 from pygeoinf.interval.boundary_conditions import BoundaryConditions
 from pygeoinf.interval.providers import (
-    BasisProvider, SpectrumProvider, EigenvalueProvider,
-    CustomEigenvalueProvider, create_spectrum_provider
+    BasisProvider, SpectrumProvider
 )
 from pygeoinf.interval.interval_domain import IntervalDomain
 
@@ -247,7 +246,8 @@ class Sobolev(L2Space):
         # For basis_callables, we need to create a custom spectrum provider
         # that doesn't rely on a basis_provider but stores eigenvalues directly
         from .providers import SpectrumProvider, CustomEigenvalueProvider
-        # Create the provider without space initially to avoid circular dependency
+        # Create the provider without space initially to avoid circular
+        # dependency
         eigenvalue_provider = CustomEigenvalueProvider(eigenvalues)
         provider = SpectrumProvider(self, None, eigenvalue_provider)
         # Set space after creation to complete initialization

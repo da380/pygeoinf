@@ -1,18 +1,18 @@
 """
 FEM Solvers for Laplacian Inverse Operator
 
-This module provides different FEM solver backends for the LaplacianInverseOperator.
-Users can choose between:
+This module provides different FEM solver backends for the
+LaplacianInverseOperator. Users can choose between:
 1. DOLFINx-based solver (requires DOLFINx installation)
 2. Custom native Python FEM solver (no external dependencies)
 
-The native FEM solver leverages the L2Space hat basis functions for all operations.
+The native FEM solver leverages the L2Space hat basis functions for all
+operations.
 """
 
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Optional, Callable
-import warnings
+from typing import Callable
 
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
@@ -63,12 +63,14 @@ class FEMSolverBase(ABC):
         valid_types = ['dirichlet', 'neumann', 'periodic']
         if self.boundary_conditions.type not in valid_types:
             raise ValueError(
-                f"FEM solver only supports boundary condition types: {valid_types}"
+                f"FEM solver only supports boundary condition types: "
+                f"{valid_types}"
             )
 
     @property
     def bc_type(self) -> str:
-        """Get the boundary condition type as string for backward compatibility."""
+        """Get the boundary condition type as string for backward
+        compatibility."""
         return self.boundary_conditions.type
 
     @abstractmethod
@@ -77,7 +79,9 @@ class FEMSolverBase(ABC):
         pass
 
     @abstractmethod
-    def solve_poisson(self, rhs_function: Callable[[np.ndarray], np.ndarray]) -> np.ndarray:
+    def solve_poisson(self,
+                      rhs_function: Callable[[np.ndarray], np.ndarray]
+                      ) -> np.ndarray:
         """
         Solve -d²u/dx² = f with specified boundary conditions.
 
@@ -96,7 +100,7 @@ class FEMSolverBase(ABC):
 
     @abstractmethod
     def interpolate_solution(self, solution_values: np.ndarray,
-                           eval_points: np.ndarray) -> np.ndarray:
+                             eval_points: np.ndarray) -> np.ndarray:
         """
         Interpolate solution to arbitrary evaluation points.
 
@@ -156,7 +160,9 @@ class DOLFINxSolver(FEMSolverBase):
                     np.isclose(x[0], self.function_domain.b)
                 )
 
-            boundary_dofs = dolfinx.fem.locate_dofs_geometrical(self._V, boundary_all)
+            boundary_dofs = dolfinx.fem.locate_dofs_geometrical(
+                self._V, boundary_all
+            )
             bc_dirichlet = dolfinx.fem.dirichletbc(
                 PETSc.ScalarType(0), boundary_dofs, self._V
             )
@@ -185,12 +191,16 @@ class DOLFINxSolver(FEMSolverBase):
                 right_dofs.append(i)
 
         if len(left_dofs) != 1 or len(right_dofs) != 1:
-            raise ValueError("Unexpected number of boundary DOFs for periodic BC")
+            raise ValueError(
+                "Unexpected number of boundary DOFs for periodic BC"
+            )
 
         self._periodic_dofs = (left_dofs[0], right_dofs[0])
         # Note: Periodic constraint will be applied in the solver
 
-    def solve_poisson(self, rhs_function: Callable[[np.ndarray], np.ndarray]) -> np.ndarray:
+    def solve_poisson(self,
+                      rhs_function: Callable[[np.ndarray], np.ndarray]
+                      ) -> np.ndarray:
         """Solve Poisson equation with DOLFINx."""
         # Create trial and test functions
         u = ufl.TrialFunction(self._V)
@@ -230,7 +240,9 @@ class DOLFINxSolver(FEMSolverBase):
             volume = dolfinx.fem.assemble_scalar(
                 dolfinx.fem.form(dolfinx.fem.Constant(self._mesh, 1.0) * dx)
             )
-            rhs_integral = dolfinx.fem.assemble_scalar(dolfinx.fem.form(f * dx))
+            rhs_integral = dolfinx.fem.assemble_scalar(
+                dolfinx.fem.form(f * dx)
+            )
 
             if abs(rhs_integral) > 1e-12:
                 mean_rhs = rhs_integral / volume
@@ -319,7 +331,7 @@ class DOLFINxSolver(FEMSolverBase):
         return self._V.tabulate_dof_coordinates()[:, 0]
 
     def interpolate_solution(self, solution_values: np.ndarray,
-                           eval_points: np.ndarray) -> np.ndarray:
+                             eval_points: np.ndarray) -> np.ndarray:
         """Interpolate using DOLFINx function."""
         # Create function from solution values
         solution_func = dolfinx.fem.Function(self._V)

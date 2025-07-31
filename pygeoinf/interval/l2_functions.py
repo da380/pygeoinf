@@ -1,8 +1,8 @@
 """
 Functions on interval domains.
 
-This module provides function objects that live on IntervalDomain in function spaces,
-including L² spaces and Sobolev spaces.
+This module provides function objects that live on IntervalDomain in function
+spaces, including L² spaces and Sobolev spaces.
 """
 
 import numpy as np
@@ -122,7 +122,8 @@ class Function:
     def space_type(self):
         """Get the type of space this function belongs to."""
         # Check if the space is a Sobolev space
-        if hasattr(self.space, 'order') and hasattr(self.space, 'inner_product_type'):
+        if (hasattr(self.space, 'order') and
+                hasattr(self.space, 'inner_product_type')):
             if self.space.order == 0.0:
                 return "L2"
             else:
@@ -229,7 +230,8 @@ class Function:
         return outside_support.item() if is_scalar else outside_support
 
     def evaluate(self, x: Union[float, np.ndarray],
-                 check_domain: Optional[bool] = None) -> Union[float, np.ndarray]:
+                 check_domain: Optional[bool] = None
+                 ) -> Union[float, np.ndarray]:
         """
         Point evaluation of representative: f(x).
 
@@ -261,9 +263,9 @@ class Function:
         if self.space_type == "L2":
             # Warn about point evaluation in L² space
             warnings.warn(
-                "Point evaluation is not well-defined for general L² functions. "
-                "Consider using a Sobolev space with s > 1/2 for point "
-                "evaluation.",
+                "Point evaluation is not well-defined for general L² "
+                "functions. Consider using a Sobolev space with s > 1/2 for "
+                "point evaluation.",
                 UserWarning
             )
 

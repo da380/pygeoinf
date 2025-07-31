@@ -69,11 +69,13 @@ class ParametricFunctionProvider(FunctionProvider):
     """
 
     @abstractmethod
-    def get_function_by_parameters(self, parameters: Dict[str, Any], **kwargs) -> 'Function':
+    def get_function_by_parameters(self, parameters: Dict[str, Any],
+                                   **kwargs) -> 'Function':
         """Get a function with specific parameters."""
         pass
 
-    def get_function(self, parameters: Optional[Dict[str, Any]] = None, **kwargs) -> 'Function':
+    def get_function(self, parameters: Optional[Dict[str, Any]] = None,
+                     **kwargs) -> 'Function':
         """Get function with given or default parameters."""
         if parameters is None:
             parameters = self.get_default_parameters()
@@ -431,7 +433,8 @@ class FourierFunctionProvider(IndexedFunctionProvider):
             )
 
 
-class SplineFunctionProvider(IndexedFunctionProvider, ParametricFunctionProvider):
+class SplineFunctionProvider(IndexedFunctionProvider,
+                             ParametricFunctionProvider):
     """Provider for spline functions."""
 
     def __init__(self, space):
@@ -443,7 +446,8 @@ class SplineFunctionProvider(IndexedFunctionProvider, ParametricFunctionProvider
         """
         super().__init__(space)
 
-    def get_function_by_index(self, index: int, degree: int = 3, n_knots: int = 10, **kwargs) -> 'Function':
+    def get_function_by_index(self, index: int, degree: int = 3,
+                              n_knots: int = 10, **kwargs) -> 'Function':
         """Get B-spline basis function by index."""
         from .l2_functions import Function
         from scipy.interpolate import BSpline
@@ -474,7 +478,8 @@ class SplineFunctionProvider(IndexedFunctionProvider, ParametricFunctionProvider
             name=f'spline_{index}'
         )
 
-    def get_function_by_parameters(self, parameters: Dict[str, Any], **kwargs) -> 'Function':
+    def get_function_by_parameters(self, parameters: Dict[str, Any],
+                                   **kwargs) -> 'Function':
         """Get spline with specific parameters."""
         from .l2_functions import Function
         from scipy.interpolate import BSpline
@@ -680,7 +685,9 @@ class DiscontinuousFunctionProvider(RandomFunctionProvider):
         disc_locations.sort()
 
         # Random jump sizes
-        jumps = self.rng.uniform(jump_range[0], jump_range[1], n_discontinuities)
+        jumps = self.rng.uniform(
+            jump_range[0], jump_range[1], n_discontinuities
+        )
 
         def discontinuous_func(x):
             x_arr = np.asarray(x)
@@ -920,7 +927,8 @@ class HatFunctionProvider(IndexedFunctionProvider):
         Args:
             space: L2Space instance (contains domain information)
             homogeneous: If True, omit boundary nodes (homogeneous Dirichlet)
-            n_nodes: Number of nodes. If None, uses space.dim + boundary adjustment
+            n_nodes: Number of nodes. If None, uses space.dim + boundary
+                     adjustment
         """
         super().__init__(space)
         self._cache = {}
@@ -932,7 +940,8 @@ class HatFunctionProvider(IndexedFunctionProvider):
                 # For homogeneous: space.dim interior nodes + 2 boundary nodes
                 self.n_nodes = self.space.dim + 2
             else:
-                # For non-homogeneous: space.dim total nodes (including boundary)
+                # For non-homogeneous: space.dim total nodes
+                # (including boundary)
                 self.n_nodes = self.space.dim
         else:
             self.n_nodes = n_nodes
@@ -950,19 +959,24 @@ class HatFunctionProvider(IndexedFunctionProvider):
             index: Index of the hat function
 
         Returns:
-            Function: Hat function that is 1 at node[effective_index] and 0 elsewhere
+            Function: Hat function that is 1 at node[effective_index] and 0
+                      elsewhere
         """
         if index not in self._cache:
             # Determine which node this function corresponds to
             if self.homogeneous:
                 if not (0 <= index < self.space.dim):
-                    raise IndexError(f"Index {index} out of range [0, {self.space.dim})")
+                    raise IndexError(
+                        f"Index {index} out of range [0, {self.space.dim})"
+                    )
                 # Skip first boundary node: effective_index = index + 1
                 effective_index = index + 1
                 node_position = self.nodes[effective_index]
             else:
                 if not (0 <= index < self.n_nodes):
-                    raise IndexError(f"Index {index} out of range [0, {self.n_nodes})")
+                    raise IndexError(
+                        f"Index {index} out of range [0, {self.n_nodes})"
+                    )
                 effective_index = index
                 node_position = self.nodes[effective_index]
 
@@ -990,7 +1004,9 @@ class HatFunctionProvider(IndexedFunctionProvider):
                         result[mask_right] = (right_x - x[mask_right]) / self.h
 
                 # Handle the case where x is exactly at the node
-                mask_exact = np.isclose(x, node_position, rtol=1e-14, atol=1e-14)
+                mask_exact = np.isclose(
+                    x, node_position, rtol=1e-14, atol=1e-14
+                )
                 result[mask_exact] = 1.0
 
                 return result
