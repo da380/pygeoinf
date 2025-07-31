@@ -231,7 +231,7 @@ class IntervalDomain:
         else:
             a, b = self.a, self.b
         # Update number of n_points based on length of the interval
-        n_points_interval = int(n_points * (b - a) / (self.b - self.a))
+        n_points_interval = max(3, int(n_points * (b - a) / (self.b - self.a)))
 
         if method == 'adaptive':
             try:
@@ -248,23 +248,23 @@ class IntervalDomain:
             try:
                 from scipy.integrate import simpson
                 x = np.linspace(a, b, n_points_interval)
-                y = f(x)
+                y = np.array([f(xi) for xi in x])
                 return float(simpson(y, x=x))
             except ImportError:
                 # Fallback to numpy trapz
                 x = np.linspace(a, b, n_points_interval)
-                y = f(x)
+                y = np.array([f(xi) for xi in x])
                 return float(np.trapz(y, x=x))
         elif method == 'trapz':
             try:
                 from scipy.integrate import trapezoid
                 x = np.linspace(a, b, n_points_interval)
-                y = f(x)
+                y = np.array([f(xi) for xi in x])
                 return float(trapezoid(y, x=x))
             except ImportError:
                 # Fallback to numpy trapz
                 x = np.linspace(a, b, n_points_interval)
-                y = f(x)
+                y = np.array([f(xi) for xi in x])
                 return float(np.trapz(y, x=x))
         else:
             raise ValueError(f"Unknown integration method: {method}")

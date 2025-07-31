@@ -193,7 +193,7 @@ class Function:
                     intersections.append((intersect_a, intersect_b))
 
         if not intersections:
-            return None
+            return []
 
         # Sort and return (should already be disjoint by construction)
         intersections.sort(key=lambda x: x[0])
@@ -373,7 +373,7 @@ class Function:
             if weight is None:
                 # Direct integration over all support intervals
                 if self.evaluate_callable is not None:
-                    return self._function_domain.integrate(
+                    return self.function_domain.integrate(
                         self.evaluate_callable, method=method,
                         support=self.support
                     )
@@ -381,7 +381,7 @@ class Function:
                     # For basis representations
                     def integrand_coeffs(x):
                         return self.evaluate(x, check_domain=False)
-                    return self._function_domain.integrate(
+                    return self.function_domain.integrate(
                         integrand_coeffs, method=method,
                         support=self.support
                     )
@@ -391,7 +391,7 @@ class Function:
                 # Weighted integration over all support intervals
                 def weighted_integrand(x):
                     return self.evaluate(x, check_domain=False) * weight(x)
-                return self._function_domain.integrate(
+                return self.function_domain.integrate(
                     weighted_integrand, method=method,
                     support=self.support
                 )
@@ -462,6 +462,13 @@ class Function:
     def __add__(self, other):
         """Addition of functions or with a scalar."""
         if isinstance(other, Function):
+            # Check space compatibility
+            if self.space != other.space:
+                raise ValueError(
+                    "Cannot add functions from different spaces. "
+                    f"Got spaces: {self.space} and {other.space}"
+                )
+
             # Support of sum is union of supports
             new_support = self._union_supports(self.support, other.support)
 
@@ -503,6 +510,13 @@ class Function:
     def __sub__(self, other):
         """Subtraction of functions or with a scalar."""
         if isinstance(other, Function):
+            # Check space compatibility
+            if self.space != other.space:
+                raise ValueError(
+                    "Cannot subtract functions from different spaces. "
+                    f"Got spaces: {self.space} and {other.space}"
+                )
+
             # Support of difference is union of supports
             new_support = self._union_supports(self.support, other.support)
 
@@ -554,6 +568,13 @@ class Function:
                     support=self.support
                 )
         elif isinstance(other, Function):
+            # Check space compatibility
+            if self.space != other.space:
+                raise ValueError(
+                    "Cannot multiply functions from different spaces. "
+                    f"Got spaces: {self.space} and {other.space}"
+                )
+
             # Function multiplication: compact support is intersection
             new_support = self._intersect_supports(self.support, other.support)
 
