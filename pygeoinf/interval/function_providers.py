@@ -505,6 +505,145 @@ class SplineFunctionProvider(IndexedFunctionProvider, ParametricFunctionProvider
         }
 
 
+class BumpFunctionProvider(ParametricFunctionProvider,
+                           IndexedFunctionProvider):
+    """
+    Provider for smooth bump functions with compact support.
+
+    Bump functions are infinitely differentiable (C∞) functions that are
+    zero outside a finite interval and positive inside. They use the standard
+    mathematical form: exp(-1/((x-a)(b-x))) inside (a,b), zero elsewhere.
+    """
+
+    def __init__(self, space, default_width: float = 0.2):
+        """
+        Initialize bump function provider.
+
+        Args:
+            space: L2Space instance (contains domain information)
+            default_width: Default width for indexed access (as fraction of
+                          domain)
+        """
+        super().__init__(space)
+        self.default_width = default_width
+        self._cache = {}
+
+    def get_function_by_parameters(self, parameters: Dict[str, Any],
+                                   **kwargs) -> 'Function':
+        """
+        Get a bump function with specific parameters.
+
+        Args:
+            parameters: Dictionary containing:
+                - 'center': Center of the bump function
+                - 'width': Width of the compact support
+        """
+        from .l2_functions import Function
+
+        center = parameters['center']
+        width = parameters['width']
+
+        # Calculate support interval [a, b]
+        a_support = center - width / 2
+        b_support = center + width / 2
+
+        def bump_func(x):
+            """
+            Modified bump function: exp(1/(t²-1)) where t is scaled coordinate.
+
+            Uses the form exp(1/(t²-1)) defined on [-1,1], but transformed
+            to have custom center and width. This gives larger, more practical
+            values compared to the standard exp(-1/((x-a)(b-x))) form.
+
+            The function is defined as:
+            - exp(1/(t²-1)) for t ∈ (-1,1) where t = 2(x-center)/width
+            - 0 for t = ±1 (boundaries)
+            - 0 for |t| > 1 (outside support)
+            """
+            x_arr = np.asarray(x)
+
+            # Transform coordinates: map [a_support, b_support] to [-1, 1]
+            # t = 2 * (x - center) / width
+            t = 2.0 * (x_arr - center) / width
+
+            # Handle the interior and boundary cases
+            result = np.zeros_like(x_arr, dtype=float)
+
+            # Interior condition: |t| < 1 (strictly inside [-1, 1])
+            interior_mask = np.abs(t) < 1.0
+
+            # Only compute exponential for interior points
+            if np.any(interior_mask):
+                t_interior = t[interior_mask]
+                # Use exp(1/(t²-1)) form - note the positive sign
+                denominator = t_interior**2 - 1.0
+                result[interior_mask] = np.exp(1.0 / denominator)
+
+            # Boundary points (|t| = 1) and exterior points remain zero
+            return result
+
+        return Function(
+            self.space,
+            evaluate_callable=bump_func,
+            name=f'bump_center_{center:.3f}_width_{width:.3f}',
+            support=(a_support, b_support)  # Use Function's compact support
+        )
+
+    def get_function_by_index(self, index: int, **kwargs) -> 'Function':
+        """
+        Get bump function by index with predetermined centers and widths.
+
+        The index determines the center position distributed across the domain,
+        using the default width.
+
+        Args:
+            index: Index of the bump function (must be >= 0)
+        """
+        if index < 0:
+            raise ValueError(f"Index must be non-negative, got {index}")
+
+        if index not in self._cache:
+            a, b = self.domain.a, self.domain.b
+            domain_length = b - a
+
+            # Distribute centers across the domain
+            # Use a pattern that avoids boundary issues
+            n_divisions = index + 2  # At least 2 divisions
+            center_positions = np.linspace(a + 0.1 * domain_length,
+                                           b - 0.1 * domain_length,
+                                           n_divisions)
+            center = center_positions[index % len(center_positions)]
+
+            # Use default width, but ensure it doesn't exceed domain bounds
+            width = min(self.default_width * domain_length,
+                        2 * min(center - a, b - center))
+
+            parameters = {'center': center, 'width': width}
+            func = self.get_function_by_parameters(parameters)
+            func.name = f'bump_{index}_center_{center:.3f}_width_{width:.3f}'
+
+            self._cache[index] = func
+
+        return self._cache[index]
+
+    def get_default_parameters(self) -> Dict[str, Any]:
+        """Get default parameters for bump functions."""
+        a, b = self.domain.a, self.domain.b
+        domain_length = b - a
+
+        return {
+            'center': (a + b) / 2,  # Center of domain
+            'width': self.default_width * domain_length
+        }
+
+    def get_function(self, parameters: Optional[Dict[str, Any]] = None,
+                     **kwargs) -> 'Function':
+        """Get bump function with given or default parameters."""
+        if parameters is None:
+            parameters = self.get_default_parameters()
+        return self.get_function_by_parameters(parameters, **kwargs)
+
+
 class DiscontinuousFunctionProvider(RandomFunctionProvider):
     """Provider for functions with random discontinuities."""
 
