@@ -188,12 +188,14 @@ class L2Space(HilbertSpace):
         """The type of basis functions used."""
         return self._basis_type
 
-    def inner_product(self, u, v):
+    def inner_product(self, u, v, method='simpson', n_points=100):
         """
         L² inner product: ⟨u,v⟩_L² = ∫_a^b u(x)v(x) dx
 
         Args:
             u, v: Functions in this L² space
+            method (str): Numerical integration method ('simpson', 'trapezoid')
+            n_points (int): Number of points for numerical integration
 
         Returns:
             float: L² inner product
@@ -205,7 +207,7 @@ class L2Space(HilbertSpace):
         # For L² functions, we need to be careful about pointwise operations
         # In practice, we work with smooth approximations
         product = u * v
-        return product.integrate()
+        return product.integrate(method=method, n_points=n_points)
 
     def _compute_gram_matrix(self):
         """

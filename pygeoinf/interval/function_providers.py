@@ -517,10 +517,14 @@ class BumpFunctionProvider(ParametricFunctionProvider,
 
     Bump functions are infinitely differentiable (C∞) functions that are
     zero outside a finite interval and positive inside. They use the standard
-    mathematical form: exp(-1/((x-a)(b-x))) inside (a,b), zero elsewhere.
+    mathematical form: exp(1/(t²-1)) where t is a scaled coordinate.
+
+    All bump functions are automatically normalized so that their integral
+    over their compact support equals 1 (unimodular property).
     """
 
-    def __init__(self, space, default_width: float = 0.2):
+    def __init__(self, space, default_width: float = 0.2,
+                 centers: Optional[np.ndarray] = None):
         """
         Initialize bump function provider.
 
@@ -528,15 +532,22 @@ class BumpFunctionProvider(ParametricFunctionProvider,
             space: L2Space instance (contains domain information)
             default_width: Default width for indexed access (as fraction of
                           domain)
+            centers: Optional array of centers for indexed access. If provided,
+                    get_function_by_index will use these centers directly.
+                    If None, centers will be automatically distributed.
         """
         super().__init__(space)
         self.default_width = default_width
+        self.centers = np.asarray(centers) if centers is not None else None
         self._cache = {}
 
     def get_function_by_parameters(self, parameters: Dict[str, Any],
                                    **kwargs) -> 'Function':
         """
-        Get a bump function with specific parameters.
+        Get a normalized bump function with specific parameters.
+
+        The bump function is normalized so that its integral over its
+        compact support equals 1 (unimodular).
 
         Args:
             parameters: Dictionary containing:
@@ -544,6 +555,7 @@ class BumpFunctionProvider(ParametricFunctionProvider,
                 - 'width': Width of the compact support
         """
         from .l2_functions import Function
+        # Removed unused import: from scipy import integrate
 
         center = parameters['center']
         width = parameters['width']
@@ -552,13 +564,14 @@ class BumpFunctionProvider(ParametricFunctionProvider,
         a_support = center - width / 2
         b_support = center + width / 2
 
-        def bump_func(x):
+        normalization_constant = 0.746825 * width
+
+        def normalized_bump_func(x):
             """
-            Modified bump function: exp(1/(t²-1)) where t is scaled coordinate.
+            Normalized bump function: exp(1/(t²-1)) where t is scaled.
 
             Uses the form exp(1/(t²-1)) defined on [-1,1], but transformed
-            to have custom center and width. This gives larger, more practical
-            values compared to the standard exp(-1/((x-a)(b-x))) form.
+            to have custom center and width.
 
             The function is defined as:
             - exp(1/(t²-1)) for t ∈ (-1,1) where t = 2(x-center)/width
@@ -585,12 +598,12 @@ class BumpFunctionProvider(ParametricFunctionProvider,
                 result[interior_mask] = np.exp(1.0 / denominator)
 
             # Boundary points (|t| = 1) and exterior points remain zero
-            return result
+            return result / normalization_constant
 
         return Function(
             self.space,
-            evaluate_callable=bump_func,
-            name=f'bump_center_{center:.3f}_width_{width:.3f}',
+            evaluate_callable=normalized_bump_func,
+            name=f'bump_normalized_center_{center:.3f}_width_{width:.3f}',
             support=(a_support, b_support)  # Use Function's compact support
         )
 
@@ -598,8 +611,9 @@ class BumpFunctionProvider(ParametricFunctionProvider,
         """
         Get bump function by index with predetermined centers and widths.
 
-        The index determines the center position distributed across the domain,
-        using the default width.
+        If centers were provided during initialization, uses those centers
+        directly. Otherwise, distributes centers across the domain using
+        the default width.
 
         Args:
             index: Index of the bump function (must be >= 0)
@@ -611,13 +625,29 @@ class BumpFunctionProvider(ParametricFunctionProvider,
             a, b = self.domain.a, self.domain.b
             domain_length = b - a
 
-            # Distribute centers across the domain
-            # Use a pattern that avoids boundary issues
-            n_divisions = index + 2  # At least 2 divisions
-            center_positions = np.linspace(a + 0.1 * domain_length,
-                                           b - 0.1 * domain_length,
-                                           n_divisions)
-            center = center_positions[index % len(center_positions)]
+            if self.centers is not None:
+                # Use provided centers
+                if index >= len(self.centers):
+                    raise IndexError(
+                        f"Index {index} out of range for provided centers "
+                        f"(length {len(self.centers)})"
+                    )
+                center = self.centers[index]
+
+                # Validate that the center is within the domain
+                if not (a <= center <= b):
+                    raise ValueError(
+                        f"Center {center} at index {index} is outside "
+                        f"domain [{a}, {b}]"
+                    )
+            else:
+                # Distribute centers across the domain (original behavior)
+                # Use a pattern that avoids boundary issues
+                n_divisions = index + 2  # At least 2 divisions
+                center_positions = np.linspace(a + 0.1 * domain_length,
+                                               b - 0.1 * domain_length,
+                                               n_divisions)
+                center = center_positions[index % len(center_positions)]
 
             # Use default width, but ensure it doesn't exceed domain bounds
             width = min(self.default_width * domain_length,
@@ -647,6 +677,24 @@ class BumpFunctionProvider(ParametricFunctionProvider,
         if parameters is None:
             parameters = self.get_default_parameters()
         return self.get_function_by_parameters(parameters, **kwargs)
+
+    def get_n_functions(self) -> Optional[int]:
+        """
+        Get the number of available functions.
+
+        Returns:
+            int: Number of functions if centers were provided, None otherwise
+        """
+        return len(self.centers) if self.centers is not None else None
+
+    def get_centers(self) -> Optional[np.ndarray]:
+        """
+        Get the array of centers used by this provider.
+
+        Returns:
+            np.ndarray: Array of centers if provided, None otherwise
+        """
+        return self.centers.copy() if self.centers is not None else None
 
 
 class DiscontinuousFunctionProvider(RandomFunctionProvider):

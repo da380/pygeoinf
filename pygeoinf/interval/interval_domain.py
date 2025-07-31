@@ -169,7 +169,7 @@ class IntervalDomain:
         method: str = 'adaptive',
         support: Optional[Union[Tuple[float, float],
                                 "list[Tuple[float, float]]"]] = None,
-        n_points: int = 1000,
+        n_points: int = 100,
         **kwargs
     ) -> float:
         """
@@ -248,23 +248,23 @@ class IntervalDomain:
             try:
                 from scipy.integrate import simpson
                 x = np.linspace(a, b, n_points_interval)
-                y = np.array([f(xi) for xi in x])
+                y = self._evaluate_function_vectorized(f, x)
                 return float(simpson(y, x=x))
             except ImportError:
                 # Fallback to numpy trapz
                 x = np.linspace(a, b, n_points_interval)
-                y = np.array([f(xi) for xi in x])
+                y = self._evaluate_function_vectorized(f, x)
                 return float(np.trapz(y, x=x))
         elif method == 'trapz':
             try:
                 from scipy.integrate import trapezoid
                 x = np.linspace(a, b, n_points_interval)
-                y = np.array([f(xi) for xi in x])
+                y = self._evaluate_function_vectorized(f, x)
                 return float(trapezoid(y, x=x))
             except ImportError:
                 # Fallback to numpy trapz
                 x = np.linspace(a, b, n_points_interval)
-                y = np.array([f(xi) for xi in x])
+                y = self._evaluate_function_vectorized(f, x)
                 return float(np.trapz(y, x=x))
         else:
             raise ValueError(f"Unknown integration method: {method}")
@@ -288,7 +288,35 @@ class IntervalDomain:
         x = a + (b - a) * (nodes + 1) / 2
         w = weights * (b - a) / 2
 
-        return float(np.sum(w * f(x)))
+        return float(np.sum(w * self._evaluate_function_vectorized(f, x)))
+
+    def _evaluate_function_vectorized(
+        self, f: Callable, x: np.ndarray
+    ) -> np.ndarray:
+        """
+        Evaluate function f at array of points x, with vectorization
+        optimization.
+
+        Args:
+            f: Function to evaluate
+            x: Array of evaluation points
+
+        Returns:
+            Array of function values
+        """
+        try:
+            # Try vectorized evaluation first
+            result = f(x)
+            # Check if result is scalar (function isn't vectorized) or array
+            if np.isscalar(result):
+                # Function isn't vectorized, fall back to loop
+                return np.array([f(xi) for xi in x])
+            else:
+                # Function is vectorized
+                return np.asarray(result)
+        except (TypeError, ValueError):
+            # Function doesn't support vectorized evaluation, use loop
+            return np.array([f(xi) for xi in x])
 
     def point_evaluation_functional(self, x: float) -> Callable:
         """

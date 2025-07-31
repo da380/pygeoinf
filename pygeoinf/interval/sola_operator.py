@@ -29,7 +29,9 @@ class SOLAOperator(LinearOperator):
     def __init__(self, domain, codomain: EuclideanSpace,
                  function_provider: Optional[FunctionProvider] = None,
                  random_state: Optional[int] = None,
-                 cache_functions: bool = False):
+                 cache_functions: bool = False,
+                 integration_method: str = 'simpson',
+                 n_points: int = 1000):
         """
         Initialize the SOLA operator.
 
@@ -41,10 +43,15 @@ class SOLAOperator(LinearOperator):
             random_state: Random seed for reproducible function generation
             cache_functions: If True, cache projection functions after first
                            access for faster repeated operations
+            integration_method: Method for numerical integration
+                ('simpson', 'trapezoid')
+            n_points: Number of points for numerical integration
         """
         self.N_d = codomain.dim
         self.cache_functions = cache_functions
         self._function_cache = {} if cache_functions else None
+        self._integration_method = integration_method
+        self._n_points = n_points
 
         # Create or use provided FunctionProvider
         if function_provider is None:
@@ -121,7 +128,12 @@ class SOLAOperator(LinearOperator):
             # Lazily get the i-th projection function
             proj_func = self._get_projection_function(i)
             # Compute inner product with the i-th projection function
-            data[i] = self.domain.inner_product(func, proj_func)
+            data[i] = self.domain.inner_product(
+                func,
+                proj_func,
+                method=self._integration_method,
+                n_points=self._n_points
+            )
 
         return data
 
@@ -192,7 +204,10 @@ class SOLAOperator(LinearOperator):
             for j in range(self.N_d):
                 proj_func_j = self._get_projection_function(j)
                 gram[i, j] = self.domain.inner_product(
-                    proj_func_i, proj_func_j
+                    proj_func_i,
+                    proj_func_j,
+                    method=self._integration_method,
+                    n_points=self._n_points
                 )
 
         return gram

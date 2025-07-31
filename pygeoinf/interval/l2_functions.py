@@ -356,7 +356,7 @@ class Function:
         return self.evaluate(x, check_domain=None)
 
     def integrate(self, weight: Optional[Callable] = None,
-                  method: str = 'simpson') -> float:
+                  method: str = 'simpson', n_points: int = 100) -> float:
         """
         Integrate function over its domain: ∫[a,b] f(x) w(x) dx.
 
@@ -365,6 +365,7 @@ class Function:
         Args:
             weight: Optional weight function w(x)
             method: Integration method
+            n_points: Number of points for numerical integration
 
         Returns:
             Integral value
@@ -377,7 +378,8 @@ class Function:
                 if self.evaluate_callable is not None:
                     return self.function_domain.integrate(
                         self.evaluate_callable, method=method,
-                        support=self.support
+                        support=self.support,
+                        n_points=n_points
                     )
                 elif self.coefficients is not None:
                     # For basis representations
@@ -385,7 +387,8 @@ class Function:
                         return self.evaluate(x, check_domain=False)
                     return self.function_domain.integrate(
                         integrand_coeffs, method=method,
-                        support=self.support
+                        support=self.support,
+                        n_points=n_points
                     )
                 else:
                     return 0.0
@@ -395,7 +398,8 @@ class Function:
                     return self.evaluate(x, check_domain=False) * weight(x)
                 return self.function_domain.integrate(
                     weighted_integrand, method=method,
-                    support=self.support
+                    support=self.support,
+                    n_points=n_points
                 )
         else:
             # No compact support - integrate over entire domain
@@ -404,21 +408,24 @@ class Function:
                 if self.evaluate_callable is not None:
                     return self.space.function_domain.integrate(
                         self.evaluate_callable,
-                        method=method
+                        method=method,
+                        n_points=n_points
                     )
                 elif self.coefficients is not None:
                     # For basis representations, might have analytical formulas
                     def integrand_full(x):
                         return self.evaluate(x, check_domain=False)
                     return self.space.function_domain.integrate(
-                        integrand_full, method=method
+                        integrand_full, method=method,
+                        n_points=n_points
                     )
             else:
                 def weighted_integrand_full(x):
                     return self.evaluate(x, check_domain=False) * weight(x)
                 return self.space.function_domain.integrate(
                     weighted_integrand_full,
-                    method=method
+                    method=method,
+                    n_points=n_points
                 )
 
         raise RuntimeError("No integration method available")
