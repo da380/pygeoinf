@@ -564,7 +564,7 @@ class BumpFunctionProvider(ParametricFunctionProvider,
         a_support = center - width / 2
         b_support = center + width / 2
 
-        normalization_constant = 0.746825 * width
+        normalization_constant = 0.443993816168 * width / 2
 
         def normalized_bump_func(x):
             """
