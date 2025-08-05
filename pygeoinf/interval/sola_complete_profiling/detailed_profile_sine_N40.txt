@@ -1,0 +1,28 @@
+         1515815 function calls (1401212 primitive calls) in 3.916 seconds
+
+   Ordered by: cumulative time
+   List reduced from 362 to 20 due to restriction <20>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    3.916    3.916 /tmp/ipykernel_16176/2511335428.py:36(profile_complete_sola)
+   364/54    0.000    0.000    3.862    0.072 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/hilbert_space.py:438(__call__)
+  104/103    0.000    0.000    3.838    0.037 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/hilbert_space.py:1158(mapping)
+       54    0.000    0.000    3.837    0.071 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/interval/sola_operator.py:71(mapping)
+       54    0.011    0.000    3.837    0.071 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/interval/sola_operator.py:115(_project_function)
+        1    0.000    0.000    3.663    3.663 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linear_solvers.py:83(__call__)
+      2/1    0.000    0.000    3.663    3.663 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/hilbert_space.py:740(matrix)
+        1    0.000    0.000    3.663    3.663 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/hilbert_space.py:1062(_compute_dense_matrix)
+       53    0.000    0.000    3.662    0.069 /home/adrian/miniconda3/envs/inferences3/lib/python3.11/site-packages/scipy/sparse/linalg/_interface.py:205(matvec)
+       53    0.000    0.000    3.661    0.069 /home/adrian/miniconda3/envs/inferences3/lib/python3.11/site-packages/scipy/sparse/linalg/_interface.py:592(_matvec)
+       51    0.000    0.000    3.661    0.072 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/hilbert_space.py:749(matvec)
+       51    0.000    0.000    3.660    0.072 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/hilbert_space.py:1122(mapping)
+       51    0.000    0.000    3.596    0.071 /home/adrian/miniconda3/envs/inferences3/lib/python3.11/site-packages/scipy/sparse/linalg/_interface.py:451(__matmul__)
+       51    0.000    0.000    3.596    0.071 /home/adrian/miniconda3/envs/inferences3/lib/python3.11/site-packages/scipy/sparse/linalg/_interface.py:410(__mul__)
+       51    0.000    0.000    3.596    0.071 /home/adrian/miniconda3/envs/inferences3/lib/python3.11/site-packages/scipy/sparse/linalg/_interface.py:419(dot)
+     2640    0.005    0.000    3.307    0.001 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/interval/l2_space.py:206(inner_product)
+     2640    0.005    0.000    3.280    0.001 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/interval/l2_functions.py:358(integrate)
+     2640    0.024    0.000    3.274    0.001 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/interval/interval_domain.py:166(integrate)
+     2640    0.005    0.000    3.123    0.001 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/interval/interval_domain.py:293(_evaluate_function_vectorized)
+     2640    0.005    0.000    3.104    0.001 /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/interval/l2_functions.py:602(product_callable)
+
+
