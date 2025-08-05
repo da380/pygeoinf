@@ -885,12 +885,13 @@ class SineFunctionProvider(IndexedFunctionProvider):
             a, b = self.space.function_domain.a, self.space.function_domain.b
             length = b - a
             k = index + 1  # Sine functions start from k=1
+            normalization = np.sqrt(2 / length)
 
             def sine_func(x):
                 if isinstance(x, np.ndarray):
-                    return np.sin(2 * k * np.pi * (x - a) / length)
+                    return  normalization * np.sin(k * np.pi * (x - a) / length)
                 else:
-                    return math.sin(2 * k * math.pi * (x - a) / length)
+                    return normalization * math.sin(k * np.pi * (x - a) / length)
 
             from .l2_functions import Function
             func = Function(
@@ -926,7 +927,7 @@ class CosineFunctionProvider(IndexedFunctionProvider):
                 # Constant mode for Neumann BC
                 def constant_func(x):
                     return (np.ones_like(x) if isinstance(x, np.ndarray)
-                            else 1.0)
+                            else 1.0) / np.sqrt(length)
 
                 from .l2_functions import Function
                 func = Function(
@@ -937,12 +938,13 @@ class CosineFunctionProvider(IndexedFunctionProvider):
             else:
                 # Cosine modes for k = index
                 k = index
+                normalization = np.sqrt(2 / length)
 
                 def cosine_func(x):
                     if isinstance(x, np.ndarray):
-                        return np.cos(k * np.pi * (x - a) / length)
+                        return normalization * np.cos(k * np.pi * (x - a) / length)
                     else:
-                        return math.cos(k * math.pi * (x - a) / length)
+                        return normalization * math.cos(k * np.pi * (x - a) / length)
 
                 from .l2_functions import Function
                 func = Function(

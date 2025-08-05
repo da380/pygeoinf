@@ -74,10 +74,10 @@ class TestFunctionProviders(unittest.TestCase):
         func = provider.get_function_by_index(0)  # sin(2π*x)
 
         # Test at specific points
-        x = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        x = np.array([0.0, 0.5, 1.0])
         values = func.evaluate(x)
-        # sin(2π*x): sin(0), sin(π/2), sin(π), sin(3π/2), sin(2π)
-        expected = np.array([0.0, 1.0, 0.0, -1.0, 0.0])
+        # sin(π*x): sin(0), sin(π/2), sin(π)
+        expected = np.array([0.0, 1.0, 0.0])
 
         np.testing.assert_array_almost_equal(values, expected, decimal=10)
 

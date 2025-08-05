@@ -16,6 +16,7 @@ on demand to handle high-dimensional spaces efficiently.
 import numpy as np
 import math
 from abc import ABC, abstractmethod
+from typing import Optional
 from .function_providers import IndexedFunctionProvider
 
 
@@ -65,17 +66,22 @@ class BasisProvider:
     All computation is lazy with caching for efficiency.
     """
 
-    def __init__(self, space, function_provider: IndexedFunctionProvider):
+    def __init__(self, space, function_provider: IndexedFunctionProvider,
+                 orthonormal: bool = False, basis_type: Optional[str] = None):
         """
         Initialize basis provider with a function provider.
 
         Args:
             space: The function space that owns this provider
             function_provider: IndexedFunctionProvider for the basis functions
+            orthonormal: True if the basis functions are orthonormal with
+                        respect to the L² inner product
         """
         self.space = space
         self.function_provider = function_provider
+        self.orthonormal = orthonormal
         self._cache = {}
+        self.type = basis_type
 
         # Ensure function provider knows about the space
         if hasattr(function_provider, 'space'):
@@ -146,7 +152,8 @@ class SpectrumProvider(BasisProvider):
     """
 
     def __init__(self, space, function_provider: IndexedFunctionProvider,
-                 eigenvalue_provider: EigenvalueProvider):
+                 eigenvalue_provider: EigenvalueProvider,
+                 orthonormal: bool = False, basis_type: Optional[str] = None):
         """
         Initialize spectrum provider.
 
@@ -154,8 +161,11 @@ class SpectrumProvider(BasisProvider):
             space: The function space
             function_provider: IndexedFunctionProvider for eigenfunctions
             eigenvalue_provider: EigenvalueProvider for eigenvalues
+            orthonormal: True if the basis functions are orthonormal with
+                        respect to the L² inner product
+            basis_type: String identifier for the type of basis functions
         """
-        super().__init__(space, function_provider)
+        super().__init__(space, function_provider, orthonormal, basis_type)
         self.eigenvalue_provider = eigenvalue_provider
         self._eigenvalue_cache = {}
 
@@ -289,30 +299,47 @@ def create_basis_provider(space, basis_type: str):
 
     Args:
         space: The L2Space instance
-        basis_type: Type of basis ('fourier', 'hat', 'hat_homogeneous')
+        basis_type: Type of basis ('fourier', 'hat', 'hat_homogeneous', 'sine')
 
     Returns:
         BasisProvider: Provider configured for the specified basis type
     """
     from .function_providers import (FourierFunctionProvider,
-                                     HatFunctionProvider)
+                                     HatFunctionProvider,
+                                     SineFunctionProvider,
+                                     CosineFunctionProvider)
 
     if basis_type == 'fourier':
         func_provider = FourierFunctionProvider(space)
-        return BasisProvider(space, func_provider)
+        return BasisProvider(space, func_provider, orthonormal=True,
+                             basis_type='fourier')
     elif basis_type == 'hat':
         # Non-homogeneous hat functions (include boundary nodes)
         func_provider = HatFunctionProvider(space, homogeneous=False)
-        return BasisProvider(space, func_provider)
+        return BasisProvider(space, func_provider, orthonormal=False,
+                             basis_type='hat')
     elif basis_type == 'hat_homogeneous':
         # Homogeneous hat functions (exclude boundary nodes)
         func_provider = HatFunctionProvider(space, homogeneous=True)
-        return BasisProvider(space, func_provider)
+        return BasisProvider(space, func_provider, orthonormal=False,
+                             basis_type='hat_homogeneous')
+    elif basis_type == 'sine':
+        # Sine functions for Dirichlet boundary conditions
+        func_provider = SineFunctionProvider(space)
+        return BasisProvider(space, func_provider, orthonormal=True,
+                             basis_type='sine')
+    elif basis_type == 'cosine':
+        # Cosine functions for Neumann boundary conditions
+        func_provider = CosineFunctionProvider(space)
+        return BasisProvider(space, func_provider, orthonormal=True,
+                             basis_type='cosine')
     else:
         raise ValueError(f"Unsupported basis type: {basis_type}")
 
 
-def create_spectrum_provider(space, function_provider, eigenvalue_provider):
+def create_spectrum_provider(space, function_provider, eigenvalue_provider,
+                             orthonormal: bool = False,
+                             basis_type: Optional[str] = None):
     """
     Create a SpectrumProvider with the given components.
 
@@ -320,11 +347,15 @@ def create_spectrum_provider(space, function_provider, eigenvalue_provider):
         space: The L2Space instance
         function_provider: IndexedFunctionProvider for the functions
         eigenvalue_provider: EigenvalueProvider for the eigenvalues
+        orthonormal: True if the basis functions are orthonormal with
+                    respect to the L² inner product
+        basis_type: String identifier for the type of basis functions
 
     Returns:
         SpectrumProvider: Configured spectrum provider
     """
-    return SpectrumProvider(space, function_provider, eigenvalue_provider)
+    return SpectrumProvider(space, function_provider, eigenvalue_provider,
+                            orthonormal, basis_type)
 
 
 class LaplacianEigenvalueProvider(EigenvalueProvider):
@@ -335,7 +366,13 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
     For the inverse Laplacian, eigenvalues are 1/λₖ.
     """
 
-    def __init__(self, function_domain, boundary_conditions, inverse=False):
+    def __init__(
+        self,
+        function_domain,
+        boundary_conditions,
+        inverse=False,
+        alpha=1.0
+    ):
         """
         Initialize the eigenvalue provider.
 
@@ -343,11 +380,13 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             function_domain: Interval domain
             boundary_conditions: Boundary conditions ('dirichlet', 'neumann',
                                  'periodic')
-            inverse: If True, compute eigenvalues of (-Δ)^(-1), else of -Δ
+            inverse: If True, compute eigenvalues of (-Δ)⁻¹, else of -Δ
+            alpha: Scaling factor for the eigenvalues (default: 1.0)
         """
         self.function_domain = function_domain
         self.boundary_conditions = boundary_conditions
         self.inverse = inverse
+        self.alpha = alpha
         self._eigenvalue_cache = {}
 
     def get_eigenvalue(self, index: int) -> float:
@@ -363,7 +402,7 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
         if self.boundary_conditions.type == 'dirichlet':
             # λₖ = (kπ/L)² where k = index + 1
             k = index + 1
-            eigenval = (k * math.pi / length)**2
+            eigenval = self.alpha * (k * math.pi / length)**2
 
         elif self.boundary_conditions.type == 'neumann':
             if index == 0:
@@ -372,7 +411,7 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             else:
                 # λₖ = (kπ/L)² where k = index
                 k = index
-                eigenval = (k * math.pi / length)**2
+                eigenval = self.alpha * (k * math.pi / length)**2
 
         elif self.boundary_conditions.type == 'periodic':
             if index == 0:
@@ -381,7 +420,7 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             else:
                 # Both cos and sin modes: λₖ = (2πk/L)²
                 k = (index + 1) // 2  # Frequency index
-                eigenval = (2 * k * math.pi / length)**2
+                eigenval = self.alpha * (2 * k * math.pi / length)**2
 
         else:
             raise ValueError(f"Unsupported boundary condition: "
@@ -418,10 +457,16 @@ def create_laplacian_spectrum_provider(space, boundary_conditions,
     # Choose appropriate function provider based on boundary conditions
     if boundary_conditions.type == 'dirichlet':
         function_provider = SineFunctionProvider(space)
+        orthonormal = True  # Sine functions are normalized
+        basis_type = 'sine_dirichlet'
     elif boundary_conditions.type == 'neumann':
         function_provider = CosineFunctionProvider(space)
+        orthonormal = True  # Cosine functions are normalized
+        basis_type = 'cosine_neumann'
     elif boundary_conditions.type == 'periodic':
         function_provider = FourierFunctionProvider(space)
+        orthonormal = True  # Fourier functions are orthonormal
+        basis_type = 'fourier_periodic'
     else:
         raise ValueError(f"Unsupported boundary condition: "
                          f"{boundary_conditions.type}")
@@ -431,4 +476,5 @@ def create_laplacian_spectrum_provider(space, boundary_conditions,
         space.function_domain, boundary_conditions, inverse=inverse
     )
 
-    return SpectrumProvider(space, function_provider, eigenvalue_provider)
+    return SpectrumProvider(space, function_provider, eigenvalue_provider,
+                            orthonormal, basis_type)

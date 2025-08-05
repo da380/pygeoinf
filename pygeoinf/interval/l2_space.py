@@ -104,7 +104,7 @@ class L2Space(HilbertSpace):
             self._pending_callables = None
 
         # Create basis provider for standard basis types
-        if basis_type in ['fourier', 'hat', 'hat_homogeneous']:
+        if basis_type in ['fourier', 'hat', 'hat_homogeneous', 'sine']:
             from .providers import create_basis_provider
             self._basis_provider = create_basis_provider(self, basis_type)
 
@@ -179,6 +179,7 @@ class L2Space(HilbertSpace):
     @property
     def gram_matrix(self):
         """The Gram matrix of basis functions."""
+        # Compute the Gram matrix if not already done
         if self._gram_matrix is None:
             self._compute_gram_matrix()
         return self._gram_matrix
@@ -188,14 +189,31 @@ class L2Space(HilbertSpace):
         """The type of basis functions used."""
         return self._basis_type
 
-    def inner_product(self, u, v, method='simpson', n_points=100):
+    @property
+    def provider_basis_type(self):
+        """The detailed basis type from the provider."""
+        if self._basis_provider is not None:
+            return getattr(self._basis_provider, 'type', None)
+        return None
+
+    @property
+    def is_orthonormal_basis(self):
+        """Check if the basis is orthonormal."""
+        if self._basis_provider is not None:
+            return getattr(self._basis_provider, 'orthonormal', False)
+        return False
+
+    def inner_product(self, u, v, method='simpson', n_points=None):
         """
         L² inner product: ⟨u,v⟩_L² = ∫_a^b u(x)v(x) dx
 
         Args:
             u, v: Functions in this L² space
             method (str): Numerical integration method ('simpson', 'trapezoid')
-            n_points (int): Number of points for numerical integration
+            n_points (int, optional): Number of points for numerical
+                integration. If None, automatically selects sufficient points
+                based on space dimension to resolve all basis functions
+                (especially important for high-frequency Fourier modes).
 
         Returns:
             float: L² inner product
@@ -203,7 +221,22 @@ class L2Space(HilbertSpace):
         For L² functions, we compute ⟨u,v⟩_L² = ∫_a^b u(x)v(x) dx through
         numerical integration, not pointwise evaluation (which is not
         mathematically well-defined for general L² functions).
+
+        Note: For large dimensions (N >> 500), adaptive integration point
+        selection is crucial to avoid numerical errors from under-sampling
+        high-frequency basis functions.
         """
+        # Adaptive integration point selection if not specified
+        if n_points is None:
+            # For Fourier basis: need at least 2*max_frequency points (Nyquist)
+            # Use 4*dim for safety margin, with practical limits
+            if self.provider_basis_type == 'fourier':
+                # Fourier modes have frequencies up to ~dim/2
+                n_points = max(1000, min(50000, 4 * self.dim))
+            else:
+                # For other basis types, use more conservative scaling
+                n_points = max(1000, min(20000, 2 * self.dim))
+
         # For L² functions, we need to be careful about pointwise operations
         # In practice, we work with smooth approximations
         product = u * v
@@ -213,18 +246,22 @@ class L2Space(HilbertSpace):
         """
         Compute the Gram matrix of the basis functions using L2 inner products.
         """
-        n = self.dim
-        self._gram_matrix = np.zeros((n, n))
+        if self.is_orthonormal_basis:
+            # If orthonormal, return identity matrix
+            self._gram_matrix = np.eye(self.dim)
+        else:
+            n = self.dim
+            self._gram_matrix = np.zeros((n, n))
 
-        for i in range(n):
-            for j in range(i, n):  # Only compute upper triangle
-                # Get basis functions - works with both lazy and explicit
-                basis_i = self.get_basis_function(i)
-                basis_j = self.get_basis_function(j)
+            for i in range(n):
+                for j in range(i, n):  # Only compute upper triangle
+                    # Get basis functions - works with both lazy and explicit
+                    basis_i = self.get_basis_function(i)
+                    basis_j = self.get_basis_function(j)
 
-                inner_prod = self.inner_product(basis_i, basis_j)
-                self._gram_matrix[i, j] = inner_prod
-                self._gram_matrix[j, i] = inner_prod  # Symmetric matrix
+                    inner_prod = self.inner_product(basis_i, basis_j)
+                    self._gram_matrix[i, j] = inner_prod
+                    self._gram_matrix[j, i] = inner_prod  # Symmetric matrix
 
     def project(self, f):
         """
@@ -257,7 +294,11 @@ class L2Space(HilbertSpace):
             basis_func = self.get_basis_function(k)
             rhs[k] = self.inner_product(u, basis_func)
 
-        # Solve the linear system: G * c = rhs
+        # For orthonormal basis, coefficients are just the inner products
+        if self.is_orthonormal_basis:
+            return rhs
+
+        # For non-orthonormal basis, solve the linear system: G * c = rhs
         gram = self.gram_matrix
         if gram is None:
             raise ValueError("Gram matrix not computed")
@@ -288,10 +329,16 @@ class L2Space(HilbertSpace):
             basis_func = self.get_basis_function(i)
             dual_components[i] = up(basis_func)
 
-        gram = self.gram_matrix
-        if gram is None:
-            raise ValueError("Gram matrix not computed")
-        components = np.linalg.solve(gram, dual_components)
+        # For orthonormal basis, components are just the dual components
+        if self.is_orthonormal_basis:
+            components = dual_components
+        else:
+            # For non-orthonormal basis, solve with Gram matrix
+            gram = self.gram_matrix
+            if gram is None:
+                raise ValueError("Gram matrix not computed")
+            components = np.linalg.solve(gram, dual_components)
+
         return Function(
             self,
             coefficients=components,
@@ -304,6 +351,16 @@ class L2Space(HilbertSpace):
             coefficients=self.to_components(x).copy(),
             name=getattr(x, 'name', None)
         )
+
+    def __eq__(self, other):
+        if not isinstance(other, L2Space):
+            return False
+        # Compare dimension and domain
+        if self.function_domain != other.function_domain:
+            return False
+
+        return True
+        # Compare basis type (or provider/callables if custom)
 
     # ========================================================================
     # Gaussian Measure Methods
@@ -485,7 +542,7 @@ class L2Space(HilbertSpace):
 
         return samples[0] if n_samples == 1 else samples
 
-    def create_gaussian_measure(self, method='kl', kl_expansion: int = 100,
+    def create_gaussian_measure(self, method='kl',
                                 **kwargs):
         """
         Unified interface for creating Gaussian measures with different
@@ -501,6 +558,7 @@ class L2Space(HilbertSpace):
             covariance (LinearOperator): Covariance operator that should have
                 a spectrum provider available (e.g., LaplacianInverseOperator)
             expectation (Function, optional): Mean function
+            kl_expansion (int): Number of modes for KL expansion (default 100).
 
         For method='spde':
             precision_operator (LinearOperator): Precision/covariance operator
@@ -524,7 +582,7 @@ class L2Space(HilbertSpace):
             ... )
         """
         if method == 'kl':
-            self.gaussian_measure_kl(kl_expansion=kl_expansion, **kwargs)
+            self.gaussian_measure_kl(**kwargs)
         elif method == 'spde':
             self.gaussian_measure_spde(**kwargs)
         else:

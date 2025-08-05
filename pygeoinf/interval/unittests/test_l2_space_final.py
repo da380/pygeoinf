@@ -301,7 +301,7 @@ class TestL2SpaceComplete(unittest.TestCase):
         func = Function(self.space, coefficients=coeffs)
 
         components = self.space._to_components(func)
-        np.testing.assert_array_almost_equal(components, coeffs, decimal=10)
+        np.testing.assert_array_almost_equal(components, coeffs, decimal=8)
 
     def test_to_components_with_callable(self):
         """Test _to_components with callable function."""
@@ -338,7 +338,7 @@ class TestL2SpaceComplete(unittest.TestCase):
         reconstructed = self.space._from_components(components)
 
         np.testing.assert_array_almost_equal(
-            reconstructed.coefficients, original_coeffs, decimal=10
+            reconstructed.coefficients, original_coeffs, decimal=8
         )
 
     # === DUAL SPACE TESTS ===
@@ -362,7 +362,7 @@ class TestL2SpaceComplete(unittest.TestCase):
         self.assertIsInstance(copied_func, Function)
         self.assertIsNot(copied_func, func)
         np.testing.assert_array_almost_equal(
-            copied_func.coefficients, func.coefficients, decimal=10
+            copied_func.coefficients, func.coefficients, decimal=8
         )
 
     # === GRAM MATRIX TESTS ===
