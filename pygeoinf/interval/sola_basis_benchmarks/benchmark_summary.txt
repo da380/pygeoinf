@@ -1,0 +1,5 @@
+SOLA Basis Function Benchmarking Summary
+Generated on: 2025-08-06 09:32:09
+Total configurations: 18
+Best accuracy: sine N=5 (error=0.189709)
+Fastest: sine N=50 (time=1.260s)

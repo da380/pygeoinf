@@ -62,6 +62,10 @@ class L2Space(HilbertSpace):
             2. basis_callables: User-provided callable functions
             3. basis_provider: Custom lazy provider implementation
         """
+        # Add counters for _to_components and _from_components
+        self._to_components_count = 0
+        self._from_components_count = 0
+
         self._dim = dim
         self._function_domain = function_domain
         self._gaussian_measure = None
@@ -284,6 +288,7 @@ class L2Space(HilbertSpace):
         return self._from_components(coeffs)
 
     def _to_components(self, u):
+        self._to_components_count += 1
         """
         Convert a function to coefficients using inner products with basis
         functions.
@@ -306,6 +311,7 @@ class L2Space(HilbertSpace):
         return coeffs
 
     def _from_components(self, coeff):
+        self._from_components_count += 1
         """
         Convert coefficients to a function using linear combination of
         basis functions.
@@ -361,6 +367,16 @@ class L2Space(HilbertSpace):
 
         return True
         # Compare basis type (or provider/callables if custom)
+
+    @property
+    def zero(self):
+        """
+        Create the zero function in this L2 space.
+
+        Returns:
+            Function: The zero function in this space
+        """
+        return Function(self, evaluate_callable=lambda x: np.zeros_like(x))
 
     # ========================================================================
     # Gaussian Measure Methods
