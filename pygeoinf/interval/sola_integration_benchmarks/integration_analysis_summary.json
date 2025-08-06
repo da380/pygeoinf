@@ -3,7 +3,7 @@
   "optimal_speed": 100,
   "optimal_efficiency": 10000,
   "convergence_point": null,
-  "time_scaling_exponent": -0.05095340828923044,
+  "time_scaling_exponent": -0.1513132982110024,
   "error_scaling_exponent": -2.020610607276818,
-  "average_integration_overhead_percent": 0.0063347101712318025
+  "average_integration_overhead_percent": 0.013749556444677475
 }
