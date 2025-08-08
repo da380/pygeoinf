@@ -132,7 +132,7 @@ class TestSOLAOperator(unittest.TestCase):
         def test_func_callable(x):
             return np.sin(2 * np.pi * x)
 
-        from pygeoinf.interval.l2_functions import Function
+        from pygeoinf.interval.functions import Function
         test_func = Function(self.space, evaluate_callable=test_func_callable)
 
         # Project the function

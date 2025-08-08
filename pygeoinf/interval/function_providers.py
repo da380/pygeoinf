@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Any, Dict, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .l2_functions import Function
+    from .functions import Function
 
 
 class FunctionProvider(ABC):
@@ -164,7 +164,7 @@ class NormalModesProvider(RandomFunctionProvider, ParametricFunctionProvider,
             Function: Random function combining multiple sine functions with
                      Gaussian envelopes
         """
-        from .l2_functions import Function
+        from .functions import Function
 
         a, b = self.domain.a, self.domain.b
         interval_length = b - a
@@ -242,7 +242,7 @@ class NormalModesProvider(RandomFunctionProvider, ParametricFunctionProvider,
 
         # Create a temporary provider with the index-specific RNG
         # We need to temporarily replace our RNG for the generation
-        from .l2_functions import Function
+        from .functions import Function
 
         a, b = self.domain.a, self.domain.b
         interval_length = b - a
@@ -321,7 +321,7 @@ class NormalModesProvider(RandomFunctionProvider, ParametricFunctionProvider,
             parameters: Dictionary containing 'coefficients', 'frequencies',
                        'gaussian_center', and 'gaussian_width'
         """
-        from .l2_functions import Function
+        from .functions import Function
 
         a, b = self.domain.a, self.domain.b
         interval_length = b - a
@@ -395,7 +395,7 @@ class FourierFunctionProvider(IndexedFunctionProvider):
         Index 2k-1: cos(kπx/(b-a))
         Index 2k: sin(kπx/(b-a))
         """
-        from .l2_functions import Function
+        from .functions import Function
 
         a, b = self.domain.a, self.domain.b
         L = b - a
@@ -449,7 +449,7 @@ class SplineFunctionProvider(IndexedFunctionProvider,
     def get_function_by_index(self, index: int, degree: int = 3,
                               n_knots: int = 10, **kwargs) -> 'Function':
         """Get B-spline basis function by index."""
-        from .l2_functions import Function
+        from .functions import Function
         from scipy.interpolate import BSpline
 
         a, b = self.domain.a, self.domain.b
@@ -481,7 +481,7 @@ class SplineFunctionProvider(IndexedFunctionProvider,
     def get_function_by_parameters(self, parameters: Dict[str, Any],
                                    **kwargs) -> 'Function':
         """Get spline with specific parameters."""
-        from .l2_functions import Function
+        from .functions import Function
         from scipy.interpolate import BSpline
 
         a, b = self.domain.a, self.domain.b
@@ -606,7 +606,7 @@ class BumpFunctionProvider(ParametricFunctionProvider,
                 - 'width': Width of the compact support
                 - 'k': Shape parameter (optional, defaults to default_k)
         """
-        from .l2_functions import Function
+        from .functions import Function
 
         center = parameters['center']
         width = parameters['width']
@@ -810,7 +810,7 @@ class DiscontinuousFunctionProvider(RandomFunctionProvider):
             n_discontinuities: Number of discontinuities (random if None)
             jump_range: Range for jump sizes
         """
-        from .l2_functions import Function
+        from .functions import Function
 
         a, b = self.domain.a, self.domain.b
 
@@ -867,7 +867,7 @@ class WaveletFunctionProvider(IndexedFunctionProvider):
 
     def _get_haar_wavelet(self, index: int) -> 'Function':
         """Get Haar wavelet by index."""
-        from .l2_functions import Function
+        from .functions import Function
 
         a, b = self.domain.a, self.domain.b
 
@@ -982,7 +982,7 @@ class SineFunctionProvider(IndexedFunctionProvider):
                 else:
                     return normalization * math.sin(k * np.pi * (x - a) / length)
 
-            from .l2_functions import Function
+            from .functions import Function
             func = Function(
                 self.space,
                 evaluate_callable=sine_func,
@@ -1018,7 +1018,7 @@ class CosineFunctionProvider(IndexedFunctionProvider):
                     return (np.ones_like(x) if isinstance(x, np.ndarray)
                             else 1.0) / np.sqrt(length)
 
-                from .l2_functions import Function
+                from .functions import Function
                 func = Function(
                     self.space,
                     evaluate_callable=constant_func,
@@ -1035,7 +1035,7 @@ class CosineFunctionProvider(IndexedFunctionProvider):
                     else:
                         return normalization * math.cos(k * np.pi * (x - a) / length)
 
-                from .l2_functions import Function
+                from .functions import Function
                 func = Function(
                     self.space,
                     evaluate_callable=cosine_func,
@@ -1150,7 +1150,7 @@ class HatFunctionProvider(IndexedFunctionProvider):
 
                 return result
 
-            from .l2_functions import Function
+            from .functions import Function
 
             # Create function name
             if self.homogeneous:

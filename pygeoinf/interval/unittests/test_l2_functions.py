@@ -14,7 +14,7 @@ import os
 # Add the parent directory to the Python path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
-from pygeoinf.interval.l2_functions import Function
+from pygeoinf.interval.functions import Function
 from pygeoinf.interval.interval_domain import IntervalDomain
 from pygeoinf.interval.l2_space import L2Space
 

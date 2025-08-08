@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 try:
     from pygeoinf.interval.interval_domain import IntervalDomain
     from pygeoinf.interval.l2_space import L2Space
-    from pygeoinf.interval.l2_functions import Function
+    from pygeoinf.interval.functions import Function
     IMPORTS_SUCCESSFUL = True
 except ImportError as e:
     print(f"Import error: {e}")

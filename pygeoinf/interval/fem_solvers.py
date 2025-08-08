@@ -16,7 +16,7 @@ from typing import Callable
 
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
-from .l2_functions import Function
+from .functions import Function
 
 try:
     import dolfinx

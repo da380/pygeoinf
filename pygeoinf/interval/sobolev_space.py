@@ -350,7 +350,7 @@ class Sobolev(L2Space):
         Convert coefficients to a Function using linear combination
         of basis functions.
         """
-        from .l2_functions import Function
+        from .functions import Function
 
         coeff = np.asarray(coeff)
         if len(coeff) != self.dim:
@@ -404,7 +404,7 @@ class Sobolev(L2Space):
         Returns:
             float: Spectral Sobolev inner product value
         """
-        from .l2_functions import Function
+        from .functions import Function
 
         if not isinstance(u, Function) or not isinstance(v, Function):
             raise TypeError(

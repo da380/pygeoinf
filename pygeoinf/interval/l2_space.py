@@ -11,7 +11,7 @@ from typing import Optional
 
 from pygeoinf.hilbert_space import HilbertSpace, LinearOperator
 from pygeoinf.hilbert_space import LinearForm
-from pygeoinf.interval.l2_functions import Function
+from pygeoinf.interval.functions import Function
 from pygeoinf.interval.interval_domain import IntervalDomain
 from pygeoinf.interval.providers import BasisProvider
 

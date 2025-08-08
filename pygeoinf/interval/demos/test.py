@@ -13,7 +13,7 @@ from pygeoinf.interval.interval_domain import IntervalDomain
 from pygeoinf.interval.l2_space import L2Space
 from pygeoinf.hilbert_space import EuclideanSpace, LinearOperator
 from pygeoinf.interval.sola_operator import SOLAOperator
-from pygeoinf.interval.l2_functions import Function
+from pygeoinf.interval.functions import Function
 from pygeoinf.linear_solvers import CholeskySolver
 from pygeoinf.gaussian_measure import GaussianMeasure
 

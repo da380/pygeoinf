@@ -22,7 +22,7 @@ from .l2_space import L2Space
 from .sobolev_space import Sobolev
 from .boundary_conditions import BoundaryConditions
 from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
-from .l2_functions import Function
+from .functions import Function
 from .providers import create_laplacian_spectrum_provider
 # FEM import only needed for LaplacianInverseOperator
 from pygeoinf.interval.fem_solvers import create_fem_solver
@@ -616,7 +616,7 @@ class SOLAOperator(LinearOperator):
             adjoint_mapping=adjoint_mapping
         )
 
-    def _get_kernel(self, index: int):
+    def get_kernel(self, index: int):
         """
         Lazily get the i-th kernel with optional caching.
 
@@ -658,7 +658,7 @@ class SOLAOperator(LinearOperator):
 
         for i in range(self.N_d):
             # Lazily get the i-th kernel
-            proj_func = self._get_kernel(i)
+            proj_func = self.get_kernel(i)
             # Compute inner product with the i-th kernel
             data[i] = self.domain.inner_product(
                 func,
@@ -686,7 +686,7 @@ class SOLAOperator(LinearOperator):
         for i, coeff in enumerate(data):
             if abs(coeff) > 1e-14:  # Avoid numerical noise
                 # Lazily get the i-th kernel
-                proj_func = self._get_kernel(i)
+                proj_func = self.get_kernel(i)
                 reconstructed += coeff * proj_func
 
         return reconstructed
@@ -699,7 +699,7 @@ class SOLAOperator(LinearOperator):
         Returns:
             list: List of kernels used for projection
         """
-        return [self._get_kernel(i) for i in range(self.N_d)]
+        return [self.get_kernel(i) for i in range(self.N_d)]
 
     def evaluate_kernel(self, x):
         """
@@ -715,7 +715,7 @@ class SOLAOperator(LinearOperator):
         values = np.zeros((self.N_d, len(x)))
 
         for i in range(self.N_d):
-            proj_func = self._get_kernel(i)
+            proj_func = self.get_kernel(i)
             values[i, :] = proj_func.evaluate(x)
 
         return values
@@ -732,9 +732,9 @@ class SOLAOperator(LinearOperator):
         gram = np.zeros((self.N_d, self.N_d))
 
         for i in range(self.N_d):
-            proj_func_i = self._get_kernel(i)
+            proj_func_i = self.get_kernel(i)
             for j in range(self.N_d):
-                proj_func_j = self._get_kernel(j)
+                proj_func_j = self.get_kernel(j)
                 gram[i, j] = self.domain.inner_product(
                     proj_func_i,
                     proj_func_j,
