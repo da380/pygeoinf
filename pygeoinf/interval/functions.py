@@ -14,53 +14,6 @@ if TYPE_CHECKING:
 
 
 class Function:
-    def _binary_op(self, other, op, op_name, scalar_allowed=True, support_strategy='union'):
-        """
-        General helper for binary operations (add, sub, mul).
-        Args:
-            other: Function or scalar
-            op: Callable for the operation (e.g., operator.add)
-            op_name: String for error messages
-            scalar_allowed: Whether to allow scalar as other
-            support_strategy: 'union' (add/sub), 'intersect' (mul)
-        """
-        import operator
-        if isinstance(other, Function):
-            if self.space != other.space:
-                raise ValueError(
-                    f"Cannot {op_name} functions from different spaces. "
-                    f"Got spaces: {self.space} and {other.space}"
-                )
-            if support_strategy == 'union':
-                new_support = self._union_supports(self.support, other.support)
-            elif support_strategy == 'intersect':
-                new_support = self._intersect_supports(self.support, other.support)
-            else:
-                new_support = None
-            # Try coefficient operation if possible
-            if (self.coefficients is not None and
-                    other.coefficients is not None and
-                    len(self.coefficients) == len(other.coefficients)):
-                new_coeffs = op(self.coefficients, other.coefficients)
-                return self.__class__(
-                    self.space, coefficients=new_coeffs, support=new_support
-                )
-            else:
-                def op_callable(x):
-                    return op(self.evaluate(x), other.evaluate(x))
-                return self.__class__(
-                    self.space, evaluate_callable=op_callable, support=new_support
-                )
-        elif scalar_allowed and isinstance(other, numbers.Number):
-            def scalar_op_callable(x):
-                return op(self.evaluate(x), other)
-            return self.__class__(
-                self.space, evaluate_callable=scalar_op_callable, support=self.support
-            )
-        else:
-            raise TypeError(
-                f"Can only {op_name} Function or scalar (int, float, numbers.Number), not {type(other)}"
-            )
     """
     A function in L²([a,b]) with both mathematical and computational aspects.
 
@@ -517,9 +470,75 @@ class Function:
         """Allow f(x) syntax."""
         return self.evaluate(x, check_domain=None)
 
+    def _binary_op(
+            self, other, op, op_name,
+            scalar_allowed=True,
+            support_strategy='union'
+            ):
+        """
+        General helper for binary operations (add, sub, mul).
+        Args:
+            other: Function or scalar
+            op: Callable for the operation (e.g., operator.add)
+            op_name: String for error messages
+            scalar_allowed: Whether to allow scalar as other
+            support_strategy: 'union' (add/sub), 'intersect' (mul)
+        """
+        if isinstance(other, Function):
+            if self.space != other.space:
+                raise ValueError(
+                    f"Cannot {op_name} functions from different spaces. "
+                    f"Got spaces: {self.space} and {other.space}"
+                )
+            if support_strategy == 'union':
+                new_support = self._union_supports(self.support, other.support)
+            elif support_strategy == 'intersect':
+                new_support = self._intersect_supports(
+                    self.support, other.support
+                )
+            else:
+                new_support = None
+            # Try coefficient operation if possible
+            if (self.coefficients is not None and
+                    other.coefficients is not None and
+                    len(self.coefficients) == len(other.coefficients)):
+                new_coeffs = op(self.coefficients, other.coefficients)
+                return self.__class__(
+                    self.space, coefficients=new_coeffs, support=new_support
+                )
+            else:
+                def op_callable(x):
+                    return op(self.evaluate(x), other.evaluate(x))
+                return self.__class__(
+                    self.space,
+                    evaluate_callable=op_callable,
+                    support=new_support
+                )
+        elif scalar_allowed and isinstance(other, numbers.Number):
+            def scalar_op_callable(x):
+                return op(self.evaluate(x), other)
+            return self.__class__(
+                self.space,
+                evaluate_callable=scalar_op_callable,
+                support=self.support
+            )
+        else:
+            raise TypeError(
+                (
+                    f"Can only {op_name} Function or scalar "
+                    f"(int, float, numbers.Number), not {type(other)}"
+                )
+            )
+
     def __add__(self, other):
         import operator
-        return self._binary_op(other, operator.add, 'add', scalar_allowed=True, support_strategy='union')
+        return self._binary_op(
+            other,
+            operator.add,
+            'add',
+            scalar_allowed=True,
+            support_strategy='union'
+        )
 
     def __radd__(self, other):
         """Right addition to support scalar + Function."""
@@ -527,12 +546,23 @@ class Function:
 
     def __sub__(self, other):
         import operator
-        return self._binary_op(other, operator.sub, 'subtract', scalar_allowed=True, support_strategy='union')
+        return self._binary_op(
+            other,
+            operator.sub,
+            'subtract',
+            scalar_allowed=True,
+            support_strategy='union'
+        )
 
     def __mul__(self, other):
         import operator
-        # Special case: if both have compact support and intersection is None, return zero function
-        if isinstance(other, Function) and self.has_compact_support and other.has_compact_support:
+        # Special case: if both have compact support and intersection is None,
+        # return zero function
+        if (
+            isinstance(other, Function)
+            and self.has_compact_support
+            and other.has_compact_support
+        ):
             new_support = self._intersect_supports(self.support, other.support)
             if new_support is None:
                 def zero_callable(x):
@@ -541,7 +571,13 @@ class Function:
                     self.space,
                     evaluate_callable=zero_callable
                 )
-        return self._binary_op(other, operator.mul, 'multiply', scalar_allowed=True, support_strategy='intersect')
+        return self._binary_op(
+            other,
+            operator.mul,
+            'multiply',
+            scalar_allowed=True,
+            support_strategy='intersect'
+        )
 
     def __rmul__(self, other):
         """Right multiplication (for scalar * function)."""

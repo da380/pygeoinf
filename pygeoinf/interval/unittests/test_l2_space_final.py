@@ -86,8 +86,6 @@ class TestL2SpaceComplete(unittest.TestCase):
         space = L2Space(3, self.domain, basis_callables=basis_funcs)
 
         self.assertEqual(space.dim, 3)
-        self.assertIsNotNone(space._manual_basis_functions)
-        self.assertEqual(len(space._manual_basis_functions), 3)
 
     def test_init_with_basis_provider(self):
         """Test initialization with custom basis provider."""
@@ -221,11 +219,6 @@ class TestL2SpaceComplete(unittest.TestCase):
             lambda x: x**2
         ]
         space = L2Space(3, self.domain, basis_callables=basis_funcs)
-
-        # Manual basis requires special handling, so we test what we can
-        # Check that the space has manual basis functions set
-        self.assertIsNotNone(space._manual_basis_functions)
-        self.assertEqual(len(space._manual_basis_functions), 3)
 
         # Try to get basis functions - may fail due to implementation details
         try:

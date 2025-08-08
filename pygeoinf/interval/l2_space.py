@@ -303,20 +303,18 @@ class L2Space(HilbertSpace):
     def _validate_basis_options(
         self, basis_type, basis_callables, basis_provider
     ):
-        # Validate that exactly one basis option is provided
-        basis_options = [basis_type, basis_callables, basis_provider]
-        non_none_count = sum(1 for opt in basis_options if opt is not None)
+        # Count non-None options
+        options = [basis_type, basis_callables, basis_provider]
+        non_none = [opt for opt in options if opt is not None]
 
-        if non_none_count == 0:
-            # Default to fourier if nothing specified
+        if len(non_none) == 0:
             basis_type = 'fourier'
-        elif non_none_count > 1:
+        elif len(non_none) > 1:
             raise ValueError(
-                "Exactly one of basis_type, basis_callables, or "
-                "basis_provider must be provided, but multiple were given"
+                "Specify only one of basis_type, basis_callables, or "
+                "basis_provider."
             )
 
-        # Handle the three basis options
         if basis_callables is not None:
             if len(basis_callables) != self.dim:
                 raise ValueError(
@@ -324,34 +322,26 @@ class L2Space(HilbertSpace):
                     f"must match dimension ({self.dim})"
                 )
             self._basis_type = 'custom'
-            # Convert callables to L2Function objects after space is created
-            self._pending_callables = basis_callables
-            self._basis_functions = None  # Will be created after init
+            self._basis_functions = [
+                Function(self, evaluate_callable=cb)
+                for cb in basis_callables
+            ]
             self._basis_provider = None
-        elif basis_provider is not None:
+            return
+
+        if basis_provider is not None:
             self._basis_type = 'custom_provider'
             self._basis_functions = None
             self._basis_provider = basis_provider
-            self._pending_callables = None
-        else:
-            # basis_type is specified (or defaulted to 'fourier')
-            self._basis_type = basis_type
-            self._basis_functions = None
-            self._basis_provider = None  # Will be created below
-            self._pending_callables = None
+            return
 
-        # Create basis provider for standard basis types
+        # If here, use basis_type (either provided or defaulted)
+        self._basis_type = basis_type
+        self._basis_functions = None
+        self._basis_provider = None
         if basis_type in ['fourier', 'hat', 'hat_homogeneous', 'sine']:
             from .providers import create_basis_provider
             self._basis_provider = create_basis_provider(self, basis_type)
-
-        # to Function objects (this solves the circular dependency)
-        if basis_callables:
-            l2_funcs = []
-            for callable_func in basis_callables:
-                l2_func = Function(self, evaluate_callable=callable_func)
-                l2_funcs.append(l2_func)
-            self._manual_basis_functions = l2_funcs
 
     def _copy(self, x):
         """Custom copy implementation for Functions."""
