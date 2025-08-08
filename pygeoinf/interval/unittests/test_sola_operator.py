@@ -14,7 +14,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 try:
-    from pygeoinf.interval.sola_operator import SOLAOperator
+    from pygeoinf.interval.operators import SOLAOperator
     from pygeoinf.interval.function_providers import (
         NormalModesProvider, SineFunctionProvider, BumpFunctionProvider
     )
@@ -82,7 +82,7 @@ class TestSOLAOperator(unittest.TestCase):
 
     # === PROJECTION FUNCTION ACCESS TESTS ===
 
-    def test_get_projection_function_indexed_provider(self):
+    def testget_kernel_indexed_provider(self):
         """Test getting projection function from indexed provider."""
         custom_provider = SineFunctionProvider(self.space)
         operator = SOLAOperator(
@@ -90,31 +90,31 @@ class TestSOLAOperator(unittest.TestCase):
             function_provider=custom_provider
         )
 
-        func = operator._get_projection_function(0)
+        func = operator.get_kernel(0)
         self.assertIsNotNone(func)
         self.assertEqual(func.space, self.space)
 
-    def test_get_projection_function_caching(self):
+    def testget_kernel_caching(self):
         """Test projection function caching."""
         operator = SOLAOperator(
             self.space, self.euclidean_space,
             random_state=42, cache_functions=True
         )
 
-        func1 = operator._get_projection_function(0)
-        func2 = operator._get_projection_function(0)
+        func1 = operator.get_kernel(0)
+        func2 = operator.get_kernel(0)
 
         self.assertIs(func1, func2)
 
-    def test_get_projection_function_no_caching(self):
+    def testget_kernel_no_caching(self):
         """Test projection function without caching."""
         operator = SOLAOperator(
             self.space, self.euclidean_space,
             random_state=42, cache_functions=False
         )
 
-        func1 = operator._get_projection_function(0)
-        func2 = operator._get_projection_function(0)
+        func1 = operator.get_kernel(0)
+        func2 = operator.get_kernel(0)
 
         # Without caching, functions should be newly generated each time
         # but should have same properties
@@ -211,7 +211,7 @@ class TestSOLAOperator(unittest.TestCase):
         reconstructed = operator._reconstruct_function(data)
 
         # Should be equal to first projection function
-        first_proj_func = operator._get_projection_function(0)
+        first_proj_func = operator.get_kernel(0)
 
         x_test = np.linspace(0, 1, 10)
         reconstructed_values = reconstructed.evaluate(x_test)
@@ -232,7 +232,7 @@ class TestSOLAOperator(unittest.TestCase):
         reconstructed = operator._reconstruct_function(data)
 
         # Should effectively be just the first component
-        first_proj_func = operator._get_projection_function(0)
+        first_proj_func = operator.get_kernel(0)
 
         x_test = np.linspace(0, 1, 10)
         reconstructed_values = reconstructed.evaluate(x_test)
@@ -270,26 +270,26 @@ class TestSOLAOperator(unittest.TestCase):
 
     # === UTILITY METHOD TESTS ===
 
-    def test_get_projection_functions(self):
+    def testget_kernels(self):
         """Test getting all projection functions."""
         operator = SOLAOperator(
             self.space, self.euclidean_space, random_state=42
         )
 
-        functions = operator.get_projection_functions()
+        functions = operator.get_kernels()
 
         self.assertEqual(len(functions), self.euclidean_space.dim)
         for func in functions:
             self.assertEqual(func.space, self.space)
 
-    def test_evaluate_projection_functions(self):
+    def test_evaluate_kernels(self):
         """Test evaluating all projection functions at points."""
         operator = SOLAOperator(
             self.space, self.euclidean_space, random_state=42
         )
 
         x = np.linspace(0, 1, 20)
-        values = operator.evaluate_projection_functions(x)
+        values = operator.evaluate_kernel(x)
 
         self.assertEqual(values.shape, (self.euclidean_space.dim, len(x)))
 
@@ -335,7 +335,7 @@ class TestSOLAOperator(unittest.TestCase):
         )
 
         # Access a function to populate cache
-        operator._get_projection_function(0)
+        operator.get_kernel(0)
         self.assertEqual(len(operator._function_cache), 1)
 
         # Clear cache
@@ -365,8 +365,8 @@ class TestSOLAOperator(unittest.TestCase):
         self.assertEqual(info["cached_functions"], 0)
 
         # Access some functions
-        operator._get_projection_function(0)
-        operator._get_projection_function(1)
+        operator.get_kernel(0)
+        operator.get_kernel(1)
 
         info = operator.get_cache_info()
         self.assertEqual(info["cached_functions"], 2)
@@ -440,8 +440,8 @@ class TestSOLAOperator(unittest.TestCase):
         )
 
         # Should produce same projection functions
-        func1 = operator1._get_projection_function(0)
-        func2 = operator2._get_projection_function(0)
+        func1 = operator1.get_kernel(0)
+        func2 = operator2.get_kernel(0)
 
         x_test = np.linspace(0, 1, 10)
         values1 = func1.evaluate(x_test)

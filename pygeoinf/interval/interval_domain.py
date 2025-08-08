@@ -181,7 +181,7 @@ class IntervalDomain:
         Args:
             f: Function to integrate
             method: Integration method
-                ('adaptive', 'gauss', 'simpson', 'trapz')
+                ('adaptive', 'simpson', 'trapz')
             subinterval: Optional integration bounds. Can be:
                 - None: integrate over entire domain [self.a, self.b]
                 - (a, b): integrate over single subinterval [a, b]
@@ -242,8 +242,6 @@ class IntervalDomain:
                     "scipy is required for adaptive integration. "
                     "Install with: pip install scipy"
                 )
-        elif method == 'gauss':
-            return self._gauss_legendre_integrate(f, a, b, **kwargs)
         elif method == 'simpson':
             try:
                 from scipy.integrate import simpson
@@ -268,27 +266,6 @@ class IntervalDomain:
                 return float(np.trapz(y, x=x))
         else:
             raise ValueError(f"Unknown integration method: {method}")
-
-    def _gauss_legendre_integrate(
-        self, f: Callable, a: float, b: float, n: int = 50
-    ) -> float:
-        """Gauss-Legendre quadrature over [a, b]."""
-        try:
-            from scipy.special import roots_legendre
-        except ImportError:
-            raise ImportError(
-                "scipy is required for Gauss-Legendre quadrature. "
-                "Install with: pip install scipy"
-            )
-
-        # Get Gauss-Legendre nodes and weights on [-1, 1]
-        nodes, weights = roots_legendre(n)
-
-        # Transform to [a, b]
-        x = a + (b - a) * (nodes + 1) / 2
-        w = weights * (b - a) / 2
-
-        return float(np.sum(w * self._evaluate_function_vectorized(f, x)))
 
     def _evaluate_function_vectorized(
         self, f: Callable, x: np.ndarray

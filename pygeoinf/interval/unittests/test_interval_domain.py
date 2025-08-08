@@ -539,20 +539,6 @@ class TestIntervalDomain(unittest.TestCase):
         with self.assertRaises(ValueError):
             domain.integrate(test_func, support=(0.5, 1.5))
 
-    def test_integrate_gauss_legendre(self):
-        """Test Gauss-Legendre integration if available."""
-        domain = IntervalDomain(0.0, 1.0, boundary_type='closed')
-
-        def test_func(x):
-            return x**2
-
-        try:
-            result = domain.integrate(test_func, method='gauss', n=10)
-            self.assertAlmostEqual(result, 1.0/3.0, places=3)
-        except ImportError:
-            # scipy not available
-            pass
-
     @unittest.skipIf(True, "Adaptive integration requires scipy")
     def test_integrate_adaptive(self):
         """Test adaptive integration if scipy is available."""

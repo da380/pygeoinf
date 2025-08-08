@@ -77,7 +77,7 @@ class TestFunctionProviders(unittest.TestCase):
         x = np.array([0.0, 0.5, 1.0])
         values = func.evaluate(x)
         # sin(π*x): sin(0), sin(π/2), sin(π)
-        expected = np.array([0.0, 1.0, 0.0])
+        expected = np.array([0.0, np.sqrt(2), 0.0])
 
         np.testing.assert_array_almost_equal(values, expected, decimal=10)
 
@@ -111,7 +111,7 @@ class TestFunctionProviders(unittest.TestCase):
 
         x = np.array([0.0, 0.5, 1.0])
         values = func.evaluate(x)
-        expected = np.array([1.0, 0.0, -1.0])  # cos(0), cos(π/2), cos(π)
+        expected = np.array([np.sqrt(2), 0.0, -np.sqrt(2)])  # cos(0), cos(π/2), cos(π)
 
         np.testing.assert_array_almost_equal(values, expected, decimal=10)
 

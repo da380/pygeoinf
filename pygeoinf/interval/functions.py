@@ -14,6 +14,53 @@ if TYPE_CHECKING:
 
 
 class Function:
+    def _binary_op(self, other, op, op_name, scalar_allowed=True, support_strategy='union'):
+        """
+        General helper for binary operations (add, sub, mul).
+        Args:
+            other: Function or scalar
+            op: Callable for the operation (e.g., operator.add)
+            op_name: String for error messages
+            scalar_allowed: Whether to allow scalar as other
+            support_strategy: 'union' (add/sub), 'intersect' (mul)
+        """
+        import operator
+        if isinstance(other, Function):
+            if self.space != other.space:
+                raise ValueError(
+                    f"Cannot {op_name} functions from different spaces. "
+                    f"Got spaces: {self.space} and {other.space}"
+                )
+            if support_strategy == 'union':
+                new_support = self._union_supports(self.support, other.support)
+            elif support_strategy == 'intersect':
+                new_support = self._intersect_supports(self.support, other.support)
+            else:
+                new_support = None
+            # Try coefficient operation if possible
+            if (self.coefficients is not None and
+                    other.coefficients is not None and
+                    len(self.coefficients) == len(other.coefficients)):
+                new_coeffs = op(self.coefficients, other.coefficients)
+                return self.__class__(
+                    self.space, coefficients=new_coeffs, support=new_support
+                )
+            else:
+                def op_callable(x):
+                    return op(self.evaluate(x), other.evaluate(x))
+                return self.__class__(
+                    self.space, evaluate_callable=op_callable, support=new_support
+                )
+        elif scalar_allowed and isinstance(other, numbers.Number):
+            def scalar_op_callable(x):
+                return op(self.evaluate(x), other)
+            return self.__class__(
+                self.space, evaluate_callable=scalar_op_callable, support=self.support
+            )
+        else:
+            raise TypeError(
+                f"Can only {op_name} Function or scalar (int, float, numbers.Number), not {type(other)}"
+            )
     """
     A function in L²([a,b]) with both mathematical and computational aspects.
 
@@ -163,41 +210,6 @@ class Function:
         else:
             raise RuntimeError("No evaluation method available")
 
-    def _evaluate_from_coefficients(
-        self, x: Union[float, np.ndarray]
-    ) -> Union[float, np.ndarray]:
-        """Evaluate the function at x using the basis and coefficients."""
-        # Get the basis functions from the parent space
-        basis_functions = self.space.basis_functions
-        coeffs = self.coefficients
-        if coeffs is None or basis_functions is None:
-            raise RuntimeError("Coefficients or basis functions not available "
-                               "for evaluation.")
-        if len(coeffs) != len(basis_functions):
-            raise ValueError(
-                f"Coefficient length {len(coeffs)} does not match "
-                f"number of basis functions {len(basis_functions)}."
-            )
-
-        x_array = np.asarray(x)
-        is_scalar = x_array.ndim == 0
-        if is_scalar:
-            x_array = x_array.reshape(1)
-
-        # Evaluate each basis function at x_array
-        basis_evals = np.array([bf.evaluate(x_array, check_domain=False)
-                                for bf in basis_functions])
-        # basis_evals shape: (n_basis, n_points)
-        # Linear combination: sum_k c_k * phi_k(x)
-        result = np.tensordot(coeffs, basis_evals, axes=([0], [0]))
-        return result[0] if is_scalar else result
-
-    def __call__(
-        self, x: Union[float, np.ndarray]
-    ) -> Union[float, np.ndarray]:
-        """Allow f(x) syntax."""
-        return self.evaluate(x, check_domain=None)
-
     def integrate(self, weight: Optional[Callable] = None,
                   method: str = 'simpson', n_points: int = 100) -> float:
         """
@@ -310,6 +322,52 @@ class Function:
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         return plt.gca()  # Return axes for further customization
+
+    def copy(self):
+        """Custom copy implementation for L2Functions."""
+        if self.coefficients is not None:
+            return self.__class__(
+                self.space,
+                coefficients=self.coefficients.copy(),
+                name=self.name,
+                support=self.support
+            )
+        else:
+            return self.__class__(
+                self.space,
+                evaluate_callable=self.evaluate_callable,
+                name=self.name,
+                support=self.support
+            )
+
+    def _evaluate_from_coefficients(
+        self, x: Union[float, np.ndarray]
+    ) -> Union[float, np.ndarray]:
+        """Evaluate the function at x using the basis and coefficients."""
+        # Get the basis functions from the parent space
+        basis_functions = self.space.basis_functions
+        coeffs = self.coefficients
+        if coeffs is None or basis_functions is None:
+            raise RuntimeError("Coefficients or basis functions not available "
+                               "for evaluation.")
+        if len(coeffs) != len(basis_functions):
+            raise ValueError(
+                f"Coefficient length {len(coeffs)} does not match "
+                f"number of basis functions {len(basis_functions)}."
+            )
+
+        x_array = np.asarray(x)
+        is_scalar = x_array.ndim == 0
+        if is_scalar:
+            x_array = x_array.reshape(1)
+
+        # Evaluate each basis function at x_array
+        basis_evals = np.array([bf.evaluate(x_array, check_domain=False)
+                                for bf in basis_functions])
+        # basis_evals shape: (n_basis, n_points)
+        # Linear combination: sum_k c_k * phi_k(x)
+        result = np.tensordot(coeffs, basis_evals, axes=([0], [0]))
+        return result[0] if is_scalar else result
 
     def _is_zero_at(
         self, x: Union[float, np.ndarray]
@@ -453,148 +511,37 @@ class Function:
                     )
         return support
 
+    def __call__(
+        self, x: Union[float, np.ndarray]
+    ) -> Union[float, np.ndarray]:
+        """Allow f(x) syntax."""
+        return self.evaluate(x, check_domain=None)
+
     def __add__(self, other):
-        """Addition of functions or with a scalar."""
-        if isinstance(other, Function):
-            # Check space compatibility
-            if self.space != other.space:
-                raise ValueError(
-                    "Cannot add functions from different spaces. "
-                    f"Got spaces: {self.space} and {other.space}"
-                )
-
-            # Support of sum is union of supports
-            new_support = self._union_supports(self.support, other.support)
-
-            if (self.coefficients is not None and
-                    other.coefficients is not None and
-                    len(self.coefficients) == len(other.coefficients)):
-                # Only use coefficient addition if both functions have
-                # coefficients of the same length
-                new_coeffs = self.coefficients + other.coefficients
-                return self.__class__(
-                    self.space, coefficients=new_coeffs, support=new_support
-                )
-            else:
-                # For callable functions or mismatched coefficients,
-                # create a new callable
-                def add_callable(x):
-                    return self.evaluate(x) + other.evaluate(x)
-                return self.__class__(
-                    self.space, evaluate_callable=add_callable,
-                    support=new_support
-                )
-        elif isinstance(other, numbers.Number):
-            # Adding a constant
-            def scalar_add_callable(x):
-                return self.evaluate(x) + other  # type: ignore
-            return self.__class__(
-                self.space, evaluate_callable=scalar_add_callable
-            )
-        else:
-            raise TypeError(
-                f"Can only add Function or scalar "
-                f"(int, float, numbers.Number), not {type(other)}"
-            )
+        import operator
+        return self._binary_op(other, operator.add, 'add', scalar_allowed=True, support_strategy='union')
 
     def __radd__(self, other):
         """Right addition to support scalar + Function."""
         return self.__add__(other)
 
     def __sub__(self, other):
-        """Subtraction of functions or with a scalar."""
-        if isinstance(other, Function):
-            # Check space compatibility
-            if self.space != other.space:
-                raise ValueError(
-                    "Cannot subtract functions from different spaces. "
-                    f"Got spaces: {self.space} and {other.space}"
-                )
-
-            # Support of difference is union of supports
-            new_support = self._union_supports(self.support, other.support)
-
-            if (self.coefficients is not None and
-                    other.coefficients is not None and
-                    len(self.coefficients) == len(other.coefficients)):
-                # Coefficient subtraction
-                new_coeffs = self.coefficients - other.coefficients
-                return self.__class__(
-                    self.space, coefficients=new_coeffs, support=new_support
-                )
-            else:
-                # Callable subtraction
-                def sub_callable(x):
-                    return self.evaluate(x) - other.evaluate(x)
-                return self.__class__(
-                    self.space, evaluate_callable=sub_callable,
-                    support=new_support
-                )
-        elif isinstance(other, (int, float)):
-            # Subtracting a constant
-            def scalar_sub_callable(x):
-                return self.evaluate(x) - other
-            return self.__class__(
-                self.space, evaluate_callable=scalar_sub_callable
-            )
-        else:
-            raise TypeError(
-                f"Can only subtract Function or scalar "
-                f"(int, float), not {type(other)}"
-            )
+        import operator
+        return self._binary_op(other, operator.sub, 'subtract', scalar_allowed=True, support_strategy='union')
 
     def __mul__(self, other):
-        """Multiplication of functions or by scalars."""
-        if isinstance(other, (int, float)):
-            # Scalar multiplication - preserves compact support
-            if self.coefficients is not None:
-                return Function(  # Use base class
-                    self.space,
-                    coefficients=other * self.coefficients,
-                    support=self.support
-                )
-            else:
-                def new_callable(x):
-                    return other * self.evaluate(x)
-                return Function(  # Use base class
-                    self.space,
-                    evaluate_callable=new_callable,
-                    support=self.support
-                )
-        elif isinstance(other, Function):
-            # Check space compatibility
-            if self.space != other.space:
-                raise ValueError(
-                    "Cannot multiply functions from different spaces. "
-                    f"Got spaces: {self.space} and {other.space}"
-                )
-
-            # Function multiplication: compact support is intersection
+        import operator
+        # Special case: if both have compact support and intersection is None, return zero function
+        if isinstance(other, Function) and self.has_compact_support and other.has_compact_support:
             new_support = self._intersect_supports(self.support, other.support)
-
-            # If no intersection, result is zero function
-            if new_support is None and (self.has_compact_support and
-                                        other.has_compact_support):
+            if new_support is None:
                 def zero_callable(x):
                     return np.zeros_like(np.asarray(x), dtype=float)
-                # For zero function, no compact support
                 return Function(
                     self.space,
                     evaluate_callable=zero_callable
                 )
-
-            # Create product function
-            def product_callable(x):
-                return self.evaluate(x) * other.evaluate(x)
-            return Function(  # Use base class, not self.__class__
-                self.space,
-                evaluate_callable=product_callable,
-                support=new_support
-            )
-        else:
-            raise TypeError(
-                f"Cannot multiply Function with {type(other)}"
-            )
+        return self._binary_op(other, operator.mul, 'multiply', scalar_allowed=True, support_strategy='intersect')
 
     def __rmul__(self, other):
         """Right multiplication (for scalar * function)."""
@@ -603,20 +550,3 @@ class Function:
     def __repr__(self) -> str:
         return (f"Function(domain={self.space.function_domain}, "
                 f"space_type={self.space_type}, name={self.name})")
-
-    def copy(self):
-        """Custom copy implementation for L2Functions."""
-        if self.coefficients is not None:
-            return self.__class__(
-                self.space,
-                coefficients=self.coefficients.copy(),
-                name=self.name,
-                support=self.support
-            )
-        else:
-            return self.__class__(
-                self.space,
-                evaluate_callable=self.evaluate_callable,
-                name=self.name,
-                support=self.support
-            )

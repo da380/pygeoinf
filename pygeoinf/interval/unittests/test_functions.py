@@ -207,7 +207,7 @@ class TestFunction(unittest.TestCase):
         """Test is_zero_at method."""
         # Function without compact support
         func1 = Function(self.space, evaluate_callable=self.simple_func)
-        self.assertFalse(func1.is_zero_at(0.5))
+        self.assertFalse(func1._is_zero_at(0.5))
 
         # Function with compact support
         func2 = Function(
@@ -215,8 +215,8 @@ class TestFunction(unittest.TestCase):
             evaluate_callable=self.simple_func,
             support=(0.2, 0.8)
         )
-        self.assertTrue(func2.is_zero_at(0.1))  # outside support
-        self.assertFalse(func2.is_zero_at(0.5))  # inside support
+        self.assertTrue(func2._is_zero_at(0.1))  # outside support
+        self.assertFalse(func2._is_zero_at(0.5))  # inside support
 
     def test_evaluate_with_callable(self):
         """Test evaluate method with callable representation."""
