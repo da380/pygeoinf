@@ -195,15 +195,15 @@ class TestL2SpaceComplete(unittest.TestCase):
 
         # Test valid indices
         for i in range(4):
-            basis_func = space.basis_function(i)
+            basis_func = space.get_basis_function(i)
             self.assertIsInstance(basis_func, Function)
 
         # Test invalid indices
         with self.assertRaises(IndexError):
-            space.basis_function(-1)
+            space.get_basis_function(-1)
 
         with self.assertRaises(IndexError):
-            space.basis_function(4)
+            space.get_basis_function(4)
 
     def test_basis_provider_property(self):
         """Test basis_provider property."""
@@ -475,7 +475,7 @@ class TestL2SpaceComplete(unittest.TestCase):
         def test_func(x):
             return np.sin(np.pi * x)
 
-        projected = space.project(test_func)
+        projected = space.project(Function(space, evaluate_callable=test_func))
         self.assertIsInstance(projected, Function)
         self.assertEqual(projected.space, space)
         self.assertIsNotNone(projected.coefficients)
@@ -487,7 +487,9 @@ class TestL2SpaceComplete(unittest.TestCase):
         def constant_func(x):
             return 2.0
 
-        projected = space.project(constant_func)
+        projected = space.project(
+            Function(space, evaluate_callable=constant_func)
+        )
         self.assertIsInstance(projected, Function)
 
         # The projection should be reasonable
