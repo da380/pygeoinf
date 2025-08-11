@@ -718,7 +718,7 @@ class BumpFunctionProvider(ParametricFunctionProvider,
                 center = center_positions[index % len(center_positions)]
 
             # Use default width, but ensure it doesn't exceed domain bounds
-            width = min(self.default_width * domain_length,
+            width = min(self.default_width,
                         2 * min(center - a, b - center))
 
             parameters = {'center': center, 'width': width, 'k': k}
