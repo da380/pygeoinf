@@ -426,7 +426,7 @@ class LaplacianInverseOperator(LinearOperator):
         Returns:
             L2Function representing (-Δ)⁻¹f
         """
-        f = (1 / self._alpha) * f  # Scale input by alpha
+        f = self._alpha * f  # Scale input by alpha
 
         # Solve PDE using FEM solver with L2Function
         solution_values = self._fem_solver.solve_poisson(f)
@@ -478,7 +478,7 @@ class LaplacianInverseOperator(LinearOperator):
         Returns:
             float: Eigenvalue λₖ of (-Δ)^(-1)
         """
-        return self._spectrum_provider.get_eigenvalue(index)
+        return self._alpha * self._spectrum_provider.get_eigenvalue(index)
 
     def get_eigenfunction(self, index: int) -> Function:
         """
@@ -502,7 +502,7 @@ class LaplacianInverseOperator(LinearOperator):
         """
         if n is None:
             n = self._domain.dim
-        return self._spectrum_provider.get_all_eigenvalues(n)
+        return self._alpha * self._spectrum_provider.get_all_eigenvalues(n)
 
     def get_solver_info(self) -> dict:
         """Get information about the current solver."""

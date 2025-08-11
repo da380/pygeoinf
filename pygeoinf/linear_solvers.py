@@ -1,5 +1,5 @@
 """
-Module for linear solvers. 
+Module for linear solvers.
 """
 
 from abc import ABC, abstractmethod
