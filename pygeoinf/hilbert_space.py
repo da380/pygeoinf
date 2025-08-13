@@ -259,7 +259,9 @@ class HilbertSpace:
 
     def axpy(self, a, x, y):
         """
-        Sets y = y + a * x.
+        Performs the in-place operation y := y + a * x.
+
+        Note: This method modifies `y` directly.
         """
         return self._axpy(a, x, y)
 
@@ -470,13 +472,24 @@ class LinearOperator(Operator):
                 of the adjoint operator's action.
             formal_adjoint_mapping (callable): Optional implementation
                 of the operator's formal adjoint.
-
             thread_safe (bool): True if the operators action can be
                 safely called in parallel. Default is false.
             dual_base (LinearOperator) : Used internally when defining
                 dual operators. Should not be set manually.
             adjoint_base (LinearOperator): Used internally when defining
                 adjoint operators. Should not be set manually.
+
+        Notes:
+            The `dual` and `adjoint` properties are constructed based on the
+            provided mappings. The logic follows this priority order:
+
+            1. If `dual_mapping` is provided, it is used directly.
+            2. Otherwise, if `adjoint_mapping` is provided, the dual is derived
+               from it.
+            3. Otherwise, if `formal_adjoint_mapping` is provided, the dual is
+               derived from it.
+            4. If none are provided, a default implementation of the dual is
+               used, and the adjoint is derived from that.
         """
         super().__init__(domain, codomain, mapping)
         self._dual_base = dual_base
