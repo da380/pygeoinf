@@ -4,7 +4,8 @@ Module for the Bayesian approaches to Bayesian inverse problems.
 
 import numpy as np
 from scipy.linalg import cho_factor, solve_triangular
-from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.operators import LinearOperator
 from pygeoinf.linear_solvers import IterativeLinearSolver
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.inversion import Inversion

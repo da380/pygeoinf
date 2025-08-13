@@ -3,7 +3,7 @@ Module for classes related to the solution of inverse problems via optimisation 
 """
 
 from scipy.stats import chi2
-from pygeoinf.hilbert_space import Operator
+from pygeoinf.operators import Operator
 from pygeoinf.inversion import Inversion
 from pygeoinf.linear_solvers import IterativeLinearSolver
 

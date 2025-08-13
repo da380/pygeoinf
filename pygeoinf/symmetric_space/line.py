@@ -4,7 +4,7 @@ Sobolev spaces for functions on a line.
 
 import matplotlib.pyplot as plt
 import numpy as np
-from pygeoinf.hilbert_space import LinearOperator
+from pygeoinf.operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.symmetric_space.symmetric_space import SymmetricSpaceSobolev
 from pygeoinf.symmetric_space.circle import Sobolev as CicleSobolev

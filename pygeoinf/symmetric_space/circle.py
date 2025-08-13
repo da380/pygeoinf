@@ -7,10 +7,11 @@ import numpy as np
 from scipy.fft import rfft, irfft
 from scipy.sparse import diags
 from pygeoinf.hilbert_space import (
-    LinearOperator,
-    LinearForm,
     EuclideanSpace,
 )
+
+from pygeoinf.operators import LinearOperator
+from pygeoinf.forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.symmetric_space.symmetric_space import SymmetricSpaceSobolev
 

@@ -4,7 +4,8 @@ Module containing the base class for Sobolev spaces defined on symmetric spaces.
 
 from abc import ABC, abstractmethod
 import numpy as np
-from pygeoinf.hilbert_space import HilbertSpace, LinearOperator, EuclideanSpace
+from pygeoinf.hilbert_space import HilbertSpace, EuclideanSpace
+from pygeoinf.operators import LinearOperator
 
 
 class SymmetricSpaceSobolev(HilbertSpace, ABC):

@@ -13,7 +13,8 @@ import cartopy.feature as cfeature
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 
 
-from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.operators import LinearOperator
 from pygeoinf.symmetric_space.symmetric_space import SymmetricSpaceSobolev
 from pygeoinf.gaussian_measure import GaussianMeasure
 

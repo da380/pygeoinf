@@ -1,8 +1,11 @@
 """
-Module for linear solvers. 
+Module for solving linear systems of equations involving abstract operators.
 """
 
+from __future__ import annotations
 from abc import ABC, abstractmethod
+from typing import Optional, Callable, Any
+
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.linalg import (
@@ -12,48 +15,56 @@ from scipy.linalg import (
     lu_solve,
 )
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
-from pygeoinf.hilbert_space import LinearOperator
+
+from pygeoinf.operators import LinearOperator
+from pygeoinf.hilbert_space import T_vec
 
 
 class LinearSolver(ABC):
     """
-    Abstract base class for linear solvers.
+    An abstract base class for linear solvers.
     """
 
 
 class DirectLinearSolver(LinearSolver):
     """
-    Abstract base class for direct linear solvers.
+    An abstract base class for direct linear solvers that rely on matrix
+    factorization.
     """
 
 
 class LUSolver(DirectLinearSolver):
     """
-    Direct Linear solver class based on LU decomposition of the
-    matrix representation.
+    A direct linear solver based on the LU decomposition of an operator's
+    dense matrix representation.
     """
 
-    def __init__(self, /, *, galerkin=False):
+    def __init__(self, /, *, galerkin: bool = False) -> None:
         """
         Args:
-            galerkin (bool): If true, the Galerkin matrix representation is used.
+            galerkin (bool): If True, the Galerkin matrix representation is used.
         """
-        self._galerkin = galerkin
+        self._galerkin: bool = galerkin
 
-    def __call__(self, operator):
+    def __call__(self, operator: LinearOperator) -> LinearOperator:
         """
-        Returns the inverse of a LinearOperator based on the LU factorisation
-        of its dense matrix representation.
-        """
+        Computes the inverse of a LinearOperator.
 
-        assert operator.domain.dim == operator.codomain.dim
+        Args:
+            operator (LinearOperator): The operator to be inverted.
+
+        Returns:
+            LinearOperator: A new operator representing the inverse.
+        """
+        assert operator.is_square
+
         matrix = operator.matrix(dense=True, galerkin=self._galerkin)
         factor = lu_factor(matrix, overwrite_a=True)
 
-        def matvec(cy):
+        def matvec(cy: np.ndarray) -> np.ndarray:
             return lu_solve(factor, cy, 0)
 
-        def rmatvec(cx):
+        def rmatvec(cx: np.ndarray) -> np.ndarray:
             return lu_solve(factor, cx, 1)
 
         inverse_matrix = ScipyLinOp(
@@ -69,29 +80,35 @@ class LUSolver(DirectLinearSolver):
 
 class CholeskySolver(DirectLinearSolver):
     """
-    Direct Linear solver class based on Cholesky decomposition of the
-    matrix representation. It is assumed that the operator's matrix
-    representation is self-adjoint and positive-definite.
+    A direct linear solver based on Cholesky decomposition.
+
+    It is assumed that the operator is self-adjoint and its matrix
+    representation is positive-definite.
     """
 
-    def __init__(self, /, *, galerkin=False):
+    def __init__(self, /, *, galerkin: bool = False) -> None:
         """
-        galerkin (bool): If true, use the Galerkin matrix representation.
+        Args:
+            galerkin (bool): If True, the Galerkin matrix representation is used.
         """
-        self._galerkin = galerkin
+        self._galerkin: bool = galerkin
 
-    def __call__(self, operator):
+    def __call__(self, operator: LinearOperator) -> LinearOperator:
         """
-        Returns the inverse of a LinearOperator based on the LU factorisation
-        of its dense matrix representation.
-        """
+        Computes the inverse of a self-adjoint LinearOperator.
 
+        Args:
+            operator (LinearOperator): The self-adjoint operator to be inverted.
+
+        Returns:
+            LinearOperator: A new operator representing the inverse.
+        """
         assert operator.is_automorphism
 
         matrix = operator.matrix(dense=True, galerkin=self._galerkin)
         factor = cho_factor(matrix, overwrite_a=False)
 
-        def matvec(cy):
+        def matvec(cy: np.ndarray) -> np.ndarray:
             return cho_solve(factor, cy)
 
         inverse_matrix = ScipyLinOp(
@@ -105,22 +122,62 @@ class CholeskySolver(DirectLinearSolver):
 
 class IterativeLinearSolver(LinearSolver):
     """
-    Abstract base class for direct linear solvers.
+    An abstract base class for iterative linear solvers.
     """
 
     @abstractmethod
-    def solve_linear_system(self, operator, preconditioner, y, x0):
+    def solve_linear_system(
+        self,
+        operator: LinearOperator,
+        preconditioner: Optional[LinearOperator],
+        y: T_vec,
+        x0: Optional[T_vec],
+    ) -> T_vec:
         """
-        Returns the solution of the linear system.
+        Solves the linear system Ax = y for x.
+
+        Args:
+            operator (LinearOperator): The operator A of the linear system.
+            preconditioner (LinearOperator, optional): The preconditioner.
+            y (T_vec): The right-hand side vector.
+            x0 (T_vec, optional): The initial guess for the solution.
+
+        Returns:
+            T_vec: The solution vector x.
         """
 
-    def solve_adjoint_linear_system(self, operator, preconditioner, x, y0):
+    def solve_adjoint_linear_system(
+        self,
+        operator: LinearOperator,
+        preconditioner: Optional[LinearOperator],
+        x: T_vec,
+        y0: Optional[T_vec],
+    ) -> T_vec:
         """
-        Returns the solution of the adjoint linear system.
+        Solves the adjoint linear system A*y = x for y.
         """
-        return self.solve_linear_system(operator.adjoint, preconditioner, x, y0)
+        # Note: Preconditioner is not used for adjoint solve in this default impl.
+        return self.solve_linear_system(operator.adjoint, None, x, y0)
 
-    def __call__(self, operator, /, *, preconditioner=None):
+    def __call__(
+        self,
+        operator: LinearOperator,
+        /,
+        *,
+        preconditioner: Optional[LinearOperator] = None,
+    ) -> LinearOperator:
+        """
+        Creates an operator representing the inverse of the input operator.
+
+        Args:
+            operator (LinearOperator): The operator to be inverted.
+            preconditioner (LinearOperator, optional): A preconditioner to
+                accelerate convergence.
+
+        Returns:
+            LinearOperator: A new operator that applies the inverse of the
+                original operator.
+        """
         assert operator.is_automorphism
         return LinearOperator(
             operator.codomain,
@@ -134,46 +191,55 @@ class IterativeLinearSolver(LinearSolver):
 
 class CGMatrixSolver(IterativeLinearSolver):
     """
-    Linear solver for self-adjoint operators based on the application
-    of the conjugate gradient algorithm to the matrix representation.
-
-    It is assumed that the matrix representation of the operator
-    is also self-adjoint. This will hold automatically when the
-    Galerkin representation is used.
+    Iterative solver using SciPy's Conjugate Gradient (CG) algorithm on the
+    operator's matrix representation. Assumes the operator is self-adjoint.
     """
 
     def __init__(
-        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
-    ):
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        rtol: float = 1.0e-5,
+        atol: float = 0.0,
+        maxiter: Optional[int] = None,
+        callback: Optional[Callable[[np.ndarray], None]] = None,
+    ) -> None:
         """
         Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
+            galerkin (bool): If True, use the Galerkin matrix representation.
+            rtol (float): Relative tolerance for convergence.
+            atol (float): Absolute tolerance for convergence.
+            maxiter (int, optional): Maximum number of iterations.
+            callback (callable, optional): User-supplied function to call
+                after each iteration.
         """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._maxiter = maxiter
-        self._callback = callback
+        self._galerkin: bool = galerkin
+        self._rtol: float = rtol
+        self._atol: float = atol
+        self._maxiter: Optional[int] = maxiter
+        self._callback: Optional[Callable[[np.ndarray], None]] = callback
 
-    def solve_linear_system(self, operator, preconditioner, y, x0):
-
+    def solve_linear_system(
+        self,
+        operator: LinearOperator,
+        preconditioner: Optional[LinearOperator],
+        y: T_vec,
+        x0: Optional[T_vec],
+    ) -> T_vec:
         domain = operator.codomain
         matrix = operator.matrix(galerkin=self._galerkin)
 
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
+        matrix_preconditioner = (
+            None
+            if preconditioner is None
+            else preconditioner.matrix(galerkin=self._galerkin)
+        )
 
         cx0 = None if x0 is None else domain.to_components(x0)
         cy = domain.to_components(y)
 
-        cxp = cg(
+        cxp, _ = cg(
             matrix,
             cy,
             x0=cx0,
@@ -182,7 +248,7 @@ class CGMatrixSolver(IterativeLinearSolver):
             maxiter=self._maxiter,
             M=matrix_preconditioner,
             callback=self._callback,
-        )[0]
+        )
         if self._galerkin:
             xp = domain.dual.from_components(cxp)
             return domain.from_dual(xp)
@@ -192,43 +258,56 @@ class CGMatrixSolver(IterativeLinearSolver):
 
 class BICGMatrixSolver(IterativeLinearSolver):
     """
-    Linear solver for general operators based on the application
-    of the biconjugate gradient algorithm to the matrix representation.
+    Iterative solver using SciPy's Biconjugate Gradient (BiCG) algorithm on
+    the operator's matrix representation. For general square operators.
     """
 
     def __init__(
-        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
-    ):
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        rtol: float = 1.0e-5,
+        atol: float = 0.0,
+        maxiter: Optional[int] = None,
+        callback: Optional[Callable[[np.ndarray], None]] = None,
+    ) -> None:
         """
         Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
+            galerkin (bool): If True, use the Galerkin matrix representation.
+            rtol (float): Relative tolerance for convergence.
+            atol (float): Absolute tolerance for convergence.
+            maxiter (int, optional): Maximum number of iterations.
+            callback (callable, optional): User-supplied function to call
+                after each iteration.
         """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._maxiter = maxiter
-        self._callback = callback
+        self._galerkin: bool = galerkin
+        self._rtol: float = rtol
+        self._atol: float = atol
+        self._maxiter: Optional[int] = maxiter
+        self._callback: Optional[Callable[[np.ndarray], None]] = callback
 
-    def solve_linear_system(self, operator, preconditioner, y, x0):
-
+    def solve_linear_system(
+        self,
+        operator: LinearOperator,
+        preconditioner: Optional[LinearOperator],
+        y: T_vec,
+        x0: Optional[T_vec],
+    ) -> T_vec:
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
 
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
+        matrix_preconditioner = (
+            None
+            if preconditioner is None
+            else preconditioner.matrix(galerkin=self._galerkin)
+        )
 
         cx0 = None if x0 is None else domain.to_components(x0)
         cy = domain.to_components(y)
 
-        cxp = bicg(
+        cxp, _ = bicg(
             matrix,
             cy,
             x0=cx0,
@@ -237,7 +316,7 @@ class BICGMatrixSolver(IterativeLinearSolver):
             maxiter=self._maxiter,
             M=matrix_preconditioner,
             callback=self._callback,
-        )[0]
+        )
         if self._galerkin:
             xp = codomain.dual.from_components(cxp)
             return codomain.from_dual(xp)
@@ -247,43 +326,56 @@ class BICGMatrixSolver(IterativeLinearSolver):
 
 class BICGStabMatrixSolver(IterativeLinearSolver):
     """
-    Linear solver for general operators based on the application
-    of the biconjugate gradient stabilised algorithm to the matrix representation.
+    Iterative solver using SciPy's Biconjugate Gradient Stabilized (BiCGSTAB)
+    algorithm on the operator's matrix representation. For general square operators.
     """
 
     def __init__(
-        self, /, *, galerkin=False, rtol=1.0e-5, atol=0, maxiter=None, callback=None
-    ):
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        rtol: float = 1.0e-5,
+        atol: float = 0.0,
+        maxiter: Optional[int] = None,
+        callback: Optional[Callable[[np.ndarray], None]] = None,
+    ) -> None:
         """
         Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
+            galerkin (bool): If True, use the Galerkin matrix representation.
+            rtol (float): Relative tolerance for convergence.
+            atol (float): Absolute tolerance for convergence.
+            maxiter (int, optional): Maximum number of iterations.
+            callback (callable, optional): User-supplied function to call
+                after each iteration.
         """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._maxiter = maxiter
-        self._callback = callback
+        self._galerkin: bool = galerkin
+        self._rtol: float = rtol
+        self._atol: float = atol
+        self._maxiter: Optional[int] = maxiter
+        self._callback: Optional[Callable[[np.ndarray], None]] = callback
 
-    def solve_linear_system(self, operator, preconditioner, y, x0):
-
+    def solve_linear_system(
+        self,
+        operator: LinearOperator,
+        preconditioner: Optional[LinearOperator],
+        y: T_vec,
+        x0: Optional[T_vec],
+    ) -> T_vec:
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
 
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
+        matrix_preconditioner = (
+            None
+            if preconditioner is None
+            else preconditioner.matrix(galerkin=self._galerkin)
+        )
 
         cx0 = None if x0 is None else domain.to_components(x0)
         cy = domain.to_components(y)
 
-        cxp = bicgstab(
+        cxp, _ = bicgstab(
             matrix,
             cy,
             x0=cx0,
@@ -292,7 +384,7 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
             maxiter=self._maxiter,
             M=matrix_preconditioner,
             callback=self._callback,
-        )[0]
+        )
         if self._galerkin:
             xp = codomain.dual.from_components(cxp)
             return codomain.from_dual(xp)
@@ -302,60 +394,62 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
 
 class GMRESMatrixSolver(IterativeLinearSolver):
     """
-    Linear solver for general operators based on the application
-    of the GMRES algorithm to the matrix representation.
+    Iterative solver using SciPy's Generalized Minimal Residual (GMRES)
+    algorithm on the operator's matrix representation. For general square operators.
     """
 
     def __init__(
         self,
         /,
         *,
-        galerkin=False,
-        rtol=1.0e-5,
-        atol=0,
-        restart=None,
-        maxiter=None,
-        callback=None,
-        callback_type=None,
-    ):
+        galerkin: bool = False,
+        rtol: float = 1.0e-5,
+        atol: float = 0.0,
+        restart: Optional[int] = None,
+        maxiter: Optional[int] = None,
+        callback: Optional[Callable] = None,
+        callback_type: Optional[str] = None,
+    ) -> None:
         """
         Args:
-            galerkin (bool): True if the Galerkin matrix representation is used.
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            restart (int): Number of iterations between restarts.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. Signature
-                of this function is determined by callback_type.
-            callback_type ("x", "pr_norm", "legacy"): If "x" the current solution is
-                passed to the callback function, if "pr_norm" it is the preconditioned
-                residual norm. The default is "legacy" which means the same as "pr_norm",
-                but changes the meaning of maxiter to count inner iterations instead of
-                restart cycles.
+            galerkin (bool): If True, use the Galerkin matrix representation.
+            rtol (float): Relative tolerance for convergence.
+            atol (float): Absolute tolerance for convergence.
+            restart (int, optional): Number of iterations between restarts.
+            maxiter (int, optional): Maximum number of iterations.
+            callback (callable, optional): User-supplied function to call
+                during iterations.
+            callback_type (str, optional): Type of callback ("x", "pr_norm").
         """
-        self._galerkin = galerkin
-        self._rtol = rtol
-        self._atol = atol
-        self._restart = restart
-        self._maxiter = maxiter
-        self._callback = callback
-        self._callback_type = callback_type
+        self._galerkin: bool = galerkin
+        self._rtol: float = rtol
+        self._atol: float = atol
+        self._restart: Optional[int] = restart
+        self._maxiter: Optional[int] = maxiter
+        self._callback: Optional[Callable] = callback
+        self._callback_type: Optional[str] = callback_type
 
-    def solve_linear_system(self, operator, preconditioner, y, x0):
-
+    def solve_linear_system(
+        self,
+        operator: LinearOperator,
+        preconditioner: Optional[LinearOperator],
+        y: T_vec,
+        x0: Optional[T_vec],
+    ) -> T_vec:
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
 
-        if preconditioner is None:
-            matrix_preconditioner = None
-        else:
-            matrix_preconditioner = preconditioner.matrix(galerkin=self._galerkin)
+        matrix_preconditioner = (
+            None
+            if preconditioner is None
+            else preconditioner.matrix(galerkin=self._galerkin)
+        )
 
         cx0 = None if x0 is None else domain.to_components(x0)
         cy = domain.to_components(y)
 
-        cxp = gmres(
+        cxp, _ = gmres(
             matrix,
             cy,
             x0=cx0,
@@ -366,7 +460,7 @@ class GMRESMatrixSolver(IterativeLinearSolver):
             M=matrix_preconditioner,
             callback=self._callback,
             callback_type=self._callback_type,
-        )[0]
+        )
 
         if self._galerkin:
             xp = codomain.dual.from_components(cxp)
@@ -377,76 +471,81 @@ class GMRESMatrixSolver(IterativeLinearSolver):
 
 class CGSolver(IterativeLinearSolver):
     """
-    LinearSolver class using the conjugate gradient algorithm without
-    use of the matrix representation. Can be applied to self-adjoint
-    operators on a general Hilbert space.
+    A matrix-free implementation of the Conjugate Gradient (CG) algorithm.
+
+    This solver operates directly on Hilbert space vectors and operator actions
+    without explicitly forming a matrix. It is suitable for self-adjoint,
+    positive-definite operators on a general Hilbert space.
     """
 
-    def __init__(self, /, *, rtol=1.0e-5, atol=0, maxiter=None, callback=None):
+    def __init__(
+        self,
+        /,
+        *,
+        rtol: float = 1.0e-5,
+        atol: float = 0.0,
+        maxiter: Optional[int] = None,
+        callback: Optional[Callable[[T_vec], None]] = None,
+    ) -> None:
         """
         Args:
-            rtol (float): relative tolerance within convergence checks.
-            atol (float): absolute tolerance within convergence checks.
-            maxiter (int): maximum number of iterations to allow.
-            callback (callable): callable function after each iteration. This function
-                takes in as argument the current solution vector.
+            rtol (float): Relative tolerance for convergence.
+            atol (float): Absolute tolerance for convergence.
+            maxiter (int, optional): Maximum number of iterations.
+            callback (callable, optional): User-supplied function to call
+                after each iteration with the current solution vector.
         """
-        if rtol > 0:
-            self._rtol = rtol
-        else:
+        if not rtol > 0:
             raise ValueError("rtol must be positive")
-        if atol >= 0:
-            self._atol = atol
-        else:
+        self._rtol: float = rtol
+
+        if not atol >= 0:
             raise ValueError("atol must be non-negative!")
-        if maxiter is None:
-            self._maxiter = maxiter
-        else:
-            if maxiter >= 0:
-                self._maxiter = maxiter
-            else:
-                raise ValueError("maxiter must be None or positive")
+        self._atol: float = atol
 
-        self._callback = callback
+        if maxiter is not None and not maxiter >= 0:
+            raise ValueError("maxiter must be None or positive")
+        self._maxiter: Optional[int] = maxiter
 
-    def solve_linear_system(self, operator, preconditioner, y, x0):
+        self._callback: Optional[Callable[[T_vec], None]] = callback
 
+    def solve_linear_system(
+        self,
+        operator: LinearOperator,
+        preconditioner: Optional[LinearOperator],
+        y: T_vec,
+        x0: Optional[T_vec],
+    ) -> T_vec:
         domain = operator.domain
-        if x0 is None:
-            x = domain.zero
-        else:
-            x = domain.copy(x0)
+        x = domain.zero if x0 is None else domain.copy(x0)
 
         r = domain.subtract(y, operator(x))
-        if preconditioner is None:
-            z = domain.copy(r)
-        else:
-            z = preconditioner(r)
+        z = domain.copy(r) if preconditioner is None else preconditioner(r)
         p = domain.copy(z)
 
         y_squared_norm = domain.squared_norm(y)
-        if y_squared_norm <= self._atol:
-            return y
+        # If RHS is zero, solution is zero
+        if y_squared_norm == 0.0:
+            return domain.zero
 
-        tol = np.max([self._atol, self._rtol * y_squared_norm])
+        # Determine tolerance
+        tol_sq = max(self._atol**2, (self._rtol**2) * y_squared_norm)
 
-        if self._maxiter is None:
-            maxiter = 10 * domain.dim
-        else:
-            maxiter = self._maxiter
+        maxiter = self._maxiter if self._maxiter is not None else 10 * domain.dim
+
+        num = domain.inner_product(r, z)
 
         for _ in range(maxiter):
-
-            if domain.norm(r) <= tol:
+            # Check for convergence
+            if domain.squared_norm(r) <= tol_sq:
                 break
 
             q = operator(p)
-            num = domain.inner_product(r, z)
             den = domain.inner_product(p, q)
             alpha = num / den
 
-            x = domain.axpy(alpha, p, x)
-            r = domain.axpy(-alpha, q, r)
+            domain.axpy(alpha, p, x)
+            domain.axpy(-alpha, q, r)
 
             if preconditioner is None:
                 z = domain.copy(r)
@@ -457,8 +556,9 @@ class CGSolver(IterativeLinearSolver):
             num = operator.domain.inner_product(r, z)
             beta = num / den
 
-            p = domain.multiply(beta, p)
-            p = domain.add(p, z)
+            # p = z + beta * p
+            domain.ax(beta, p)
+            domain.axpy(1.0, z, p)
 
             if self._callback is not None:
                 self._callback(x)

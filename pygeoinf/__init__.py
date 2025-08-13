@@ -9,11 +9,19 @@ from pygeoinf.random_matrix import (
 from pygeoinf.hilbert_space import (
     HilbertSpace,
     EuclideanSpace,
+)
+
+
+from pygeoinf.operators import (
     Operator,
     LinearOperator,
     DiagonalLinearOperator,
+)
+
+from pygeoinf.forms import (
     LinearForm,
 )
+
 
 from pygeoinf.gaussian_measure import (
     GaussianMeasure,
