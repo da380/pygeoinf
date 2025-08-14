@@ -34,12 +34,13 @@ class SymmetricSpaceSobolev(HilbertSpace, ABC):
         from_dual: Callable[["LinearForm"], Any],
         /,
         *,
-        add: Optional[Callable[[Any, Any], Any]] = None,
-        subtract: Optional[Callable[[Any, Any], Any]] = None,
-        multiply: Optional[Callable[[float, Any], Any]] = None,
-        axpy: Optional[Callable[[float, Any, Any], None]] = None,
-        copy: Optional[Callable[[Any], Any]] = None,
-        vector_multiply: Optional[Callable[[Any, Any], Any]] = None,
+        add: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+        subtract: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+        multiply: Optional[Callable[[float, T_vec], T_vec]] = None,
+        ax: Optional[Callable[[float, T_vec], None]] = None,
+        axpy: Optional[Callable[[float, T_vec, T_vec], None]] = None,
+        copy: Optional[Callable[[T_vec], T_vec]] = None,
+        vector_multiply: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
     ) -> None:
         """
         Args:
@@ -78,6 +79,7 @@ class SymmetricSpaceSobolev(HilbertSpace, ABC):
             add=add,
             subtract=subtract,
             multiply=multiply,
+            ax=ax,
             axpy=axpy,
             copy=copy,
             vector_multiply=vector_multiply,

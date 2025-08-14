@@ -88,6 +88,8 @@ class Sobolev(SymmetricSpaceSobolev):
                 self._inner_product_impl,
                 self._to_dual_impl,
                 self._from_dual_impl,
+                ax=self._ax_impl,
+                axpy=self._axpy_impl,
                 vector_multiply=self._vector_multiply_impl,
             )
         else:
@@ -100,6 +102,8 @@ class Sobolev(SymmetricSpaceSobolev):
                 self._inner_product_impl,
                 self._to_dual_impl,
                 self._from_dual_impl,
+                ax=self._ax_impl,
+                axpy=self._axpy_impl,
                 vector_multiply=self._vector_multiply_impl,
             )
 
@@ -575,6 +579,30 @@ class Sobolev(SymmetricSpaceSobolev):
         """Implements the mapping from the dual space."""
         c = self._inverse_metric_tensor @ self.dual.to_components(up) / self.radius**2
         return self.from_components(c)
+
+    def _ax_impl(self, a: float, x: Any) -> None:
+        """
+        Custom in-place ax implementation for pyshtools objects.
+        x := a*x
+        """
+        if self._vector_as_SHGrid:
+            # For SHGrid objects, modify the .data array
+            x.data *= a
+        else:
+            # For SHCoeffs objects, modify the .coeffs array
+            x.coeffs *= a
+
+    def _axpy_impl(self, a: float, x: Any, y: Any) -> None:
+        """
+        Custom in-place axpy implementation for pyshtools objects.
+        y := a*x + y
+        """
+        if self._vector_as_SHGrid:
+            # For SHGrid objects, modify the .data array
+            y.data += a * x.data
+        else:
+            # For SHCoeffs objects, modify the .coeffs array
+            y.coeffs += a * x.coeffs
 
     def _vector_multiply_impl(self, u1: Any, u2: Any) -> Any:
         """Implements element-wise multiplication of two fields."""
