@@ -1,13 +1,9 @@
 """
 FEM Solvers for Laplacian Inverse Operator
 
-This module provides different FEM solver backends for the
-LaplacianInverseOperator. Users can choose between:
-1. DOLFINx-based solver (requires DOLFINx installation)
-2. Custom native Python FEM solver (no external dependencies)
-
-The native FEM solver leverages the L2Space hat basis functions for all
-operations.
+This module provides a native Python FEM solver backend for the
+LaplacianInverseOperator. The native FEM solver leverages the L2Space hat
+basis functions for all operations and has no external dependencies.
 """
 
 import numpy as np
@@ -17,16 +13,6 @@ from typing import Callable
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
 from .functions import Function
-
-try:
-    import dolfinx
-    import dolfinx.fem
-    import dolfinx.fem.petsc
-    import ufl
-    from petsc4py import PETSc
-    DOLFINX_AVAILABLE = True
-except ImportError:
-    DOLFINX_AVAILABLE = False
 
 
 class FEMSolverBase(ABC):
@@ -112,235 +98,6 @@ class FEMSolverBase(ABC):
             Interpolated values
         """
         pass
-
-
-class DOLFINxSolver(FEMSolverBase):
-    """DOLFINx-based FEM solver."""
-
-    def __init__(self, function_domain: IntervalDomain, dofs: int,
-                 boundary_conditions: BoundaryConditions):
-        if not DOLFINX_AVAILABLE:
-            raise ImportError(
-                "DOLFINx is not available. Install with: "
-                "conda install -c conda-forge fenics-dolfinx"
-            )
-
-        super().__init__(function_domain, dofs, boundary_conditions)
-        self._mesh = None
-        self._V = None
-        self._bcs = None
-        self._periodic_dofs = None
-
-    def setup(self):
-        """Set up DOLFINx mesh and function space."""
-        from dolfinx import mesh
-
-        # Create 1D interval mesh
-        self._mesh = mesh.create_interval(
-            comm=PETSc.COMM_WORLD,
-            nx=self.dofs,
-            points=np.array([self.function_domain.a, self.function_domain.b])
-        )
-
-        # Create function space (P1 Lagrange elements)
-        self._V = dolfinx.fem.FunctionSpace(self._mesh, ("Lagrange", 1))
-
-        # Set up boundary conditions
-        self._setup_boundary_conditions()
-
-    def _setup_boundary_conditions(self):
-        """Set up boundary conditions."""
-        self._bcs = []
-
-        if self.bc_type == 'dirichlet':
-            # Homogeneous Dirichlet: u = 0 on boundary
-            def boundary_all(x):
-                return np.logical_or(
-                    np.isclose(x[0], self.function_domain.a),
-                    np.isclose(x[0], self.function_domain.b)
-                )
-
-            boundary_dofs = dolfinx.fem.locate_dofs_geometrical(
-                self._V, boundary_all
-            )
-            bc_dirichlet = dolfinx.fem.dirichletbc(
-                PETSc.ScalarType(0), boundary_dofs, self._V
-            )
-            self._bcs = [bc_dirichlet]
-
-        elif self.bc_type == 'neumann':
-            # Natural boundary conditions (no explicit BCs needed)
-            self._bcs = []
-
-        elif self.bc_type == 'periodic':
-            # Set up periodic constraint
-            self._setup_periodic_bcs()
-
-    def _setup_periodic_bcs(self):
-        """Set up periodic boundary conditions."""
-        # Get DOF coordinates and find boundary DOFs
-        dof_coords = self._V.tabulate_dof_coordinates()[:, 0]
-
-        left_dofs = []
-        right_dofs = []
-
-        for i, coord in enumerate(dof_coords):
-            if np.isclose(coord, self.function_domain.a):
-                left_dofs.append(i)
-            elif np.isclose(coord, self.function_domain.b):
-                right_dofs.append(i)
-
-        if len(left_dofs) != 1 or len(right_dofs) != 1:
-            raise ValueError(
-                "Unexpected number of boundary DOFs for periodic BC"
-            )
-
-        self._periodic_dofs = (left_dofs[0], right_dofs[0])
-        # Note: Periodic constraint will be applied in the solver
-
-    def solve_poisson(self,
-                      rhs_function: Callable[[np.ndarray], np.ndarray]
-                      ) -> np.ndarray:
-        """Solve Poisson equation with DOLFINx."""
-        # Create trial and test functions
-        u = ufl.TrialFunction(self._V)
-        v = ufl.TestFunction(self._V)
-
-        # Create RHS function
-        f = dolfinx.fem.Function(self._V)
-        coords = self._V.tabulate_dof_coordinates()[:, 0]
-        f.x.array[:] = rhs_function(coords)
-
-        # Bilinear form: a(u,v) = ∫ ∇u·∇v dx
-        a = ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx
-
-        # Linear form: L(v) = ∫ f·v dx
-        L = ufl.inner(f, v) * ufl.dx
-
-        if self.bc_type == 'periodic':
-            # Handle periodic BCs with custom matrix modification
-            return self._solve_periodic(a, L, f)
-        else:
-            # Standard solve
-            return self._solve_standard(a, L, f)
-
-    def _solve_standard(self, a, L, f):
-        """Standard DOLFINx solve."""
-        if self.bc_type == 'neumann':
-            # Singular system - use iterative solver
-            petsc_options = {
-                "ksp_type": "cg",
-                "pc_type": "jacobi",
-                "ksp_rtol": 1e-10,
-                "ksp_max_it": 1000
-            }
-
-            # Check solvability condition
-            dx = ufl.dx
-            volume = dolfinx.fem.assemble_scalar(
-                dolfinx.fem.form(dolfinx.fem.Constant(self._mesh, 1.0) * dx)
-            )
-            rhs_integral = dolfinx.fem.assemble_scalar(
-                dolfinx.fem.form(f * dx)
-            )
-
-            if abs(rhs_integral) > 1e-12:
-                mean_rhs = rhs_integral / volume
-                f.x.array[:] -= mean_rhs
-        else:
-            # Regular system - direct solver
-            petsc_options = {
-                "ksp_type": "preonly",
-                "pc_type": "lu"
-            }
-
-        # Solve
-        problem = dolfinx.fem.petsc.LinearProblem(
-            a, L, bcs=self._bcs, petsc_options=petsc_options
-        )
-        solution_func = problem.solve()
-
-        # Enforce zero mean for Neumann
-        if self.bc_type == 'neumann':
-            dx = ufl.dx
-            volume = dolfinx.fem.assemble_scalar(
-                dolfinx.fem.form(dolfinx.fem.Constant(self._mesh, 1.0) * dx)
-            )
-            mean_sol = dolfinx.fem.assemble_scalar(
-                dolfinx.fem.form(solution_func * dx)
-            ) / volume
-            solution_func.x.array[:] -= mean_sol
-
-        return solution_func.x.array.copy()
-
-    def _solve_periodic(self, a, L, f):
-        """Solve with periodic boundary conditions."""
-        # Assemble system manually to modify for periodicity
-        a_form = dolfinx.fem.form(a)
-        L_form = dolfinx.fem.form(L)
-
-        A = dolfinx.fem.petsc.assemble_matrix(a_form)
-        A.assemble()
-        b = dolfinx.fem.petsc.assemble_vector(L_form)
-        b.assemble()
-
-        # Apply periodic constraint: u(left) = u(right)
-        left_dof, right_dof = self._periodic_dofs
-
-        # Modify matrix: replace right DOF equation with constraint
-        A.zeroRows([right_dof], diag=1.0)
-        A.setValue(right_dof, right_dof, 1.0)
-        A.setValue(right_dof, left_dof, -1.0)
-        b.setValue(right_dof, 0.0)
-
-        A.assemble()
-        b.assemble()
-
-        # Check solvability and solve
-        dx = ufl.dx
-        volume = dolfinx.fem.assemble_scalar(
-            dolfinx.fem.form(dolfinx.fem.Constant(self._mesh, 1.0) * dx)
-        )
-        rhs_integral = dolfinx.fem.assemble_scalar(dolfinx.fem.form(f * dx))
-
-        if abs(rhs_integral) > 1e-12:
-            mean_rhs = rhs_integral / volume
-            b_array = b.getArray()
-            b_array[:] -= mean_rhs * volume / len(b_array)
-            b.restoreArray(b_array)
-
-        # Solve system
-        u = b.duplicate()
-        ksp = PETSc.KSP().create()
-        ksp.setOperators(A)
-        ksp.setType("cg")
-        ksp.getPC().setType("jacobi")
-        ksp.setTolerances(rtol=1e-10, max_it=1000)
-        ksp.solve(b, u)
-
-        solution = u.getArray().copy()
-
-        # Enforce zero mean
-        mean_sol = np.mean(solution)
-        solution -= mean_sol
-
-        return solution
-
-    def get_coordinates(self) -> np.ndarray:
-        """Get mesh node coordinates."""
-        return self._V.tabulate_dof_coordinates()[:, 0]
-
-    def interpolate_solution(self, solution_values: np.ndarray,
-                             eval_points: np.ndarray) -> np.ndarray:
-        """Interpolate using DOLFINx function."""
-        # Create function from solution values
-        solution_func = dolfinx.fem.Function(self._V)
-        solution_func.x.array[:] = solution_values
-
-        # Evaluate at points
-        points = np.column_stack([eval_points, np.zeros_like(eval_points),
-                                 np.zeros_like(eval_points)])
-        return solution_func.eval(points, self._mesh.geometry.x)
 
 
 class NativeFEMSolver(FEMSolverBase):
@@ -516,7 +273,7 @@ def create_fem_solver(solver_type: str,
     Factory function to create FEM solvers.
 
     Args:
-        solver_type: 'dolfinx' or 'native'
+        solver_type: Only 'native' is supported
         function_domain: IntervalDomain object
         dofs: Mesh resolution
         boundary_conditions: BoundaryConditions object
@@ -524,9 +281,8 @@ def create_fem_solver(solver_type: str,
     Returns:
         FEM solver instance
     """
-    if solver_type == 'dolfinx':
-        return DOLFINxSolver(function_domain, dofs, boundary_conditions)
-    elif solver_type == 'native':
+    if solver_type == 'native':
         return NativeFEMSolver(function_domain, dofs, boundary_conditions)
     else:
-        raise ValueError(f"Unknown solver type: {solver_type}")
+        raise ValueError(f"Unknown solver type: {solver_type}. "
+                         f"Only 'native' is supported.")

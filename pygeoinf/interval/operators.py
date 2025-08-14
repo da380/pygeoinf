@@ -305,9 +305,7 @@ class LaplacianInverseOperator(LinearOperator):
     This operator solves -Δu = f with homogeneous boundary conditions,
     providing a self-adjoint operator suitable for Gaussian measures.
 
-    Supports multiple FEM backends:
-    - 'dolfinx': Uses DOLFINx library (requires installation)
-    - 'native': Pure Python implementation (no external dependencies)
+    Uses native Python FEM implementation (no external dependencies).
     """
 
     def __init__(
@@ -331,7 +329,7 @@ class LaplacianInverseOperator(LinearOperator):
             boundary_conditions: Boundary conditions for the operator
             sobolev_order: Order of the Sobolev space (codomain), default 1.0
             dofs: Number of degrees of freedom (default: 100)
-            solver_type: 'dolfinx', 'native', or 'auto'
+            solver_type: Only 'native' is supported now
         """
         # Check that domain is an L2 space
         if not isinstance(domain, L2Space):
@@ -353,7 +351,7 @@ class LaplacianInverseOperator(LinearOperator):
             basis_type='fourier',  # Use Fourier basis for spectral approach
             boundary_conditions=boundary_conditions
         ) """
-        self._codomain = domain # FOR TESTING ONLY
+        self._codomain = domain  # FOR TESTING ONLY
 
         # Get function domain from domain (L2Space and SobolevSpace)
         self._function_domain = domain.function_domain
@@ -370,31 +368,14 @@ class LaplacianInverseOperator(LinearOperator):
             domain, self._boundary_conditions, inverse=True
         )
 
-        # Choose solver type (NOW ONLY NATIVE WORKS!)
+        # Use native solver (only option available)
         if solver_type == "auto":
-            # Try DOLFINx first, fall back to native
-            try:
-                from .fem_solvers import DOLFINX_AVAILABLE
-                if DOLFINX_AVAILABLE:
-                    # Try to create DOLFINx solver to test compatibility
-                    try:
-                        test_bc = BoundaryConditions('dirichlet')
-                        test_solver = create_fem_solver(
-                            "dolfinx", self._function_domain, 10, test_bc
-                        )
-                        test_solver.setup()
-                        self._solver_type = "dolfinx"
-                    except Exception:
-                        # DOLFINx available but has compatibility issues
-                        self._solver_type = "native"
-                        print("DOLFINx found but has compatibility issues, "
-                              "using native solver")
-                else:
-                    self._solver_type = "native"
-            except ImportError:
-                self._solver_type = "native"
+            self._solver_type = "native"
+        elif solver_type == "native":
+            self._solver_type = "native"
         else:
-            self._solver_type = solver_type
+            raise ValueError(f"Unknown solver type: {solver_type}. "
+                             f"Only 'native' and 'auto' are supported.")
 
         # Create and setup FEM solver
         self._fem_solver = create_fem_solver(
@@ -524,7 +505,7 @@ class LaplacianInverseOperator(LinearOperator):
         Change the FEM solver backend.
 
         Args:
-            new_solver_type: 'dolfinx' or 'native'
+            new_solver_type: Only 'native' is supported
 
         Note:
             This does not affect the spectrum computation, which is

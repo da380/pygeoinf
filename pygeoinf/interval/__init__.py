@@ -1,24 +1,22 @@
 """
-Other Space Module
+Interval Function Spaces Module
 
-This module contains implementations for various function spaces beyond the
-standard pygeoinf spaces, including:
+This module contains implementations for various function spaces on intervals,
+including:
 
 - Sobolev spaces on intervals with spectral methods
-- DOLFINx integration for finite element computations
+- Native finite element computations
 - Inverse elliptic operators for covariance modeling
 
 Modules:
     interval_space: Sobolev spaces on 1D intervals
     sobolev_functions: Function objects for Sobolev spaces
     interval_domain: Domain utilities for intervals
-    dolfinx_bridge: Bridge between pygeoinf and DOLFINx
     inverse_elliptical: Inverse elliptic operators for PDEs
 
 Classes:
     Sobolev: Sobolev space implementation with spectral methods
     SobolevFunction: Function living in Sobolev spaces
-    DOLFINxSobolevBridge: Bridge for pygeoinf-DOLFINx integration
     InverseEllipticOperator: Inverse elliptic PDE operators
 """
 
@@ -29,7 +27,7 @@ from .sobolev_space import Sobolev
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
 
-# LaplacianInverseOperator (requires DOLFINx)
+# LaplacianInverseOperator (native implementation)
 try:
     import importlib
     if importlib.util.find_spec("pygeoinf.interval.laplacian_operator"):

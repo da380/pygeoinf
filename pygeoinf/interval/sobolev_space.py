@@ -6,11 +6,7 @@ import numpy as np
 from scipy.sparse import diags
 from typing import Optional
 
-from pygeoinf.hilbert_space import (
-    LinearOperator,
-    EuclideanSpace,
-)
-from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf.hilbert_space import LinearOperator
 from pygeoinf.interval.l2_space import L2Space
 from pygeoinf.interval.boundary_conditions import BoundaryConditions
 from pygeoinf.interval.providers import (
