@@ -182,7 +182,7 @@ ax.legend()
 plt.show()
 ```
 
-The output of the above script will look similar to the following figure, showing how the prior belief (blue samples) is updated by the noisy data (red points) to produce the posterior belief (green samples), which is more concentrated around the true model (dashed black line).
+The output of the above script will look similar to the following figure:
 
 ![Example of Bayesian Inference on a Circle](figures/fig1.png)
 
