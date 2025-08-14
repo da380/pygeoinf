@@ -392,8 +392,8 @@ class FourierFunctionProvider(IndexedFunctionProvider):
         Get Fourier basis function by index.
 
         Index 0: constant function
-        Index 2k-1: cos(kπx/(b-a))
-        Index 2k: sin(kπx/(b-a))
+        Odd index (2k-1):  √(2/L) · cos(2πk(x−a)/L)
+        Even index (2k):   √(2/L) · sin(2πk(x−a)/L)
         """
         from .functions import Function
 

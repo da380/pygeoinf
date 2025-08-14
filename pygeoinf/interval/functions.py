@@ -77,19 +77,6 @@ class Function:
         return self.space._function_domain
 
     @property
-    def space_type(self):
-        """Get the type of space this function belongs to."""
-        # Check if the space is a Sobolev space
-        if (hasattr(self.space, 'order') and
-                hasattr(self.space, 'inner_product_type')):
-            if self.space.order == 0.0:
-                return "L2"
-            else:
-                return f"H{self.space.order}"
-        else:
-            return "L2"
-
-    @property
     def has_compact_support(self) -> bool:
         """Check if function has compact support."""
         return self.support is not None
@@ -585,4 +572,4 @@ class Function:
 
     def __repr__(self) -> str:
         return (f"Function(domain={self.space.function_domain}, "
-                f"space_type={self.space_type}, name={self.name})")
+                f"name={self.name})")

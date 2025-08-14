@@ -59,7 +59,6 @@ class Sobolev(L2Space):
         dim: int,
         function_domain: IntervalDomain,
         order: float,
-        inner_product_type: str,
         /,
         basis_type: Optional[str] = None,
         basis_callables: Optional[list] = None,
@@ -78,12 +77,6 @@ class Sobolev(L2Space):
             order (float): Sobolev order s.
             inner_product_type (str): Type of inner product to use:
                 'spectral' - Uses spectral definition ⟨u,v⟩ = ∑(1+λₖ)ˢûₖv̂ₖ
-                'weak_derivative' - Uses weak derivative definition
-
-            For weak_derivative inner product:
-                basis_type (str, optional): Basis type ('fourier', 'hat', etc.)
-                basis_callables (list, optional): Custom basis functions
-                basis_provider (BasisProvider, optional): Basis provider
 
             For spectral inner product:
                 basis_type (str, optional): Basis type (creates
@@ -110,61 +103,19 @@ class Sobolev(L2Space):
         self._dim = dim
         self._order = order
         self._function_domain = function_domain
-        self._inner_product_type = inner_product_type
-
-        # Validate inner product type
-        if inner_product_type not in ['spectral', 'weak_derivative']:
-            raise ValueError(
-                f"inner_product_type must be 'spectral' or 'weak_derivative', "
-                f"got '{inner_product_type}'"
-            )
 
         # Handle boundary conditions
         self._boundary_conditions = boundary_conditions
 
-        # Different validation and initialization based on inner product type
-        if inner_product_type == 'weak_derivative':
-            self._init_weak_derivative(
-                dim, function_domain, basis_type, basis_callables,
-                basis_provider
-            )
-        elif inner_product_type == 'spectral':
-            self._init_spectral(
-                dim, function_domain, basis_type, basis_callables,
-                eigenvalues, spectrum_provider
-            )
+        # Initialization of spectral properties of the space, needed for the
+        # spectral inner product
+        self._init_spectral(
+            dim, function_domain, basis_type, basis_callables,
+            eigenvalues, spectrum_provider
+        )
 
         # Don't compute Gram matrix here - will be computed lazily
         self._gram_matrix = None
-
-    def _init_weak_derivative(self, dim, function_domain, basis_type,
-                              basis_callables, basis_provider):
-        """Initialize for weak derivative inner product."""
-        # For weak derivative, only allow basis_type, basis_callables,
-        # or basis_provider
-        options = [basis_type, basis_callables, basis_provider]
-        provided_options = [opt for opt in options if opt is not None]
-        if len(provided_options) != 1:
-            raise ValueError(
-                "For weak_derivative inner product, exactly one of "
-                "basis_type, basis_callables, or basis_provider must be "
-                "provided"
-            )
-
-        # Initialize parent L2Space with the provided option
-        if basis_type is not None:
-            super().__init__(dim, function_domain, basis_type=basis_type)
-        elif basis_callables is not None:
-            super().__init__(
-                dim, function_domain, basis_callables=basis_callables
-            )
-        elif basis_provider is not None:
-            super().__init__(
-                dim, function_domain, basis_provider=basis_provider
-            )
-
-        # No spectrum provider for weak derivative
-        self._spectrum_provider = None
 
     def _init_spectral(self, dim, function_domain, basis_type, basis_callables,
                        eigenvalues, spectrum_provider):
@@ -272,8 +223,7 @@ class Sobolev(L2Space):
     @property
     def eigenvalues(self):
         """Eigenvalues of the basis functions (if available)."""
-        if (self._inner_product_type == 'spectral' and
-                self._spectrum_provider is not None):
+        if self._spectrum_provider is not None:
             # Get eigenvalues from LazySpectrumProvider
             eigenvals = np.zeros(self.dim)
             for i in range(self.dim):
@@ -365,7 +315,6 @@ class Sobolev(L2Space):
 
         This method supports two definitions:
         1. Spectral: ⟨u,v⟩_H^s = ∑_k (1 + λ_k)^s û_k v̂_k
-        2. Weak derivative: ⟨u,v⟩_H^s = ∑_{|α|≤s} ⟨D^α u, D^α v⟩_L²
 
         The method used depends on the inner_product_type parameter set
         during initialization.
@@ -376,14 +325,7 @@ class Sobolev(L2Space):
         Returns:
             float: Sobolev inner product value
         """
-        if self._inner_product_type == 'spectral':
-            return self._spectral_inner_product(u, v)
-        elif self._inner_product_type == 'weak_derivative':
-            return self._weak_derivative_inner_product(u, v)
-        else:
-            raise ValueError(
-                f"Unknown inner product type: {self._inner_product_type}"
-            )
+        return self._spectral_inner_product(u, v)
 
     def _spectral_inner_product(self, u, v):
         """
@@ -436,35 +378,6 @@ class Sobolev(L2Space):
 
         return result
 
-    def _weak_derivative_inner_product(self, u, v):
-        """
-        Weak derivative definition of Sobolev inner product H^s.
-
-        Mathematical Definition:
-        ⟨u,v⟩_H^s = ∑_{|α|≤s} ⟨D^α u, D^α v⟩_L²
-
-        where D^α represents weak derivatives of order α.
-
-        Args:
-            u, v: Functions in this Sobolev space
-
-        Returns:
-            float: Weak derivative Sobolev inner product value
-
-        Note:
-            This is a placeholder implementation. Full implementation
-            requires weak derivative computation methods.
-        """
-        # TODO: Implement weak derivative computation
-        # For now, fall back to L² inner product when s=0
-        if self._order == 0:
-            return super().inner_product(u, v)
-        else:
-            raise NotImplementedError(
-                "Weak derivative inner product not yet implemented for s > 0. "
-                "Use inner_product_type='spectral' for now."
-            )
-
     def _default_to_dual(self, u):
         """Default mapping to dual space using Gram matrix."""
         coeff = self._to_components(u)
@@ -515,61 +428,3 @@ class Sobolev(L2Space):
             return self.from_components(coeff)
 
         return LinearOperator.formally_self_adjoint(self, mapping)
-
-    def gaussian_measure(self, f, /, *, expectation=None):
-        """
-        Create a Gaussian measure with covariance given by function f.
-        The function f should map mode indices to covariance scaling.
-        """
-        values = np.fromiter(
-            [np.sqrt(f(k)) for k in range(self.dim)],
-            dtype=float,
-        )
-        matrix = diags(values, 0)
-
-        domain = EuclideanSpace(self.dim)
-        codomain = self
-
-        def mapping(c):
-            coeff = matrix @ c
-            return self.from_components(coeff)
-
-        def formal_adjoint(u):
-            coeff = self.to_components(u)
-            return matrix @ coeff
-
-        covariance_factor = LinearOperator(
-            domain, codomain, mapping, formal_adjoint_mapping=formal_adjoint
-        )
-
-        return GaussianMeasure(
-            covariance_factor=covariance_factor,
-            expectation=expectation,
-        )
-
-
-class Lebesgue(Sobolev):
-    """
-    Implementation of the Lebesgue space L2 on a segment [a, b].
-
-    This is a convenience class that creates an L2 space using
-    Fourier basis functions with order=0 (no Sobolev scaling).
-    """
-
-    def __init__(
-        self,
-        dim,
-        function_domain: IntervalDomain,
-        /,
-    ):
-        """
-        Args:
-            dim (int): Dimension of the space.
-            function_domain (IntervalDomain): Domain object.
-        """
-        # Create L2 space with order=0 (no Sobolev scaling)
-        # For Lebesgue space, we use periodic boundary conditions as default
-        super().__init__(
-            dim, function_domain, 0.0, 'spectral', basis_type='fourier',
-            boundary_conditions=BoundaryConditions.periodic()
-        )
