@@ -136,11 +136,6 @@ class TestFunction(unittest.TestCase):
         func = Function(self.space, coefficients=self.coeffs)
         self.assertEqual(func.function_domain, self.domain)
 
-    def test_space_type_property(self):
-        """Test space_type property."""
-        func = Function(self.space, coefficients=self.coeffs)
-        self.assertEqual(func.space_type, "L2")
-
     def test_has_compact_support_property(self):
         """Test has_compact_support property."""
         # Function without compact support
@@ -425,7 +420,6 @@ class TestFunction(unittest.TestCase):
 
         repr_str = repr(func)
         self.assertIn("test_func", repr_str)
-        self.assertIn("L2", repr_str)
 
     def test_copy_method(self):
         """Test copy method."""

@@ -653,7 +653,9 @@ class BumpFunctionProvider(ParametricFunctionProvider,
                 else:
                     # Use exp(k*t/(t²-1)) form
                     denominator = t_interior**2 - 1.0
-                    result[interior_mask] = np.exp(k * t_interior**2 / denominator)
+                    result[interior_mask] = np.exp(
+                        k * t_interior**2 / denominator
+                    )
 
             # Boundary points (|t| = 1) and exterior points remain zero
             return result / normalization_constant
@@ -913,46 +915,6 @@ class WaveletFunctionProvider(IndexedFunctionProvider):
             evaluate_callable=haar_func,
             name=f'haar_L{level}_I{index}'
         )
-
-
-# Adapter classes to bridge to the current basis/spectrum provider system
-
-class FunctionProviderAdapter:
-    """
-    Adapter to use FunctionProviders in the current basis system.
-
-    This bridges the gap between the new flexible function providers
-    and the existing basis/spectrum provider interfaces.
-    """
-
-    def __init__(self, function_provider: FunctionProvider):
-        """
-        Initialize adapter.
-
-        Args:
-            function_provider: The function provider to adapt
-        """
-        self.function_provider = function_provider
-        self._cache = {}
-
-    @property
-    def space(self):
-        """Get the space from the function provider."""
-        return self.function_provider.space
-
-    def get_basis_function(self, index: int):
-        """Get basis function by index (for indexed providers)."""
-        if index not in self._cache:
-            if isinstance(self.function_provider, IndexedFunctionProvider):
-                func = self.function_provider.get_function_by_index(index)
-                # Ensure the function belongs to our space
-                func.space = self.space
-                self._cache[index] = func
-            else:
-                raise ValueError(
-                    "Provider must be IndexedFunctionProvider for basis use"
-                )
-        return self._cache[index]
 
 
 class SineFunctionProvider(IndexedFunctionProvider):

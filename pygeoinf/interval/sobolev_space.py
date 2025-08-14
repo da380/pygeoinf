@@ -161,16 +161,13 @@ class Sobolev(L2Space):
             self._basis_provider = self._spectrum_provider
 
         elif basis_callables is not None:
-            # For basis_callables with spectral, we need to create a custom
-            # spectrum provider that stores the eigenvalues
+            # For basis_callables with spectral, we store eigenvalues directly
             super().__init__(
                 dim, function_domain, basis_callables=basis_callables
             )
-            # Create a custom spectrum provider that wraps the basis provider
-            # and stores eigenvalues
-            self._spectrum_provider = self._create_custom_spectrum_provider(
-                eigenvalues
-            )
+            # Store eigenvalues directly (no spectrum provider needed)
+            self._eigenvalues = eigenvalues
+            self._spectrum_provider = None
 
         elif spectrum_provider is not None:
             # Use the provided spectrum provider
@@ -192,19 +189,6 @@ class Sobolev(L2Space):
             # This can be extended with specific eigenvalue calculations
             return ZeroEigenvalueProvider()
 
-    def _create_custom_spectrum_provider(self, eigenvalues):
-        """Create custom spectrum provider for basis_callables + eigenvals."""
-        # For basis_callables, we need to create a custom spectrum provider
-        # that doesn't rely on a basis_provider but stores eigenvalues directly
-        from .providers import SpectrumProvider, CustomEigenvalueProvider
-        # Create the provider without space initially to avoid circular
-        # dependency
-        eigenvalue_provider = CustomEigenvalueProvider(eigenvalues)
-        provider = SpectrumProvider(self, None, eigenvalue_provider)
-        # Set space after creation to complete initialization
-        provider._set_space(self)
-        return provider
-
     @property
     def boundary_conditions(self):
         """Boundary conditions for this Sobolev space."""
@@ -223,7 +207,10 @@ class Sobolev(L2Space):
     @property
     def eigenvalues(self):
         """Eigenvalues of the basis functions (if available)."""
-        if self._spectrum_provider is not None:
+        if hasattr(self, '_eigenvalues') and self._eigenvalues is not None:
+            # Direct storage case (basis_callables)
+            return self._eigenvalues
+        elif self._spectrum_provider is not None:
             # Get eigenvalues from LazySpectrumProvider
             eigenvals = np.zeros(self.dim)
             for i in range(self.dim):

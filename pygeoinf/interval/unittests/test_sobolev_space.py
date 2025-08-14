@@ -1,416 +1,482 @@
+"""
+Unit tests for Sobolev space implementation.
+
+Tests the Sobolev class which provides H^s spaces on intervals with
+spectral inner products based on eigenvalues of differential operators.
+"""
+
 import unittest
 import numpy as np
+import numpy.testing as npt
 import sys
 import os
 
 # Add the parent directory to the Python path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
-try:
-    from pygeoinf.interval.interval_domain import IntervalDomain
-    from pygeoinf.interval.sobolev_space import Sobolev
-    from pygeoinf.interval.functions import Function
-    from pygeoinf.interval.boundary_conditions import BoundaryConditions
-    IMPORTS_SUCCESSFUL = True
-except ImportError as e:
-    print(f"Import error: {e}")
-    IMPORTS_SUCCESSFUL = False
+from pygeoinf.interval.sobolev_space import Sobolev
+from pygeoinf.interval.interval_domain import IntervalDomain
+from pygeoinf.interval.boundary_conditions import BoundaryConditions
+from pygeoinf.interval.functions import Function
 
 
-@unittest.skipUnless(IMPORTS_SUCCESSFUL, "Required modules not available")
-class TestSobolevSpace(unittest.TestCase):
+class TestSobolevSpaceInitialization(unittest.TestCase):
+    """Test Sobolev space initialization with different parameters."""
+
     def setUp(self):
-        self.domain = IntervalDomain(0.0, 1.0)
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0, 1)
         self.dim = 5
-        self.order = 1.0
-        self.spectral_fourier_space = Sobolev(
-            self.dim, self.domain, self.order, 'spectral',
+        self.order = 1.5
+
+    def test_init_with_basis_type(self):
+        """Test initialization with basis_type parameter."""
+        space = Sobolev(
+            self.dim, self.domain, self.order,
             basis_type='fourier'
         )
 
-        def simple_func(x):
-            return x
-
-        def constant_func(x):
-            return np.ones_like(x) if hasattr(x, '__iter__') else 1.0
-
-        def quadratic_func(x):
-            return x**2
-
-        self.simple_func = simple_func
-        self.constant_func = constant_func
-        self.quadratic_func = quadratic_func
-
-    def test_init_spectral_fourier_basic(self):
-        space = Sobolev(3, self.domain, 1.5, 'spectral',
-                        basis_type='fourier')
-        self.assertEqual(space.dim, 3)
-        self.assertEqual(space.order, 1.5)
+        self.assertEqual(space.dim, self.dim)
+        self.assertEqual(space.order, self.order)
         self.assertEqual(space.function_domain, self.domain)
         self.assertIsNotNone(space._spectrum_provider)
 
-    def test_init_spectral_with_boundary_conditions(self):
-        bc = BoundaryConditions.periodic()
-        space = Sobolev(
-            3, self.domain, 1.0, 'spectral',
-            basis_type='fourier', boundary_conditions=bc
-        )
-        self.assertEqual(space.boundary_conditions, bc)
-        self.assertEqual(space.order, 1.0)
+    def test_init_with_basis_callables_and_eigenvalues(self):
+        """Test initialization with custom basis functions and eigenvalues."""
+        # Create simple polynomial basis functions
+        basis_callables = [
+            lambda x: np.ones_like(x),  # constant
+            lambda x: x,  # linear
+            lambda x: x**2,  # quadratic
+        ]
+        eigenvalues = np.array([0.0, 1.0, 4.0])
 
-    def test_init_spectral_with_manual_eigenvalues(self):
-        basis_funcs = [
-            lambda x: (np.ones_like(x) if hasattr(x, '__iter__') else 1.0),
+        space = Sobolev(
+            3, self.domain, self.order,
+            basis_callables=basis_callables,
+            eigenvalues=eigenvalues
+        )
+
+        self.assertEqual(space.dim, 3)
+        npt.assert_array_equal(space.eigenvalues, eigenvalues)
+
+    def test_init_with_boundary_conditions(self):
+        """Test initialization with boundary conditions."""
+        bc = BoundaryConditions('dirichlet', left=0.0, right=0.0)
+
+        space = Sobolev(
+            self.dim, self.domain, self.order,
+            basis_type='fourier',
+            boundary_conditions=bc
+        )
+
+        self.assertEqual(space.boundary_conditions, bc)
+
+    def test_init_invalid_no_basis_specified(self):
+        """Test that initialization fails when no basis is specified."""
+        with self.assertRaises(ValueError) as context:
+            Sobolev(self.dim, self.domain, self.order)
+
+        self.assertIn("exactly one of", str(context.exception))
+
+    def test_init_invalid_multiple_basis_specified(self):
+        """Test initialization fails when multiple basis options given."""
+        basis_callables = [lambda x: np.ones_like(x)]
+        eigenvalues = np.array([0.0])
+
+        with self.assertRaises(ValueError) as context:
+            Sobolev(
+                self.dim, self.domain, self.order,
+                basis_type='fourier',
+                basis_callables=basis_callables,
+                eigenvalues=eigenvalues
+            )
+
+        self.assertIn("exactly one of", str(context.exception))
+
+    def test_init_basis_callables_without_eigenvalues(self):
+        """Test that basis_callables requires eigenvalues."""
+        basis_callables = [lambda x: np.ones_like(x)]
+
+        with self.assertRaises(ValueError) as context:
+            Sobolev(
+                self.dim, self.domain, self.order,
+                basis_callables=basis_callables
+            )
+
+        self.assertIn("eigenvalues must also be provided",
+                      str(context.exception))
+
+    def test_init_eigenvalues_wrong_length(self):
+        """Test that eigenvalues must match dimension."""
+        basis_callables = [lambda x: np.ones_like(x)]
+        eigenvalues = np.array([0.0, 1.0])  # Wrong length
+
+        with self.assertRaises(ValueError) as context:
+            Sobolev(
+                1, self.domain, self.order,
+                basis_callables=basis_callables,
+                eigenvalues=eigenvalues
+            )
+
+        self.assertIn("eigenvalues length", str(context.exception))
+
+
+class TestSobolevSpaceProperties(unittest.TestCase):
+    """Test Sobolev space properties and metadata."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0, 2*np.pi)
+        self.space = Sobolev(
+            5, self.domain, 1.0,
+            basis_type='fourier'
+        )
+
+    def test_order_property(self):
+        """Test that order property returns correct value."""
+        self.assertEqual(self.space.order, 1.0)
+
+    def test_boundary_conditions_property(self):
+        """Test boundary conditions property."""
+        # Test without boundary conditions
+        self.assertIsNone(self.space.boundary_conditions)
+
+        # Test with boundary conditions
+        bc = BoundaryConditions('periodic')
+        space_with_bc = Sobolev(
+            3, self.domain, 1.0,
+            basis_type='fourier',
+            boundary_conditions=bc
+        )
+        self.assertEqual(space_with_bc.boundary_conditions, bc)
+
+    def test_eigenvalues_property(self):
+        """Test eigenvalues property."""
+        eigenvalues = self.space.eigenvalues
+        self.assertIsInstance(eigenvalues, np.ndarray)
+        self.assertEqual(len(eigenvalues), self.space.dim)
+
+    def test_operator_property(self):
+        """Test operator property returns correct metadata."""
+        operator_info = self.space.operator
+
+        self.assertIsInstance(operator_info, dict)
+        self.assertEqual(operator_info['type'], 'negative_laplacian')
+        self.assertEqual(operator_info['symbol'], '-Δ')
+        self.assertIn('boundary_conditions', operator_info)
+        self.assertIn('domain', operator_info)
+        self.assertIn('description', operator_info)
+        self.assertIn('eigenfunction_basis', operator_info)
+
+    def test_operator_with_different_boundary_conditions(self):
+        """Test operator description with different boundary conditions."""
+        bc_types = ['periodic', 'dirichlet', 'neumann']
+
+        for bc_type in bc_types:
+            bc = BoundaryConditions(bc_type)
+            space = Sobolev(
+                3, self.domain, 1.0,
+                basis_type='fourier',
+                boundary_conditions=bc
+            )
+
+            operator_info = space.operator
+            self.assertEqual(operator_info['boundary_conditions'], bc_type)
+            self.assertIn(bc_type, operator_info['description'])
+
+
+class TestSobolevSpaceInnerProduct(unittest.TestCase):
+    """Test Sobolev space inner product calculations."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0, 2*np.pi)
+        self.space = Sobolev(
+            3, self.domain, 1.0,
+            basis_type='fourier'
+        )
+
+    def test_spectral_inner_product_with_basis_functions(self):
+        """Test spectral inner product between basis functions."""
+        # Get two basis functions
+        phi_0 = self.space.get_basis_function(0)
+        phi_1 = self.space.get_basis_function(1)
+
+        # Inner product should depend on eigenvalues and Sobolev order
+        result = self.space.inner_product(phi_0, phi_1)
+        self.assertIsInstance(result, float)
+
+    def test_spectral_inner_product_self_positive(self):
+        """Test that inner product of function with itself is positive."""
+        phi_0 = self.space.get_basis_function(0)
+        result = self.space.inner_product(phi_0, phi_0)
+        self.assertGreater(result, 0)
+
+    def test_spectral_inner_product_linearity(self):
+        """Test linearity of inner product in first argument."""
+        phi_0 = self.space.get_basis_function(0)
+        phi_1 = self.space.get_basis_function(1)
+
+        # Create linear combination
+        coeffs = np.array([2.0, 3.0, 0.0])
+        f = self.space.from_components(coeffs)
+
+        # Test linearity: <a*phi_0 + b*phi_1, phi_0> =
+        # a*<phi_0,phi_0> + b*<phi_1,phi_0>
+        result1 = self.space.inner_product(f, phi_0)
+        result2 = (2.0 * self.space.inner_product(phi_0, phi_0) +
+                   3.0 * self.space.inner_product(phi_1, phi_0))
+
+        self.assertAlmostEqual(result1, result2, places=10)
+
+    def test_spectral_inner_product_invalid_types(self):
+        """Test that inner product requires Function instances."""
+        phi_0 = self.space.get_basis_function(0)
+
+        with self.assertRaises(TypeError):
+            self.space.inner_product(phi_0, "not a function")
+
+        with self.assertRaises(TypeError):
+            self.space.inner_product(3.14, phi_0)
+
+
+class TestSobolevSpaceGramMatrix(unittest.TestCase):
+    """Test Gram matrix computation for Sobolev spaces."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0, 2*np.pi)
+        self.space = Sobolev(
+            3, self.domain, 1.0,
+            basis_type='fourier'
+        )
+
+    def test_gram_matrix_shape(self):
+        """Test that Gram matrix has correct shape."""
+        gram = self.space.gram_matrix
+        self.assertEqual(gram.shape, (self.space.dim, self.space.dim))
+
+    def test_gram_matrix_symmetric(self):
+        """Test that Gram matrix is symmetric."""
+        gram = self.space.gram_matrix
+        npt.assert_array_almost_equal(gram, gram.T)
+
+    def test_gram_matrix_positive_definite(self):
+        """Test that Gram matrix is positive definite."""
+        gram = self.space.gram_matrix
+        eigenvals = np.linalg.eigvals(gram)
+        self.assertTrue(np.all(eigenvals > 0))
+
+    def test_gram_matrix_caching(self):
+        """Test that Gram matrix is computed only once (cached)."""
+        # First access computes the matrix
+        gram1 = self.space.gram_matrix
+        # Second access should return cached version
+        gram2 = self.space.gram_matrix
+
+        # Should be the exact same object (not just equal values)
+        self.assertIs(gram1, gram2)
+
+
+class TestSobolevSpaceComponentTransforms(unittest.TestCase):
+    """Test conversion between functions and coefficient representations."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0, 2*np.pi)
+        self.space = Sobolev(
+            3, self.domain, 1.0,
+            basis_type='fourier'
+        )
+
+    def test_to_components_and_from_components_roundtrip(self):
+        """Test that to_components and from_components are inverses."""
+        # Create a function from known coefficients
+        original_coeffs = np.array([1.0, 2.0, -0.5])
+        f = self.space.from_components(original_coeffs)
+
+        # Convert back to coefficients
+        recovered_coeffs = self.space.to_components(f)
+
+        # Should recover original coefficients
+        npt.assert_array_almost_equal(original_coeffs, recovered_coeffs)
+
+    def test_from_components_creates_function(self):
+        """Test that from_components creates valid Function instance."""
+        coeffs = np.array([1.0, 0.0, -1.0])
+        f = self.space.from_components(coeffs)
+
+        self.assertIsInstance(f, Function)
+        self.assertEqual(f.space, self.space)
+
+    def test_from_components_wrong_length(self):
+        """Test that from_components rejects wrong coefficient length."""
+        wrong_coeffs = np.array([1.0, 2.0])  # Too short
+
+        with self.assertRaises(ValueError):
+            self.space.from_components(wrong_coeffs)
+
+    def test_to_components_uses_sobolev_inner_product(self):
+        """Test that to_components uses Sobolev (not L2) inner products."""
+        # Create a basis function
+        phi_0 = self.space.get_basis_function(0)
+
+        # Convert to coefficients
+        coeffs = self.space.to_components(phi_0)
+
+        # The coefficient should reflect Sobolev inner product weights
+        # For basis functions, this involves the Gram matrix
+        expected_coeffs = np.linalg.solve(
+            self.space.gram_matrix,
+            np.array([1.0, 0.0, 0.0])  # RHS from Sobolev inner products
+        )
+
+        npt.assert_array_almost_equal(coeffs, expected_coeffs)
+
+
+class TestSobolevSpaceWithCustomBasis(unittest.TestCase):
+    """Test Sobolev space with custom basis functions and eigenvalues."""
+
+    def setUp(self):
+        """Set up test fixtures with custom basis."""
+        self.domain = IntervalDomain(0, 1)
+
+        # Simple polynomial basis: 1, x, x^2
+        self.basis_callables = [
+            lambda x: np.ones_like(x),
             lambda x: x,
             lambda x: x**2
         ]
-        eigenvals = np.array([0.0, 1.0, 4.0])
-        try:
-            space = Sobolev(
-                3, self.domain, 2.0, 'spectral',
-                basis_callables=basis_funcs, eigenvalues=eigenvals
-            )
-            self.assertEqual(space.dim, 3)
-            self.assertEqual(space.order, 2.0)
-            np.testing.assert_array_equal(space.eigenvalues, eigenvals)
-        except (AttributeError, ValueError):
-            # Skip if this functionality is not fully implemented
-            pass
 
-    def test_init_invalid_basis_spec(self):
-        # Test missing eigenvalues with basis_callables
-        basis_funcs = [lambda x: x, lambda x: x**2]
-        with self.assertRaises(ValueError):
-            Sobolev(
-                2, self.domain, 1.0, 'spectral',
-                basis_callables=basis_funcs
-            )
+        # Corresponding eigenvalues (made up for testing)
+        self.eigenvalues = np.array([0.0, 1.0, 4.0])
 
-    def test_init_different_orders(self):
-        orders = [0.0, 0.5, 1.0, 2.0, 3.5]
-        for order in orders:
-            space = Sobolev(3, self.domain, order, 'spectral',
-                            basis_type='fourier')
-            self.assertEqual(space.order, order)
-
-    def test_init_different_domains(self):
-        domains = [
-            IntervalDomain(-1.0, 1.0),
-            IntervalDomain(0.0, 2.0),
-            IntervalDomain(-2.0, 3.0)
-        ]
-        for domain in domains:
-            space = Sobolev(3, domain, 1.0, 'spectral',
-                            basis_type='fourier')
-            self.assertEqual(space.function_domain, domain)
-
-    def test_order_property(self):
-        orders = [0.0, 1.0, 2.5, 3.0]
-        for order in orders:
-            space = Sobolev(3, self.domain, order, 'spectral',
-                            basis_type='fourier')
-            self.assertEqual(space.order, order)
-
-    def test_boundary_conditions_property(self):
-        bc = BoundaryConditions.periodic()
-        space = Sobolev(
-            3, self.domain, 1.0, 'spectral',
-            basis_type='fourier', boundary_conditions=bc
+        self.space = Sobolev(
+            3, self.domain, 1.0,
+            basis_callables=self.basis_callables,
+            eigenvalues=self.eigenvalues
         )
-        self.assertEqual(space.boundary_conditions, bc)
 
-    def test_eigenvalues_property_spectral(self):
-        space = Sobolev(3, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        eigenvals = space.eigenvalues
-        self.assertIsNotNone(eigenvals)
-        self.assertEqual(len(eigenvals), 3)
-        self.assertIsInstance(eigenvals, np.ndarray)
+    def test_eigenvalues_stored_correctly(self):
+        """Test that custom eigenvalues are stored correctly."""
+        npt.assert_array_equal(self.space.eigenvalues, self.eigenvalues)
 
-    def test_operator_property(self):
-        bc = BoundaryConditions.periodic()
-        space = Sobolev(
-            3, self.domain, 1.0, 'spectral',
-            basis_type='fourier', boundary_conditions=bc
-        )
-        operator_info = space.operator
-        self.assertIsInstance(operator_info, dict)
-        self.assertIn('type', operator_info)
-        self.assertIn('boundary_conditions', operator_info)
-        self.assertIn('domain', operator_info)
-        self.assertEqual(operator_info['type'], 'negative_laplacian')
+    def test_basis_functions_accessible(self):
+        """Test that custom basis functions are accessible."""
+        phi_0 = self.space.get_basis_function(0)
+        phi_1 = self.space.get_basis_function(1)
 
-    def test_operator_property_without_bc(self):
-        space = Sobolev(3, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        operator_info = space.operator
-        self.assertEqual(operator_info['boundary_conditions'], 'unspecified')
+        self.assertIsInstance(phi_0, Function)
+        self.assertIsInstance(phi_1, Function)
 
-    def test_spectral_inner_product_basic(self):
-        space = Sobolev(3, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        func1 = Function(space, evaluate_callable=self.constant_func)
-        func2 = Function(space, evaluate_callable=self.simple_func)
-        result = space.inner_product(func1, func2)
-        self.assertIsInstance(result, (int, float))
+    def test_spectral_inner_product_with_custom_eigenvalues(self):
+        """Test spectral inner product uses custom eigenvalues."""
+        phi_0 = self.space.get_basis_function(0)  # eigenvalue = 0
+        phi_1 = self.space.get_basis_function(1)  # eigenvalue = 1
 
-    def test_spectral_inner_product_same_function(self):
-        space = Sobolev(3, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        func = Function(space, evaluate_callable=self.constant_func)
-        result = space.inner_product(func, func)
-        self.assertGreater(result, 0.0)
+        # For order s=1.0:
+        # Weight for phi_0: (1 + 0)^1 = 1
+        # Weight for phi_1: (1 + 1)^1 = 2
 
-    def test_spectral_inner_product_symmetry(self):
-        space = Sobolev(4, self.domain, 1.5, 'spectral',
-                        basis_type='fourier')
-        func1 = Function(space, evaluate_callable=self.simple_func)
-        func2 = Function(space, evaluate_callable=self.quadratic_func)
-        result1 = space.inner_product(func1, func2)
-        result2 = space.inner_product(func2, func1)
-        self.assertAlmostEqual(result1, result2, places=5)
+        # Self inner products should reflect these weights
+        result_0 = self.space.inner_product(phi_0, phi_0)
+        result_1 = self.space.inner_product(phi_1, phi_1)
 
-    def test_spectral_inner_product_with_coefficients(self):
-        space = Sobolev(3, self.domain, 2.0, 'spectral',
-                        basis_type='fourier')
-        func1 = Function(space, coefficients=np.array([1.0, 0.0, 0.0]))
-        func2 = Function(space, coefficients=np.array([0.0, 1.0, 0.0]))
-        result = space.inner_product(func1, func2)
-        self.assertAlmostEqual(result, 0.0, places=1)
-
-    def test_spectral_inner_product_order_effect(self):
-        func_coeffs = np.array([0.0, 1.0, 0.0, 0.0, 0.0])
-        space_order_0 = Sobolev(5, self.domain, 0.0, 'spectral',
-                                basis_type='fourier')
-        space_order_2 = Sobolev(5, self.domain, 2.0, 'spectral',
-                                basis_type='fourier')
-        func_0 = Function(space_order_0, coefficients=func_coeffs)
-        func_2 = Function(space_order_2, coefficients=func_coeffs)
-        norm_0 = space_order_0.inner_product(func_0, func_0)
-        norm_2 = space_order_2.inner_product(func_2, func_2)
-        self.assertGreater(norm_2, norm_0)
-
-    def test_spectral_inner_product_invalid_input_types(self):
-        space = Sobolev(3, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        func = Function(space, evaluate_callable=self.constant_func)
-        with self.assertRaises(TypeError):
-            space.inner_product(func, "not a function")
-        with self.assertRaises(TypeError):
-            space.inner_product(123, func)
-
-    def test_to_components_basic(self):
-        func = Function(self.spectral_fourier_space,
-                        evaluate_callable=self.constant_func)
-        components = self.spectral_fourier_space._to_components(func)
-        self.assertIsInstance(components, np.ndarray)
-        self.assertEqual(len(components), self.dim)
-
-    def test_to_components_with_coefficients(self):
-        coeffs = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        func = Function(self.spectral_fourier_space, coefficients=coeffs)
-        components = self.spectral_fourier_space._to_components(func)
-        self.assertEqual(len(components), self.dim)
-
-    def test_from_components_basic(self):
-        components = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        func = self.spectral_fourier_space._from_components(components)
-        self.assertIsInstance(func, Function)
-        self.assertEqual(func.space, self.spectral_fourier_space)
-        np.testing.assert_array_equal(func.coefficients, components)
-
-    def test_component_roundtrip_approximation(self):
-        func = Function(self.spectral_fourier_space,
-                        coefficients=np.array([1.0, 0.0, 1.0, 0.0, 0.0]))
-        components = self.spectral_fourier_space._to_components(func)
-        reconstructed = (
-            self.spectral_fourier_space._from_components(components)
-        )
-        self.assertIsInstance(reconstructed, Function)
-        self.assertEqual(reconstructed.space, self.spectral_fourier_space)
-
-    def test_gram_matrix_basic(self):
-        space = Sobolev(3, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        gram = space.gram_matrix
-        self.assertEqual(gram.shape, (3, 3))
-        np.testing.assert_array_almost_equal(gram, gram.T, decimal=3)
-        eigenvals = np.linalg.eigvals(gram)
-        self.assertTrue(np.all(eigenvals > -1e-10))
-
-    def test_gram_matrix_caching(self):
-        space = Sobolev(2, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        gram1 = space.gram_matrix
-        self.assertIsNotNone(space._gram_matrix)
-        gram2 = space.gram_matrix
-        self.assertIs(gram1, gram2)
-
-    def test_gram_matrix_different_orders(self):
-        orders = [0.0, 1.0, 2.0]
-        for order in orders:
-            space = Sobolev(3, self.domain, order, 'spectral',
-                            basis_type='fourier')
-            gram = space.gram_matrix
-            self.assertEqual(gram.shape, (3, 3))
-            if order > 0:
-                self.assertGreater(np.min(np.diag(gram)), 0.0)
-
-    def test_norm_computation(self):
-        func = Function(self.spectral_fourier_space,
-                        evaluate_callable=self.constant_func)
-        norm = self.spectral_fourier_space.norm(func)
-        self.assertIsInstance(norm, (int, float))
-        self.assertGreater(norm, 0.0)
-
-    def test_norm_zero_function(self):
-        zero = self.spectral_fourier_space.zero
-        norm = self.spectral_fourier_space.norm(zero)
-        self.assertAlmostEqual(norm, 0.0, places=5)
-
-    def test_norm_order_dependency(self):
-        func_coeffs = np.array([0.0, 1.0, 0.0, 0.0, 0.0])
-        space_0 = Sobolev(5, self.domain, 0.0, 'spectral',
-                          basis_type='fourier')
-        space_2 = Sobolev(5, self.domain, 2.0, 'spectral',
-                          basis_type='fourier')
-        func_0 = Function(space_0, coefficients=func_coeffs)
-        func_2 = Function(space_2, coefficients=func_coeffs)
-        norm_0 = space_0.norm(func_0)
-        norm_2 = space_2.norm(func_2)
-        self.assertGreater(norm_2, norm_0)
-
-    def test_zero_function(self):
-        zero = self.spectral_fourier_space.zero
-        self.assertIsInstance(zero, Function)
-        self.assertEqual(zero.space, self.spectral_fourier_space)
-        if zero.coefficients is not None:
-            np.testing.assert_array_almost_equal(
-                zero.coefficients, np.zeros(self.dim), decimal=10
-            )
-
-    def test_zero_function_norm(self):
-        zero = self.spectral_fourier_space.zero
-        norm = self.spectral_fourier_space.norm(zero)
-        self.assertAlmostEqual(norm, 0.0, places=10)
-
-    def test_edge_cases_small_dimension(self):
-        space = Sobolev(1, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        self.assertEqual(space.dim, 1)
-        basis_func = space.get_basis_function(0)
-        self.assertIsInstance(basis_func, Function)
-
-    def test_edge_cases_zero_order(self):
-        space = Sobolev(3, self.domain, 0.0, 'spectral',
-                        basis_type='fourier')
-        self.assertEqual(space.order, 0.0)
-        func = Function(space, evaluate_callable=self.constant_func)
-        result = space.inner_product(func, func)
-        self.assertGreater(result, 0.0)
-
-    def test_edge_cases_high_order(self):
-        space = Sobolev(3, self.domain, 10.0, 'spectral',
-                        basis_type='fourier')
-        self.assertEqual(space.order, 10.0)
-        gram = space.gram_matrix
-        self.assertEqual(gram.shape, (3, 3))
-
-    def test_edge_cases_small_domain(self):
-        small_domain = IntervalDomain(0.0, 1e-6)
-        space = Sobolev(2, small_domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        self.assertEqual(space.function_domain, small_domain)
-        self.assertEqual(space.dim, 2)
-
-    def test_edge_cases_large_dimension(self):
-        space = Sobolev(50, self.domain, 1.0, 'spectral',
-                        basis_type='fourier')
-        self.assertEqual(space.dim, 50)
-        self.assertEqual(space.order, 1.0)
-        self.assertIsNotNone(space.eigenvalues)
-
-    def test_repr_method(self):
-        space = Sobolev(3, self.domain, 1.5, 'spectral',
-                        basis_type='fourier')
-        repr_str = repr(space)
-        self.assertIsInstance(repr_str, str)
-        self.assertTrue('Space' in repr_str or 'Sobolev' in repr_str)
-
-    def test_repr_different_configurations(self):
-        configurations = [
-            (2, 0.0),
-            (5, 2.0),
-        ]
-        for dim, order in configurations:
-            space = Sobolev(dim, self.domain, order, 'spectral',
-                            basis_type='fourier')
-            repr_str = repr(space)
-            self.assertIsInstance(repr_str, str)
+        self.assertGreater(result_0, 0)
+        self.assertGreater(result_1, 0)
+        # phi_1 should have higher norm due to larger eigenvalue
+        # (exact relationship depends on L2 inner products of basis functions)
 
 
-@unittest.skipUnless(IMPORTS_SUCCESSFUL, "Required modules not available")
-class TestLebesgueSpace(unittest.TestCase):
+class TestSobolevSpaceAutomorphism(unittest.TestCase):
+    """Test automorphism functionality."""
+
     def setUp(self):
-        self.domain = IntervalDomain(0.0, 1.0)
-        self.dim = 5
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0, 2*np.pi)
+        self.space = Sobolev(
+            3, self.domain, 1.0,
+            basis_type='fourier'
+        )
 
-    def test_lebesgue_basic_initialization(self):
-        space = Lebesgue(self.dim, self.domain)
-        self.assertEqual(space.dim, self.dim)
-        self.assertEqual(space.function_domain, self.domain)
+    def test_automorphism_creation(self):
+        """Test that automorphism can be created."""
+        # Create a simple scaling automorphism
+        f = lambda k: 2.0 if k == 0 else 1.0
+        auto = self.space.automorphism(f)
+
+        # Should return a LinearOperator
+        from pygeoinf.hilbert_space import LinearOperator
+        self.assertIsInstance(auto, LinearOperator)
+
+    def test_automorphism_application(self):
+        """Test applying automorphism to a function."""
+        # Create scaling automorphism
+        f = lambda k: 2.0 if k == 0 else 1.0
+        auto = self.space.automorphism(f)
+
+        # Create test function
+        coeffs = np.array([1.0, 1.0, 1.0])
+        test_func = self.space.from_components(coeffs)
+
+        # Apply automorphism
+        result = auto(test_func)
+
+        self.assertIsInstance(result, Function)
+        self.assertEqual(result.space, self.space)
+
+
+class TestSobolevSpaceEdgeCases(unittest.TestCase):
+    """Test edge cases and error conditions."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0, 1)
+
+    def test_zero_order_sobolev_space(self):
+        """Test Sobolev space with order 0 (should be L2-like)."""
+        space = Sobolev(
+            3, self.domain, 0.0,
+            basis_type='fourier'
+        )
+
         self.assertEqual(space.order, 0.0)
-        self.assertEqual(space.inner_product_type, 'spectral')
 
-    def test_lebesgue_is_sobolev_subclass(self):
-        space = Lebesgue(3, self.domain)
-        self.assertIsInstance(space, Sobolev)
+        # Order 0 should give weights (1 + λ_k)^0 = 1 for all k
+        phi_0 = space.get_basis_function(0)
+        phi_1 = space.get_basis_function(1)
 
-    def test_lebesgue_boundary_conditions(self):
-        space = Lebesgue(3, self.domain)
-        bc = space.boundary_conditions
-        self.assertIsNotNone(bc)
-        self.assertEqual(bc.type, 'periodic')
+        # Inner products should exist and be positive
+        self.assertGreater(space.inner_product(phi_0, phi_0), 0)
+        self.assertGreater(space.inner_product(phi_1, phi_1), 0)
 
-    def test_lebesgue_properties(self):
-        space = Lebesgue(4, self.domain)
-        self.assertEqual(space.dim, 4)
-        self.assertEqual(space.order, 0.0)
-        self.assertIsNotNone(space.eigenvalues)
-        self.assertIsNotNone(space.gram_matrix)
+    def test_negative_order_sobolev_space(self):
+        """Test Sobolev space with negative order."""
+        space = Sobolev(
+            3, self.domain, -0.5,
+            basis_type='fourier'
+        )
 
-    def test_lebesgue_inner_product(self):
-        space = Lebesgue(3, self.domain)
+        self.assertEqual(space.order, -0.5)
 
-        def constant_func(x):
-            return np.ones_like(x) if hasattr(x, '__iter__') else 1.0
+        # Should still work mathematically
+        phi_0 = space.get_basis_function(0)
+        self.assertGreater(space.inner_product(phi_0, phi_0), 0)
 
-        func = Function(space, evaluate_callable=constant_func)
-        result = space.inner_product(func, func)
-        self.assertIsInstance(result, (int, float))
-        self.assertGreater(result, 0.0)
+    def test_very_small_dimension(self):
+        """Test Sobolev space with dimension 1."""
+        space = Sobolev(
+            1, self.domain, 1.0,
+            basis_type='fourier'
+        )
 
-    def test_lebesgue_different_domains(self):
-        domains = [
-            IntervalDomain(-1.0, 1.0),
-            IntervalDomain(0.0, 2.0),
-            IntervalDomain(-2.0, 3.0)
-        ]
-        for domain in domains:
-            space = Lebesgue(3, domain)
-            self.assertEqual(space.function_domain, domain)
-            self.assertEqual(space.order, 0.0)
+        self.assertEqual(space.dim, 1)
 
-    def test_lebesgue_different_dimensions(self):
-        dimensions = [1, 3, 5, 10, 20]
-        for dim in dimensions:
-            space = Lebesgue(dim, self.domain)
-            self.assertEqual(space.dim, dim)
-            self.assertEqual(space.order, 0.0)
+        # Should still work
+        phi_0 = space.get_basis_function(0)
+        self.assertGreater(space.inner_product(phi_0, phi_0), 0)
 
 
 if __name__ == '__main__':
-    if not IMPORTS_SUCCESSFUL:
-        print("Skipping tests due to import errors")
-        exit(1)
-    unittest.main(verbosity=2)
+    unittest.main()

@@ -16,11 +16,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 try:
     from pygeoinf.interval.function_providers import (
-        FunctionProvider, IndexedFunctionProvider, ParametricFunctionProvider,
-        RandomFunctionProvider, NormalModesProvider, FourierFunctionProvider,
-        SplineFunctionProvider, BumpFunctionProvider, DiscontinuousFunctionProvider,
-        WaveletFunctionProvider, FunctionProviderAdapter, SineFunctionProvider,
-        CosineFunctionProvider, HatFunctionProvider
+        NormalModesProvider,
+        FourierFunctionProvider,
+        SplineFunctionProvider,
+        BumpFunctionProvider,
+        DiscontinuousFunctionProvider,
+        WaveletFunctionProvider,
+        SineFunctionProvider,
+        CosineFunctionProvider,
+        HatFunctionProvider
     )
     from pygeoinf.interval.interval_domain import IntervalDomain
     from pygeoinf.interval.l2_space import L2Space
@@ -356,43 +360,6 @@ class TestFunctionProviders(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             provider.get_function_by_index(0)
-
-    # === FUNCTION PROVIDER ADAPTER TESTS ===
-
-    def test_adapter_basic(self):
-        """Test function provider adapter basic functionality."""
-        provider = SineFunctionProvider(self.space)
-        adapter = FunctionProviderAdapter(provider)
-
-        self.assertEqual(adapter.space, self.space)
-
-    def test_adapter_get_basis_function(self):
-        """Test adapter get_basis_function method."""
-        provider = SineFunctionProvider(self.space)
-        adapter = FunctionProviderAdapter(provider)
-
-        func = adapter.get_basis_function(0)
-        self.assertIsNotNone(func)
-        self.assertEqual(func.space, self.space)
-
-    def test_adapter_caching(self):
-        """Test adapter caches basis functions."""
-        provider = SineFunctionProvider(self.space)
-        adapter = FunctionProviderAdapter(provider)
-
-        func1 = adapter.get_basis_function(0)
-        func2 = adapter.get_basis_function(0)
-
-        self.assertIs(func1, func2)
-
-    def test_adapter_non_indexed_provider(self):
-        """Test adapter raises error for non-indexed providers."""
-        # Create a non-indexed provider (ParametricFunctionProvider only)
-        provider = BumpFunctionProvider(self.space)  # This is both parametric and indexed
-
-        # For this test, we'd need a provider that's only parametric
-        # Since we don't have one in the current implementation, skip this test
-        pass
 
     # === EDGE CASES AND ERROR HANDLING ===
 
