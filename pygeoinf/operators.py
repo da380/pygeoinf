@@ -11,7 +11,7 @@ from scipy.sparse import diags
 
 # This import path assumes `pygeoinf` is on the python path.
 # For a local package structure, you might use from ..random_matrix import ...
-from pygeoinf.random_matrix import (
+from .random_matrix import (
     fixed_rank_random_range,
     variable_rank_random_range,
     random_svd as rm_svd,

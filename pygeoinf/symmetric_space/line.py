@@ -1,70 +1,85 @@
 """
-Sobolev spaces for functions on a line. 
+Sobolev spaces for functions on a line.
 """
 
+from __future__ import annotations
+from typing import Callable, Any, Tuple, Optional
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
+from pygeoinf.operators import LinearOperator
+from pygeoinf.forms import LinearForm
+from pygeoinf.gaussian_measure import GaussianMeasure
+
 from pygeoinf.operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.symmetric_space.symmetric_space import SymmetricSpaceSobolev
-from pygeoinf.symmetric_space.circle import Sobolev as CicleSobolev
+from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
 
 
 class Sobolev(SymmetricSpaceSobolev):
     """
-    Implementation of the Sobolev space H^s on a line.
+    Implementation of the Sobolev space H^s on a finite line interval.
+
+    This class models functions on an interval [x0, x1] by mapping the problem
+    to a periodic domain (a circle) with padding. This avoids explicit
+    boundary conditions by using smooth tapers.
     """
 
     def __init__(
         self,
-        kmax,
-        order,
-        scale,
+        kmax: int,
+        order: float,
+        scale: float,
         /,
         *,
-        x0=0,
-        x1=1,
-    ):
+        x0: float = 0.0,
+        x1: float = 1.0,
+    ) -> None:
         """
         Args:
-            kmax (float): The maximum Fourier degree.
-            order (float): Sobolev order.
-            scale (float): Sobolev length-scale.
-            radius (float): Radius of the circle. Default is 1.
-            x0 (float): The left boudary of the interval, Default is 0.
-            x1 (float): The right boundary of the interval. Default is 1.
+            kmax: The maximum Fourier degree for the underlying circle representation.
+            order: The Sobolev order, controlling function smoothness.
+            scale: The Sobolev length-scale.
+            x0: The left boundary of the interval. Defaults to 0.0.
+            x1: The right boundary of the interval. Defaults to 1.0.
+
+        Raises:
+            ValueError: If `x0 >= x1` or if `scale <= 0` when `order` is non-zero.
         """
 
         if x0 >= x1:
-            raise ValueError("Invalid interval parameters")
-
+            raise ValueError("Invalid interval parameters: x0 must be less than x1.")
         if order != 0 and scale <= 0:
-            raise ValueError("Length-scale must be positive")
+            raise ValueError("Length-scale must be positive for non-L2 spaces.")
 
-        self._kmax = kmax
-        self._x0 = x0
-        self._x1 = x1
+        self._kmax: int = kmax
+        self._x0: float = x0
+        self._x1: float = x1
 
         # Work out the padding.
-        padding_scale = 5 * scale if scale > 0 else 0.1 * (x1 - x0)
-        number_of_points = 2 * kmax
-        width = x1 - x0
-        self._start_index = int(
+        padding_scale: float = 5 * scale if scale > 0 else 0.1 * (x1 - x0)
+        number_of_points: int = 2 * kmax
+        width: float = x1 - x0
+        self._start_index: int = int(
             number_of_points * padding_scale / (width + 2 * padding_scale)
         )
-        self._finish_index = 2 * kmax - self._start_index + 1
-        self._padding_length = (
+        self._finish_index: int = 2 * kmax - self._start_index + 1
+        self._padding_length: float = (
             self._start_index * width / (number_of_points - 2 * self._start_index)
         )
 
-        self._jac = (width + 2 * self._padding_length) / (2 * np.pi)
-        self._ijac = 1 / self._jac
-        self._sqrt_jac = np.sqrt(self._jac)
-        self._isqrt_jac = 1 / self._sqrt_jac
+        self._jac: float = (width + 2 * self._padding_length) / (2 * np.pi)
+        self._ijac: float = 1.0 / self._jac
+        self._sqrt_jac: float = np.sqrt(self._jac)
+        self._isqrt_jac: float = 1.0 / self._sqrt_jac
 
         # Set up the related Sobolev space on the unit circle.
-        circle_scale = scale * self._ijac
-        self._circle_space = CicleSobolev(kmax, order, circle_scale)
+        circle_scale: float = scale * self._ijac
+        self._circle_space: CircleSobolev = CircleSobolev(kmax, order, circle_scale)
 
         super().__init__(
             order,
@@ -80,97 +95,114 @@ class Sobolev(SymmetricSpaceSobolev):
 
     @staticmethod
     def from_sobolev_parameters(
-        order, scale, /, *, x0=0, x1=1, rtol=1e-8, power_of_two=False
-    ):
+        order: float,
+        scale: float,
+        /,
+        *,
+        x0: float = 0.0,
+        x1: float = 1.0,
+        rtol: float = 1e-8,
+        power_of_two: bool = False,
+    ) -> "Sobolev":
         """
-        Returns an instance of the space with $kmax selected based on the Sobolev parameters.
-        """
+        Creates an instance with `kmax` selected based on the Sobolev parameters.
 
+        Args:
+            order: The Sobolev order.
+            scale: The Sobolev length-scale.
+            x0: The left boundary of the interval. Defaults to 0.0.
+            x1: The right boundary of the interval. Defaults to 1.0.
+            rtol: Relative tolerance for truncation error assessment.
+            power_of_two: If True, `kmax` is set to the next power of two.
+
+        Returns:
+            An instance of the Sobolev class with an appropriate `kmax`.
+        """
         if x0 >= x1:
             raise ValueError("Invalid interval parameters")
 
         circle_scale = scale / (x1 - x0)
-        circle_space = CicleSobolev.from_sobolev_parameters(
+        circle_space = CircleSobolev.from_sobolev_parameters(
             order, circle_scale, rtol=rtol, power_of_two=power_of_two
         )
         kmax = circle_space.kmax
         return Sobolev(kmax, order, scale, x0=x0, x1=x1)
 
     @property
-    def kmax(self):
-        """
-        Return the maximum Fourier degree.
-        """
+    def kmax(self) -> int:
+        """The maximum Fourier degree of the underlying circle representation."""
         return self._kmax
 
     @property
-    def x0(self):
-        """
-        Returns the left boundary point.
-        """
+    def x0(self) -> float:
+        """The left boundary point of the interval."""
         return self._x0
 
     @property
-    def x1(self):
-        """
-        Returns the right boundary point.
-        """
+    def x1(self) -> float:
+        """The right boundary point of the interval."""
         return self._x1
 
     @property
-    def width(self):
-        """
-        Return the radius.
-        """
+    def width(self) -> float:
+        """The width of the interval, `x1 - x0`."""
         return self._x1 - self._x0
 
     @property
-    def point_spacing(self):
-        """
-        Return the point spacing.
-        """
+    def point_spacing(self) -> float:
+        """The spacing between grid points on the interval."""
         return self._circle_space.angle_spacing * self._jac
 
-    def computational_points(self):
-        """
-        Returns a numpy array of the computational points.
-        """
+    def computational_points(self) -> np.ndarray:
+        """Returns the grid points on the full computational domain, including padding."""
         return self._x0 - self._padding_length + self._jac * self._circle_space.angles()
 
-    def points(self):
-        """
-        Returns a numpy array of the points.
-        """
+    def points(self) -> np.ndarray:
+        """Returns the grid points within the primary interval `[x0, x1]`."""
         return self.computational_points()[self._start_index : self._finish_index]
 
-    def project_function(self, f):
+    def project_function(self, f: Callable[[float], float]) -> np.ndarray:
         """
-        Returns an element of the space formed by projecting a given function.
-        """
-        return np.fromiter(
-            [f(x) * self._taper(x) for x in self.computational_points()], float
-        )
+        Returns an element of the space by projecting a given function.
 
-    def random_point(self):
-        return np.random.uniform(self._x0, self._x1)
-
-    def plot(self, u, fig=None, ax=None, computational_domain=False, **kwargs):
-        """
-        Make a simple plot of an element of the space on the computational domain.
+        The function `f` is evaluated at the computational grid points and
+        multiplied by a smooth tapering function.
 
         Args:
-            u (vector): The element of the space to be plotted.
-            fig (Figure): An existing Figure object to use. Default is None.
-            ax (Axes): An existing Axes object to use. Default is None.
-            computatoinal_domain (bool): If True, plot the whole computational
-                domain. Default is False.
-            kwargs: Keyword arguments forwarded to plot.
-
-        Returns
-            Figure: The figure object, either that given or newly created.
-            Axes: The axes object, either that given or newly created.
+            f: A function that takes a position `x` and returns a value.
         """
+        return np.fromiter(
+            (f(x) * self._taper(x) for x in self.computational_points()), float
+        )
 
+    def random_point(self) -> float:
+        """Returns a random point within the interval `[x0, x1]`."""
+        return np.random.uniform(self._x0, self._x1)
+
+    def plot(
+        self,
+        u: np.ndarray,
+        fig: Optional[Figure] = None,
+        ax: Optional[Axes] = None,
+        /,
+        *,
+        computational_domain: bool = False,
+        **kwargs,
+    ) -> Tuple[Figure, Axes]:
+        """
+        Makes a simple plot of a function from the space.
+
+        Args:
+            u: The vector representing the function to be plotted.
+            fig: An existing Matplotlib Figure object. Defaults to None.
+            ax: An existing Matplotlib Axes object. Defaults to None.
+            computational_domain: If True, plot the whole computational
+                domain including the tapered padding. Defaults to False.
+            **kwargs: Keyword arguments forwarded to `ax.plot()`.
+
+        Returns:
+            A tuple (figure, axes) containing the plot objects.
+        """
         figsize = kwargs.pop("figsize", (10, 8))
 
         if fig is None:
@@ -186,24 +218,30 @@ class Sobolev(SymmetricSpaceSobolev):
         return fig, ax
 
     def plot_pointwise_bounds(
-        self, u, u_bound, fig=None, ax=None, computational_domain=False, **kwargs
-    ):
+        self,
+        u: np.ndarray,
+        u_bound: np.ndarray,
+        fig: Optional[Figure] = None,
+        ax: Optional[Axes] = None,
+        /,
+        *,
+        computational_domain: bool = False,
+        **kwargs,
+    ) -> Tuple[Figure, Axes]:
         """
-        Make a plot of an element of the space bounded above and below by a standard
-        deviation curve.
+        Plots a function with pointwise error bounds.
 
         Args:
-            u (vector): The element of the space to be plotted.
-            u_bounds (vector): A second element giving point-wise bounds.
-            fig (Figure): An existing Figure object to use. Default is None.
-            ax (Axes): An existing Axes object to use. Default is None.
-            kwargs: Keyword arguments forwarded to plot.
+            u: The vector representing the mean function.
+            u_bound: A vector giving pointwise standard deviations.
+            fig: An existing Matplotlib Figure object. Defaults to None.
+            ax: An existing Matplotlib Axes object. Defaults to None.
+            computational_domain: If True, plot the whole computational domain.
+            **kwargs: Keyword arguments forwarded to `ax.fill_between()`.
 
-        Returns
-            Figure: The figure object, either that given or newly created.
-            Axes: The axes object, either that given or newly created.
+        Returns:
+            A tuple (figure, axes) containing the plot objects.
         """
-
         figsize = kwargs.pop("figsize", (10, 8))
 
         if fig is None:
@@ -227,11 +265,13 @@ class Sobolev(SymmetricSpaceSobolev):
 
         return fig, ax
 
-    def invariant_automorphism(self, f):
+    def invariant_automorphism(self, f: Callable[[float], float]) -> "LinearOperator":
         A = self._circle_space.invariant_automorphism(lambda k: f(self._ijac * k))
         return LinearOperator.formally_self_adjoint(self, A)
 
-    def invariant_gaussian_measure(self, f, /, *, expectation=None):
+    def invariant_gaussian_measure(
+        self, f: Callable[[float], float], /, *, expectation: Optional[Any] = None
+    ) -> "GaussianMeasure":
         mu = self._circle_space.invariant_gaussian_measure(
             lambda k: f(self._ijac * k), expectation=expectation
         )
@@ -240,7 +280,7 @@ class Sobolev(SymmetricSpaceSobolev):
             covariance=covariance, expectation=expectation, sample=mu.sample
         )
 
-    def dirac(self, point):
+    def dirac(self, point: float) -> "LinearForm":
         theta = self._inverse_transformation(point)
         up = self._circle_space.dirac(theta)
         cp = self._circle_space.dual.to_components(up) * self._isqrt_jac
@@ -250,52 +290,52 @@ class Sobolev(SymmetricSpaceSobolev):
     #                        Private methods                       #
     # =============================================================#
 
-    def _step(self, x):
+    def _step(self, x: float) -> float:
         if x > 0:
-            return np.exp(-1 / x)
+            return np.exp(-1.0 / x)
         else:
-            return 0
+            return 0.0
 
-    def _bump_up(self, x, x1, x2):
+    def _bump_up(self, x: float, x1: float, x2: float) -> float:
         s1 = self._step(x - x1)
         s2 = self._step(x2 - x)
         return s1 / (s1 + s2)
 
-    def _bump_down(self, x, x1, x2):
+    def _bump_down(self, x: float, x1: float, x2: float) -> float:
         s1 = self._step(x2 - x)
         s2 = self._step(x - x1)
         return s1 / (s1 + s2)
 
-    def _taper(self, x):
+    def _taper(self, x: float) -> float:
         s1 = self._bump_up(x, self._x0 - self._padding_length, self._x0)
         s2 = self._bump_down(x, self._x1, self._x1 + self._padding_length)
         return s1 * s2
 
-    def _transformation(self, th):
+    def _transformation(self, th: float) -> float:
         return self._x0 - self._padding_length + self._jac * th
 
-    def _inverse_transformation(self, x):
+    def _inverse_transformation(self, x: float) -> float:
         return (x - self._x0 + self._padding_length) * self._ijac
 
-    def _to_components(self, u):
+    def _to_components(self, u: np.ndarray) -> np.ndarray:
         c = self._circle_space.to_components(u)
         c *= self._sqrt_jac
         return c
 
-    def _from_components(self, c):
+    def _from_components(self, c: np.ndarray) -> np.ndarray:
         c *= self._isqrt_jac
         u = self._circle_space.from_components(c)
         return u
 
-    def _inner_product(self, u1, u2):
+    def _inner_product(self, u1: np.ndarray, u2: np.ndarray) -> float:
         return self._jac * self._circle_space.inner_product(u1, u2)
 
-    def _to_dual(self, u):
+    def _to_dual(self, u: np.ndarray) -> "LinearForm":
         up = self._circle_space.to_dual(u)
         cp = self._circle_space.dual.to_components(up) * self._sqrt_jac
         return self.dual.from_components(cp)
 
-    def _from_dual(self, up):
+    def _from_dual(self, up: "LinearForm") -> np.ndarray:
         cp = self.dual.to_components(up)
         vp = self._circle_space.dual.from_components(cp) * self._isqrt_jac
         return self._circle_space.from_dual(vp)
@@ -303,20 +343,23 @@ class Sobolev(SymmetricSpaceSobolev):
 
 class Lebesgue(Sobolev):
     """
-    Implementation of the Lebesgue space L2 on a line.
+    Implementation of the Lebesgue space L^2 on a line.
+
+    This is a special case of the Sobolev space with order `s=0`.
     """
 
     def __init__(
         self,
-        kmax,
+        kmax: int,
         /,
         *,
-        x0=0,
-        x1=1,
-    ):
+        x0: float = 0.0,
+        x1: float = 1.0,
+    ) -> None:
         """
         Args:
-            kmax (float): The maximum Fourier degree.
-            radius (float): Radius of the circle. Default is 1.
+            kmax: The maximum Fourier degree for the underlying representation.
+            x0: The left boundary of the interval. Defaults to 0.0.
+            x1: The right boundary of the interval. Defaults to 1.0.
         """
-        super().__init__(kmax, 0, 1, x0=x0, x1=x1)
+        super().__init__(kmax, 0.0, 1.0, x0=x0, x1=x1)

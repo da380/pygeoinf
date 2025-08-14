@@ -1,25 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.symmetric_space.line import Sobolev
+from pygeoinf.symmetric_space.sphere import Sobolev
 
-X = Sobolev.from_sobolev_parameters(3, 0.1, x1=10)
-mu = X.heat_gaussian_measure(0.1, 1)
+X = Sobolev(128, 2, 0.1)
 
-Y = inf.HilbertSpaceDirectSum([X, X])
 
-nu = inf.GaussianMeasure.from_direct_sum([mu, mu])
+mu = X.sobolev_gaussian_measure(2, 0.3, 1)
 
-v = nu.sample()
+x = mu.sample()
 
-fig, ax = X.plot(v[0])
-X.plot(v[1], fig=fig, ax=ax)
+fig, ax, im = X.plot(x)
+
+fig.colorbar(
+    im, ax=ax, orientation="horizontal", shrink=0.7, label="Present-day ice thickness"
+)
+
 plt.show()
-
-# u = X.project_function(lambda x: np.exp(-10 * (x - 5) ** 2))
-# u = A(u)
-
-# u = X.project_function(lambda x: x)
-
-# fig, ax = X.plot(u, computational_domain=True)
-# plt.show()

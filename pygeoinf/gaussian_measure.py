@@ -11,16 +11,16 @@ from scipy.sparse import diags
 from scipy.stats import multivariate_normal
 
 
-from pygeoinf.hilbert_space import (
+from .hilbert_space import (
     EuclideanSpace,
 )
 
-from pygeoinf.operators import (
+from .operators import (
     LinearOperator,
     DiagonalLinearOperator,
 )
 
-from pygeoinf.direct_sum import (
+from .direct_sum import (
     BlockDiagonalLinearOperator,
 )
 

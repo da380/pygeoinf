@@ -1,4 +1,4 @@
-from pygeoinf.random_matrix import (
+from .random_matrix import (
     fixed_rank_random_range,
     variable_rank_random_range,
     random_svd,
@@ -6,28 +6,28 @@ from pygeoinf.random_matrix import (
     random_cholesky,
 )
 
-from pygeoinf.hilbert_space import (
+from .hilbert_space import (
     HilbertSpace,
     EuclideanSpace,
 )
 
 
-from pygeoinf.operators import (
+from .operators import (
     Operator,
     LinearOperator,
     DiagonalLinearOperator,
 )
 
-from pygeoinf.forms import (
+from .forms import (
     LinearForm,
 )
 
 
-from pygeoinf.gaussian_measure import (
+from .gaussian_measure import (
     GaussianMeasure,
 )
 
-from pygeoinf.direct_sum import (
+from .direct_sum import (
     HilbertSpaceDirectSum,
     BlockStructure,
     BlockLinearOperator,
@@ -36,7 +36,7 @@ from pygeoinf.direct_sum import (
     BlockDiagonalLinearOperator,
 )
 
-from pygeoinf.linear_solvers import (
+from .linear_solvers import (
     LinearSolver,
     DirectLinearSolver,
     LUSolver,
@@ -49,13 +49,11 @@ from pygeoinf.linear_solvers import (
     CGSolver,
 )
 
-from pygeoinf.forward_problem import ForwardProblem, LinearForwardProblem
+from .forward_problem import ForwardProblem, LinearForwardProblem
 
-from pygeoinf.optimisation import (
+from .optimisation import (
     LinearLeastSquaresInversion,
     LinearMinimumNormInversion,
 )
 
-from pygeoinf.bayesian import LinearBayesianInversion, LinearBayesianInference
-
-from pygeoinf.checks.hilbert_space import HilbertSpaceChecks
+from .bayesian import LinearBayesianInversion, LinearBayesianInference

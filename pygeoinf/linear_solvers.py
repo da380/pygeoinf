@@ -4,7 +4,7 @@ Module for solving linear systems of equations involving abstract operators.
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Any
+from typing import Callable
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
@@ -16,8 +16,8 @@ from scipy.linalg import (
 )
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
-from pygeoinf.operators import LinearOperator
-from pygeoinf.hilbert_space import T_vec
+from .operators import LinearOperator
+from .hilbert_space import T_vec
 
 
 class LinearSolver(ABC):
