@@ -212,6 +212,21 @@ The library is organized into two main parts:
 * Cartopy (for plotting in `sphere.py`)
 
 
+
+
+## Future Plans
+
+`pygeoinf` is under active development. Future work will focus on expanding the library's capabilities to address a broader range of geophysical problems. Key areas for development include:
+
+* **Generalised Backus-Gilbert Methods**: Implementation of a generalised Backus-Gilbert framework for linear inference problems, building on the work of [Al-Attar(2021)](https://arxiv.org/abs/2104.12256). The focus will be on constructing direct estimates of specific properties of interest (i.e., linear functionals of the model) from data, without needing to first solve for the full model itself.
+
+* **Non-linear Optimisation**: Extension of the current optimisation framework to handle non-linear inverse problems. This will involve creating a general interface where users can provide their own non-linear forward mapping, a misfit functional, and methods for computing gradients (and optionally Hessians) for use in gradient-based optimisation algorithms.
+
+* **Non-linear Bayesian Inference**: Development of methods for non-linear Bayesian problems. Planned approaches include linearizing the problem around the maximum a posteriori (MAP) solution to estimate posterior uncertainty, and using this linearization to construct efficient proposal distributions for Markov chain Monte Carlo (MCMC) sampling methods.
+
+* **New Geophysical Hilbert Spaces**: Addition of further `HilbertSpace` implementations tailored to specific geophysical applications. A primary focus will be on creating spaces for functions defined within a **spherical annulus** (spherical shell), which is essential for problems in global seismology and mantle tomography.
+
+
 ## Contributing
 Contributions are welcome! If you would like to contribute, please feel free to fork the repository, make your changes, and submit a pull request. For major changes, please open an issue first to discuss what you would like to change.
 
