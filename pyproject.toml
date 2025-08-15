@@ -15,7 +15,6 @@ matplotlib = ">=3.0.0"
 pyqt6 = ">=6.0.0"
 Cartopy = "^0.23.0"
 
-
 [tool.poetry.group.tests]
 optional = true
 
@@ -29,6 +28,14 @@ optional = true
 [tool.poetry.group.tutorials.dependencies]
 jupyter = "^1.1.1"
 
+
+[tool.poetry.group.docs]
+optional = true
+
+[tool.poetry.group.docs.dependencies]
+furo = "^2025.7.19"
+sphinx = "<8.2"
+nbsphinx = "^0.9.7"
 
 [build-system]
 requires = ["poetry-core"]

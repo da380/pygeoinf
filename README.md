@@ -42,19 +42,37 @@ git clone https://github.com/da380/pygeoinf.git
 cd pygeoinf
 poetry install
 ```
+
+You can install the optional dependencies for running tests, building documentation, or running the tutorials by using the --with flag.
+
+```bash
+# To install dependencies for running the test suite
+poetry install --with tests
+
+# To install dependencies for building the documentation
+poetry install --with docs
+
+# To install dependencies for running the Jupyter tutorials
+poetry install --with tutorials
+
+# You can also combine them
+poetry install --with tests,docs,tutorials
+```
+
 ## Tutorials
 
 You can run the interactive tutorials directly in Google Colab to get started with the core concepts of the library.
 
+
 | Tutorial Name                 | Link to Colab                                                                                                                                                                                                                                    |
 | :---------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tutorial 1 - A first example  | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t1.ipynb)                                                                                  |
-| Tutorial 2 - Hilbert spaces   | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t2.ipynb)                                                                                  |
-| Tutorial 3 - Dual spaces      | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t3.ipynb)                                                                                  |
-| Tutorial 4 - Linear operators | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t4.ipynb)                                                                                  |
-| Tutorial 5 - Gaussian measures| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t5.ipynb)                                                                                  |
-| Tutorial 6 - Minimum norm inversions | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t6.ipynb)                                                                          |
-| Tutorial 7 - Bayesian inversions | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/tutorials/t7.ipynb)                                                                              |
+| Tutorial 1 - A first example  | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/t1.ipynb)                                                                                  |
+| Tutorial 2 - Hilbert spaces   | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/t2.ipynb)                                                                                  |
+| Tutorial 3 - Dual spaces      | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/t3.ipynb)                                                                                  |
+| Tutorial 4 - Linear operators | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/t4.ipynb)                                                                                  |
+| Tutorial 5 - Gaussian measures| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/t5.ipynb)                                                                                  |
+| Tutorial 6 - Minimum norm inversions | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/t6.ipynb)                                                                          |
+| Tutorial 7 - Bayesian inversions | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/t7.ipynb)                                                                              |
 
 
 
@@ -186,23 +204,6 @@ The output of the above script will look similar to the following figure:
 
 ![Example of Bayesian Inference on a Circle](figures/fig1.png)
 
-## Structure of the Library
-
-The library is organized into two main parts:
-
-* `pygeoinf/`: The core library containing the abstract framework.
-    * `hilbert_space.py`: The foundational `HilbertSpace` class.
-    * `operators.py`: `LinearOperator` and related classes.
-    * `gaussian_measure.py`: Probabilistic modeling tools.
-    * `forward_problem.py`, `inversion.py`: Classes for defining and solving inverse problems.
-    * `bayesian.py`, `optimisation.py`: Implementations of different inversion strategies.
-    * `linear_solvers.py`: A suite of direct and iterative linear solvers.
-* `pygeoinf/symmetric_spaces/`: Concrete implementations for specific geometries.
-    * `circle.py`: Sobolev spaces on the circle using Fourier series.
-    * `line.py`: Sobolev spaces on a line interval.
-    * `sphere.py`: Sobolev spaces on the two-sphere using spherical harmonics.
-
-
 ## Dependencies
 
 * NumPy
@@ -210,9 +211,6 @@ The library is organized into two main parts:
 * Matplotlib
 * pyshtools (for `sphere.py`)
 * Cartopy (for plotting in `sphere.py`)
-
-
-
 
 ## Future Plans
 

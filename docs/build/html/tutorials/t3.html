@@ -1,0 +1,868 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html" /><link rel="search" title="Search" href="../search.html" /><link rel="next" title="Tutorial 4 - Linear operators" href="t4.html" /><link rel="prev" title="Tutorial 2 - Hilbert spaces" href="t2.html" />
+
+    <!-- Generated with Sphinx 8.1.3 and Furo 2025.07.19 -->
+        <title>Tutorial 3 - Dual spaces - pygeoinf documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=25af2a20" />
+    <link rel="stylesheet" type="text/css" href="../_static/nbsphinx-code-cells.css?v=2aa19091" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #2b2b2b;
+  --color-code-foreground: #f8f8f2;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #2b2b2b;
+  --color-code-foreground: #f8f8f2;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">pygeoinf  documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  
+  <span class="sidebar-brand-text">pygeoinf  documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="t1.html">Tutorial 1 - A first example</a></li>
+<li class="toctree-l1"><a class="reference internal" href="t2.html">Tutorial 2 - Hilbert spaces</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Tutorial 3 - Dual spaces</a></li>
+<li class="toctree-l1"><a class="reference internal" href="t4.html">Tutorial 4 - Linear operators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="t5.html">Tutorial 5 - Gaussian measures</a></li>
+<li class="toctree-l1"><a class="reference internal" href="t6.html">Tutorial 6 - Minumum norm inversions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="t7.html">Tutorial 7 - Bayesian inversions</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/operators.html">pygeoinf.operators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/forms.html">pygeoinf.forms</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/direct_sum.html">pygeoinf.direct_sum</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/forward_problem.html">pygeoinf.forward_problem</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/inversion.html">pygeoinf.inversion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/random_matrix.html">pygeoinf.random_matrix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/symmetric_spaces.html">Symmetric Spaces</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="../_sources/tutorials/t3.ipynb.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[14]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Uncomment and run this when using colab.</span>
+<span class="c1">#%pip install pygeoinf</span>
+</pre></div>
+</div>
+</div>
+<section id="Tutorial-3---Dual-spaces">
+<h1>Tutorial 3 - Dual spaces<a class="headerlink" href="#Tutorial-3---Dual-spaces" title="Link to this heading">¶</a></h1>
+<p>The dual, <span class="math notranslate nohighlight">\(X'\)</span>, of a Hilbert space, <span class="math notranslate nohighlight">\(X\)</span>, is the set of all continuous linear functional on <span class="math notranslate nohighlight">\(E\)</span>. The Riesz representation theorem states that every Hilbert space is isometrically isomorphic to its dual. This means that there is a continuous linear mapping, <span class="math notranslate nohighlight">\(J_{X}\in \mathrm{Hom}(X',X)\)</span>, such that</p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[\langle u',u \rangle = (J_{X}u', u)_{X},\]</div>
+</div>
+<p>for every <span class="math notranslate nohighlight">\(u' \in X'\)</span> and <span class="math notranslate nohighlight">\(u \in X\)</span> while also <span class="math notranslate nohighlight">\(\|u'\|_{X'} = \|J_{X}u'\|_{X}\)</span>. Within this tutorial we will look at the <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> class that is used to define dual vectors for a given <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code>. We will also see that each <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> can automatically generate its dual space. Each <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> also provides the mappings to and from its dual as defined through the Riesz representation theorem.</p>
+<section id="The-LinearForm-class">
+<h2>The <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> class<a class="headerlink" href="#The-LinearForm-class" title="Link to this heading">¶</a></h2>
+<p>To begin, we use <code class="docutils literal notranslate"><span class="pre">Euclideanspace</span></code> as an example. Construction of a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> can be done by specifying its action on a vector. In the example below, we define a linear form that maps a vector in <code class="docutils literal notranslate"><span class="pre">X</span></code> to the value of its zeroth-component.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[15]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set up the space.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf</span><span class="w"> </span><span class="kn">import</span> <span class="n">EuclideanSpace</span><span class="p">,</span> <span class="n">LinearForm</span>
+<span class="n">X</span> <span class="o">=</span> <span class="n">EuclideanSpace</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+
+<span class="c1"># Define the linear form in terms of its mapping.</span>
+<span class="n">xp</span> <span class="o">=</span> <span class="n">LinearForm</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+<span class="c1"># Test its action on a random vector.</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;x      =  </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;xp,x&gt; =  </span><span class="si">{</span><span class="n">xp</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+x      =  [-1.57519131 -1.11923675 -0.05461242  0.4181217   0.43528924]
+&lt;xp,x&gt; =  -1.575191311530877
+</pre></div></div>
+</div>
+<p>Note that the action of a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> on a vector is through the object’s <code class="docutils literal notranslate"><span class="pre">__call__</span></code> method. There is no check within the class that the mapping asigned to a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> is well-defined, but in a later tutorial we show how this can be done.</p>
+<p>Recall that each <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> is associated with a mapping from a vector to its components. We shall write this mapping as <span class="math notranslate nohighlight">\(P_{X} \in \mathrm{Hom}(X,\mathbb{R}^{n})\)</span> where <span class="math notranslate nohighlight">\(n\)</span> is the dimension of the space. The inverse mapping from a components into the space is then written <span class="math notranslate nohighlight">\(I_{X}(\mathbb{R}^{n}, x)\)</span>. Within this notation we can see <span class="math notranslate nohighlight">\(P_{X}\)</span> has standing for a co-ordinate <strong>projection</strong> while <span class="math notranslate nohighlight">\(I_{X}\)</span> is a co-ordinate <strong>inclusion</strong>. These mappings induce
+corresponding co-ordinate mappings on the dual space. The co-ordinate projection and inclusion, <span class="math notranslate nohighlight">\(P_{X'}\)</span> and <span class="math notranslate nohighlight">\(I_{X'}\)</span>, on the dual space are defined such that for any <span class="math notranslate nohighlight">\(x'\in X'\)</span> and <span class="math notranslate nohighlight">\(\mathbf{x} \in \mathbb{R}^{n}\)</span> we have</p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[\langle x', I_{X}\mathbf{x} \rangle = (P_{X'}x', \mathbf{x})_{\mathbb{R}^{n}}\]</div>
+</div>
+<p>while for <span class="math notranslate nohighlight">\(\mathbf{x}' \in \mathbb{R}^{n}\)</span> and <span class="math notranslate nohighlight">\(x \in X\)</span></p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[\langle I_{X'}\mathbf{x}', x \rangle = (\mathbf{x}', P_{X}x)_{\mathbb{R}^{n}}.\]</div>
+</div>
+<p>In the code below, we see that a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> can be defined directly in terms of its components:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[16]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># Set the component vector.</span>
+<span class="n">cp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">X</span><span class="o">.</span><span class="n">dim</span><span class="p">)</span>
+<span class="n">cp</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+
+<span class="c1"># Define the linear form</span>
+<span class="n">xp</span> <span class="o">=</span> <span class="n">LinearForm</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="n">cp</span><span class="p">)</span>
+
+<span class="c1"># Test its action on a random vector.</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;x      =  </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;xp,x&gt; =  </span><span class="si">{</span><span class="n">xp</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<br/></pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+x      =  [-1.12049122  0.36610293 -0.35165481 -0.32744713  0.53459906]
+&lt;xp,x&gt; =  -1.1204912204777568
+</pre></div></div>
+</div>
+<p>The components of a form can be accessed through its <code class="docutils literal notranslate"><span class="pre">components</span></code> property:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[17]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;The components of the linear form are: </span><span class="si">{</span><span class="n">xp</span><span class="o">.</span><span class="n">components</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+The components of the linear form are: [1. 0. 0. 0. 0.]
+</pre></div></div>
+</div>
+<p>We can also call <code class="docutils literal notranslate"><span class="pre">print</span></code> directly on a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> with the result being that its components are printed:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;The components of the form are: </span><span class="si">{</span><span class="n">xp</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+The components of the form are: [1. 0. 0. 0. 0.]
+</pre></div></div>
+</div>
+<p>Linear forms over a Hilbert space form a vector space in a natural way. This is implemented in <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> through suitable overloads:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[19]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define two linear forms</span>
+<span class="n">xp1</span> <span class="o">=</span> <span class="n">LinearForm</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+<span class="n">xp2</span> <span class="o">=</span> <span class="n">LinearForm</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="nb">sum</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+
+<span class="c1"># Print their action on a random vector.</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+<span class="n">a1</span> <span class="o">=</span> <span class="n">xp1</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">a2</span> <span class="o">=</span> <span class="n">xp2</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&lt;xp1, x&gt;              = </span><span class="si">{</span><span class="n">a1</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&lt;xp2, x&gt;              = </span><span class="si">{</span><span class="n">a2</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="c1"># Form a linear combination of the forms</span>
+<span class="n">xp3</span> <span class="o">=</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">xp1</span> <span class="o">-</span> <span class="n">xp2</span> <span class="o">/</span> <span class="mi">5</span>
+<span class="n">a3</span> <span class="o">=</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">a1</span> <span class="o">-</span> <span class="n">a2</span> <span class="o">/</span> <span class="mi">5</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;4 xp1 - xp2, x&gt;      = </span><span class="si">{</span><span class="n">xp3</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;4 &lt;xp1, x&gt; - &lt;xp2, x&gt; = </span><span class="si">{</span><span class="n">a3</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+&lt;xp1, x&gt;              = 1.1748286027686725
+&lt;xp2, x&gt;              = 1.7664061789780698
+&lt;4 xp1 - xp2, x&gt;      = 4.346033175279076
+4 &lt;xp1, x&gt; - &lt;xp2, x&gt; = 4.346033175279076
+</pre></div></div>
+</div>
+<p>Algebriac combinations of forms is generally done lazily. If, however, all the forms involved have their components stored, the components of the new form are determined explicitly which can aid with computational efficiency.</p>
+<p>We can similarly define instances of <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> on more complicated <code class="docutils literal notranslate"><span class="pre">HilbertSpaces</span></code>. Here we set of an instance of the Sobolev space <span class="math notranslate nohighlight">\(H^{s}(\mathbb{S}^{1})\)</span> for <span class="math notranslate nohighlight">\(s &gt; 0.5\)</span> and define a linear form that maps a function to its value at a point within the numerical grid. That this linear form is well-defined is discussed below.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[20]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Construct a Sobolev space on the unit circle.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.symmetric_space.circle</span><span class="w"> </span><span class="kn">import</span>  <span class="n">Sobolev</span>
+<span class="n">Y</span> <span class="o">=</span> <span class="n">Sobolev</span><span class="o">.</span><span class="n">from_sobolev_parameters</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">)</span>
+
+<span class="c1"># Set up a linear form that evaluates the function at</span>
+<span class="c1">#  a specified grid point.</span>
+<span class="n">i</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">dim</span> <span class="o">//</span> <span class="mi">4</span>
+<span class="n">th</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">angles</span><span class="p">()[</span><span class="n">i</span><span class="p">]</span>
+
+<span class="n">vp</span> <span class="o">=</span> <span class="n">LinearForm</span><span class="p">(</span><span class="n">Y</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">u</span> <span class="p">:</span> <span class="n">u</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+
+<span class="c1"># Define a function.</span>
+<span class="n">f</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">th</span> <span class="p">:</span>  <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">project_function</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+<span class="c1"># Print the action of the form and the corresponding function value.</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&lt;vp,u&gt;  = </span><span class="si">{</span><span class="n">vp</span><span class="p">(</span><span class="n">u</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;u(th)   = </span><span class="si">{</span><span class="n">f</span><span class="p">(</span><span class="n">th</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+&lt;vp,u&gt;  = 0.001575522243668773
+u(th)   = 0.001575522243668773
+</pre></div></div>
+</div>
+<section id="The-dual-of-a-HilbertSpace">
+<h3>The dual of a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code><a class="headerlink" href="#The-dual-of-a-HilbertSpace" title="Link to this heading">¶</a></h3>
+<p>For each <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> there is a corresponding dual space which is another instance of <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code>. This can be generated using the <code class="docutils literal notranslate"><span class="pre">dual</span></code> property. This is illustrated below:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[21]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Form the dual space.</span>
+<span class="n">Xp</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">dual</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;The dimension of the dual space is </span><span class="si">{</span><span class="n">Xp</span><span class="o">.</span><span class="n">dim</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Define a linear form an get its components.</span>
+<span class="n">xp</span> <span class="o">=</span> <span class="n">LinearForm</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">x</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+<span class="n">cp</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;The linear form has components </span><span class="si">{</span><span class="n">cp</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Print the norm of the linear form.</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;The linear form has norm: </span><span class="si">{</span><span class="n">Xp</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<br/></pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+The dimension of the dual space is 5
+The linear form has components [ 2.  0. -1.  0.  0.]
+The linear form has norm: 2.23606797749979
+</pre></div></div>
+</div>
+<p>Each <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> can map between itself and its dual space using the <code class="docutils literal notranslate"><span class="pre">from_dual</span></code> and <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> methods. These mappings for a Hilbert space, <span class="math notranslate nohighlight">\(X\)</span>, are implementation of the operator <span class="math notranslate nohighlight">\(J_{X} \in \mathrm{Hom}(X',X)\)</span> and its inverse. In the case of <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> these mappings are <em>almost</em> trivial, with a vector and the corresponding form having identical components. But note that the vector and the corresponding dual vector are still different kinds of object.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[22]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Generate a random vector and dual vector</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+<span class="n">yp</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;x      = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;yp     = </span><span class="si">{</span><span class="n">yp</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="c1"># Print the value of the dual pairing.</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&lt;yp,x&gt; = </span><span class="si">{</span><span class="n">yp</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="c1"># Map the dual vector to X.</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">yp</span><span class="p">)</span>
+
+<span class="c1"># Print the inner product of y and x.</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;(y,x)  = </span><span class="si">{</span><span class="n">X</span><span class="o">.</span><span class="n">inner_product</span><span class="p">(</span><span class="n">y</span><span class="p">,</span><span class="n">x</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="c1"># Print the dual norm and that of its representation.</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;||yp|| =  </span><span class="si">{</span><span class="n">Xp</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">yp</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;||y||  =  </span><span class="si">{</span><span class="n">X</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">y</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+x      = [ 0.15782957 -0.76560116  1.6603107   0.95074063  1.41893334]
+yp     = [-0.43764019 -1.47839627 -1.39568354  1.19468235  0.50153332]
+&lt;yp,x&gt; = 0.5929964181912808
+(y,x)  = 0.5929964181912808
+||yp|| =  2.450289489473236
+||y||  =  2.450289489473236
+</pre></div></div>
+</div>
+<p>In more complicated Hilbert spaces the mappings to and from the dual space are more involved. For example, in <span class="math notranslate nohighlight">\(H^{s}(\mathbb{S}^{1})\)</span> it can be shown that</p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[H^{s}(\mathbb{S}^{1})' \cong H^{-s}(\mathbb{S}^{1}),\]</div>
+</div>
+<p>in terms of which the necessary mapping from <span class="math notranslate nohighlight">\(H^{s}(\mathbb{S}^{1})'\)</span> to <span class="math notranslate nohighlight">\(H^{s}(\mathbb{S}^{1})\)</span> can be written</p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[J_{H^{s}(\mathbb{S}^{1})} = (1+\lambda^{2}\Delta)^{-s}.\]</div>
+</div>
+<p>A further key property of this space is that when <span class="math notranslate nohighlight">\(s &gt; 1/2 + k\)</span> we have the continuous embedding</p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[H^{s}(\mathbb{S}^{1}) \subseteq C^{k}(\mathbb{S}^{1}).\]</div>
+</div>
+<p>This means that point evaluation defines a continuous linear form on this space so long as <span class="math notranslate nohighlight">\(s &gt; 0.5\)</span>. This justifies our definition of the form <code class="docutils literal notranslate"><span class="pre">vp</span></code> above, and we can plot its representation as follows:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[23]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+
+<span class="c1"># Convert the linear form to the space and plot its form.</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">vp</span><span class="p">)</span>
+<span class="n">Y</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+
+<span class="c1"># Check that the vector does the right thing.</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&lt;vp,u&gt; = </span><span class="si">{</span><span class="n">vp</span><span class="p">(</span><span class="n">u</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;(v,u)  = </span><span class="si">{</span><span class="n">Y</span><span class="o">.</span><span class="n">inner_product</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="n">u</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<br/></pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_t3_19_0.png" src="../_images/tutorials_t3_19_0.png" />
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+&lt;vp,u&gt; = 0.001575522243668773
+(v,u)  = 0.001575522243668449
+</pre></div></div>
+</div>
+<p>The Dirac measure, <span class="math notranslate nohighlight">\(\delta_{\theta}\)</span>, occurs frequently in applications and so it has been implemented directly within <code class="docutils literal notranslate"><span class="pre">Sobolev</span></code>:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[24]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set the base point</span>
+<span class="n">th</span> <span class="o">=</span> <span class="mi">1</span>
+
+<span class="c1"># Get the Dirac measure</span>
+<span class="n">vp</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">dirac</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
+
+<span class="c1"># Form its representation.</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">vp</span><span class="p">)</span>
+
+<span class="c1"># This can also be done directly.</span>
+<span class="n">w</span> <span class="o">=</span> <span class="n">Y</span><span class="o">.</span><span class="n">dirac_representation</span><span class="p">(</span><span class="n">th</span><span class="p">)</span>
+
+<span class="c1"># Plot both</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">()</span>
+<span class="n">Y</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">fig</span><span class="o">=</span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">,</span> <span class="n">color</span> <span class="o">=</span> <span class="s1">&#39;b&#39;</span><span class="p">)</span>
+<span class="n">Y</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">fig</span><span class="o">=</span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">,</span> <span class="n">color</span> <span class="o">=</span> <span class="s1">&#39;r&#39;</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s2">&quot;--&quot;</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_t3_21_0.png" src="../_images/tutorials_t3_21_0.png" />
+</div>
+</div>
+<p>Within the previous tutorial, we noted that the static method <code class="docutils literal notranslate"><span class="pre">from_sobolev_parameters</span></code> required <span class="math notranslate nohighlight">\(s&gt;0.5\)</span>. The reason is that this method chooses <span class="math notranslate nohighlight">\(k_{\mathrm{max}}\)</span> based on an error estimate linked to the representation of the Dirac measure.</p>
+</section>
+</section>
+<section id="Double-duals">
+<h2>Double duals<a class="headerlink" href="#Double-duals" title="Link to this heading">¶</a></h2>
+<p>If <span class="math notranslate nohighlight">\(X\)</span> is a Hilbert space and <span class="math notranslate nohighlight">\(X'\)</span> its dual, we can also form the double dual <span class="math notranslate nohighlight">\(X''\)</span>. Strictly, <span class="math notranslate nohighlight">\(X\)</span> and <span class="math notranslate nohighlight">\(X''\)</span> are not the same objects, but they are canonically isomorphic. Within the <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> class, however, the dual of a dual space is set equal to the orignal space.</p>
+<p>This is seen below.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[25]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">X</span> <span class="o">==</span> <span class="n">X</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">dual</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">Y</span> <span class="o">==</span> <span class="n">Y</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">dual</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+True
+True
+</pre></div></div>
+</div>
+</section>
+<section id="Constructing-EuclideanSpace">
+<h2>Constructing <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code><a class="headerlink" href="#Constructing-EuclideanSpace" title="Link to this heading">¶</a></h2>
+<p>Having now introduced dual spaces, we can explain in full detail how the <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> class is implemented, this forming a model for the implementation fo any other <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code>.</p>
+<p>The first point to note is that <code class="docutils literal notranslate"><span class="pre">HilbertSpaces</span></code> are not meant to be constructed directly. Rather, the intention is that new classes are defined that inherit from <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code>. This is due to an apparent circularity in the definition of a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> class. To construct a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> we need to provide the <code class="docutils literal notranslate"><span class="pre">from_dual</span></code> and <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> mappings. But <code class="docutils literal notranslate"><span class="pre">LinearForms</span></code> cannot be constructed until the space is already set up. By, however, inheriting from <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> within a new
+class, we can insure that the space can be refered to in its methods, and that these methods cannot be called until the class has been set up. Below we see the implementation of <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> from within the <code class="docutils literal notranslate"><span class="pre">pygeoinf</span></code> library. The <code class="docutils literal notranslate"><span class="pre">to_component</span></code> and <code class="docutils literal notranslate"><span class="pre">from_component</span></code> mappings are trivial, as noted above. For the inner product, we use the standard <code class="docutils literal notranslate"><span class="pre">numpy</span></code> function. Lastly, the mappings <code class="docutils literal notranslate"><span class="pre">from_dual</span></code> and <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> are very simple, just reflecting the fact that the components of a
+dual vector and its representation are equal.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">EuclideanSpace</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Euclidean space implemented as an instance of HilbertSpace.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Args:</span>
+<span class="sd">            dim (int): Dimension of the space.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="n">dim</span><span class="p">,</span>
+            <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
+            <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">__inner_product</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">__to_dual</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">__from_dual</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__inner_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">):</span>
+        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Overload of equality operator for Euclidean spaces.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">EuclideanSpace</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dim</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">dim</span>
+</pre></div>
+</div>
+<p>To illustrate the contruction of new <code class="docutils literal notranslate"><span class="pre">HilbertSpaces</span></code> further, we can generalise Euclidean space by using an inner product of the form</p>
+<div class="math-wrapper docutils container">
+<div class="math notranslate nohighlight">
+\[(x,y)_{X} = (M x, y)_{\mathbb{R}^{n}},\]</div>
+</div>
+<p>with <span class="math notranslate nohighlight">\(M\)</span> a symmetric matrix and we call the <strong>metric</strong> for the generalised Euclidean space. In this case, the components of a dual vector and its representation are not equal, but related through the action of the inverse metric. The code below implements such a space and checks that the to and from dual mappings work as they should.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[26]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">scipy.linalg</span><span class="w"> </span><span class="kn">import</span> <span class="n">cho_factor</span><span class="p">,</span> <span class="n">cho_solve</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf</span><span class="w"> </span><span class="kn">import</span>  <span class="n">HilbertSpace</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">GeneralisedEuclideanSpace</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Class for a generalised Euclidean space whose inner</span>
+<span class="sd">    product is defined by a metric tensor.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="n">metric</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">inverse_metric</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Args:</span>
+<span class="sd">            dim (int): Dimension of the space.</span>
+<span class="sd">            metric (matrix-like): The metric tensor.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_metric</span> <span class="o">=</span> <span class="n">metric</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_factor</span> <span class="o">=</span> <span class="n">cho_factor</span><span class="p">(</span><span class="n">metric</span><span class="p">)</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="n">dim</span><span class="p">,</span>
+            <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
+            <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_inner_product</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_to_dual</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_from_dual</span>
+        <span class="p">)</span>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_inner_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_metric</span> <span class="o">@</span> <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">):</span>
+        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">cho_solve</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_factor</span><span class="p">,</span> <span class="n">cp</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metric</span> <span class="o">@</span> <span class="n">x</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span>
+
+
+<span class="c1"># Set the dimension of the space.</span>
+<span class="n">dim</span> <span class="o">=</span> <span class="mi">4</span>
+
+<span class="c1"># Generate a metric tensor as a self-adjoint matrix.</span>
+<span class="n">metric</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">dim</span><span class="p">)</span>
+<span class="n">metric</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">identity</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span> <span class="o">+</span> <span class="mi">5</span> <span class="o">*</span> <span class="n">metric</span> <span class="o">@</span> <span class="n">metric</span><span class="o">.</span><span class="n">T</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;The metric is:</span><span class="se">\n</span><span class="s1"> </span><span class="si">{</span><span class="n">metric</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="c1"># Construct the Hilbert space.</span>
+<span class="n">X</span> <span class="o">=</span> <span class="n">GeneralisedEuclideanSpace</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">metric</span><span class="p">)</span>
+
+<span class="c1"># Test the basic identities on random vectors.</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;x      = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;y      = </span><span class="si">{</span><span class="n">y</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;(x,y)  = </span><span class="si">{</span><span class="n">X</span><span class="o">.</span><span class="n">inner_product</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="n">xp</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;xp     = </span><span class="si">{</span><span class="n">xp</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&lt;xp,y&gt; = </span><span class="si">{</span><span class="n">xp</span><span class="p">(</span><span class="n">y</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="n">zp</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;zp     = </span><span class="si">{</span><span class="n">zp</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&lt;zp,y&gt; = </span><span class="si">{</span><span class="n">zp</span><span class="p">(</span><span class="n">y</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">zp</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;z      = </span><span class="si">{</span><span class="n">z</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;(z,y)  = </span><span class="si">{</span><span class="n">X</span><span class="o">.</span><span class="n">inner_product</span><span class="p">(</span><span class="n">z</span><span class="p">,</span><span class="n">y</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+The metric is:
+ [[ 35.01753449   3.94625011  18.06283348 -16.30278111]
+ [  3.94625011  20.27720831 -13.65323009  19.14899449]
+ [ 18.06283348 -13.65323009  30.61274728 -26.49133796]
+ [-16.30278111  19.14899449 -26.49133796  36.81613865]]
+x      = [-0.3153512   1.26065172 -1.05413352  0.32709779]
+y      = [-1.23151769 -0.15875524  0.17688897 -0.28158816]
+(x,y)  = -0.44388281686562436
+xp     = [-30.44121657  44.97396412 -63.84328545  69.24919949]
+&lt;xp,y&gt; = -0.44388281686562436
+zp     = [ 0.10689571  3.01707756 -0.80397111 -0.3028258 ]
+&lt;zp,y&gt; = -0.6675622827980545
+z      = [-0.34464667  0.72164373  0.09261975 -0.46954016]
+(z,y)  = -0.667562282798055
+</pre></div></div>
+</div>
+<p>The implementation could be improved in various ways. We might, for example, allow the metric to be given in a more general form (e.g., as a <code class="docutils literal notranslate"><span class="pre">scipy.sparse</span></code> <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code>) and its inverse computed using iterative methods. We might also allow the user to optionally provide the inverse metric directly. Such steps would be particularly useful if the dimension of the space is large.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="t4.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Tutorial 4 - Linear operators</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="t2.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Tutorial 2 - Hilbert spaces</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, David Al-Attar, Dan Heathcote, Adrian Mag
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Tutorial 3 - Dual spaces</a><ul>
+<li><a class="reference internal" href="#The-LinearForm-class">The <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> class</a><ul>
+<li><a class="reference internal" href="#The-dual-of-a-HilbertSpace">The dual of a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#Double-duals">Double duals</a></li>
+<li><a class="reference internal" href="#Constructing-EuclideanSpace">Constructing <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code></a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>window.MathJax = {"tex": {"inlineMath": [["$", "$"], ["\\(", "\\)"]], "processEscapes": true}, "options": {"ignoreHtmlClass": "tex2jax_ignore|mathjax_ignore|document", "processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    </body>
+</html>

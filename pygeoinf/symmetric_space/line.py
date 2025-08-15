@@ -293,15 +293,17 @@ class Sobolev(SymmetricSpaceSobolev):
         Two spaces are considered equal if they are of the same type and have
         the same defining parameters (kmax, order, scale, x0, and x1).
         """
+
         if not isinstance(other, Sobolev):
             return NotImplemented
-    
-        return (self.kmax == other.kmax and
-                self.order == other.order and
-                self.scale == other.scale and
-                self.x0 == other.x0 and
-                self.x1 == other.x1)
 
+        return (
+            self.kmax == other.kmax
+            and self.order == other.order
+            and self.scale == other.scale
+            and self.x0 == other.x0
+            and self.x1 == other.x1
+        )
 
     # =============================================================#
     #                        Private methods                       #
@@ -339,7 +341,7 @@ class Sobolev(SymmetricSpaceSobolev):
         c *= self._sqrt_jac
         return c
 
-    def _from_components(self, c: np.ndarray) -> np.ndarray:        
+    def _from_components(self, c: np.ndarray) -> np.ndarray:
         u = self._circle_space.from_components(c)
         u *= self._isqrt_jac
         return u

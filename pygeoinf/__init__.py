@@ -51,9 +51,9 @@ from .linear_solvers import (
 
 from .forward_problem import ForwardProblem, LinearForwardProblem
 
-from .optimisation import (
+from .linear_optimisation import (
     LinearLeastSquaresInversion,
     LinearMinimumNormInversion,
 )
 
-from .bayesian import LinearBayesianInversion, LinearBayesianInference
+from .linear_bayesian import LinearBayesianInversion, LinearBayesianInference
