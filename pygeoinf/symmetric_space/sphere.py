@@ -485,6 +485,25 @@ class Sobolev(SymmetricSpaceSobolev):
 
         return fig, ax, im
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev space on a sphere.
+
+        Two spaces are considered equal if they are of the same type and have
+        the same defining parameters.
+        """
+        if not isinstance(other, Sobolev):
+            return NotImplemented
+
+        return (
+            self.lmax == other.lmax
+            and self.order == other.order
+            and self.scale == other.scale
+            and self.radius == other.radius
+            and self.grid == other.grid
+            and self._vector_as_SHGrid == other._vector_as_SHGrid
+        )
+
     # ==============================================#
     #                Private methods                #
     # ==============================================#

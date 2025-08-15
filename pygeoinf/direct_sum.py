@@ -127,7 +127,20 @@ class HilbertSpaceDirectSum(HilbertSpace):
             for i, space in enumerate(self.subspaces)
         ]
 
-    # ... (Private methods remain the same) ...
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another direct sum space.
+
+        Two direct sum spaces are equal if they are composed of the same
+        number of subspaces, and each corresponding subspace is equal.
+        """
+        if not isinstance(other, HilbertSpaceDirectSum):
+            return NotImplemented
+    
+        # This relies on the subspaces having their own __eq__ methods.
+        return self.subspaces == other.subspaces
+
+        
     def __to_components(self, xs: List[Any]) -> np.ndarray:
         cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
         return np.concatenate(cs, 0)

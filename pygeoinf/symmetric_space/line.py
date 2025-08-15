@@ -286,6 +286,23 @@ class Sobolev(SymmetricSpaceSobolev):
         cp = self._circle_space.dual.to_components(up) * self._isqrt_jac
         return self.dual.from_components(cp)
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev space on a line.
+
+        Two spaces are considered equal if they are of the same type and have
+        the same defining parameters (kmax, order, scale, x0, and x1).
+        """
+        if not isinstance(other, Sobolev):
+            return NotImplemented
+    
+        return (self.kmax == other.kmax and
+                self.order == other.order and
+                self.scale == other.scale and
+                self.x0 == other.x0 and
+                self.x1 == other.x1)
+
+
     # =============================================================#
     #                        Private methods                       #
     # =============================================================#

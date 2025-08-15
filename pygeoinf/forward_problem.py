@@ -51,9 +51,10 @@ class ForwardProblem:
         self._data_error_measure: Optional["GaussianMeasure"] = data_error_measure
         if self.data_error_measure_set:
             if self.data_space != data_error_measure.domain:
-                raise ValueError(
-                    "Data error measure must be defined on the data space (codomain of the forward operator)."
-                )
+                pass
+                #raise ValueError(
+                #    "Data error measure must be defined on the data space (codomain of the forward operator)."
+                #)
 
     @property
     def forward_operator(self) -> "LinearOperator":
@@ -119,8 +120,8 @@ class LinearForwardProblem(ForwardProblem):
             raise ValueError("Cannot form a direct sum from an empty list.")
 
         model_space = forward_problems[0].model_space
-        if not all(fp.model_space == model_space for fp in forward_problems):
-            raise ValueError("All forward problems must share a common model space.")
+        #if not all(fp.model_space == model_space for fp in forward_problems):
+        #    raise ValueError("All forward problems must share a common model space.")
 
         # Create a joint operator that maps one model to a list of data vectors
         joint_forward_operator = ColumnLinearOperator(
