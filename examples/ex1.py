@@ -1,32 +1,29 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.symmetric_space.sphere import Sobolev
+from pygeoinf.symmetric_space.line import Sobolev
 
-X = Sobolev(128, 2, 0.1)
+X = Sobolev.from_sobolev_parameters(2,0.1)
+
+print(X._sqrt_jac)
+print(X._isqrt_jac)
+print(X._sqrt_jac * X._isqrt_jac)
+
+x1 = X.project_function(lambda x : x)
+
+c1 = X.to_components(x1)
+
+x2 = X.from_components(c1)
+
+c2 = X.to_components(x2)
+
+#print(c1-c2)
 
 
-mu = X.sobolev_gaussian_measure(2, 0.3, 1)
 
-a = 2
-x = mu.sample()
-y = mu.sample()
-
-z = y.copy()
-
-
-def axpy(a, x, y):
-    y.data += a * x.data
-
-
-axpy(a, x, y)
-
-fig, ax, im = X.plot(y)
-
-fig.colorbar(im, ax=ax, orientation="horizontal", shrink=0.7)
-
-fig, ax, im = X.plot(z)
-
-fig.colorbar(im, ax=ax, orientation="horizontal", shrink=0.7)
-
+#fig, ax = X.plot(x1)
+#X.plot(x2,fig, ax, linestyle = "--")
+#X.plot(x3,fig, ax, linestyle = "-.")
+plt.plot(c1)
+plt.plot(c2,'--')
 plt.show()

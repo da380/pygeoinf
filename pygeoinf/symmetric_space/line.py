@@ -322,9 +322,9 @@ class Sobolev(SymmetricSpaceSobolev):
         c *= self._sqrt_jac
         return c
 
-    def _from_components(self, c: np.ndarray) -> np.ndarray:
-        c *= self._isqrt_jac
+    def _from_components(self, c: np.ndarray) -> np.ndarray:        
         u = self._circle_space.from_components(c)
+        u *= self._isqrt_jac
         return u
 
     def _inner_product(self, u1: np.ndarray, u2: np.ndarray) -> float:
