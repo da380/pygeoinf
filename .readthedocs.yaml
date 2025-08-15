@@ -15,10 +15,10 @@ build:
 sphinx:
   configuration: docs/source/conf.py
 
-# Instruct Read the Docs to install your project's dependencies.
-# We use the standard pip syntax '.[docs]' to install the project
-# itself along with the 'docs' extras group from pyproject.toml.
+# Instruct Read the Docs to install your project and its doc dependencies
+# from the generated requirements.txt file.
 python:
   install:
+    - requirements: docs/requirements.txt
     - method: pip
-      path: .[docs, tutorials]
+      path: .
