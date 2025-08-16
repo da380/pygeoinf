@@ -473,7 +473,9 @@ class LaplacianInverseOperator(LinearOperator):
         """
         return self._spectrum_provider.get_basis_function(index)
 
-    def get_all_eigenvalues(self, n: int | None = None) -> np.ndarray:
+    from typing import Optional
+
+    def get_all_eigenvalues(self, n: Optional[int] = None) -> np.ndarray:
         """
         Get all eigenvalues of the inverse Laplacian operator.
         Args:

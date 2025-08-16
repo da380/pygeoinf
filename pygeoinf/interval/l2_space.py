@@ -30,6 +30,10 @@ class L2Space(HilbertSpace):
     This serves as the base class for SobolevSpace.
     """
 
+    # Default integration settings (can be overridden per-instance)
+    default_integration_method: str = 'simpson'
+    default_integration_npoints: int = 1000
+
     def __init__(
         self,
         dim: int,
@@ -39,6 +43,8 @@ class L2Space(HilbertSpace):
         basis_type: Optional[str] = None,
         basis_callables: Optional[list] = None,
         basis_provider: Optional[BasisProvider] = None,
+        integration_method: Optional[str] = None,
+        integration_npoints: Optional[int] = None,
     ):
         """
         Args:
@@ -74,6 +80,18 @@ class L2Space(HilbertSpace):
 
         # Initialize Gram matrix as None - computed lazily when needed
         self._gram_matrix = None
+
+        # Integration settings (use class defaults if not provided)
+        self.integration_method = (
+            integration_method
+            if integration_method is not None
+            else self.default_integration_method
+        )
+        self.integration_npoints = (
+            integration_npoints
+            if integration_npoints is not None
+            else self.default_integration_npoints
+        )
 
         # Initialize the parent HilbertSpace with L² inner product
         super().__init__(
@@ -166,7 +184,8 @@ class L2Space(HilbertSpace):
             return getattr(self._basis_provider, 'orthonormal', False)
         return False
 
-    def inner_product(self, u, v, method='simpson', n_points=None):
+    def inner_product(self, u, v, method: Optional[str] = None,
+                      n_points: Optional[int] = None):
         """
         L² inner product: ⟨u,v⟩_L² = ∫_a^b u(x)v(x) dx
 
@@ -189,16 +208,20 @@ class L2Space(HilbertSpace):
         selection is crucial to avoid numerical errors from under-sampling
         high-frequency basis functions.
         """
-        # Adaptive integration point selection if not specified
+        # Prefer instance-level settings when method/n_points are omitted
+        if method is None:
+            method = self.integration_method
+
         if n_points is None:
-            # For Fourier basis: need at least 2*max_frequency points (Nyquist)
-            # Use 4*dim for safety margin, with practical limits
-            if self.provider_basis_type == 'fourier':
-                # Fourier modes have frequencies up to ~dim/2
-                n_points = max(1000, min(50000, 4 * self.dim))
+            # Use the instance default if available
+            if getattr(self, 'integration_npoints', None) is not None:
+                n_points = self.integration_npoints
             else:
-                # For other basis types, use more conservative scaling
-                n_points = max(1000, min(20000, 2 * self.dim))
+                # Fallback: adaptive selection based on basis type
+                if self.provider_basis_type == 'fourier':
+                    n_points = max(1000, min(50000, 4 * self.dim))
+                else:
+                    n_points = max(1000, min(20000, 2 * self.dim))
 
         # For L² functions, we need to be careful about pointwise operations
         # In practice, we work with smooth approximations
