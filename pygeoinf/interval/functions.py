@@ -151,7 +151,8 @@ class Function:
             raise RuntimeError("No evaluation method available")
 
     def integrate(self, weight: Optional[Callable] = None,
-                  method: str = 'simpson', n_points: int = 100) -> float:
+                  method: str = 'simpson', n_points: int = 100,
+                  *, vectorized: Optional[bool] = None) -> float:
         """
         Integrate function over its domain: ∫[a,b] f(x) w(x) dx.
 
@@ -174,7 +175,8 @@ class Function:
                     return self.function_domain.integrate(
                         self.evaluate_callable, method=method,
                         support=self.support,
-                        n_points=n_points
+                        n_points=n_points,
+                        vectorized=vectorized
                     )
                 elif self.coefficients is not None:
                     # For basis representations
@@ -183,7 +185,8 @@ class Function:
                     return self.function_domain.integrate(
                         integrand_coeffs, method=method,
                         support=self.support,
-                        n_points=n_points
+                        n_points=n_points,
+                        vectorized=vectorized
                     )
                 else:
                     return 0.0
@@ -204,7 +207,8 @@ class Function:
                     return self.space.function_domain.integrate(
                         self.evaluate_callable,
                         method=method,
-                        n_points=n_points
+                        n_points=n_points,
+                        vectorized=vectorized
                     )
                 elif self.coefficients is not None:
                     # For basis representations, might have analytical formulas
@@ -212,7 +216,8 @@ class Function:
                         return self.evaluate(x, check_domain=False)
                     return self.space.function_domain.integrate(
                         integrand_full, method=method,
-                        n_points=n_points
+                        n_points=n_points,
+                        vectorized=vectorized
                     )
             else:
                 def weighted_integrand_full(x):
@@ -220,7 +225,8 @@ class Function:
                 return self.space.function_domain.integrate(
                     weighted_integrand_full,
                     method=method,
-                    n_points=n_points
+                    n_points=n_points,
+                    vectorized=vectorized
                 )
 
         raise RuntimeError("No integration method available")
