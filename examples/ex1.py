@@ -1,32 +1,22 @@
-import pygeoinf as inf
+import matplotlib.pyplot as plt
 
-X = inf.EuclideanSpace(2)
+import pygeoinf as inf
+from pygeoinf.symmetric_space.sphere import Sobolev
+
+
+X = Sobolev(128, 2, 0.5)
+
 
 Y = inf.HilbertSpaceDirectSum([X, X])
 
-Z = X
+A = inf.LinearOperator(
+    X, Y, lambda x: [x, x], formal_adjoint_mapping=lambda y: y[0] + y[1]
+)
 
+x = X.random()
+y = Y.random()
 
-class OperatorTest(inf.LinearOperator):
+lhs = Y.inner_product(y, A(x))
+rhs = X.inner_product(A.adjoint(y), x)
 
-    def __init__(self, domain):
-
-        codomain = inf.HilbertSpaceDirectSum([domain, domain])
-
-        def mapping(x):
-            return [x, x]
-
-        def formal_adjoint_mapping(y):
-            [y1, y2] = y
-            return self.domain.add(y1, y2)
-
-        super().__init__(
-            domain, codomain, mapping, formal_adjoint_mapping=formal_adjoint_mapping
-        )
-
-
-A = OperatorTest(Y)
-
-print(A)
-
-print(A.adjoint)
+print(lhs, rhs)

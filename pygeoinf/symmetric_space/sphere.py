@@ -221,6 +221,19 @@ class Sobolev(SymmetricSpaceSobolev):
     #                 Public methods                #
     # ==============================================#
 
+    def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
+        """
+        Returns an element of the space by projecting a given function.
+
+        Args:
+            f: A function that takes a point `(lat, lon)` and returns a value.
+        """
+        u = self.zero
+        for j, lon in enumerate(u.lons()):
+            for i, lat in enumerate(u.lats()):
+                u.data[i, j] = f((lat, lon))
+        return u
+
     def random_point(self) -> List[float]:
         """Returns a random point as `[latitude, longitude]`."""
         latitude = np.random.uniform(-90.0, 90.0)

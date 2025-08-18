@@ -119,12 +119,10 @@ class HilbertSpaceDirectSum(HilbertSpace):
         """
         if len(xps) != self.number_of_subspaces:
             raise ValueError("Incorrect number of dual vectors provided.")
-        return LinearForm(
-            self,
-            mapping=lambda x: sum(
-                xp(self.subspace_projection(i)(x)) for i, xp in enumerate(xps)
-            ),
-        )
+
+        cps = [space.dual.to_components(xp) for space, xp in zip(self._spaces, xps)]
+        cp = np.concatenate(cps, 0)
+        return LinearForm(self, components=cp)
 
     def canonical_dual_inverse_isomorphism(self, xp: LinearForm) -> List[LinearForm]:
         """
@@ -136,12 +134,17 @@ class HilbertSpaceDirectSum(HilbertSpace):
         Args:
             xp (LinearForm): A dual vector on the direct sum space.
         """
-        return [
-            LinearForm(space, mapping=lambda x, j=i: xp(self.subspace_inclusion(j)(x)))
-            for i, space in enumerate(self.subspaces)
-        ]
 
-    # ... (Private methods remain the same) ...
+        cp = self.dual.to_components(xp)
+        xps = []
+        i = 0
+        for space in self._spaces:
+            j = i + space.dim
+            xp = space.dual.from_components(cp[i:j])
+            xps.append(xp)
+            i = j
+        return xps
+
     def __to_components(self, xs: List[Any]) -> np.ndarray:
         cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
         return np.concatenate(cs, 0)
@@ -204,7 +207,6 @@ class BlockStructure(ABC):
     An abstract base class for operators with a block structure.
     """
 
-    # ... (class content is the same) ...
     def __init__(self, row_dim: int, col_dim: int) -> None:
         self._row_dim: int = row_dim
         self._col_dim: int = col_dim
@@ -245,7 +247,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         """
         if not blocks or not blocks[0]:
             raise ValueError("Block structure cannot be empty.")
-        # ... (rest of the method is the same) ...
+
         domains = [operator.domain for operator in blocks[0]]
         codomains = []
         for row in blocks:
@@ -281,7 +283,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         return self._blocks[i][j]
 
     def __mapping(self, xs: List[Any]) -> List[Any]:
-        # ... (method content is the same) ...
+
         ys = []
         for i in range(self.row_dim):
             codomain = self._codomains[i]
@@ -293,7 +295,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         return ys
 
     def __adjoint_mapping(self, ys: List[Any]) -> List[Any]:
-        # ... (method content is the same) ...
+
         xs = []
         for j in range(self.col_dim):
             domain = self._domains[j]
