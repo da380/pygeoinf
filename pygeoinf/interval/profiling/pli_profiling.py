@@ -18,6 +18,101 @@ from pygeoinf.linear_bayesian import LinearBayesianInference
 from typing import Tuple, Dict, Any, List
 import time
 
+
+class CovarianceMatrixError(Exception):
+    """Exception raised when covariance matrix has numerical issues"""
+
+    def __init__(self, message: str, diagnostics: Dict[str, Any] = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics if diagnostics is not None else {}
+
+
+######################################
+# COVARIANCE MATRIX DIAGNOSTICS
+######################################
+
+def _compute_eigenvalue_diagnostics(cov_matrix) -> Dict[str, Any]:
+    """Compute eigenvalue-based diagnostics for a covariance matrix."""
+    diagnostics = {}
+
+    try:
+        if cov_matrix is not None:
+            diagnostics['cov_P_shape'] = getattr(cov_matrix, 'shape', None)
+
+            # Compute symmetric eigenvalues (use eigvalsh for Hermitian)
+            try:
+                eigs = np.linalg.eigvalsh(cov_matrix)
+            except Exception:
+                # Fall back to a general eigenvalue routine if needed
+                eigs = np.linalg.eigvals(cov_matrix)
+                eigs = np.real(eigs)
+
+            min_eig = float(np.min(eigs))
+            max_eig = float(np.max(eigs))
+            num_negative = int(np.sum(eigs < -1e-12))
+
+            # Condition number heuristic (use absolute min eigenvalue)
+            eps = 1e-16
+            denom = max(float(abs(min_eig)), eps)
+            condition_number = float(max_eig) / denom
+
+            diagnostics.update({
+                'cov_P_min_eigenvalue': min_eig,
+                'cov_P_max_eigenvalue': max_eig,
+                'cov_P_num_negative_eigenvalues': num_negative,
+                'cov_P_condition_number': condition_number,
+                'cov_P_is_positive_definite': bool(min_eig > 1e-12),
+                'cov_P_is_invertible': bool(abs(min_eig) > 1e-12)
+            })
+
+    except Exception as e:
+        diagnostics['cov_P_eigenvalue_error'] = str(e)
+
+    return diagnostics
+
+
+def _test_measure_construction(P, cov_matrix, expectation) -> Dict[str, Any]:
+    """Test if Gaussian measure can be constructed from covariance matrix."""
+    result = {
+        'cov_P_measure_failed': False,
+        'cov_P_measure_error': None
+    }
+
+    try:
+        GaussianMeasure.from_covariance_matrix(P, cov_matrix, expectation=expectation)
+    except Exception as e:
+        result['cov_P_measure_failed'] = True
+        result['cov_P_measure_error'] = str(e)
+
+    return result
+
+
+def _detect_critical_failures(diagnostics: Dict[str, Any]) -> List[str]:
+    """Detect critical failures that should raise exceptions."""
+    critical_failures = []
+
+    # Check if covariance matrix is not positive definite
+    if not diagnostics.get('cov_P_is_positive_definite', True):
+        min_eig = diagnostics.get('cov_P_min_eigenvalue', 'unknown')
+        critical_failures.append(
+            f"Covariance matrix not positive definite (min eigenvalue: {min_eig})"
+        )
+
+    # Check if measure construction failed
+    if diagnostics.get('cov_P_measure_failed', False):
+        measure_error = diagnostics.get('cov_P_measure_error', 'unknown')
+        critical_failures.append(
+            f"Gaussian measure construction failed: {measure_error}"
+        )
+
+    # Check for negative eigenvalues
+    num_neg = diagnostics.get('cov_P_num_negative_eigenvalues', 0)
+    if num_neg > 0:
+        critical_failures.append(f"{num_neg} negative eigenvalues detected")
+
+    return critical_failures
+
+
 ######################################
 # FUNDAMENTAL BLOCKS
 ######################################
@@ -190,10 +285,9 @@ def compute_model_posterior(
 def compute_property_posterior(
         P, bayesian_inference, d_tilde, /, *, solver
 ):
-    # Compute property posterior using built-in methods
+    """Compute property posterior using built-in methods with diagnostics."""
 
     # Use the LinearBayesianInference class to compute property posterior
-    # directly
     t0 = time.time()
     property_posterior = bayesian_inference.property_posterior_measure(
         d_tilde, solver
@@ -208,87 +302,275 @@ def compute_property_posterior(
     t1 = time.time()
     cov_P_computation_time = t1 - t0
 
-    # Basic diagnostics for the covariance matrix
-    cov_diagnostics = {}
+    # Run comprehensive covariance matrix diagnostics
+    cov_diagnostics = _compute_eigenvalue_diagnostics(cov_P_matrix)
 
-    try:
-        if cov_P_matrix is not None:
-            cov_diagnostics['cov_P_shape'] = getattr(
-                cov_P_matrix, 'shape', None
-            )
+    # Test measure construction
+    measure_results = _test_measure_construction(P, cov_P_matrix, p_tilde)
+    cov_diagnostics.update(measure_results)
 
-            # Compute symmetric eigenvalues (use eigvalsh for Hermitian)
-            try:
-                eigs = np.linalg.eigvalsh(cov_P_matrix)
-            except Exception:
-                # Fall back to a general eigenvalue routine if needed
-                eigs = np.linalg.eigvals(cov_P_matrix)
-                eigs = np.real(eigs)
-
-            min_eig = float(np.min(eigs))
-            max_eig = float(np.max(eigs))
-            num_negative = int(np.sum(eigs < -1e-12))
-
-            # Condition number heuristic (use absolute min eigenvalue)
-            eps = 1e-16
-            denom = max(float(abs(min_eig)), eps)
-            condition_number = float(max_eig) / denom
-
-            cov_diagnostics['cov_P_min_eigenvalue'] = min_eig
-            cov_diagnostics['cov_P_max_eigenvalue'] = max_eig
-            cov_diagnostics['cov_P_num_negative_eigenvalues'] = num_negative
-            cov_diagnostics['cov_P_condition_number'] = condition_number
-            cov_diagnostics['cov_P_is_positive_definite'] = (
-                bool(min_eig > 1e-12)
-            )
-            cov_diagnostics['cov_P_is_invertible'] = (
-                bool(abs(min_eig) > 1e-12)
-            )
-
-            # Suggest a minimal regularization amount if needed
-            suggestions = []
-            if min_eig <= 1e-12:
-                # Suggest adding diagonal jitter to shift min_eig positive
-                jitter = max(1e-8, float(-min_eig) + 1e-8)
-                suggestions.append(
-                    f"Add diagonal regularization ~ {jitter:.2e} to cov_P"
-                )
-            if condition_number > 1e12:
-                suggestions.append(
-                    "High condition number: consider stronger regularization"
-                )
-
-            if suggestions:
-                cov_diagnostics['cov_P_suggested_regularization'] = suggestions
-
-    except Exception as e:
-        # If diagnostics fail, record the exception message
-        cov_diagnostics['cov_P_suggested_regularization'] = [
-            f"Diagnostics error: {str(e)}"
-        ]
-
-    # Keep original behavior (create GaussianMeasure) but record diagnostics
-    try:
-        GaussianMeasure.from_covariance_matrix(
-            P, cov_P_matrix, expectation=p_tilde
-        )
-    except Exception as e:
-        # Record that measure construction failed but continue returning
-        # diagnostics so callers can inspect what went wrong.
-        cov_diagnostics['cov_P_measure_failed'] = True
-        cov_diagnostics['cov_P_measure_error'] = str(e)
-
-    # Return timings plus diagnostics for downstream analysis
+    # Prepare output with timings and diagnostics
     out = {
-        "property_posterior_computation_time": (
-            property_posterior_computation_time
-        ),
+        "property_posterior_computation_time": property_posterior_computation_time,
         "cov_P_computation_time": cov_P_computation_time,
     }
+    out.update(cov_diagnostics)
 
-    # Merge diagnostics into output explicitly to avoid type-checker issues
-    for k, v in cov_diagnostics.items():
-        out[k] = v
+    # Check for critical failures and raise exception if needed
+    critical_failures = _detect_critical_failures(cov_diagnostics)
+    if critical_failures:
+        error_message = "; ".join(critical_failures)
+        raise CovarianceMatrixError(error_message, diagnostics=out)
+
+    return out
+
+
+def compute_model_posterior_detailed(
+        M, d_tilde, bayesian_inference, /, *, solver
+):
+    """Compute model posterior with detailed intermediate diagnostics."""
+
+    # Step 1: Compute normal operator (covariance of prior predictive distribution)
+    t0 = time.time()
+    normal_operator = bayesian_inference.normal_operator
+    t1 = time.time()
+    normal_operator_time = t1 - t0
+
+    # Step 2: Get normal operator matrix and diagnose it
+    t0 = time.time()
+    normal_op_matrix = normal_operator.matrix(dense=True)
+    t1 = time.time()
+    normal_op_matrix_time = t1 - t0
+
+    normal_op_diagnostics = _compute_eigenvalue_diagnostics(normal_op_matrix)
+    # Rename keys to be specific to normal operator
+    normal_op_diagnostics = {f"normal_op_{k.replace('cov_P_', '')}": v
+                           for k, v in normal_op_diagnostics.items()}
+
+    # Step 3: Solve normal equations (this creates the inverse normal operator)
+    t0 = time.time()
+    try:
+        if hasattr(solver, '__call__'):
+            # Direct solver case (e.g., LUSolver)
+            inverse_normal_operator = solver(normal_operator)
+        else:
+            # Iterative solver case
+            inverse_normal_operator = solver(normal_operator)
+    except Exception as e:
+        # Capture solver failure
+        return {
+            "normal_operator_time": normal_operator_time,
+            "normal_op_matrix_time": normal_op_matrix_time,
+            "solver_failed": True,
+            "solver_error": str(e),
+            **normal_op_diagnostics
+        }
+    t1 = time.time()
+    solver_time = t1 - t0
+
+    # Step 4: Compute posterior mean
+    t0 = time.time()
+    data_space = bayesian_inference.data_space
+    model_space = bayesian_inference.model_space
+    forward_operator = bayesian_inference.forward_problem.forward_operator
+    prior_model_covariance = bayesian_inference.model_prior_measure.covariance
+
+    # Calculate shifted data: d - A*mu_u - mu_e
+    shifted_data = data_space.subtract(
+        d_tilde, forward_operator(bayesian_inference.model_prior_measure.expectation)
+    )
+    if bayesian_inference.forward_problem.data_error_measure_set:
+        shifted_data = data_space.subtract(
+            shifted_data, bayesian_inference.forward_problem.data_error_measure.expectation
+        )
+
+    # Posterior mean update: mu_post = mu_u + C_u*A^T*C_d^-1*(shifted_data)
+    mean_update = (
+        prior_model_covariance @ forward_operator.adjoint @ inverse_normal_operator
+    )(shifted_data)
+    expectation = model_space.add(bayesian_inference.model_prior_measure.expectation, mean_update)
+    t1 = time.time()
+    posterior_mean_time = t1 - t0
+
+    # Step 5: Compute posterior covariance
+    t0 = time.time()
+    # C_post = C_u - C_u*A^T*C_d^-1*A*C_u
+    covariance = prior_model_covariance - (
+        prior_model_covariance
+        @ forward_operator.adjoint
+        @ inverse_normal_operator
+        @ forward_operator
+        @ prior_model_covariance
+    )
+    t1 = time.time()
+    posterior_cov_time = t1 - t0
+
+    # Step 6: Convert covariance to dense matrix and diagnose
+    t0 = time.time()
+    C_M_matrix = covariance.matrix(dense=True)
+    t1 = time.time()
+    C_M_matrix_time = t1 - t0
+
+    model_cov_diagnostics = _compute_eigenvalue_diagnostics(C_M_matrix)
+    # Rename keys to be specific to model posterior covariance
+    model_cov_diagnostics = {f"model_post_{k.replace('cov_P_', '')}": v
+                           for k, v in model_cov_diagnostics.items()}
+
+    # Step 7: Test measure construction
+    measure_results = _test_measure_construction(M, C_M_matrix, expectation)
+    model_measure_results = {f"model_{k}": v for k, v in measure_results.items()}
+
+    # Prepare comprehensive output
+    out = {
+        "normal_operator_time": normal_operator_time,
+        "normal_op_matrix_time": normal_op_matrix_time,
+        "solver_time": solver_time,
+        "posterior_mean_time": posterior_mean_time,
+        "posterior_cov_time": posterior_cov_time,
+        "C_M_matrix_time": C_M_matrix_time,
+        "solver_failed": False,
+        **normal_op_diagnostics,
+        **model_cov_diagnostics,
+        **model_measure_results
+    }
+
+    # Check for critical failures in model posterior
+    critical_failures = []
+    if not model_cov_diagnostics.get('model_post_is_positive_definite', True):
+        min_eig = model_cov_diagnostics.get('model_post_min_eigenvalue', 'unknown')
+        critical_failures.append(f"Model posterior covariance not PD (min eigenvalue: {min_eig})")
+
+    if model_measure_results.get('model_cov_P_measure_failed', False):
+        critical_failures.append(f"Model measure construction failed: {model_measure_results.get('model_cov_P_measure_error', 'unknown')}")
+
+    if critical_failures:
+        error_message = "; ".join(critical_failures)
+        raise CovarianceMatrixError(error_message, diagnostics=out)
+
+    return out
+
+
+def compute_property_posterior_detailed(
+        P, M, bayesian_inference, d_tilde, /, *, solver
+):
+    """Compute property posterior with detailed step-by-step diagnostics."""
+
+    # Step 1: First compute model posterior with full diagnostics
+    try:
+        model_results = compute_model_posterior_detailed(M, d_tilde, bayesian_inference, solver=solver)
+    except CovarianceMatrixError as e:
+        # Model posterior failed, but we want to capture diagnostics
+        return {
+            "model_posterior_failed": True,
+            "model_posterior_error": str(e),
+            **e.diagnostics
+        }
+
+    # Step 2: Get the actual model posterior measure for property computation
+    t0 = time.time()
+    model_posterior = bayesian_inference.model_posterior_measure(d_tilde, solver)
+    t1 = time.time()
+    model_posterior_measure_time = t1 - t0
+
+    # Step 3: Apply property mapping to get property posterior
+    t0 = time.time()
+    property_posterior = model_posterior.affine_mapping(operator=bayesian_inference.property_operator)
+    t1 = time.time()
+    property_mapping_time = t1 - t0
+
+    # Step 4: Extract property posterior components
+    p_tilde = property_posterior.expectation
+    t0 = time.time()
+    cov_P_matrix = property_posterior.covariance.matrix(dense=True)
+    t1 = time.time()
+    cov_P_matrix_time = t1 - t0
+
+    # Step 5: Diagnose property posterior covariance
+    property_cov_diagnostics = _compute_eigenvalue_diagnostics(cov_P_matrix)
+    # Rename keys to be specific to property posterior
+    property_cov_diagnostics = {f"property_post_{k.replace('cov_P_', '')}": v
+                              for k, v in property_cov_diagnostics.items()}
+
+    # Step 6: Test property measure construction
+    property_measure_results = _test_measure_construction(P, cov_P_matrix, p_tilde)
+    property_measure_results = {f"property_{k}": v for k, v in property_measure_results.items()}
+
+    # Step 7: Check property operator properties
+    t0 = time.time()
+    try:
+        # Get model posterior covariance for rank analysis
+        model_cov = model_posterior.covariance
+        model_cov_matrix = model_cov.matrix(dense=True)
+
+        # Get property operator matrix if possible
+        prop_op_matrix = bayesian_inference.property_operator.matrix(dense=True)
+
+        # Compute property covariance via explicit formula: P @ C_model @ P^T
+        explicit_prop_cov = prop_op_matrix @ model_cov_matrix @ prop_op_matrix.T
+
+        # Compare with the affine mapping result
+        diff_norm = np.linalg.norm(explicit_prop_cov - cov_P_matrix, ord='fro')
+
+        # Diagnose property operator
+        prop_op_svd = np.linalg.svd(prop_op_matrix, compute_uv=False)
+        prop_op_rank = np.sum(prop_op_svd > 1e-12 * prop_op_svd[0])
+        prop_op_cond = prop_op_svd[0] / max(prop_op_svd[-1], 1e-16)
+
+        property_operator_diagnostics = {
+            "property_operator_shape": prop_op_matrix.shape,
+            "property_operator_rank": int(prop_op_rank),
+            "property_operator_condition": float(prop_op_cond),
+            "property_operator_min_singular": float(prop_op_svd[-1]),
+            "property_operator_max_singular": float(prop_op_svd[0]),
+            "explicit_vs_affine_diff_norm": float(diff_norm),
+            "explicit_computation_successful": True
+        }
+
+        # Additional diagnostics on the explicit computation
+        explicit_diagnostics = _compute_eigenvalue_diagnostics(explicit_prop_cov)
+        explicit_diagnostics = {f"explicit_{k.replace('cov_P_', '')}": v
+                              for k, v in explicit_diagnostics.items()}
+
+    except Exception as e:
+        property_operator_diagnostics = {
+            "explicit_computation_successful": False,
+            "explicit_computation_error": str(e)
+        }
+        explicit_diagnostics = {}
+
+    t1 = time.time()
+    property_operator_analysis_time = t1 - t0
+
+    # Combine all results
+    out = {
+        # Timing information
+        "model_posterior_measure_time": model_posterior_measure_time,
+        "property_mapping_time": property_mapping_time,
+        "cov_P_matrix_time": cov_P_matrix_time,
+        "property_operator_analysis_time": property_operator_analysis_time,
+
+        # Include all model posterior diagnostics
+        **model_results,
+
+        # Property-specific diagnostics
+        **property_cov_diagnostics,
+        **property_measure_results,
+        **property_operator_diagnostics,
+        **explicit_diagnostics
+    }
+
+    # Check for critical failures in property posterior
+    critical_failures = []
+    if not property_cov_diagnostics.get('property_post_is_positive_definite', True):
+        min_eig = property_cov_diagnostics.get('property_post_min_eigenvalue', 'unknown')
+        critical_failures.append(f"Property posterior covariance not PD (min eigenvalue: {min_eig})")
+
+    if property_measure_results.get('property_cov_P_measure_failed', False):
+        critical_failures.append(f"Property measure construction failed: {property_measure_results.get('property_cov_P_measure_error', 'unknown')}")
+
+    if critical_failures:
+        error_message = "; ".join(critical_failures)
+        raise CovarianceMatrixError(error_message, diagnostics=out)
 
     return out
 
@@ -313,6 +595,8 @@ DEPENDENCY_GRAPH = {
     ],
     'compute_model_posterior': ['setup_spatial_spaces', 'create_problems'],
     'compute_property_posterior': ['setup_spatial_spaces', 'create_problems'],
+    'compute_model_posterior_detailed': ['setup_spatial_spaces', 'create_problems'],
+    'compute_property_posterior_detailed': ['setup_spatial_spaces', 'create_problems'],
 }
 
 # Function registry
@@ -324,6 +608,8 @@ FUNCTION_REGISTRY = {
     'create_problems': create_problems,
     'compute_model_posterior': compute_model_posterior,
     'compute_property_posterior': compute_property_posterior,
+    'compute_model_posterior_detailed': compute_model_posterior_detailed,
+    'compute_property_posterior_detailed': compute_property_posterior_detailed,
 }
 
 # Define parameter requirements for each function
@@ -337,6 +623,8 @@ PARAMETER_REQUIREMENTS = {
     'create_problems': [],  # uses only artifacts from dependencies
     'compute_model_posterior': ['solver'],
     'compute_property_posterior': ['solver'],
+    'compute_model_posterior_detailed': ['solver'],
+    'compute_property_posterior_detailed': ['solver'],
 }
 
 # Define artifact outputs for each function (in order)
@@ -353,6 +641,8 @@ ARTIFACT_OUTPUTS = {
     'create_problems': ['forward_problem', 'bayesian_inference'],
     'compute_model_posterior': [],  # returns only results dict
     'compute_property_posterior': [],  # returns only results dict
+    'compute_model_posterior_detailed': [],  # returns only results dict
+    'compute_property_posterior_detailed': [],  # returns only results dict
 }
 
 
@@ -483,6 +773,19 @@ def run_with_dependencies(
                 artifacts['bayesian_inference'],
                 artifacts['d_tilde'],
             ]
+        elif func_name == 'compute_model_posterior_detailed':
+            pos_args = [
+                artifacts['M'],
+                artifacts['d_tilde'],
+                artifacts['bayesian_inference'],
+            ]
+        elif func_name == 'compute_property_posterior_detailed':
+            pos_args = [
+                artifacts['P'],
+                artifacts['M'],
+                artifacts['bayesian_inference'],
+                artifacts['d_tilde'],
+            ]
 
         # Execute the function
         print(f"Executing {func_name}...")
@@ -520,7 +823,9 @@ def run_with_dependencies(
 
         # Store results if function returns a results dict
         if isinstance(result, dict) and func_name in (
-            'compute_model_posterior', 'compute_property_posterior'
+            'compute_model_posterior', 'compute_property_posterior',
+            'compute_model_posterior_detailed',
+            'compute_property_posterior_detailed'
         ):
             all_results[func_name] = result
 

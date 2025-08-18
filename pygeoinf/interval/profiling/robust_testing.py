@@ -1,6 +1,40 @@
 """
 Enhanced PLI Profiler - Phase 1: Robust Testing Framework
 Goal: Find scenarios where PLI breaks and understand failure modes
+
+This framework now supports testing any dependency block, not just compute_property_posterior!
+
+Available blocks:
+- setup_spatial_spaces: Basic spatial domain setup
+- setup_mappings: Integration/mapping operators
+- _setup_truths_and_measurement: Data and measurement setup
+- setup_prior_measure: Prior measure construction
+- create_problems: Forward problem and Bayesian inference setup
+- compute_model_posterior: Model posterior computation
+- compute_property_posterior: Property posterior computation (default)
+
+Quick usage examples:
+
+1. Test a single block:
+   from robust_testing import test_block, get_available_blocks
+
+   # See available blocks
+   print(get_available_blocks())
+
+   # Test specific block
+   result = test_block('compute_model_posterior', parameters)
+
+2. Run custom test suite on any block:
+   from robust_testing import run_custom_robustness_test
+
+   results_df = run_custom_robustness_test(
+       configurations=[config1, config2, ...],
+       target_block='compute_model_posterior'
+   )
+
+3. Backward compatibility (defaults to compute_property_posterior):
+   tester = RobustTester()
+   result = tester.run_single_test(parameters)  # same as before
 """
 
 import numpy as np
@@ -10,6 +44,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import time
+import pandas as pd
 
 
 class FailureType(Enum):
@@ -130,10 +165,11 @@ class RobustTester:
         self.timeout_seconds = timeout_seconds
         self.results: List[TestResult] = []
 
-    def run_comprehensive_test_suite(self, base_parameters: Dict[str, Any]) -> List[TestResult]:
+    def run_comprehensive_test_suite(self, base_parameters: Dict[str, Any], target_block: str = 'compute_property_posterior') -> List[TestResult]:
         """Run all test categories"""
 
         print("🧪 Starting Comprehensive PLI Test Suite...")
+        print(f"📋 Target block: {target_block}")
 
         # Generate test cases
         test_configs = []
@@ -159,7 +195,7 @@ class RobustTester:
         # Run tests
         for i, config in enumerate(test_configs):
             print(f"Running test {i+1}/{len(test_configs)}...")
-            result = self.run_single_test(config)
+            result = self.run_single_test(config, target_block=target_block)
             self.results.append(result)
 
             if not result.success:
@@ -170,7 +206,112 @@ class RobustTester:
 
         return self.results
 
-    def run_single_test(self, parameters: Dict[str, Any]) -> TestResult:
+    def run_custom_test_suite(
+        self,
+        configurations: List[Dict[str, Any]],
+        save_to_file: Optional[str] = None,
+        verbose: bool = True,
+        target_block: str = 'compute_property_posterior'
+    ) -> pd.DataFrame:
+        """
+        Run tests on user-provided configurations and return results as DataFrame.
+
+        Parameters:
+        -----------
+        configurations : List[Dict[str, Any]]
+            List of parameter dictionaries to test
+        save_to_file : Optional[str]
+            If provided, save the DataFrame to this file path (CSV format)
+        verbose : bool
+            Whether to print progress messages
+        target_block : str
+            Which block to test (e.g., 'compute_property_posterior', 'compute_model_posterior', etc.)
+
+        Returns:
+        --------
+        pd.DataFrame
+            Results with columns for parameters, success, timing, errors, etc.
+        """
+
+        if verbose:
+            print(f"🧪 Running Custom Test Suite with {len(configurations)} configurations...")
+            print(f"📋 Target block: {target_block}")
+
+        # Clear previous results
+        self.results = []
+
+        # Run tests
+        for i, config in enumerate(configurations):
+            if verbose:
+                print(f"Running test {i+1}/{len(configurations)}...")
+
+            result = self.run_single_test(config, target_block=target_block)
+            self.results.append(result)
+
+            if verbose:
+                if not result.success:
+                    print(f"❌ FAILED: {result.failure_type} at {result.failure_stage}")
+                    print(f"   Error: {result.error_message}")
+                else:
+                    print(f"✅ SUCCESS: {result.execution_time:.2f}s")
+
+        # Convert to DataFrame
+        df = self._results_to_dataframe()
+
+        # Save to file if requested
+        if save_to_file:
+            df.to_csv(save_to_file, index=False)
+            if verbose:
+                print(f"📁 Results saved to {save_to_file}")
+
+        if verbose:
+            success_rate = (df['success'].sum() / len(df)) * 100
+            print(f"🔍 Test Suite Complete: {success_rate:.1f}% success rate")
+
+        return df
+
+    def _results_to_dataframe(self) -> pd.DataFrame:
+        """Convert test results to a pandas DataFrame for analysis"""
+
+        rows = []
+
+        for result in self.results:
+            # Start with basic info
+            row = {
+                'success': result.success,
+                'execution_time': result.execution_time,
+                'failure_type': result.failure_type.value if result.failure_type else None,
+                'failure_stage': result.failure_stage,
+                'error_message': result.error_message,
+                'warnings_count': len(result.warnings),
+                'memory_peak': result.memory_peak
+            }
+
+            # Add all parameters as separate columns
+            for param_name, param_value in result.parameters.items():
+                row[f'param_{param_name}'] = param_value
+
+            # Add results if available
+            if result.results:
+                for result_name, result_value in result.results.items():
+                    # Handle different types of results
+                    if isinstance(result_value, (int, float, bool)):
+                        row[f'result_{result_name}'] = result_value
+                    elif isinstance(result_value, np.ndarray):
+                        # Store array statistics
+                        row[f'result_{result_name}_mean'] = np.mean(result_value)
+                        row[f'result_{result_name}_std'] = np.std(result_value)
+                        row[f'result_{result_name}_min'] = np.min(result_value)
+                        row[f'result_{result_name}_max'] = np.max(result_value)
+                    else:
+                        # Convert to string for complex objects
+                        row[f'result_{result_name}'] = str(result_value)
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    def run_single_test(self, parameters: Dict[str, Any], target_block: str = 'compute_property_posterior') -> TestResult:
         """Run a single test with comprehensive error handling"""
 
         start_time = time.time()
@@ -181,7 +322,7 @@ class RobustTester:
             from pli_profiling import run_with_dependencies
 
             # Add timeout handling (simplified - real implementation would use signal)
-            results = run_with_dependencies('compute_property_posterior', parameters)
+            results = run_with_dependencies(target_block, parameters)
 
             execution_time = time.time() - start_time
 
@@ -209,12 +350,20 @@ class RobustTester:
             failure_type = self._classify_failure(e)
             failure_stage = self._extract_failure_stage(traceback.format_exc())
 
+            # Try to extract diagnostics from CovarianceMatrixError
+            diagnostics_results = None
+            if 'CovarianceMatrixError' in str(type(e)) and hasattr(e, 'diagnostics'):
+                # Use getattr to safely access the diagnostics attribute
+                diagnostics = getattr(e, 'diagnostics', None)
+                if diagnostics:
+                    diagnostics_results = {target_block: diagnostics}
+
             return TestResult(
                 parameters=parameters,
                 success=False,
                 execution_time=execution_time,
                 memory_peak=None,
-                results=None,
+                results=diagnostics_results,  # Include diagnostics if available
                 failure_type=failure_type,
                 failure_stage=failure_stage,
                 error_message=str(e),
@@ -226,7 +375,10 @@ class RobustTester:
         """Classify the type of failure based on exception"""
         error_msg = str(exception).lower()
 
-        if isinstance(exception, (np.linalg.LinAlgError, ValueError)) and 'singular' in error_msg:
+        # Check for our custom covariance matrix error
+        if 'CovarianceMatrixError' in str(type(exception)):
+            return FailureType.NUMERICAL_INSTABILITY
+        elif isinstance(exception, (np.linalg.LinAlgError, ValueError)) and 'singular' in error_msg:
             return FailureType.NUMERICAL_INSTABILITY
         elif isinstance(exception, MemoryError):
             return FailureType.MEMORY_ERROR
@@ -315,8 +467,60 @@ class RobustTester:
         return {"analysis": "Would analyze parameter correlations with failures"}
 
 
+def run_custom_robustness_test(
+    configurations: List[Dict[str, Any]],
+    save_to_file: Optional[str] = None,
+    timeout_seconds: float = 300,
+    verbose: bool = True,
+    target_block: str = 'compute_property_posterior'
+) -> pd.DataFrame:
+    """
+    Convenience function to run robustness tests on custom configurations.
+
+    Parameters:
+    -----------
+    configurations : List[Dict[str, Any]]
+        List of parameter dictionaries to test
+    save_to_file : Optional[str]
+        If provided, save the DataFrame to this file path (CSV format)
+    timeout_seconds : float
+        Timeout for individual tests
+    verbose : bool
+        Whether to print progress messages
+    target_block : str
+        Which block to test (e.g., 'compute_property_posterior', 'compute_model_posterior', etc.)
+
+    Returns:
+    --------
+    pd.DataFrame
+        Results DataFrame with test outcomes and analysis
+
+    Example:
+    --------
+    configs = [
+        {'N': 10, 'N_d': 20, 'N_p': 5, 'alpha': 0.1},
+        {'N': 20, 'N_d': 40, 'N_p': 10, 'alpha': 0.5},
+        {'N': 50, 'N_d': 100, 'N_p': 25, 'alpha': 1.0},
+    ]
+
+    results_df = run_custom_robustness_test(
+        configs,
+        save_to_file='my_test_results.csv',
+        target_block='compute_model_posterior'
+    )
+    """
+
+    tester = RobustTester(timeout_seconds=timeout_seconds)
+    return tester.run_custom_test_suite(
+        configurations=configurations,
+        save_to_file=save_to_file,
+        verbose=verbose,
+        target_block=target_block
+    )
+
+
 # Example usage function
-def run_robustness_testing():
+def run_robustness_testing(target_block: str = 'compute_property_posterior'):
     """Example of how to run comprehensive robustness testing"""
 
     # Base parameters that work
@@ -333,7 +537,7 @@ def run_robustness_testing():
     }
 
     tester = RobustTester(timeout_seconds=60)
-    results = tester.run_comprehensive_test_suite(base_params)
+    results = tester.run_comprehensive_test_suite(base_params, target_block=target_block)
 
     # Generate report
     report = tester.generate_failure_report()
@@ -346,5 +550,142 @@ def run_robustness_testing():
     return results, report
 
 
+def get_available_blocks() -> List[str]:
+    """Get list of available blocks that can be tested"""
+    try:
+        from pli_profiling import DEPENDENCY_GRAPH
+        return list(DEPENDENCY_GRAPH.keys())
+    except ImportError:
+        return [
+            'setup_spatial_spaces',
+            'setup_mappings',
+            '_setup_truths_and_measurement',
+            'setup_prior_measure',
+            'create_problems',
+            'compute_model_posterior',
+            'compute_property_posterior'
+        ]
+
+
+def test_block(
+    block_name: str,
+    parameters: Dict[str, Any],
+    timeout_seconds: float = 60
+) -> TestResult:
+    """
+    Convenience function to test a single block with given parameters.
+
+    Parameters:
+    -----------
+    block_name : str
+        Name of the block to test (use get_available_blocks() to see options)
+    parameters : Dict[str, Any]
+        Parameters dictionary for the test
+    timeout_seconds : float
+        Timeout for the test
+
+    Returns:
+    --------
+    TestResult
+        Result of the test
+
+    Example:
+    --------
+    params = {
+        'N': 20, 'N_d': 40, 'N_p': 10,
+        'endpoints': (0, 1), 'basis_type': 'sine',
+        # ... other required parameters
+    }
+
+    result = test_block('compute_model_posterior', params)
+    print(f"Success: {result.success}")
+    """
+
+    available_blocks = get_available_blocks()
+    if block_name not in available_blocks:
+        raise ValueError(f"Unknown block '{block_name}'. Available blocks: {available_blocks}")
+
+    tester = RobustTester(timeout_seconds=timeout_seconds)
+    return tester.run_single_test(parameters, target_block=block_name)
+
+
+def example_custom_testing():
+    """Example of how to run custom configuration testing"""
+
+    # Base parameters that work
+    base_params = {
+        'endpoints': (0, 1),
+        'basis_type': 'sine',
+        'integration_method_G': 'trapz',
+        'integration_method_T': 'trapz',
+        'n_points_G': 1000,
+        'n_points_T': 1000,
+        'm_bar_callable': lambda x: np.sin(2 * np.pi * x),
+        'm_0_callable': lambda x: np.zeros_like(x),
+        'solver': 'LUSolver()'
+    }
+
+    # Create custom configurations to test
+    custom_configs = []
+
+    # Test different dimensions
+    for N, N_d, N_p in [(10, 20, 5), (25, 50, 15), (50, 100, 25)]:
+        config = base_params.copy()
+        config.update({'N': N, 'N_d': N_d, 'N_p': N_p})
+        custom_configs.append(config)
+
+    # Test different noise levels
+    for noise in [0.01, 0.1, 0.5]:
+        config = base_params.copy()
+        config.update({
+            'true_data_noise': noise,
+            'assumed_data_noise': noise,
+            'N': 20, 'N_d': 40, 'N_p': 10
+        })
+        custom_configs.append(config)
+
+    # Test different priors
+    for alpha in [0.01, 0.1, 1.0]:
+        config = base_params.copy()
+        config.update({
+            'alpha': alpha,
+            'K': 20,
+            'N': 20, 'N_d': 40, 'N_p': 10
+        })
+        custom_configs.append(config)
+
+    print(f"Testing {len(custom_configs)} custom configurations")
+
+    # Run the tests and save results
+    results_df = run_custom_robustness_test(
+        configurations=custom_configs,
+        save_to_file='custom_test_results.csv',
+        timeout_seconds=60,
+        verbose=True
+    )
+
+    # Basic analysis
+    print("\n📊 RESULTS SUMMARY:")
+    print(f"Total tests: {len(results_df)}")
+    print(f"Successful: {results_df['success'].sum()}")
+    print(f"Failed: {(~results_df['success']).sum()}")
+    print(f"Success rate: {results_df['success'].mean():.1%}")
+
+    if 'failure_type' in results_df.columns:
+        print("\nFailure types:")
+        print(results_df['failure_type'].value_counts())
+
+    print("\nExecution time stats:")
+    print(results_df['execution_time'].describe())
+
+    return results_df
+
+
 if __name__ == "__main__":
-    results, report = run_robustness_testing()
+    # You can run either the comprehensive test or custom test
+
+    # Original comprehensive test
+    # results, report = run_robustness_testing()
+
+    # New custom configuration test
+    custom_results = example_custom_testing()
