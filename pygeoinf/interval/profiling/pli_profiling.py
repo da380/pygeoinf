@@ -79,7 +79,8 @@ def _test_measure_construction(P, cov_matrix, expectation) -> Dict[str, Any]:
     }
 
     try:
-        GaussianMeasure.from_covariance_matrix(P, cov_matrix, expectation=expectation)
+            return GaussianMeasure.from_covariance_matrix(
+        P, cov_matrix, expectation=expectation)
     except Exception as e:
         result['cov_P_measure_failed'] = True
         result['cov_P_measure_error'] = str(e)
@@ -252,80 +253,6 @@ def create_problems(
 
 
 def compute_model_posterior(
-        M, d_tilde,
-        bayesian_inference,
-        /, *, solver
-):
-    # Compute posterior using the built-in solver
-    t0 = time.time()
-    posterior_model = bayesian_inference.model_posterior_measure(
-        d_tilde, solver
-    )
-    t1 = time.time()
-    posterior_model_computation_time = t1 - t0
-
-    # Extract mean and covariance for compatibility
-    m_tilde = posterior_model.expectation
-    t0 = time.time()
-    C_M_matrix = posterior_model.covariance.matrix(dense=True)
-    t1 = time.time()
-    C_M_computation_time = t1 - t0
-    # Create new Gaussian measure with sampling capability using
-    # dense covariance
-    GaussianMeasure.from_covariance_matrix(
-        M, C_M_matrix, expectation=m_tilde
-    )
-
-    return {
-        "posterior_model_computation_time": posterior_model_computation_time,
-        "C_M_computation_time": C_M_computation_time
-    }
-
-
-def compute_property_posterior(
-        P, bayesian_inference, d_tilde, /, *, solver
-):
-    """Compute property posterior using built-in methods with diagnostics."""
-
-    # Use the LinearBayesianInference class to compute property posterior
-    t0 = time.time()
-    property_posterior = bayesian_inference.property_posterior_measure(
-        d_tilde, solver
-    )
-    t1 = time.time()
-    property_posterior_computation_time = t1 - t0
-
-    # Extract property mean and covariance
-    p_tilde = property_posterior.expectation
-    t0 = time.time()
-    cov_P_matrix = property_posterior.covariance.matrix(dense=True)
-    t1 = time.time()
-    cov_P_computation_time = t1 - t0
-
-    # Run comprehensive covariance matrix diagnostics
-    cov_diagnostics = _compute_eigenvalue_diagnostics(cov_P_matrix)
-
-    # Test measure construction
-    measure_results = _test_measure_construction(P, cov_P_matrix, p_tilde)
-    cov_diagnostics.update(measure_results)
-
-    # Prepare output with timings and diagnostics
-    out = {
-        "property_posterior_computation_time": property_posterior_computation_time,
-        "cov_P_computation_time": cov_P_computation_time,
-    }
-    out.update(cov_diagnostics)
-
-    # Check for critical failures and raise exception if needed
-    critical_failures = _detect_critical_failures(cov_diagnostics)
-    if critical_failures:
-        error_message = "; ".join(critical_failures)
-        raise CovarianceMatrixError(error_message, diagnostics=out)
-
-    return out
-
-
-def compute_model_posterior_detailed(
         M, d_tilde, bayesian_inference, /, *, solver
 ):
     """Compute model posterior with detailed intermediate diagnostics."""
@@ -450,14 +377,14 @@ def compute_model_posterior_detailed(
     return out
 
 
-def compute_property_posterior_detailed(
+def compute_property_posterior(
         P, M, bayesian_inference, d_tilde, /, *, solver
 ):
     """Compute property posterior with detailed step-by-step diagnostics."""
 
     # Step 1: First compute model posterior with full diagnostics
     try:
-        model_results = compute_model_posterior_detailed(M, d_tilde, bayesian_inference, solver=solver)
+        model_results = compute_model_posterior(M, d_tilde, bayesian_inference, solver=solver)
     except CovarianceMatrixError as e:
         # Model posterior failed, but we want to capture diagnostics
         return {
@@ -575,6 +502,8 @@ def compute_property_posterior_detailed(
     return out
 
 
+
+
 ######################################
 # DEPENDENCY RESOLUTION SYSTEM
 ######################################
@@ -582,21 +511,14 @@ def compute_property_posterior_detailed(
 # Define the dependency graph
 DEPENDENCY_GRAPH = {
     'setup_spatial_spaces': [],
-    'setup_mappings': ['setup_spatial_spaces'],
-    '_setup_truths_and_measurement': [
-        'setup_spatial_spaces',
-        'setup_mappings',
-    ],
-    'setup_prior_measure': ['setup_spatial_spaces'],
-    'create_problems': [
-        'setup_mappings',
-        '_setup_truths_and_measurement',
-        'setup_prior_measure',
-    ],
+    'create_problems': ['setup_spatial_spaces'],
+    'solve_problems': ['setup_spatial_spaces', 'create_problems'],
     'compute_model_posterior': ['setup_spatial_spaces', 'create_problems'],
     'compute_property_posterior': ['setup_spatial_spaces', 'create_problems'],
-    'compute_model_posterior_detailed': ['setup_spatial_spaces', 'create_problems'],
-    'compute_property_posterior_detailed': ['setup_spatial_spaces', 'create_problems'],
+    'compute_model_trace': ['compute_model_posterior'],
+    'compute_bias_variance': ['compute_model_posterior'],
+    'add_noise_realizations': ['solve_problems'],
+    'create_gram_matrix': ['setup_spatial_spaces'],
 }
 
 # Function registry
@@ -608,8 +530,6 @@ FUNCTION_REGISTRY = {
     'create_problems': create_problems,
     'compute_model_posterior': compute_model_posterior,
     'compute_property_posterior': compute_property_posterior,
-    'compute_model_posterior_detailed': compute_model_posterior_detailed,
-    'compute_property_posterior_detailed': compute_property_posterior_detailed,
 }
 
 # Define parameter requirements for each function
@@ -623,8 +543,6 @@ PARAMETER_REQUIREMENTS = {
     'create_problems': [],  # uses only artifacts from dependencies
     'compute_model_posterior': ['solver'],
     'compute_property_posterior': ['solver'],
-    'compute_model_posterior_detailed': ['solver'],
-    'compute_property_posterior_detailed': ['solver'],
 }
 
 # Define artifact outputs for each function (in order)
@@ -641,8 +559,6 @@ ARTIFACT_OUTPUTS = {
     'create_problems': ['forward_problem', 'bayesian_inference'],
     'compute_model_posterior': [],  # returns only results dict
     'compute_property_posterior': [],  # returns only results dict
-    'compute_model_posterior_detailed': [],  # returns only results dict
-    'compute_property_posterior_detailed': [],  # returns only results dict
 }
 
 
@@ -773,19 +689,6 @@ def run_with_dependencies(
                 artifacts['bayesian_inference'],
                 artifacts['d_tilde'],
             ]
-        elif func_name == 'compute_model_posterior_detailed':
-            pos_args = [
-                artifacts['M'],
-                artifacts['d_tilde'],
-                artifacts['bayesian_inference'],
-            ]
-        elif func_name == 'compute_property_posterior_detailed':
-            pos_args = [
-                artifacts['P'],
-                artifacts['M'],
-                artifacts['bayesian_inference'],
-                artifacts['d_tilde'],
-            ]
 
         # Execute the function
         print(f"Executing {func_name}...")
@@ -823,9 +726,7 @@ def run_with_dependencies(
 
         # Store results if function returns a results dict
         if isinstance(result, dict) and func_name in (
-            'compute_model_posterior', 'compute_property_posterior',
-            'compute_model_posterior_detailed',
-            'compute_property_posterior_detailed'
+            'compute_model_posterior', 'compute_property_posterior'
         ):
             all_results[func_name] = result
 

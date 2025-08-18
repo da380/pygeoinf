@@ -10,9 +10,10 @@ import numpy as np
 import math
 from abc import ABC, abstractmethod
 from typing import Optional, Any, Dict, List, Tuple, TYPE_CHECKING
+import os
+from scipy.interpolate import interp1d
 
-if TYPE_CHECKING:
-    from .functions import Function
+from pygeoinf.interval.functions import Function
 
 
 class FunctionProvider(ABC):
@@ -1152,3 +1153,39 @@ class HatFunctionProvider(IndexedFunctionProvider):
             return self.nodes[1:-1].copy()  # Exclude boundary nodes
         else:
             return self.nodes.copy()  # All nodes are active
+
+
+class KernelProvider(IndexedFunctionProvider):
+    def __init__(self, space: "L2Space", kernel_type: str = "rho", kernel_data_dir: str = None):
+
+        super().__init__(space)
+        self._kernel_type = kernel_type
+        self._data_dir = kernel_data_dir
+        self._data_list = self._get_data_list()
+
+    def get_function_by_index(self, index: int):
+        if index < 0 or index >= len(self._data_list):
+            raise IndexError(
+                f"Invalid index. Maximum is {len(self._data_list) - 1}"
+            )
+        mode = self._data_list[index]
+        filename = f"{self._kernel_type}-sens_{mode}_iso.dat"
+        filepath = os.path.join(self._data_dir, filename)
+        if not os.path.isfile(filepath):
+            raise FileNotFoundError(f"Kernel file not found: {filepath}")
+        data = np.loadtxt(filepath)
+        radius = data[:, 0]
+        values = data[:, 1]
+
+        interp_func = interp1d(
+            radius, values, bounds_error=False, fill_value='extrapolate'
+        )
+        return Function(self.space, evaluate_callable=interp_func)
+
+    def _get_data_list(self):
+        """Get a list of all kernel data files."""
+        filepath = os.path.join(self._data_dir, 'data_list_SP12RTS')
+        if not os.path.isfile(filepath):
+            return []
+        with open(filepath, 'r') as f:
+            return [line.strip() for line in f if line.strip()]
