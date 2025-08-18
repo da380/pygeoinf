@@ -1,5 +1,5 @@
 """
-Sobolev spaces for functions on a circle.
+ Sobolev spaces for functions on a circle.
 """
 
 from __future__ import annotations
@@ -295,7 +295,7 @@ class Sobolev(SymmetricSpaceSobolev):
         """
         if not isinstance(other, Sobolev):
             return NotImplemented
-        
+
         return (self.kmax == other.kmax and
                 self.order == other.order and
                 self.scale == other.scale and

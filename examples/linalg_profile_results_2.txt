@@ -1,0 +1,90 @@
+Timer unit: 1e-06 s
+
+Total time: 18.4797 s
+File: /home/adrian/PhD/Inferences/pygeoinf/examples/inference.py
+Function: G_mapping at line 79
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    79                                           def G_mapping(f: functions.Function, kernels):
+    80        63   18479742.2 293329.2    100.0      return np.array([M.inner_product(f, kernel) for kernel in kernels])
+
+Total time: 18.4818 s
+File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Function: __call__ at line 201
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   201                                               def __call__(self, x):
+   202                                                   """Action of the operator on a vector."""
+   203       190   18481757.9  97272.4    100.0          return self.__mapping(x)
+
+Total time: 0 s
+File: /home/adrian/PhD/Inferences/pygeoinf/pygeoinf/linalg.py
+Function: __call__ at line 1462
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+  1462                                               def __call__(self, operator, /, *, preconditioner=None, x0=None):
+  1463                                           
+  1464                                                   if operator.domain != operator.codomain:
+  1465                                                       raise ValueError("Operator is not self-adjoint!")
+  1466                                           
+  1467                                                   def mapping(y):
+  1468                                           
+  1469                                                       domain = operator.domain
+  1470                                           
+  1471                                                       if x0 is None:
+  1472                                                           x = domain.zero
+  1473                                                       else:
+  1474                                                           x = domain.copy(x0)
+  1475                                           
+  1476                                                       r = domain.subtract(y, operator(x))
+  1477                                                       if preconditioner is None:
+  1478                                                           z = domain.copy(r)
+  1479                                                       else:
+  1480                                                           z = preconditioner(r)
+  1481                                                       p = domain.copy(z)
+  1482                                           
+  1483                                                       y_squared_norm = domain.squared_norm(y)
+  1484                                                       if y_squared_norm <= self._atol:
+  1485                                                           return y
+  1486                                           
+  1487                                                       tol = np.max([self._atol, self._rtol * y_squared_norm])
+  1488                                           
+  1489                                                       if self._maxiter is None:
+  1490                                                           maxiter = 10 * domain.dim
+  1491                                                       else:
+  1492                                                           maxiter = self._maxiter
+  1493                                           
+  1494                                                       for iteration in range(maxiter):
+  1495                                                           if (domain.norm(r) <= tol):
+  1496                                                               break
+  1497                                           
+  1498                                                           q = operator(p)
+  1499                                                           num = domain.inner_product(r, z)
+  1500                                                           den = domain.inner_product(p, q)
+  1501                                                           alpha = num / den
+  1502                                           
+  1503                                                           x = domain.axpy(alpha, p, x)
+  1504                                                           r = domain.axpy(-alpha, q, r)
+  1505                                           
+  1506                                                           if preconditioner is None:
+  1507                                                               z = domain.copy(r)
+  1508                                                           else:
+  1509                                                               z = preconditioner(r)
+  1510                                           
+  1511                                                           den = num
+  1512                                                           num = operator.domain.inner_product(r, z)
+  1513                                                           beta = num / den
+  1514                                           
+  1515                                                           p = domain.multiply(beta, p)
+  1516                                                           p = domain.add(p, z)
+  1517                                           
+  1518                                                           if self._callback is not None:
+  1519                                                               self._callback(x)
+  1520                                           
+  1521                                                       return x
+  1522                                           
+  1523                                                   return LinearOperator.self_adjoint(operator.domain, mapping)
+

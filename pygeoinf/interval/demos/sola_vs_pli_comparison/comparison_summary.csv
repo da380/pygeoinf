@@ -1,0 +1,8 @@
+Metric,SOLA,PLI,Winner
+Mean Absolute Error,0.189709,0.164527,PLI
+RMS Error,0.213294,0.179896,PLI
+Model Reconstruction Error,1.117653,0.400939,PLI
+Computation Time (s),1.182,2.408,SOLA
+1σ Coverage,0.55,0.30,SOLA
+2σ Coverage,0.85,0.90,PLI
+Average Uncertainty,0.204855,0.146638,PLI

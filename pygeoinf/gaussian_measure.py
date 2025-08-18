@@ -1,5 +1,5 @@
 """
-Module for representing Gaussian measures on abstract Hilbert spaces.
+Module for Gaussian measures on Hilbert spaces.
 """
 
 from __future__ import annotations

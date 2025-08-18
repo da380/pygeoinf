@@ -1,5 +1,8 @@
 """
-Module defining the core HilbertSpace and EuclideanSpace classes.
+Module defining classes for Hilbert spaces, linear operators and linear forms.
+
+The classes within this module have interdependencies and so cannot be split
+into separate modules.
 """
 
 from __future__ import annotations

@@ -1,14 +1,6 @@
 """
-Module for defining forward problem classes.
-
-This module provides classes to represent inverse problem formulations, which
-relate unknown model parameters to observed data through a forward operator.
-It handles both deterministic (error-free) and statistical (with data errors)
-scenarios.
+Module defined the forward problem class.
 """
-
-from __future__ import annotations
-from typing import Optional, List, Tuple, TYPE_CHECKING
 
 from scipy.stats import chi2
 

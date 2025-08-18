@@ -1,5 +1,5 @@
 """
-Module for solving linear systems of equations involving abstract operators.
+Module for linear solvers.
 """
 
 from __future__ import annotations
