@@ -18,10 +18,11 @@ from abc import ABC, abstractmethod
 from typing import Optional, Union, Literal
 import warnings
 
+from pygeoinf.hilbert_space import EuclideanSpace
 from .l2_space import L2Space
 from .sobolev_space import Sobolev
 from .boundary_conditions import BoundaryConditions
-from pygeoinf.hilbert_space import LinearOperator, EuclideanSpace
+from pygeoinf.operators import LinearOperator
 from .functions import Function
 from .providers import create_laplacian_spectrum_provider
 # FEM import only needed for LaplacianInverseOperator

@@ -407,7 +407,7 @@ class TestSobolevSpaceAutomorphism(unittest.TestCase):
         auto = self.space.automorphism(f)
 
         # Should return a LinearOperator
-        from pygeoinf.hilbert_space import LinearOperator
+        from pygeoinf.operators import LinearOperator
         self.assertIsInstance(auto, LinearOperator)
 
     def test_automorphism_application(self):

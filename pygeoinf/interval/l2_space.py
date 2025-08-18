@@ -8,9 +8,11 @@ for more specialized function spaces like Sobolev spaces.
 import numpy as np
 from typing import Optional
 
+from pygeoinf.hilbert_space import HilbertSpace
 
-from pygeoinf.hilbert_space import HilbertSpace, LinearOperator
-from pygeoinf.hilbert_space import LinearForm
+
+from pygeoinf.operators import LinearOperator
+from pygeoinf.forms import LinearForm
 from pygeoinf.interval.functions import Function
 from pygeoinf.interval.interval_domain import IntervalDomain
 from pygeoinf.interval.providers import BasisProvider
