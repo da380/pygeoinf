@@ -2,6 +2,8 @@
 Module defined the forward problem class.
 """
 
+from typing import TYPE_CHECKING, Optional, List, Tuple
+
 from scipy.stats import chi2
 
 from .gaussian_measure import GaussianMeasure
