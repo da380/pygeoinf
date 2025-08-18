@@ -1,14 +1,32 @@
-import numpy as np
-import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.symmetric_space.line import Sobolev
 
-X = Sobolev.from_sobolev_parameters(2, 0.1)
-A = inf.LinearOperator(X, X, lambda x: x)
-mu = X.heat_gaussian_measure(0.1, 1)
+X = inf.EuclideanSpace(2)
 
-fp = inf.LinearForwardProblem(A, data_error_measure=mu)
+Y = inf.HilbertSpaceDirectSum([X, X])
 
-cfp = inf.LinearForwardProblem.from_direct_sum([fp, fp])
+Z = X
 
-print(cfp.model_space == fp.model_space)
+
+class OperatorTest(inf.LinearOperator):
+
+    def __init__(self, domain):
+
+        codomain = inf.HilbertSpaceDirectSum([domain, domain])
+
+        def mapping(x):
+            return [x, x]
+
+        def formal_adjoint_mapping(y):
+            [y1, y2] = y
+            return self.domain.add(y1, y2)
+
+        super().__init__(
+            domain, codomain, mapping, formal_adjoint_mapping=formal_adjoint_mapping
+        )
+
+
+A = OperatorTest(Y)
+
+print(A)
+
+print(A.adjoint)
