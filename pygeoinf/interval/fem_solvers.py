@@ -26,10 +26,19 @@ class GeneralFEMSolver:
     suitable functions that span the finite-dimensional subspace Vₕ ⊂ H₀¹(a,b).
 
     The solver extracts basis functions from the L2Space basis provider and
-    assembles the stiffness matrix and load vector using numerical integration:
+    assembles the stiffness matrix and load vector. For the stiffness matrix:
 
     [K]ᵢⱼ = ∫ φ'ᵢ(x) φ'ⱼ(x) dx
     [F]ᵢ = ∫ f(x) φᵢ(x) dx
+
+    **Analytical Optimization**: For hat functions with homogeneous Dirichlet
+    boundary conditions, the solver automatically detects this configuration
+    and uses an analytical formula for the stiffness matrix, which is much
+    faster than numerical integration.
+
+    **Numerical Method**: For arbitrary basis functions, the solver uses the
+    GradientOperator for computing derivatives and Function.integrate() for
+    integration, providing a robust and mathematically consistent approach.
     """
 
     def __init__(self, l2_space, boundary_conditions: BoundaryConditions):
@@ -65,10 +74,10 @@ class GeneralFEMSolver:
         # For Dirichlet BCs, basis functions should vanish at boundaries
         if hasattr(l2_space, '_basis_type'):
             basis_type = l2_space._basis_type
-            if basis_type not in ['hat_homogeneous', 'fourier_sin']:
+            if basis_type not in ['hat_homogeneous', 'sine']:
                 print(f"Warning: L2Space basis type '{basis_type}' may not "
                       f"satisfy homogeneous Dirichlet boundary conditions. "
-                      f"Consider using 'hat_homogeneous' or 'fourier_sin'.")
+                      f"Consider using 'hat_homogeneous' or 'sine'.")
         else:
             print("Warning: L2Space basis type unknown. Ensure basis "
                   "functions vanish at boundaries for Dirichlet BCs.")
@@ -97,48 +106,122 @@ class GeneralFEMSolver:
         print(f"Setting up GeneralFEMSolver with {self.dofs} basis functions "
               f"from {type(self.l2_space._basis_provider).__name__}")
 
-        # Pre-assemble the stiffness matrix (does not depend on RHS)
-        self._stiffness_matrix = self._assemble_stiffness_matrix()
+        # Check if analytical computation is possible
+        self._can_use_analytical = self._check_analytical_computation()
 
-        # Optionally pre-assemble mass matrix (useful for some algorithms)
-        self._mass_matrix = self.l2_space.gram_matrix
+        if self._can_use_analytical:
+            print("Using analytical stiffness matrix computation for "
+                  "hat functions")
+            self._stiffness_matrix = (
+                self._assemble_stiffness_matrix_analytical()
+            )
+        else:
+            print("Using numerical stiffness matrix computation")
+            self._stiffness_matrix = (
+                self._assemble_stiffness_matrix_numerical()
+            )
 
         self._is_setup = True
 
-    def _assemble_stiffness_matrix(self) -> np.ndarray:
+    def _check_analytical_computation(self) -> bool:
         """
-        Assemble the stiffness matrix K where [K]ᵢⱼ = ∫ φ'ᵢ(x) φ'ⱼ(x) dx.
+        Check if the current configuration allows for analytical computation
+        of the stiffness matrix.
 
-        This uses numerical differentiation and integration to compute
-        the entries for arbitrary basis functions.
+        Returns True for hat functions with homogeneous Dirichlet boundary
+        conditions, where the stiffness matrix has a known analytical form.
+        """
+        # Check if we have homogeneous Dirichlet boundary conditions
+        if self.boundary_conditions.type != 'dirichlet':
+            return False
+
+        # Check if boundary values are zero (homogeneous)
+        left_val = self.boundary_conditions.get_parameter('left', 0.0)
+        right_val = self.boundary_conditions.get_parameter('right', 0.0)
+        if left_val != 0.0 or right_val != 0.0:
+            return False
+
+        # Check if we're using hat basis functions
+        if hasattr(self.l2_space, '_basis_type'):
+            basis_type = self.l2_space._basis_type
+            if basis_type == 'hat_homogeneous':
+                return True
+
+        # Check if the basis provider is specifically for hat functions
+        # by examining its type name
+        provider_name = type(self.l2_space._basis_provider).__name__
+        if 'Hat' in provider_name and 'Homogeneous' in provider_name:
+            return True
+
+        return False
+
+    def _assemble_stiffness_matrix_analytical(self) -> np.ndarray:
+        """
+        Assemble stiffness matrix analytically for hat functions with
+        homogeneous Dirichlet boundary conditions.
+
+        For uniform hat functions on interval [a,b] with n interior nodes,
+        the stiffness matrix has the analytical form:
+        - Diagonal entries: 2/h where h = (b-a)/(n+1)
+        - Off-diagonal entries: -1/h for adjacent functions, 0 otherwise
         """
         n = self.dofs
         K = np.zeros((n, n))
 
-        # Integration domain
+        # Calculate element size h = (b-a)/(n+1) for uniform mesh
         a, b = self.function_domain.a, self.function_domain.b
-        x_quad = np.linspace(a, b, self.n_integration_points)
-        dx = (b - a) / (self.n_integration_points - 1)
+        h = (b - a) / (n + 1)
 
-        # Get basis functions and compute their derivatives numerically
-        basis_functions = []
+        # Fill analytical stiffness matrix
+        for i in range(n):
+            # Diagonal terms
+            K[i, i] = 2.0 / h
+
+            # Off-diagonal terms (adjacent only)
+            if i > 0:
+                K[i, i-1] = -1.0 / h
+            if i < n - 1:
+                K[i, i+1] = -1.0 / h
+
+        return K
+
+    def _assemble_stiffness_matrix_numerical(self) -> np.ndarray:
+        """
+        Assemble the stiffness matrix K where [K]ᵢⱼ = ∫ φ'ᵢ(x) φ'ⱼ(x) dx
+        using the gradient operator and function domain integration.
+
+        This method works with arbitrary basis functions by computing
+        derivatives using the GradientOperator and integrating using
+        the Function.integrate() method.
+        """
+        # Import here to avoid circular imports
+        from .operators import GradientOperator
+
+        n = self.dofs
+        K = np.zeros((n, n))
+
+        # Create gradient operator for computing derivatives
+        gradient_op = GradientOperator(
+            self.l2_space,
+            method='finite_difference',
+            fd_order=4,  # Use higher order for better accuracy
+            fd_step=1e-6  # Use smaller step size for better accuracy
+        )
+
+        # Get basis functions and compute their derivatives
         basis_derivatives = []
-
         for i in range(n):
             phi_i = self.l2_space._basis_provider.get_basis_function(i)
-            basis_functions.append(phi_i)
-
-            # Compute derivative using central differences
-            phi_i_values = phi_i(x_quad)
-            phi_i_prime = np.gradient(phi_i_values, dx)
+            phi_i_prime = gradient_op._apply(phi_i)
             basis_derivatives.append(phi_i_prime)
 
-        # Assemble stiffness matrix using numerical integration
+        # Assemble stiffness matrix using Function integration
         for i in range(n):
             for j in range(i, n):  # Exploit symmetry
-                # Integrate φ'ᵢ * φ'ⱼ using Simpson's rule
+                # Compute ∫ φ'ᵢ * φ'ⱼ dx using Function multiplication
+                # and integration
                 integrand = basis_derivatives[i] * basis_derivatives[j]
-                integral = np.trapz(integrand, x_quad)
+                integral = integrand.integrate(method=self.integration_method)
 
                 K[i, j] = integral
                 if i != j:
@@ -261,12 +344,6 @@ class GeneralFEMSolver:
         if not self._is_setup:
             raise RuntimeError("Must call setup() first")
         return self._stiffness_matrix.copy()
-
-    def get_mass_matrix(self) -> np.ndarray:
-        """Get the mass matrix (Gram matrix of basis functions)."""
-        if not self._is_setup:
-            raise RuntimeError("Must call setup() first")
-        return self._mass_matrix.copy()
 
 
 class FEMSolver:

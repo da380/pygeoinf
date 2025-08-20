@@ -223,7 +223,7 @@ class L2Space(HilbertSpace):
             )
 
         self._basis_provider = basis_provider
-        self._basis_type = 'custom_provider'
+        self._basis_type = basis_provider.type
         self._basis_functions = None
 
         # Clear cached Gram matrix since basis changed
@@ -415,7 +415,7 @@ class L2Space(HilbertSpace):
             return
 
         if basis_provider is not None:
-            self._basis_type = 'custom_provider'
+            self._basis_type = basis_provider.type
             self._basis_functions = None
             self._basis_provider = basis_provider
             return
