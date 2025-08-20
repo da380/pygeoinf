@@ -54,7 +54,8 @@ class L2Space(HilbertSpace):
             function_domain (IntervalDomain): Domain object with optional
                 boundary conditions.
             basis_type (str, optional): Type of basis functions to auto-gen
-                ('fourier', 'hat', 'hat_homogeneous'). Creates a lazy provider.
+                ('fourier', 'hat', 'hat_homogeneous', 'none'). Creates a lazy
+                provider. Use 'none' to create a space without basis initially.
             basis_callables (list, optional): List of callable functions that
                 will be converted to L2Function basis functions on this space.
                 Solves the circular dependency problem.
@@ -64,11 +65,14 @@ class L2Space(HilbertSpace):
         Note:
             Exactly one of basis_type, basis_callables, or basis_provider
             must be provided. If none are provided, defaults to 'fourier'.
+            Use basis_type='none' to create a space without basis initially,
+            then use set_basis_provider() to add one later.
 
-            The three options correspond to:
+            The options correspond to:
             1. basis_type: Auto-generate standard basis (Fourier, hat, etc.)
-            2. basis_callables: User-provided callable functions
-            3. basis_provider: Custom lazy provider implementation
+            2. basis_type='none': No basis (for breaking circular dependencies)
+            3. basis_callables: User-provided callable functions
+            4. basis_provider: Custom lazy provider implementation
         """
 
         self._dim = dim
@@ -131,10 +135,15 @@ class L2Space(HilbertSpace):
         """Property to access basis functions with consistent interface."""
         if self._basis_functions is not None:
             return self._basis_functions
-        else:
+        elif self._basis_provider is not None:
             # Use the lazy provider to get all basis functions as a list
             # This ensures consistent interface - always returns a list
             return self._basis_provider.get_all_basis_functions()
+        else:
+            raise RuntimeError(
+                "No basis functions available. Use set_basis_provider() "
+                "to add a basis first."
+            )
 
     def get_basis_function(self, index: int):
         """Get basis function by index, works with both lazy and explicit."""
@@ -148,7 +157,8 @@ class L2Space(HilbertSpace):
             return self._basis_provider.get_basis_function(index)
         else:
             raise RuntimeError(
-                "Neither explicit nor lazy basis functions available"
+                "No basis functions available. Use set_basis_provider() "
+                "to add a basis first."
             )
 
     @property
@@ -162,6 +172,11 @@ class L2Space(HilbertSpace):
     @property
     def gram_matrix(self):
         """The Gram matrix of basis functions."""
+        if self._basis_type == 'none':
+            raise RuntimeError(
+                "Cannot compute Gram matrix: space has no basis. "
+                "Use set_basis_provider() to add a basis first."
+            )
         # Compute the Gram matrix if not already done
         if self._gram_matrix is None:
             self._compute_gram_matrix()
@@ -185,6 +200,37 @@ class L2Space(HilbertSpace):
         if self._basis_provider is not None:
             return getattr(self._basis_provider, 'orthonormal', False)
         return False
+
+    def set_basis_provider(self, basis_provider):
+        """
+        Set the basis provider for this space.
+
+        This method allows you to add a basis to a space that was created
+        with basis_type='none', enabling the pattern:
+        1. Create space with no basis
+        2. Create function provider using the space
+        3. Create basis provider from function provider
+        4. Set the basis provider on the space
+
+        Args:
+            basis_provider: BasisProvider instance to use for this space
+        """
+        if self._basis_type != 'none':
+            raise ValueError(
+                f"Cannot set basis provider on space with existing basis "
+                f"type '{self._basis_type}'. Use basis_type='none' when "
+                f"creating the space."
+            )
+
+        self._basis_provider = basis_provider
+        self._basis_type = 'custom_provider'
+        self._basis_functions = None
+
+        # Clear cached Gram matrix since basis changed
+        self._gram_matrix = None
+
+        print(f"Basis provider set successfully. Space now has {self.dim} "
+              f"basis functions of type '{self.provider_basis_type}'.")
 
     def inner_product(self, u, v, method: Optional[str] = None,
                       n_points: Optional[int] = None):
@@ -271,6 +317,12 @@ class L2Space(HilbertSpace):
         Convert a function to coefficients using inner products with basis
         functions.
         """
+        if self._basis_type == 'none':
+            raise RuntimeError(
+                "Cannot convert to components: space has no basis. "
+                "Use set_basis_provider() to add a basis first."
+            )
+
         # Compute right-hand side: b_i = <u, φ_i>_L²
         rhs = np.zeros(self.dim)
         for k in range(self.dim):
@@ -293,6 +345,12 @@ class L2Space(HilbertSpace):
         Convert coefficients to a function using linear combination of
         basis functions.
         """
+        if self._basis_type == 'none':
+            raise RuntimeError(
+                "Cannot convert from components: space has no basis. "
+                "Use set_basis_provider() to add a basis first."
+            )
+
         coeff = np.asarray(coeff)
         if len(coeff) != self.dim:
             raise ValueError(f"Coefficients must have length {self.dim}")
@@ -366,7 +424,13 @@ class L2Space(HilbertSpace):
         self._basis_type = basis_type
         self._basis_functions = None
         self._basis_provider = None
-        if basis_type in ['fourier', 'hat', 'hat_homogeneous', 'sine']:
+
+        if basis_type == 'none':
+            # No basis - for breaking circular dependencies
+            # Methods like to_components and from_components will raise errors
+            # until a basis is added via set_basis_provider()
+            pass
+        elif basis_type in ['fourier', 'hat', 'hat_homogeneous', 'sine']:
             from .providers import create_basis_provider
             self._basis_provider = create_basis_provider(self, basis_type)
 
