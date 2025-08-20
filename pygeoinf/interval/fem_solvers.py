@@ -1,41 +1,52 @@
 """
 FEM Solvers for Laplacian Inverse Operator
 
-This module provides a native Python FEM solver backend for the
-LaplacianInverseOperator. The native FEM solver leverages the L2Space hat
-basis functions for all operations and has no external dependencies.
+This module provides Python FEM solvers for the LaplacianInverseOperator.
+Two implementations are available:
+
+1. GeneralFEMSolver: Works with any basis functions from L2Space
+2. FEMSolver: Optimized for hat basis functions (legacy implementation)
+
+Both solvers have no external dependencies.
 """
 
 import numpy as np
-from abc import ABC, abstractmethod
-from typing import Callable
 
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
 from .functions import Function
 
 
-class FEMSolverBase(ABC):
-    """Abstract base class for FEM solvers."""
+class GeneralFEMSolver:
+    """
+    General FEM solver that works with any basis functions from L2Space.
 
-    def __init__(self, function_domain: IntervalDomain, dofs: int,
-                 boundary_conditions: BoundaryConditions):
+    This implementation follows the general finite element method described
+    in the mathematical formulation, where basis functions {φᵢ} can be any
+    suitable functions that span the finite-dimensional subspace Vₕ ⊂ H₀¹(a,b).
+
+    The solver extracts basis functions from the L2Space basis provider and
+    assembles the stiffness matrix and load vector using numerical integration:
+
+    [K]ᵢⱼ = ∫ φ'ᵢ(x) φ'ⱼ(x) dx
+    [F]ᵢ = ∫ f(x) φᵢ(x) dx
+    """
+
+    def __init__(self, l2_space, boundary_conditions: BoundaryConditions):
         """
-        Initialize FEM solver.
+        Initialize general FEM solver with L2Space basis functions.
 
         Args:
-            function_domain: IntervalDomain object
-            dofs: Number of elements in mesh
-            boundary_conditions: BoundaryConditions object
+            l2_space: L2Space object providing the basis functions
+            boundary_conditions: BoundaryConditions object (must be Dirichlet)
         """
-        if not isinstance(function_domain, IntervalDomain):
-            raise TypeError(
-                f"function_domain must be IntervalDomain object, "
-                f"got {type(function_domain)}"
-            )
+        # Import here to avoid circular imports
+        from .l2_space import L2Space
 
-        self.function_domain = function_domain
-        self.dofs = dofs
+        if not isinstance(l2_space, L2Space):
+            raise TypeError(
+                f"l2_space must be L2Space object, got {type(l2_space)}"
+            )
 
         if not isinstance(boundary_conditions, BoundaryConditions):
             raise TypeError(
@@ -43,68 +54,233 @@ class FEMSolverBase(ABC):
                 f"got {type(boundary_conditions)}"
             )
 
-        self.boundary_conditions = boundary_conditions
-
-        # Validate boundary conditions (basic check for FEM compatibility)
-        valid_types = ['dirichlet', 'neumann', 'periodic']
-        if self.boundary_conditions.type not in valid_types:
+        # Currently only support Dirichlet boundary conditions
+        if boundary_conditions.type != 'dirichlet':
             raise ValueError(
-                f"FEM solver only supports boundary condition types: "
-                f"{valid_types}"
+                f"GeneralFEMSolver only supports 'dirichlet' boundary "
+                f"conditions, got '{boundary_conditions.type}'"
             )
+
+        # Check that the L2Space basis is compatible with Dirichlet BCs
+        # For Dirichlet BCs, basis functions should vanish at boundaries
+        if hasattr(l2_space, '_basis_type'):
+            basis_type = l2_space._basis_type
+            if basis_type not in ['hat_homogeneous', 'fourier_sin']:
+                print(f"Warning: L2Space basis type '{basis_type}' may not "
+                      f"satisfy homogeneous Dirichlet boundary conditions. "
+                      f"Consider using 'hat_homogeneous' or 'fourier_sin'.")
+        else:
+            print("Warning: L2Space basis type unknown. Ensure basis "
+                  "functions vanish at boundaries for Dirichlet BCs.")
+
+        self.l2_space = l2_space
+        self.boundary_conditions = boundary_conditions
+        self.function_domain = l2_space.function_domain
+        self.dofs = l2_space.dim
+
+        # Integration parameters for numerical assembly
+        self.integration_method = 'simpson'
+        self.n_integration_points = 1000
+
+        # Storage for assembled matrices
+        self._stiffness_matrix = None
+        self._mass_matrix = None
+        self._is_setup = False
 
     @property
     def bc_type(self) -> str:
-        """Get the boundary condition type as string for backward
-        compatibility."""
+        """Get the boundary condition type for backward compatibility."""
         return self.boundary_conditions.type
 
-    @abstractmethod
     def setup(self):
-        """Set up the FEM discretization (mesh, function space, etc.)"""
-        pass
+        """Set up the FEM solver by pre-assembling matrices."""
+        print(f"Setting up GeneralFEMSolver with {self.dofs} basis functions "
+              f"from {type(self.l2_space._basis_provider).__name__}")
 
-    @abstractmethod
-    def solve_poisson(self,
-                      rhs_function: Callable[[np.ndarray], np.ndarray]
-                      ) -> np.ndarray:
+        # Pre-assemble the stiffness matrix (does not depend on RHS)
+        self._stiffness_matrix = self._assemble_stiffness_matrix()
+
+        # Optionally pre-assemble mass matrix (useful for some algorithms)
+        self._mass_matrix = self.l2_space.gram_matrix
+
+        self._is_setup = True
+
+    def _assemble_stiffness_matrix(self) -> np.ndarray:
         """
-        Solve -d²u/dx² = f with specified boundary conditions.
+        Assemble the stiffness matrix K where [K]ᵢⱼ = ∫ φ'ᵢ(x) φ'ⱼ(x) dx.
+
+        This uses numerical differentiation and integration to compute
+        the entries for arbitrary basis functions.
+        """
+        n = self.dofs
+        K = np.zeros((n, n))
+
+        # Integration domain
+        a, b = self.function_domain.a, self.function_domain.b
+        x_quad = np.linspace(a, b, self.n_integration_points)
+        dx = (b - a) / (self.n_integration_points - 1)
+
+        # Get basis functions and compute their derivatives numerically
+        basis_functions = []
+        basis_derivatives = []
+
+        for i in range(n):
+            phi_i = self.l2_space._basis_provider.get_basis_function(i)
+            basis_functions.append(phi_i)
+
+            # Compute derivative using central differences
+            phi_i_values = phi_i(x_quad)
+            phi_i_prime = np.gradient(phi_i_values, dx)
+            basis_derivatives.append(phi_i_prime)
+
+        # Assemble stiffness matrix using numerical integration
+        for i in range(n):
+            for j in range(i, n):  # Exploit symmetry
+                # Integrate φ'ᵢ * φ'ⱼ using Simpson's rule
+                integrand = basis_derivatives[i] * basis_derivatives[j]
+                integral = np.trapz(integrand, x_quad)
+
+                K[i, j] = integral
+                if i != j:
+                    K[j, i] = integral  # Symmetric matrix
+
+        return K
+
+    def _assemble_load_vector(self, rhs_function: Function) -> np.ndarray:
+        """
+        Assemble the load vector F where [F]ᵢ = ∫ f(x) φᵢ(x) dx.
+
+        This leverages the Function integration capabilities.
+        """
+        f_vec = np.zeros(self.dofs)
+
+        for i in range(self.dofs):
+            # Get basis function as Function
+            phi_i = self.l2_space._basis_provider.get_basis_function(i)
+
+            # Compute ∫ f(x) φᵢ(x) dx using Function operations
+            integrand = rhs_function * phi_i
+            f_vec[i] = integrand.integrate(method=self.integration_method)
+
+        return f_vec
+
+    def solve_poisson(self, rhs_function: Function) -> np.ndarray:
+        """
+        Solve the Poisson equation -d²u/dx² = f with Dirichlet BCs.
 
         Args:
             rhs_function: Right-hand side function f(x)
 
         Returns:
-            Solution values at mesh nodes
+            Coefficients of the solution in the basis {φᵢ}
         """
-        pass
+        if not self._is_setup:
+            raise RuntimeError("Must call setup() first")
 
-    @abstractmethod
-    def get_coordinates(self) -> np.ndarray:
-        """Get coordinates of mesh nodes."""
-        pass
+        if not isinstance(rhs_function, Function):
+            raise TypeError(
+                f"rhs_function must be Function, got {type(rhs_function)}"
+            )
 
-    @abstractmethod
-    def interpolate_solution(self, solution_values: np.ndarray,
-                             eval_points: np.ndarray) -> np.ndarray:
+        # Assemble load vector
+        f_vec = self._assemble_load_vector(rhs_function)
+
+        # Solve linear system K * u = f
+        u_coeffs = np.linalg.solve(self._stiffness_matrix, f_vec)
+
+        return u_coeffs
+
+    def solution_to_function(self, coefficients: np.ndarray) -> Function:
         """
-        Interpolate solution to arbitrary evaluation points.
+        Convert solution coefficients to a Function object.
 
         Args:
-            solution_values: Solution at mesh nodes
-            eval_points: Points where to evaluate
+            coefficients: Solution coefficients in the basis
 
         Returns:
-            Interpolated values
+            Function representing u(x) = Σ coeffᵢ φᵢ(x)
         """
-        pass
+        if len(coefficients) != self.dofs:
+            raise ValueError(
+                f"Expected {self.dofs} coefficients, got {len(coefficients)}"
+            )
+
+        # Create solution function as linear combination of basis functions
+        def solution_func(x):
+            result = np.zeros_like(x)
+            for i, coeff in enumerate(coefficients):
+                if abs(coeff) > 1e-14:  # Skip negligible coefficients
+                    phi_i = self.l2_space._basis_provider.get_basis_function(i)
+                    result += coeff * phi_i(x)
+            return result
+
+        return Function(
+            self.l2_space,
+            evaluate_callable=solution_func,
+            name="FEM solution (general)"
+        )
+
+    def get_basis_function(self, dof_index: int) -> Function:
+        """Get the i-th basis function."""
+        if dof_index >= self.dofs:
+            raise ValueError(f"dof_index {dof_index} >= {self.dofs}")
+        return self.l2_space._basis_provider.get_basis_function(dof_index)
+
+    def get_basis_functions(self) -> list:
+        """Get all basis functions."""
+        return [self.l2_space._basis_provider.get_basis_function(i)
+                for i in range(self.dofs)]
+
+    def get_coordinates(self) -> np.ndarray:
+        """Get evaluation points (not meaningful for general basis)."""
+        # For general basis functions, we don't have a fixed mesh
+        # Return evaluation points spanning the domain
+        return np.linspace(
+            self.function_domain.a,
+            self.function_domain.b,
+            self.n_integration_points
+        )
+
+    def interpolate_solution(self, coefficients: np.ndarray,
+                             eval_points: np.ndarray) -> np.ndarray:
+        """
+        Evaluate the solution at arbitrary points.
+
+        Args:
+            coefficients: Solution coefficients
+            eval_points: Points where to evaluate the solution
+
+        Returns:
+            Solution values at eval_points
+        """
+        solution_func = self.solution_to_function(coefficients)
+        return solution_func(eval_points)
+
+    def get_stiffness_matrix(self) -> np.ndarray:
+        """Get the assembled stiffness matrix."""
+        if not self._is_setup:
+            raise RuntimeError("Must call setup() first")
+        return self._stiffness_matrix.copy()
+
+    def get_mass_matrix(self) -> np.ndarray:
+        """Get the mass matrix (Gram matrix of basis functions)."""
+        if not self._is_setup:
+            raise RuntimeError("Must call setup() first")
+        return self._mass_matrix.copy()
 
 
-class NativeFEMSolver(FEMSolverBase):
-    """Native Python FEM solver - supports Dirichlet BCs."""
+class FEMSolver:
+    """FEM solver - supports Dirichlet BCs."""
 
     def __init__(self, function_domain: IntervalDomain,
                  dofs: int, boundary_conditions: BoundaryConditions):
+        # Validate that function_domain is an IntervalDomain object
+        if not isinstance(function_domain, IntervalDomain):
+            raise TypeError(
+                f"function_domain must be IntervalDomain object, "
+                f"got {type(function_domain)}"
+            )
+
         # Validate that boundary_conditions is a BoundaryConditions object
         if not isinstance(boundary_conditions, BoundaryConditions):
             raise TypeError(
@@ -112,20 +288,28 @@ class NativeFEMSolver(FEMSolverBase):
                 f"got {type(boundary_conditions)}"
             )
 
-        # Validate that native solver can handle this boundary condition type
+        # Validate that solver can handle this boundary condition type
         if boundary_conditions.type != 'dirichlet':
             raise ValueError(
-                f"NativeFEMSolver only supports 'dirichlet' boundary "
+                f"FEMSolver only supports 'dirichlet' boundary "
                 f"conditions, got '{boundary_conditions.type}'"
             )
 
-        super().__init__(function_domain, dofs, boundary_conditions)
+        self.function_domain = function_domain
+        self.dofs = dofs
+        self.boundary_conditions = boundary_conditions
         self._nodes = None
         self._dofs = dofs
         self._l2_space = None  # L2Space with hat basis functions
 
+    @property
+    def bc_type(self) -> str:
+        """Get the boundary condition type as string for backward
+        compatibility."""
+        return self.boundary_conditions.type
+
     def setup(self):
-        """Set up native FEM mesh and structures using L2Space hat basis."""
+        """Set up FEM mesh and structures using L2Space hat basis."""
         # Create uniform 1D mesh
         self._nodes = np.linspace(
             self.function_domain.a, self.function_domain.b, self._dofs + 2
@@ -262,27 +446,3 @@ class NativeFEMSolver(FEMSolverBase):
         if self._nodes is None:
             raise RuntimeError("Must call setup() first")
         return np.interp(eval_points, self._nodes, solution_values)
-
-
-def create_fem_solver(solver_type: str,
-                      function_domain: IntervalDomain,
-                      dofs: int,
-                      boundary_conditions: BoundaryConditions
-                      ) -> FEMSolverBase:
-    """
-    Factory function to create FEM solvers.
-
-    Args:
-        solver_type: Only 'native' is supported
-        function_domain: IntervalDomain object
-        dofs: Mesh resolution
-        boundary_conditions: BoundaryConditions object
-
-    Returns:
-        FEM solver instance
-    """
-    if solver_type == 'native':
-        return NativeFEMSolver(function_domain, dofs, boundary_conditions)
-    else:
-        raise ValueError(f"Unknown solver type: {solver_type}. "
-                         f"Only 'native' is supported.")

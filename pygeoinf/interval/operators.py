@@ -1,16 +1,15 @@
 """
-Differential Operators for Interval Domains
+Differential operators on interval domains.
 
-This module provides implementations of common differential operators
-on interval domains, with multiple discretization methods available.
+This module provides differential operators for interval domains with various
+solution methods:
 
-Operators included:
-- LaplacianOperator: The negative Laplacian operator (-Δ)
-- LaplacianInverseOperator: The inverse negative Laplacian operator ((-Δ)^(-1))
+- LaplacianOperator: -Δ with spectral/finite difference methods
+- LaplacianInverseOperator: (-Δ)^(-1) with FEM solvers
+- GradientOperator: ∇ with finite difference and automatic differentiation
 
-Available discretization methods:
-- 'spectral': Spectral methods using Fourier/sine/cosine basis
-- 'finite_difference': Finite difference discretization
+The operators implement proper function space mappings and support
+boundary conditions through the underlying function spaces.
 """
 
 import numpy as np
@@ -26,7 +25,7 @@ from pygeoinf.operators import LinearOperator
 from .functions import Function
 from .providers import create_laplacian_spectrum_provider
 # FEM import only needed for LaplacianInverseOperator
-from pygeoinf.interval.fem_solvers import create_fem_solver
+from pygeoinf.interval.fem_solvers import FEMSolver, GeneralFEMSolver
 from pygeoinf.interval.function_providers import (
     FunctionProvider, IndexedFunctionProvider, NormalModesProvider
 )
@@ -58,6 +57,278 @@ class DifferentialOperator(LinearOperator, ABC):
     def _apply(self, f: Function) -> Function:
         """Apply the operator to a function."""
         pass
+
+
+class GradientOperator(DifferentialOperator):
+    """
+    The gradient operator (d/dx) on interval domains.
+
+    In 1D, the gradient is simply the first derivative. This operator
+    provides multiple methods for computing derivatives:
+
+    - 'finite_difference': Numerical differentiation using finite differences
+    - 'automatic': Automatic differentiation using JAX (if available)
+
+    The operator maps between function spaces:
+    - H^s → H^(s-1) (reduces regularity by one order)
+    """
+
+    def __init__(
+        self,
+        domain: Union[L2Space, Sobolev],
+        /,
+        *,
+        method: Literal[
+            'finite_difference', 'automatic'
+        ] = 'finite_difference',
+        fd_order: int = 2,
+        fd_step: Optional[float] = None,
+        boundary_treatment: str = 'one_sided'
+    ):
+        """
+        Initialize the gradient operator.
+
+        Args:
+            domain: Function space (L2Space or SobolevSpace)
+            method: Differentiation method
+                ('finite_difference', 'automatic')
+            fd_order: Order of finite difference stencil (2, 4, 6)
+                for FD method
+            fd_step: Step size for finite differences (auto-computed if None)
+            boundary_treatment: How to handle boundaries for FD
+                ('one_sided', 'extrapolate')
+        """
+        self._domain = domain
+        self._fd_order = fd_order
+        self._fd_step = fd_step
+        self._boundary_treatment = boundary_treatment
+
+        # Determine codomain based on method and domain
+        if isinstance(domain, Sobolev):
+            # Ensure domain has sufficient regularity for gradient
+            if domain.order < 1.0:
+                warnings.warn(
+                    f"Gradient requires domain with Sobolev order ≥ 1, "
+                    f"got {domain.order}. Consider using H¹ space."
+                )
+
+            # Create codomain with one order less regularity
+            target_order = domain.order - 1.0
+            if hasattr(domain, '_basis_type'):
+                basis_type = domain._basis_type
+            else:
+                basis_type = 'fourier'
+
+            codomain = Sobolev(
+                domain.dim, domain.function_domain,
+                target_order,
+                basis_type=basis_type
+            )
+        else:
+            # For L2 domain (H⁰), gradient maps to H⁻¹
+            codomain = Sobolev(
+                domain.dim, domain.function_domain,
+                -1.0,
+                basis_type='fourier'
+            )
+
+        # No boundary conditions needed for gradient (unlike Laplacian)
+        super().__init__(domain, codomain, None, method)
+
+        # Initialize method-specific components
+        self._setup_method()
+
+    def _validate_method(self):
+        """Override to validate gradient-specific methods."""
+        valid_methods = ['finite_difference', 'automatic']
+        if self.method not in valid_methods:
+            raise ValueError(f"Unknown method '{self.method}'. "
+                             f"Valid methods: {valid_methods}")
+
+    def _setup_method(self):
+        """Setup method-specific components."""
+        if self.method == 'finite_difference':
+            self._setup_finite_difference()
+        elif self.method == 'automatic':
+            self._setup_automatic_differentiation()
+
+    def _setup_finite_difference(self):
+        """Setup finite difference method."""
+        # Determine step size if not provided
+        if self._fd_step is None:
+            a, b = self._domain.function_domain.a, \
+                   self._domain.function_domain.b
+            # Use a fraction of the domain size
+            self._fd_step = (b - a) / 1000
+
+        print(f"GradientOperator (finite difference, order {self._fd_order}) "
+              f"initialized with step size {self._fd_step:.2e}")
+
+    def _setup_automatic_differentiation(self):
+        """Setup automatic differentiation method."""
+        try:
+            import jax  # noqa: F401
+            import jax.numpy as jnp  # noqa: F401
+            from jax import grad  # noqa: F401
+            self._jax = jax
+            self._jnp = jnp
+            self._grad = grad
+            print("GradientOperator (automatic differentiation) "
+                  "initialized with JAX")
+        except ImportError:
+            raise ImportError(
+                "JAX is required for automatic differentiation. "
+                "Install with: pip install jax jaxlib"
+            )
+
+    def _apply(self, f: Function) -> Function:
+        """Apply the gradient operator to function f."""
+        if self.method == 'finite_difference':
+            return self._apply_finite_difference(f)
+        elif self.method == 'automatic':
+            return self._apply_automatic(f)
+        else:
+            raise ValueError(f"Unknown method '{self.method}'")
+
+    def _apply_finite_difference(self, f: Function) -> Function:
+        """Apply gradient using finite difference method."""
+
+        def gradient_func(x):
+            """Compute gradient at points x using finite differences."""
+            # Handle scalar input
+            if np.isscalar(x):
+                x = np.array([x])
+                scalar_input = True
+            else:
+                scalar_input = False
+
+            df_dx = np.zeros_like(x)
+            h = self._fd_step
+
+            for i, xi in enumerate(x):
+                # Check boundaries
+                a, b = (self._domain.function_domain.a,
+                        self._domain.function_domain.b)
+
+                if self._boundary_treatment == 'one_sided':
+                    # Use one-sided differences at boundaries
+                    if xi <= a + h:
+                        # Forward difference at left boundary
+                        if self._fd_order == 2:
+                            df_dx[i] = (
+                                -3*f(xi) + 4*f(xi + h) - f(xi + 2*h)
+                            ) / (2*h)
+                        else:  # Higher order forward
+                            df_dx[i] = (
+                                -f(xi + 2*h) + 8*f(xi + h) - 8*f(xi) + f(xi)
+                            ) / (12*h)
+                    elif xi >= b - h:
+                        # Backward difference at right boundary
+                        if self._fd_order == 2:
+                            df_dx[i] = (
+                                3*f(xi) - 4*f(xi - h) + f(xi - 2*h)
+                            ) / (2*h)
+                        else:  # Higher order backward
+                            df_dx[i] = (
+                                f(xi - 2*h) - 8*f(xi - h) + 8*f(xi) - f(xi)
+                            ) / (12*h)
+                    else:
+                        # Central difference in interior
+                        if self._fd_order == 2:
+                            df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
+                        elif self._fd_order == 4:
+                            df_dx[i] = (
+                                -f(xi + 2*h) + 8*f(xi + h) - 8*f(xi - h) +
+                                f(xi - 2*h)
+                            ) / (12*h)
+                        else:
+                            # Default to 2nd order
+                            df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
+                else:
+                    # Simple central difference everywhere (boundary issues)
+                    if self._fd_order == 2:
+                        df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
+                    elif self._fd_order == 4:
+                        df_dx[i] = (
+                            -f(xi + 2*h) + 8*f(xi + h) - 8*f(xi - h) +
+                            f(xi - 2*h)
+                        ) / (12*h)
+                    else:
+                        df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
+
+            return df_dx[0] if scalar_input else df_dx
+
+        return Function(
+            self.codomain,
+            evaluate_callable=gradient_func,
+            name=f"∇({f.name})" if hasattr(f, 'name') else "∇f"
+        )
+
+    def _apply_automatic(self, f: Function) -> Function:
+        """Apply gradient using automatic differentiation."""
+
+        def gradient_func(x):
+            """Compute gradient using JAX automatic differentiation."""
+            if not hasattr(f, 'evaluate_callable'):
+                raise ValueError(
+                    "Function must have evaluate_callable for "
+                    "automatic differentiation"
+                )
+
+            # Create a JAX-native version of the function
+            # This requires the user's function to be JAX-compatible
+            original_func = f.evaluate_callable
+
+            def jax_compatible_func(xi):
+                """JAX-compatible wrapper that works with JAX arrays."""
+                try:
+                    # Try to call the function with JAX arrays directly
+                    return original_func(xi)
+                except Exception:
+                    # If that fails, the function may not be JAX-compatible
+                    # Convert to numpy, compute, then back to JAX
+                    if hasattr(xi, 'shape'):  # It's an array-like
+                        xi_np = np.asarray(xi)
+                        result_np = original_func(xi_np)
+                        return self._jnp.asarray(result_np)
+                    else:  # It's a scalar
+                        xi_float = float(xi)
+                        result_float = original_func(xi_float)
+                        return self._jnp.asarray(result_float)
+
+            # Get the gradient function
+            grad_jax_func = self._grad(jax_compatible_func)
+
+            # Handle scalar vs array input
+            if np.isscalar(x):
+                x_jax = self._jnp.array(float(x))
+                result_jax = grad_jax_func(x_jax)
+                return float(result_jax)
+            else:
+                # For array input, compute gradient at each point individually
+                # This avoids vectorization issues with JAX tracing
+                results = []
+                for xi in x:
+                    x_jax = self._jnp.array(float(xi))
+                    result_jax = grad_jax_func(x_jax)
+                    results.append(float(result_jax))
+                return np.array(results)
+
+        return Function(
+            self.codomain,
+            evaluate_callable=gradient_func,
+            name=f"∇({f.name})" if hasattr(f, 'name') else "∇f"
+        )
+
+    @property
+    def fd_step(self) -> Optional[float]:
+        """Get the finite difference step size."""
+        return self._fd_step
+
+    @property
+    def fd_order(self) -> int:
+        """Get the finite difference order."""
+        return self._fd_order
 
 
 class LaplacianOperator(DifferentialOperator):
@@ -317,7 +588,7 @@ class LaplacianInverseOperator(LinearOperator):
         *,
         alpha: float = 1.0,
         dofs: int = 100,
-        solver_type: str = "auto"
+        fem_type: str = "hat"
     ):
         """
         Initialize the Laplacian inverse operator.
@@ -328,9 +599,11 @@ class LaplacianInverseOperator(LinearOperator):
         Args:
             domain: The L2 space (domain of the operator)
             boundary_conditions: Boundary conditions for the operator
-            sobolev_order: Order of the Sobolev space (codomain), default 1.0
+            alpha: Scaling factor for the operator (default: 1.0)
             dofs: Number of degrees of freedom (default: 100)
-            solver_type: Only 'native' is supported now
+            fem_type: FEM implementation to use:
+                - "hat": Optimized hat function implementation (default)
+                - "general": General implementation using domain's basis
         """
         # Check that domain is an L2 space
         if not isinstance(domain, L2Space):
@@ -341,6 +614,13 @@ class LaplacianInverseOperator(LinearOperator):
         self._domain = domain
         self._dofs = dofs
         self._boundary_conditions = boundary_conditions
+        self._fem_type = fem_type
+
+        # Validate fem_type
+        if fem_type not in ["hat", "general"]:
+            raise ValueError(
+                f"fem_type must be 'hat' or 'general', got '{fem_type}'"
+            )
 
         # Create the Sobolev space as codomain
         # IN TESTING NOW!!!!
@@ -369,26 +649,29 @@ class LaplacianInverseOperator(LinearOperator):
             domain, self._boundary_conditions, inverse=True
         )
 
-        # Use native solver (only option available)
-        if solver_type == "auto":
-            self._solver_type = "native"
-        elif solver_type == "native":
-            self._solver_type = "native"
-        else:
-            raise ValueError(f"Unknown solver type: {solver_type}. "
-                             f"Only 'native' and 'auto' are supported.")
+        # Create and setup FEM solver based on type
+        if self._fem_type == "hat":
+            # Use optimized hat function implementation
+            self._fem_solver = FEMSolver(
+                self._function_domain,
+                dofs,
+                self._boundary_conditions
+            )
+            self._fem_solver.setup()
+            solver_description = "hat function FEM solver"
+        elif self._fem_type == "general":
+            # Use general implementation with domain's basis functions
+            self._fem_solver = GeneralFEMSolver(
+                domain,  # Pass the L2Space directly
+                self._boundary_conditions
+            )
+            self._fem_solver.setup()
+            solver_description = "general FEM solver"
 
-        # Create and setup FEM solver
-        self._fem_solver = create_fem_solver(
-            self._solver_type,
-            self._function_domain,
-            dofs,
-            self._boundary_conditions
+        print(
+            f"LaplacianInverseOperator initialized with {solver_description}, "
+            f"{self._boundary_conditions} BCs"
         )
-        self._fem_solver.setup()
-
-        print(f"LaplacianInverseOperator initialized with {self._solver_type} "
-              f"solver, {self._boundary_conditions} BCs")
 
         # Initialize LinearOperator with L2 domain and Sobolev codomain
         # The operator maps (-Δ)⁻¹: L² → H^s
@@ -410,11 +693,15 @@ class LaplacianInverseOperator(LinearOperator):
         """
         f = self._alpha * f  # Scale input by alpha
 
-        # Solve PDE using FEM solver with L2Function
-        solution_values = self._fem_solver.solve_poisson(f)
-
-        # Convert back to hilbert space function
-        return self._fem_to_hilbert_function(solution_values)
+        # Solve PDE using FEM solver
+        if self._fem_type == "hat":
+            # Hat function solver returns nodal values
+            solution_values = self._fem_solver.solve_poisson(f)
+            return self._fem_to_hilbert_function(solution_values)
+        elif self._fem_type == "general":
+            # General solver returns coefficients in basis functions
+            solution_coeffs = self._fem_solver.solve_poisson(f)
+            return self._fem_solver.solution_to_function(solution_coeffs)
 
     def _fem_to_hilbert_function(self, fem_solution):
         """Convert FEM solution to hilbert space function."""
@@ -427,18 +714,18 @@ class LaplacianInverseOperator(LinearOperator):
         return Function(
             self._domain,
             evaluate_callable=evaluate_func,
-            name=f"Laplacian⁻¹ solution ({self._solver_type})"
+            name="Laplacian⁻¹ solution"
         )
-
-    @property
-    def solver_type(self) -> str:
-        """Get the current solver type."""
-        return self._solver_type
 
     @property
     def boundary_conditions(self) -> BoundaryConditions:
         """Get the boundary conditions object."""
         return self._boundary_conditions
+
+    @property
+    def fem_type(self) -> str:
+        """Get the FEM implementation type."""
+        return self._fem_type
 
     @property
     def dofs(self) -> int:
@@ -491,7 +778,7 @@ class LaplacianInverseOperator(LinearOperator):
     def get_solver_info(self) -> dict:
         """Get information about the current solver."""
         return {
-            'solver_type': self._solver_type,
+            'fem_type': self._fem_type,
             'boundary_conditions': self._boundary_conditions,
             'dofs': self._dofs,
             'fem_coordinates': self._fem_solver.get_coordinates(),
@@ -502,33 +789,6 @@ class LaplacianInverseOperator(LinearOperator):
                  if self._domain.dim > 0 else None)
             )
         }
-
-    def change_solver(self, new_solver_type: str):
-        """
-        Change the FEM solver backend.
-
-        Args:
-            new_solver_type: Only 'native' is supported
-
-        Note:
-            This does not affect the spectrum computation, which is
-            analytical and independent of the FEM solver.
-        """
-        if new_solver_type == self._solver_type:
-            print(f"Already using {new_solver_type} solver")
-            return
-
-        # Create new solver
-        self._solver_type = new_solver_type
-        self._fem_solver = create_fem_solver(
-            self._solver_type,
-            self._function_domain,
-            self._dofs,
-            self._boundary_conditions
-        )
-        self._fem_solver.setup()
-
-        print(f"Switched to {self._solver_type} solver")
 
 
 class SOLAOperator(LinearOperator):
