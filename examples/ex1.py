@@ -14,7 +14,6 @@ w = nu.sample()
 
 
 def mapping(u):
-
     ulm = u.expand()
     for l in range(u.lmax + 1):
         fac = l * (l + 1)
