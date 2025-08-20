@@ -494,3 +494,64 @@ class LebesgueSpace(HilbertSpace, Generic[T_vec]):
         """Maps a dual form back to a vector via its components."""
         cp = self.dual.to_components(xp)
         return self.from_components(cp)
+
+
+class RieszMetricSpace(HilbertSpace, Generic[T_vec]):
+    """
+    A Hilbert space defined by a metric operator on an underlying L2 space.
+
+    This class models spaces where the inner product takes the form:
+        <u, v>_M = <M u, v>_L2
+    where M is a self-adjoint, positive-definite linear operator.
+
+    This is a common structure for Sobolev spaces, spaces used in Bayesian
+    inverse problems, and preconditioned spaces in numerical optimization.
+    """
+
+    def __init__(
+        self,
+        lebesgue_space: LebesgueSpace[T_vec],
+        M: Callable[[T_vec], T_vec],
+        M_inv: Callable[[T_vec], T_vec],
+    ):
+        """
+        Args:
+            lebesgue_space (LebesgueSpace[T_vec]): The underlying L2 space.
+            M (Union[LinearOperator, Callable[[T_vec], T_vec]]): The metric
+                operator.
+            M_inv (Union[LinearOperator, Callable[[T_vec], T_vec]]): The inverse
+                of the metric operator.
+        """
+
+        self._lebesgue_space: LebesgueSpace[T_vec] = lebesgue_space
+        self._M: Callable[[T_vec], T_vec] = M
+        self._M_inv: Callable[[T_vec], T_vec] = M_inv
+
+        super().__init__(
+            lebesgue_space.dim,
+            lebesgue_space.to_components,
+            lebesgue_space.from_components,
+            self._inner_product_impl,
+            self._to_dual_impl,
+            self._from_dual_impl,
+            add=lebesgue_space.add,
+            subtract=lebesgue_space.subtract,
+            multiply=lebesgue_space.multiply,
+            ax=lebesgue_space.ax,
+            axpy=lebesgue_space.axpy,
+            copy=lebesgue_space.copy,
+            vector_multiply=lebesgue_space.vector_multiply,
+        )
+
+    def _inner_product_impl(self, x1: T_vec, x2: T_vec) -> float:
+        return self.to_dual(x1)(x2)
+
+    def _to_dual_impl(self, x: T_vec) -> "LinearForm":
+        cx = self.to_components(x)
+        cxp = self._M(cx)
+        return self.dual.from_components(cxp)
+
+    def _from_dual_impl(self, xp: "LinearForm") -> T_vec:
+        cxp = self.dual.to_components(xp)
+        cx = self._M_inv(cxp)
+        return self.from_components(cx)
