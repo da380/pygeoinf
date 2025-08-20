@@ -285,7 +285,6 @@ class Sobolev(SymmetricSpaceSobolev):
         """Maps complex Fourier coefficients to a function vector."""
         return irfft(coeff, n=self.dim) * self._inverse_fft_factor
 
-
     def __eq__(self, other: object) -> bool:
         """
         Checks for mathematical equality with another Sobolev space on a circle.
@@ -295,11 +294,13 @@ class Sobolev(SymmetricSpaceSobolev):
         """
         if not isinstance(other, Sobolev):
             return NotImplemented
-        
-        return (self.kmax == other.kmax and
-                self.order == other.order and
-                self.scale == other.scale and
-                self.radius == other.radius)
+
+        return (
+            self.kmax == other.kmax
+            and self.order == other.order
+            and self.scale == other.scale
+            and self.radius == other.radius
+        )
 
     # ================================================================#
     #                         Private methods                         #

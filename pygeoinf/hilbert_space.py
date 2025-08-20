@@ -3,7 +3,7 @@ Module defining the core HilbertSpace and EuclideanSpace classes.
 """
 
 from __future__ import annotations
-from typing import TypeVar, Callable, List, Optional, Any, TYPE_CHECKING
+from typing import TypeVar, Callable, List, Optional, Any, TYPE_CHECKING, Generic
 
 import numpy as np
 
@@ -131,7 +131,7 @@ class HilbertSpace:
         return self.from_components(np.zeros((self.dim)))
 
     @property
-    def coordinate_inclusion(self) -> "LinearOperator":
+    def coordinate_inclusion(self) -> LinearOperator:
         """
         Returns the operator mapping coordinate vectors in R^n to vectors
         in this Hilbert space.
@@ -157,7 +157,7 @@ class HilbertSpace:
         )
 
     @property
-    def coordinate_projection(self) -> "LinearOperator":
+    def coordinate_projection(self) -> LinearOperator:
         """
         Returns the operator mapping vectors in this Hilbert space to their
         coordinate vectors in R^n.
@@ -183,7 +183,7 @@ class HilbertSpace:
         )
 
     @property
-    def riesz(self) -> "LinearOperator":
+    def riesz(self) -> LinearOperator:
         """
         Returns the Riesz map (dual to primal) as a LinearOperator.
         """
@@ -192,7 +192,7 @@ class HilbertSpace:
         return LinearOperator.self_dual(self.dual, self.from_dual)
 
     @property
-    def inverse_riesz(self) -> "LinearOperator":
+    def inverse_riesz(self) -> LinearOperator:
         """
         Returns the inverse Riesz map (primal to dual) as a LinearOperator.
         """
@@ -321,7 +321,7 @@ class HilbertSpace:
             self.axpy(1 / n, x, xbar)
         return xbar
 
-    def identity_operator(self) -> "LinearOperator":
+    def identity_operator(self) -> LinearOperator:
         """Returns the identity operator on the space."""
         from .operators import LinearOperator
 
@@ -333,9 +333,7 @@ class HilbertSpace:
             adjoint_mapping=lambda y: y,
         )
 
-    def zero_operator(
-        self, codomain: Optional[HilbertSpace] = None
-    ) -> "LinearOperator":
+    def zero_operator(self, codomain: Optional[HilbertSpace] = None) -> LinearOperator:
         """
         Returns the zero operator from this space to a codomain.
 
@@ -352,10 +350,10 @@ class HilbertSpace:
             adjoint_mapping=lambda y: self.zero,
         )
 
-    def _dual_to_components(self, xp: "LinearForm") -> np.ndarray:
+    def _dual_to_components(self, xp: LinearForm) -> np.ndarray:
         return xp.components
 
-    def _dual_from_components(self, cp: np.ndarray) -> "LinearForm":
+    def _dual_from_components(self, cp: np.ndarray) -> LinearForm:
         from .forms import LinearForm
 
         return LinearForm(self, components=cp)
@@ -404,13 +402,95 @@ class EuclideanSpace(HilbertSpace):
     def __inner_product(self, x1: np.ndarray, x2: np.ndarray) -> float:
         return np.dot(x1, x2)
 
-    def __to_dual(self, x: np.ndarray) -> "LinearForm":
+    def __to_dual(self, x: np.ndarray) -> LinearForm:
         return self.dual.from_components(x)
 
-    def __from_dual(self, xp: "LinearForm") -> np.ndarray:
+    def __from_dual(self, xp: LinearForm) -> np.ndarray:
         cp = self.dual.to_components(xp)
         return self.from_components(cp)
 
     def __eq__(self, other: object) -> bool:
         """Checks for equality with another EuclideanSpace."""
         return isinstance(other, EuclideanSpace) and self.dim == other.dim
+
+
+class LebesgueSpace(HilbertSpace, Generic[T_vec]):
+    """A factory for Hilbert spaces with a standard inner product.
+
+    This class simplifies the creation of a HilbertSpace for any case where
+    the inner product between two vectors is equivalent to the standard l2
+    (Euclidean) dot product of their component representations.
+
+    The user only needs to provide the mappings to and from the component
+    form, and this class will automatically define the inner product, Riesz
+    maps, and their duals accordingly.
+
+    Example:
+        If you have a custom vector class `MyVector` and functions
+        `to_numpy(v: MyVector)` and `from_numpy(arr: np.ndarray)`, you can
+        define the space simply as:
+        `space = LebesgueSpace(dim, to_numpy, from_numpy)`
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        to_components: Callable[[T_vec], np.ndarray],
+        from_components: Callable[[np.ndarray], T_vec],
+        /,
+        *,
+        add: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+        subtract: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+        multiply: Optional[Callable[[float, T_vec], T_vec]] = None,
+        ax: Optional[Callable[[float, T_vec], None]] = None,
+        axpy: Optional[Callable[[float, T_vec, T_vec], None]] = None,
+        copy: Optional[Callable[[T_vec], T_vec]] = None,
+        vector_multiply: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+    ):
+        """Initializes the LebesgueSpace.
+
+        Args:
+            dim (int): The dimension of the space.
+            to_components (callable): A function mapping abstract vectors to their
+                NumPy component arrays.
+            from_components (callable): A function mapping NumPy component
+                arrays back to abstract vectors.
+            add (callable, optional): Custom vector addition.
+            subtract (callable, optional): Custom vector subtraction.
+            multiply (callable, optional): Custom scalar multiplication.
+            ax (callable, optional): Custom in-place scaling x := a*x.
+            axpy (callable, optional): Custom in-place operation y := a*x + y.
+            copy (callable, optional): Custom deep copy for vectors.
+            vector_multiply (callable, optional): Custom element-wise product.
+        """
+        super().__init__(
+            dim,
+            to_components,
+            from_components,
+            self._inner_product_from_components,
+            self._to_dual_from_components,
+            self._from_dual_from_components,
+            add=add,
+            subtract=subtract,
+            multiply=multiply,
+            ax=ax,
+            axpy=axpy,
+            copy=copy,
+            vector_multiply=vector_multiply,
+        )
+
+    def _inner_product_from_components(self, x1: T_vec, x2: T_vec) -> float:
+        """Computes inner product via the l2 dot product of components."""
+        c1 = self.to_components(x1)
+        c2 = self.to_components(x2)
+        return np.dot(c1, c2)
+
+    def _to_dual_from_components(self, x: T_vec) -> "LinearForm":
+        """Maps a vector to its dual form via its components."""
+        c = self.to_components(x)
+        return self.dual.from_components(c)
+
+    def _from_dual_from_components(self, xp: "LinearForm") -> T_vec:
+        """Maps a dual form back to a vector via its components."""
+        cp = self.dual.to_components(xp)
+        return self.from_components(cp)
