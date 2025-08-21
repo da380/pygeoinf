@@ -29,7 +29,6 @@ class SymmetricSpaceSobolev(HilbertSpace, ABC):
         dim: int,
         to_components: Callable[[Any], np.ndarray],
         from_components: Callable[[np.ndarray], Any],
-        inner_product: Callable[[Any, Any], float],
         to_dual: Callable[[Any], "LinearForm"],
         from_dual: Callable[["LinearForm"], Any],
         /,
@@ -50,7 +49,6 @@ class SymmetricSpaceSobolev(HilbertSpace, ABC):
                 approximating space.
             to_components: A callable that maps vectors to their component arrays.
             from_components: A callable that maps component arrays to vectors.
-            inner_product: A callable that implements the inner product on the space.
             to_dual: A callable that maps a vector to the canonically
                 associated dual vector (a LinearForm).
             from_dual: A callable that maps a dual vector back to its
@@ -73,7 +71,6 @@ class SymmetricSpaceSobolev(HilbertSpace, ABC):
             dim,
             to_components,
             from_components,
-            inner_product,
             to_dual,
             from_dual,
             add=add,

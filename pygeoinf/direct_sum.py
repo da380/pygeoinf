@@ -34,7 +34,6 @@ class HilbertSpaceDirectSum(HilbertSpace):
             dim,
             self.__to_components,
             self.__from_components,
-            self.__inner_product,
             self.__to_dual,
             self.__from_dual,
             add=self.__add,
@@ -55,7 +54,6 @@ class HilbertSpaceDirectSum(HilbertSpace):
         if not isinstance(other, HilbertSpaceDirectSum):
             return NotImplemented
 
-        # This relies on the subspaces having their own __eq__ methods.
         return self.subspaces == other.subspaces
 
     @property
@@ -158,11 +156,6 @@ class HilbertSpaceDirectSum(HilbertSpace):
             xs.append(x)
             i = j
         return xs
-
-    def __inner_product(self, x1s: List[Any], x2s: List[Any]) -> float:
-        return sum(
-            space.inner_product(x1, x2) for space, x1, x2 in zip(self._spaces, x1s, x2s)
-        )
 
     def __to_dual(self, xs: List[Any]) -> LinearForm:
         if len(xs) != self.number_of_subspaces:

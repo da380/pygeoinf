@@ -87,7 +87,6 @@ class Sobolev(SymmetricSpaceSobolev):
             self._circle_space.dim,
             self._to_components,
             self._from_components,
-            self._inner_product,
             self._to_dual,
             self._from_dual,
             vector_multiply=lambda u1, u2: u1 * u2,
@@ -345,9 +344,6 @@ class Sobolev(SymmetricSpaceSobolev):
         u = self._circle_space.from_components(c)
         u *= self._isqrt_jac
         return u
-
-    def _inner_product(self, u1: np.ndarray, u2: np.ndarray) -> float:
-        return self._jac * self._circle_space.inner_product(u1, u2)
 
     def _to_dual(self, u: np.ndarray) -> "LinearForm":
         up = self._circle_space.to_dual(u)

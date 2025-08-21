@@ -85,7 +85,6 @@ class Sobolev(SymmetricSpaceSobolev):
                 dim,
                 self._to_components_from_SHGrid,
                 self._from_components_to_SHGrid,
-                self._inner_product_impl,
                 self._to_dual_impl,
                 self._from_dual_impl,
                 ax=self._ax_impl,
@@ -99,7 +98,6 @@ class Sobolev(SymmetricSpaceSobolev):
                 dim,
                 self._to_components_from_SHCoeffs,
                 self._from_components_to_SHCoeffs,
-                self._inner_product_impl,
                 self._to_dual_impl,
                 self._from_dual_impl,
                 ax=self._ax_impl,
@@ -595,12 +593,6 @@ class Sobolev(SymmetricSpaceSobolev):
     def _sobolev_function(self, l: int) -> float:
         """The degree-dependent scaling that defines the Sobolev inner product."""
         return self.radius**2 * (1.0 + self.scale**2 * l * (l + 1)) ** self.order
-
-    def _inner_product_impl(self, u: Any, v: Any) -> float:
-        """Implements the Sobolev inner product in the spectral domain."""
-        return np.dot(
-            self._metric_tensor @ self.to_components(u), self.to_components(v)
-        )
 
     def _to_dual_impl(self, u: Any) -> "LinearForm":
         """Implements the mapping to the dual space."""

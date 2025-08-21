@@ -54,7 +54,6 @@ class Sobolev(SymmetricSpaceSobolev):
             2 * kmax,
             self._to_components,
             self._from_components,
-            self._inner_product,
             self._to_dual,
             self._from_dual,
             vector_multiply=lambda u1, u2: u1 * u2,
@@ -78,7 +77,7 @@ class Sobolev(SymmetricSpaceSobolev):
         /,
         *,
         radius: float = 1.0,
-        rtol: float = 1e-8,
+        rtol: float = 1e-6,
         power_of_two: bool = False,
     ) -> "Sobolev":
         """
@@ -112,7 +111,7 @@ class Sobolev(SymmetricSpaceSobolev):
             term = (1 + (scale * k / radius) ** 2) ** -order
             summation += 2 * term
             err = 2 * term / summation
-            if k > 10000:
+            if k > 100000:
                 raise RuntimeError("Failed to converge on a stable kmax.")
 
         if power_of_two:
@@ -329,12 +328,6 @@ class Sobolev(SymmetricSpaceSobolev):
         """Converts a real component vector back to a function vector."""
         coeff = self._component_to_coefficient(c)
         return self.from_coefficient(coeff)
-
-    def _inner_product(self, u1: np.ndarray, u2: np.ndarray) -> float:
-        """Computes the H^s inner product in the Fourier domain."""
-        coeff1 = self.to_coefficient(u1)
-        coeff2 = self.to_coefficient(u2)
-        return np.real(np.vdot(self._metric @ coeff1, coeff2))
 
     def _to_dual(self, u: np.ndarray) -> "LinearForm":
         """Maps a vector `u` to its dual representation `u*`."""
