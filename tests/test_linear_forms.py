@@ -4,15 +4,13 @@ Tests for the LinearForm class.
 
 import pytest
 import numpy as np
-from typing import Union
-from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
+from numpy.testing import assert_allclose
+
+from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace, Vector
 from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
 from pygeoinf.symmetric_space.line import Sobolev as LineSobolev
 from pygeoinf.symmetric_space.sphere import Sobolev as SphereSobolev
 from pygeoinf.linear_forms import LinearForm
-
-
-from pygeoinf.hilbert_space import Vector
 
 
 # =============================================================================
@@ -28,8 +26,6 @@ space_implementations = [
 ]
 
 
-# Use pytest.mark.parametrize to create a fixture that will run tests
-# for each of the space implementations defined above.
 @pytest.fixture(params=space_implementations)
 def space(request) -> HilbertSpace:
     """Provides parametrized HilbertSpace instances for the tests."""
@@ -96,14 +92,14 @@ class TestLinearForm:
         self, form_from_components: LinearForm, components: np.ndarray
     ):
         """Tests that the .components property returns the correct vector."""
-        assert np.allclose(form_from_components.components, components)
+        assert_allclose(form_from_components.components, components)
 
     def test_component_computation(
         self, form_from_mapping: LinearForm, components: np.ndarray
     ):
         """Tests that components are computed correctly for a form defined by a mapping."""
         computed_components = form_from_mapping.components
-        assert np.allclose(computed_components, components)
+        assert_allclose(computed_components, components)
 
     def test_addition(
         self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: Vector
@@ -113,7 +109,7 @@ class TestLinearForm:
         f2 = form_from_mapping
         sum_form = f1 + f2
         assert np.isclose(sum_form(x), f1(x) + f2(x))
-        assert np.allclose(sum_form.components, f1.components + f2.components)
+        assert_allclose(sum_form.components, f1.components + f2.components)
 
     def test_subtraction(
         self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: Vector
@@ -123,14 +119,14 @@ class TestLinearForm:
         f2 = form_from_mapping
         diff_form = f1 - f2
         assert np.isclose(diff_form(x), f1(x) - f2(x))
-        assert np.allclose(diff_form.components, f1.components - f2.components)
+        assert_allclose(diff_form.components, f1.components - f2.components)
 
     def test_scalar_multiplication(self, form_from_components: LinearForm, x: Vector):
         """Tests scalar multiplication: (a * f)(x) = a * f(x)."""
         scalar = 2.5
         scaled_form = scalar * form_from_components
         assert np.isclose(scaled_form(x), scalar * form_from_components(x))
-        assert np.allclose(
+        assert_allclose(
             scaled_form.components, scalar * form_from_components.components
         )
 
@@ -138,4 +134,77 @@ class TestLinearForm:
         """Tests negation: (-f)(x) = -f(x)."""
         neg_form = -form_from_components
         assert np.isclose(neg_form(x), -form_from_components(x))
-        assert np.allclose(neg_form.components, -form_from_components.components)
+        assert_allclose(neg_form.components, -form_from_components.components)
+
+    def test_iadd(
+        self, form_from_components: LinearForm, form_from_mapping: LinearForm
+    ):
+        """Tests in-place addition (+=)."""
+        f1 = form_from_components.copy()
+        f2 = form_from_mapping
+
+        expected_components = f1.components + f2.components
+
+        # The operation should return self
+        result = f1.__iadd__(f2)
+
+        assert result is f1
+        assert_allclose(f1.components, expected_components)
+
+    def test_imul(self, form_from_components: LinearForm):
+        """Tests in-place scalar multiplication (*=)."""
+        f1 = form_from_components.copy()
+        scalar = -1.5
+
+        expected_components = f1.components * scalar
+
+        # The operation should return self
+        result = f1.__imul__(scalar)
+
+        assert result is f1
+        assert_allclose(f1.components, expected_components)
+
+    def test_copy(self, form_from_components: LinearForm):
+        """Tests that the copy method creates an independent instance."""
+        f1 = form_from_components
+        f2 = f1.copy()
+
+        # They should be equal in value but not the same object
+        assert f1 is not f2
+        assert f1.domain == f2.domain
+        assert_allclose(f1.components, f2.components)
+
+        # Modify the copy and ensure the original is unchanged
+        f2 *= 2.0
+        assert not np.allclose(f1.components, f2.components)
+
+    def test_domain_mismatch_raises_error(self, form_from_components: LinearForm):
+        """Tests that operating on forms with different domains raises a ValueError."""
+        # Create a form on a different space
+        different_space = EuclideanSpace(form_from_components.domain.dim + 1)
+        form_on_different_domain = LinearForm(
+            different_space, components=np.random.randn(different_space.dim)
+        )
+
+        with pytest.raises(ValueError):
+            _ = form_from_components + form_on_different_domain
+
+        with pytest.raises(ValueError):
+            form_from_components += form_on_different_domain
+
+    def test_as_linear_operator(self, form_from_components: LinearForm, x: Vector):
+        """Tests the conversion to a LinearOperator."""
+        form = form_from_components
+        operator = form.as_linear_operator
+
+        # The operator's codomain should be a 1D Euclidean space
+        assert isinstance(operator.codomain, EuclideanSpace)
+        assert operator.codomain.dim == 1
+
+        # The action of the operator should match the action of the form
+        form_value = form(x)
+        operator_value = operator(x)
+
+        assert isinstance(operator_value, np.ndarray)
+        assert operator_value.shape == (1,)
+        assert np.isclose(form_value, operator_value[0])

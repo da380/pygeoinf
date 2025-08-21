@@ -1,9 +1,12 @@
 """
 Tests for the direct_sum module.
 """
+
 import pytest
 import numpy as np
-from pygeoinf.hilbert_space import EuclideanSpace
+from numpy.testing import assert_allclose
+
+from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
 from pygeoinf.symmetric_space.circle import Sobolev
 from pygeoinf.operators import LinearOperator
 from pygeoinf.direct_sum import (
@@ -18,24 +21,25 @@ from .checks.linear_operator import LinearOperatorChecks
 
 
 # =============================================================================
-# Fixtures for building direct sum spaces and block operators
+# Fixtures
 # =============================================================================
 
-@pytest.fixture
+
+@pytest.fixture(scope="module")
 def euclidean_subspaces() -> list[EuclideanSpace]:
     """Provides a list of simple Euclidean spaces to form a direct sum."""
     return [EuclideanSpace(dim=2), EuclideanSpace(dim=3)]
 
 
-@pytest.fixture
-def mixed_subspaces() -> list[EuclideanSpace | Sobolev]:
+@pytest.fixture(scope="module")
+def mixed_subspaces() -> list[HilbertSpace]:
     """Provides a mixed list of Euclidean and Sobolev spaces."""
     return [EuclideanSpace(dim=3), Sobolev(8, 1.0, 0.1)]
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def block_operators(euclidean_subspaces) -> list[list[LinearOperator]]:
-    """Provides a 2x2 block matrix of linear operators between Euclidean spaces."""
+    """Provides a 2x2 block matrix of linear operators."""
     s1, s2 = euclidean_subspaces
     op11 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
     op12 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
@@ -45,22 +49,28 @@ def block_operators(euclidean_subspaces) -> list[list[LinearOperator]]:
 
 
 # =============================================================================
-# Test Suite 1: Euclidean Spaces Only
+# Test Suite 1: HilbertSpaceChecks Contract
 # =============================================================================
 
+
 class TestHilbertSpaceDirectSumEuclidean(HilbertSpaceChecks):
-    """
-    Runs Hilbert space checks on a direct sum of EuclideanSpaces.
-    """
     @pytest.fixture
     def space(self, euclidean_subspaces: list[EuclideanSpace]) -> HilbertSpaceDirectSum:
         return HilbertSpaceDirectSum(euclidean_subspaces)
 
 
-class TestBlockLinearOperatorEuclidean(LinearOperatorChecks):
-    """
-    Runs linear operator checks on a BlockLinearOperator between Euclidean spaces.
-    """
+class TestHilbertSpaceDirectSumMixed(HilbertSpaceChecks):
+    @pytest.fixture
+    def space(self, mixed_subspaces: list[HilbertSpace]) -> HilbertSpaceDirectSum:
+        return HilbertSpaceDirectSum(mixed_subspaces)
+
+
+# =============================================================================
+# Test Suite 2: LinearOperatorChecks Contract
+# =============================================================================
+
+
+class TestBlockLinearOperator(LinearOperatorChecks):
     @pytest.fixture
     def operator(
         self, block_operators: list[list[LinearOperator]]
@@ -68,52 +78,185 @@ class TestBlockLinearOperatorEuclidean(LinearOperatorChecks):
         return BlockLinearOperator(block_operators)
 
 
-class TestBlockDiagonalLinearOperatorEuclidean(LinearOperatorChecks):
-    """
-    Runs linear operator checks on a BlockDiagonalLinearOperator.
-    """
+class TestBlockDiagonalLinearOperator(LinearOperatorChecks):
     @pytest.fixture
-    def operator(self, euclidean_subspaces: list[EuclideanSpace]) -> BlockDiagonalLinearOperator:
+    def operator(
+        self, euclidean_subspaces: list[EuclideanSpace]
+    ) -> BlockDiagonalLinearOperator:
         s1, s2 = euclidean_subspaces
         op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
         op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
         return BlockDiagonalLinearOperator([op1, op2])
 
 
-# =============================================================================
-# Test Suite 2: Mixed Euclidean and Sobolev Spaces
-# =============================================================================
-
-class TestHilbertSpaceDirectSumMixed(HilbertSpaceChecks):
-    """
-    Runs Hilbert space checks on a direct sum of a EuclideanSpace and a Sobolev space.
-    """
+class TestRowLinearOperator(LinearOperatorChecks):
     @pytest.fixture
-    def space(self, mixed_subspaces: list[EuclideanSpace | Sobolev]) -> HilbertSpaceDirectSum:
-        return HilbertSpaceDirectSum(mixed_subspaces)
+    def operator(self, euclidean_subspaces: list[EuclideanSpace]) -> RowLinearOperator:
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op2 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
+        return RowLinearOperator([op1, op2])
+
+
+class TestColumnLinearOperator(LinearOperatorChecks):
+    @pytest.fixture
+    def operator(
+        self, euclidean_subspaces: list[EuclideanSpace]
+    ) -> ColumnLinearOperator:
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
+        op2 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        return ColumnLinearOperator([op1, op2])
 
 
 # =============================================================================
-# Simple instantiation tests for Row and Column operators
+# Test Suite 3: Specific Properties and Composition Rules
 # =============================================================================
 
-def test_row_linear_operator_instantiation(euclidean_subspaces):
-    """Tests that a RowLinearOperator can be created successfully."""
-    s1, s2 = euclidean_subspaces
-    op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
-    op2 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
-    row_op = RowLinearOperator([op1, op2])
-    assert row_op is not None
-    assert row_op.row_dim == 1
-    assert row_op.col_dim == 2
+
+class TestDirectSumProperties:
+    """Tests specific mathematical properties of direct sums and block operators."""
+
+    def test_projection_inclusion_identity(self, euclidean_subspaces):
+        """Tests that P_i @ J_i = Id_i for projection and inclusion."""
+        direct_sum = HilbertSpaceDirectSum(euclidean_subspaces)
+        for i, subspace in enumerate(euclidean_subspaces):
+            proj = direct_sum.subspace_projection(i)
+            incl = direct_sum.subspace_inclusion(i)
+            composed_op = proj @ incl
+
+            identity_matrix = np.eye(subspace.dim)
+            assert_allclose(composed_op.matrix(dense=True), identity_matrix)
+
+    def test_partition_of_unity(self, euclidean_subspaces):
+        """Tests that sum(J_i @ P_i) = Id on the direct sum space."""
+        direct_sum = HilbertSpaceDirectSum(euclidean_subspaces)
+        identity_sum = direct_sum.zero_operator(direct_sum)
+
+        for i in range(len(euclidean_subspaces)):
+            proj = direct_sum.subspace_projection(i)
+            incl = direct_sum.subspace_inclusion(i)
+            identity_sum += incl @ proj
+
+        identity_matrix = np.eye(direct_sum.dim)
+        assert_allclose(identity_sum.matrix(dense=True), identity_matrix)
+
+    def test_block_operator_composition(self, block_operators):
+        """Tests that (P_i @ A @ J_j) is equivalent to A_ij."""
+        block_op = BlockLinearOperator(block_operators)
+        direct_sum_domain = block_op.domain
+        direct_sum_codomain = block_op.codomain
+
+        for i in range(block_op.row_dim):
+            for j in range(block_op.col_dim):
+                proj_i = direct_sum_codomain.subspace_projection(i)
+                incl_j = direct_sum_domain.subspace_inclusion(j)
+
+                extracted_block = proj_i @ block_op @ incl_j
+                original_block = block_op.block(i, j)
+
+                assert_allclose(
+                    extracted_block.matrix(dense=True),
+                    original_block.matrix(dense=True),
+                )
+
+    def test_block_diagonal_off_diagonal_is_zero(self, euclidean_subspaces):
+        """Tests that off-diagonal blocks of a BlockDiagonalLinearOperator are zero."""
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
+        block_diag_op = BlockDiagonalLinearOperator([op1, op2])
+
+        for i in range(block_diag_op.row_dim):
+            for j in range(block_diag_op.col_dim):
+                if i != j:
+                    block = block_diag_op.block(i, j)
+                    zero_matrix = np.zeros((block.codomain.dim, block.domain.dim))
+                    assert_allclose(block.matrix(dense=True), zero_matrix)
+
+    def test_adjoint_of_column_is_row(self, euclidean_subspaces):
+        """Tests that the adjoint of a ColumnLinearOperator is a RowLinearOperator."""
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
+        op2 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+
+        column_op = ColumnLinearOperator([op1, op2])
+        adjoint_op = column_op.adjoint
+
+        assert isinstance(adjoint_op.domain, HilbertSpaceDirectSum)
+        assert not isinstance(adjoint_op.codomain, HilbertSpaceDirectSum)
+
+        manual_row_op = RowLinearOperator([op1.adjoint, op2.adjoint])
+
+        assert_allclose(adjoint_op.matrix(dense=True), manual_row_op.matrix(dense=True))
 
 
-def test_column_linear_operator_instantiation(euclidean_subspaces):
-    """Tests that a ColumnLinearOperator can be created successfully."""
-    s1, s2 = euclidean_subspaces
-    op1 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
-    op2 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
-    col_op = ColumnLinearOperator([op1, op2])
-    assert col_op is not None
-    assert col_op.row_dim == 2
-    assert col_op.col_dim == 1
+# =============================================================================
+# Test Suite 4: Error Handling and Edge Cases
+# =============================================================================
+
+
+class TestDirectSumErrorHandling:
+    """Tests for exceptions and invalid inputs."""
+
+    def test_block_operator_mismatched_domains(self, euclidean_subspaces):
+        """Tests ValueError for inconsistent domains in a column."""
+        s1, s2 = euclidean_subspaces
+        s3 = EuclideanSpace(4)
+        op11 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op21_bad = LinearOperator.from_matrix(s3, s2, np.random.randn(3, 4))
+        with pytest.raises(ValueError):
+            BlockLinearOperator([[op11], [op21_bad]])
+
+    def test_block_operator_mismatched_codomains(self, euclidean_subspaces):
+        """Tests ValueError for inconsistent codomains in a row."""
+        s1, s2 = euclidean_subspaces
+        s3 = EuclideanSpace(4)
+        op11 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op12_bad = LinearOperator.from_matrix(s2, s3, np.random.randn(4, 3))
+        with pytest.raises(ValueError):
+            BlockLinearOperator([[op11, op12_bad]])
+
+    def test_row_operator_mismatched_codomains(self, euclidean_subspaces):
+        """Tests ValueError for inconsistent codomains in a RowLinearOperator."""
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
+        with pytest.raises(ValueError):
+            RowLinearOperator([op1, op2])
+
+    def test_column_operator_mismatched_domains(self, euclidean_subspaces):
+        """Tests ValueError for inconsistent domains in a ColumnLinearOperator."""
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
+        with pytest.raises(ValueError):
+            ColumnLinearOperator([op1, op2])
+
+    @pytest.mark.parametrize(
+        "op_class", [BlockLinearOperator, RowLinearOperator, ColumnLinearOperator]
+    )
+    def test_empty_operator_list_raises_error(self, op_class):
+        """Tests ValueError when initializing block operators with empty lists."""
+        with pytest.raises(ValueError):
+            op_class([])
+        if op_class == BlockLinearOperator:
+            with pytest.raises(ValueError):
+                op_class([[]])
+
+    def test_block_indexing_errors(self, block_operators):
+        """Tests that out-of-bounds block indexing raises an error."""
+        block_op = BlockLinearOperator(block_operators)
+        with pytest.raises(ValueError):
+            block_op.block(2, 0)
+        with pytest.raises(ValueError):
+            block_op.block(0, 2)
+
+    def test_dual_isomorphism_wrong_number_of_forms(self, euclidean_subspaces):
+        """Tests ValueError for canonical_dual_isomorphism with wrong input size."""
+        direct_sum = HilbertSpaceDirectSum(euclidean_subspaces)
+        s1, s2 = euclidean_subspaces
+        form1 = s1.to_dual(s1.random())
+        # Provide only one form when two are expected
+        with pytest.raises(ValueError):
+            direct_sum.canonical_dual_isomorphism([form1])

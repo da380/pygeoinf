@@ -3,7 +3,16 @@ Module defining the core HilbertSpace and EuclideanSpace classes.
 """
 
 from __future__ import annotations
-from typing import TypeVar, Callable, List, Optional, Any, TYPE_CHECKING, Generic
+from typing import (
+    TypeVar,
+    Callable,
+    List,
+    Optional,
+    Any,
+    TYPE_CHECKING,
+    Generic,
+    TypeAlias,
+)
 
 import numpy as np
 
@@ -11,7 +20,9 @@ import numpy as np
 if TYPE_CHECKING:
     from .operators import LinearOperator
     from .linear_forms import LinearForm
+    from scipy.sparse.linalg import LinearOperator
 
+    MatrixLike: TypeAlias = np.ndarray | LinearOperator
 
 # Define a generic type for vectors in a Hilbert space
 Vector = TypeVar("Vector")
@@ -512,32 +523,35 @@ class MassWeightedHilbertSpace(HilbertSpace, Generic[Vector]):
 
     (u, v)_Y = (M u, v)_X,
 
-    with M the self-adjoint and positive-definite operator on X that acts as a
-    mass matrix or equivalently as a metric tensor.
+    with M the self-adjoint and positive-definite operator on X.
+
+    The mass operator and its inverse are provided in terms of their
+    Galerkin representation relative the underlying space.
     """
 
     def __init__(
         self,
         space: HilbertSpace,
-        mass_operator: LinearOperator,
-        inverse_mass_operator: LinearOperator,
+        mass_matrix: MatrixLike,
+        _inverse_mass_matrix: MatrixLike,
     ):
         """
         Args:
             space (HilbertSpace): The space in which the inner product is defined.
-            mass_operator (LinearOperator): The self-adjoint and positive-definite
-                operator that acts as a mass matrix.
-            inverse_mass_operator (LinearOperator): The inverse of the mass operator.
+            mass_matrix (MatrixLike): The matrix representation of the mass operator.
+            inverse_mass_matrix (MatrixLike): The matrix representation of the inverse mass operator.
         """
+
         self._underlying_space = space
-        self._mass_operator = mass_operator
-        self._inverse_mass_operator = inverse_mass_operator
+        self._mass_matrix = mass_matrix
+        self._inverse_mass_operator = _inverse_mass_matrix
+
         super().__init__(
             space.dim,
             space.to_components,
             space.from_components,
-            self._to_dual_from_mass_operator,
-            self._from_dual_from_mass_operator,
+            self._to_dual_impl,
+            self._from_dual_impl,
             add=space.add,
             subtract=space.subtract,
             multiply=space.multiply,
@@ -547,8 +561,16 @@ class MassWeightedHilbertSpace(HilbertSpace, Generic[Vector]):
             vector_multiply=space.vector_multiply,
         )
 
-    def _to_dual_from_mass_operator(self, x: Vector) -> "LinearForm":
-        return self._underlying_space.to_dual(self._mass_operator(x))
+    def _to_dual_impl(self, x: Vector) -> "LinearForm":
+        """Maps a vector to its dual form via its components."""
+        from .linear_forms import LinearForm
 
-    def _from_dual_from_mass_operator(self, xp: "LinearForm") -> Vector:
-        return self._inverse_mass_operator(self._underlying_space.from_dual(xp))
+        cx = self._underlying_space.to_components(x)
+        cyp = self._mass_matrix @ cx
+        return LinearForm(self, components=cyp)
+
+    def _from_dual_impl(self, xp: "LinearForm") -> Vector:
+        """Maps a dual form back to a vector via its components."""
+        cxp = xp.components
+        cy = self._inverse_mass_operator @ cxp
+        return self._underlying_space.from_components(cy)
