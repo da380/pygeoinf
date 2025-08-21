@@ -9,7 +9,7 @@ import numpy as np
 
 from pygeoinf.hilbert_space import HilbertSpace, EuclideanSpace
 from pygeoinf.operators import LinearOperator
-from pygeoinf.forms import LinearForm
+from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 
@@ -33,13 +33,13 @@ class SymmetricSpaceSobolev(HilbertSpace, ABC):
         from_dual: Callable[["LinearForm"], Any],
         /,
         *,
-        add: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
-        subtract: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
-        multiply: Optional[Callable[[float, T_vec], T_vec]] = None,
-        ax: Optional[Callable[[float, T_vec], None]] = None,
-        axpy: Optional[Callable[[float, T_vec, T_vec], None]] = None,
-        copy: Optional[Callable[[T_vec], T_vec]] = None,
-        vector_multiply: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+        add: Optional[Callable[[Vector, Vector], Vector]] = None,
+        subtract: Optional[Callable[[Vector, Vector], Vector]] = None,
+        multiply: Optional[Callable[[float, Vector], Vector]] = None,
+        ax: Optional[Callable[[float, Vector], None]] = None,
+        axpy: Optional[Callable[[float, Vector, Vector], None]] = None,
+        copy: Optional[Callable[[Vector], Vector]] = None,
+        vector_multiply: Optional[Callable[[Vector, Vector], Vector]] = None,
     ) -> None:
         """
         Args:

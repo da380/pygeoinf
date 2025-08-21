@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -280,7 +265,7 @@
 
 
 <div class="viewcode-block" id="fixed_rank_random_range">
-<a class="viewcode-back" href="../../api/random_matrix.html#pygeoinf.random_matrix.fixed_rank_random_range">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.fixed_rank_random_range">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">fixed_rank_random_range</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">power</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
@@ -327,7 +312,7 @@
 
 
 <div class="viewcode-block" id="variable_rank_random_range">
-<a class="viewcode-back" href="../../api/random_matrix.html#pygeoinf.random_matrix.variable_rank_random_range">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.variable_rank_random_range">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">variable_rank_random_range</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">power</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">rtol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
@@ -403,7 +388,7 @@
 
 
 <div class="viewcode-block" id="random_svd">
-<a class="viewcode-back" href="../../api/random_matrix.html#pygeoinf.random_matrix.random_svd">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.random_svd">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">random_svd</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">qr_factor</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
@@ -438,7 +423,7 @@
 
 
 <div class="viewcode-block" id="random_eig">
-<a class="viewcode-back" href="../../api/random_matrix.html#pygeoinf.random_matrix.random_eig">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.random_eig">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">random_eig</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">qr_factor</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
@@ -469,7 +454,7 @@
 
 
 <div class="viewcode-block" id="random_cholesky">
-<a class="viewcode-back" href="../../api/random_matrix.html#pygeoinf.random_matrix.random_cholesky">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.random_cholesky">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">random_cholesky</span><span class="p">(</span><span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">qr_factor</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Computes an approximate Cholesky factorisation for a symmetric positive-</span>

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from cartopy.mpl.geoaxes import GeoAxes
     from cartopy.crs import Projection
-    from pygeoinf.forms import LinearForm
+    from pygeoinf.linear_forms import LinearForm
 
 
 class Sobolev(SymmetricSpaceSobolev):

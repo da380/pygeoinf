@@ -208,21 +208,6 @@
 <li class="toctree-l1"><a class="reference internal" href="t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -263,7 +248,7 @@
         </div>
         <article role="main" id="furo-main-content">
           <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[14]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[1]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Uncomment and run this when using colab.</span>
@@ -283,7 +268,7 @@
 <h2>The <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> class<a class="headerlink" href="#The-LinearForm-class" title="Link to this heading">¶</a></h2>
 <p>To begin, we use <code class="docutils literal notranslate"><span class="pre">Euclideanspace</span></code> as an example. Construction of a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> can be done by specifying its action on a vector. In the example below, we define a linear form that maps a vector in <code class="docutils literal notranslate"><span class="pre">X</span></code> to the value of its zeroth-component.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[15]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[2]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set up the space.</span>
@@ -305,8 +290,8 @@
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x      =  [-1.57519131 -1.11923675 -0.05461242  0.4181217   0.43528924]
-&lt;xp,x&gt; =  -1.575191311530877
+x      =  [ 0.04388682  0.80789837  0.49392391  0.38373418 -1.12005244]
+&lt;xp,x&gt; =  0.04388681882524307
 </pre></div></div>
 </div>
 <p>Note that the action of a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> on a vector is through the object’s <code class="docutils literal notranslate"><span class="pre">__call__</span></code> method. There is no check within the class that the mapping asigned to a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> is well-defined, but in a later tutorial we show how this can be done.</p>
@@ -323,7 +308,7 @@ corresponding co-ordinate mappings on the dual space. The co-ordinate projection
 </div>
 <p>In the code below, we see that a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> can be defined directly in terms of its components:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[16]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
@@ -347,13 +332,13 @@ corresponding co-ordinate mappings on the dual space. The co-ordinate projection
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x      =  [-1.12049122  0.36610293 -0.35165481 -0.32744713  0.53459906]
-&lt;xp,x&gt; =  -1.1204912204777568
+x      =  [-0.621658    0.7811031   0.30798937  1.33008542 -1.03973981]
+&lt;xp,x&gt; =  -0.6216580043508921
 </pre></div></div>
 </div>
 <p>The components of a form can be accessed through its <code class="docutils literal notranslate"><span class="pre">components</span></code> property:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[17]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;The components of the linear form are: </span><span class="si">{</span><span class="n">xp</span><span class="o">.</span><span class="n">components</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
@@ -370,7 +355,7 @@ The components of the linear form are: [1. 0. 0. 0. 0.]
 </div>
 <p>We can also call <code class="docutils literal notranslate"><span class="pre">print</span></code> directly on a <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> with the result being that its components are printed:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[5]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;The components of the form are: </span><span class="si">{</span><span class="n">xp</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
@@ -387,7 +372,7 @@ The components of the form are: [1. 0. 0. 0. 0.]
 </div>
 <p>Linear forms over a Hilbert space form a vector space in a natural way. This is implemented in <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> through suitable overloads:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[19]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[6]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define two linear forms</span>
@@ -414,16 +399,16 @@ The components of the form are: [1. 0. 0. 0. 0.]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-&lt;xp1, x&gt;              = 1.1748286027686725
-&lt;xp2, x&gt;              = 1.7664061789780698
-&lt;4 xp1 - xp2, x&gt;      = 4.346033175279076
-4 &lt;xp1, x&gt; - &lt;xp2, x&gt; = 4.346033175279076
+&lt;xp1, x&gt;              = -0.5463755034742701
+&lt;xp2, x&gt;              = -2.5448648979535577
+&lt;4 xp1 - xp2, x&gt;      = -1.6765290343063692
+4 &lt;xp1, x&gt; - &lt;xp2, x&gt; = -1.6765290343063688
 </pre></div></div>
 </div>
 <p>Algebriac combinations of forms is generally done lazily. If, however, all the forms involved have their components stored, the components of the new form are determined explicitly which can aid with computational efficiency.</p>
 <p>We can similarly define instances of <code class="docutils literal notranslate"><span class="pre">LinearForm</span></code> on more complicated <code class="docutils literal notranslate"><span class="pre">HilbertSpaces</span></code>. Here we set of an instance of the Sobolev space <span class="math notranslate nohighlight">\(H^{s}(\mathbb{S}^{1})\)</span> for <span class="math notranslate nohighlight">\(s &gt; 0.5\)</span> and define a linear form that maps a function to its value at a point within the numerical grid. That this linear form is well-defined is discussed below.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[20]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Construct a Sobolev space on the unit circle.</span>
@@ -452,15 +437,15 @@ The components of the form are: [1. 0. 0. 0. 0.]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-&lt;vp,u&gt;  = 0.001575522243668773
-u(th)   = 0.001575522243668773
+&lt;vp,u&gt;  = 0.0015629807833259259
+u(th)   = 0.0015629807833258728
 </pre></div></div>
 </div>
 <section id="The-dual-of-a-HilbertSpace">
 <h3>The dual of a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code><a class="headerlink" href="#The-dual-of-a-HilbertSpace" title="Link to this heading">¶</a></h3>
 <p>For each <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> there is a corresponding dual space which is another instance of <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code>. This can be generated using the <code class="docutils literal notranslate"><span class="pre">dual</span></code> property. This is illustrated below:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[21]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Form the dual space.</span>
@@ -474,7 +459,7 @@ u(th)   = 0.001575522243668773
 
 <span class="c1"># Print the norm of the linear form.</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;The linear form has norm: </span><span class="si">{</span><span class="n">Xp</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<br/></pre></div>
+<br/><br/><br/><br/><br/><br/></pre></div>
 </div>
 </div>
 <div class="nboutput nblast docutils container">
@@ -489,7 +474,7 @@ The linear form has norm: 2.23606797749979
 </div>
 <p>Each <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> can map between itself and its dual space using the <code class="docutils literal notranslate"><span class="pre">from_dual</span></code> and <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> methods. These mappings for a Hilbert space, <span class="math notranslate nohighlight">\(X\)</span>, are implementation of the operator <span class="math notranslate nohighlight">\(J_{X} \in \mathrm{Hom}(X',X)\)</span> and its inverse. In the case of <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> these mappings are <em>almost</em> trivial, with a vector and the corresponding form having identical components. But note that the vector and the corresponding dual vector are still different kinds of object.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[22]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[9]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Generate a random vector and dual vector</span>
@@ -519,12 +504,12 @@ The linear form has norm: 2.23606797749979
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x      = [ 0.15782957 -0.76560116  1.6603107   0.95074063  1.41893334]
-yp     = [-0.43764019 -1.47839627 -1.39568354  1.19468235  0.50153332]
-&lt;yp,x&gt; = 0.5929964181912808
-(y,x)  = 0.5929964181912808
-||yp|| =  2.450289489473236
-||y||  =  2.450289489473236
+x      = [ 0.1680331  -1.25345309 -1.4820198  -0.02613382 -0.14268024]
+yp     = [-0.25107731 -0.02923271  1.60879873 -0.08422208 -0.15520114]
+&lt;yp,x&gt; = -2.3654738583602257
+(y,x)  = -2.3654738583602257
+||yp|| =  1.638080727089822
+||y||  =  1.638080727089822
 </pre></div></div>
 </div>
 <p>In more complicated Hilbert spaces the mappings to and from the dual space are more involved. For example, in <span class="math notranslate nohighlight">\(H^{s}(\mathbb{S}^{1})\)</span> it can be shown that</p>
@@ -544,7 +529,7 @@ yp     = [-0.43764019 -1.47839627 -1.39568354  1.19468235  0.50153332]
 </div>
 <p>This means that point evaluation defines a continuous linear form on this space so long as <span class="math notranslate nohighlight">\(s &gt; 0.5\)</span>. This justifies our definition of the form <code class="docutils literal notranslate"><span class="pre">vp</span></code> above, and we can plot its representation as follows:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[23]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[10]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
@@ -572,13 +557,13 @@ yp     = [-0.43764019 -1.47839627 -1.39568354  1.19468235  0.50153332]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-&lt;vp,u&gt; = 0.001575522243668773
-(v,u)  = 0.001575522243668449
+&lt;vp,u&gt; = 0.0015629807833259259
+(v,u)  = 0.0015629807833259643
 </pre></div></div>
 </div>
 <p>The Dirac measure, <span class="math notranslate nohighlight">\(\delta_{\theta}\)</span>, occurs frequently in applications and so it has been implemented directly within <code class="docutils literal notranslate"><span class="pre">Sobolev</span></code>:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[24]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[11]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set the base point</span>
@@ -616,7 +601,7 @@ yp     = [-0.43764019 -1.47839627 -1.39568354  1.19468235  0.50153332]
 <p>If <span class="math notranslate nohighlight">\(X\)</span> is a Hilbert space and <span class="math notranslate nohighlight">\(X'\)</span> its dual, we can also form the double dual <span class="math notranslate nohighlight">\(X''\)</span>. Strictly, <span class="math notranslate nohighlight">\(X\)</span> and <span class="math notranslate nohighlight">\(X''\)</span> are not the same objects, but they are canonically isomorphic. Within the <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> class, however, the dual of a dual space is set equal to the orignal space.</p>
 <p>This is seen below.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[25]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[12]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">X</span> <span class="o">==</span> <span class="n">X</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">dual</span><span class="p">)</span>
@@ -638,41 +623,38 @@ True
 <h2>Constructing <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code><a class="headerlink" href="#Constructing-EuclideanSpace" title="Link to this heading">¶</a></h2>
 <p>Having now introduced dual spaces, we can explain in full detail how the <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> class is implemented, this forming a model for the implementation fo any other <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code>.</p>
 <p>The first point to note is that <code class="docutils literal notranslate"><span class="pre">HilbertSpaces</span></code> are not meant to be constructed directly. Rather, the intention is that new classes are defined that inherit from <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code>. This is due to an apparent circularity in the definition of a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> class. To construct a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> we need to provide the <code class="docutils literal notranslate"><span class="pre">from_dual</span></code> and <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> mappings. But <code class="docutils literal notranslate"><span class="pre">LinearForms</span></code> cannot be constructed until the space is already set up. By, however, inheriting from <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> within a new
-class, we can insure that the space can be refered to in its methods, and that these methods cannot be called until the class has been set up. Below we see the implementation of <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> from within the <code class="docutils literal notranslate"><span class="pre">pygeoinf</span></code> library. The <code class="docutils literal notranslate"><span class="pre">to_component</span></code> and <code class="docutils literal notranslate"><span class="pre">from_component</span></code> mappings are trivial, as noted above. For the inner product, we use the standard <code class="docutils literal notranslate"><span class="pre">numpy</span></code> function. Lastly, the mappings <code class="docutils literal notranslate"><span class="pre">from_dual</span></code> and <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> are very simple, just reflecting the fact that the components of a
-dual vector and its representation are equal.</p>
+class, we can insure that the space can be refered to in its methods, and that these methods cannot be called until the class has been set up. Below we see the implementation of <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> from within the <code class="docutils literal notranslate"><span class="pre">pygeoinf</span></code> library. The <code class="docutils literal notranslate"><span class="pre">to_component</span></code> and <code class="docutils literal notranslate"><span class="pre">from_component</span></code> mappings are trivial, as noted above. Lastly, the mappings <code class="docutils literal notranslate"><span class="pre">from_dual</span></code> and <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> are very simple, just reflecting the fact that the components of a dual vector and its representation are equal. Note that the inner
+product is determined internally using the <code class="docutils literal notranslate"><span class="pre">to_dual</span></code> mapping.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">EuclideanSpace</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Euclidean space implemented as an instance of HilbertSpace.&quot;&quot;&quot;</span>
+<span class="sd">    An n-dimensional Euclidean space, R^n.</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">):</span>
+<span class="sd">    This is a concrete implementation of HilbertSpace where vectors are</span>
+<span class="sd">    represented directly by NumPy arrays.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Args:</span>
 <span class="sd">            dim (int): Dimension of the space.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
             <span class="n">dim</span><span class="p">,</span>
             <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
             <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">__inner_product</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">__to_dual</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">__from_dual</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_to_dual_impl</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_from_dual_impl</span><span class="p">,</span>
         <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__inner_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">):</span>
-        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">__to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_to_dual_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_from_dual_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
         <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Overload of equality operator for Euclidean spaces.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Checks for equality with another EuclideanSpace.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">EuclideanSpace</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dim</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">dim</span>
 </pre></div>
 </div>
@@ -683,7 +665,7 @@ dual vector and its representation are equal.</p>
 </div>
 <p>with <span class="math notranslate nohighlight">\(M\)</span> a symmetric matrix and we call the <strong>metric</strong> for the generalised Euclidean space. In this case, the components of a dual vector and its representation are not equal, but related through the action of the inverse metric. The code below implements such a space and checks that the to and from dual mappings work as they should.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[26]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[13]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">scipy.linalg</span><span class="w"> </span><span class="kn">import</span> <span class="n">cho_factor</span><span class="p">,</span> <span class="n">cho_solve</span>
@@ -707,14 +689,10 @@ dual vector and its representation are equal.</p>
             <span class="n">dim</span><span class="p">,</span>
             <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
             <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_inner_product</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_to_dual</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_from_dual</span>
         <span class="p">)</span>
 
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_inner_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">):</span>
-        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_metric</span> <span class="o">@</span> <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">):</span>
         <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
@@ -765,19 +743,19 @@ dual vector and its representation are equal.</p>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
 The metric is:
- [[ 35.01753449   3.94625011  18.06283348 -16.30278111]
- [  3.94625011  20.27720831 -13.65323009  19.14899449]
- [ 18.06283348 -13.65323009  30.61274728 -26.49133796]
- [-16.30278111  19.14899449 -26.49133796  36.81613865]]
-x      = [-0.3153512   1.26065172 -1.05413352  0.32709779]
-y      = [-1.23151769 -0.15875524  0.17688897 -0.28158816]
-(x,y)  = -0.44388281686562436
-xp     = [-30.44121657  44.97396412 -63.84328545  69.24919949]
-&lt;xp,y&gt; = -0.44388281686562436
-zp     = [ 0.10689571  3.01707756 -0.80397111 -0.3028258 ]
-&lt;zp,y&gt; = -0.6675622827980545
-z      = [-0.34464667  0.72164373  0.09261975 -0.46954016]
-(z,y)  = -0.667562282798055
+ [[  6.72970833 -10.30815292  -3.73970333   3.92085708]
+ [-10.30815292  35.5580565    5.13660413 -21.50307659]
+ [ -3.73970333   5.13660413  12.33759879 -10.18498392]
+ [  3.92085708 -21.50307659 -10.18498392  30.35892642]]
+x      = [-2.20163386 -0.99411176  1.99211338 -0.20871871]
+y      = [ 1.80526181 -0.88838663  0.14218069 -0.44965178]
+(x,y)  = -14.527237948999378
+xp     = [-12.83716703   2.06688879  29.83079131 -13.88194925]
+&lt;xp,y&gt; = -14.527237948999378
+zp     = [-0.72228526 -0.12056812  0.06306008  0.54996723]
+&lt;zp,y&gt; = -1.435130705483572
+z      = [-0.26208832 -0.0904634  -0.0645403  -0.0337629 ]
+(z,y)  = -1.435130705483572
 </pre></div></div>
 </div>
 <p>The implementation could be improved in various ways. We might, for example, allow the metric to be given in a more general form (e.g., as a <code class="docutils literal notranslate"><span class="pre">scipy.sparse</span></code> <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code>) and its inverse computed using iterative methods. We might also allow the user to optionally provide the inverse metric directly. Such steps would be particularly useful if the dimension of the space is large.</p>

@@ -17,7 +17,7 @@ from scipy.linalg import (
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
 from .operators import LinearOperator
-from .hilbert_space import T_vec
+from .hilbert_space import Vector
 
 
 class LinearSolver(ABC):
@@ -130,29 +130,29 @@ class IterativeLinearSolver(LinearSolver):
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         """
         Solves the linear system Ax = y for x.
 
         Args:
             operator (LinearOperator): The operator A of the linear system.
             preconditioner (LinearOperator, optional): The preconditioner.
-            y (T_vec): The right-hand side vector.
-            x0 (T_vec, optional): The initial guess for the solution.
+            y (Vector): The right-hand side vector.
+            x0 (Vector, optional): The initial guess for the solution.
 
         Returns:
-            T_vec: The solution vector x.
+            Vector: The solution vector x.
         """
 
     def solve_adjoint_linear_system(
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        x: T_vec,
-        y0: Optional[T_vec],
-    ) -> T_vec:
+        x: Vector,
+        y0: Optional[Vector],
+    ) -> Vector:
         """
         Solves the adjoint linear system A*y = x for y.
         """
@@ -224,9 +224,9 @@ class CGMatrixSolver(IterativeLinearSolver):
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         domain = operator.codomain
         matrix = operator.matrix(galerkin=self._galerkin)
 
@@ -291,9 +291,9 @@ class BICGMatrixSolver(IterativeLinearSolver):
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
@@ -359,9 +359,9 @@ class BICGStabMatrixSolver(IterativeLinearSolver):
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
@@ -433,9 +433,9 @@ class GMRESMatrixSolver(IterativeLinearSolver):
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         domain = operator.codomain
         codomain = operator.domain
         matrix = operator.matrix(galerkin=self._galerkin)
@@ -485,7 +485,7 @@ class CGSolver(IterativeLinearSolver):
         rtol: float = 1.0e-5,
         atol: float = 0.0,
         maxiter: Optional[int] = None,
-        callback: Optional[Callable[[T_vec], None]] = None,
+        callback: Optional[Callable[[Vector], None]] = None,
     ) -> None:
         """
         Args:
@@ -507,15 +507,15 @@ class CGSolver(IterativeLinearSolver):
             raise ValueError("maxiter must be None or positive")
         self._maxiter: Optional[int] = maxiter
 
-        self._callback: Optional[Callable[[T_vec], None]] = callback
+        self._callback: Optional[Callable[[Vector], None]] = callback
 
     def solve_linear_system(
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         domain = operator.domain
         x = domain.zero if x0 is None else domain.copy(x0)
 

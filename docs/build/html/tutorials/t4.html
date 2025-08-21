@@ -208,21 +208,6 @@
 <li class="toctree-l1"><a class="reference internal" href="t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -263,7 +248,7 @@
         </div>
         <article role="main" id="furo-main-content">
           <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[29]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[1]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Uncomment and run this when using colab.</span>
@@ -278,7 +263,7 @@
 <h2>Defining a linear operator<a class="headerlink" href="#Defining-a-linear-operator" title="Link to this heading">¶</a></h2>
 <p>Let <span class="math notranslate nohighlight">\(X\)</span> and <span class="math notranslate nohighlight">\(Y\)</span> be two Hilbert spaces represented by <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> objects. A linear operator between them is specified through its mapping. This is shown in the following example using instances of <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> as the domain and codomain of the mapping.</p>
 <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[30]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[2]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
@@ -297,7 +282,7 @@
 </div>
 <p>Having defined the operator, we can compute its action on vectors as follows:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[31]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">x</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
@@ -313,13 +298,13 @@
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x =  [-0.11415349  1.38619828 -1.04610582  1.54245682 -0.74082673]
-Ax = [-0.11415349  1.38619828 -1.04610582]
+x =  [ 1.16575696 -0.27139188 -0.47870897 -1.31344606  0.15398645]
+Ax = [ 1.16575696 -0.27139188 -0.47870897]
 </pre></div></div>
 </div>
 <p>Linear operators can be combined in the usual manners so long as their domains and codomains are compatible. For example:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[32]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Project the final elements onto Y.</span>
@@ -353,13 +338,13 @@ Ax = [-0.11415349  1.38619828 -1.04610582]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x          = [-0.41847086 -0.61023093  2.11319    -0.33582984 -0.54078921]
-Ax         = [-0.41847086 -0.61023093  2.11319   ]
-Bx         = [ 2.11319    -0.33582984 -0.54078921]
-(A + 2 B)x = [ 3.80790915 -1.28189062  1.03161159]
-Ax + 2 Bx  = [ 3.80790915 -1.28189062  1.03161159]
-D(Ax)      = [-0.41847086 -0.61023093  2.11319     0.          0.        ]
-(DA)x      = [-0.41847086 -0.61023093  2.11319     0.          0.        ]
+x          = [-0.34094654 -0.78770764  2.0818175   0.52163684  0.57421852]
+Ax         = [-0.34094654 -0.78770764  2.0818175 ]
+Bx         = [2.0818175  0.52163684 0.57421852]
+(A + 2 B)x = [3.82268846 0.25556605 3.23025455]
+Ax + 2 Bx  = [3.82268846 0.25556605 3.23025455]
+D(Ax)      = [-0.34094654 -0.78770764  2.0818175   0.          0.        ]
+(DA)x      = [-0.34094654 -0.78770764  2.0818175   0.          0.        ]
 </pre></div></div>
 </div>
 <p>Algebraic combinations of such operators are always detemrined lazily, and hence there is essentially no cost in forming the combinations until their action on a vector is computed.</p>
@@ -373,7 +358,7 @@ D(Ax)      = [-0.41847086 -0.61023093  2.11319     0.          0.        ]
 </div>
 <p>for all <span class="math notranslate nohighlight">\(x \in X\)</span> and <span class="math notranslate nohighlight">\(y' \in Y'\)</span>. Such an operator can be accessed from a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> using its <code class="docutils literal notranslate"><span class="pre">dual</span></code> property. This is shown in the code below where we verify that the defining identity holds.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[33]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[5]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">x</span> <span class="o">=</span> <span class="n">X</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
@@ -389,8 +374,8 @@ D(Ax)      = [-0.41847086 -0.61023093  2.11319     0.          0.        ]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-&lt;yp, Ax&gt;    = -0.08402357088716553
-&lt;Ap(yp), x&gt; = -0.08402357088716553
+&lt;yp, Ax&gt;    = -0.16971138253001203
+&lt;Ap(yp), x&gt; = -0.16971138253001203
 </pre></div></div>
 </div>
 <p>Here we see that once a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> has been defined its dual is automatically available. This is done internally using the defining relation for the dual operator. However, this implementation is inefficient and should be used rarely. Indeed, the action of of this dual operator on a vector of dimension <span class="math notranslate nohighlight">\(n\)</span> requires <span class="math notranslate nohighlight">\(n\)</span> actions of the original operator to be computed. Rather, when constructing a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> the dual mapping can be provided directly as a key-word
@@ -402,7 +387,7 @@ argument.</p>
 </div>
 <p>where <span class="math notranslate nohighlight">\(m = \dim Y\)</span>. It follows that <span class="math notranslate nohighlight">\(A'y'\)</span> is the element of <span class="math notranslate nohighlight">\(X'\)</span> whose first <span class="math notranslate nohighlight">\(m\)</span> components equal those of <span class="math notranslate nohighlight">\(y'\)</span> while all others are zero. Using this result, we can re-implement the projection operator as follows:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[34]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[6]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define the mapping and the dual mapping</span>
@@ -431,8 +416,8 @@ argument.</p>
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-&lt;yp, Ax&gt;    = 0.6977529510738387
-&lt;Ap(yp), x&gt; = 0.6977529510738387
+&lt;yp, Ax&gt;    = -1.7458653093078291
+&lt;Ap(yp), x&gt; = -1.7458653093078291
 </pre></div></div>
 </div>
 </section>
@@ -445,7 +430,7 @@ argument.</p>
 </div>
 <p>for all <span class="math notranslate nohighlight">\(x \in X\)</span> and <span class="math notranslate nohighlight">\(y \in Y\)</span>. For a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> the adjoint can be accessed through its <code class="docutils literal notranslate"><span class="pre">adjoint</span></code> property:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[35]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define the projection again just in terms of its mapping.</span>
@@ -464,8 +449,8 @@ argument.</p>
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-(y,Ax)  = -0.881393659461033
-(A*y,x) = -0.881393659461033
+(y,Ax)  = 1.850030482501015
+(A*y,x) = 1.850030482501015
 </pre></div></div>
 </div>
 <p>The dual and adjoint operators are related, and in the above case this relation is used to determine the adjoint from the automatically generated dual. Recalling the Riesz representation theorem in terms of an isometric isomorphisms <span class="math notranslate nohighlight">\(J_{X} = \mathrm{Hom}(X',X)\)</span> and <span class="math notranslate nohighlight">\(J_{Y} = \mathrm{Hom}(Y',Y)\)</span>, it is readily seen that</p>
@@ -476,7 +461,7 @@ argument.</p>
 <p>If a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> is constructed given an explicit dual mapping, then the above relation is used to efficiently implement its adjoint. Equally, an <code class="docutils literal notranslate"><span class="pre">adjoint_mapping</span></code> can be provided as a key-word argument, and then the above relation generates the dual mapping.</p>
 <p>In the case of the projection, <span class="math notranslate nohighlight">\(A\)</span>, from <span class="math notranslate nohighlight">\(X\)</span> to <span class="math notranslate nohighlight">\(Y\)</span>, a simple calculation shows that <span class="math notranslate nohighlight">\(A^{*}\)</span> is just the inclusion from <span class="math notranslate nohighlight">\(Y\)</span> into <span class="math notranslate nohighlight">\(X\)</span>. We can, therefore, implement this operator as follows:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[36]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">adjoint_mapping</span><span class="p">(</span><span class="n">y</span><span class="p">):</span>
@@ -502,10 +487,10 @@ argument.</p>
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-(y,Ax)     = -0.24017696243918896
-(A*y,x)    = -0.24017696243918896
-&lt;yp,Ax&gt;    = 0.13365937051420906
-&lt;Ap(yp),x&gt; = 0.13365937051420906
+(y,Ax)     = 1.6653081648027053
+(A*y,x)    = 1.6653081648027053
+&lt;yp,Ax&gt;    = 0.2665562500375226
+&lt;Ap(yp),x&gt; = 0.2665562500375226
 </pre></div></div>
 </div>
 </section>
@@ -518,7 +503,7 @@ argument.</p>
 </div>
 <p>This operator can be viewed as an <span class="math notranslate nohighlight">\(m\times n\)</span> matrix, and from a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> it can be accessed as follows:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[37]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[9]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">Ah</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">matrix</span><span class="p">(</span><span class="n">dense</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -539,7 +524,7 @@ argument.</p>
 <p>Note the inclusion of the key-word argument <code class="docutils literal notranslate"><span class="pre">dense</span></code> when using the <code class="docutils literal notranslate"><span class="pre">matrix</span></code> method. Without this, the default is to return the matrix representation as a <code class="docutils literal notranslate"><span class="pre">scipy</span></code> <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> instance. This latter option is useful when interfacing between <code class="docutils literal notranslate"><span class="pre">pygeoinf</span></code> operators and numerical algorithms within the <code class="docutils literal notranslate"><span class="pre">scipy</span></code> package.</p>
 <p>The dense matrix representation is generated by successively acting the operator on basis vectors for the space. A <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> can also be printed, the result just being its dense matrix representation:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[38]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[10]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">A</span><span class="p">)</span>
@@ -558,7 +543,7 @@ argument.</p>
 </div>
 <p>If the matrix representation of an linear operator is available, this can be used to generate the correspondind <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> using the static method <code class="docutils literal notranslate"><span class="pre">from_matrix</span></code>. The matrix used can either be a dense <code class="docutils literal notranslate"><span class="pre">numpy</span></code> matrix or a <code class="docutils literal notranslate"><span class="pre">scipy</span></code> <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code>. As an example, we can reconstruct our projection operator using its dense matrix representation:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[39]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[11]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Form the operator from a matrix.</span>
@@ -582,10 +567,10 @@ argument.</p>
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-(y,Ax)     = -0.17039623488783748
-(A*y,x)    = -0.17039623488783748
-&lt;yp,Ax&gt;    = 0.07440943617372242
-&lt;Ap(yp),x&gt; = 0.07440943617372242
+(y,Ax)     = 0.9108700531892913
+(A*y,x)    = 0.9108700531892913
+&lt;yp,Ax&gt;    = -0.3144214357213772
+&lt;Ap(yp),x&gt; = -0.3144214357213772
 </pre></div></div>
 </div>
 </section>
@@ -603,7 +588,7 @@ argument.</p>
 </div>
 <p>From a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code>, its Galerkin matrix representation can be accessed from the <code class="docutils literal notranslate"><span class="pre">matrix</span></code> method by setting the keyword argument <code class="docutils literal notranslate"><span class="pre">galerkin=True</span></code>:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[40]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[12]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">Ag</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">matrix</span><span class="p">(</span><span class="n">dense</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">galerkin</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -623,7 +608,7 @@ argument.</p>
 </div>
 <p>In this example, the two matrix representations coincide because the mapping from Euclidean space to its dual is trivial. This is not the case in more general Hilbert spaces, however. The <code class="docutils literal notranslate"><span class="pre">from_matrix</span></code> method can also use Galerking representations to construct a <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code>:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[41]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[13]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Construct a operator from its Galerkin matrix.</span>
@@ -647,10 +632,10 @@ argument.</p>
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-(y,Ax)     = -0.20919992686705868
-(A*y,x)    = -0.20919992686705868
-&lt;yp,Ax&gt;    = 0.66853019671021
-&lt;Ap(yp),x&gt; = 0.66853019671021
+(y,Ax)     = -0.19175578803414312
+(A*y,x)    = -0.19175578803414312
+&lt;yp,Ax&gt;    = 0.45940321426665004
+&lt;Ap(yp),x&gt; = 0.45940321426665004
 </pre></div></div>
 </div>
 </section>
@@ -706,7 +691,7 @@ adjoint defined relative to the <span class="math notranslate nohighlight">\(L^{
 </div>
 <p>and hence in terms of Fourier coefficients differentiation us just a wavenumber-dependent scaling.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[42]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[14]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
@@ -785,8 +770,8 @@ adjoint defined relative to the <span class="math notranslate nohighlight">\(L^{
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-(v,Au) =  -10.236171815918802
-(A*v,u) = -10.236171815918805
+(v,Au) =  -16.075572234890124
+(A*v,u) = -16.07557223489012
 </pre></div></div>
 </div>
 </section>

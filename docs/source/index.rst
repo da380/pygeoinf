@@ -41,16 +41,6 @@ The library is built on a few key concepts:
    :caption: API Reference
    :hidden:
 
-   api/hilbert_space
-   api/operators
-   api/forms
-   api/gaussian_measure
-   api/direct_sum
-   api/linear_solvers
-   api/forward_problem
-   api/inversion
-   api/linear_optimisation
-   api/linear_bayesian
-   api/random_matrix
-   api/symmetric_spaces
+   api/modules
 
+   

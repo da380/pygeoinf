@@ -8,7 +8,7 @@ vector type, rather than using NumPy arrays directly.
 import pytest
 import numpy as np
 from typing import Callable
-from pygeoinf.hilbert_space import LebesgueSpace, T_vec
+from pygeoinf.hilbert_space import LebesgueSpace, Vector
 from .checks.hilbert_space import HilbertSpaceChecks
 
 
@@ -19,19 +19,19 @@ class CustomVector:
     def __init__(self, data: np.ndarray):
         self.data = data
 
-    def __add__(self, other: "CustomVector") -> "CustomVector":
+    def __add__(self, other: Vector) -> Vector:
         return CustomVector(self.data + other.data)
 
-    def __sub__(self, other: "CustomVector") -> "CustomVector":
+    def __sub__(self, other: Vector) -> Vector:
         return CustomVector(self.data - other.data)
 
-    def __mul__(self, scalar: float) -> "CustomVector":
+    def __mul__(self, scalar: float) -> Vector:
         return CustomVector(self.data * scalar)
 
-    def __rmul__(self, scalar: float) -> "CustomVector":
+    def __rmul__(self, scalar: float) -> Vector:
         return self * scalar
 
-    def copy(self) -> "CustomVector":
+    def copy(self) -> Vector:
         """Returns a deep copy of this vector."""
         return CustomVector(self.data.copy())
 
@@ -39,7 +39,7 @@ class CustomVector:
         """In-place scaling: self := alpha * self."""
         self.data *= alpha
 
-    def axpy(self, alpha: float, x: "CustomVector") -> None:
+    def axpy(self, alpha: float, x: Vector) -> None:
         """In-place scale and add: self := alpha * x + self."""
         self.data += alpha * x.data
 

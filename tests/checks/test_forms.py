@@ -1,18 +1,18 @@
 """
 Tests for the LinearForm class.
 """
+
 import pytest
 import numpy as np
-from typing import  Union
+from typing import Union
 from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
 from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
 from pygeoinf.symmetric_space.line import Sobolev as LineSobolev
 from pygeoinf.symmetric_space.sphere import Sobolev as SphereSobolev
-from pygeoinf.forms import LinearForm
+from pygeoinf.linear_forms import LinearForm
 
 
-
-from pygeoinf.hilbert_space import T_vec
+from pygeoinf.hilbert_space import Vector
 
 
 # =============================================================================
@@ -27,6 +27,7 @@ space_implementations = [
     SphereSobolev(16, 1.0, 0.1),
 ]
 
+
 # Use pytest.mark.parametrize to create a fixture that will run tests
 # for each of the space implementations defined above.
 @pytest.fixture(params=space_implementations)
@@ -39,6 +40,7 @@ def space(request) -> HilbertSpace:
 # Unified Test Suite
 # =============================================================================
 
+
 class TestLinearForm:
     """
     A unified suite of tests for the LinearForm class that runs against
@@ -46,7 +48,7 @@ class TestLinearForm:
     """
 
     @pytest.fixture
-    def x(self, space: HilbertSpace) -> T_vec:
+    def x(self, space: HilbertSpace) -> Vector:
         """Provides a random vector from the parametrized space."""
         return space.random()
 
@@ -56,12 +58,16 @@ class TestLinearForm:
         return np.random.randn(space.dim)
 
     @pytest.fixture
-    def form_from_components(self, space: HilbertSpace, components: np.ndarray) -> LinearForm:
+    def form_from_components(
+        self, space: HilbertSpace, components: np.ndarray
+    ) -> LinearForm:
         """Provides a LinearForm instance created from a component vector."""
         return LinearForm(space, components=components)
 
     @pytest.fixture
-    def form_from_mapping(self, space: HilbertSpace, components: np.ndarray) -> LinearForm:
+    def form_from_mapping(
+        self, space: HilbertSpace, components: np.ndarray
+    ) -> LinearForm:
         """Provides a LinearForm instance created from a mapping."""
         mapping = lambda vec: np.dot(components, space.to_components(vec))
         return LinearForm(space, mapping=mapping)
@@ -78,7 +84,7 @@ class TestLinearForm:
         self,
         space: HilbertSpace,
         form_from_components: LinearForm,
-        x: T_vec,
+        x: Vector,
         components: np.ndarray,
     ):
         """Tests that the form's action on a vector is correct."""
@@ -100,7 +106,7 @@ class TestLinearForm:
         assert np.allclose(computed_components, components)
 
     def test_addition(
-        self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: T_vec
+        self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: Vector
     ):
         """Tests the addition of two linear forms: (f1 + f2)(x) = f1(x) + f2(x)."""
         f1 = form_from_components
@@ -110,7 +116,7 @@ class TestLinearForm:
         assert np.allclose(sum_form.components, f1.components + f2.components)
 
     def test_subtraction(
-        self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: T_vec
+        self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: Vector
     ):
         """Tests subtraction: (f1 - f2)(x) = f1(x) - f2(x)."""
         f1 = form_from_components
@@ -119,14 +125,16 @@ class TestLinearForm:
         assert np.isclose(diff_form(x), f1(x) - f2(x))
         assert np.allclose(diff_form.components, f1.components - f2.components)
 
-    def test_scalar_multiplication(self, form_from_components: LinearForm, x: T_vec):
+    def test_scalar_multiplication(self, form_from_components: LinearForm, x: Vector):
         """Tests scalar multiplication: (a * f)(x) = a * f(x)."""
         scalar = 2.5
         scaled_form = scalar * form_from_components
         assert np.isclose(scaled_form(x), scalar * form_from_components(x))
-        assert np.allclose(scaled_form.components, scalar * form_from_components.components)
+        assert np.allclose(
+            scaled_form.components, scalar * form_from_components.components
+        )
 
-    def test_negation(self, form_from_components: LinearForm, x: T_vec):
+    def test_negation(self, form_from_components: LinearForm, x: Vector):
         """Tests negation: (-f)(x) = -f(x)."""
         neg_form = -form_from_components
         assert np.isclose(neg_form(x), -form_from_components(x))

@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -276,7 +261,7 @@
 
 
 <div class="viewcode-block" id="LinearLeastSquaresInversion">
-<a class="viewcode-back" href="../../api/linear_optimisation.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearLeastSquaresInversion</span><span class="p">(</span><span class="n">Inversion</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Solves a linear inverse problem using Tikhonov-regularized least-squares.</span>
@@ -297,7 +282,7 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">assert_inverse_data_covariance</span><span class="p">()</span>
 
 <div class="viewcode-block" id="LinearLeastSquaresInversion.normal_operator">
-<a class="viewcode-back" href="../../api/linear_optimisation.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.normal_operator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.normal_operator">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">normal_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">damping</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the Tikhonov-regularized normal operator.</span>
@@ -335,7 +320,7 @@
 
 
 <div class="viewcode-block" id="LinearLeastSquaresInversion.least_squares_operator">
-<a class="viewcode-back" href="../../api/linear_optimisation.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.least_squares_operator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.least_squares_operator">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">least_squares_operator</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">damping</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
@@ -382,7 +367,7 @@
                 <span class="k">return</span> <span class="p">(</span>
                     <span class="n">inverse_normal_operator</span>
 <div class="viewcode-block" id="LinearMinimumNormInversion">
-<a class="viewcode-back" href="../../api/linear_optimisation.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion">[docs]</a>
                     <span class="o">@</span> <span class="n">forward_operator</span><span class="o">.</span><span class="n">adjoint</span>
                     <span class="o">@</span> <span class="n">inverse_data_covariance</span>
                 <span class="p">)(</span><span class="n">shifted_data</span><span class="p">)</span>
@@ -415,7 +400,7 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">assert_inverse_data_covariance</span><span class="p">()</span>
 
 <div class="viewcode-block" id="LinearMinimumNormInversion.minimum_norm_operator">
-<a class="viewcode-back" href="../../api/linear_optimisation.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion.minimum_norm_operator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion.minimum_norm_operator">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">minimum_norm_operator</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">solver</span><span class="p">:</span> <span class="s2">&quot;LinearSolver&quot;</span><span class="p">,</span>

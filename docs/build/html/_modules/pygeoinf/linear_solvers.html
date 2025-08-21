@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -278,7 +263,7 @@
 
 
 <div class="viewcode-block" id="LinearSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.LinearSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.LinearSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearSolver</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An abstract base class for linear solvers.</span>
@@ -287,7 +272,7 @@
 
 
 <div class="viewcode-block" id="DirectLinearSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.DirectLinearSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.DirectLinearSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">DirectLinearSolver</span><span class="p">(</span><span class="n">LinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An abstract base class for direct linear solvers that rely on matrix</span>
@@ -297,7 +282,7 @@
 
 
 <div class="viewcode-block" id="LUSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.LUSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.LUSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LUSolver</span><span class="p">(</span><span class="n">DirectLinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A direct linear solver based on the LU decomposition of an operator&#39;s</span>
@@ -345,7 +330,7 @@
 
 
 <div class="viewcode-block" id="CholeskySolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.CholeskySolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.CholeskySolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">CholeskySolver</span><span class="p">(</span><span class="n">DirectLinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A direct linear solver based on Cholesky decomposition.</span>
@@ -390,14 +375,14 @@
 
 
 <div class="viewcode-block" id="IterativeLinearSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.IterativeLinearSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.IterativeLinearSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">IterativeLinearSolver</span><span class="p">(</span><span class="n">LinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An abstract base class for iterative linear solvers.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
 <div class="viewcode-block" id="IterativeLinearSolver.solve_linear_system">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.IterativeLinearSolver.solve_linear_system">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.IterativeLinearSolver.solve_linear_system">[docs]</a>
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">solve_linear_system</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
@@ -421,7 +406,7 @@
 
 
 <div class="viewcode-block" id="IterativeLinearSolver.solve_adjoint_linear_system">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.IterativeLinearSolver.solve_adjoint_linear_system">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.IterativeLinearSolver.solve_adjoint_linear_system">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">solve_adjoint_linear_system</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
@@ -468,7 +453,7 @@
 
 
 <div class="viewcode-block" id="CGMatrixSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.CGMatrixSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.CGMatrixSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">CGMatrixSolver</span><span class="p">(</span><span class="n">IterativeLinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Iterative solver using SciPy&#39;s Conjugate Gradient (CG) algorithm on the</span>
@@ -501,7 +486,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_callback</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="n">callback</span>
 
 <div class="viewcode-block" id="CGMatrixSolver.solve_linear_system">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.CGMatrixSolver.solve_linear_system">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.CGMatrixSolver.solve_linear_system">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">solve_linear_system</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
@@ -541,7 +526,7 @@
 
 
 <div class="viewcode-block" id="BICGMatrixSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.BICGMatrixSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.BICGMatrixSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">BICGMatrixSolver</span><span class="p">(</span><span class="n">IterativeLinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Iterative solver using SciPy&#39;s Biconjugate Gradient (BiCG) algorithm on</span>
@@ -574,7 +559,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_callback</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="n">callback</span>
 
 <div class="viewcode-block" id="BICGMatrixSolver.solve_linear_system">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.BICGMatrixSolver.solve_linear_system">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.BICGMatrixSolver.solve_linear_system">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">solve_linear_system</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
@@ -615,7 +600,7 @@
 
 
 <div class="viewcode-block" id="BICGStabMatrixSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.BICGStabMatrixSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.BICGStabMatrixSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">BICGStabMatrixSolver</span><span class="p">(</span><span class="n">IterativeLinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Iterative solver using SciPy&#39;s Biconjugate Gradient Stabilized (BiCGSTAB)</span>
@@ -648,7 +633,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_callback</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="n">callback</span>
 
 <div class="viewcode-block" id="BICGStabMatrixSolver.solve_linear_system">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.BICGStabMatrixSolver.solve_linear_system">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.BICGStabMatrixSolver.solve_linear_system">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">solve_linear_system</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
@@ -689,7 +674,7 @@
 
 
 <div class="viewcode-block" id="GMRESMatrixSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.GMRESMatrixSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.GMRESMatrixSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">GMRESMatrixSolver</span><span class="p">(</span><span class="n">IterativeLinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Iterative solver using SciPy&#39;s Generalized Minimal Residual (GMRES)</span>
@@ -728,7 +713,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_callback_type</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">callback_type</span>
 
 <div class="viewcode-block" id="GMRESMatrixSolver.solve_linear_system">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.GMRESMatrixSolver.solve_linear_system">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.GMRESMatrixSolver.solve_linear_system">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">solve_linear_system</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
@@ -772,7 +757,7 @@
 
 
 <div class="viewcode-block" id="CGSolver">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.CGSolver">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.CGSolver">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">CGSolver</span><span class="p">(</span><span class="n">IterativeLinearSolver</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A matrix-free implementation of the Conjugate Gradient (CG) algorithm.</span>
@@ -814,7 +799,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_callback</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="n">callback</span>
 
 <div class="viewcode-block" id="CGSolver.solve_linear_system">
-<a class="viewcode-back" href="../../api/linear_solvers.html#pygeoinf.linear_solvers.CGSolver.solve_linear_system">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_solvers.CGSolver.solve_linear_system">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">solve_linear_system</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>

@@ -18,7 +18,7 @@ from .direct_sum import ColumnLinearOperator
 # This block only runs for type checkers, not at runtime, to prevent
 # circular import errors while still allowing type hints.
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, T_vec
+    from .hilbert_space import HilbertSpace, Vector
     from .operators import LinearOperator
 
 
@@ -139,7 +139,7 @@ class LinearForwardProblem(ForwardProblem):
             joint_forward_operator, data_error_measure=data_error_measure
         )
 
-    def data_measure(self, model: "T_vec") -> "GaussianMeasure":
+    def data_measure(self, model: "Vector") -> "GaussianMeasure":
         """
         Returns the Gaussian measure for the data, given a specific model.
 
@@ -160,7 +160,7 @@ class LinearForwardProblem(ForwardProblem):
             translation=self.forward_operator(model)
         )
 
-    def synthetic_data(self, model: "T_vec") -> "T_vec":
+    def synthetic_data(self, model: "Vector") -> "Vector":
         """
         Generates a synthetic data vector for a given model.
 
@@ -177,7 +177,7 @@ class LinearForwardProblem(ForwardProblem):
 
     def synthetic_model_and_data(
         self, prior: "GaussianMeasure"
-    ) -> Tuple["T_vec", "T_vec"]:
+    ) -> Tuple["Vector", "Vector"]:
         """
         Generates a random model and corresponding synthetic data.
 
@@ -211,7 +211,7 @@ class LinearForwardProblem(ForwardProblem):
         """
         return chi2.ppf(significance_level, self.data_space.dim)
 
-    def chi_squared(self, model: "T_vec", data: "T_vec") -> float:
+    def chi_squared(self, model: "Vector", data: "Vector") -> float:
         """
         Calculates the chi-squared statistic for a given model and data.
 
@@ -246,7 +246,7 @@ class LinearForwardProblem(ForwardProblem):
             return self.data_space.squared_norm(residual)
 
     def chi_squared_test(
-        self, significance_level: float, model: "T_vec", data: "T_vec"
+        self, significance_level: float, model: "Vector", data: "Vector"
     ) -> bool:
         """
         Performs a chi-squared test for goodness of fit.

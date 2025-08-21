@@ -12,7 +12,7 @@ from .gaussian_measure import GaussianMeasure
 from .forward_problem import LinearForwardProblem
 from .operators import LinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
-from .hilbert_space import HilbertSpace, T_vec
+from .hilbert_space import HilbertSpace, Vector
 
 
 class LinearBayesianInversion(Inversion):
@@ -87,7 +87,7 @@ class LinearBayesianInversion(Inversion):
 
     def model_posterior_measure(
         self,
-        data: "T_vec",
+        data: "Vector",
         solver: "LinearSolver",
         /,
         *,
@@ -196,7 +196,7 @@ class LinearBayesianInference(LinearBayesianInversion):
 
     def property_posterior_measure(
         self,
-        data: "T_vec",
+        data: "Vector",
         solver: "LinearSolver",
         /,
         *,

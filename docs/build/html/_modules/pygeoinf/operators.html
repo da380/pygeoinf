@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -279,11 +264,11 @@
 <span class="c1"># This block only runs for type checkers, not at runtime</span>
 <span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">EuclideanSpace</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">.forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 
 
 <div class="viewcode-block" id="Operator">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.Operator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.Operator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">Operator</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A general, potentially non-linear operator between two Hilbert spaces.</span>
@@ -340,7 +325,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearOperator</span><span class="p">(</span><span class="n">Operator</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A linear operator between two Hilbert spaces.</span>
@@ -404,7 +389,7 @@
                 <span class="bp">self</span><span class="o">.</span><span class="n">__adjoint_mapping</span> <span class="o">=</span> <span class="n">adjoint_mapping</span>
 
 <div class="viewcode-block" id="LinearOperator.self_dual">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.self_dual">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_dual">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_dual</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
@@ -414,7 +399,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.self_adjoint">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.self_adjoint">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_adjoint</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
@@ -424,7 +409,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.formally_self_adjoint">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.formally_self_adjoint">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.formally_self_adjoint">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">formally_self_adjoint</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
@@ -434,7 +419,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.from_linear_forms">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.from_linear_forms">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.from_linear_forms">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_linear_forms</span><span class="p">(</span><span class="n">forms</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;LinearForm&quot;</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -468,7 +453,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.from_matrix">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.from_matrix">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.from_matrix">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_matrix</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -528,7 +513,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.self_adjoint_from_matrix">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.self_adjoint_from_matrix">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint_from_matrix">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_adjoint_from_matrix</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">matrix</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">ScipyLinOp</span><span class="p">]</span>
@@ -545,7 +530,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.from_tensor_product">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.from_tensor_product">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.from_tensor_product">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_tensor_product</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -583,7 +568,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.self_adjoint_from_tensor_product">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.self_adjoint_from_tensor_product">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint_from_tensor_product">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_adjoint_from_tensor_product</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -642,7 +627,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_thread_safe</span>
 
 <div class="viewcode-block" id="LinearOperator.matrix">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.matrix">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.matrix">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">matrix</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dense</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">galerkin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">ScipyLinOp</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
@@ -712,7 +697,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.random_svd">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.random_svd">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.random_svd">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_svd</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -767,7 +752,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.random_eig">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.random_eig">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.random_eig">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_eig</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -809,7 +794,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.random_cholesky">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.LinearOperator.random_cholesky">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.random_cholesky">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_cholesky</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -850,7 +835,7 @@
 
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_dual_mapping_default</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">yp</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">:</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">.forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 
         <span class="k">return</span> <span class="n">LinearForm</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">yp</span><span class="p">(</span><span class="bp">self</span><span class="p">(</span><span class="n">x</span><span class="p">)))</span>
 
@@ -963,7 +948,7 @@
 
 
 <div class="viewcode-block" id="DiagonalLinearOperator">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.DiagonalLinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">DiagonalLinearOperator</span><span class="p">(</span><span class="n">LinearOperator</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A LinearOperator that is diagonal in its component representation.</span>
@@ -1009,7 +994,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_diagonal_values</span>
 
 <div class="viewcode-block" id="DiagonalLinearOperator.function">
-<a class="viewcode-back" href="../../api/operators.html#pygeoinf.operators.DiagonalLinearOperator.function">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator.function">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">function</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;DiagonalLinearOperator&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Applies a function to the operator via functional calculus.</span>

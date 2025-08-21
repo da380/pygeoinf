@@ -9,7 +9,7 @@ import numpy as np
 
 from .hilbert_space import HilbertSpace
 from .operators import LinearOperator
-from .forms import LinearForm
+from .linear_forms import LinearForm
 
 
 class HilbertSpaceDirectSum(HilbertSpace):

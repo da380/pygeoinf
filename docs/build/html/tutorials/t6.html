@@ -208,21 +208,6 @@
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -263,7 +248,7 @@
         </div>
         <article role="main" id="furo-main-content">
           <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[25]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[1]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Uncomment and run this when using colab.</span>
@@ -287,7 +272,7 @@ obtained.</p>
 corrected such that this is true - the methods discussed can also handle the more general case if desired.</p>
 <p>To proceed, we first set up the model space:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[26]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[2]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
@@ -311,13 +296,13 @@ corrected such that this is true - the methods discussed can also handle the mor
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-The discretised model space has dimension: 2048
+The discretised model space has dimension: 512
 </pre></div></div>
 </div>
 <p>Note that we have used the static method <code class="docutils literal notranslate"><span class="pre">from_sobolev_parameters</span></code> to select an appropriate discretisation of the model space. In this case, we have set the optional argument <code class="docutils literal notranslate"><span class="pre">power_of_two</span></code> to be <code class="docutils literal notranslate"><span class="pre">True</span></code>. This ensures that the discretised model space has a dimension <span class="math notranslate nohighlight">\(2^{m}\)</span> for some <span class="math notranslate nohighlight">\(m\)</span>. Doing this aids efficiency within fast Fourier transformations.</p>
 <p>To get the forward operator, we can use the method <code class="docutils literal notranslate"><span class="pre">point_evaluation_operator</span></code> that is built into the Sobolev class. To form this operator, we just need to provide a list of the observation points and the corresponding <code class="docutils literal notranslate"><span class="pre">LinearOperator</span></code> is returned. The codomain of this operator is the appropriately dimensioned <code class="docutils literal notranslate"><span class="pre">EuclideanSpace</span></code> which we store as the data space for our problem.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[27]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set up the observation points.</span>
@@ -345,7 +330,7 @@ The data space has dimension: 15
 <p>We now need to define the data error measure. To proceed, we will assume that these errors arise from an underlying Gaussian measure, with this being a convenient method for generating errors with a non-diagonal covariance matrix. In code below we first set up such a measure on the model space with non-zero mean. This can be pushed forward using the forward operator to form the data error measure. An issue, however, is that the resulting measure does not have its inverse covariance defined, nor
 a sampling method set up, both of which we later require. To proceed, we can extract the measure’s covariance matrix in dense form and use this to construct our final data error measure.</p>
 <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[28]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># First define a Gaussian measure on the model space.</span>
@@ -370,7 +355,7 @@ a sampling method set up, both of which we later require. To proceed, we can ext
 </div>
 <p>We are now in a position to set up our forward problem, this being described by an instance of the class <code class="docutils literal notranslate"><span class="pre">LinearForwardProblem</span></code>. Construction of this object requires us to pass the <code class="docutils literal notranslate"><span class="pre">forward_operator</span></code> and the <code class="docutils literal notranslate"><span class="pre">data_error_measure</span></code>. The second argument is optional with default <code class="docutils literal notranslate"><span class="pre">None</span></code> in which case the data are assumed to be error-free.</p>
 <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[29]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[5]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set the forward problem.</span>
@@ -381,7 +366,7 @@ a sampling method set up, both of which we later require. To proceed, we can ext
 <p>The <code class="docutils literal notranslate"><span class="pre">LinearForwardProblem</span></code> class has, in of itself, relatively little functionality. It does, however, provides useful methods for generating synthetic data. One is called <code class="docutils literal notranslate"><span class="pre">synthetic_data</span></code>, takes in a model as argument, and returns the corresponding data. If a data error measure has been set, then sampled values for the data errors are added to the result of the forward operator. Below we directly define a model and use <code class="docutils literal notranslate"><span class="pre">synthetic_data</span></code> to generate corresponding data. We also make use of a
 simple method within the <code class="docutils literal notranslate"><span class="pre">Sobolev</span></code> class for plotting its elements.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[30]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[6]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set the function directly.</span>
@@ -406,7 +391,7 @@ simple method within the <code class="docutils literal notranslate"><span class=
 </div>
 <p>The <code class="docutils literal notranslate"><span class="pre">LinearForwardProblem</span></code> class also provided methods related to the chi-squared statistic that can be used to assess the compatibility of a given model with data. To use these methods it is necessary that a data error measure is provided and that it has its inverse covariance set. These ideas are illustrated below:</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[31]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set the desired significance level</span>
@@ -438,9 +423,9 @@ simple method within the <code class="docutils literal notranslate"><span class=
 <div class="output_area docutils container">
 <div class="highlight"><pre>
 The critical chi-squared value is: 24.995790139728616
-The chi-squared for the true model is: 14.10311874290737
+The chi-squared for the true model is: 14.19332867135305
 Is the chi-squared test passed for the true model: True
-The chi-squared for the new model is: 1363.3790591984887
+The chi-squared for the new model is: 1240.4373723906378
 Is the chi-squared test passed for the new model: False
 </pre></div></div>
 </div>
@@ -459,7 +444,7 @@ Is the chi-squared test passed for the new model: False
 </div>
 <p>This problem can be solved using the <code class="docutils literal notranslate"><span class="pre">LinearLeastSquaresInversion</span></code> class. To construct an instance, we need only provide the forward problem:</p>
 <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[32]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">least_squares_inversion</span> <span class="o">=</span> <span class="n">inf</span><span class="o">.</span><span class="n">LinearLeastSquaresInversion</span><span class="p">(</span><span class="n">forward_problem</span><span class="p">)</span>
@@ -468,7 +453,7 @@ Is the chi-squared test passed for the new model: False
 </div>
 <p>From this object we can, for example, obtain the normal operator, <span class="math notranslate nohighlight">\(A^{*}R^{-1}A+\mu\)</span> for a given damping parameter. Extraction of this operator can be useful when, for example, building a pre-conditioner for the solution of the normal equations.</p>
 <div class="nbinput nblast docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[33]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[9]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">damping_parameter</span> <span class="o">=</span> <span class="mf">0.1</span>
@@ -494,7 +479,7 @@ Is the chi-squared test passed for the new model: False
 <p>In the code below, we determine the solution of the least squares problem using either a <code class="docutils literal notranslate"><span class="pre">CholeskySolver</span></code> or the matrix-free <code class="docutils literal notranslate"><span class="pre">CGSolver</span></code> method. Note that for the Cholesky method we set the optional <code class="docutils literal notranslate"><span class="pre">galerkin</span></code> argument to <code class="docutils literal notranslate"><span class="pre">True</span></code>. This is to ensure that the matrix representation used is symmetric and positive-definite.</p>
 <p>It should be seen that the iterative method is faster and is more robust for small values of the damping parameter (in which case the operator becomes poorly conditioned). Indeed, it is important that <code class="docutils literal notranslate"><span class="pre">CGSolver</span></code> works directly on the Sobolev space using the correct inner product. This leads to a far better conditioned linear system that those that rely on either matrix representation.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[34]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[10]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set the solution method &quot;direct&quot; or &quot;iterative&quot;</span>
@@ -563,7 +548,7 @@ error-free case, a <code class="docutils literal notranslate"><span class="pre">
 <p>A key point about the minimum norm method is that it can fail to find a suitable model. This occurs when no element of the model space fits the data acceptably. In practice, this means that as the Lagrange multiplier tends to infinity the associated value of <span class="math notranslate nohighlight">\(\chi^{2}\)</span> never drops below the critical value. If the method is run with a 95% significance level, and if our error model is correct, this should happen aroud 5% of the time. In such cases the <code class="docutils literal notranslate"><span class="pre">minimum_norm_operator</span></code> raises a
 <code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>. We account for this below through a simple use of exception handling.</p>
 <div class="nbinput docutils container">
-<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[35]:
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[11]:
 </pre></div>
 </div>
 <div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># Set up the inversion scheme.</span>

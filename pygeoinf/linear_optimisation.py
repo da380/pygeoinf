@@ -15,7 +15,7 @@ from .inversion import Inversion
 from .forward_problem import LinearForwardProblem
 from .operators import LinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
-from .hilbert_space import T_vec
+from .hilbert_space import Vector
 
 
 class LinearLeastSquaresInversion(Inversion):
@@ -111,7 +111,7 @@ class LinearLeastSquaresInversion(Inversion):
             )
 
             # This mapping is affine, not linear, if the error measure has a non-zero mean.
-            def mapping(data: "T_vec") -> "T_vec":
+            def mapping(data: "Vector") -> "Vector":
                 shifted_data = self.forward_problem.data_space.subtract(
                     data, self.forward_problem.data_error_measure.expectation
                 )
@@ -185,8 +185,8 @@ class LinearMinimumNormInversion(Inversion):
             lsq_inversion = LinearLeastSquaresInversion(self.forward_problem)
 
             def get_model_for_damping(
-                damping: float, data: "T_vec", model0: Optional["T_vec"] = None
-            ) -> tuple["T_vec", float]:
+                damping: float, data: "Vector", model0: Optional["Vector"] = None
+            ) -> tuple["Vector", float]:
                 """Computes the LS model and its chi-squared for a given damping."""
                 op = lsq_inversion.least_squares_operator(
                     damping, solver, preconditioner=preconditioner
@@ -195,7 +195,7 @@ class LinearMinimumNormInversion(Inversion):
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 return model, chi_squared
 
-            def mapping(data: "T_vec") -> "T_vec":
+            def mapping(data: "Vector") -> "Vector":
                 """The non-linear mapping from data to the minimum-norm model."""
                 model = self.model_space.zero
                 chi_squared = self.forward_problem.chi_squared(model, data)

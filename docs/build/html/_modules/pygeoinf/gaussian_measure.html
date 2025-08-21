@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -294,7 +279,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">GaussianMeasure</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Represents a Gaussian measure on a Hilbert space.</span>
@@ -375,7 +360,7 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">_expectation</span> <span class="o">=</span> <span class="n">expectation</span>
 
 <div class="viewcode-block" id="GaussianMeasure.from_standard_deviation">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviation">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviation">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_standard_deviation</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -406,7 +391,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_standard_deviations">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviations">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviations">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_standard_deviations</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -443,7 +428,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_covariance_matrix">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.from_covariance_matrix">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_covariance_matrix">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_covariance_matrix</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -491,7 +476,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_samples">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.from_samples">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_samples">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_samples</span><span class="p">(</span><span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">samples</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -537,7 +522,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_direct_sum">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.from_direct_sum">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_direct_sum">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_direct_sum</span><span class="p">(</span><span class="n">measures</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -635,7 +620,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
 <div class="viewcode-block" id="GaussianMeasure.sample">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.sample">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a single random sample drawn from the measure.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
@@ -644,7 +629,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.samples">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.samples">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.samples">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">samples</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a list of n random samples from the measure.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
@@ -653,7 +638,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.sample_expectation">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_expectation">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_expectation">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">sample_expectation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Estimates the expectation by drawing n samples.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
@@ -662,7 +647,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.sample_pointwise_variance">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_pointwise_variance">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_pointwise_variance">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">sample_pointwise_variance</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Estimates the pointwise variance by drawing n samples.</span>
@@ -690,7 +675,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.affine_mapping">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.affine_mapping">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.affine_mapping">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">affine_mapping</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">operator</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">translation</span><span class="p">:</span> <span class="n">T_vec</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
@@ -739,7 +724,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.as_multivariate_normal">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.as_multivariate_normal">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.as_multivariate_normal">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">as_multivariate_normal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">multivariate_normal</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the measure as a `scipy.stats.multivariate_normal` object.</span>
@@ -758,7 +743,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.low_rank_approximation">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.low_rank_approximation">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.low_rank_approximation">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">low_rank_approximation</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -794,7 +779,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.two_point_covariance">
-<a class="viewcode-back" href="../../api/gaussian_measure.html#pygeoinf.gaussian_measure.GaussianMeasure.two_point_covariance">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.two_point_covariance">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">two_point_covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Computes the two-point covariance function.</span>

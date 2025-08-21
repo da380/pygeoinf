@@ -11,7 +11,7 @@ import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from pygeoinf.operators import LinearOperator
-from pygeoinf.forms import LinearForm
+from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 from pygeoinf.operators import LinearOperator

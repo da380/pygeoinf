@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -266,11 +251,11 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">HilbertSpace</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 
 
 <div class="viewcode-block" id="HilbertSpaceDirectSum">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.HilbertSpaceDirectSum">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">HilbertSpaceDirectSum</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A Hilbert space formed from the direct sum of a list of other spaces.</span>
@@ -293,7 +278,6 @@
             <span class="n">dim</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">__to_components</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">__from_components</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">__inner_product</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">__to_dual</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">__from_dual</span><span class="p">,</span>
             <span class="n">add</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">__add</span><span class="p">,</span>
@@ -314,7 +298,6 @@
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">HilbertSpaceDirectSum</span><span class="p">):</span>
             <span class="k">return</span> <span class="bp">NotImplemented</span>
 
-        <span class="c1"># This relies on the subspaces having their own __eq__ methods.</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">subspaces</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">subspaces</span>
 
     <span class="nd">@property</span>
@@ -328,7 +311,7 @@
         <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">subspaces</span><span class="p">)</span>
 
 <div class="viewcode-block" id="HilbertSpaceDirectSum.subspace">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subspace">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subspace">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">subspace</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HilbertSpace</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the i-th subspace.</span>
@@ -340,7 +323,7 @@
 
 
 <div class="viewcode-block" id="HilbertSpaceDirectSum.subspace_projection">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subspace_projection">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subspace_projection">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">subspace_projection</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the projection operator onto the i-th subspace.</span>
@@ -357,7 +340,7 @@
 
 
 <div class="viewcode-block" id="HilbertSpaceDirectSum.subspace_inclusion">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subspace_inclusion">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subspace_inclusion">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">subspace_inclusion</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 
@@ -375,7 +358,7 @@
 
 
 <div class="viewcode-block" id="HilbertSpaceDirectSum.canonical_dual_isomorphism">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.canonical_dual_isomorphism">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.canonical_dual_isomorphism">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">canonical_dual_isomorphism</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xps</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LinearForm</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Maps a list of dual vectors to a single dual vector on the sum space.</span>
@@ -389,16 +372,14 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">xps</span><span class="p">)</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">number_of_subspaces</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Incorrect number of dual vectors provided.&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">LinearForm</span><span class="p">(</span>
-            <span class="bp">self</span><span class="p">,</span>
-            <span class="n">mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">sum</span><span class="p">(</span>
-                <span class="n">xp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">subspace_projection</span><span class="p">(</span><span class="n">i</span><span class="p">)(</span><span class="n">x</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">xp</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">xps</span><span class="p">)</span>
-            <span class="p">),</span>
-        <span class="p">)</span></div>
+
+        <span class="n">cps</span> <span class="o">=</span> <span class="p">[</span><span class="n">space</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span> <span class="k">for</span> <span class="n">space</span><span class="p">,</span> <span class="n">xp</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_spaces</span><span class="p">,</span> <span class="n">xps</span><span class="p">)]</span>
+        <span class="n">cp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">cps</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">LinearForm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="n">cp</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="HilbertSpaceDirectSum.canonical_dual_inverse_isomorphism">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.canonical_dual_inverse_isomorphism">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.canonical_dual_inverse_isomorphism">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">canonical_dual_inverse_isomorphism</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">LinearForm</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Maps a dual vector on the sum space to a list of dual vectors.</span>
@@ -409,13 +390,18 @@
 <span class="sd">        Args:</span>
 <span class="sd">            xp (LinearForm): A dual vector on the direct sum space.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="p">[</span>
-            <span class="n">LinearForm</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">,</span> <span class="n">j</span><span class="o">=</span><span class="n">i</span><span class="p">:</span> <span class="n">xp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">subspace_inclusion</span><span class="p">(</span><span class="n">j</span><span class="p">)(</span><span class="n">x</span><span class="p">)))</span>
-            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">space</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">subspaces</span><span class="p">)</span>
-        <span class="p">]</span></div>
+
+        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
+        <span class="n">xps</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">space</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_spaces</span><span class="p">:</span>
+            <span class="n">j</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="n">space</span><span class="o">.</span><span class="n">dim</span>
+            <span class="n">xp</span> <span class="o">=</span> <span class="n">space</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cp</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">j</span><span class="p">])</span>
+            <span class="n">xps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
+            <span class="n">i</span> <span class="o">=</span> <span class="n">j</span>
+        <span class="k">return</span> <span class="n">xps</span></div>
 
 
-    <span class="c1"># ... (Private methods remain the same) ...</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">__to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
         <span class="n">cs</span> <span class="o">=</span> <span class="p">[</span><span class="n">space</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">space</span><span class="p">,</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_spaces</span><span class="p">,</span> <span class="n">xs</span><span class="p">)]</span>
         <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">cs</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
@@ -429,11 +415,6 @@
             <span class="n">xs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
             <span class="n">i</span> <span class="o">=</span> <span class="n">j</span>
         <span class="k">return</span> <span class="n">xs</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">__inner_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1s</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span> <span class="n">x2s</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span>
-            <span class="n">space</span><span class="o">.</span><span class="n">inner_product</span><span class="p">(</span><span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">)</span> <span class="k">for</span> <span class="n">space</span><span class="p">,</span> <span class="n">x1</span><span class="p">,</span> <span class="n">x2</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_spaces</span><span class="p">,</span> <span class="n">x1s</span><span class="p">,</span> <span class="n">x2s</span><span class="p">)</span>
-        <span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">__to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
         <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">xs</span><span class="p">)</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">number_of_subspaces</span><span class="p">:</span>
@@ -475,13 +456,12 @@
 
 
 <div class="viewcode-block" id="BlockStructure">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.BlockStructure">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.BlockStructure">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">BlockStructure</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An abstract base class for operators with a block structure.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="c1"># ... (class content is the same) ...</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">row_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">col_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_row_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">row_dim</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_col_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">col_dim</span>
@@ -495,7 +475,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_col_dim</span>
 
 <div class="viewcode-block" id="BlockStructure.block">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.BlockStructure.block">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.BlockStructure.block">[docs]</a>
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">block</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">j</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
         <span class="k">pass</span></div>
@@ -510,7 +490,7 @@
 
 
 <div class="viewcode-block" id="BlockLinearOperator">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.BlockLinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.BlockLinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">BlockLinearOperator</span><span class="p">(</span><span class="n">LinearOperator</span><span class="p">,</span> <span class="n">BlockStructure</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A linear operator between direct sums of Hilbert spaces, defined by a</span>
@@ -528,7 +508,7 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">blocks</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">blocks</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Block structure cannot be empty.&quot;</span><span class="p">)</span>
-        <span class="c1"># ... (rest of the method is the same) ...</span>
+
         <span class="n">domains</span> <span class="o">=</span> <span class="p">[</span><span class="n">operator</span><span class="o">.</span><span class="n">domain</span> <span class="k">for</span> <span class="n">operator</span> <span class="ow">in</span> <span class="n">blocks</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
         <span class="n">codomains</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">blocks</span><span class="p">:</span>
@@ -559,7 +539,7 @@
         <span class="n">BlockStructure</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">row_dim</span><span class="p">,</span> <span class="n">col_dim</span><span class="p">)</span>
 
 <div class="viewcode-block" id="BlockLinearOperator.block">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.BlockLinearOperator.block">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.BlockLinearOperator.block">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">block</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">j</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the operator in the (i, j)-th sub-block.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_check_block_indices</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">)</span>
@@ -567,7 +547,7 @@
 
 
     <span class="k">def</span><span class="w"> </span><span class="nf">__mapping</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">]:</span>
-        <span class="c1"># ... (method content is the same) ...</span>
+
         <span class="n">ys</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">row_dim</span><span class="p">):</span>
             <span class="n">codomain</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_codomains</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
@@ -579,7 +559,7 @@
         <span class="k">return</span> <span class="n">ys</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">__adjoint_mapping</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ys</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">]:</span>
-        <span class="c1"># ... (method content is the same) ...</span>
+
         <span class="n">xs</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">col_dim</span><span class="p">):</span>
             <span class="n">domain</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_domains</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
@@ -593,7 +573,7 @@
 
 
 <div class="viewcode-block" id="ColumnLinearOperator">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.ColumnLinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.ColumnLinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ColumnLinearOperator</span><span class="p">(</span><span class="n">LinearOperator</span><span class="p">,</span> <span class="n">BlockStructure</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An operator that maps a single Hilbert space to a direct sum of spaces.</span>
@@ -638,7 +618,7 @@
         <span class="n">BlockStructure</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">operators</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>
 
 <div class="viewcode-block" id="ColumnLinearOperator.block">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.ColumnLinearOperator.block">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.ColumnLinearOperator.block">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">block</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">j</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the operator in the (i, 0)-th sub-block.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_check_block_indices</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">)</span>
@@ -650,7 +630,7 @@
 
 
 <div class="viewcode-block" id="RowLinearOperator">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.RowLinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.RowLinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">RowLinearOperator</span><span class="p">(</span><span class="n">LinearOperator</span><span class="p">,</span> <span class="n">BlockStructure</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An operator that maps a direct sum of spaces to a single Hilbert space,</span>
@@ -694,7 +674,7 @@
         <span class="n">BlockStructure</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">operators</span><span class="p">))</span>
 
 <div class="viewcode-block" id="RowLinearOperator.block">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.RowLinearOperator.block">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.RowLinearOperator.block">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">block</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">j</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the operator in the (0, j)-th sub-block.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_check_block_indices</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">)</span>
@@ -706,7 +686,7 @@
 
 
 <div class="viewcode-block" id="BlockDiagonalLinearOperator">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.BlockDiagonalLinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.BlockDiagonalLinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">BlockDiagonalLinearOperator</span><span class="p">(</span><span class="n">LinearOperator</span><span class="p">,</span> <span class="n">BlockStructure</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A block operator where all off-diagonal blocks are zero operators.</span>
@@ -733,7 +713,7 @@
         <span class="n">BlockStructure</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="n">dim</span><span class="p">)</span>
 
 <div class="viewcode-block" id="BlockDiagonalLinearOperator.block">
-<a class="viewcode-back" href="../../api/direct_sum.html#pygeoinf.direct_sum.BlockDiagonalLinearOperator.block">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.direct_sum.BlockDiagonalLinearOperator.block">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">block</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">j</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the operator in the (i, j)-th sub-block.</span>

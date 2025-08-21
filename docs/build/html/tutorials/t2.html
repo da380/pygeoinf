@@ -208,21 +208,6 @@
 <li class="toctree-l1"><a class="reference internal" href="t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -334,8 +319,8 @@ Dimension of the vector space = 4
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-The vector is equal to:               [ 0.31458612  0.23939082  0.48436426 -1.04249317]
-The vector&#39;s components are equal to: [ 0.31458612  0.23939082  0.48436426 -1.04249317]
+The vector is equal to:               [0.10946179 0.90877864 0.20657289 0.77606113]
+The vector&#39;s components are equal to: [0.10946179 0.90877864 0.20657289 0.77606113]
 </pre></div></div>
 </div>
 <p>Note that the <code class="docutils literal notranslate"><span class="pre">random</span></code> method for <code class="docutils literal notranslate"><span class="pre">HilbertSpaces</span></code> internally generates a component vector drawn from a standard Gaussian distribution and then maps this to an element of the space. This method is only meant to provide a quick means of generating elements of the space for testing purposes.</p>
@@ -385,10 +370,10 @@ The vector&#39;s components are equal to: [0. 0. 0. 0.]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x1       =  [-1.51468248 -0.26728645 -0.90803901 -0.45946656]
-x2       =  [ 1.90565051 -0.50519919  0.11522771 -0.67999332]
-(x1, x2) =  -2.5436196232127806
-(x2, x1) =  -2.5436196232127806
+x1       =  [ 0.50881131  0.74674642  0.20572841 -0.99711093]
+x2       =  [-1.58576191e+00  1.23616578e-03  1.20644768e-02  6.86563505e-01]
+(x1, x2) =  -1.4880284682434177
+(x2, x1) =  -1.4880284682434177
 </pre></div></div>
 </div>
 <p>The inner product defines a norm, and we can access this as follows:</p>
@@ -408,9 +393,9 @@ x2       =  [ 1.90565051 -0.50519919  0.11522771 -0.67999332]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x       =  [1.51623519 0.52534823 1.65880755 0.00999307]
-||x||   =  2.30796495466161
-||x||^2 =  5.326702231946166
+x       =  [ 0.71806503 -1.87372382  0.01566318  0.33403388]
+||x||   =  2.034276851539801
+||x||^2 =  4.138282308710687
 </pre></div></div>
 </div>
 <p>We can use these methods to verify that standard Hilbert space inequalities are satified.</p>
@@ -438,8 +423,8 @@ x       =  [1.51623519 0.52534823 1.65880755 0.00999307]
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x1 =  [ 1.98204598  2.953178    0.74395735 -1.33098436]
-x2 =  [ 0.61750093  0.96424256  1.26207965 -0.3856503 ]
+x1 =  [ 0.36866408  1.13616985 -1.71376307 -0.59047237]
+x2 =  [ 0.83468275 -1.06456915 -1.19686493 -0.27687583]
 The triangle inequality, |x1 + x2| &lt;= |x1| + |x2|, is True.
 The Cauchy-Scwharz inequality, |(x1,x2)| &lt;= |x1||x2|, is True.
 </pre></div></div>
@@ -471,11 +456,11 @@ The Cauchy-Scwharz inequality, |(x1,x2)| &lt;= |x1||x2|, is True.
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-x1      = [ 6.46682902e-01 -1.64123627e+00 -1.64898135e+00 -5.79273177e-04]
-x2      = [ 0.40912471  1.44303263 -0.3025449   0.24165519]
-x1 + x2 = [ 1.05580761 -0.19820364 -1.95152625  0.24107592]
-2 * x1  = [ 1.29336580e+00 -3.28247254e+00 -3.29796271e+00 -1.15854635e-03]
-x4      = [ 1.05580761 -0.19820364 -1.95152625  0.24107592]
+x1      = [ 1.14144875 -0.2038053   0.84189683 -0.27450422]
+x2      = [ 0.68139236 -1.35715295  0.85142732  1.1826353 ]
+x1 + x2 = [ 1.82284111 -1.56095825  1.69332415  0.90813108]
+2 * x1  = [ 2.2828975  -0.40761061  1.68379366 -0.54900844]
+x4      = [ 1.82284111 -1.56095825  1.69332415  0.90813108]
 </pre></div></div>
 </div>
 <p>Custom implementation for these operations can be provided when a <code class="docutils literal notranslate"><span class="pre">HilbertSpace</span></code> is constructed.</p>
@@ -665,7 +650,7 @@ The dimension of the space is equal to: 490
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-Dimension of space = 1178
+Dimension of space = 1196
 </pre></div></div>
 </div>
 <p>The user can optionally provide a relative tolerance through the keyword argument <code class="docutils literal notranslate"><span class="pre">rtol</span></code> and ensure that <span class="math notranslate nohighlight">\(k_{\mathrm{max}}\)</span> is a power of 2 by setting the key-word argument <code class="docutils literal notranslate"><span class="pre">power_of_two</span></code> equal to <code class="docutils literal notranslate"><span class="pre">True</span></code>. Note, however, that this method is only available when <span class="math notranslate nohighlight">\(s &gt; 0.5\)</span>.</p>

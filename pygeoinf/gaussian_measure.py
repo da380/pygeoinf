@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from .direct_sum import BlockDiagonalLinearOperator
 
 # Define a generic type for vectors in a Hilbert space
-T_vec = TypeVar("T_vec")
+Vector = TypeVar("Vector")
 
 
 class GaussianMeasure:
@@ -52,8 +52,8 @@ class GaussianMeasure:
         *,
         covariance: "LinearOperator" = None,
         covariance_factor: "LinearOperator" = None,
-        expectation: T_vec = None,
-        sample: Callable[[], T_vec] = None,
+        expectation: Vector = None,
+        sample: Callable[[], Vector] = None,
         inverse_covariance: "LinearOperator" = None,
         inverse_covariance_factor: "LinearOperator" = None,
     ) -> None:
@@ -94,7 +94,7 @@ class GaussianMeasure:
             else covariance
         )
         self._domain: "HilbertSpace" = self._covariance.domain
-        self._sample: Optional[Callable[[], T_vec]] = (
+        self._sample: Optional[Callable[[], Vector]] = (
             sample if covariance_factor is None else self._sample_from_factor
         )
         self._inverse_covariance_factor: Optional["LinearOperator"] = (
@@ -111,7 +111,7 @@ class GaussianMeasure:
             self._inverse_covariance = None
 
         if expectation is None:
-            self._expectation: T_vec = self.domain.zero
+            self._expectation: Vector = self.domain.zero
         else:
             self._expectation = expectation
 
@@ -121,7 +121,7 @@ class GaussianMeasure:
         standard_deviation: float,
         /,
         *,
-        expectation: T_vec = None,
+        expectation: Vector = None,
     ) -> "GaussianMeasure":
         """
         Creates an isotropic Gaussian measure with scaled identity covariance.
@@ -149,7 +149,7 @@ class GaussianMeasure:
         standard_deviations: np.ndarray,
         /,
         *,
-        expectation: T_vec = None,
+        expectation: Vector = None,
     ) -> "GaussianMeasure":
         """
         Creates a Gaussian measure with a diagonal covariance operator.
@@ -183,7 +183,7 @@ class GaussianMeasure:
         covariance_matrix: np.ndarray,
         /,
         *,
-        expectation: T_vec = None,
+        expectation: Vector = None,
     ) -> "GaussianMeasure":
         """
         Creates a Gaussian measure from a dense covariance matrix.
@@ -223,7 +223,9 @@ class GaussianMeasure:
         )
 
     @staticmethod
-    def from_samples(domain: "HilbertSpace", samples: List[T_vec]) -> "GaussianMeasure":
+    def from_samples(
+        domain: "HilbertSpace", samples: List[Vector]
+    ) -> "GaussianMeasure":
         """
         Estimates a Gaussian measure from a collection of sample vectors.
 
@@ -245,7 +247,7 @@ class GaussianMeasure:
         if n == 1:
             covariance = domain.zero_operator()
 
-            def sample() -> T_vec:
+            def sample() -> Vector:
                 return expectation
 
         else:
@@ -254,7 +256,7 @@ class GaussianMeasure:
                 domain, offsets
             ) / (n - 1)
 
-            def sample() -> T_vec:
+            def sample() -> Vector:
                 x = domain.copy(expectation)
                 randoms = np.random.randn(len(offsets))
                 for y, r in zip(offsets, randoms):
@@ -290,7 +292,7 @@ class GaussianMeasure:
             else None
         )
 
-        def sample_impl() -> List[T_vec]:
+        def sample_impl() -> List[Vector]:
             return [measure.sample() for measure in measures]
 
         sample = (
@@ -351,7 +353,7 @@ class GaussianMeasure:
         return self._inverse_covariance_factor
 
     @property
-    def expectation(self) -> T_vec:
+    def expectation(self) -> Vector:
         """The expectation (mean) of the measure."""
         return self._expectation
 
@@ -360,25 +362,25 @@ class GaussianMeasure:
         """True if a method for drawing samples is available."""
         return self._sample is not None
 
-    def sample(self) -> T_vec:
+    def sample(self) -> Vector:
         """Returns a single random sample drawn from the measure."""
         if self._sample is None:
             raise NotImplementedError("A sample method is not set for this measure.")
         return self._sample()
 
-    def samples(self, n: int) -> List[T_vec]:
+    def samples(self, n: int) -> List[Vector]:
         """Returns a list of n random samples from the measure."""
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
         return [self.sample() for _ in range(n)]
 
-    def sample_expectation(self, n: int) -> T_vec:
+    def sample_expectation(self, n: int) -> Vector:
         """Estimates the expectation by drawing n samples."""
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
         return self.domain.sample_expectation(self.samples(n))
 
-    def sample_pointwise_variance(self, n: int) -> T_vec:
+    def sample_pointwise_variance(self, n: int) -> Vector:
         """
         Estimates the pointwise variance by drawing n samples.
 
@@ -404,7 +406,7 @@ class GaussianMeasure:
         return variance
 
     def affine_mapping(
-        self, /, *, operator: "LinearOperator" = None, translation: T_vec = None
+        self, /, *, operator: "LinearOperator" = None, translation: Vector = None
     ) -> "GaussianMeasure":
         """
         Transforms the measure under the affine map y = A(x) + b.
@@ -440,7 +442,7 @@ class GaussianMeasure:
         else:
             new_covariance = _operator @ self.covariance @ _operator.adjoint
 
-            def new_sample() -> T_vec:
+            def new_sample() -> Vector:
                 return _operator.codomain.add(_operator(self.sample()), _translation)
 
             return GaussianMeasure(
@@ -498,7 +500,7 @@ class GaussianMeasure:
             expectation=self.expectation,
         )
 
-    def two_point_covariance(self, point: Any) -> T_vec:
+    def two_point_covariance(self, point: Any) -> Vector:
         """
         Computes the two-point covariance function.
 
@@ -593,7 +595,7 @@ class GaussianMeasure:
             sample=new_sample,
         )
 
-    def _sample_from_factor(self) -> T_vec:
+    def _sample_from_factor(self) -> Vector:
         """Default sampling method when a covariance factor is provided."""
         covariance_factor = self.covariance_factor
         # Draw from standard normal in the Euclidean space

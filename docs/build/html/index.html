@@ -209,18 +209,13 @@
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="api/symmetric_spaces.html">Symmetric Spaces</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -263,7 +258,27 @@
         <article role="main" id="furo-main-content">
           <section id="pygeoinf-a-python-library-for-geophysical-inference">
 <h1>pygeoinf: A Python Library for Geophysical Inference<a class="headerlink" href="#pygeoinf-a-python-library-for-geophysical-inference" title="Link to this heading">¶</a></h1>
-<p>The core philosophy of <cite>pygeoinf</cite> is to separate the abstract mathematical structure of an inverse problem from its concrete numerical implementation. Instead of manipulating NumPy arrays directly, you work with high-level objects like <cite>HilbertSpace</cite>, <cite>LinearOperator</cite>, and <cite>GaussianMeasure</cite>.</p>
+<p><strong>pygeoinf</strong> is a Python library for solving geophysical inference and inverse problems in a coordinate-free, abstract framework. It leverages the mathematics of Hilbert spaces to provide a robust and flexible foundation for Bayesian and optimisation-based inference.</p>
+<p>## Overview</p>
+<p>The core philosophy of <cite>pygeoinf</cite> is to separate the abstract mathematical structure of an inverse problem from its concrete numerical implementation. Instead of manipulating NumPy arrays directly, you work with high-level objects like <cite>HilbertSpace</cite>, <cite>LinearOperator</cite>, and <cite>GaussianMeasure</cite>. This allows you to write code that is more readable, less error-prone, and closer to the underlying mathematics.</p>
+<p>The library is built on a few key concepts:</p>
+<ul class="simple">
+<li><p><strong>`HilbertSpace`</strong>: The foundational class. It represents a vector space with an inner product, but it abstracts away the specific representation of vectors (e.g., NumPy arrays, <cite>pyshtools</cite> grids).</p></li>
+<li><p><strong>`LinearOperator`</strong>: Represents linear mappings between Hilbert spaces. These are the workhorses of the library, supporting composition, adjoints, and matrix representations.</p></li>
+<li><p><strong>`GaussianMeasure`</strong>: Generalizes the multivariate normal distribution to abstract Hilbert spaces, providing a way to define priors and noise models.</p></li>
+<li><p><strong>`ForwardProblem`</strong>: Encapsulates the mathematical model <cite>d = A(u) + e</cite>, linking the unknown model <cite>u</cite> to the observed data <cite>d</cite>.</p></li>
+<li><p><strong>Inversion Classes</strong>: High-level classes like <cite>LinearBayesianInversion</cite> and <cite>LinearLeastSquaresInversion</cite> provide ready-to-use algorithms for solving the inverse problem.</p></li>
+</ul>
+<p>## Key Features</p>
+<ul class="simple">
+<li><p><strong>Abstract Coordinate-Free Formulation</strong>: Write elegant code that mirrors the mathematics of inverse problems.</p></li>
+<li><p><strong>Bayesian Inference</strong>: Solve inverse problems in a probabilistic framework to obtain posterior distributions over models.</p></li>
+<li><p><strong>Optimisation Methods</strong>: Includes Tikhonov-regularized least-squares and minimum-norm solutions.</p></li>
+<li><p><strong>Probabilistic Modelling</strong>: Define priors and noise models using <cite>GaussianMeasure</cite> objects on abstract spaces.</p></li>
+<li><p><strong>Randomized Algorithms</strong>: Utilizes randomized SVD and Cholesky decompositions for efficient low-rank approximations of large operators.</p></li>
+<li><p><strong>Application-Specific Spaces</strong>: Provides concrete <cite>HilbertSpace</cite> implementations for functions on a <strong>line</strong>, <strong>circle</strong>, and the <strong>two-sphere</strong>.</p></li>
+<li><p><strong>High-Quality Visualisation</strong>: Built-in plotting methods for functions on symmetric spaces, including map projections via <cite>cartopy</cite>.</p></li>
+</ul>
 <div class="toctree-wrapper compound">
 </div>
 <div class="toctree-wrapper compound">

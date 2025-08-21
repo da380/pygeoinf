@@ -208,21 +208,6 @@
 <li class="toctree-l1"><a class="reference internal" href="t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -337,13 +322,13 @@
 <div class="output_area docutils container">
 <div class="highlight"><pre>
 mu.domain == X is: True
-Expectation of the measure: [-2.13387249  1.05452966 -0.4895571  -0.12320256 -2.28852682]
+Expectation of the measure: [-0.94330663  0.05081911 -2.67958871 -0.08073235  1.96824748]
 Covariance of the measure:
- [[ 4.36542174 -3.8281961   2.5959916   1.39553136  0.12261482]
- [-3.8281961   8.71414564 -4.29632035 -4.09510053 -2.5154239 ]
- [ 2.5959916  -4.29632035  7.92081567  4.89046507  2.06106245]
- [ 1.39553136 -4.09510053  4.89046507  5.65539397  3.0967805 ]
- [ 0.12261482 -2.5154239   2.06106245  3.0967805   1.98655637]]
+ [[ 1.73993344  0.97056774  0.4636536  -0.53434703  2.59395452]
+ [ 0.97056774  0.83588801  0.68948348 -0.65923083  2.28856094]
+ [ 0.4636536   0.68948348  2.70117446 -1.42516354  3.38274323]
+ [-0.53434703 -0.65923083 -1.42516354  5.26515526 -1.25303019]
+ [ 2.59395452  2.28856094  3.38274323 -1.25303019  7.70029821]]
 </pre></div></div>
 </div>
 <p>Let’s redefine this measure using the same expectation and covariance, but now providing a sampling method via <code class="docutils literal notranslate"><span class="pre">scipy.stats</span></code></p>
@@ -387,18 +372,18 @@ Covariance of the measure:
 <div class="output_area docutils container">
 <div class="highlight"><pre>
 A sample from the measure:
- [-2.83213967  1.3794842   5.35629402  2.73414098 -1.12108835]
+ [-1.52913555 -0.41048792 -5.50258371  0.33495698 -1.34430733]
 A set of samples from the measure:
-[-4.89486727  0.8513005  -2.80412416 -2.96792231 -2.97120038]
-[-5.40080886  5.28102343  3.3033801   1.81020631 -1.56197556]
-[-5.33881723  1.35215965 -1.09497868  2.85480755  0.25484973]
-[-2.7398364   1.69939913 -1.59032393  0.16643849 -1.6375867 ]
-[ 1.49410569 -2.50987764  0.26458292 -1.77981447 -3.57248941]
-[-4.27365022  6.39248798 -1.97287701 -1.301961   -3.09750566]
-[-4.072466    0.73838649 -0.17696682  1.88532247 -0.65765377]
-[-3.52058179  1.53102825 -3.72712101 -3.72823573 -3.78186227]
-[ 1.11487308 -0.41214792 -0.4632472  -0.65734788 -3.10128457]
-[-1.46206092  1.38046778  0.18549934 -0.00622371 -2.43730967]
+[-1.69694065 -1.0204706  -3.56671609 -2.43001926 -1.81154375]
+[-1.07270651 -0.54681179 -4.65792675  1.05781376 -0.7118105 ]
+[-0.27757695  0.08394607 -3.16731927 -0.90195045  1.4145824 ]
+[ 0.12777953  0.82294009 -3.74358014 -6.5062818   0.96377285]
+[-2.6355292  -0.8844544  -5.10379474  1.91000298 -1.89878877]
+[-1.35990634  0.11261467 -0.39067831 -1.87032403  3.59826831]
+[-1.06757771 -1.14578799 -3.9010909   0.75109631 -1.44741867]
+[ 0.56718108  1.5763579  -1.6235408  -1.30352195  6.12582934]
+[-1.20484759  0.3649584  -3.77300001 -3.3339379   0.68562768]
+[-0.4645154   0.16675687 -4.52564831  5.58434611  2.30949049]
 </pre></div></div>
 </div>
 <p>A static method, <code class="docutils literal notranslate"><span class="pre">from_covariance_matrix</span></code> is provided that can simplify the construction of simple Gaussian measures. Internally, the eigen-decomposition of the covariance matrix is formed and used to factor both the covariance and inverse covariance. Note that the matrix input is the Galerkin representation of the covariance. Because this method is based on the storage and factorisation of dense matrices it is inefficient in high-dimensional spaces.</p>
@@ -424,23 +409,23 @@ A set of samples from the measure:
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-Expectation of the measure: [-2.13387249  1.05452966 -0.4895571  -0.12320256 -2.28852682]
+Expectation of the measure: [-0.94330663  0.05081911 -2.67958871 -0.08073235  1.96824748]
 Covariance of the measure:
- [[ 4.36542174 -3.8281961   2.5959916   1.39553136  0.12261482]
- [-3.8281961   8.71414564 -4.29632035 -4.09510053 -2.5154239 ]
- [ 2.5959916  -4.29632035  7.92081567  4.89046507  2.06106245]
- [ 1.39553136 -4.09510053  4.89046507  5.65539397  3.0967805 ]
- [ 0.12261482 -2.5154239   2.06106245  3.0967805   1.98655637]]
-sample 0 is equal to: [-1.67426433 -0.27788624  1.48760151  1.63015211 -1.40841251]
-sample 1 is equal to: [-5.41770475  1.47604046 -0.82626312  0.34554376 -1.1975025 ]
-sample 2 is equal to: [-4.33960019  3.74393669 -0.44700056 -0.66634967 -2.39131497]
-sample 3 is equal to: [-1.12589981  0.51669207  1.80888457  0.43965869 -2.4973457 ]
-sample 4 is equal to: [-1.97022831 -1.14869163 -2.1353192   0.56756502 -1.33651498]
-sample 5 is equal to: [-2.44199193  4.22517285 -3.01478179 -1.12668123 -3.28617349]
-sample 6 is equal to: [-2.03280231  3.79382897 -4.78224657 -2.30257128 -3.73795261]
-sample 7 is equal to: [ 0.61048246 -0.23451212 -0.31373935 -0.38842923 -2.98294603]
-sample 8 is equal to: [ 2.92646158 -4.06133011  4.96827987  1.68673313 -2.12875711]
-sample 9 is equal to: [ 0.01038893  2.45306439 -0.0203689   0.27041319 -3.06189544]
+ [[ 1.73993344  0.97056774  0.4636536  -0.53434703  2.59395452]
+ [ 0.97056774  0.83588801  0.68948348 -0.65923083  2.28856094]
+ [ 0.4636536   0.68948348  2.70117446 -1.42516354  3.38274323]
+ [-0.53434703 -0.65923083 -1.42516354  5.26515526 -1.25303019]
+ [ 2.59395452  2.28856094  3.38274323 -1.25303019  7.70029821]]
+sample 0 is equal to: [-4.13514317 -2.21679437 -2.1361908  -2.02023971 -3.36563017]
+sample 1 is equal to: [-3.18235565 -1.90478702 -2.28011758  3.80017219 -1.22870507]
+sample 2 is equal to: [ 0.07811378  1.09834065 -0.92499984 -2.42560181  4.79746717]
+sample 3 is equal to: [-2.66100224 -1.11297345 -4.65721645  0.60174438 -2.18710307]
+sample 4 is equal to: [-2.1334078  -0.57077526 -4.33297616 -3.64242251 -1.85329242]
+sample 5 is equal to: [-0.51057031 -0.7943052  -3.95588224  5.61049749  0.97990522]
+sample 6 is equal to: [-2.84631787 -1.60821697 -1.72796219  0.75160492 -0.97378554]
+sample 7 is equal to: [-1.53146919 -0.08822224 -4.23671746  2.36286774  1.07770728]
+sample 8 is equal to: [-0.94141792  0.89627235  0.59777703 -3.13978634  5.7294624 ]
+sample 9 is equal to: [-2.05508508 -0.29237089 -1.28460516  2.40706602  2.47469458]
 </pre></div></div>
 </div>
 </section>
@@ -524,21 +509,21 @@ sample 9 is equal to: [ 0.01038893  2.45306439 -0.0203689   0.27041319 -3.061895
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-Expectation of the measure: [-2.9109628   0.94060056 -2.2468168 ]
+Expectation of the measure: [-0.91486181  0.97891676 -1.64289078]
 Covariance of the measure:
- [[ 4.36542174 -3.8281961   2.5959916 ]
- [-3.8281961   8.71414564 -4.29632035]
- [ 2.5959916  -4.29632035  7.92081567]]
-sample 0 is equal to: [ 0.65855633 -1.7095042   2.97158402]
-sample 1 is equal to: [-3.60757632  1.73906337 -0.63265479]
-sample 2 is equal to: [-5.5504044   3.02193252 -5.20155178]
-sample 3 is equal to: [ 0.26155417 -0.23947034 -0.31069359]
-sample 4 is equal to: [-3.74401911 -1.3263118  -2.31544357]
-sample 5 is equal to: [-5.13077415  2.17805543 -5.801635  ]
-sample 6 is equal to: [-2.66361449  3.0526353  -2.90015286]
-sample 7 is equal to: [-1.03715873  3.04391333 -3.10004029]
-sample 8 is equal to: [-5.91596402  7.7175197  -8.82452479]
-sample 9 is equal to: [-1.33215631 -1.20627763  0.06215464]
+ [[1.73993344 0.97056774 0.4636536 ]
+ [0.97056774 0.83588801 0.68948348]
+ [0.4636536  0.68948348 2.70117446]]
+sample 0 is equal to: [ 1.15436968  1.95973986 -0.35029542]
+sample 1 is equal to: [-1.41817964 -0.55801486 -6.62803712]
+sample 2 is equal to: [-1.7629631   0.76975871 -1.98380398]
+sample 3 is equal to: [-2.31701022  0.25554326 -2.54034617]
+sample 4 is equal to: [-1.69453777  0.96181151  0.23153631]
+sample 5 is equal to: [-0.93228256  0.84364881 -3.50264389]
+sample 6 is equal to: [-0.90590507  1.33073674 -1.86469471]
+sample 7 is equal to: [-2.07882935  0.37133463 -4.00408062]
+sample 8 is equal to: [-2.28382008  1.23333455  1.67566827]
+sample 9 is equal to: [2.16438412 3.09114717 0.21083988]
 True
 False
 </pre></div></div>
@@ -563,20 +548,20 @@ False
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-Expectation of the measure: [-4.26774499  2.10905931 -0.97911419 -0.24640512 -4.57705364]
+Expectation of the measure: [-1.88661326  0.10163823 -5.35917741 -0.16146471  3.93649496]
 Covariance of the measure:
- [[ 17.46168698 -15.31278439  10.38396641   5.58212543   0.49045926]
- [-15.31278439  34.85658258 -17.1852814  -16.38040213 -10.06169562]
- [ 10.38396641 -17.1852814   31.68326267  19.56186027   8.24424982]
- [  5.58212543 -16.38040213  19.56186027  22.62157589  12.387122  ]
- [  0.49045926 -10.06169562   8.24424982  12.387122     7.94622547]]
-Expectation of the measure: [-4.26774499  2.10905931 -0.97911419 -0.24640512 -4.57705364]
+ [[ 6.95973376  3.88227097  1.85461439 -2.13738814 10.3758181 ]
+ [ 3.88227097  3.34355206  2.7579339  -2.63692334  9.15424377]
+ [ 1.85461439  2.7579339  10.80469783 -5.70065415 13.53097294]
+ [-2.13738814 -2.63692334 -5.70065415 21.06062106 -5.01212075]
+ [10.3758181   9.15424377 13.53097294 -5.01212075 30.80119283]]
+Expectation of the measure: [-1.88661326  0.10163823 -5.35917741 -0.16146471  3.93649496]
 Covariance of the measure:
- [[ 17.46168698 -15.31278439  10.38396641   5.58212543   0.49045926]
- [-15.31278439  34.85658258 -17.1852814  -16.38040213 -10.06169562]
- [ 10.38396641 -17.1852814   31.68326267  19.56186027   8.24424982]
- [  5.58212543 -16.38040213  19.56186027  22.62157589  12.387122  ]
- [  0.49045926 -10.06169562   8.24424982  12.387122     7.94622547]]
+ [[ 6.95973376  3.88227097  1.85461439 -2.13738814 10.3758181 ]
+ [ 3.88227097  3.34355206  2.7579339  -2.63692334  9.15424377]
+ [ 1.85461439  2.7579339  10.80469783 -5.70065415 13.53097294]
+ [-2.13738814 -2.63692334 -5.70065415 21.06062106 -5.01212075]
+ [10.3758181   9.15424377 13.53097294 -5.01212075 30.80119283]]
 </pre></div></div>
 </div>
 </section>

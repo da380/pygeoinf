@@ -22,7 +22,7 @@ from .random_matrix import (
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, EuclideanSpace
-    from .forms import LinearForm
+    from .linear_forms import LinearForm
 
 
 class Operator:
@@ -552,7 +552,7 @@ class LinearOperator(Operator):
         )
 
     def _dual_mapping_default(self, yp: Any) -> "LinearForm":
-        from .forms import LinearForm
+        from .linear_forms import LinearForm
 
         return LinearForm(self.domain, mapping=lambda x: yp(self(x)))
 

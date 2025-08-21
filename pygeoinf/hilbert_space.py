@@ -10,11 +10,11 @@ import numpy as np
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .operators import LinearOperator
-    from .forms import LinearForm
+    from .linear_forms import LinearForm
 
 
 # Define a generic type for vectors in a Hilbert space
-T_vec = TypeVar("T_vec")
+Vector = TypeVar("Vector")
 
 
 class HilbertSpace:
@@ -34,19 +34,19 @@ class HilbertSpace:
     def __init__(
         self,
         dim: int,
-        to_components: Callable[[T_vec], np.ndarray],
-        from_components: Callable[[np.ndarray], T_vec],
-        to_dual: Callable[[T_vec], Any],
-        from_dual: Callable[[Any], T_vec],
+        to_components: Callable[[Vector], np.ndarray],
+        from_components: Callable[[np.ndarray], Vector],
+        to_dual: Callable[[Vector], Any],
+        from_dual: Callable[[Any], Vector],
         /,
         *,
-        add: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
-        subtract: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
-        multiply: Optional[Callable[[float, T_vec], T_vec]] = None,
-        ax: Optional[Callable[[float, T_vec], None]] = None,
-        axpy: Optional[Callable[[float, T_vec, T_vec], None]] = None,
-        copy: Optional[Callable[[T_vec], T_vec]] = None,
-        vector_multiply: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+        add: Optional[Callable[[Vector, Vector], Vector]] = None,
+        subtract: Optional[Callable[[Vector, Vector], Vector]] = None,
+        multiply: Optional[Callable[[float, Vector], Vector]] = None,
+        ax: Optional[Callable[[float, Vector], None]] = None,
+        axpy: Optional[Callable[[float, Vector, Vector], None]] = None,
+        copy: Optional[Callable[[Vector], Vector]] = None,
+        vector_multiply: Optional[Callable[[Vector, Vector], Vector]] = None,
         base: Optional[HilbertSpace] = None,
     ):
         """
@@ -74,24 +74,26 @@ class HilbertSpace:
                 dual spaces. Should not be set by the user.
         """
         self._dim: int = dim
-        self.__to_components: Callable[[T_vec], np.ndarray] = to_components
-        self.__from_components: Callable[[np.ndarray], T_vec] = from_components
-        self.__from_dual: Callable[[Any], T_vec] = from_dual
-        self.__to_dual: Callable[[T_vec], Any] = to_dual
+        self.__to_components: Callable[[Vector], np.ndarray] = to_components
+        self.__from_components: Callable[[np.ndarray], Vector] = from_components
+        self.__from_dual: Callable[[Any], Vector] = from_dual
+        self.__to_dual: Callable[[Vector], Any] = to_dual
         self._base: Optional[HilbertSpace] = base
-        self._add: Callable[[T_vec, T_vec], T_vec] = self.__add if add is None else add
-        self._subtract: Callable[[T_vec, T_vec], T_vec] = (
+        self._add: Callable[[Vector, Vector], Vector] = (
+            self.__add if add is None else add
+        )
+        self._subtract: Callable[[Vector, Vector], Vector] = (
             self.__subtract if subtract is None else subtract
         )
-        self._multiply: Callable[[float, T_vec], T_vec] = (
+        self._multiply: Callable[[float, Vector], Vector] = (
             self.__multiply if multiply is None else multiply
         )
-        self._ax: Callable[[float, T_vec], None] = self.__ax if ax is None else ax
-        self._axpy: Callable[[float, T_vec, T_vec], None] = (
+        self._ax: Callable[[float, Vector], None] = self.__ax if ax is None else ax
+        self._axpy: Callable[[float, Vector, Vector], None] = (
             self.__axpy if axpy is None else axpy
         )
-        self._copy: Callable[[T_vec], T_vec] = self.__copy if copy is None else copy
-        self._vector_multiply: Optional[Callable[[T_vec, T_vec], T_vec]] = (
+        self._copy: Callable[[Vector], Vector] = self.__copy if copy is None else copy
+        self._vector_multiply: Optional[Callable[[Vector, Vector], Vector]] = (
             vector_multiply
         )
 
@@ -131,7 +133,7 @@ class HilbertSpace:
             return self._base
 
     @property
-    def zero(self) -> T_vec:
+    def zero(self) -> Vector:
         """Returns the zero vector for the space."""
         return self.from_components(np.zeros((self.dim)))
 
@@ -149,7 +151,7 @@ class HilbertSpace:
             cp = self.dual.to_components(xp)
             return domain.to_dual(cp)
 
-        def adjoint_mapping(y: T_vec) -> np.ndarray:
+        def adjoint_mapping(y: Vector) -> np.ndarray:
             yp = self.to_dual(y)
             return self.dual.to_components(yp)
 
@@ -175,7 +177,7 @@ class HilbertSpace:
             c = codomain.from_dual(cp)
             return self.dual.from_components(c)
 
-        def adjoint_mapping(c: np.ndarray) -> T_vec:
+        def adjoint_mapping(c: np.ndarray) -> Vector:
             xp = self.dual.from_components(c)
             return self.from_dual(xp)
 
@@ -205,7 +207,7 @@ class HilbertSpace:
 
         return LinearOperator.self_dual(self, self.to_dual)
 
-    def duality_product(self, xp: LinearForm, x: T_vec) -> float:
+    def duality_product(self, xp: LinearForm, x: Vector) -> float:
         """
         Computes the duality product of a dual vector and a vector.
 
@@ -217,26 +219,26 @@ class HilbertSpace:
         else:
             return xp(x)
 
-    def inner_product(self, x1: T_vec, x2: T_vec) -> float:
+    def inner_product(self, x1: Vector, x2: Vector) -> float:
         """Computes the inner product of two vectors."""
         return self.duality_product(self.to_dual(x1), x2)
 
-    def squared_norm(self, x: T_vec) -> float:
+    def squared_norm(self, x: Vector) -> float:
         """Computes the squared norm of a vector."""
         return self.inner_product(x, x)
 
-    def norm(self, x: T_vec) -> float:
+    def norm(self, x: Vector) -> float:
         """Computes the norm of a vector."""
         return np.sqrt(self.squared_norm(x))
 
-    def gram_schmidt(self, vectors: List[T_vec]) -> List[T_vec]:
+    def gram_schmidt(self, vectors: List[Vector]) -> List[Vector]:
         """
         Orthonormalizes a list of vectors using the Gram-Schmidt process.
         """
         if not all(self.is_element(vector) for vector in vectors):
             raise ValueError("Not all vectors are elements of the space")
 
-        orthonormalised_vectors: List[T_vec] = []
+        orthonormalised_vectors: List[Vector] = []
         for i, vector in enumerate(vectors):
             vec_copy = self.copy(vector)
             for j in range(i):
@@ -248,11 +250,11 @@ class HilbertSpace:
 
         return orthonormalised_vectors
 
-    def to_dual(self, x: T_vec) -> Any:
+    def to_dual(self, x: Vector) -> Any:
         """Maps a vector to its canonical dual vector (a linear functional)."""
         return self.__to_dual(x)
 
-    def from_dual(self, xp: Any) -> T_vec:
+    def from_dual(self, xp: Any) -> Vector:
         """Maps a dual vector to its representative in the primal space."""
         return self.__from_dual(xp)
 
@@ -265,35 +267,35 @@ class HilbertSpace:
         """
         return isinstance(x, type(self.zero))
 
-    def add(self, x: T_vec, y: T_vec) -> T_vec:
+    def add(self, x: Vector, y: Vector) -> Vector:
         """Adds two vectors."""
         return self._add(x, y)
 
-    def subtract(self, x: T_vec, y: T_vec) -> T_vec:
+    def subtract(self, x: Vector, y: Vector) -> Vector:
         """Subtracts two vectors."""
         return self._subtract(x, y)
 
-    def multiply(self, a: float, x: T_vec) -> T_vec:
+    def multiply(self, a: float, x: Vector) -> Vector:
         """Performs scalar multiplication, returning a new vector."""
         return self._multiply(a, x)
 
-    def negative(self, x: T_vec) -> T_vec:
+    def negative(self, x: Vector) -> Vector:
         """Returns the additive inverse of a vector."""
         return self.multiply(-1.0, x)
 
-    def ax(self, a: float, x: T_vec) -> None:
+    def ax(self, a: float, x: Vector) -> None:
         """Performs the in-place scaling operation x := a*x."""
         self._ax(a, x)
 
-    def axpy(self, a: float, x: T_vec, y: T_vec) -> None:
+    def axpy(self, a: float, x: Vector, y: Vector) -> None:
         """Performs the in-place vector operation y := y + a*x."""
         self._axpy(a, x, y)
 
-    def copy(self, x: T_vec) -> T_vec:
+    def copy(self, x: Vector) -> Vector:
         """Returns a deep copy of a vector."""
         return self._copy(x)
 
-    def vector_multiply(self, x1: T_vec, x2: T_vec) -> T_vec:
+    def vector_multiply(self, x1: Vector, x2: Vector) -> Vector:
         """
         Returns the product of two elements of the space, if defined.
         """
@@ -303,21 +305,21 @@ class HilbertSpace:
             )
         return self._vector_multiply(x1, x2)
 
-    def to_components(self, x: T_vec) -> np.ndarray:
+    def to_components(self, x: Vector) -> np.ndarray:
         """Maps a vector to its NumPy component array."""
         return self.__to_components(x)
 
-    def from_components(self, c: np.ndarray) -> T_vec:
+    def from_components(self, c: np.ndarray) -> Vector:
         """Maps a NumPy component array to a vector."""
         return self.__from_components(c)
 
-    def basis_vector(self, i: int) -> T_vec:
+    def basis_vector(self, i: int) -> Vector:
         """Returns the i-th standard basis vector."""
         c = np.zeros(self.dim)
         c[i] = 1
         return self.from_components(c)
 
-    def random(self) -> T_vec:
+    def random(self) -> Vector:
         """
         Returns a random vector from the space.
 
@@ -325,7 +327,7 @@ class HilbertSpace:
         """
         return self.from_components(np.random.randn(self.dim))
 
-    def sample_expectation(self, vectors: List[T_vec]) -> T_vec:
+    def sample_expectation(self, vectors: List[Vector]) -> Vector:
         """Computes the sample mean of a list of vectors."""
         n = len(vectors)
         if not all(self.is_element(x) for x in vectors):
@@ -368,26 +370,26 @@ class HilbertSpace:
         return xp.components
 
     def _dual_from_components(self, cp: np.ndarray) -> LinearForm:
-        from .forms import LinearForm
+        from .linear_forms import LinearForm
 
         return LinearForm(self, components=cp)
 
-    def __add(self, x: T_vec, y: T_vec) -> T_vec:
+    def __add(self, x: Vector, y: Vector) -> Vector:
         return x + y
 
-    def __subtract(self, x: T_vec, y: T_vec) -> T_vec:
+    def __subtract(self, x: Vector, y: Vector) -> Vector:
         return x - y
 
-    def __multiply(self, a: float, x: T_vec) -> T_vec:
+    def __multiply(self, a: float, x: Vector) -> Vector:
         return a * x.copy()
 
-    def __ax(self, a: float, x: T_vec) -> None:
+    def __ax(self, a: float, x: Vector) -> None:
         x *= a
 
-    def __axpy(self, a: float, x: T_vec, y: T_vec) -> None:
+    def __axpy(self, a: float, x: Vector, y: Vector) -> None:
         y += a * x
 
-    def __copy(self, x: T_vec) -> T_vec:
+    def __copy(self, x: Vector) -> Vector:
         return x.copy()
 
 
@@ -424,7 +426,7 @@ class EuclideanSpace(HilbertSpace):
         return isinstance(other, EuclideanSpace) and self.dim == other.dim
 
 
-class LebesgueSpace(HilbertSpace, Generic[T_vec]):
+class LebesgueSpace(HilbertSpace, Generic[Vector]):
     """A factory for Hilbert spaces with a standard inner product.
 
         This class simplifies the creation of a `HilbertSpace` where the inner
@@ -446,17 +448,17 @@ class LebesgueSpace(HilbertSpace, Generic[T_vec]):
     def __init__(
         self,
         dim: int,
-        to_components: Callable[[T_vec], np.ndarray],
-        from_components: Callable[[np.ndarray], T_vec],
+        to_components: Callable[[Vector], np.ndarray],
+        from_components: Callable[[np.ndarray], Vector],
         /,
         *,
-        add: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
-        subtract: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
-        multiply: Optional[Callable[[float, T_vec], T_vec]] = None,
-        ax: Optional[Callable[[float, T_vec], None]] = None,
-        axpy: Optional[Callable[[float, T_vec, T_vec], None]] = None,
-        copy: Optional[Callable[[T_vec], T_vec]] = None,
-        vector_multiply: Optional[Callable[[T_vec, T_vec], T_vec]] = None,
+        add: Optional[Callable[[Vector, Vector], Vector]] = None,
+        subtract: Optional[Callable[[Vector, Vector], Vector]] = None,
+        multiply: Optional[Callable[[float, Vector], Vector]] = None,
+        ax: Optional[Callable[[float, Vector], None]] = None,
+        axpy: Optional[Callable[[float, Vector, Vector], None]] = None,
+        copy: Optional[Callable[[Vector], Vector]] = None,
+        vector_multiply: Optional[Callable[[Vector, Vector], Vector]] = None,
     ):
         """Initializes the LebesgueSpace.
 
@@ -489,12 +491,64 @@ class LebesgueSpace(HilbertSpace, Generic[T_vec]):
             vector_multiply=vector_multiply,
         )
 
-    def _to_dual_from_components(self, x: T_vec) -> "LinearForm":
+    def _to_dual_from_components(self, x: Vector) -> "LinearForm":
         """Maps a vector to its dual form via its components."""
         c = self.to_components(x)
         return self.dual.from_components(c)
 
-    def _from_dual_from_components(self, xp: "LinearForm") -> T_vec:
+    def _from_dual_from_components(self, xp: "LinearForm") -> Vector:
         """Maps a dual form back to a vector via its components."""
         cp = self.dual.to_components(xp)
         return self.from_components(cp)
+
+
+class MassWeightedHilbertSpace(HilbertSpace, Generic[Vector]):
+    """
+    Class for Hilbert spaces that are defined in terms of another
+    HilbertSpace, but with an inner product defined through a
+    self-adjoint and positive-definite operator on the original space.
+
+    If X is the original space and Y the new one, then we have
+
+    (u, v)_Y = (M u, v)_X,
+
+    with M the self-adjoint and positive-definite operator on X that acts as a
+    mass matrix or equivalently as a metric tensor.
+    """
+
+    def __init__(
+        self,
+        space: HilbertSpace,
+        mass_operator: LinearOperator,
+        inverse_mass_operator: LinearOperator,
+    ):
+        """
+        Args:
+            space (HilbertSpace): The space in which the inner product is defined.
+            mass_operator (LinearOperator): The self-adjoint and positive-definite
+                operator that acts as a mass matrix.
+            inverse_mass_operator (LinearOperator): The inverse of the mass operator.
+        """
+        self._underlying_space = space
+        self._mass_operator = mass_operator
+        self._inverse_mass_operator = inverse_mass_operator
+        super().__init__(
+            space.dim,
+            space.to_components,
+            space.from_components,
+            self._to_dual_from_mass_operator,
+            self._from_dual_from_mass_operator,
+            add=space.add,
+            subtract=space.subtract,
+            multiply=space.multiply,
+            ax=space.ax,
+            axpy=space.axpy,
+            copy=space.copy,
+            vector_multiply=space.vector_multiply,
+        )
+
+    def _to_dual_from_mass_operator(self, x: Vector) -> "LinearForm":
+        return self._underlying_space.to_dual(self._mass_operator(x))
+
+    def _from_dual_from_mass_operator(self, xp: "LinearForm") -> Vector:
+        return self._inverse_mass_operator(self._underlying_space.from_dual(xp))

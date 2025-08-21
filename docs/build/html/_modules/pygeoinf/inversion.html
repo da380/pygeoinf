@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -266,7 +251,7 @@
 
 
 <div class="viewcode-block" id="Inversion">
-<a class="viewcode-back" href="../../api/inversion.html#pygeoinf.inversion.Inversion">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.inversion.Inversion">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">Inversion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An abstract base class for inversion methods.</span>
@@ -302,7 +287,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">data_space</span>
 
 <div class="viewcode-block" id="Inversion.assert_data_error_measure">
-<a class="viewcode-back" href="../../api/inversion.html#pygeoinf.inversion.Inversion.assert_data_error_measure">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.inversion.Inversion.assert_data_error_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">assert_data_error_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Checks if a data error measure is set in the forward problem.</span>
@@ -319,7 +304,7 @@
 
 
 <div class="viewcode-block" id="Inversion.assert_inverse_data_covariance">
-<a class="viewcode-back" href="../../api/inversion.html#pygeoinf.inversion.Inversion.assert_inverse_data_covariance">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.inversion.Inversion.assert_inverse_data_covariance">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">assert_inverse_data_covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Checks if the data error measure has an inverse covariance.</span>

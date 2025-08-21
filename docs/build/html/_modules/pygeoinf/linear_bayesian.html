@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -273,7 +258,7 @@
 
 
 <div class="viewcode-block" id="LinearBayesianInversion">
-<a class="viewcode-back" href="../../api/linear_bayesian.html#pygeoinf.linear_bayesian.LinearBayesianInversion">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearBayesianInversion</span><span class="p">(</span><span class="n">Inversion</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Solves a linear inverse problem using Bayesian methods.</span>
@@ -323,7 +308,7 @@
             <span class="k">return</span> <span class="n">forward_operator</span> <span class="o">@</span> <span class="n">prior_model_covariance</span> <span class="o">@</span> <span class="n">forward_operator</span><span class="o">.</span><span class="n">adjoint</span>
 
 <div class="viewcode-block" id="LinearBayesianInversion.data_prior_measure">
-<a class="viewcode-back" href="../../api/linear_bayesian.html#pygeoinf.linear_bayesian.LinearBayesianInversion.data_prior_measure">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.data_prior_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">data_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the prior predictive distribution on the data, `p(d)`.</span>
@@ -348,7 +333,7 @@
 
 
 <div class="viewcode-block" id="LinearBayesianInversion.model_posterior_measure">
-<a class="viewcode-back" href="../../api/linear_bayesian.html#pygeoinf.linear_bayesian.LinearBayesianInversion.model_posterior_measure">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.model_posterior_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">model_posterior_measure</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">,</span>
@@ -402,7 +387,7 @@
         <span class="n">covariance</span> <span class="o">=</span> <span class="n">prior_model_covariance</span> <span class="o">-</span> <span class="p">(</span>
             <span class="n">prior_model_covariance</span>
 <div class="viewcode-block" id="LinearBayesianInference">
-<a class="viewcode-back" href="../../api/linear_bayesian.html#pygeoinf.linear_bayesian.LinearBayesianInference">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference">[docs]</a>
             <span class="o">@</span> <span class="n">forward_operator</span><span class="o">.</span><span class="n">adjoint</span>
             <span class="o">@</span> <span class="n">inverse_normal_operator</span>
             <span class="o">@</span> <span class="n">forward_operator</span>
@@ -454,7 +439,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_property_operator</span>
 
 <div class="viewcode-block" id="LinearBayesianInference.property_prior_measure">
-<a class="viewcode-back" href="../../api/linear_bayesian.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_prior_measure">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_prior_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">property_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the prior measure on the property space, `p(p)`.</span>
@@ -466,7 +451,7 @@
 
 
 <div class="viewcode-block" id="LinearBayesianInference.property_posterior_measure">
-<a class="viewcode-back" href="../../api/linear_bayesian.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_posterior_measure">[docs]</a>
+<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_posterior_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">property_posterior_measure</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">,</span>

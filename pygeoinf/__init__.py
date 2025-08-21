@@ -18,7 +18,7 @@ from .operators import (
     DiagonalLinearOperator,
 )
 
-from .forms import (
+from .linear_forms import (
     LinearForm,
 )
 

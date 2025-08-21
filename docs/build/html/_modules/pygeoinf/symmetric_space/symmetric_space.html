@@ -206,21 +206,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/hilbert_space.html">pygeoinf.hilbert_space</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/operators.html">pygeoinf.operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/forms.html">pygeoinf.forms</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/gaussian_measure.html">pygeoinf.gaussian_measure</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/direct_sum.html">pygeoinf.direct_sum</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/linear_solvers.html">pygeoinf.linear_solvers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/forward_problem.html">pygeoinf.forward_problem</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/inversion.html">pygeoinf.inversion</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/linear_optimisation.html">pygeoinf.linear_optimisation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/linear_bayesian.html">pygeoinf.linear_bayesian</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/random_matrix.html">pygeoinf.random_matrix</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../api/symmetric_spaces.html">Symmetric Spaces</a></li>
-</ul>
 
 </div>
 </div>
@@ -266,12 +251,12 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">EuclideanSpace</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.gaussian_measure</span><span class="w"> </span><span class="kn">import</span> <span class="n">GaussianMeasure</span>
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">SymmetricSpaceSobolev</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">ABC</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An abstract base class for Sobolev spaces of scalar fields on a symmetric space.</span>
@@ -288,7 +273,6 @@
         <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
         <span class="n">to_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
         <span class="n">from_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">Any</span><span class="p">],</span>
-        <span class="n">inner_product</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="nb">float</span><span class="p">],</span>
         <span class="n">to_dual</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">],</span>
         <span class="n">from_dual</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="s2">&quot;LinearForm&quot;</span><span class="p">],</span> <span class="n">Any</span><span class="p">],</span>
         <span class="o">/</span><span class="p">,</span>
@@ -309,7 +293,6 @@
 <span class="sd">                approximating space.</span>
 <span class="sd">            to_components: A callable that maps vectors to their component arrays.</span>
 <span class="sd">            from_components: A callable that maps component arrays to vectors.</span>
-<span class="sd">            inner_product: A callable that implements the inner product on the space.</span>
 <span class="sd">            to_dual: A callable that maps a vector to the canonically</span>
 <span class="sd">                associated dual vector (a LinearForm).</span>
 <span class="sd">            from_dual: A callable that maps a dual vector back to its</span>
@@ -332,7 +315,6 @@
             <span class="n">dim</span><span class="p">,</span>
             <span class="n">to_components</span><span class="p">,</span>
             <span class="n">from_components</span><span class="p">,</span>
-            <span class="n">inner_product</span><span class="p">,</span>
             <span class="n">to_dual</span><span class="p">,</span>
             <span class="n">from_dual</span><span class="p">,</span>
             <span class="n">add</span><span class="o">=</span><span class="n">add</span><span class="p">,</span>
@@ -355,14 +337,14 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_scale</span>
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.random_point">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.random_point">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.random_point">[docs]</a>
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_point</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a single random point from the underlying symmetric space.&quot;&quot;&quot;</span></div>
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.random_points">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.random_points">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.random_points">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_points</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns a list of `n` random points.</span>
@@ -374,7 +356,7 @@
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.dirac">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.dirac">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.dirac">[docs]</a>
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">dirac</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -389,7 +371,7 @@
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.dirac_representation">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.dirac_representation">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.dirac_representation">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">dirac_representation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 
@@ -405,7 +387,7 @@
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.point_evaluation_operator">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.point_evaluation_operator">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.point_evaluation_operator">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">point_evaluation_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">points</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns a linear operator that evaluates a function at a list of points.</span>
@@ -429,7 +411,7 @@
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.invariant_automorphism">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.invariant_automorphism">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.invariant_automorphism">[docs]</a>
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">invariant_automorphism</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -444,7 +426,7 @@
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.invariant_gaussian_measure">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.invariant_gaussian_measure">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.invariant_gaussian_measure">[docs]</a>
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">invariant_gaussian_measure</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">],</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">expectation</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
@@ -482,7 +464,7 @@
         <span class="k">return</span> <span class="n">mu</span><span class="o">.</span><span class="n">affine_mapping</span><span class="p">(</span><span class="n">translation</span><span class="o">=</span><span class="n">expectation</span><span class="p">)</span>
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.sobolev_gaussian_measure">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.sobolev_gaussian_measure">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.sobolev_gaussian_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">sobolev_gaussian_measure</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">order</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
@@ -509,7 +491,7 @@
 
 
 <div class="viewcode-block" id="SymmetricSpaceSobolev.heat_gaussian_measure">
-<a class="viewcode-back" href="../../../api/symmetric_spaces.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.heat_gaussian_measure">[docs]</a>
+<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.heat_gaussian_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">heat_gaussian_measure</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span> <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">expectation</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
