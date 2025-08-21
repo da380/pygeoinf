@@ -523,28 +523,25 @@ class MassWeightedHilbertSpace(HilbertSpace, Generic[Vector]):
 
     (u, v)_Y = (M u, v)_X,
 
-    with M the self-adjoint and positive-definite operator on X.
-
-    The mass operator and its inverse are provided in terms of their
-    Galerkin representation relative the underlying space.
+    with M the self-adjoint and positive-definite operator on X,
+    and where there is an implicit inclusion of Y in X.
     """
 
     def __init__(
         self,
         space: HilbertSpace,
-        mass_matrix: MatrixLike,
-        _inverse_mass_matrix: MatrixLike,
+        mass_operator: LinearOperator,
+        inverse_mass_operator: LinearOperator,
     ):
         """
         Args:
             space (HilbertSpace): The space in which the inner product is defined.
-            mass_matrix (MatrixLike): The matrix representation of the mass operator.
-            inverse_mass_matrix (MatrixLike): The matrix representation of the inverse mass operator.
+
         """
 
         self._underlying_space = space
-        self._mass_matrix = mass_matrix
-        self._inverse_mass_operator = _inverse_mass_matrix
+        self._mass_operator = mass_operator
+        self._inverse_mass_operator = inverse_mass_operator
 
         super().__init__(
             space.dim,
@@ -561,16 +558,30 @@ class MassWeightedHilbertSpace(HilbertSpace, Generic[Vector]):
             vector_multiply=space.vector_multiply,
         )
 
+    @property
+    def underlying_space(self) -> HilbertSpace:
+        """The underlying Hilbert space."""
+        return self._underlying_space
+
+    @property
+    def mass_operator(self) -> LinearOperator:
+        """The mass operator on the underlying space."""
+        return self._mass_operator
+
+    @property
+    def inverse_mass_operator(self) -> LinearOperator:
+        """The inverse mass operator on the underlying space."""
+        return self._inverse_mass_operator
+
     def _to_dual_impl(self, x: Vector) -> "LinearForm":
         """Maps a vector to its dual form via its components."""
         from .linear_forms import LinearForm
 
-        cx = self._underlying_space.to_components(x)
-        cyp = self._mass_matrix @ cx
-        return LinearForm(self, components=cyp)
+        y = self._mass_operator(x)
+        yp = self.underlying_space.to_dual(y)
+        return LinearForm(self, components=yp.components)
 
     def _from_dual_impl(self, xp: "LinearForm") -> Vector:
         """Maps a dual form back to a vector via its components."""
-        cxp = xp.components
-        cy = self._inverse_mass_operator @ cxp
-        return self._underlying_space.from_components(cy)
+        x = self.underlying_space.from_dual(xp)
+        return self._inverse_mass_operator(x)

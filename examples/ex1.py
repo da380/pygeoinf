@@ -1,16 +1,14 @@
 import matplotlib.pyplot as plt
 
+import numpy as np
+
 import pygeoinf as inf
+from pygeoinf.symmetric_space_new.circle import Lebesgue
 
+X = Lebesgue(128)
 
-X = inf.EuclideanSpace(4)
+x1 = X.project_function(lambda th: 1)
 
-x = X.random()
-xp = X.to_dual(x)
+x2 = X.project_function(lambda th: 1)
 
-y = X.random()
-yp = X.to_dual(y)
-
-print(xp)
-X.dual.ax(2, xp)
-print(xp)
+print(X.inner_product(x1, x2))
