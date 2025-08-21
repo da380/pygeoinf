@@ -6,9 +6,12 @@ the `HilbertSpace` class must pass to be considered valid.
 """
 
 from __future__ import annotations
+from typing import TYPE_CHECKING
 import pytest
 import numpy as np
-from typing import TYPE_CHECKING
+
+
+from numpy.testing import assert_allclose
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
@@ -191,11 +194,10 @@ class HilbertSpaceChecks:
         This is a fundamental check that the inner product and the mapping to the
         dual space are consistent.
         """
+
         inner_product_val = space.inner_product(x, y)
-        # Get the linear form (dual vector) corresponding to y
-        y_dual = space.to_dual(y)
-        # Apply the linear form to x
-        linear_form_val = y_dual(x)
+        yp = space.to_dual(y)
+        linear_form_val = space.duality_product(yp, x)
         assert np.isclose(inner_product_val, linear_form_val)
 
     def test_to_from_dual_identity(self, space: "HilbertSpace", x: "T_vec"):

@@ -106,6 +106,11 @@ class HilbertSpace:
         return self._vector_multiply is not None
 
     @property
+    def is_dual(self) -> bool:
+        """True if the space is a dual space."""
+        return self._base is not None
+
+    @property
     def dual(self) -> HilbertSpace:
         """
         The dual of the Hilbert space.
@@ -200,12 +205,21 @@ class HilbertSpace:
 
         return LinearOperator.self_dual(self, self.to_dual)
 
+    def duality_product(self, xp: LinearForm, x: T_vec) -> float:
+        """
+        Computes the duality product of a dual vector and a vector.
+
+        Note that this method is not symmetric in its arguments with
+        the linear form always being the first argument.
+        """
+        if self.is_dual:
+            return x(xp)
+        else:
+            return xp(x)
+
     def inner_product(self, x1: T_vec, x2: T_vec) -> float:
         """Computes the inner product of two vectors."""
-        if self._base is None:
-            return self.to_dual(x1)(x2)
-        else:
-            return x1(self.to_dual(x2))
+        return self.duality_product(self.to_dual(x1), x2)
 
     def squared_norm(self, x: T_vec) -> float:
         """Computes the squared norm of a vector."""

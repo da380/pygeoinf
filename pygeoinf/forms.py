@@ -24,7 +24,7 @@ class LinearForm:
 
     def __init__(
         self,
-        domain: "HilbertSpace",
+        domain: HilbertSpace,
         /,
         *,
         mapping: Optional[Callable[[Any], float]] = None,
@@ -42,7 +42,7 @@ class LinearForm:
                 the form.
         """
 
-        self._domain: "HilbertSpace" = domain
+        self._domain: HilbertSpace = domain
 
         if components is None:
             if mapping is None:
@@ -58,7 +58,7 @@ class LinearForm:
             self._components: np.ndarray = components
 
     @staticmethod
-    def from_linear_operator(operator: "LinearOperator") -> "LinearForm":
+    def from_linear_operator(operator: "LinearOperator") -> LinearForm:
         """
         Creates a LinearForm from an operator that maps to a 1D Euclidean space.
         """
@@ -68,7 +68,7 @@ class LinearForm:
         return LinearForm(operator.domain, mapping=lambda x: operator(x)[0])
 
     @property
-    def domain(self) -> "HilbertSpace":
+    def domain(self) -> HilbertSpace:
         """The Hilbert space on which the form is defined."""
         return self._domain
 
@@ -95,33 +95,55 @@ class LinearForm:
             dual_mapping=lambda y: y * self,
         )
 
+    def copy(self) -> LinearForm:
+        """
+        Creates a deep copy of the linear form.
+        """
+        return LinearForm(self.domain, components=self.components.copy())
+
     def __call__(self, x: Any) -> float:
         """Applies the linear form to a vector."""
         return np.dot(self._components, self.domain.to_components(x))
 
-    def __neg__(self) -> "LinearForm":
+    def __neg__(self) -> LinearForm:
         """Returns the additive inverse of the form."""
         return LinearForm(self.domain, components=-self._components)
 
-    def __mul__(self, a: float) -> "LinearForm":
+    def __mul__(self, a: float) -> LinearForm:
         """Returns the product of the form and a scalar."""
         return LinearForm(self.domain, components=a * self._components)
 
-    def __rmul__(self, a: float) -> "LinearForm":
+    def __rmul__(self, a: float) -> LinearForm:
         """Returns the product of the form and a scalar."""
         return self * a
 
-    def __truediv__(self, a: float) -> "LinearForm":
+    def __truediv__(self, a: float) -> LinearForm:
         """Returns the division of the form by a scalar."""
         return self * (1.0 / a)
 
-    def __add__(self, other: "LinearForm") -> "LinearForm":
+    def __add__(self, other: LinearForm) -> LinearForm:
         """Returns the sum of this form and another."""
         return LinearForm(self.domain, components=self.components + other.components)
 
-    def __sub__(self, other: "LinearForm") -> "LinearForm":
+    def __sub__(self, other: LinearForm) -> LinearForm:
         """Returns the difference between this form and another."""
         return LinearForm(self.domain, components=self.components - other.components)
+
+    def __imul__(self, a: float) -> "LinearForm":
+        """
+        Performs in-place scalar multiplication: self *= a.
+        """
+        self._components *= a
+        return self
+
+    def __iadd__(self, other: "LinearForm") -> "LinearForm":
+        """
+        Performs in-place addition with another form: self += other.
+        """
+        if self.domain != other.domain:
+            raise ValueError("Linear forms must share the same domain for addition.")
+        self._components += other.components
+        return self
 
     def __str__(self) -> str:
         """Returns the string representation of the form's components."""
