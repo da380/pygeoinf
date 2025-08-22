@@ -49,6 +49,28 @@ class TestGeneralFEMSolver(unittest.TestCase):
 
         self.assertFalse(solver._can_use_analytical)
 
+    def test_analytical_vs_numerical_methods_match(self):
+        """Test analytical and numerical methods produce same results."""
+        # Create GeneralFEMSolver with hat functions (uses analytical)
+        l2_space = L2Space(self.n_dofs, self.domain, basis_type='hat_homogeneous')
+        analytical_solver = GeneralFEMSolver(l2_space, self.bc_homogeneous)
+        analytical_solver.setup()
+
+        # Force numerical computation by temporarily setting _can_use_analytical
+        numerical_solver = GeneralFEMSolver(l2_space, self.bc_homogeneous)
+        numerical_solver._can_use_analytical = False
+        numerical_solver._stiffness_matrix = (
+            numerical_solver._assemble_stiffness_matrix_numerical()
+        )
+        numerical_solver._is_setup = True
+
+        # Get stiffness matrices
+        K_analytical = analytical_solver.get_stiffness_matrix()
+        K_numerical = numerical_solver.get_stiffness_matrix()
+
+        # They should match closely (allowing for numerical errors)
+        np.testing.assert_allclose(K_analytical, K_numerical, rtol=1e-10)
+
     def test_analytical_stiffness_matrix_structure(self):
         """Test analytical stiffness matrix has correct tridiagonal structure."""
         l2_space = L2Space(self.n_dofs, self.domain, basis_type='hat_homogeneous')

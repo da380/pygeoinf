@@ -1,7 +1,7 @@
 """
 Unit tests for FEM solver.
 
-Tests GeneralFEMSolver class including the analytical stiffness matrix
+Tests GeneralFEMSolver class including the analytical stiffness matrix 
 optimization for hat functions.
 """
 
@@ -48,6 +48,28 @@ class TestGeneralFEMSolver(unittest.TestCase):
         solver.setup()
 
         self.assertFalse(solver._can_use_analytical)
+
+    def test_analytical_vs_numerical_methods_match(self):
+        """Test analytical and numerical methods produce same results."""
+        # Create GeneralFEMSolver with hat functions (uses analytical)
+        l2_space = L2Space(self.n_dofs, self.domain, basis_type='hat_homogeneous')
+        analytical_solver = GeneralFEMSolver(l2_space, self.bc_homogeneous)
+        analytical_solver.setup()
+
+        # Force numerical computation by temporarily setting _can_use_analytical
+        numerical_solver = GeneralFEMSolver(l2_space, self.bc_homogeneous)
+        numerical_solver._can_use_analytical = False
+        numerical_solver._stiffness_matrix = (
+            numerical_solver._assemble_stiffness_matrix_numerical()
+        )
+        numerical_solver._is_setup = True
+
+        # Get stiffness matrices
+        K_analytical = analytical_solver.get_stiffness_matrix()
+        K_numerical = numerical_solver.get_stiffness_matrix()
+
+        # They should match closely (allowing for numerical errors)
+        np.testing.assert_allclose(K_analytical, K_numerical, rtol=1e-10)
 
     def test_analytical_stiffness_matrix_structure(self):
         """Test analytical stiffness matrix has correct tridiagonal structure."""
@@ -126,44 +148,50 @@ class TestGeneralFEMSolver(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(values)))
 
 
-class TestGeneralFEMSolverNumericalMethod(unittest.TestCase):
-    """Test GeneralFEMSolver with numerical stiffness matrix assembly."""
+class TestFEMSolver(unittest.TestCase):
+    """Test legacy FEMSolver class."""
 
     def setUp(self):
         """Set up test fixtures."""
         self.domain = IntervalDomain(0.0, 1.0)
         self.bc = BoundaryConditions('dirichlet', left=0.0, right=0.0)
-        self.n_dofs = 3
+        self.n_dofs = 5
 
-    def test_fourier_basis_numerical_assembly(self):
-        """Test numerical assembly works with Fourier basis."""
-        # Use Fourier basis to force numerical assembly
-        l2_space = L2Space(self.n_dofs, self.domain, basis_type='fourier')
-        solver = GeneralFEMSolver(l2_space, self.bc)
+    def test_fem_solver_setup(self):
+        """Test FEMSolver setup."""
+        solver = FEMSolver(self.domain, self.n_dofs, self.bc)
         solver.setup()
 
-        # Should use numerical method
-        self.assertFalse(solver._can_use_analytical)
+        # Check setup completed successfully
+        self.assertIsNotNone(solver._nodes)
+        self.assertIsNotNone(solver._l2_space)
 
-        # Should have valid stiffness matrix
-        K = solver.get_stiffness_matrix()
-        self.assertEqual(K.shape, (self.n_dofs, self.n_dofs))
-        self.assertTrue(np.all(np.isfinite(K)))
-
-    def test_sine_basis_numerical_assembly(self):
-        """Test numerical assembly works with sine basis."""
-        # Use sine basis
-        l2_space = L2Space(self.n_dofs, self.domain, basis_type='sine')
-        solver = GeneralFEMSolver(l2_space, self.bc)
+    def test_fem_solver_stiffness_matrix_structure(self):
+        """Test FEMSolver stiffness matrix structure."""
+        solver = FEMSolver(self.domain, self.n_dofs, self.bc)
         solver.setup()
 
-        # Should have valid stiffness matrix
-        K = solver.get_stiffness_matrix()
-        self.assertEqual(K.shape, (self.n_dofs, self.n_dofs))
-        self.assertTrue(np.all(np.isfinite(K)))
+        K = solver._assemble_stiffness_matrix()
 
-    def test_stiffness_matrix_properties(self):
-        """Test that the stiffness matrix has expected properties."""
+        # Should have correct shape and structure
+        self.assertEqual(K.shape, (self.n_dofs, self.n_dofs))
+
+        # Should be symmetric
+        np.testing.assert_allclose(K, K.T, rtol=1e-15)
+
+
+class TestGeneralFEMSolverNumericalMethod(unittest.TestCase):
+    """Test the numerical gradient operator-based method."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.domain = IntervalDomain(0.0, 1.0)
+        self.bc = BoundaryConditions('dirichlet', left=0.0, right=0.0)
+        self.n_dofs = 4
+
+    def test_numerical_method_with_sine_basis(self):
+        """Test numerical method produces symmetric positive definite matrix
+        with sine basis."""
         l2_space = L2Space(self.n_dofs, self.domain, basis_type='sine')
         solver = GeneralFEMSolver(l2_space, self.bc)
         solver.setup()
@@ -181,7 +209,8 @@ class TestGeneralFEMSolverNumericalMethod(unittest.TestCase):
         self.assertTrue(np.all(eigenvals > 1e-10))
 
     def test_gradient_operator_integration_functionality(self):
-        """Test that the gradient operator and Function integration work together."""
+        """Test that the gradient operator and Function integration work
+        together."""
         l2_space = L2Space(3, self.domain, basis_type='sine')
         solver = GeneralFEMSolver(l2_space, self.bc)
         solver.setup()

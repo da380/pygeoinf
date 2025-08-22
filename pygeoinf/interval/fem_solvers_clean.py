@@ -1,7 +1,7 @@
 """
-FEM Solver for Laplacian Inverse Operator
+FEM Solvers for Laplacian Inverse Operator
 
-This module provides a Python FEM solver for the LaplacianInverseOperator.
+This module provides Python FEM solvers for the LaplacianInverseOperator.
 GeneralFEMSolver works with any basis functions from L2Space and automatically
 optimizes for hat functions when detected.
 
@@ -10,6 +10,7 @@ No external dependencies required.
 
 import numpy as np
 
+from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
 from .functions import Function
 
@@ -122,15 +123,15 @@ class GeneralFEMSolver:
         """
         # Check boundary conditions are homogeneous Dirichlet
         if (self.boundary_conditions.type != 'dirichlet' or
-                self.boundary_conditions.get_parameter('left', 0.0) != 0.0 or
-                self.boundary_conditions.get_parameter('right', 0.0) != 0.0):
+            self.boundary_conditions.left != 0.0 or
+            self.boundary_conditions.right != 0.0):
             return False
 
         # Check if the basis provider is specifically for hat functions
-        # by checking the stored basis type
-        if hasattr(self.l2_space, '_basis_type'):
-            if self.l2_space._basis_type == 'hat_homogeneous':
-                return True
+        # by examining its type name
+        provider_name = type(self.l2_space._basis_provider).__name__
+        if 'Hat' in provider_name and 'Homogeneous' in provider_name:
+            return True
 
         return False
 
@@ -172,8 +173,7 @@ class GeneralFEMSolver:
         Uses GradientOperator for derivatives and Function.integrate()
         for integration.
         """
-        # Import here to avoid circular imports
-        from .operators import GradientOperator
+        from .operators import GradientOperator  # Import here to avoid circular imports
 
         n = self.dofs
         K = np.zeros((n, n))
@@ -320,7 +320,7 @@ class GeneralFEMSolver:
             )
 
     def interpolate_solution(self, solution_coeffs: np.ndarray,
-                             eval_points: np.ndarray) -> np.ndarray:
+                           eval_points: np.ndarray) -> np.ndarray:
         """
         Evaluate solution at given points using basis function expansion.
 

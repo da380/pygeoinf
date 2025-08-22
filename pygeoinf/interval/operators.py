@@ -25,7 +25,7 @@ from pygeoinf.operators import LinearOperator
 from .functions import Function
 from .providers import create_laplacian_spectrum_provider
 # FEM import only needed for LaplacianInverseOperator
-from pygeoinf.interval.fem_solvers import FEMSolver, GeneralFEMSolver
+from pygeoinf.interval.fem_solvers import GeneralFEMSolver
 from pygeoinf.interval.function_providers import (
     FunctionProvider, IndexedFunctionProvider, NormalModesProvider
 )
@@ -601,9 +601,10 @@ class LaplacianInverseOperator(LinearOperator):
             boundary_conditions: Boundary conditions for the operator
             alpha: Scaling factor for the operator (default: 1.0)
             dofs: Number of degrees of freedom (default: 100)
-            fem_type: FEM implementation to use:
-                - "hat": Optimized hat function implementation (default)
-                - "general": General implementation using domain's basis
+            fem_type: FEM implementation to use (deprecated):
+                - "hat": Uses hat function basis (default)
+                - "general": Uses domain's basis functions
+                Note: Both options now use GeneralFEMSolver internally.
         """
         # Check that domain is an L2 space
         if not isinstance(domain, L2Space):
@@ -649,15 +650,18 @@ class LaplacianInverseOperator(LinearOperator):
             domain, self._boundary_conditions, inverse=True
         )
 
-        # Create and setup FEM solver based on type
+        # Create and setup FEM solver
         if self._fem_type == "hat":
-            # Use optimized hat function implementation
-            self._fem_solver = FEMSolver(
-                self._function_domain,
+            # Create L2Space with hat functions for optimized performance
+            fem_l2_space = L2Space(
                 dofs,
+                self._function_domain,
+                basis_type='hat_homogeneous'
+            )
+            self._fem_solver = GeneralFEMSolver(
+                fem_l2_space,
                 self._boundary_conditions
             )
-            self._fem_solver.setup()
             solver_description = "hat function FEM solver"
         elif self._fem_type == "general":
             # Use general implementation with domain's basis functions
@@ -665,8 +669,9 @@ class LaplacianInverseOperator(LinearOperator):
                 domain,  # Pass the L2Space directly
                 self._boundary_conditions
             )
-            self._fem_solver.setup()
             solver_description = "general FEM solver"
+
+        self._fem_solver.setup()
 
         print(
             f"LaplacianInverseOperator initialized with {solver_description}, "
@@ -693,29 +698,10 @@ class LaplacianInverseOperator(LinearOperator):
         """
         f = self._alpha * f  # Scale input by alpha
 
-        # Solve PDE using FEM solver
-        if self._fem_type == "hat":
-            # Hat function solver returns nodal values
-            solution_values = self._fem_solver.solve_poisson(f)
-            return self._fem_to_hilbert_function(solution_values)
-        elif self._fem_type == "general":
-            # General solver returns coefficients in basis functions
-            solution_coeffs = self._fem_solver.solve_poisson(f)
-            return self._fem_solver.solution_to_function(solution_coeffs)
-
-    def _fem_to_hilbert_function(self, fem_solution):
-        """Convert FEM solution to hilbert space function."""
-
-        # Create interpolation function
-        def evaluate_func(x):
-            return self._fem_solver.interpolate_solution(fem_solution, x)
-
-        # Create Function with interpolated solution
-        return Function(
-            self._domain,
-            evaluate_callable=evaluate_func,
-            name="Laplacian⁻¹ solution"
-        )
+        # Solve PDE using GeneralFEMSolver
+        # Both hat and general types now use GeneralFEMSolver
+        solution_coeffs = self._fem_solver.solve_poisson(f)
+        return self._fem_solver.solution_to_function(solution_coeffs)
 
     @property
     def boundary_conditions(self) -> BoundaryConditions:
