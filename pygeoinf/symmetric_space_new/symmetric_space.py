@@ -7,19 +7,30 @@ from abc import ABC, abstractmethod
 from typing import Callable, Any, List, Optional
 import numpy as np
 
-from pygeoinf.hilbert_space import HilbertSpace, EuclideanSpace
+from pygeoinf.hilbert_space import (
+    HilbertSpace,
+    MassWeightedHilbertSpace,
+    EuclideanSpace,
+)
 from pygeoinf.operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 
-class SymmetricSpaceHelper:
+class LebesgueHelper(ABC):
     """
-    An abstract base class for
+    An abstract base class that provides functionality for Lebesgue spaces defined
+    over a symmetric space.
+    """
 
-    This class can be inherited by a Hilbert space to provide common functionality for
-    functions on symmetric spaces.
-    """
+    @property
+    @abstractmethod
+    def spatial_dimension(self):
+        """The dimension of the symetric space."""
+
+    @abstractmethod
+    def _space(self):
+        """The Hilbert space."""
 
     @abstractmethod
     def random_point(self) -> Any:
@@ -35,10 +46,205 @@ class SymmetricSpaceHelper:
         return [self.random_point() for _ in range(n)]
 
     @abstractmethod
-    def laplacian(self) -> LinearOperator:
+    def laplacian_eigenvalue(self, k: int | tuple[int, ...]) -> float:
         """
-        Returns the Laplacian as an automorphism on the space. Strictly, this
-        operator is well-defined only on a dense subset of the true function space
-        but this is ignored numerically.
+        Returns the k-th eigenvalue of the Laplacian. Note that the index can
+        either be an integer or a tuple of integers.
+
+        Args:
+            k: The index of the eigenvalue to return.
         """
-        pass
+
+    @abstractmethod
+    def invariant_automorphism(self, f: Callable[[float], float]) -> LinearOperator:
+        """
+        Returns an automorphism of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian, Δ.
+
+        In order to be well-defined, the function must have appropriate
+        growth properties. For example, in an L² space we need f to be bounded.
+        In Sobolev spaces Hˢ a more complex condition holds depending on the
+        Sobolev order. These conditions on the function are not checked.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian.
+        """
+
+    @abstractmethod
+    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
+        """
+        Returns the trace of the automorphism of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian.
+        """
+
+    @abstractmethod
+    def invariant_gaussian_measure(
+        self,
+        f: Callable[[float], float],
+    ) -> GaussianMeasure:
+        """
+        Returns a Gaussian measure whose covariance is f(Δ) with f a
+        function that is well-defined on the spectrum of the Laplacian, Δ.
+
+        In order to be well-defined, f(Δ) must be trace class, with this implying
+        decay conditions on f whose form depends on the form of the symmetric space.
+        These conditions on the function are not checked.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+            of the Laplacian.
+        """
+
+    def norm_scaled_invariant_gaussian_measure(
+        self, f: Callable[[float], float], std: float
+    ) -> GaussianMeasure:
+        """
+        Returns a Gaussian measure whose covariance is proportional to f(Δ) with
+        f a function that is well-defined on the spectrum of the Laplacian, Δ.
+
+        In order to be well-defined, f(Δ) must be trace class, with this implying
+        decay conditions on f whose form depends on the form of the symmetric space.
+        These conditions on the function are not checked.
+
+        The measure's covariance is scaled such that the expected value for the
+        samples norm is equal to the given standard deviation.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+            of the Laplacian.
+            std: The desired standard deviation for the norm of samples.
+        """
+        mu = self.invariant_gaussian_measure(f)
+        tr = self.trace_of_invariant_automorphism(f)
+        return (std / np.sqrt(tr)) * mu
+
+    def sobolev_kernel_gaussian_measure(self, order: float, scale: float):
+        """
+        Returns an invariant Gaussian measure with a Sobolev-type covariance
+        equal to (1 + scale^2 * Δ)^-order.
+
+        Args:
+            order: Order parameter for the covariance.
+            scale: Scale parameter for the covariance.
+        """
+        return self.invariant_gaussian_measure(lambda k: (1 + scale**2 * k) ** -order)
+
+    def norm_scaled_sobolev_kernel_gaussian_measure(
+        self, order: float, scale: float, std: float
+    ):
+        """
+        Returns an invariant Gaussian measure with a Sobolev-type covariance
+        proportional to (1 + scale^2 * Δ)^-order.
+
+        The measure's covariance is scaled such that the expected value for the
+        samples norm is equal to the given standard deviation.
+
+        Args:
+            order: Order parameter for the covariance.
+            scale: Scale parameter for the covariance.
+            std: The desired standard deviation for the norm of samples.
+        """
+        return self.norm_scaled_invariant_gaussian_measure(
+            lambda k: (1 + scale**2 * k) ** -order, std
+        )
+
+    def heat_kernel_gaussian_measure(self, scale: float):
+        """
+        Returns an invariant Gaussian measure with a heat kernel covariance
+        equal to exp(-scale^2 * Δ).
+
+        Args:
+            scale: Scale parameter for the covariance.
+        """
+        return self.invariant_gaussian_measure(lambda k: np.exp(-(scale**2) * k))
+
+    def norm_scaled_heat_kernel_gaussian_measure(self, scale: float, std: float):
+        """
+        Returns an invariant Gaussian measure with a heat kernel covariance
+        proportional to exp(-scale^2 * Δ).
+
+        The measure's covariance is scaled such that the expected value for the
+        samples norm is equal to the given standard deviation.
+
+        Args:
+            scale: Scale parameter for the covariance.
+            std: The desired standard deviation for the norm of samples.
+        """
+        return self.norm_scaled_invariant_gaussian_measure(
+            lambda k: np.exp(-(scale**2) * k), std
+        )
+
+
+class SobolevHelper(LebesgueHelper):
+    """
+    An abstract base class that builds on LebesgueHelper to provide additional functionality
+    for Sobolev spaces.
+    """
+
+    @property
+    @abstractmethod
+    def order(self) -> float:
+        """The Sobolev order."""
+
+    @property
+    @abstractmethod
+    def scale(self) -> float:
+        """The Sobolev length-scale."""
+
+    @abstractmethod
+    def dirac(self, point: Any) -> LinearForm:
+        """
+        Returns the linear functional corresponding to a point evaluation.
+
+        This represents the action of the Dirac delta measure based at the given
+        point.
+
+        Args:
+            point: The point on the symmetric space at which to base the functional.
+        """
+
+    def dirac_representation(self, point: Any) -> Any:
+        """
+
+        Returns the Riesz representation of the Dirac delta functional.
+
+        This is the vector in the Hilbert space that represents point evaluation
+        via the inner product.
+
+        Args:
+            point: The point on the symmetric space.
+        """
+        return self._space().from_dual(self.dirac(point))
+
+    def point_evaluation_operator(self, points: List[Any]) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        The resulting operator maps a function (a vector in this space) to a
+        vector in Euclidean space containing the function's values.
+
+        Args:
+            points: A list of points at which to evaluate the functions.
+
+        Raises:
+            NotImplementedError: If order <= n/2, where n is the space dimension.
+        """
+        if self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Order must be greater than n/2")
+
+        space = self._space()
+        dim = len(points)
+        matrix = np.zeros((dim, space.dim))
+
+        for i, point in enumerate(points):
+            cp = self.dirac(point).components
+            matrix[i, :] = cp
+
+        return LinearOperator.from_matrix(
+            space, EuclideanSpace(dim), matrix, galerkin=True
+        )

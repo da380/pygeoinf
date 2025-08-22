@@ -122,7 +122,7 @@ class GaussianMeasure:
         /,
         *,
         expectation: Vector = None,
-    ) -> "GaussianMeasure":
+    ) -> GaussianMeasure:
         """
         Creates an isotropic Gaussian measure with scaled identity covariance.
 
@@ -150,7 +150,7 @@ class GaussianMeasure:
         /,
         *,
         expectation: Vector = None,
-    ) -> "GaussianMeasure":
+    ) -> GaussianMeasure:
         """
         Creates a Gaussian measure with a diagonal covariance operator.
 
@@ -184,7 +184,7 @@ class GaussianMeasure:
         /,
         *,
         expectation: Vector = None,
-    ) -> "GaussianMeasure":
+    ) -> GaussianMeasure:
         """
         Creates a Gaussian measure from a dense covariance matrix.
 
@@ -223,9 +223,7 @@ class GaussianMeasure:
         )
 
     @staticmethod
-    def from_samples(
-        domain: "HilbertSpace", samples: List[Vector]
-    ) -> "GaussianMeasure":
+    def from_samples(domain: "HilbertSpace", samples: List[Vector]) -> GaussianMeasure:
         """
         Estimates a Gaussian measure from a collection of sample vectors.
 
@@ -268,7 +266,7 @@ class GaussianMeasure:
         )
 
     @staticmethod
-    def from_direct_sum(measures: List["GaussianMeasure"]) -> "GaussianMeasure":
+    def from_direct_sum(measures: List[GaussianMeasure]) -> GaussianMeasure:
         """
         Constructs a product measure from a list of other measures.
 
@@ -407,7 +405,7 @@ class GaussianMeasure:
 
     def affine_mapping(
         self, /, *, operator: "LinearOperator" = None, translation: Vector = None
-    ) -> "GaussianMeasure":
+    ) -> GaussianMeasure:
         """
         Transforms the measure under the affine map y = A(x) + b.
 
@@ -475,7 +473,7 @@ class GaussianMeasure:
         power: int = 0,
         method: str = "fixed",
         rtol: float = 1e-2,
-    ) -> "GaussianMeasure":
+    ) -> GaussianMeasure:
         """
         Constructs a low-rank approximation of the measure.
 
@@ -517,7 +515,7 @@ class GaussianMeasure:
         cov = self.covariance
         return cov(u)
 
-    def __neg__(self) -> "GaussianMeasure":
+    def __neg__(self) -> GaussianMeasure:
         """Returns a measure with a negated expectation."""
         if self.covariance_factor_set:
             return GaussianMeasure(
@@ -536,7 +534,7 @@ class GaussianMeasure:
                 sample=new_sample,
             )
 
-    def __mul__(self, alpha: float) -> "GaussianMeasure":
+    def __mul__(self, alpha: float) -> GaussianMeasure:
         """Scales the measure by a scalar alpha."""
         if self.covariance_factor_set:
             return GaussianMeasure(
@@ -555,11 +553,15 @@ class GaussianMeasure:
             sample=new_sample,
         )
 
-    def __rmul__(self, alpha: float) -> "GaussianMeasure":
+    def __rmul__(self, alpha: float) -> GaussianMeasure:
         """Scales the measure by a scalar alpha."""
         return self * alpha
 
-    def __add__(self, other: "GaussianMeasure") -> "GaussianMeasure":
+    def __truediv__(self, a: float) -> GaussianMeasure:
+        """Returns the division of the measure by a scalar."""
+        return self * (1.0 / a)
+
+    def __add__(self, other: GaussianMeasure) -> GaussianMeasure:
         """
         Adds two independent Gaussian measures defined on the same domain.
         """
@@ -577,7 +579,7 @@ class GaussianMeasure:
             sample=new_sample,
         )
 
-    def __sub__(self, other: "GaussianMeasure") -> "GaussianMeasure":
+    def __sub__(self, other: GaussianMeasure) -> GaussianMeasure:
         """
         Subtracts two independent Gaussian measures on the same domain.
         """

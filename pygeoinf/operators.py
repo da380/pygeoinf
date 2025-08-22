@@ -163,6 +163,77 @@ class LinearOperator(Operator):
         return LinearOperator(domain, domain, mapping, formal_adjoint_mapping=mapping)
 
     @staticmethod
+    def from_formal_adjoint(
+        domain: "HilbertSpace", codomain: "HilbertSpace", operator: LinearOperator
+    ) -> LinearOperator:
+        """
+        Method to construct LinearOperators on MassWeightedHilbertSpaces
+        from instances of the operator on the underlying spaces.
+
+        Args:
+            domain (MassWeightedHilbertSpace): The domain of the operator.
+            codomain (MassWeightedHilbertSpace): The codomain of the operator.
+            operator (LinearOperator): The operator to be converted
+
+        Notes:
+            If the domain is not a MassWeightedHilbertSpace, the underlying
+            domain is taken to be the domain, and the mass operator the identity.
+            The same holds for the codomain. The process remains well-defined in
+            such cases, and is useful if at least one space is mass-weighted.
+            If neither space is mass-weighted there is not point to the method as
+            the output operator is identical to the input operator.
+        """
+        from .hilbert_space import MassWeightedHilbertSpace
+
+        if isinstance(domain, MassWeightedHilbertSpace):
+            domain_base = domain.underlying_space
+            domain_inverse_mass_operator = domain.inverse_mass_operator
+        else:
+            domain_base = domain
+            domain_inverse_mass_operator = domain.identity_operator()
+
+        if isinstance(codomain, MassWeightedHilbertSpace):
+            codomain_base = codomain.underlying_space
+            codomain_mass_operator = codomain.mass_operator
+        else:
+            codomain_base = codomain
+            codomain_mass_operator = codomain.identity_operator()
+
+        if domain_base != operator.domain:
+            raise ValueError("Domain mismatch")
+        if codomain_base != operator.codomain:
+            raise ValueError("Codomain mismatch")
+
+        return LinearOperator(
+            domain,
+            codomain,
+            operator,
+            adjoint_mapping=domain_inverse_mass_operator
+            @ operator.adjoint
+            @ codomain_mass_operator,
+        )
+
+    @staticmethod
+    def from_formally_self_adjoint(
+        domain: "HilbertSpace", operator: LinearOperator
+    ) -> LinearOperator:
+        """
+        Method to construct LinearOperators on MassWeightedHilbertSpaces
+        that are self-adjoint on the underlying space.
+
+        Args:
+            domain (MassWeightedHilbertSpace): The domain of the operator.
+            operator (LinearOperator): The operator to be converted
+
+        Notes:
+            If the domain is not a MassWeightedHilbertSpace, the underlying
+            domain is taken to be the domain, and the mass operator the identity.
+            In such cases the method is well-defined but pointless as the output
+            operator is identical to the input operator.
+        """
+        return LinearOperator.from_formal_adjoint(domain, domain, operator)
+
+    @staticmethod
     def from_linear_forms(forms: List["LinearForm"]) -> LinearOperator:
         """
         Creates an operator from a list of linear forms.

@@ -22,7 +22,7 @@ from pygeoinf.hilbert_space import (
 from pygeoinf.operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.symmetric_space_new.symmetric_space import SymmetricSpaceHelper
+from pygeoinf.symmetric_space_new.symmetric_space import LebesgueHelper, SobolevHelper
 
 
 class CircleHelper:
@@ -39,6 +39,12 @@ class CircleHelper:
         self._kmax: int = kmax
         self._radius: float = radius
 
+        self._fft_factor: float = np.sqrt(2 * np.pi * radius) / (2 * self.kmax)
+        self._inverse_fft_factor: float = 1.0 / self._fft_factor
+
+    def _space(self):
+        return self
+
     @property
     def kmax(self):
         """The maximum Fourier degree represented in this space."""
@@ -54,6 +60,27 @@ class CircleHelper:
         """The angular spacing between grid points."""
         return np.pi / self.kmax
 
+    @property
+    def spatial_dimension(self) -> int:
+        """The dimension of the space."""
+        return 1
+
+    @property
+    def fft_factor(self) -> float:
+        """
+        The factor by which the Fourier coefficients are scaled
+        in forward transformations.
+        """
+        return self._fft_factor
+
+    @property
+    def inverse_fft_factor(self) -> float:
+        """
+        The factor by which the Fourier coefficients are scaled
+        in inverse transformations.
+        """
+        return self._inverse_fft_factor
+
     def random_point(self) -> float:
         """Returns a random angle in the interval [0, 2*pi)."""
         return np.random.uniform(0, 2 * np.pi)
@@ -65,6 +92,15 @@ class CircleHelper:
             float,
         )
 
+    def laplacian_eigenvalue(self, k: int) -> float:
+        """
+        Returns the k-th eigenvalue of the Laplacian.
+
+        Args:
+            k: The index of the eigenvalue to return.
+        """
+        return (k / self.radius) ** 2
+
     def project_function(self, f: Callable[[float], float]) -> np.ndarray:
         """
         Returns an element of the space by projecting a given function.
@@ -75,6 +111,14 @@ class CircleHelper:
             f: A function that takes an angle (float) and returns a value.
         """
         return np.fromiter((f(theta) for theta in self.angles()), float)
+
+    def to_coefficient(self, u: np.ndarray) -> np.ndarray:
+        """Maps a function vector to its complex Fourier coefficients."""
+        return rfft(u) * self.fft_factor
+
+    def from_coefficient(self, coeff: np.ndarray) -> np.ndarray:
+        """Maps complex Fourier coefficients to a function vector."""
+        return irfft(coeff, n=2 * self.kmax) * self._inverse_fft_factor
 
     def plot(
         self,
@@ -136,8 +180,18 @@ class CircleHelper:
         ax.fill_between(self.angles(), u - u_bound, u + u_bound, **kwargs)
         return fig, ax
 
+    def _coefficient_to_component(self, coeff: np.ndarray) -> np.ndarray:
+        """Packs complex Fourier coefficients into a real component vector."""
+        return np.concatenate((coeff.real, coeff.imag[1 : self.kmax]))
 
-class Lebesgue(CircleHelper, HilbertSpace):
+    def _component_to_coefficient(self, c: np.ndarray) -> np.ndarray:
+        """Unpacks a real component vector into complex Fourier coefficients."""
+        coeff_real = c[: self.kmax + 1]
+        coeff_imag = np.concatenate([[0], c[self.kmax + 1 :], [0]])
+        return coeff_real + 1j * coeff_imag
+
+
+class Lebesgue(CircleHelper, HilbertSpace, LebesgueHelper):
     """
     Implementation of the Lebesgue space L^2 on a circle based
     on Fourier expansions.
@@ -157,6 +211,7 @@ class Lebesgue(CircleHelper, HilbertSpace):
         """
 
         CircleHelper.__init__(self, kmax, radius)
+
         HilbertSpace.__init__(
             self,
             2 * kmax,
@@ -167,16 +222,11 @@ class Lebesgue(CircleHelper, HilbertSpace):
             vector_multiply=lambda u1, u2: u1 * u2,
         )
 
-        self._fft_factor: float = np.sqrt(2 * np.pi * radius) / self.dim
-        self._inverse_fft_factor: float = 1.0 / self._fft_factor
-
-    def to_coefficient(self, u: np.ndarray) -> np.ndarray:
-        """Maps a function vector to its complex Fourier coefficients."""
-        return rfft(u) * self._fft_factor
-
-    def from_coefficient(self, coeff: np.ndarray) -> np.ndarray:
-        """Maps complex Fourier coefficients to a function vector."""
-        return irfft(coeff, n=self.dim) * self._inverse_fft_factor
+        values = np.fromiter(
+            [2 if k > 0 else 1 for k in range(self.kmax + 1)], dtype=float
+        )
+        self._metric = diags([values], [0])
+        self._inverse_metric = diags([np.reciprocal(values)], [0])
 
     def __eq__(self, other: object) -> bool:
         """
@@ -190,19 +240,85 @@ class Lebesgue(CircleHelper, HilbertSpace):
 
         return self.kmax == other.kmax and self.radius == other.radius
 
+    def invariant_automorphism(self, f: Callable[[float], float]):
+        """
+        Implements an invariant automorphism of the form f(Δ) using Fourier
+        expansions on a circle.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian, Δ.
+        """
+
+        values = np.fromiter(
+            (f(self.laplacian_eigenvalue(k)) for k in range(self.kmax + 1)),
+            dtype=float,
+        )
+        matrix = diags([values], [0])
+
+        def mapping(u):
+            coeff = self.to_coefficient(u)
+            coeff = matrix @ coeff
+            return self.from_coefficient(coeff)
+
+        return LinearOperator.self_adjoint(self, mapping)
+
+    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
+        """
+        Returns the trace of the automorphism of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian.
+        """
+        return np.sum(
+            [
+                (2 if k > 0 else 1) * f(self.laplacian_eigenvalue(k))
+                for k in range(self.kmax + 1)
+            ]
+        )
+
+    def invariant_gaussian_measure(
+        self,
+        f: Callable[[float], float],
+    ):
+        """
+        Implements an invariant Gaussian measure using Fourier expansions on a circle.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian, Δ.
+        """
+        covariance = self.invariant_automorphism(f)
+
+        """
+        values = np.fromiter(
+            [np.sqrt(self.laplacian_eigenvalue(k)) for k in range(self.kmax + 1)],
+            dtype=float,
+        )
+        matrix = diags([values], [0])
+
+        def sample():
+            c = np.random.randn(self.dim)
+            coeff = matrix @ (self._component_to_coefficient(c))
+            return self.from_coefficient(coeff)
+        """
+
+        sqrt_covariance = self.invariant_automorphism(lambda k: np.sqrt(f(k)))
+
+        def sample():
+            c = np.random.randn(self.dim)
+            c[1 : self.kmax] /= np.sqrt(2)
+            c[self.kmax + 1 :] /= np.sqrt(2)
+            u = self.from_components(c)
+            return sqrt_covariance(u)
+
+        return GaussianMeasure(covariance=covariance, sample=sample)
+
     # ================================================================#
     #                         Private methods                         #
     # ================================================================#
-
-    def _coefficient_to_component(self, coeff: np.ndarray) -> np.ndarray:
-        """Packs complex Fourier coefficients into a real component vector."""
-        return np.concatenate((coeff.real, coeff.imag[1 : self.kmax]))
-
-    def _component_to_coefficient(self, c: np.ndarray) -> np.ndarray:
-        """Unpacks a real component vector into complex Fourier coefficients."""
-        coeff_real = c[: self.kmax + 1]
-        coeff_imag = np.concatenate([[0], c[self.kmax + 1 :], [0]])
-        return coeff_real + 1j * coeff_imag
 
     def _to_components_impl(self, u: np.ndarray) -> np.ndarray:
         """Converts a function vector to its real component representation."""
@@ -216,16 +332,19 @@ class Lebesgue(CircleHelper, HilbertSpace):
 
     def _to_dual_impl(self, u: np.ndarray) -> "LinearForm":
         """Maps a vector `u` to its dual representation `u*`."""
-        cp = self.to_components(u)
+        coeff = self.to_coefficient(u)
+        cp = self._coefficient_to_component(self._metric @ coeff)
         return self.dual.from_components(cp)
 
     def _from_dual_impl(self, up: "LinearForm") -> np.ndarray:
         """Maps a dual vector `u*` back to its primal representation `u`."""
-        c = self.dual.to_components(up)
+        cp = self.dual.to_components(up)
+        coeff = self._component_to_coefficient(cp)
+        c = self._coefficient_to_component(self._inverse_metric @ coeff)
         return self.from_components(c)
 
 
-class Sobolev(CircleHelper, MassWeightedHilbertSpace):
+class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
     """
     Implementation of the Sobolev space L^2 on a circle based on Fourier expansions.
     """
@@ -254,27 +373,9 @@ class Sobolev(CircleHelper, MassWeightedHilbertSpace):
 
         lebesgue = Lebesgue(kmax, radius=radius)
 
-        values = np.zeros(self.kmax + 1)
-        values[0] = 1
-        for k in range(1, self.kmax + 1):
-            values[k] = 2 * self.sobolev_function(k)
-
-        self._metric = diags([values], [0])
-        self._inverse_metric = diags([np.reciprocal(values)], [0])
-
-        def mass_operator_mapping(u: np.ndarray) -> np.ndarray:
-            coeff = lebesgue.to_coefficient(u)
-            coeff = self._metric @ coeff
-            return lebesgue.from_coefficient(coeff)
-
-        def inverse_mass_operator_mapping(u: np.ndarray) -> np.ndarray:
-            coeff = lebesgue.to_coefficient(u)
-            coeff = self._inverse_metric @ coeff
-            return lebesgue.from_coefficient(coeff)
-
-        mass_operator = LinearOperator.self_adjoint(lebesgue, mass_operator_mapping)
-        inverse_mass_operator = LinearOperator.self_adjoint(
-            lebesgue, inverse_mass_operator_mapping
+        mass_operator = lebesgue.invariant_automorphism(self.sobolev_function)
+        inverse_mass_operator = lebesgue.invariant_automorphism(
+            lambda k: 1.0 / self.sobolev_function(k)
         )
 
         MassWeightedHilbertSpace.__init__(
@@ -311,3 +412,85 @@ class Sobolev(CircleHelper, MassWeightedHilbertSpace):
             and self.order == other.order
             and self.scale == other.scale
         )
+
+    def dirac(self, point: float) -> LinearForm:
+        """
+        Returns the linear functional corresponding to a point evaluation.
+
+        This represents the action of the Dirac delta measure based at the given
+        point.
+
+        Args:
+            point: The angle for the point at which the measure is based.
+
+        Raises:
+            ValueError: If the Sobolev order is less than n/2, with n the spatial dimension.
+        """
+        if self.order <= self.spatial_dimension / 2:
+            raise ValueError("This method is only applicable for orders >= n/2")
+
+        coeff = np.zeros(self.kmax + 1, dtype=complex)
+        fac = np.exp(-1j * point)
+        coeff[0] = 1.0
+        for k in range(1, coeff.size):
+            coeff[k] = coeff[k - 1] * fac
+        coeff *= 1.0 / np.sqrt(2 * np.pi * self.radius)
+        coeff[1:] *= 2.0
+        cp = self._coefficient_to_component(coeff)
+        return LinearForm(self, components=cp)
+
+    def invariant_automorphism(self, f: Callable[[float], float]):
+        """
+        Implements an invariant automorphism of the form f(Δ) using Fourier
+        expansions on a circle.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian, Δ.
+        """
+
+        A = self.underlying_space.invariant_automorphism(f)
+        return LinearOperator.from_formally_self_adjoint(self, A)
+
+    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
+        """
+        Returns the trace of the automorphism of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian.
+        """
+        values = np.fromiter(
+            [
+                f(self.laplacian_eigenvalue(k)) * self.sobolev_function(k)
+                for k in range(self.kmax + 1)
+            ],
+            dtype=float,
+        )
+        return np.sum([(2 if k > 0 else 1) * v for k, v in enumerate(values)])
+
+    def invariant_gaussian_measure(
+        self,
+        f: Callable[[float], float],
+    ):
+        """
+        Implements an invariant Gaussian measure using Fourier expansions on a circle.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian, Δ.
+        """
+
+        mu = self.underlying_space.invariant_gaussian_measure(f)
+        covariance = LinearOperator.from_formally_self_adjoint(self, mu.covariance)
+
+        sqrt_inverse_mass_operator = self.underlying_space.invariant_automorphism(
+            lambda k: np.sqrt(self.sobolev_function(k))
+        )
+
+        def sample():
+            u = mu.sample()
+            return u
+
+        return GaussianMeasure(covariance=covariance, sample=sample)
