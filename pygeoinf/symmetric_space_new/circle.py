@@ -272,12 +272,16 @@ class Lebesgue(CircleHelper, HilbertSpace, LebesgueHelper):
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian.
         """
-        return np.sum(
-            [
-                (2 if k > 0 else 1) * f(self.laplacian_eigenvalue(k))
-                for k in range(self.kmax + 1)
-            ]
+        trace = f(self.laplacian_eigenvalue(0))  # k=0 mode has multiplicity 1
+        if self.kmax > 0:
+            trace += f(
+                self.laplacian_eigenvalue(self.kmax)
+            )  # k=kmax mode has multiplicity 1
+        # Intermediate modes have multiplicity 2
+        trace += 2 * np.sum(
+            [f(self.laplacian_eigenvalue(k)) for k in range(1, self.kmax)]
         )
+        return trace
 
     def invariant_gaussian_measure(
         self,
@@ -290,31 +294,27 @@ class Lebesgue(CircleHelper, HilbertSpace, LebesgueHelper):
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian, Δ.
         """
-        covariance = self.invariant_automorphism(f)
 
-        """
         values = np.fromiter(
-            [np.sqrt(self.laplacian_eigenvalue(k)) for k in range(self.kmax + 1)],
-            dtype=float,
+            [1 / np.sqrt(2) if i > 0 else 1 for i in range(self.dim)], dtype=float
         )
         matrix = diags([values], [0])
-
-        def sample():
-            c = np.random.randn(self.dim)
-            coeff = matrix @ (self._component_to_coefficient(c))
-            return self.from_coefficient(coeff)
-        """
-
+        inverse_matrix = diags([np.reciprocal(values)], [0])
         sqrt_covariance = self.invariant_automorphism(lambda k: np.sqrt(f(k)))
 
-        def sample():
-            c = np.random.randn(self.dim)
-            c[1 : self.kmax] /= np.sqrt(2)
-            c[self.kmax + 1 :] /= np.sqrt(2)
-            u = self.from_components(c)
+        def mapping(c: np.ndarray) -> np.ndarray:
+            u = self.from_components(matrix @ c)
             return sqrt_covariance(u)
 
-        return GaussianMeasure(covariance=covariance, sample=sample)
+        def adjoint_mapping(u: np.ndarray) -> np.ndarray:
+            c = self.to_components(sqrt_covariance(u))
+            return inverse_matrix @ c
+
+        covariance_factor = LinearOperator(
+            EuclideanSpace(self.dim), self, mapping, adjoint_mapping=adjoint_mapping
+        )
+
+        return GaussianMeasure(covariance_factor=covariance_factor)
 
     # ================================================================#
     #                         Private methods                         #
@@ -339,9 +339,9 @@ class Lebesgue(CircleHelper, HilbertSpace, LebesgueHelper):
     def _from_dual_impl(self, up: "LinearForm") -> np.ndarray:
         """Maps a dual vector `u*` back to its primal representation `u`."""
         cp = self.dual.to_components(up)
-        coeff = self._component_to_coefficient(cp)
-        c = self._coefficient_to_component(self._inverse_metric @ coeff)
-        return self.from_components(c)
+        dual_coeff = self._component_to_coefficient(cp)
+        primal_coeff = self._inverse_metric @ dual_coeff
+        return self.from_coefficient(primal_coeff)
 
 
 class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
@@ -439,19 +439,6 @@ class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
         cp = self._coefficient_to_component(coeff)
         return LinearForm(self, components=cp)
 
-    def invariant_automorphism(self, f: Callable[[float], float]):
-        """
-        Implements an invariant automorphism of the form f(Δ) using Fourier
-        expansions on a circle.
-
-        Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian, Δ.
-        """
-
-        A = self.underlying_space.invariant_automorphism(f)
-        return LinearOperator.from_formally_self_adjoint(self, A)
-
     def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
         """
         Returns the trace of the automorphism of the form f(Δ) with f a function
@@ -461,36 +448,15 @@ class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian.
         """
-        values = np.fromiter(
+        trace = f(self.laplacian_eigenvalue(0)) * self.sobolev_function(0)
+        if self.kmax > 0:
+            trace += f(self.laplacian_eigenvalue(self.kmax)) * self.sobolev_function(
+                self.kmax
+            )
+        trace += 2 * np.sum(
             [
                 f(self.laplacian_eigenvalue(k)) * self.sobolev_function(k)
-                for k in range(self.kmax + 1)
-            ],
-            dtype=float,
+                for k in range(1, self.kmax)
+            ]
         )
-        return np.sum([(2 if k > 0 else 1) * v for k, v in enumerate(values)])
-
-    def invariant_gaussian_measure(
-        self,
-        f: Callable[[float], float],
-    ):
-        """
-        Implements an invariant Gaussian measure using Fourier expansions on a circle.
-
-        Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian, Δ.
-        """
-
-        mu = self.underlying_space.invariant_gaussian_measure(f)
-        covariance = LinearOperator.from_formally_self_adjoint(self, mu.covariance)
-
-        sqrt_inverse_mass_operator = self.underlying_space.invariant_automorphism(
-            lambda k: np.sqrt(self.sobolev_function(k))
-        )
-
-        def sample():
-            u = mu.sample()
-            return u
-
-        return GaussianMeasure(covariance=covariance, sample=sample)
+        return trace

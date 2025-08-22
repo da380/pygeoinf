@@ -196,6 +196,13 @@ class SobolevHelper(LebesgueHelper):
     def scale(self) -> float:
         """The Sobolev length-scale."""
 
+    @property
+    @abstractmethod
+    def sobolev_function(self, k: float) -> float:
+        """
+        Implementation of the relevant Sobolev function for the space.
+        """
+
     @abstractmethod
     def dirac(self, point: Any) -> LinearForm:
         """
@@ -248,3 +255,29 @@ class SobolevHelper(LebesgueHelper):
         return LinearOperator.from_matrix(
             space, EuclideanSpace(dim), matrix, galerkin=True
         )
+
+    def invariant_automorphism(self, f: Callable[[float], float]):
+        """
+        Implements an invariant automorphism of the form f(Δ) based on the
+        underlying Lebesgue space.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian, Δ.
+        """
+        A = self._space().underlying_space.invariant_automorphism(f)
+        return LinearOperator.from_formally_self_adjoint(self, A)
+
+    def invariant_gaussian_measure(
+        self,
+        f: Callable[[float], float],
+    ):
+        """
+        Implements an invariant Gaussian measure based on the underlying Lebesgue space.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian, Δ.
+        """
+
+        g = lambda k: np.sqrt(f(k) / self.sobolev_function(k))
