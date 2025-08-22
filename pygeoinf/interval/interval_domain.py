@@ -193,11 +193,15 @@ class IntervalDomain:
 
         if method == "trapz":
             try:
-                from scipy.integrate import trapz
-            except Exception as exc:  # pragma: no cover - SciPy required
-                raise ImportError(
-                    "scipy is required for 'trapz' integration"
-                ) from exc
+                from scipy.integrate import trapezoid as trapz
+            except ImportError:
+                # Fallback for older SciPy versions
+                try:
+                    from scipy.integrate import trapz
+                except Exception as exc:  # pragma: no cover - SciPy required
+                    raise ImportError(
+                        "scipy is required for 'trapz' integration"
+                    ) from exc
 
             return float(trapz(ys, x=xs))
 
