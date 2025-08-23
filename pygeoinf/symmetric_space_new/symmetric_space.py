@@ -6,6 +6,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Callable, Any, List, Optional
 import numpy as np
+from scipy.sparse import diags
 
 from pygeoinf.hilbert_space import (
     HilbertSpace,
@@ -82,23 +83,46 @@ class LebesgueHelper(ABC):
                of the Laplacian.
         """
 
-    @abstractmethod
     def invariant_gaussian_measure(
         self,
         f: Callable[[float], float],
-    ) -> GaussianMeasure:
+    ):
         """
-        Returns a Gaussian measure whose covariance is f(Δ) with f a
-        function that is well-defined on the spectrum of the Laplacian, Δ.
+        Returns a Gaussian measure with covariance of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian.
 
-        In order to be well-defined, f(Δ) must be trace class, with this implying
-        decay conditions on f whose form depends on the form of the symmetric space.
-        These conditions on the function are not checked.
+        To be mathematically well-defined, the operator f(Δ) must be trace-class,
+        this imposing a condition on the growth of f that is not checked.
 
         Args:
             f: A real-valued function that is well-defined on the spectrum
-            of the Laplacian.
+               of the Laplacian, Δ.
         """
+
+        space = self._space()
+
+        values = np.fromiter(
+            [1 / space.norm(space.basis_vector(i)) for i in range(space.dim)],
+            dtype=float,
+        )
+        matrix = diags([values], [0])
+        inverse_matrix = diags([np.reciprocal(values)], [0])
+
+        def mapping(c: np.ndarray) -> np.ndarray:
+            return space.from_components(matrix @ c)
+
+        def adjoint_mapping(u: np.ndarray) -> np.ndarray:
+            c = space.to_components(u)
+            return inverse_matrix @ c
+
+        component_mapping = LinearOperator(
+            EuclideanSpace(space.dim), self, mapping, adjoint_mapping=adjoint_mapping
+        )
+        sqrt_covariance = self.invariant_automorphism(lambda k: np.sqrt(f(k)))
+
+        covariance_factor = sqrt_covariance @ component_mapping
+
+        return GaussianMeasure(covariance_factor=covariance_factor)
 
     def norm_scaled_invariant_gaussian_measure(
         self, f: Callable[[float], float], std: float
@@ -213,6 +237,9 @@ class SobolevHelper(LebesgueHelper):
 
         Args:
             point: The point on the symmetric space at which to base the functional.
+
+        Raises:
+            NotImplementedError: If the Sobolev order is less than n/2, with n the spatial dimension.
         """
 
     def dirac_representation(self, point: Any) -> Any:
@@ -225,6 +252,9 @@ class SobolevHelper(LebesgueHelper):
 
         Args:
             point: The point on the symmetric space.
+
+        Raises:
+            NotImplementedError: If the Sobolev order is less than n/2, with n the spatial dimension.
         """
         return self._space().from_dual(self.dirac(point))
 
@@ -258,7 +288,7 @@ class SobolevHelper(LebesgueHelper):
 
     def invariant_automorphism(self, f: Callable[[float], float]):
         """
-        Implements an invariant automorphism of the form f(Δ) based on the
+        Returns an invariant automorphism of the form f(Δ) based on the
         underlying Lebesgue space.
 
         Args:
@@ -268,16 +298,70 @@ class SobolevHelper(LebesgueHelper):
         A = self._space().underlying_space.invariant_automorphism(f)
         return LinearOperator.from_formally_self_adjoint(self, A)
 
-    def invariant_gaussian_measure(
-        self,
-        f: Callable[[float], float],
+    def point_value_scaled_invariant_gaussian_measure(
+        self, f: Callable[[float], float], amplitude: float
     ):
         """
-        Implements an invariant Gaussian measure based on the underlying Lebesgue space.
+        Returns an invariant Gaussian measure with covariance proportional to f(Δ),
+        where f must be such that this operator is trace-class.
+
+        The covariance of the operator is scaled such that the standard deviation
+        of the point-wise values are equal to the given amplitude.
 
         Args:
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian, Δ.
-        """
+            amplitude: The desired standard deviation for the pointwise values.
 
-        g = lambda k: np.sqrt(f(k) / self.sobolev_function(k))
+        Raises:
+            NotImplementedError: If the Sobolev order is less than n/2, with n the spatial dimension.
+
+        Notes:
+            This method applies for symmetric spaces an invariant measures. As a result, the
+            pointwise variance is the same at all points. Internally, a random point is chosen
+            to carry out the normalisation.
+        """
+        space = self._space()
+        point = self.random_point()
+        u = self.dirac_representation(point)
+        mu = self.invariant_gaussian_measure(f)
+        cov = mu.covariance
+        var = space.inner_product(cov(u), u)
+        return (amplitude / np.sqrt(var)) * mu
+
+    def point_value_scaled_sobolev_kernel_gaussian_measure(
+        self, order: float, scale: float, amplitude: float
+    ):
+        """
+        Returns an invariant Gaussian measure with a Sobolev-type covariance
+        proportional to (1 + scale^2 * Δ)^-order.
+
+        The covariance of the operator is scaled such that the standard deviation
+        of the point-wise values are equal to the given amplitude.
+
+        Args:
+            order: Order parameter for the covariance.
+            scale: Scale parameter for the covariance.
+            amplitude: The desired standard deviation for the pointwise values.
+        """
+        return self.point_value_scaled_invariant_gaussian_measure(
+            lambda k: (1 + scale**2 * k) ** -order, amplitude
+        )
+
+    def point_value_scaled_heat_kernel_gaussian_measure(
+        self, scale: float, amplitude: float
+    ):
+        """
+        Returns an invariant Gaussian measure with a heat-kernel covariance
+        proportional to exp(-scale^2 * Δ).
+
+        The covariance of the operator is scaled such that the standard deviation
+        of the point-wise values are equal to the given amplitude.
+
+        Args:
+            scale: Scale parameter for the covariance.
+            amplitude: The desired standard deviation for the pointwise values.
+        """
+        return self.point_value_scaled_invariant_gaussian_measure(
+            lambda k: np.exp(-(scale**2) * k), amplitude
+        )

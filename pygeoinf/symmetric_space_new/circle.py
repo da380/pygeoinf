@@ -101,6 +101,23 @@ class CircleHelper:
         """
         return (k / self.radius) ** 2
 
+    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
+        """
+        Returns the trace of the automorphism of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian.
+        """
+        trace = f(self.laplacian_eigenvalue(0))
+        if self.kmax > 0:
+            trace += f(self.laplacian_eigenvalue(self.kmax))
+        trace += 2 * np.sum(
+            [f(self.laplacian_eigenvalue(k)) for k in range(1, self.kmax)]
+        )
+        return trace
+
     def project_function(self, f: Callable[[float], float]) -> np.ndarray:
         """
         Returns an element of the space by projecting a given function.
@@ -263,59 +280,6 @@ class Lebesgue(CircleHelper, HilbertSpace, LebesgueHelper):
 
         return LinearOperator.self_adjoint(self, mapping)
 
-    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
-        """
-        Returns the trace of the automorphism of the form f(Δ) with f a function
-        that is well-defined on the spectrum of the Laplacian.
-
-        Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian.
-        """
-        trace = f(self.laplacian_eigenvalue(0))  # k=0 mode has multiplicity 1
-        if self.kmax > 0:
-            trace += f(
-                self.laplacian_eigenvalue(self.kmax)
-            )  # k=kmax mode has multiplicity 1
-        # Intermediate modes have multiplicity 2
-        trace += 2 * np.sum(
-            [f(self.laplacian_eigenvalue(k)) for k in range(1, self.kmax)]
-        )
-        return trace
-
-    def invariant_gaussian_measure(
-        self,
-        f: Callable[[float], float],
-    ):
-        """
-        Implements an invariant Gaussian measure using Fourier expansions on a circle.
-
-        Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian, Δ.
-        """
-
-        values = np.fromiter(
-            [1 / np.sqrt(2) if i > 0 else 1 for i in range(self.dim)], dtype=float
-        )
-        matrix = diags([values], [0])
-        inverse_matrix = diags([np.reciprocal(values)], [0])
-        sqrt_covariance = self.invariant_automorphism(lambda k: np.sqrt(f(k)))
-
-        def mapping(c: np.ndarray) -> np.ndarray:
-            u = self.from_components(matrix @ c)
-            return sqrt_covariance(u)
-
-        def adjoint_mapping(u: np.ndarray) -> np.ndarray:
-            c = self.to_components(sqrt_covariance(u))
-            return inverse_matrix @ c
-
-        covariance_factor = LinearOperator(
-            EuclideanSpace(self.dim), self, mapping, adjoint_mapping=adjoint_mapping
-        )
-
-        return GaussianMeasure(covariance_factor=covariance_factor)
-
     # ================================================================#
     #                         Private methods                         #
     # ================================================================#
@@ -427,7 +391,9 @@ class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
             ValueError: If the Sobolev order is less than n/2, with n the spatial dimension.
         """
         if self.order <= self.spatial_dimension / 2:
-            raise ValueError("This method is only applicable for orders >= n/2")
+            raise NotImplementedError(
+                "This method is only applicable for orders >= n/2"
+            )
 
         coeff = np.zeros(self.kmax + 1, dtype=complex)
         fac = np.exp(-1j * point)
@@ -438,25 +404,3 @@ class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
         coeff[1:] *= 2.0
         cp = self._coefficient_to_component(coeff)
         return LinearForm(self, components=cp)
-
-    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
-        """
-        Returns the trace of the automorphism of the form f(Δ) with f a function
-        that is well-defined on the spectrum of the Laplacian.
-
-        Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian.
-        """
-        trace = f(self.laplacian_eigenvalue(0)) * self.sobolev_function(0)
-        if self.kmax > 0:
-            trace += f(self.laplacian_eigenvalue(self.kmax)) * self.sobolev_function(
-                self.kmax
-            )
-        trace += 2 * np.sum(
-            [
-                f(self.laplacian_eigenvalue(k)) * self.sobolev_function(k)
-                for k in range(1, self.kmax)
-            ]
-        )
-        return trace

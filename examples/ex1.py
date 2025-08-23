@@ -5,8 +5,8 @@ import numpy as np
 import pygeoinf as inf
 from pygeoinf.symmetric_space_new.circle import Lebesgue, Sobolev
 
-# X = Sobolev(16, 2, 0.1)
-X = Lebesgue(4)
+X = Sobolev(16, 2, 0.1)
+# X = Lebesgue(16)
 
 
 mu = X.norm_scaled_invariant_gaussian_measure(lambda k: (1 + k * k) ** 0, 1)
