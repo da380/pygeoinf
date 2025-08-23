@@ -388,11 +388,11 @@ class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
             point: The angle for the point at which the measure is based.
 
         Raises:
-            ValueError: If the Sobolev order is less than n/2, with n the spatial dimension.
+            ValueError: If the Sobolev order is less than 1/2.
         """
-        if self.order <= self.spatial_dimension / 2:
+        if self.order <= 1 / 2:
             raise NotImplementedError(
-                "This method is only applicable for orders >= n/2"
+                "This method is only applicable for orders >= 1/2"
             )
 
         coeff = np.zeros(self.kmax + 1, dtype=complex)
