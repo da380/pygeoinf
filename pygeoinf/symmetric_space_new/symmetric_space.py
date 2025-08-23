@@ -1,6 +1,42 @@
 """
-Module for abstract helper class for function spaces defined on symmetric spaces.
+Module for abstract helper classes for function spaces defined on symmetric spaces.
+
+This module provides a framework of abstract base classes, `LebesgueHelper` and
+`SobolevHelper`, designed to simplify the construction and manipulation of function
+spaces defined on symmetric spaces (e.g., spheres, tori).
+
+The core principle is the utilization of the spectral properties of the
+Laplace-Beltrami operator (Δ). By providing an implementation for the
+eigenvalues of the Laplacian, these helper classes can construct a wide range
+of operators and Gaussian measures that are invariant under the isometries of the
+underlying space.
+
+Classes
+-------
+LebesgueHelper
+    An abstract base class for L²-type (Lebesgue) spaces. It provides methods
+    to define operators of the form `f(Δ)` and to construct Gaussian measures
+    with common covariance structures, such as Sobolev-type and heat kernels.
+    It includes methods to scale these measures based on the expected norm of
+    the samples.
+
+SobolevHelper
+    An abstract base class for Sobolev spaces that inherits from `LebesgueHelper`.
+    It extends the functionality to include operations that are well-defined in
+    Sobolev spaces with a sufficiently high order of smoothness, most notably
+    point evaluation (via Dirac delta functionals). A key feature is the ability
+    to construct Gaussian measures scaled by their point-wise standard deviation
+    (amplitude).
+
+Usage
+-----
+Concrete implementations for specific symmetric spaces should inherit from these
+classes and implement the abstract methods (e.g., `_space`, `laplacian_eigenvalue`).
+This grants them immediate access to a rich set of tools for defining operators
+and probability measures, useful in fields like spatial statistics, machine learning,
+and computational physics.
 """
+
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
