@@ -97,6 +97,11 @@ class LebesgueHelper(ABC):
         Args:
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian, Δ.
+
+        Notes:
+            The implementation of this method assumes that the basis for the
+            HilbertSpace is comprised of orthogonal eigenvectors for the
+            Laplacian. It is not necessary for this basis to be normalised.
         """
 
         space = self._space()
@@ -287,8 +292,8 @@ class SobolevHelper(LebesgueHelper):
 
     def invariant_automorphism(self, f: Callable[[float], float]):
         """
-        Returns an invariant automorphism of the form f(Δ) based on the
-        underlying Lebesgue space.
+        Returns an invariant automorphism of the form f(Δ) making use of the equivalent
+        operator on the underlying Lebesgue space.
 
         Args:
             f: A real-valued function that is well-defined on the spectrum
