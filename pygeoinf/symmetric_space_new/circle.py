@@ -1,6 +1,32 @@
 """
 Lebesgue and Sobolev spaces for functions on a circle.
+
+This module provides concrete implementations for function spaces on the circle
+(the 1-sphere, S¹), building upon the `pygeoinf` Hilbert space framework.
+The core representation is a truncated Fourier series, with efficient conversion
+to and from a spatial grid representation via the Fast Fourier Transform (FFT).
+
+The classes in this module are concrete implementations of the abstract helper
+classes `LebesgueHelper` and `SobolevHelper`.
+
+Classes
+-------
+CircleHelper
+    A mixin class providing common geometric properties, plotting utilities,
+    and Fourier transform machinery for spaces on the circle.
+
+Lebesgue
+    Implements the Lebesgue space L²(S¹). This space represents
+    square-integrable functions and uses the standard L² inner product,
+    which is diagonal in the Fourier basis.
+
+Sobolev
+    Implements the Sobolev space Hˢ(S¹). This space represents functions with
+    a degree of smoothness controlled by the `order` parameter. It is
+    constructed as a mass-weighted version of the Lebesgue space, where the
+    inner product penalizes high-frequency components.
 """
+
 
 from __future__ import annotations
 
