@@ -220,7 +220,6 @@ class SobolevHelper(LebesgueHelper):
     def scale(self) -> float:
         """The Sobolev length-scale."""
 
-    @property
     @abstractmethod
     def sobolev_function(self, k: float) -> float:
         """
