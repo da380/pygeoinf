@@ -33,9 +33,7 @@ from typing import Callable, Any, List
 import numpy as np
 from scipy.sparse import diags
 
-from pygeoinf.hilbert_space import (
-    EuclideanSpace,
-)
+from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
 from pygeoinf.operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
@@ -52,9 +50,18 @@ class AbstractInvariantLebesgueSpace(ABC):
     def spatial_dimension(self):
         """The dimension of the symetric space."""
 
+    @property
     @abstractmethod
-    def _space(self):
-        """The Hilbert space."""
+    def dim(self):
+        """The dimension of the Hilbert space."""
+
+    @abstractmethod
+    def to_components(self, u: Any) -> np.ndarray:
+        """Maps a vector `u` to its real component representation."""
+
+    @abstractmethod
+    def from_components(self, c: np.ndarray) -> Any:
+        """Maps a real component vector back to a vector `u`."""
 
     @abstractmethod
     def random_point(self) -> Any:
@@ -134,21 +141,19 @@ class AbstractInvariantLebesgueSpace(ABC):
             Laplacian. It is not necessary for this basis to be normalised.
         """
 
-        space = self._space()
-
-        values = space.eigenfunction_norms()
+        values = self.eigenfunction_norms()
         matrix = diags([np.reciprocal(values)], [0])
         inverse_matrix = diags([values], [0])
 
         def mapping(c: np.ndarray) -> np.ndarray:
-            return space.from_components(matrix @ c)
+            return self.from_components(matrix @ c)
 
         def adjoint_mapping(u: np.ndarray) -> np.ndarray:
-            c = space.to_components(u)
+            c = self.to_components(u)
             return inverse_matrix @ c
 
         component_mapping = LinearOperator(
-            EuclideanSpace(space.dim), self, mapping, adjoint_mapping=adjoint_mapping
+            EuclideanSpace(self.dim), self, mapping, adjoint_mapping=adjoint_mapping
         )
         sqrt_covariance = self.invariant_automorphism(lambda k: np.sqrt(f(k)))
 
@@ -270,6 +275,25 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
     def spatial_dimension(self) -> int:
         """The dimension of the space."""
 
+    @property
+    @abstractmethod
+    def underlying_space(self) -> HilbertSpace:
+        """The underlying Hilbert space."""
+
+    @abstractmethod
+    def inner_product(self, u: Any, v: Any) -> float:
+        """
+        Returns the inner product of two vectors `u` and `v`.
+
+        Args:
+            u: The first vector.
+            v: The second vector.
+        """
+
+    @abstractmethod
+    def from_dual(self, up: LinearForm) -> Any:
+        """Maps a dual vector `u*` back to a vector `u`."""
+
     @abstractmethod
     def dirac(self, point: Any) -> LinearForm:
         """
@@ -324,7 +348,7 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
         Raises:
             NotImplementedError: If the Sobolev order is less than n/2, with n the spatial dimension.
         """
-        return self._space().from_dual(self.dirac(point))
+        return self.from_dual(self.dirac(point))
 
     def point_evaluation_operator(self, points: List[Any]) -> LinearOperator:
         """
@@ -342,16 +366,15 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
         if self.order <= self.spatial_dimension / 2:
             raise NotImplementedError("Order must be greater than n/2")
 
-        space = self._space()
         dim = len(points)
-        matrix = np.zeros((dim, space.dim))
+        matrix = np.zeros((dim, self.dim))
 
         for i, point in enumerate(points):
             cp = self.dirac(point).components
             matrix[i, :] = cp
 
         return LinearOperator.from_matrix(
-            space, EuclideanSpace(dim), matrix, galerkin=True
+            self, EuclideanSpace(dim), matrix, galerkin=True
         )
 
     def invariant_automorphism(self, f: Callable[[float], float]):
@@ -363,7 +386,7 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian, Δ.
         """
-        A = self._space().underlying_space.invariant_automorphism(f)
+        A = self.underlying_space.invariant_automorphism(f)
         return LinearOperator.from_formally_self_adjoint(self, A)
 
     def point_value_scaled_invariant_gaussian_measure(
@@ -389,12 +412,11 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
             pointwise variance is the same at all points. Internally, a random point is chosen
             to carry out the normalisation.
         """
-        space = self._space()
         point = self.random_point()
         u = self.dirac_representation(point)
         mu = self.invariant_gaussian_measure(f)
         cov = mu.covariance
-        var = space.inner_product(cov(u), u)
+        var = self.inner_product(cov(u), u)
         return (amplitude / np.sqrt(var)) * mu
 
     def point_value_scaled_sobolev_kernel_gaussian_measure(

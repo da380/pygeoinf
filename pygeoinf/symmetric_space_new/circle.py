@@ -355,7 +355,11 @@ class Lebesgue(CircleHelper, HilbertSpace, AbstractInvariantLebesgueSpace):
         return self.from_coefficient(primal_coeff)
 
 
-class Sobolev(CircleHelper, AbstractInvariantSobolevSpace, MassWeightedHilbertSpace):
+class Sobolev(
+    CircleHelper,
+    MassWeightedHilbertSpace,
+    AbstractInvariantSobolevSpace,
+):
     """
     Implementation of the Sobolev space L^2 on a circle based on Fourier expansions.
     """
