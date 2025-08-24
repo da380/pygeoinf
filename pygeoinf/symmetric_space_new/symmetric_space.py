@@ -72,12 +72,19 @@ class AbstractInvariantLebesgueSpace(ABC):
     @abstractmethod
     def laplacian_eigenvalue(self, k: int | tuple[int, ...]) -> float:
         """
-        Returns the k-th eigenvalue of the Laplacian. Note that the index can
-        either be an integer or a tuple of integers.
+        Returns the eigenvalue of the Laplacian for a given mode index.
+
+        The index `k` can be a single integer (e.g., for a circle) or a
+        tuple of integers (e.g., for a sphere or torus), depending on the
+        geometry of the space.
 
         Args:
             k: The index of the eigenvalue to return.
         """
+
+    @abstractmethod
+    def eigenfunction_norms(self) -> np.ndarray:
+        """Returns a list of the norms of the eigenfunctions."""
 
     @abstractmethod
     def invariant_automorphism(self, f: Callable[[float], float]) -> LinearOperator:
@@ -129,12 +136,9 @@ class AbstractInvariantLebesgueSpace(ABC):
 
         space = self._space()
 
-        values = np.fromiter(
-            [1 / space.norm(space.basis_vector(i)) for i in range(space.dim)],
-            dtype=float,
-        )
-        matrix = diags([values], [0])
-        inverse_matrix = diags([np.reciprocal(values)], [0])
+        values = space.eigenfunction_norms()
+        matrix = diags([np.reciprocal(values)], [0])
+        inverse_matrix = diags([values], [0])
 
         def mapping(c: np.ndarray) -> np.ndarray:
             return space.from_components(matrix @ c)
@@ -153,7 +157,7 @@ class AbstractInvariantLebesgueSpace(ABC):
         return GaussianMeasure(covariance_factor=covariance_factor)
 
     def norm_scaled_invariant_gaussian_measure(
-        self, f: Callable[[float], float], std: float
+        self, f: Callable[[float], float], std: float = 1
     ) -> GaussianMeasure:
         """
         Returns a Gaussian measure whose covariance is proportional to f(Δ) with
@@ -173,6 +177,18 @@ class AbstractInvariantLebesgueSpace(ABC):
         """
         mu = self.invariant_gaussian_measure(f)
         tr = self.trace_of_invariant_automorphism(f)
+
+        # space = self._space()
+        # C = mu.covariance
+        # trace = 0
+        # for i in range(space.dim):
+        #    u = space.basis_vector(i)
+        #    n = space.norm(u)
+        #    u /= n
+        #    trace += space.inner_product(C(u), u)
+        # print(trace)
+        # print(tr)
+
         return (std / np.sqrt(tr)) * mu
 
     def sobolev_kernel_gaussian_measure(self, order: float, scale: float):
@@ -184,10 +200,10 @@ class AbstractInvariantLebesgueSpace(ABC):
             order: Order parameter for the covariance.
             scale: Scale parameter for the covariance.
         """
-        return self.invariant_gaussian_measure(lambda k: (1 + scale**2 * k) ** -order)
+        return self.invariant_gaussian_measure(lambda k: (1 + scale**2 * k) ** (-order))
 
     def norm_scaled_sobolev_kernel_gaussian_measure(
-        self, order: float, scale: float, std: float
+        self, order: float, scale: float, std: float = 1
     ):
         """
         Returns an invariant Gaussian measure with a Sobolev-type covariance
@@ -215,7 +231,7 @@ class AbstractInvariantLebesgueSpace(ABC):
         """
         return self.invariant_gaussian_measure(lambda k: np.exp(-(scale**2) * k))
 
-    def norm_scaled_heat_kernel_gaussian_measure(self, scale: float, std: float):
+    def norm_scaled_heat_kernel_gaussian_measure(self, scale: float, std: float = 1):
         """
         Returns an invariant Gaussian measure with a heat kernel covariance
         proportional to exp(-scale^2 * Δ).
@@ -238,21 +254,21 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
     for Sobolev spaces.
     """
 
-    @property
-    @abstractmethod
-    def order(self) -> float:
-        """The Sobolev order."""
+    def __init__(self, order: float, scale: float):
+        """
+        Args:
+            spatial_dimension: The dimension of the space.
+            order: The Sobolev order.
+            scale: The Sobolev length-scale.
+        """
+
+        self._order: float = order
+        self._scale: float = scale
 
     @property
     @abstractmethod
-    def scale(self) -> float:
-        """The Sobolev length-scale."""
-
-    @abstractmethod
-    def sobolev_function(self, k: float) -> float:
-        """
-        Implementation of the relevant Sobolev function for the space.
-        """
+    def spatial_dimension(self) -> int:
+        """The dimension of the space."""
 
     @abstractmethod
     def dirac(self, point: Any) -> LinearForm:
@@ -268,6 +284,31 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
         Raises:
             NotImplementedError: If the Sobolev order is less than n/2, with n the spatial dimension.
         """
+
+    @abstractmethod
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev space.
+
+        Two spaces are considered equal if they are of the same type and have
+        the same defining parameters.
+        """
+
+    @property
+    def order(self) -> float:
+        """The Sobolev order."""
+        return self._order
+
+    @property
+    def scale(self) -> float:
+        """The Sobolev length-scale."""
+        return self._scale
+
+    def sobolev_function(self, k: float) -> float:
+        """
+        Implementation of the relevant Sobolev function for the space.
+        """
+        return (1 + self.scale**2 * k) ** self.order
 
     def dirac_representation(self, point: Any) -> Any:
         """
@@ -326,7 +367,7 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
         return LinearOperator.from_formally_self_adjoint(self, A)
 
     def point_value_scaled_invariant_gaussian_measure(
-        self, f: Callable[[float], float], amplitude: float
+        self, f: Callable[[float], float], amplitude: float = 1
     ):
         """
         Returns an invariant Gaussian measure with covariance proportional to f(Δ),
@@ -357,7 +398,7 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
         return (amplitude / np.sqrt(var)) * mu
 
     def point_value_scaled_sobolev_kernel_gaussian_measure(
-        self, order: float, scale: float, amplitude: float
+        self, order: float, scale: float, amplitude: float = 1
     ):
         """
         Returns an invariant Gaussian measure with a Sobolev-type covariance
@@ -376,7 +417,7 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
         )
 
     def point_value_scaled_heat_kernel_gaussian_measure(
-        self, scale: float, amplitude: float
+        self, scale: float, amplitude: float = 1
     ):
         """
         Returns an invariant Gaussian measure with a heat-kernel covariance

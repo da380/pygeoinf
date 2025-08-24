@@ -146,7 +146,7 @@ class CircleHelper:
         trace += 2 * np.sum(
             [f(self.laplacian_eigenvalue(k)) for k in range(1, self.kmax)]
         )
-        return trace
+        return float(trace)
 
     def project_function(self, f: Callable[[float], float]) -> np.ndarray:
         """
@@ -285,6 +285,13 @@ class Lebesgue(CircleHelper, HilbertSpace, AbstractInvariantLebesgueSpace):
         self._metric = diags([values], [0])
         self._inverse_metric = diags([np.reciprocal(values)], [0])
 
+    def eigenfunction_norms(self) -> np.ndarray:
+        """Returns a list of the norms of the eigenfunctions."""
+        return np.fromiter(
+            [np.sqrt(2) if i > 0 else 1 for i in range(self.dim)],
+            dtype=float,
+        )
+
     def __eq__(self, other: object) -> bool:
         """
         Checks for mathematical equality with another Lebesgue space on a circle.
@@ -371,9 +378,7 @@ class Sobolev(CircleHelper, AbstractInvariantSobolevSpace, MassWeightedHilbertSp
         """
 
         CircleHelper.__init__(self, kmax, radius)
-
-        self._order: float = order
-        self._scale: float = scale
+        AbstractInvariantSobolevSpace.__init__(self, order, scale)
 
         lebesgue = Lebesgue(kmax, radius=radius)
 
@@ -385,20 +390,6 @@ class Sobolev(CircleHelper, AbstractInvariantSobolevSpace, MassWeightedHilbertSp
         MassWeightedHilbertSpace.__init__(
             self, lebesgue, mass_operator, inverse_mass_operator
         )
-
-    @property
-    def order(self) -> float:
-        """The Sobolev order."""
-        return self._order
-
-    @property
-    def scale(self) -> float:
-        """The Sobolev length-scale."""
-        return self._scale
-
-    def sobolev_function(self, k: int) -> float:
-        """Computes the diagonal entries of the Sobolev metric in Fourier space."""
-        return (1 + (self.scale * k / self.radius) ** 2) ** self.order
 
     def __eq__(self, other: object) -> bool:
         """
@@ -416,6 +407,21 @@ class Sobolev(CircleHelper, AbstractInvariantSobolevSpace, MassWeightedHilbertSp
             and self.order == other.order
             and self.scale == other.scale
         )
+
+    def eigenfunction_norms(self) -> np.ndarray:
+        """Returns a list of the norms of the eigenfunctions."""
+        values = self.underlying_space.eigenfunction_norms()
+
+        i = 0
+        for k in range(self.kmax + 1):
+            values[i] *= np.sqrt(self.sobolev_function(self.laplacian_eigenvalue(k)))
+            i += 1
+
+        for k in range(1, self.kmax):
+            values[i] *= np.sqrt(self.sobolev_function(self.laplacian_eigenvalue(k)))
+            i += 1
+
+        return values
 
     def dirac(self, point: float) -> LinearForm:
         """

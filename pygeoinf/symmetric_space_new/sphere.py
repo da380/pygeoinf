@@ -43,7 +43,6 @@ from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from pygeoinf.hilbert_space import (
     HilbertSpace,
     MassWeightedHilbertSpace,
-    EuclideanSpace,
 )
 from pygeoinf.operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
@@ -99,6 +98,10 @@ class SphereHelper:
             self._coefficient_to_component_mapping()
         )
 
+    def orthonormalised(self) -> bool:
+        """The space is orthonormalised."""
+        return True
+
     def _space(self):
         return self
 
@@ -144,7 +147,7 @@ class SphereHelper:
 
     def random_point(self) -> List[float]:
         """Returns a random point as `[latitude, longitude]`."""
-        latitude = np.random.uniform(-90.0, 90.0)
+        latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
         longitude = np.random.uniform(0.0, 360.0)
         return [latitude, longitude]
 
@@ -195,7 +198,8 @@ class SphereHelper:
 
     def from_coefficient(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
         """Maps spherical harmonic coefficients to a function vector."""
-        return ulm.expand(grid=self._grid_name(), extend=self.extend)
+        grid = self.grid if self._sampling == 1 else "DH2"
+        return ulm.expand(grid=grid, extend=self.extend)
 
     def plot(
         self,
@@ -288,19 +292,6 @@ class SphereHelper:
 
         return fig, ax, im
 
-    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
-        """Maps spherical harmonic coefficients to a component vector."""
-        flat_coeffs = ulm.coeffs.flatten(order="C")
-        return self._sparse_coeffs_to_component @ flat_coeffs
-
-    def _component_to_coefficient(self, c: np.ndarray) -> sh.SHCoeffs:
-        """Maps a component vector to spherical harmonic coefficients."""
-        flat_coeffs = self._sparse_coeffs_to_component.T @ c
-        coeffs = flat_coeffs.reshape((2, self.lmax + 1, self.lmax + 1))
-        return sh.SHCoeffs.from_array(
-            coeffs, normalization=self.normalization, csphase=self.csphase
-        )
-
     # --------------------------------------------------------------- #
     #                         private methods                         #
     # ----------------------------------------------------------------#
@@ -336,9 +327,7 @@ class SphereHelper:
             (data, (rows, cols)), shape=(row_dim, col_dim), dtype=float
         ).tocsc()
 
-    def _degree_dependent_scaling_to_diagonal_matrix(
-        self, f: Callable[[int], float]
-    ) -> diags:
+    def _degree_dependent_scaling_values(self, f: Callable[[int], float]) -> diags:
         """Creates a diagonal sparse matrix from a function of degree `l`."""
         dim = (self.lmax + 1) ** 2
         values = np.zeros(dim)
@@ -351,7 +340,20 @@ class SphereHelper:
             j = i + l
             values[i:j] = f(l)
             i = j
-        return diags([values], [0])
+        return values
+
+    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
+        """Maps spherical harmonic coefficients to a component vector."""
+        flat_coeffs = ulm.coeffs.flatten(order="C")
+        return self._sparse_coeffs_to_component @ flat_coeffs
+
+    def _component_to_coefficient(self, c: np.ndarray) -> sh.SHCoeffs:
+        """Maps a component vector to spherical harmonic coefficients."""
+        flat_coeffs = self._sparse_coeffs_to_component.T @ c
+        coeffs = flat_coeffs.reshape((2, self.lmax + 1, self.lmax + 1))
+        return sh.SHCoeffs.from_array(
+            coeffs, normalization=self.normalization, csphase=self.csphase
+        )
 
 
 class Lebesgue(SphereHelper, HilbertSpace, AbstractInvariantLebesgueSpace):
@@ -387,11 +389,23 @@ class Lebesgue(SphereHelper, HilbertSpace, AbstractInvariantLebesgueSpace):
             vector_multiply=lambda u1, u2: u1 * u2,
         )
 
-    def invariant_automorphism(self, f: Callable[[float], float]) -> LinearOperator:
-        matrix = self._degree_dependent_scaling_to_diagonal_matrix(f)
+    def eigenfunction_norms(self) -> np.ndarray:
+        """Returns a list of the norms of the eigenfunctions."""
+        return np.fromiter(
+            [self.radius for i in range(self.dim)],
+            dtype=float,
+        )
 
-        def mapping(x: Any) -> Any:
-            return self.from_components(matrix @ self.to_components(x))
+    def invariant_automorphism(self, f: Callable[[float], float]) -> LinearOperator:
+        values = self._degree_dependent_scaling_values(
+            lambda l: f(self.laplacian_eigenvalue((l, 0)))
+        )
+        matrix = diags([values], [0])
+
+        def mapping(u):
+            c = matrix @ (self.to_components(u))
+            coeff = self._component_to_coefficient(c)
+            return self.from_coefficient(coeff)
 
         return LinearOperator.self_adjoint(self, mapping)
 
@@ -400,8 +414,8 @@ class Lebesgue(SphereHelper, HilbertSpace, AbstractInvariantLebesgueSpace):
     # ================================================================ #
 
     def _to_components_impl(self, u: sh.SHGrid) -> np.ndarray:
-        ulm = self.to_coefficient(u)
-        return self._coefficient_to_component(ulm)
+        coeff = self.to_coefficient(u)
+        return self._coefficient_to_component(coeff)
 
     def _from_components_impl(self, c: np.ndarray) -> sh.SHGrid:
         coeff = self._component_to_coefficient(c)
@@ -409,13 +423,12 @@ class Lebesgue(SphereHelper, HilbertSpace, AbstractInvariantLebesgueSpace):
 
     def _to_dual_impl(self, u: sh.SHGrid) -> LinearForm:
         coeff = self.to_coefficient(u)
-        dual_coeff = self.radius**2 * coeff
-        cp = self._coefficient_to_component(dual_coeff)
+        cp = self._coefficient_to_component(coeff) * self.radius**2
         return self.dual.from_components(cp)
 
     def _from_dual_impl(self, up: LinearForm) -> sh.SHGrid:
-        cp = self.dual.to_components(up)
-        coeff = self._component_to_coefficient(cp) / self.radius**2
+        cp = self.dual.to_components(up) / self.radius**2
+        coeff = self._component_to_coefficient(cp)
         return self.from_coefficient(coeff)
 
     def _ax_impl(self, a: float, x: Any) -> None:
@@ -438,4 +451,80 @@ class Sobolev(SphereHelper, MassWeightedHilbertSpace, AbstractInvariantSobolevSp
     Implements Hˢ(S²) as an instance of MassWeightedHilbertSpace.
     """
 
-    pass
+    def __init__(
+        self,
+        lmax: int,
+        order: float,
+        scale: float,
+        /,
+        radius: float = 1,
+        grid: str = "DH",
+        extend: bool = True,
+    ):
+
+        if lmax < 0:
+            raise ValueError("lmax must be non-negative")
+
+        SphereHelper.__init__(self, lmax, radius, grid, extend)
+        AbstractInvariantSobolevSpace.__init__(self, order, scale)
+
+        lebesgue = Lebesgue(lmax, radius=radius, grid=grid, extend=extend)
+
+        mass_operator = lebesgue.invariant_automorphism(self.sobolev_function)
+        inverse_mass_operator = lebesgue.invariant_automorphism(
+            lambda k: 1.0 / self.sobolev_function(k)
+        )
+
+        MassWeightedHilbertSpace.__init__(
+            self, lebesgue, mass_operator, inverse_mass_operator
+        )
+
+    def eigenfunction_norms(self) -> np.ndarray:
+        """Returns a list of the norms of the eigenfunctions."""
+        values = self._degree_dependent_scaling_values(
+            lambda l: np.sqrt(self.sobolev_function(self.laplacian_eigenvalue((l, 0))))
+        )
+        return self.radius * np.fromiter(values, dtype=float)
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev space on a circle.
+
+        Two spaces are considered equal if they are of the same type and have
+        the same defining parameters (kmax, order, scale, and radius).
+        """
+        if not isinstance(other, Sobolev):
+            return NotImplemented
+
+        return (
+            self.lmax == other.lmax
+            and self.radius == other.radius
+            and self.order == other.order
+            and self.scale == other.scale
+        )
+
+    def dirac(self, point: (float, float)) -> LinearForm:
+        """
+        Returns the linear functional for point evaluation (Dirac measure).
+
+        Args:
+            point: A tuple containing `(latitude, longitude)`.
+        """
+        latitude, longitude = point
+        colatitude = 90.0 - latitude
+
+        coeffs = sh.expand.spharm(
+            self.lmax,
+            colatitude,
+            longitude,
+            normalization=self.normalization,
+            degrees=True,
+        )
+        ulm = sh.SHCoeffs.from_array(
+            coeffs,
+            normalization=self.normalization,
+            csphase=self.csphase,
+        )
+
+        c = self._coefficient_to_component(ulm)
+        return self.dual.from_components(c)
