@@ -3,17 +3,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import pygeoinf as inf
-from pygeoinf.symmetric_space_new.circle import Lebesgue, Sobolev
+from pygeoinf.symmetric_space_new.sphere import Lebesgue
 
-X = Sobolev(16, 2, 0.1)
-# X = Lebesgue(16)
+# X = Sobolev(16, 2, 0.1)
+X = Lebesgue(32)
 
-
-mu = X.norm_scaled_invariant_gaussian_measure(lambda k: (1 + k * k) ** 0, 1)
-
-
-us = mu.samples(1000)
-squared_norms = [X.squared_norm(u) for u in us]
-
-mean_squared_norm = np.mean(squared_norms)
-print(mean_squared_norm)
+u = X.project_function(
+    lambda point: np.sin(point[0] * np.pi / 180) * np.cos(point[1] * np.pi / 180)
+)
+X.plot(u)
+plt.show()

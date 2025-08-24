@@ -423,11 +423,15 @@ class HilbertSpace:
 
     def __eq__(self, other: object) -> bool:
         if self.is_dual:
-            return other.is_dual and self.dual == other.dual
-        else:
-            raise NotImplementedError(
-                "Equality for HilbertSpaces should be defined in each concrete case."
-            )
+            if isinstance(other, HilbertSpace) and other.is_dual:
+                return self.dual == other.dual
+            return False
+
+        # For a non-dual (base) space, delegate the comparison.
+        # This signals that the base class doesn't define equality,
+        # forcing subclasses to implement it for meaningful comparisons,
+        # but without crashing for unsupported types.
+        return NotImplemented
 
 
 class EuclideanSpace(HilbertSpace):

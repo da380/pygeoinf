@@ -135,6 +135,10 @@ class CircleHelper:
         Args:
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian.
+
+        Notes:
+            The method takes account of the Nyquist theorem for real fast Fourier transforms,
+            this meaning that element at k = -kmax is excluded from the trace.
         """
         trace = f(self.laplacian_eigenvalue(0))
         if self.kmax > 0:
