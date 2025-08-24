@@ -1,5 +1,14 @@
 """
-Module defining the LinearForm class.
+Provides the `LinearForm` class to represent linear functionals.
+
+A linear form is a linear mapping from a vector in a Hilbert space to a
+scalar (a real number). This class provides a concrete representation for
+elements of the dual space of a `HilbertSpace`.
+
+The primary class is:
+- `LinearForm`: Represents a linear functional, defined either by its
+  mapping or its component vector representation. It supports standard
+  arithmetic operations.
 """
 
 from __future__ import annotations

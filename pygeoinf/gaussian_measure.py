@@ -1,5 +1,21 @@
 """
-Module for representing Gaussian measures on abstract Hilbert spaces.
+Provides a class for representing Gaussian measures on Hilbert spaces.
+
+This module generalizes the concept of a multivariate normal distribution to
+the setting of abstract Hilbert spaces. A `GaussianMeasure` is defined by its
+expectation (a vector in the space) and its covariance (a self-adjoint,
+positive semi-definite `LinearOperator`).
+
+This abstraction is fundamental for Bayesian inference, Gaussian processes, and
+data assimilation in function spaces.
+
+Key features of the `GaussianMeasure` class include:
+- Multiple constructors for defining measures from covariance matrices,
+  standard deviations, covariance factors, or empirical samples.
+- A method for drawing random samples from the measure.
+- Implementation of the affine transformation rule (`y = Ax + b`).
+- Support for creating low-rank approximations of the measure.
+- Overloaded arithmetic operators for intuitive combination of measures.
 """
 
 from __future__ import annotations

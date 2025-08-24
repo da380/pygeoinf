@@ -1,10 +1,30 @@
 """
-Module for solving linear systems of equations involving abstract operators.
+Provides a collection of solvers for linear systems of equations.
+
+This module offers a unified interface for solving linear systems `A(x) = y`,
+where `A` is a `LinearOperator`. It includes both direct methods based on
+matrix factorization and iterative, matrix-free methods suitable for large-scale
+problems.
+
+The design uses an abstract base class, `LinearSolver`, and provides concrete
+implementations for common algorithms. The solvers are implemented as callable
+classes, where an instance of a solver can be called with an operator to
+produce a new operator representing its inverse.
+
+Key classes include:
+- `LUSolver`: A direct solver using LU decomposition.
+- `CholeskySolver`: A direct solver for self-adjoint, positive-definite
+  operators.
+- `IterativeLinearSolver`: A base class for iterative methods.
+- `CGMatrixSolver`, `BICGMatrixSolver`, `GMRESMatrixSolver`: Wrappers around
+  SciPy's iterative solvers that operate on matrix representations.
+- `CGSolver`: A pure, matrix-free implementation of the Conjugate Gradient
+  algorithm that operates directly on abstract Hilbert space vectors.
 """
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Optional
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
@@ -156,8 +176,7 @@ class IterativeLinearSolver(LinearSolver):
         """
         Solves the adjoint linear system A*y = x for y.
         """
-        # Note: Preconditioner is not used for adjoint solve in this default impl.
-        return self.solve_linear_system(operator.adjoint, None, x, y0)
+        return self.solve_linear_system(operator.adjoint, preconditioner.adjoint, x, y0)
 
     def __call__(
         self,

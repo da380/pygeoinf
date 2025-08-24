@@ -1,11 +1,20 @@
 """
-Module for random matrix factorisations.
+Implements randomized algorithms for low-rank matrix factorizations.
 
-This module provides functions for computing low-rank matrix factorisations
-using randomized algorithms. These methods are particularly effective for large
-matrices where deterministic methods would be too slow. The implementations
-are based on the work of Halko, Martinsson, and Tropp (2011).
+This module provides functions for computing approximate, low-rank matrix
+factorizations (SVD, Cholesky, Eigendecomposition) using randomized methods.
+These algorithms are particularly effective for large, high-dimensional matrices
+where deterministic methods would be computationally prohibitive.
+
+The implementations are based on the seminal work of Halko, Martinsson, and
+Tropp, "Finding structure with randomness: Probabilistic algorithms for
+constructing approximate matrix decompositions" (2011).
+
+The functions are designed to work with matrix-like objects, including both
+dense `numpy.ndarray` and matrix-free `scipy.sparse.linalg.LinearOperator`.
 """
+
+from typing import Tuple, Union
 
 import numpy as np
 from scipy.linalg import (
@@ -16,7 +25,7 @@ from scipy.linalg import (
     qr,
 )
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-from typing import Tuple, Union
+
 
 # A type for objects that act like matrices (numpy arrays or SciPy LinearOperators)
 MatrixLike = Union[np.ndarray, ScipyLinOp]

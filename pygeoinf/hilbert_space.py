@@ -1,5 +1,23 @@
 """
-Module defining the core HilbertSpace and EuclideanSpace classes.
+Defines the foundational abstractions for working with Hilbert spaces.
+
+This module provides the core `HilbertSpace` class, which serves as a mathematical
+abstraction for real vector spaces equipped with an inner product. The design
+separates abstract vector operations from their concrete representations (e.g.,
+as NumPy arrays), allowing for generic and reusable implementations of linear
+operators and algorithms.
+
+The inner product of a space is implicitly defined by its Riesz representation
+map (`to_dual` method), which connects the space to its dual.
+
+Key classes include:
+- `HilbertSpace`: The primary abstract base class.
+- `EuclideanSpace`: A concrete implementation for R^n, where vectors are
+  represented by NumPy arrays.
+- `LebesgueSpace`: A factory for creating Hilbert spaces with a standard
+  Euclidean inner product from custom vector types.
+- `MassWeightedHilbertSpace`: A class for defining spaces with an inner
+  product weighted by a mass operator.
 """
 
 from __future__ import annotations
@@ -403,6 +421,14 @@ class HilbertSpace:
     def __copy(self, x: Vector) -> Vector:
         return x.copy()
 
+    def __eq__(self, other: object) -> bool:
+        if self.is_dual:
+            return other.is_dual and self.dual == other.dual
+        else:
+            raise NotImplementedError(
+                "Equality for HilbertSpaces should be defined in each concrete case."
+            )
+
 
 class EuclideanSpace(HilbertSpace):
     """
@@ -585,3 +611,17 @@ class MassWeightedHilbertSpace(HilbertSpace, Generic[Vector]):
         """Maps a dual form back to a vector via its components."""
         x = self.underlying_space.from_dual(xp)
         return self._inverse_mass_operator(x)
+
+    def __eq__(self, other: object) -> bool:
+        """Checks for equality with another MassWeightedHilbertSpace."""
+
+        if not isinstance(other, MassWeightedHilbertSpace):
+            raise NotImplementedError(
+                "Equality for MassWeightedHilbertSpaces should be defined in each concrete case."
+            )
+
+        return (
+            self.underlying_space == other.underlying_space
+            and self.mass_operator == other.mass_operator
+            and self.inverse_mass_operator == other.inverse_mass_operator
+        )

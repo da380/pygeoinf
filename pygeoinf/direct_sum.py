@@ -1,5 +1,22 @@
 """
-Module for direct sums of Hilbert spaces and related block operators.
+Implements direct sums of Hilbert spaces and corresponding block operators.
+
+This module provides tools for constructing larger, composite Hilbert spaces and
+operators from smaller ones. This is essential for problems involving multiple
+fields or coupled physics.
+
+Key classes include:
+- `HilbertSpaceDirectSum`: A `HilbertSpace` formed by the direct sum of a
+  list of other spaces. Vectors in this space are lists of vectors from the
+  component subspaces.
+- `BlockLinearOperator`: A `LinearOperator` acting between direct sum spaces,
+  represented as a 2D grid (matrix) of sub-operators.
+- `ColumnLinearOperator`: A specialized block operator mapping from a single
+  space to a direct sum space.
+- `RowLinearOperator`: A specialized block operator mapping from a direct sum
+  space to a single space.
+- `BlockDiagonalLinearOperator`: An efficient representation for block
+  operators with zero off-diagonal blocks.
 """
 
 from __future__ import annotations

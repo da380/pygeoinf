@@ -1,5 +1,21 @@
 """
-Module defining the Operator, LinearOperator, and DiagonalLinearOperator classes.
+Defines a class hierarchy for operators between Hilbert spaces.
+
+This module provides the tools for defining and manipulating mappings between
+`HilbertSpace` objects. It distinguishes between general non-linear operators
+and the more structured linear operators, which are the primary focus.
+
+Key classes include:
+- `Operator`: A general, potentially non-linear operator defined by a simple
+  mapping function.
+- `LinearOperator`: The main workhorse for linear algebra. It represents a
+  linear map and provides rich functionality, including composition (`@`),
+  adjoints (`.adjoint`), duals (`.dual`), and matrix representations (`.matrix`).
+  It includes numerous factory methods (`from_matrix`, `from_tensor_product`,
+  etc.) for convenient construction.
+- `DiagonalLinearOperator`: A specialized, efficient implementation for linear
+  operators that are diagonal in their component representation. It supports
+  functional calculus (`.function`, `.inverse`, `.sqrt`).
 """
 
 from __future__ import annotations
@@ -274,15 +290,48 @@ class LinearOperator(Operator):
         galerkin: bool = False,
     ) -> LinearOperator:
         """
-        Creates an operator from its matrix representation.
+        Creates a LinearOperator from its matrix representation.
+
+        This factory method allows you to define a `LinearOperator` using a
+        concrete matrix (like a `numpy.ndarray`) that acts on the component
+        vectors of the abstract Hilbert space vectors. The `galerkin` flag
+        determines how this matrix action is interpreted.
 
         Args:
-            domain: The operator's domain.
-            codomain: The operator's codomain.
-            matrix: The matrix representation.
-            galerkin: If False (default), matrix maps components to components.
-                If True, matrix maps components of the domain to dual
-                components of the codomain.
+            domain (HilbertSpace): The operator's domain.
+            codomain (HilbertSpace): The operator's codomain.
+            matrix (MatrixLike): The matrix representation, which can be a dense
+                NumPy array or a SciPy LinearOperator. Its shape must be
+                (codomain.dim, domain.dim).
+            galerkin (bool): Specifies the interpretation of the matrix.
+
+                - **`galerkin=False` (Default): Standard Component Mapping**
+                  This is the most direct interpretation. The matrix `M` maps the
+                  component vector `c_x` of an input vector `x` directly to the
+                  component vector `c_y` of the output vector `y`.
+
+                - **`galerkin=True`: Galerkin (or "Weak Form") Representation**
+                  This interpretation is standard in the finite element method (FEM)
+                  and other variational techniques. The matrix `M` maps the component
+                  vector `c_x` of an input `x` to the component vector `c_yp` of the
+                  *dual* of the output vector `y`.
+
+                  - **Matrix Entries**: The matrix elements are defined by inner
+                    products with basis vectors: `M_ij = inner_product(A(b_j), b_i)`,
+                    where `b_j` are domain basis vectors and `b_i` are codomain
+                    basis vectors.
+                  - **Use Case**: This is critically important for preserving the
+                    mathematical properties of an operator. For example, if an operator
+                    `A` is self-adjoint, its Galerkin matrix `M` will be **symmetric**
+                    (`M.T == M`). This allows the use of highly efficient numerical
+                    methods like the Conjugate Gradient solver or Cholesky
+                    factorization, which rely on symmetry. The standard component
+                    matrix of a self-adjoint operator is generally not symmetric
+                    unless the basis is orthonormal.
+
+        Returns:
+            LinearOperator: A new `LinearOperator` instance whose action is
+                defined by the provided matrix and interpretation.
         """
         assert matrix.shape == (codomain.dim, domain.dim)
 
@@ -432,11 +481,44 @@ class LinearOperator(Operator):
         """
         Returns a matrix representation of the operator.
 
-        By default, returns a matrix-free `scipy.sparse.linalg.LinearOperator`.
+        This method provides a concrete matrix that represents the abstract
+        linear operator's action on the underlying component vectors.
 
         Args:
-            dense: If True, returns a dense `numpy.ndarray`.
-            galerkin: If True, returns the Galerkin representation.
+            dense (bool): Determines the format of the returned matrix.
+                - If `True`, this method computes and returns a dense `numpy.ndarray`.
+                  Be aware that this can be very memory-intensive for
+                  high-dimensional spaces.
+                - If `False` (default), it returns a matrix-free
+                  `scipy.sparse.linalg.LinearOperator`. This object encapsulates
+                  the operator's action (`matvec`) and its transpose action
+                  (`rmatvec`) without ever explicitly forming the full matrix in memory,
+                  making it ideal for large-scale problems.
+
+            galerkin (bool): Specifies the interpretation of the matrix representation. This
+                flag is crucial for correctly using the matrix with numerical solvers.
+
+                - **`galerkin=False` (Default): Standard Component Mapping**
+                  The returned matrix `M` performs a standard component-to-component
+                  mapping.
+                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`
+                    and returns the component vector `c_y` of the output `y`.
+                  - **`rmatvec` action**: Corresponds to the matrix of the **dual operator**, `A'`.
+
+                - **`galerkin=True`: Galerkin (or "Weak Form") Representation**
+                  The returned matrix `M` represents the operator in a weak form, mapping
+                  components of a vector to components of a dual vector.
+                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`
+                    and returns the component vector `c_yp` of the *dual* of the output `y`.
+                  - **`rmatvec` action**: Corresponds to the matrix of the **adjoint operator**, `A*`.
+                  - **Key Property**: This representation is designed to preserve fundamental
+                    mathematical properties. For instance, if the `LinearOperator` is
+                    self-adjoint, its Galerkin matrix will be **symmetric**, which is a
+                    prerequisite for algorithms like the Conjugate Gradient method.
+
+        Returns:
+            Union[ScipyLinOp, np.ndarray]: The matrix representation of the
+                operator, either as a dense array or a matrix-free object.
         """
         if dense:
             return self._compute_dense_matrix(galerkin)
