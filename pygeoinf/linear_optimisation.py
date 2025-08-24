@@ -1,8 +1,21 @@
 """
-Module for solving inverse problems using optimisation methods.
+Implements optimisation-based methods for solving linear inverse problems.
 
-This module provides classes for finding solutions to inverse problems via
-regularized least-squares and minimum-norm criteria.
+This module provides classical, deterministic approaches to inversion that seek
+a single "best-fit" model. These methods are typically formulated as finding
+the model `u` that minimizes a cost functional.
+
+The primary goal is to find a stable solution to an ill-posed problem by
+incorporating regularization.
+
+Key Classes:
+- `LinearLeastSquaresInversion`: Solves the inverse problem by minimizing a
+  Tikhonov-regularized least-squares functional. This is one of the most
+  common approaches to regularization.
+- `LinearMinimumNormInversion`: Finds the model with the smallest norm that
+  fits the data to a statistically acceptable degree. It uses the discrepancy
+  principle, automatically finding a suitable regularization parameter via a
+  chi-squared test.
 """
 
 from __future__ import annotations

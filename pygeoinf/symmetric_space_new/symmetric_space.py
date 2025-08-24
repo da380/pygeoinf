@@ -1,52 +1,39 @@
 """
-Module for abstract helper classes for function spaces defined on symmetric spaces.
+Provides an abstract framework for function spaces on symmetric manifolds.
 
-This module provides a framework of abstract base classes, `LebesgueHelper` and
-`SobolevHelper`, designed to simplify the construction and manipulation of function
-spaces defined on symmetric spaces (e.g., spheres, tori).
+This module offers a powerful abstract framework for defining Hilbert spaces of
+functions on symmetric spaces (like spheres, tori, etc.). The core design
+leverages the spectral properties of the Laplace-Beltrami operator (Δ), which
+is fundamental to the geometry of these spaces.
 
-The core principle is the utilization of the spectral properties of the
-Laplace-Beltrami operator (Δ). By providing an implementation for the
-eigenvalues of the Laplacian, these helper classes can construct a wide range
-of operators and Gaussian measures that are invariant under the isometries of the
-underlying space.
+By inheriting from these base classes and implementing a few key abstract
+methods (like the Laplacian eigenvalues), a concrete class can automatically
+gain a rich set of tools for defining invariant operators and probability
+measures. This is a cornerstone of fields like spatial statistics and
+geometric machine learning.
 
-Classes
--------
-LebesgueHelper
-    An abstract base class for L²-type (Lebesgue) spaces. It provides methods
-    to define operators of the form `f(Δ)` and to construct Gaussian measures
-    with common covariance structures, such as Sobolev-type and heat kernels.
-    It includes methods to scale these measures based on the expected norm of
-    the samples.
+Key Classes
+-----------
+AbstractInvariantLebesgueSpace
+    An abstract base class for L²-type spaces. It provides methods to construct
+    operators that are functions of the Laplacian (`f(Δ)`) and to build
+    rotationally-invariant Gaussian measures (e.g., with Sobolev or heat
+    kernel covariances).
 
-SobolevHelper
-    An abstract base class for Sobolev spaces that inherits from `LebesgueHelper`.
-    It extends the functionality to include operations that are well-defined in
-    Sobolev spaces with a sufficiently high order of smoothness, most notably
-    point evaluation (via Dirac delta functionals). A key feature is the ability
-    to construct Gaussian measures scaled by their point-wise standard deviation
-    (amplitude).
-
-Usage
------
-Concrete implementations for specific symmetric spaces should inherit from these
-classes and implement the abstract methods (e.g., `_space`, `laplacian_eigenvalue`).
-This grants them immediate access to a rich set of tools for defining operators
-and probability measures, useful in fields like spatial statistics, machine learning,
-and computational physics.
+AbstractInvariantSobolevSpace
+    An abstract base class for Sobolev spaces (Hˢ). It extends the Lebesgue
+    functionality with features that require higher smoothness, most notably
+    point evaluation via Dirac delta functionals, which is essential for
+    connecting the abstract function space to discrete data points.
 """
-
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Any, List, Optional
+from typing import Callable, Any, List
 import numpy as np
 from scipy.sparse import diags
 
 from pygeoinf.hilbert_space import (
-    HilbertSpace,
-    MassWeightedHilbertSpace,
     EuclideanSpace,
 )
 from pygeoinf.operators import LinearOperator
@@ -54,7 +41,7 @@ from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 
-class LebesgueHelper(ABC):
+class AbstractInvariantLebesgueSpace(ABC):
     """
     An abstract base class that provides functionality for Lebesgue spaces defined
     over a symmetric space.
@@ -245,9 +232,9 @@ class LebesgueHelper(ABC):
         )
 
 
-class SobolevHelper(LebesgueHelper):
+class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
     """
-    An abstract base class that builds on LebesgueHelper to provide additional functionality
+    An abstract base class that builds on AbstractInvariantLebesgueSpace to provide additional functionality
     for Sobolev spaces.
     """
 

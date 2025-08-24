@@ -1,5 +1,14 @@
 """
-Module containing the base class for inversion methods.
+Provides the abstract base class for all inversion algorithms.
+
+This module defines the `Inversion` class, which serves as a common
+foundation for various methods that solve an inverse problem. Its primary role
+is to maintain a reference to the `ForwardProblem` being solved, providing a
+consistent interface and convenient access to the problem's core components like
+the model space and data space.
+
+It also includes helper methods to assert preconditions required by different
+inversion techniques, such as the existence of a data error measure.
 """
 
 from __future__ import annotations

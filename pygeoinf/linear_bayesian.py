@@ -1,5 +1,22 @@
 """
-Module for solving inverse problems using Bayesian methods.
+Implements the Bayesian framework for solving linear inverse problems.
+
+This module treats the inverse problem from a statistical perspective, aiming to
+determine the full probability distribution of the unknown model parameters,
+rather than a single best-fit solution.
+
+It assumes that the prior knowledge about the model and the statistics of the
+data errors can be described by Gaussian measures. For a linear forward problem,
+the resulting posterior distribution for the model is also Gaussian, allowing
+for an analytical solution.
+
+Key Classes:
+- `LinearBayesianInversion`: Computes the posterior Gaussian measure `p(u|d)`
+  for the model `u` given observed data `d`. This provides not only a mean
+  estimate for the model but also its uncertainty (covariance).
+- `LinearBayesianInference`: Extends the framework to compute the posterior
+  distribution for a derived property of the model, `p(B(u)|d)`, where `B` is
+  some linear operator.
 """
 
 from __future__ import annotations

@@ -1,10 +1,21 @@
 """
-Module for defining forward problem classes.
+Defines the mathematical structure of a forward problem.
 
-This module provides classes to represent inverse problem formulations, which
-relate unknown model parameters to observed data through a forward operator.
-It handles both deterministic (error-free) and statistical (with data errors)
-scenarios.
+This module provides classes that encapsulate the core components of an
+inverse problem. A forward problem describes the physical or mathematical
+process that maps a set of unknown model parameters `u` to a set of observable
+data `d`.
+
+This module handles both the deterministic relationship `d = A(u)` and the more
+realistic statistical model `d = A(u) + e`, where `e` represents random noise.
+
+Key Classes:
+- `ForwardProblem`: A general class representing the link between a model
+  space and a data space via a forward operator.
+- `LinearForwardProblem`: A specialization for linear problems, where the
+  forward operator is linear and data errors are assumed to be Gaussian.
+  It provides a rich suite of methods for statistical analysis, such as
+  generating synthetic data and performing chi-squared goodness-of-fit tests.
 """
 
 from __future__ import annotations

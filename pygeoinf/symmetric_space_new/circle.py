@@ -1,32 +1,31 @@
 """
-Lebesgue and Sobolev spaces for functions on a circle.
+Provides concrete implementations of function spaces on the circle (S¹).
 
-This module provides concrete implementations for function spaces on the circle
-(the 1-sphere, S¹), building upon the `pygeoinf` Hilbert space framework.
-The core representation is a truncated Fourier series, with efficient conversion
-to and from a spatial grid representation via the Fast Fourier Transform (FFT).
+This module uses the abstract framework from the symmetric space module to create
+fully-featured `Lebesgue` (L²) and `Sobolev` (Hˢ) Hilbert spaces for functions
+defined on a circle. It provides concrete implementations of the abstract
+base classes `AbstractInvariantLebesgueSpace` and
+`AbstractInvariantSobolevSpace`.
 
-The classes in this module are concrete implementations of the abstract helper
-classes `LebesgueHelper` and `SobolevHelper`.
+The core representation is a truncated Fourier series. The module provides
+efficient methods to transform between the spatial domain (function values on a
+grid) and the frequency domain (Fourier coefficients) using the Fast Fourier
+Transform (FFT). This allows for the construction of differential operators and
+rotationally-invariant Gaussian measures on the circle, which are diagonal in
+the Fourier basis. Practical plotting utilities are also included.
 
-Classes
--------
+Key Classes
+-----------
 CircleHelper
-    A mixin class providing common geometric properties, plotting utilities,
-    and Fourier transform machinery for spaces on the circle.
-
+    A mixin class providing the core geometry, FFT machinery, and
+    plotting utilities for the circle.
 Lebesgue
-    Implements the Lebesgue space L²(S¹). This space represents
-    square-integrable functions and uses the standard L² inner product,
-    which is diagonal in the Fourier basis.
-
+    A concrete implementation of the L²(S¹) space of square-integrable
+    functions.
 Sobolev
-    Implements the Sobolev space Hˢ(S¹). This space represents functions with
-    a degree of smoothness controlled by the `order` parameter. It is
-    constructed as a mass-weighted version of the Lebesgue space, where the
-    inner product penalizes high-frequency components.
+    A concrete implementation of the Hˢ(S¹) space, which represents functions
+    with a specified degree of smoothness.
 """
-
 
 from __future__ import annotations
 
@@ -42,13 +41,14 @@ from matplotlib.axes import Axes
 
 from pygeoinf.hilbert_space import (
     HilbertSpace,
-    EuclideanSpace,
     MassWeightedHilbertSpace,
 )
 from pygeoinf.operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
-from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.symmetric_space_new.symmetric_space import LebesgueHelper, SobolevHelper
+from pygeoinf.symmetric_space_new.symmetric_space import (
+    AbstractInvariantLebesgueSpace,
+    AbstractInvariantSobolevSpace,
+)
 
 
 class CircleHelper:
@@ -225,16 +225,26 @@ class CircleHelper:
 
     def _coefficient_to_component(self, coeff: np.ndarray) -> np.ndarray:
         """Packs complex Fourier coefficients into a real component vector."""
+        # For a real-valued input, the output of rfft (real FFT) has
+        # conjugate symmetry. This implies that the imaginary parts of the
+        # zero-frequency (k=0) and Nyquist-frequency (k=kmax) components
+        # are always zero. We omit them from the component vector to create
+        # a minimal, non-redundant representation.
         return np.concatenate((coeff.real, coeff.imag[1 : self.kmax]))
 
     def _component_to_coefficient(self, c: np.ndarray) -> np.ndarray:
         """Unpacks a real component vector into complex Fourier coefficients."""
+        # This is the inverse of `_coefficient_to_component`. It reconstructs
+        # the full complex coefficient array that irfft expects. We re-insert
+        # the known zeros for the imaginary parts of the zero-frequency (k=0)
+        # and Nyquist-frequency (k=kmax) components, which were removed to
+        # create the minimal real-valued representation.
         coeff_real = c[: self.kmax + 1]
         coeff_imag = np.concatenate([[0], c[self.kmax + 1 :], [0]])
         return coeff_real + 1j * coeff_imag
 
 
-class Lebesgue(CircleHelper, HilbertSpace, LebesgueHelper):
+class Lebesgue(CircleHelper, HilbertSpace, AbstractInvariantLebesgueSpace):
     """
     Implementation of the Lebesgue space L^2 on a circle based
     on Fourier expansions.
@@ -334,7 +344,7 @@ class Lebesgue(CircleHelper, HilbertSpace, LebesgueHelper):
         return self.from_coefficient(primal_coeff)
 
 
-class Sobolev(CircleHelper, SobolevHelper, MassWeightedHilbertSpace):
+class Sobolev(CircleHelper, AbstractInvariantSobolevSpace, MassWeightedHilbertSpace):
     """
     Implementation of the Sobolev space L^2 on a circle based on Fourier expansions.
     """
