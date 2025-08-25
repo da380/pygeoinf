@@ -3,19 +3,20 @@ Defines a class hierarchy for operators between Hilbert spaces.
 
 This module provides the tools for defining and manipulating mappings between
 `HilbertSpace` objects. It distinguishes between general non-linear operators
-and the more structured linear operators, which are the primary focus.
+and the more structured linear operators, which are the primary focus and
+support a rich algebra.
 
-Key classes include:
+Key Classes
+-----------
 - `Operator`: A general, potentially non-linear operator defined by a simple
   mapping function.
 - `LinearOperator`: The main workhorse for linear algebra. It represents a
   linear map and provides rich functionality, including composition (`@`),
   adjoints (`.adjoint`), duals (`.dual`), and matrix representations (`.matrix`).
-  It includes numerous factory methods (`from_matrix`, `from_tensor_product`,
-  etc.) for convenient construction.
+  It includes numerous factory methods for convenient construction.
 - `DiagonalLinearOperator`: A specialized, efficient implementation for linear
-  operators that are diagonal in their component representation. It supports
-  functional calculus (`.function`, `.inverse`, `.sqrt`).
+  operators that are diagonal in their component representation, which supports
+  functional calculus.
 """
 
 from __future__ import annotations
@@ -25,8 +26,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse import diags
 
-# This import path assumes `pygeoinf` is on the python path.
-# For a local package structure, you might use from ..random_matrix import ...
+
 from .random_matrix import (
     fixed_rank_random_range,
     variable_rank_random_range,
@@ -99,8 +99,14 @@ class LinearOperator(Operator):
     """
     A linear operator between two Hilbert spaces.
 
-    This class is the primary workhorse for linear algebraic operations,
-    supporting composition, adjoints, duals, and matrix representations.
+    This class is the primary workhorse for linear algebraic operations. An
+    operator can be defined "on the fly" from a callable mapping. The class
+    automatically derives the associated `adjoint` and `dual` operators,
+    which are fundamental for solving linear systems and for optimization.
+
+    It supports a rich algebra, including composition (`@`), addition (`+`),
+    and scalar multiplication (`*`). Operators can also be represented as
+    dense or matrix-free (`scipy`) matrices for use with numerical solvers.
     """
 
     def __init__(
@@ -112,7 +118,6 @@ class LinearOperator(Operator):
         *,
         dual_mapping: Optional[Callable[[Any], Any]] = None,
         adjoint_mapping: Optional[Callable[[Any], Any]] = None,
-        formal_adjoint_mapping: Optional[Callable[[Any], Any]] = None,
         thread_safe: bool = False,
         dual_base: Optional[LinearOperator] = None,
         adjoint_base: Optional[LinearOperator] = None,
@@ -126,7 +131,6 @@ class LinearOperator(Operator):
             mapping (callable): The function defining the linear mapping.
             dual_mapping (callable, optional): The action of the dual operator.
             adjoint_mapping (callable, optional): The action of the adjoint.
-            formal_adjoint_mapping (callable, optional): The formal adjoint.
             thread_safe (bool, optional): True if the mapping is thread-safe.
             dual_base (LinearOperator, optional): Internal use for duals.
             adjoint_base (LinearOperator, optional): Internal use for adjoints.
@@ -135,17 +139,12 @@ class LinearOperator(Operator):
         self._dual_base: Optional[LinearOperator] = dual_base
         self._adjoint_base: Optional[LinearOperator] = adjoint_base
         self._thread_safe: bool = thread_safe
-        self.__formal_adjoint_mapping: Optional[Callable[[Any], Any]]
         self.__adjoint_mapping: Callable[[Any], Any]
         self.__dual_mapping: Callable[[Any], Any]
 
         if dual_mapping is None:
             if adjoint_mapping is None:
-                if formal_adjoint_mapping is None:
-                    self.__dual_mapping = self._dual_mapping_default
-                else:
-                    self.__formal_adjoint_mapping = formal_adjoint_mapping
-                    self.__dual_mapping = self._dual_mapping_from_formal_adjoint
+                self.__dual_mapping = self._dual_mapping_default
                 self.__adjoint_mapping = self._adjoint_mapping_from_dual
             else:
                 self.__adjoint_mapping = adjoint_mapping
@@ -172,32 +171,26 @@ class LinearOperator(Operator):
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
     @staticmethod
-    def formally_self_adjoint(
-        domain: "HilbertSpace", mapping: Callable[[Any], Any]
-    ) -> LinearOperator:
-        """Creates a formally self-adjoint operator."""
-        return LinearOperator(domain, domain, mapping, formal_adjoint_mapping=mapping)
-
-    @staticmethod
     def from_formal_adjoint(
         domain: "HilbertSpace", codomain: "HilbertSpace", operator: LinearOperator
     ) -> LinearOperator:
         """
-        Method to construct LinearOperators on MassWeightedHilbertSpaces
-        from instances of the operator on the underlying spaces.
+        Constructs an operator on weighted spaces from one on the underlying spaces.
+
+        This is a key method for working with `MassWeightedHilbertSpace`. It takes
+        an operator `A` that is defined on the simple, unweighted underlying spaces
+        and "lifts" it to be a proper operator on the mass-weighted spaces. It
+        correctly defines the new operator's adjoint with respect to the
+        weighted inner products.
 
         Args:
-            domain (MassWeightedHilbertSpace): The domain of the operator.
-            codomain (MassWeightedHilbertSpace): The codomain of the operator.
-            operator (LinearOperator): The operator to be converted
+            domain: The (potentially) mass-weighted domain of the new operator.
+            codomain: The (potentially) mass-weighted codomain of the new operator.
+            operator: The original operator defined on the underlying,
+                unweighted spaces.
 
-        Notes:
-            If the domain is not a MassWeightedHilbertSpace, the underlying
-            domain is taken to be the domain, and the mass operator the identity.
-            The same holds for the codomain. The process remains well-defined in
-            such cases, and is useful if at least one space is mass-weighted.
-            If neither space is mass-weighted there is not point to the method as
-            the output operator is identical to the input operator.
+        Returns:
+            A new `LinearOperator` that acts between the mass-weighted spaces.
         """
         from .hilbert_space import MassWeightedHilbertSpace
 
@@ -713,13 +706,6 @@ class LinearOperator(Operator):
         y = self.codomain.from_dual(yp)
         x = self.__adjoint_mapping(y)
         return self.domain.to_dual(x)
-
-    def _dual_mapping_from_formal_adjoint(self, yp: Any) -> Any:
-        cyp = self.codomain.dual.to_components(yp)
-        y = self.codomain.from_components(cyp)
-        x = self.__formal_adjoint_mapping(y)
-        cx = self.domain.to_components(x)
-        return self.domain.dual.from_components(cx)
 
     def _adjoint_mapping_from_dual(self, y: Any) -> Any:
         yp = self.codomain.to_dual(y)

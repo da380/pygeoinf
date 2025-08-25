@@ -4,7 +4,7 @@ Tests for function spaces on a circle.
 
 import pytest
 import numpy as np
-from pygeoinf.symmetric_space_new.circle import Sobolev
+from pygeoinf.symmetric_space.circle import Sobolev
 
 from ..checks.hilbert_space import HilbertSpaceChecks
 

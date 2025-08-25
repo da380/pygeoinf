@@ -1,35 +1,37 @@
 """
 Defines the foundational abstractions for working with Hilbert spaces.
 
-This module provides the core `HilbertSpace` class, which serves as a mathematical
-abstraction for real vector spaces equipped with an inner product. The design
-separates abstract vector operations from their concrete representations (e.g.,
-as NumPy arrays), allowing for generic and reusable implementations of linear
-operators and algorithms.
+This module provides the core `HilbertSpace` abstract base class (ABC), which
+serves as a mathematical abstraction for real vector spaces equipped with an
+inner product. The design separates abstract vector operations from their
+concrete representations (e.g., as NumPy arrays), allowing for generic and
+reusable implementations of linear operators and algorithms.
 
-The inner product of a space is implicitly defined by its Riesz representation
-map (`to_dual` method), which connects the space to its dual.
+The inner product of a space is defined by its Riesz representation map
+(`to_dual` and `from_dual` methods), which connects the space to its dual.
+Concrete subclasses must implement the abstract methods to define a specific
+type of space.
 
-Key classes include:
-- `HilbertSpace`: The primary abstract base class.
-- `EuclideanSpace`: A concrete implementation for R^n, where vectors are
-  represented by NumPy arrays.
-- `LebesgueSpace`: A factory for creating Hilbert spaces with a standard
-  Euclidean inner product from custom vector types.
-- `MassWeightedHilbertSpace`: A class for defining spaces with an inner
-  product weighted by a mass operator.
+Key Classes
+-----------
+- `HilbertSpace`: The primary ABC defining the interface for all Hilbert spaces.
+- `DualHilbertSpace`: A wrapper class representing the dual of a Hilbert space.
+- `HilbertModule`: An ABC for Hilbert spaces that also support vector multiplication.
+- `EuclideanSpace`: A concrete implementation for R^n using NumPy arrays.
+- `MassWeightedHilbertSpace`: A space whose inner product is weighted by a
+  mass operator relative to an underlying space.
 """
 
 from __future__ import annotations
+
+from abc import ABC, abstractmethod
 from typing import (
     TypeVar,
-    Callable,
     List,
     Optional,
     Any,
     TYPE_CHECKING,
-    Generic,
-    TypeAlias,
+    final,
 )
 
 import numpy as np
@@ -38,139 +40,199 @@ import numpy as np
 if TYPE_CHECKING:
     from .operators import LinearOperator
     from .linear_forms import LinearForm
-    from scipy.sparse.linalg import LinearOperator
-
-    MatrixLike: TypeAlias = np.ndarray | LinearOperator
 
 # Define a generic type for vectors in a Hilbert space
 Vector = TypeVar("Vector")
 
 
-class HilbertSpace:
+class HilbertSpace(ABC):
     """
-    A class for real Hilbert spaces.
+    An abstract base class for real Hilbert spaces.
 
-    This class provides a mathematical abstraction for vector spaces equipped
-    with an inner product. It separates the abstract vector operations from
-    their concrete representation (e.g., as NumPy arrays).
-
-    To define an instance, a user must provide the space's dimension, methods
-    for converting vectors to/from their component representations, and,
-    critically, the Riesz representation map (`to_dual`). **This map implicitly
-    defines the space's inner product.**
+    This class provides a mathematical abstraction for a vector space equipped
+    with an inner product. It defines a formal interface that separates
+    abstract vector operations from their concrete representation (e.g., as
+    NumPy arrays). Subclasses must implement all abstract methods to be
+    instantiable.
     """
 
-    def __init__(
-        self,
-        dim: int,
-        to_components: Callable[[Vector], np.ndarray],
-        from_components: Callable[[np.ndarray], Vector],
-        to_dual: Callable[[Vector], Any],
-        from_dual: Callable[[Any], Vector],
-        /,
-        *,
-        add: Optional[Callable[[Vector, Vector], Vector]] = None,
-        subtract: Optional[Callable[[Vector, Vector], Vector]] = None,
-        multiply: Optional[Callable[[float, Vector], Vector]] = None,
-        ax: Optional[Callable[[float, Vector], None]] = None,
-        axpy: Optional[Callable[[float, Vector, Vector], None]] = None,
-        copy: Optional[Callable[[Vector], Vector]] = None,
-        vector_multiply: Optional[Callable[[Vector, Vector], Vector]] = None,
-        base: Optional[HilbertSpace] = None,
-    ):
+    # ------------------------------------------------------------------- #
+    #               Abstract methods that must be provided                #
+    # ------------------------------------------------------------------- #
+
+    @property
+    @abstractmethod
+    def dim(self) -> int:
+        """The finite dimension of the space."""
+
+    @abstractmethod
+    def to_dual(self, x: Vector) -> Any:
         """
-        Initializes the HilbertSpace.
+        Maps a vector to its canonical dual vector (a linear functional).
+
+        This method, along with `from_dual`, defines the Riesz representation
+        map and implicitly defines the inner product of the space.
 
         Args:
-            dim (int): The dimension of the space.
-            to_components (callable): A function mapping vectors to their
-                NumPy component arrays.
-            from_components (callable): A function mapping NumPy component
-                arrays back to vectors.
-            to_dual (callable): The Riesz map, which maps a vector `x` to its
-                corresponding dual vector (a `LinearForm`). This function
-                **implicitly defines the inner product** for the space, as
-                `inner_product(x, y)` is implemented as `to_dual(x)(y)`.
-            from_dual (callable): The inverse Riesz map, which maps a dual
-                 vector back to its representative vector in the primal space.
-            add (callable, optional): Custom vector addition.
-            subtract (callable, optional): Custom vector subtraction.
-            multiply (callable, optional): Custom scalar multiplication.
-            ax (callable, optional): Custom in-place scaling x := a*x.
-            axpy (callable, optional): Custom in-place operation y := a*x + y.
-            copy (callable, optional): Custom deep copy for vectors.
-            base (HilbertSpace, optional): Used internally for creating
-                dual spaces. Should not be set by the user.
+            x: A vector in the primal space.
+
+        Returns:
+            The corresponding vector in the dual space.
         """
-        self._dim: int = dim
-        self.__to_components: Callable[[Vector], np.ndarray] = to_components
-        self.__from_components: Callable[[np.ndarray], Vector] = from_components
-        self.__from_dual: Callable[[Any], Vector] = from_dual
-        self.__to_dual: Callable[[Vector], Any] = to_dual
-        self._base: Optional[HilbertSpace] = base
-        self._add: Callable[[Vector, Vector], Vector] = (
-            self.__add if add is None else add
-        )
-        self._subtract: Callable[[Vector, Vector], Vector] = (
-            self.__subtract if subtract is None else subtract
-        )
-        self._multiply: Callable[[float, Vector], Vector] = (
-            self.__multiply if multiply is None else multiply
-        )
-        self._ax: Callable[[float, Vector], None] = self.__ax if ax is None else ax
-        self._axpy: Callable[[float, Vector, Vector], None] = (
-            self.__axpy if axpy is None else axpy
-        )
-        self._copy: Callable[[Vector], Vector] = self.__copy if copy is None else copy
-        self._vector_multiply: Optional[Callable[[Vector, Vector], Vector]] = (
-            vector_multiply
-        )
 
-    @property
-    def dim(self) -> int:
-        """The dimension of the space."""
-        return self._dim
+    @abstractmethod
+    def from_dual(self, xp: Any) -> Vector:
+        """
+        Maps a dual vector back to its representative in the primal space.
 
-    @property
-    def has_vector_multiply(self) -> bool:
-        """True if multiplication of elements is defined."""
-        return self._vector_multiply is not None
+        This is the inverse of the Riesz representation map defined by `to_dual`.
 
-    @property
-    def is_dual(self) -> bool:
-        """True if the space is a dual space."""
-        return self._base is not None
+        Args:
+            xp: A vector in the dual space.
+
+        Returns:
+            The corresponding vector in the primal space.
+        """
+
+    @abstractmethod
+    def to_components(self, x: Vector) -> np.ndarray:
+        """
+        Maps a vector to its representation as a NumPy component array.
+
+        Args:
+            x: A vector in the space.
+
+        Returns:
+            The components of the vector as a NumPy array.
+        """
+
+    @abstractmethod
+    def from_components(self, c: np.ndarray) -> Vector:
+        """
+        Maps a NumPy component array back to a vector in the space.
+
+        Args:
+            c: The components of the vector as a NumPy array.
+
+        Returns:
+            The corresponding vector in the space.
+        """
+
+    # ------------------------------------------------------------------- #
+    #            Default implementations that can be overridden           #
+    # ------------------------------------------------------------------- #
 
     @property
     def dual(self) -> HilbertSpace:
         """
-        The dual of the Hilbert space.
+        The dual of this Hilbert space.
 
         The dual space is the space of all continuous linear functionals
-        that map vectors from the Hilbert space to real numbers.
+        (i.e., `LinearForm` objects) that map vectors from this space to
+        real numbers. This implementation returns a `DualHilbertSpace` wrapper.
         """
-        if self._base is None:
-            return HilbertSpace(
-                self.dim,
-                self._dual_to_components,
-                self._dual_from_components,
-                self.from_dual,
-                self.to_dual,
-                base=self,
-            )
-        else:
-            return self._base
+        return DualHilbertSpace(self)
 
     @property
     def zero(self) -> Vector:
-        """Returns the zero vector for the space."""
+        """The zero vector (additive identity) of the space."""
         return self.from_components(np.zeros((self.dim)))
 
+    def is_element(self, x: Any) -> bool:
+        """
+        Checks if an object is a valid element of the space.
+
+        Note: The default implementation checks the object's type against the
+        type of the `zero` vector. This may not be robust for all vector
+        representations and can be overridden if needed.
+
+        Args:
+            x: The object to check.
+
+        Returns:
+            True if the object is an element of the space, False otherwise.
+        """
+        return isinstance(x, type(self.zero))
+
+    def duality_product(self, xp: LinearForm, x: Vector) -> float:
+        """
+        Computes the duality product <xp, x>.
+
+        This evaluates the linear functional `xp` (an element of the dual space)
+        at the vector `x` (an element of the primal space).
+
+        Args:
+            xp: The linear functional from the dual space.
+            x: The vector from the primal space.
+
+        Returns:
+            The result of the evaluation xp(x).
+        """
+        return xp(x)
+
+    def add(self, x: Vector, y: Vector) -> Vector:
+        """Computes the sum of two vectors. Defaults to `x + y`."""
+        return x + y
+
+    def subtract(self, x: Vector, y: Vector) -> Vector:
+        """Computes the difference of two vectors. Defaults to `x - y`."""
+        return x - y
+
+    def multiply(self, a: float, x: Vector) -> Vector:
+        """Computes scalar multiplication. Defaults to `a * x`."""
+        return a * x
+
+    def negative(self, x: Vector) -> Vector:
+        """Computes the additive inverse of a vector. Defaults to `-1 * x`."""
+        return -1 * x
+
+    def ax(self, a: float, x: Vector) -> None:
+        """Performs in-place scaling `x := a*x`. Defaults to `x *= a`."""
+        x *= a
+
+    def axpy(self, a: float, x: Vector, y: Vector) -> None:
+        """Performs in-place operation `y := y + a*x`. Defaults to `y += a*x`."""
+        y += a * x
+
+    def copy(self, x: Vector) -> Vector:
+        """Returns a deep copy of a vector. Defaults to `x.copy()`."""
+        return x.copy()
+
+    def random(self) -> Vector:
+        """
+        Generates a random vector from the space.
+
+        The vector's components are drawn from a standard normal distribution.
+
+        Returns:
+            A new random vector.
+        """
+        return self.from_components(np.random.randn(self.dim))
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Defines equality between Hilbert spaces.
+
+        For dual spaces, equality is determined by the equality of their
+        underlying primal spaces. For non-dual spaces, this is not implemented,
+        requiring concrete subclasses to define a meaningful comparison.
+        """
+        if isinstance(self, DualHilbertSpace):
+            return (
+                isinstance(other, DualHilbertSpace)
+                and self.underlying_space == other.underlying_space
+            )
+        return NotImplemented
+
+    # ------------------------------------------------------------------- #
+    #                      Final (Non-Overridable) Methods                #
+    # ------------------------------------------------------------------- #
+
+    @final
     @property
     def coordinate_inclusion(self) -> LinearOperator:
         """
-        Returns the operator mapping coordinate vectors in R^n to vectors
-        in this Hilbert space.
+        The linear operator mapping R^n component vectors into this space.
         """
         from .operators import LinearOperator
 
@@ -192,11 +254,11 @@ class HilbertSpace:
             adjoint_mapping=adjoint_mapping,
         )
 
+    @final
     @property
     def coordinate_projection(self) -> LinearOperator:
         """
-        Returns the operator mapping vectors in this Hilbert space to their
-        coordinate vectors in R^n.
+        The linear operator projecting vectors from this space to R^n.
         """
         from .operators import LinearOperator
 
@@ -218,51 +280,78 @@ class HilbertSpace:
             adjoint_mapping=adjoint_mapping,
         )
 
+    @final
     @property
     def riesz(self) -> LinearOperator:
-        """
-        Returns the Riesz map (dual to primal) as a LinearOperator.
-        """
+        """The Riesz map (dual to primal) as a `LinearOperator`."""
         from .operators import LinearOperator
 
         return LinearOperator.self_dual(self.dual, self.from_dual)
 
+    @final
     @property
     def inverse_riesz(self) -> LinearOperator:
-        """
-        Returns the inverse Riesz map (primal to dual) as a LinearOperator.
-        """
+        """The inverse Riesz map (primal to dual) as a `LinearOperator`."""
         from .operators import LinearOperator
 
         return LinearOperator.self_dual(self, self.to_dual)
 
-    def duality_product(self, xp: LinearForm, x: Vector) -> float:
-        """
-        Computes the duality product of a dual vector and a vector.
-
-        Note that this method is not symmetric in its arguments with
-        the linear form always being the first argument.
-        """
-        if self.is_dual:
-            return x(xp)
-        else:
-            return xp(x)
-
+    @final
     def inner_product(self, x1: Vector, x2: Vector) -> float:
-        """Computes the inner product of two vectors."""
+        """
+        Computes the inner product of two vectors, `(x1, x2)`.
+
+        This is defined via the duality product as `<R(x1), x2>`, where `R` is
+        the Riesz map (`to_dual`).
+
+        Args:
+            x1: The first vector.
+            x2: The second vector.
+
+        Returns:
+            The inner product as a float.
+        """
         return self.duality_product(self.to_dual(x1), x2)
 
+    @final
     def squared_norm(self, x: Vector) -> float:
-        """Computes the squared norm of a vector."""
+        """
+        Computes the squared norm of a vector, `||x||^2`.
+
+        Args:
+            x: The vector.
+
+        Returns:
+            The squared norm of the vector.
+        """
         return self.inner_product(x, x)
 
+    @final
     def norm(self, x: Vector) -> float:
-        """Computes the norm of a vector."""
+        """
+        Computes the norm of a vector, `||x||`.
+
+        Args:
+            x: The vector.
+
+        Returns:
+            The norm of the vector.
+        """
         return np.sqrt(self.squared_norm(x))
 
+    @final
     def gram_schmidt(self, vectors: List[Vector]) -> List[Vector]:
         """
         Orthonormalizes a list of vectors using the Gram-Schmidt process.
+
+        Args:
+            vectors: A list of linearly independent vectors.
+
+        Returns:
+            A list of orthonormalized vectors spanning the same subspace.
+
+        Raises:
+            ValueError: If not all items in the list are elements of the space.
         """
         if not all(self.is_element(vector) for vector in vectors):
             raise ValueError("Not all vectors are elements of the space")
@@ -274,91 +363,48 @@ class HilbertSpace:
                 product = self.inner_product(vec_copy, orthonormalised_vectors[j])
                 self.axpy(-product, orthonormalised_vectors[j], vec_copy)
             norm = self.norm(vec_copy)
+            if norm < 1e-12:
+                raise ValueError("Vectors are not linearly independent.")
             self.ax(1 / norm, vec_copy)
             orthonormalised_vectors.append(vec_copy)
 
         return orthonormalised_vectors
 
-    def to_dual(self, x: Vector) -> Any:
-        """Maps a vector to its canonical dual vector (a linear functional)."""
-        return self.__to_dual(x)
-
-    def from_dual(self, xp: Any) -> Vector:
-        """Maps a dual vector to its representative in the primal space."""
-        return self.__from_dual(xp)
-
-    def is_element(self, x: Any) -> bool:
-        """
-        Checks if an object is an element of the space.
-
-        Note: The current implementation checks type against the zero vector.
-        This may not be robust for all vector representations.
-        """
-        return isinstance(x, type(self.zero))
-
-    def add(self, x: Vector, y: Vector) -> Vector:
-        """Adds two vectors."""
-        return self._add(x, y)
-
-    def subtract(self, x: Vector, y: Vector) -> Vector:
-        """Subtracts two vectors."""
-        return self._subtract(x, y)
-
-    def multiply(self, a: float, x: Vector) -> Vector:
-        """Performs scalar multiplication, returning a new vector."""
-        return self._multiply(a, x)
-
-    def negative(self, x: Vector) -> Vector:
-        """Returns the additive inverse of a vector."""
-        return self.multiply(-1.0, x)
-
-    def ax(self, a: float, x: Vector) -> None:
-        """Performs the in-place scaling operation x := a*x."""
-        self._ax(a, x)
-
-    def axpy(self, a: float, x: Vector, y: Vector) -> None:
-        """Performs the in-place vector operation y := y + a*x."""
-        self._axpy(a, x, y)
-
-    def copy(self, x: Vector) -> Vector:
-        """Returns a deep copy of a vector."""
-        return self._copy(x)
-
-    def vector_multiply(self, x1: Vector, x2: Vector) -> Vector:
-        """
-        Returns the product of two elements of the space, if defined.
-        """
-        if self._vector_multiply is None:
-            raise NotImplementedError(
-                "Vector multiplication not defined on this space."
-            )
-        return self._vector_multiply(x1, x2)
-
-    def to_components(self, x: Vector) -> np.ndarray:
-        """Maps a vector to its NumPy component array."""
-        return self.__to_components(x)
-
-    def from_components(self, c: np.ndarray) -> Vector:
-        """Maps a NumPy component array to a vector."""
-        return self.__from_components(c)
-
+    @final
     def basis_vector(self, i: int) -> Vector:
-        """Returns the i-th standard basis vector."""
+        """
+        Returns the i-th standard basis vector.
+
+        This is the vector whose component array is all zeros except for a one
+        at index `i`.
+
+        Args:
+            i: The index of the basis vector.
+
+        Returns:
+            The i-th basis vector.
+        """
         c = np.zeros(self.dim)
         c[i] = 1
         return self.from_components(c)
 
-    def random(self) -> Vector:
-        """
-        Returns a random vector from the space.
-
-        The vector's components are drawn from a standard Gaussian distribution.
-        """
-        return self.from_components(np.random.randn(self.dim))
-
+    @final
     def sample_expectation(self, vectors: List[Vector]) -> Vector:
-        """Computes the sample mean of a list of vectors."""
+        """
+        Computes the sample mean of a list of vectors.
+
+        Args:
+            vectors: A list of vectors from the space.
+
+        Returns:
+            The sample mean (average) vector.
+
+        Raises:
+            TypeError: If not all items in the list are elements of the space.
+        """
         n = len(vectors)
+        if not n > 0:
+            raise ValueError("Cannot compute expectation of an empty list.")
         if not all(self.is_element(x) for x in vectors):
             raise TypeError("Not all items in list are elements of the space.")
         xbar = self.zero
@@ -366,23 +412,29 @@ class HilbertSpace:
             self.axpy(1 / n, x, xbar)
         return xbar
 
+    @final
     def identity_operator(self) -> LinearOperator:
-        """Returns the identity operator on the space."""
+        """Returns the identity operator `I` on the space."""
         from .operators import LinearOperator
 
         return LinearOperator(
             self,
             self,
             lambda x: x,
-            dual_mapping=lambda yp: yp,
             adjoint_mapping=lambda y: y,
         )
 
+    @final
     def zero_operator(self, codomain: Optional[HilbertSpace] = None) -> LinearOperator:
         """
-        Returns the zero operator from this space to a codomain.
+        Returns the zero operator `0` from this space to a codomain.
 
-        If no codomain is provided, it maps to itself.
+        Args:
+            codomain: The target space of the operator. If None, the operator
+                maps to this space itself.
+
+        Returns:
+            The zero linear operator.
         """
         from .operators import LinearOperator
 
@@ -395,237 +447,246 @@ class HilbertSpace:
             adjoint_mapping=lambda y: self.zero,
         )
 
-    def _dual_to_components(self, xp: LinearForm) -> np.ndarray:
-        return xp.components
 
-    def _dual_from_components(self, cp: np.ndarray) -> LinearForm:
+class DualHilbertSpace(HilbertSpace):
+    """
+    A wrapper class representing the dual of a `HilbertSpace`.
+
+    An element of a dual space is a continuous linear functional, represented
+    in this library by the `LinearForm` class. This wrapper provides a full
+    `HilbertSpace` interface for these `LinearForm` objects, allowing them to be
+    treated as vectors in their own right.
+    """
+
+    def __init__(self, space: HilbertSpace):
+        """
+        Args:
+            space: The primal space from which to form the dual.
+        """
+        self._underlying_space = space
+
+    @property
+    def underlying_space(self) -> HilbertSpace:
+        """The primal `HilbertSpace` of which this is the dual."""
+        return self._underlying_space
+
+    @property
+    def dim(self) -> int:
+        """The dimension of the dual space."""
+        return self._underlying_space.dim
+
+    @property
+    def dual(self) -> HilbertSpace:
+        """The dual of the dual space, which is the original primal space."""
+        return self._underlying_space
+
+    def to_dual(self, x: LinearForm) -> Any:
+        """Maps a dual vector back to its representative in the primal space."""
+        return self._underlying_space.from_dual(x)
+
+    def from_dual(self, xp: Vector) -> LinearForm:
+        """Maps a primal vector to its corresponding dual `LinearForm`."""
+        return self._underlying_space.to_dual(xp)
+
+    def to_components(self, x: LinearForm) -> np.ndarray:
+        """Maps a `LinearForm` to its NumPy component array."""
+        return x.components
+
+    def from_components(self, c: np.ndarray) -> LinearForm:
+        """Creates a `LinearForm` from a NumPy component array."""
         from .linear_forms import LinearForm
 
-        return LinearForm(self, components=cp)
+        return LinearForm(self._underlying_space, components=c)
 
-    def __add(self, x: Vector, y: Vector) -> Vector:
-        return x + y
+    @final
+    def duality_product(self, xp: LinearForm, x: Vector) -> float:
+        """
+        Computes the duality product <x, xp>.
 
-    def __subtract(self, x: Vector, y: Vector) -> Vector:
-        return x - y
+        In this context, `x` is from the primal space and `xp` is the dual
+        vector (a `LinearForm`). This is unconventional but maintains the
+        method signature; it evaluates `x(xp)`.
+        """
+        return x(xp)
 
-    def __multiply(self, a: float, x: Vector) -> Vector:
-        return a * x.copy()
 
-    def __ax(self, a: float, x: Vector) -> None:
-        x *= a
+class HilbertModule(HilbertSpace, ABC):
+    """
+    An ABC for a `HilbertSpace` where vector multiplication is defined.
 
-    def __axpy(self, a: float, x: Vector, y: Vector) -> None:
-        y += a * x
+    This acts as a "mixin" interface, adding the `vector_multiply` requirement
+    to the `HilbertSpace` contract.
+    """
 
-    def __copy(self, x: Vector) -> Vector:
-        return x.copy()
+    @abstractmethod
+    def vector_multiply(self, x1: Vector, x2: Vector) -> Vector:
+        """
+        Computes the product of two vectors.
 
-    def __eq__(self, other: object) -> bool:
-        if self.is_dual:
-            if isinstance(other, HilbertSpace) and other.is_dual:
-                return self.dual == other.dual
-            return False
+        Args:
+            x1: The first vector.
+            x2: The second vector.
 
-        # For a non-dual (base) space, delegate the comparison.
-        # This signals that the base class doesn't define equality,
-        # forcing subclasses to implement it for meaningful comparisons,
-        # but without crashing for unsupported types.
-        return NotImplemented
+        Returns:
+            The product of the two vectors.
+        """
 
 
 class EuclideanSpace(HilbertSpace):
     """
     An n-dimensional Euclidean space, R^n.
 
-    This is a concrete implementation of HilbertSpace where vectors are
-    represented directly by NumPy arrays.
+    This is a concrete `HilbertSpace` where vectors are represented directly by
+    NumPy arrays, and the inner product is the standard dot product.
     """
 
-    def __init__(self, dim: int) -> None:
+    def __init__(self, dim: int):
         """
         Args:
-            dim (int): Dimension of the space.
+            dim: The dimension of the space.
         """
-        super().__init__(
-            dim,
-            lambda x: x,
-            lambda x: x,
-            self._to_dual_impl,
-            self._from_dual_impl,
-        )
+        if dim < 1:
+            raise ValueError("Dimension must be a positive integer.")
+        self._dim = dim
 
-    def _to_dual_impl(self, x: np.ndarray) -> LinearForm:
-        return self.dual.from_components(x)
+    @property
+    def dim(self) -> int:
+        """The dimension of the space."""
+        return self._dim
 
-    def _from_dual_impl(self, xp: LinearForm) -> np.ndarray:
-        cp = self.dual.to_components(xp)
-        return self.from_components(cp)
+    def to_components(self, x: np.ndarray) -> np.ndarray:
+        """Returns the vector itself, as it is already a component array."""
+        return x
 
-    def __eq__(self, other: object) -> bool:
-        """Checks for equality with another EuclideanSpace."""
-        return isinstance(other, EuclideanSpace) and self.dim == other.dim
+    def from_components(self, c: np.ndarray) -> np.ndarray:
+        """Returns the component array itself, as it is the vector."""
+        return c
+
+    def to_dual(self, x: np.ndarray) -> "LinearForm":
+        """Maps a vector `x` to a `LinearForm` with the same components."""
+        from .linear_forms import LinearForm
+
+        return LinearForm(self, components=x)
+
+    def from_dual(self, xp: "LinearForm") -> np.ndarray:
+        """Maps a `LinearForm` back to a vector via its components."""
+        return self.dual.to_components(xp)
 
 
-class LebesgueSpace(HilbertSpace, Generic[Vector]):
-    """A factory for Hilbert spaces with a standard inner product.
+class MassWeightedHilbertSpace(HilbertSpace):
+    """
+    A Hilbert space with an inner product weighted by a mass operator.
 
-        This class simplifies the creation of a `HilbertSpace` where the inner
-        product is the standard Euclidean dot product of the vectors' component
-        representations.
+    This class wraps an existing `HilbertSpace` (let's call it X) and defines a new
+    inner product for a space (Y) as: `(u, v)_Y = (M @ u, v)_X`, where `M` is a
+    self-adjoint, positive-definite mass operator defined on X.
 
-        By providing only the `to_components` and `from_components` mappings,
-        this class **automatically defines the necessary Riesz maps**
-        (`to_dual` and `from_dual`) that are consistent with this standard
-        inner product.
-
-    Example:
-        If you have a custom vector class `MyVector` and functions
-        `to_numpy(v: MyVector)` and `from_numpy(arr: np.ndarray)`, you can
-        define the space simply as:
-        `space = LebesgueSpace(dim, to_numpy, from_numpy)`
+    This is a common construction in numerical methods like the Finite Element
+    Method, where the basis functions are not orthonormal.
     """
 
     def __init__(
         self,
-        dim: int,
-        to_components: Callable[[Vector], np.ndarray],
-        from_components: Callable[[np.ndarray], Vector],
-        /,
-        *,
-        add: Optional[Callable[[Vector, Vector], Vector]] = None,
-        subtract: Optional[Callable[[Vector, Vector], Vector]] = None,
-        multiply: Optional[Callable[[float, Vector], Vector]] = None,
-        ax: Optional[Callable[[float, Vector], None]] = None,
-        axpy: Optional[Callable[[float, Vector, Vector], None]] = None,
-        copy: Optional[Callable[[Vector], Vector]] = None,
-        vector_multiply: Optional[Callable[[Vector, Vector], Vector]] = None,
-    ):
-        """Initializes the LebesgueSpace.
-
-        Args:
-            dim (int): The dimension of the space.
-            to_components (callable): A function mapping abstract vectors to their
-                NumPy component arrays.
-            from_components (callable): A function mapping NumPy component
-                arrays back to abstract vectors.
-            add (callable, optional): Custom vector addition.
-            subtract (callable, optional): Custom vector subtraction.
-            multiply (callable, optional): Custom scalar multiplication.
-            ax (callable, optional): Custom in-place scaling x := a*x.
-            axpy (callable, optional): Custom in-place operation y := a*x + y.
-            copy (callable, optional): Custom deep copy for vectors.
-            vector_multiply (callable, optional): Custom element-wise product.
-        """
-        super().__init__(
-            dim,
-            to_components,
-            from_components,
-            self._to_dual_from_components,
-            self._from_dual_from_components,
-            add=add,
-            subtract=subtract,
-            multiply=multiply,
-            ax=ax,
-            axpy=axpy,
-            copy=copy,
-            vector_multiply=vector_multiply,
-        )
-
-    def _to_dual_from_components(self, x: Vector) -> "LinearForm":
-        """Maps a vector to its dual form via its components."""
-        c = self.to_components(x)
-        return self.dual.from_components(c)
-
-    def _from_dual_from_components(self, xp: "LinearForm") -> Vector:
-        """Maps a dual form back to a vector via its components."""
-        cp = self.dual.to_components(xp)
-        return self.from_components(cp)
-
-
-class MassWeightedHilbertSpace(HilbertSpace, Generic[Vector]):
-    """
-    Class for Hilbert spaces that are defined in terms of another
-    HilbertSpace, but with an inner product defined through a
-    self-adjoint and positive-definite operator on the original space.
-
-    If X is the original space and Y the new one, then we have
-
-    (u, v)_Y = (M u, v)_X,
-
-    with M the self-adjoint and positive-definite operator on X,
-    and where there is an implicit inclusion of Y in X.
-    """
-
-    def __init__(
-        self,
-        space: HilbertSpace,
+        underlying_space: HilbertSpace,
         mass_operator: LinearOperator,
         inverse_mass_operator: LinearOperator,
     ):
         """
         Args:
-            space (HilbertSpace): The space in which the inner product is defined.
-
+            underlying_space: The original space (X) on which the inner
+                product is defined.
+            mass_operator: The self-adjoint, positive-definite mass
+                operator (M).
+            inverse_mass_operator: The inverse of the mass operator.
         """
-
-        self._underlying_space = space
+        self._underlying_space = underlying_space
         self._mass_operator = mass_operator
         self._inverse_mass_operator = inverse_mass_operator
 
-        super().__init__(
-            space.dim,
-            space.to_components,
-            space.from_components,
-            self._to_dual_impl,
-            self._from_dual_impl,
-            add=space.add,
-            subtract=space.subtract,
-            multiply=space.multiply,
-            ax=space.ax,
-            axpy=space.axpy,
-            copy=space.copy,
-            vector_multiply=space.vector_multiply,
-        )
+    @property
+    def dim(self) -> int:
+        """The dimension of the space."""
+        return self._underlying_space.dim
 
     @property
     def underlying_space(self) -> HilbertSpace:
-        """The underlying Hilbert space."""
+        """The underlying Hilbert space (X) without mass weighting."""
         return self._underlying_space
 
     @property
     def mass_operator(self) -> LinearOperator:
-        """The mass operator on the underlying space."""
+        """The mass operator (M) defining the weighted inner product."""
         return self._mass_operator
 
     @property
     def inverse_mass_operator(self) -> LinearOperator:
-        """The inverse mass operator on the underlying space."""
+        """The inverse of the mass operator."""
         return self._inverse_mass_operator
 
-    def _to_dual_impl(self, x: Vector) -> "LinearForm":
-        """Maps a vector to its dual form via its components."""
+    def to_components(self, x: Vector) -> np.ndarray:
+        """Delegates component mapping to the underlying space."""
+        return self.underlying_space.to_components(x)
+
+    def from_components(self, c: np.ndarray) -> Vector:
+        """Delegates vector creation to the underlying space."""
+        return self.underlying_space.from_components(c)
+
+    def to_dual(self, x: Vector) -> "LinearForm":
+        """
+        Computes the dual mapping `R_Y(x) = R_X(M x)`.
+        """
         from .linear_forms import LinearForm
 
         y = self._mass_operator(x)
         yp = self.underlying_space.to_dual(y)
         return LinearForm(self, components=yp.components)
 
-    def _from_dual_impl(self, xp: "LinearForm") -> Vector:
-        """Maps a dual form back to a vector via its components."""
+    def from_dual(self, xp: "LinearForm") -> Vector:
+        """
+        Computes the inverse dual mapping `R_Y^{-1}(xp) = M^{-1} R_X^{-1}(xp)`.
+        """
+        # Note: This implementation relies on the from_dual operator of the
+        # underlying space not checking the domain of its argument. This is
+        # acceptable and avoids an unnecessary copy.
         x = self.underlying_space.from_dual(xp)
         return self._inverse_mass_operator(x)
 
-    def __eq__(self, other: object) -> bool:
-        """Checks for equality with another MassWeightedHilbertSpace."""
 
-        if not isinstance(other, MassWeightedHilbertSpace):
-            raise NotImplementedError(
-                "Equality for MassWeightedHilbertSpaces should be defined in each concrete case."
-            )
+class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):
+    """
+    A mass-weighted Hilbert space that also supports vector multiplication.
 
-        return (
-            self.underlying_space == other.underlying_space
-            and self.mass_operator == other.mass_operator
-            and self.inverse_mass_operator == other.inverse_mass_operator
+    This class inherits the mass-weighted inner product structure and mixes in
+    the `HilbertModule` interface, delegating the multiplication operation to
+    the underlying space.
+    """
+
+    def __init__(
+        self,
+        underlying_space: HilbertModule,
+        mass_operator: LinearOperator,
+        inverse_mass_operator: LinearOperator,
+    ):
+        """
+        Args:
+            underlying_space: The original space (X) on which the inner
+                product is defined.
+            mass_operator: The self-adjoint, positive-definite mass
+                operator (M).
+            inverse_mass_operator: The inverse of the mass operator.
+        """
+        if not isinstance(underlying_space, HilbertModule):
+            raise TypeError("Underlying space must be a HilbertModule.")
+
+        MassWeightedHilbertSpace.__init__(
+            self, underlying_space, mass_operator, inverse_mass_operator
         )
+
+    def vector_multiply(self, x1: Vector, x2: Vector) -> Vector:
+        """
+        Computes vector multiplication by delegating to the underlying space.
+
+        Note: This assumes the underlying space provided during initialization
+        is itself an instance of `HilbertModule`.
+        """
+        return self.underlying_space.vector_multiply(x1, x2)

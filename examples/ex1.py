@@ -5,7 +5,7 @@ from numpy import pi
 
 
 import pygeoinf as inf
-from pygeoinf.symmetric_space_new.sphere import Lebesgue, Sobolev
+from pygeoinf.symmetric_space.circle import Lebesgue, Sobolev
 
 import pyshtools as sh
 

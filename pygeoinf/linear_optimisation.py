@@ -6,16 +6,16 @@ a single "best-fit" model. These methods are typically formulated as finding
 the model `u` that minimizes a cost functional.
 
 The primary goal is to find a stable solution to an ill-posed problem by
-incorporating regularization.
+incorporating regularization, which balances fitting the data with controlling
+the complexity or norm of the solution.
 
-Key Classes:
+Key Classes
+-----------
 - `LinearLeastSquaresInversion`: Solves the inverse problem by minimizing a
-  Tikhonov-regularized least-squares functional. This is one of the most
-  common approaches to regularization.
+  Tikhonov-regularized least-squares functional.
 - `LinearMinimumNormInversion`: Finds the model with the smallest norm that
-  fits the data to a statistically acceptable degree. It uses the discrepancy
-  principle, automatically finding a suitable regularization parameter via a
-  chi-squared test.
+  fits the data to a statistically acceptable degree using the discrepancy
+  principle.
 """
 
 from __future__ import annotations
@@ -36,8 +36,9 @@ class LinearLeastSquaresInversion(Inversion):
     Solves a linear inverse problem using Tikhonov-regularized least-squares.
 
     This method finds the model `u` that minimizes the functional:
-    `J(u) = ||A(u) - d||^2 + alpha^2 * ||u||^2`
-    where the norms are appropriately weighted if a data error covariance is provided.
+    `J(u) = ||A(u) - d||² + α² * ||u||²`
+    where `α` is the damping parameter. If a data error covariance is provided,
+    the data misfit norm is appropriately weighted by the inverse covariance.
     """
 
     def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:
@@ -54,19 +55,15 @@ class LinearLeastSquaresInversion(Inversion):
         """
         Returns the Tikhonov-regularized normal operator.
 
-        If a data error covariance `C_e` is provided, the operator is:
-        `N = A^T * C_e^-1 * A + alpha * I`
-        Otherwise, it is:
-        `N = A^T * A + alpha * I`
+        This operator, often written as `(A* @ W @ A + α*I)`, forms the left-hand
+        side of the normal equations that must be solved to find the least-squares
+        solution. `W` is the inverse data covariance (or identity).
 
         Args:
-            damping: The Tikhonov damping parameter, `alpha`. Must be non-negative.
+            damping: The Tikhonov damping parameter, `α`. Must be non-negative.
 
         Returns:
             The normal operator as a `LinearOperator`.
-
-        Raises:
-            ValueError: If the damping parameter is negative.
         """
         if damping < 0:
             raise ValueError("Damping parameter must be non-negative.")
@@ -142,11 +139,12 @@ class LinearLeastSquaresInversion(Inversion):
 
 class LinearMinimumNormInversion(Inversion):
     """
-    Finds the minimum-norm solution to a linear inverse problem.
+    Finds a regularized solution using the discrepancy principle.
 
-    This method finds the model `u` with the smallest norm `||u||` that fits
-    the data `d` to a statistically acceptable level, as determined by a
-    chi-squared test.
+    This method automatically selects a Tikhonov damping parameter `α` such that
+    the resulting solution `u_α` fits the data to a statistically acceptable
+    level. It finds the model with the smallest norm `||u||` that satisfies
+    the target misfit, as determined by a chi-squared test.
     """
 
     def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:

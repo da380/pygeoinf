@@ -9,12 +9,13 @@ positive semi-definite `LinearOperator`).
 This abstraction is fundamental for Bayesian inference, Gaussian processes, and
 data assimilation in function spaces.
 
-Key features of the `GaussianMeasure` class include:
-- Multiple constructors for defining measures from covariance matrices,
-  standard deviations, covariance factors, or empirical samples.
+Key Features
+------------
+- Multiple factory methods for creating measures from various inputs (matrices,
+  samples, standard deviations).
 - A method for drawing random samples from the measure.
-- Implementation of the affine transformation rule (`y = Ax + b`).
-- Support for creating low-rank approximations of the measure.
+- Implementation of the affine transformation rule (`y = A(x) + b`).
+- Support for creating low-rank approximations of the measure for efficiency.
 - Overloaded arithmetic operators for intuitive combination of measures.
 """
 
@@ -56,22 +57,25 @@ class GaussianMeasure:
     """
     Represents a Gaussian measure on a Hilbert space.
 
-    This class generalizes the concept of a multivariate normal distribution
-    to abstract, potentially infinite-dimensional, Hilbert spaces. A measure is
-    defined by its expectation (mean) and its covariance, which is a linear
-    operator on the space.
+    This class generalizes the multivariate normal distribution to abstract,
+    potentially infinite-dimensional, Hilbert spaces. A measure is
+    defined by its expectation (mean vector) and its covariance, which is a
+    `LinearOperator` on the space.
+
+    It provides a powerful toolkit for probabilistic modeling, especially in
+    the context of Bayesian inversion.
     """
 
     def __init__(
         self,
         /,
         *,
-        covariance: "LinearOperator" = None,
-        covariance_factor: "LinearOperator" = None,
+        covariance: LinearOperator = None,
+        covariance_factor: LinearOperator = None,
         expectation: Vector = None,
         sample: Callable[[], Vector] = None,
-        inverse_covariance: "LinearOperator" = None,
-        inverse_covariance_factor: "LinearOperator" = None,
+        inverse_covariance: LinearOperator = None,
+        inverse_covariance_factor: LinearOperator = None,
     ) -> None:
         """
         Initializes the GaussianMeasure.
@@ -103,22 +107,22 @@ class GaussianMeasure:
                 "Neither covariance or covariance factor has been provided"
             )
 
-        self._covariance_factor: Optional["LinearOperator"] = covariance_factor
-        self._covariance: "LinearOperator" = (
+        self._covariance_factor: Optional[LinearOperator] = covariance_factor
+        self._covariance: LinearOperator = (
             covariance_factor @ covariance_factor.adjoint
             if covariance is None
             else covariance
         )
-        self._domain: "HilbertSpace" = self._covariance.domain
+        self._domain: HilbertSpace = self._covariance.domain
         self._sample: Optional[Callable[[], Vector]] = (
             sample if covariance_factor is None else self._sample_from_factor
         )
-        self._inverse_covariance_factor: Optional["LinearOperator"] = (
+        self._inverse_covariance_factor: Optional[LinearOperator] = (
             inverse_covariance_factor
         )
 
         if inverse_covariance_factor is not None:
-            self._inverse_covariance: Optional["LinearOperator"] = (
+            self._inverse_covariance: Optional[LinearOperator] = (
                 inverse_covariance_factor.adjoint @ inverse_covariance_factor
             )
         elif inverse_covariance is not None:
@@ -133,7 +137,7 @@ class GaussianMeasure:
 
     @staticmethod
     def from_standard_deviation(
-        domain: "HilbertSpace",
+        domain: HilbertSpace,
         standard_deviation: float,
         /,
         *,
@@ -161,7 +165,7 @@ class GaussianMeasure:
 
     @staticmethod
     def from_standard_deviations(
-        domain: "HilbertSpace",
+        domain: HilbertSpace,
         standard_deviations: np.ndarray,
         /,
         *,
@@ -195,7 +199,7 @@ class GaussianMeasure:
 
     @staticmethod
     def from_covariance_matrix(
-        domain: "HilbertSpace",
+        domain: HilbertSpace,
         covariance_matrix: np.ndarray,
         /,
         *,
@@ -205,13 +209,13 @@ class GaussianMeasure:
         Creates a Gaussian measure from a dense covariance matrix.
 
         The provided matrix is interpreted as the Galerkin representation of
-        the covariance operator.
+        the covariance operator. This method computes a Cholesky-like
+        decomposition of the matrix to create a `covariance_factor`.
 
         Args:
-            domain (HilbertSpace): The Hilbert space for the measure.
-            covariance_matrix (np.ndarray): The dense covariance matrix.
-            expectation (vector, optional): The expectation of the measure.
-                Defaults to zero.
+            domain: The Hilbert space the measure is defined on.
+            covariance_matrix: The dense covariance matrix.
+            expectation: The expectation (mean) of the measure.
         """
 
         eigenvalues, U = eigh(covariance_matrix)
@@ -239,7 +243,7 @@ class GaussianMeasure:
         )
 
     @staticmethod
-    def from_samples(domain: "HilbertSpace", samples: List[Vector]) -> GaussianMeasure:
+    def from_samples(domain: HilbertSpace, samples: List[Vector]) -> GaussianMeasure:
         """
         Estimates a Gaussian measure from a collection of sample vectors.
 
@@ -321,12 +325,12 @@ class GaussianMeasure:
         )
 
     @property
-    def domain(self) -> "HilbertSpace":
+    def domain(self) -> HilbertSpace:
         """The Hilbert space the measure is defined on."""
         return self._domain
 
     @property
-    def covariance(self) -> "LinearOperator":
+    def covariance(self) -> LinearOperator:
         """The covariance operator of the measure."""
         return self._covariance
 
@@ -336,7 +340,7 @@ class GaussianMeasure:
         return self._inverse_covariance is not None
 
     @property
-    def inverse_covariance(self) -> "LinearOperator":
+    def inverse_covariance(self) -> LinearOperator:
         """The inverse covariance (precision) operator."""
         if self._inverse_covariance is None:
             raise AttributeError("Inverse covariance is not set for this measure.")
@@ -348,7 +352,7 @@ class GaussianMeasure:
         return self._covariance_factor is not None
 
     @property
-    def covariance_factor(self) -> "LinearOperator":
+    def covariance_factor(self) -> LinearOperator:
         """The covariance factor L (s.t. C=LL*)."""
         if self._covariance_factor is None:
             raise AttributeError("Covariance factor has not been set.")
@@ -360,7 +364,7 @@ class GaussianMeasure:
         return self._inverse_covariance_factor is not None
 
     @property
-    def inverse_covariance_factor(self) -> "LinearOperator":
+    def inverse_covariance_factor(self) -> LinearOperator:
         """The inverse covariance factor."""
         if self._inverse_covariance_factor is None:
             raise AttributeError("Inverse covariance factor has not been set.")
@@ -420,22 +424,26 @@ class GaussianMeasure:
         return variance
 
     def affine_mapping(
-        self, /, *, operator: "LinearOperator" = None, translation: Vector = None
+        self, /, *, operator: LinearOperator = None, translation: Vector = None
     ) -> GaussianMeasure:
         """
-        Transforms the measure under the affine map y = A(x) + b.
+        Transforms the measure under an affine map `y = A(x) + b`.
 
-        This computes the resulting Gaussian measure for the transformed
-        random variable y.
+        If a random variable `x` is distributed according to this Gaussian
+        measure, `x ~ N(μ, C)`, this method computes the new Gaussian measure
+        for the transformed variable `y`.
+
+        The new measure will have:
+        - Expectation: `μ_y = A @ μ + b`
+        - Covariance: `C_y = A @ C @ A*`
 
         Args:
-            operator (LinearOperator, optional): The linear operator A in the
-                transformation. Defaults to the identity.
-            translation (vector, optional): The translation vector b. Defaults
-                to zero.
+            operator: The linear operator `A` in the transformation.
+                Defaults to the identity.
+            translation: The translation vector `b`. Defaults to zero.
 
         Returns:
-            GaussianMeasure: The transformed measure.
+            The transformed `GaussianMeasure`.
         """
         _operator = (
             operator if operator is not None else self.domain.identity_operator()

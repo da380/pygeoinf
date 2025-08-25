@@ -22,8 +22,10 @@ class Inversion:
     An abstract base class for inversion methods.
 
     This class provides a common structure for different inversion algorithms
-    (e.g., Bayesian, Least squares). Its primary role is to hold a reference to the
-    forward problem being solved and provide convenient access to its properties.
+    (e.g., Bayesian, Least Squares). Its main purpose is to hold a reference
+    to the forward problem being solved and provide convenient access to its
+    properties. Subclasses should inherit from this class to implement a
+    specific inversion technique.
     """
 
     def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:
@@ -69,7 +71,8 @@ class Inversion:
         """
         Checks if the data error measure has an inverse covariance.
 
-        This is a precondition for methods that require the data precision matrix.
+        This is a precondition for methods that require the data precision
+        matrix (the inverse of the data error covariance).
 
         Raises:
             AttributeError: If no data error measure is set, or if the measure

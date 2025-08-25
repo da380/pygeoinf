@@ -5,7 +5,7 @@ Tests for function spaces on a sphere.
 import pytest
 import numpy as np
 import pyshtools as sh
-from pygeoinf.symmetric_space_new.sphere import Lebesgue
+from pygeoinf.symmetric_space.sphere import Lebesgue
 
 from ..checks.hilbert_space import HilbertSpaceChecks
 

@@ -6,16 +6,15 @@ inverse problem. A forward problem describes the physical or mathematical
 process that maps a set of unknown model parameters `u` to a set of observable
 data `d`.
 
-This module handles both the deterministic relationship `d = A(u)` and the more
+The module handles both the deterministic relationship `d = A(u)` and the more
 realistic statistical model `d = A(u) + e`, where `e` represents random noise.
 
-Key Classes:
+Key Classes
+-----------
 - `ForwardProblem`: A general class representing the link between a model
-  space and a data space via a forward operator.
-- `LinearForwardProblem`: A specialization for linear problems, where the
-  forward operator is linear and data errors are assumed to be Gaussian.
-  It provides a rich suite of methods for statistical analysis, such as
-  generating synthetic data and performing chi-squared goodness-of-fit tests.
+  space and a data space via a forward operator, with an optional data error.
+- `LinearForwardProblem`: A specialization for linear problems where the
+  forward operator is a `LinearOperator`.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ class ForwardProblem:
 
     def __init__(
         self,
-        forward_operator: "LinearOperator",
+        forward_operator: LinearOperator,
         /,
         *,
         data_error_measure: Optional["GaussianMeasure"] = None,
@@ -58,7 +57,7 @@ class ForwardProblem:
                 from which data errors are assumed to be drawn. If None, the
                 data is considered to be error-free.
         """
-        self._forward_operator: "LinearOperator" = forward_operator
+        self._forward_operator: LinearOperator = forward_operator
         self._data_error_measure: Optional["GaussianMeasure"] = data_error_measure
         if self.data_error_measure_set:
             if self.data_space != data_error_measure.domain:
@@ -67,7 +66,7 @@ class ForwardProblem:
                 )
 
     @property
-    def forward_operator(self) -> "LinearOperator":
+    def forward_operator(self) -> LinearOperator:
         """The forward operator, mapping from model to data space."""
         return self._forward_operator
 
@@ -99,9 +98,7 @@ class LinearForwardProblem(ForwardProblem):
     Represents a linear forward problem of the form `d = A(u) + e`.
 
     Here, `d` is the data, `A` is the linear forward operator, `u` is the model,
-    and `e` is a random error drawn from a Gaussian distribution. This class
-    provides methods for statistical analysis, such as generating synthetic data
-    and performing chi-squared tests.
+    and `e` is a random error drawn from a Gaussian distribution.
     """
 
     @staticmethod
@@ -111,8 +108,9 @@ class LinearForwardProblem(ForwardProblem):
         """
         Forms a joint forward problem from a list of separate problems.
 
-        This is useful when a single underlying model is observed through
-        multiple, independent measurement systems.
+        This is a powerful tool for joint inversions, where a single underlying
+        model is observed through multiple, independent measurement systems
+        (e.g., different types of geophysical surveys).
 
         Args:
             forward_problems: A list of `LinearForwardProblem` instances that
@@ -121,10 +119,6 @@ class LinearForwardProblem(ForwardProblem):
         Returns:
             A single `LinearForwardProblem` where the data space is the direct
             sum of the individual data spaces.
-
-        Raises:
-            ValueError: If the list of problems is empty or if they do not all
-                share the same model space.
         """
         if not forward_problems:
             raise ValueError("Cannot form a direct sum from an empty list.")
@@ -226,20 +220,16 @@ class LinearForwardProblem(ForwardProblem):
         """
         Calculates the chi-squared statistic for a given model and data.
 
-        If a data error measure with an inverse covariance is defined, this is
-        the weighted misfit: `(d - A(u))^T * C_e^-1 * (d - A(u))`. Otherwise,
-        it is the squared norm of the data residual: `||d - A(u)||^2`.
-
+        This measures the misfit between the predicted and observed data.
+        - If a data error measure with an inverse covariance `C_e^-1` is defined,
+          this is the weighted misfit: `(d - A(u))^T * C_e^-1 * (d - A(u))`.
+        - Otherwise, it is the squared L2 norm of the data residual: `||d - A(u)||^2`.
         Args:
             model: A vector from the model space.
             data: An observed data vector from the data space.
 
         Returns:
             The chi-squared statistic.
-
-        Raises:
-            AttributeError: If a data error measure is set but its inverse
-                covariance (precision operator) is not available.
         """
         residual = self.data_space.subtract(data, self.forward_operator(model))
 

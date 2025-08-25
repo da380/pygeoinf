@@ -5,10 +5,8 @@ A linear form is a linear mapping from a vector in a Hilbert space to a
 scalar (a real number). This class provides a concrete representation for
 elements of the dual space of a `HilbertSpace`.
 
-The primary class is:
-- `LinearForm`: Represents a linear functional, defined either by its
-  mapping or its component vector representation. It supports standard
-  arithmetic operations.
+A `LinearForm` can be thought of as a dual vector and is a fundamental component
+for defining inner products and adjoint operators within the library.
 """
 
 from __future__ import annotations
@@ -24,11 +22,12 @@ if TYPE_CHECKING:
 
 class LinearForm:
     """
-    Represents a linear form, which is a linear functional that maps
-    vectors from a Hilbert space to a scalar value (a real number).
+    Represents a linear form, a functional that maps vectors to scalars.
 
-    Internally, the form is represented by its components relative to the basis for
-    its domain, with these components stored as in a numpy vector.
+    A `LinearForm` is an element of a dual `HilbertSpace`. It is defined by its
+    action on vectors from its `domain` space. Internally, this action is
+    represented by a component vector, which when dotted with the component
+    vector of a primal space element, produces the scalar result.
     """
 
     def __init__(
@@ -42,13 +41,15 @@ class LinearForm:
         """
         Initializes the LinearForm.
 
-        A form can be defined either by its mapping or its component vector.
+        A form can be defined either by its functional mapping or directly
+        by its component vector. If a mapping is provided without components,
+        the components will be computed by evaluating the mapping on the
+        basis vectors of the domain.
 
         Args:
-            domain (HilbertSpace): The Hilbert space on which the form is defined.
-            mapping (callable, optional): A function defining the action of the form.
-            components (np.ndarray, optional): The component representation of
-                the form.
+            domain: The Hilbert space on which the form is defined.
+            mapping: A function `f(x)` defining the action of the form.
+            components: The component representation of the form.
         """
 
         self._domain: HilbertSpace = domain
@@ -56,13 +57,7 @@ class LinearForm:
         if components is None:
             if mapping is None:
                 raise AssertionError("Neither mapping nor components specified.")
-            self._components = np.zeros(self.domain.dim)
-            cx = np.zeros(self.domain.dim)
-            for i in range(self.domain.dim):
-                cx[i] = 1
-                x = self.domain.from_components(cx)
-                self._components[i] = mapping(x)
-                cx[i] = 0
+            self._compute_components(mapping)
         else:
             self._components: np.ndarray = components
 
@@ -91,8 +86,11 @@ class LinearForm:
     @property
     def as_linear_operator(self) -> "LinearOperator":
         """
-        Represents the linear form as a LinearOperator mapping to a
-        1D Euclidean space.
+        Represents the linear form as a `LinearOperator`.
+
+        The resulting operator maps from the form's original domain to a
+        1-dimensional `EuclideanSpace`, where the single component of the output
+        is the scalar result of the form's action.
         """
         from .hilbert_space import EuclideanSpace
         from .operators import LinearOperator
@@ -157,3 +155,15 @@ class LinearForm:
     def __str__(self) -> str:
         """Returns the string representation of the form's components."""
         return self.components.__str__()
+
+    def _compute_components(self, mapping: Callable[[Any], float]):
+        """
+        Computes the component vector of the form.
+        """
+        self._components = np.zeros(self.domain.dim)
+        cx = np.zeros(self.domain.dim)
+        for i in range(self.domain.dim):
+            cx[i] = 1
+            x = self.domain.from_components(cx)
+            self._components[i] = mapping(x)
+            cx[i] = 0

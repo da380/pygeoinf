@@ -8,7 +8,11 @@ from .random_matrix import (
 
 from .hilbert_space import (
     HilbertSpace,
+    DualHilbertSpace,
     EuclideanSpace,
+    HilbertModule,
+    MassWeightedHilbertSpace,
+    MassWeightedHilbertModule,
 )
 
 

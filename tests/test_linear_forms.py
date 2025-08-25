@@ -8,7 +8,6 @@ from numpy.testing import assert_allclose
 
 from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace, Vector
 from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
-from pygeoinf.symmetric_space.line import Sobolev as LineSobolev
 from pygeoinf.symmetric_space.sphere import Sobolev as SphereSobolev
 from pygeoinf.linear_forms import LinearForm
 
@@ -21,7 +20,6 @@ from pygeoinf.linear_forms import LinearForm
 space_implementations = [
     EuclideanSpace(dim=10),
     CircleSobolev(16, 1.0, 0.1),
-    LineSobolev(16, 1.0, 0.1),
     SphereSobolev(16, 1.0, 0.1),
 ]
 
