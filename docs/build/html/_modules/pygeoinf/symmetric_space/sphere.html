@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,7 +241,26 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.symmetric_space.sphere</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module for Sobolev spaces on the two-sphere.</span>
+<span class="sd">Provides concrete implementations of function spaces on the two-sphere (S²).</span>
+
+<span class="sd">This module uses the abstract framework from the symmetric space module to create</span>
+<span class="sd">fully-featured `Lebesgue` (L²) and `Sobolev` (Hˢ) Hilbert spaces for functions</span>
+<span class="sd">defined on the surface of a sphere.</span>
+
+<span class="sd">It utilizes the `pyshtools` library for highly efficient and accurate spherical</span>
+<span class="sd">harmonic transforms. Following a compositional design, this module first</span>
+<span class="sd">defines a base `Lebesgue` space and then constructs the `Sobolev` space as a</span>
+<span class="sd">`MassWeightedHilbertSpace` over it. The module also includes powerful plotting</span>
+<span class="sd">utilities built on `cartopy` for professional-quality geospatial visualization.</span>
+
+<span class="sd">Key Classes</span>
+<span class="sd">-----------</span>
+<span class="sd">- `SphereHelper`: A mixin class providing the core geometry, spherical harmonic</span>
+<span class="sd">  transform machinery, and `cartopy`-based plotting utilities.</span>
+<span class="sd">- `Lebesgue`: A concrete implementation of the L²(S²) space of square-integrable</span>
+<span class="sd">  functions on the sphere.</span>
+<span class="sd">- `Sobolev`: A concrete implementation of the Hˢ(S²) space of functions with a</span>
+<span class="sd">  specified degree of smoothness.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
@@ -249,188 +268,88 @@
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.ticker</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mticker</span>
-
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-
 <span class="kn">from</span><span class="w"> </span><span class="nn">scipy.sparse</span><span class="w"> </span><span class="kn">import</span> <span class="n">diags</span><span class="p">,</span> <span class="n">coo_array</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">pyshtools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sh</span>
-
 <span class="kn">import</span><span class="w"> </span><span class="nn">cartopy.crs</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ccrs</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">cartopy.feature</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">cfeature</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">cartopy.mpl.ticker</span><span class="w"> </span><span class="kn">import</span> <span class="n">LongitudeFormatter</span><span class="p">,</span> <span class="n">LatitudeFormatter</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">EuclideanSpace</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">HilbertModule</span><span class="p">,</span>
+    <span class="n">MassWeightedHilbertModule</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.symmetric_space.symmetric_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">SymmetricSpaceSobolev</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.gaussian_measure</span><span class="w"> </span><span class="kn">import</span> <span class="n">GaussianMeasure</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.symmetric_space</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">AbstractInvariantLebesgueSpace</span><span class="p">,</span>
+    <span class="n">AbstractInvariantSobolevSpace</span><span class="p">,</span>
+<span class="p">)</span>
 
-<span class="c1"># This block only runs for type checkers, not at runtime</span>
+
 <span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">matplotlib.figure</span><span class="w"> </span><span class="kn">import</span> <span class="n">Figure</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">matplotlib.axes</span><span class="w"> </span><span class="kn">import</span> <span class="n">Axes</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">cartopy.mpl.geoaxes</span><span class="w"> </span><span class="kn">import</span> <span class="n">GeoAxes</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">cartopy.crs</span><span class="w"> </span><span class="kn">import</span> <span class="n">Projection</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">pygeoinf.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 
 
-<div class="viewcode-block" id="Sobolev">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev">[docs]</a>
-<span class="k">class</span><span class="w"> </span><span class="nc">Sobolev</span><span class="p">(</span><span class="n">SymmetricSpaceSobolev</span><span class="p">):</span>
+<div class="viewcode-block" id="SphereHelper">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">SphereHelper</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Implements Sobolev spaces H^s on a two-sphere.</span>
+<span class="sd">    A mixin providing common functionality for function spaces on the sphere.</span>
 
-<span class="sd">    This class uses `pyshtools` for spherical harmonic transforms. Vectors in the</span>
-<span class="sd">    space can be represented either as `pyshtools.SHGrid` objects (spatial</span>
-<span class="sd">    domain) or `pyshtools.SHCoeffs` objects (spectral domain), controlled by a flag.</span>
+<span class="sd">    This helper is not intended for direct instantiation. It provides the core</span>
+<span class="sd">    geometry (radius, grid type), the spherical harmonic transform machinery via</span>
+<span class="sd">    `pyshtools`, and `cartopy`-based plotting utilities that are shared by the</span>
+<span class="sd">    `Lebesgue` and `Sobolev` space classes.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">lmax</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-        <span class="n">order</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
-        <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
-        <span class="o">/</span><span class="p">,</span>
-        <span class="o">*</span><span class="p">,</span>
-        <span class="n">vector_as_SHGrid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
-        <span class="n">grid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;DH&quot;</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">grid</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">extend</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+    <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Args:</span>
-<span class="sd">            lmax: The maximum spherical harmonic degree for truncation.</span>
-<span class="sd">            order: The order of the Sobolev space, controlling smoothness.</span>
-<span class="sd">            scale: The non-dimensional length-scale for the space.</span>
-<span class="sd">            vector_as_SHGrid: If True (default), elements of the space are</span>
-<span class="sd">                `pyshtools.SHGrid` objects. Otherwise, they are `pyshtools.SHCoeffs`.</span>
-<span class="sd">            radius: The radius of the sphere. Defaults to 1.0.</span>
-<span class="sd">            grid: The `pyshtools` grid type (e.g., &#39;DH&#39;, &#39;DH2&#39;, &#39;GLQ&#39;).</span>
-<span class="sd">                Defaults to &#39;DH&#39;.</span>
+<span class="sd">            lmax: The maximum spherical harmonic degree to be represented.</span>
+<span class="sd">            radius: Radius of the sphere.</span>
+<span class="sd">            grid: The `pyshtools` grid type.</span>
+<span class="sd">            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-
         <span class="bp">self</span><span class="o">.</span><span class="n">_lmax</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">lmax</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_radius</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">radius</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_grid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">grid</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_sampling</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">grid</span> <span class="o">==</span> <span class="s2">&quot;DH2&quot;</span> <span class="k">else</span> <span class="mi">1</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_extend</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+
+        <span class="k">if</span> <span class="n">grid</span> <span class="o">==</span> <span class="s2">&quot;DH2&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_grid</span> <span class="o">=</span> <span class="s2">&quot;DH&quot;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_sampling</span> <span class="o">=</span> <span class="mi">2</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_grid</span> <span class="o">=</span> <span class="n">grid</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_sampling</span> <span class="o">=</span> <span class="mi">1</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_extend</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">extend</span>
+
+        <span class="c1"># SH coefficient options fixed internally</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_normalization</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;ortho&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_csphase</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+
+        <span class="c1"># Set up sparse matrix that maps SHCoeff data arrrays into reduced form</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_sparse_coeffs_to_component</span><span class="p">:</span> <span class="n">coo_array</span> <span class="o">=</span> <span class="p">(</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_coefficient_to_component_mapping</span><span class="p">()</span>
         <span class="p">)</span>
 
-        <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="p">(</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">vector_as_SHGrid</span>
-        <span class="k">if</span> <span class="n">vector_as_SHGrid</span><span class="p">:</span>
-            <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
-                <span class="n">order</span><span class="p">,</span>
-                <span class="n">scale</span><span class="p">,</span>
-                <span class="n">dim</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_to_components_from_SHGrid</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_from_components_to_SHGrid</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_to_dual_impl</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_from_dual_impl</span><span class="p">,</span>
-                <span class="n">ax</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ax_impl</span><span class="p">,</span>
-                <span class="n">axpy</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_axpy_impl</span><span class="p">,</span>
-                <span class="n">vector_multiply</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_vector_multiply_impl</span><span class="p">,</span>
-            <span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
-                <span class="n">order</span><span class="p">,</span>
-                <span class="n">scale</span><span class="p">,</span>
-                <span class="n">dim</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_to_components_from_SHCoeffs</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_from_components_to_SHCoeffs</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_to_dual_impl</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_from_dual_impl</span><span class="p">,</span>
-                <span class="n">ax</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ax_impl</span><span class="p">,</span>
-                <span class="n">axpy</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_axpy_impl</span><span class="p">,</span>
-                <span class="n">vector_multiply</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_vector_multiply_impl</span><span class="p">,</span>
-            <span class="p">)</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">_metric_tensor</span><span class="p">:</span> <span class="n">diags</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_sobolev_function</span>
-        <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_metric_tensor</span><span class="p">:</span> <span class="n">diags</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span>
-                <span class="k">lambda</span> <span class="n">l</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sobolev_function</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
-            <span class="p">)</span>
-        <span class="p">)</span>
-
-    <span class="c1"># ===============================================#</span>
-    <span class="c1">#                  Static methods                #</span>
-    <span class="c1"># ===============================================#</span>
-
-<div class="viewcode-block" id="Sobolev.from_sobolev_parameters">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.from_sobolev_parameters">[docs]</a>
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_sobolev_parameters</span><span class="p">(</span>
-        <span class="n">order</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
-        <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
-        <span class="o">/</span><span class="p">,</span>
-        <span class="o">*</span><span class="p">,</span>
-        <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
-        <span class="n">vector_as_SHGrid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="n">grid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;DH&quot;</span><span class="p">,</span>
-        <span class="n">rtol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span><span class="p">,</span>
-        <span class="n">power_of_two</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Sobolev&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Creates an instance with `lmax` chosen based on the Sobolev parameters.</span>
-
-<span class="sd">        This factory method estimates the spherical harmonic truncation degree</span>
-<span class="sd">        (`lmax`) required to represent the space while meeting a specified</span>
-<span class="sd">        relative tolerance for the truncation error. This is useful when the</span>
-<span class="sd">        required `lmax` is not known a priori.</span>
-
-<span class="sd">        Args:</span>
-<span class="sd">            order: The order of the Sobolev space, controlling smoothness.</span>
-<span class="sd">            scale: The non-dimensional length-scale for the space.</span>
-<span class="sd">            radius: The radius of the sphere. Defaults to 1.0.</span>
-<span class="sd">            vector_as_SHGrid: If True (default), elements are `SHGrid` objects.</span>
-<span class="sd">            grid: The `pyshtools` grid type (e.g., &#39;DH&#39;). Defaults to &#39;DH&#39;.</span>
-<span class="sd">            rtol: The relative tolerance used to determine the `lmax`.</span>
-<span class="sd">            power_of_two: If True, `lmax` is set to the next power of two.</span>
-
-<span class="sd">        Returns:</span>
-<span class="sd">            An instance of the Sobolev class with a calculated `lmax`.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="n">order</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;This method is only applicable for orders &gt; 1.0&quot;</span><span class="p">)</span>
-
-        <span class="n">summation</span> <span class="o">=</span> <span class="mf">1.0</span>
-        <span class="n">l</span> <span class="o">=</span> <span class="mi">0</span>
-        <span class="n">err</span> <span class="o">=</span> <span class="mf">1.0</span>
-        <span class="n">sobolev_func</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">deg</span><span class="p">:</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">scale</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="n">deg</span> <span class="o">*</span> <span class="p">(</span><span class="n">deg</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span> <span class="o">**</span> <span class="n">order</span>
-
-        <span class="k">while</span> <span class="n">err</span> <span class="o">&gt;</span> <span class="n">rtol</span><span class="p">:</span>
-            <span class="n">l</span> <span class="o">+=</span> <span class="mi">1</span>
-            <span class="n">term</span> <span class="o">=</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">sobolev_func</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
-            <span class="n">summation</span> <span class="o">+=</span> <span class="n">term</span>
-            <span class="n">err</span> <span class="o">=</span> <span class="n">term</span> <span class="o">/</span> <span class="n">summation</span>
-            <span class="nb">print</span><span class="p">(</span><span class="n">l</span><span class="p">,</span> <span class="n">err</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">l</span> <span class="o">&gt;</span> <span class="mi">10000</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Failed to converge on a stable lmax.&quot;</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="n">power_of_two</span><span class="p">:</span>
-            <span class="n">n</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">l</span><span class="p">))</span>
-            <span class="n">l</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">**</span> <span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
-
-        <span class="n">lmax</span> <span class="o">=</span> <span class="n">l</span>
-        <span class="k">return</span> <span class="n">Sobolev</span><span class="p">(</span>
-            <span class="n">lmax</span><span class="p">,</span>
-            <span class="n">order</span><span class="p">,</span>
-            <span class="n">scale</span><span class="p">,</span>
-            <span class="n">vector_as_SHGrid</span><span class="o">=</span><span class="n">vector_as_SHGrid</span><span class="p">,</span>
-            <span class="n">radius</span><span class="o">=</span><span class="n">radius</span><span class="p">,</span>
-            <span class="n">grid</span><span class="o">=</span><span class="n">grid</span><span class="p">,</span>
-        <span class="p">)</span></div>
+<div class="viewcode-block" id="SphereHelper.orthonormalised">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.orthonormalised">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">orthonormalised</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The space is orthonormalised.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="kc">True</span></div>
 
 
-    <span class="c1"># ===============================================#</span>
-    <span class="c1">#                   Properties                  #</span>
-    <span class="c1"># ===============================================#</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_space</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">lmax</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
@@ -448,6 +367,11 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_grid</span>
 
     <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sampling</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The sampling factor used for spatial representations.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sampling</span>
+
+    <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">extend</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;True if the spatial grid includes both 0 and 360-degree longitudes.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extend</span>
@@ -462,12 +386,53 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The Condon-Shortley phase convention used (1).&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_csphase</span>
 
-    <span class="c1"># ==============================================#</span>
-    <span class="c1">#                 Public methods                #</span>
-    <span class="c1"># ==============================================#</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">spatial_dimension</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The dimension of the space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="mi">2</span>
 
-<div class="viewcode-block" id="Sobolev.project_function">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.project_function">[docs]</a>
+<div class="viewcode-block" id="SphereHelper.random_point">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.random_point">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">random_point</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a random point as `[latitude, longitude]`.&quot;&quot;&quot;</span>
+        <span class="n">latitude</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">rad2deg</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arcsin</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)))</span>
+        <span class="n">longitude</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">360.0</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">latitude</span><span class="p">,</span> <span class="n">longitude</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="SphereHelper.laplacian_eigenvalue">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.laplacian_eigenvalue">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">laplacian_eigenvalue</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns the (l.m)-th eigenvalue of the Laplacian.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            k = (l,m): The index of the eigenvalue to return.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">l</span> <span class="o">=</span> <span class="n">k</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">l</span> <span class="o">*</span> <span class="p">(</span><span class="n">l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span><span class="o">**</span><span class="mi">2</span></div>
+
+
+<div class="viewcode-block" id="SphereHelper.trace_of_invariant_automorphism">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.trace_of_invariant_automorphism">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">trace_of_invariant_automorphism</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns the trace of the automorphism of the form f(Δ) with f a function</span>
+<span class="sd">        that is well-defined on the spectrum of the Laplacian.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            f: A real-valued function that is well-defined on the spectrum</span>
+<span class="sd">               of the Laplacian.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">trace</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="o">-</span><span class="n">l</span><span class="p">,</span> <span class="n">l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+                <span class="n">trace</span> <span class="o">+=</span> <span class="n">f</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">laplacian_eigenvalue</span><span class="p">((</span><span class="n">l</span><span class="p">,</span> <span class="n">m</span><span class="p">)))</span>
+        <span class="k">return</span> <span class="n">trace</span></div>
+
+
+<div class="viewcode-block" id="SphereHelper.project_function">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.project_function">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">project_function</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[(</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">)],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns an element of the space by projecting a given function.</span>
@@ -475,201 +440,36 @@
 <span class="sd">        Args:</span>
 <span class="sd">            f: A function that takes a point `(lat, lon)` and returns a value.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">u</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">zero</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="o">.</span><span class="n">from_zeros</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span><span class="p">,</span> <span class="n">grid</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">extend</span><span class="p">,</span> <span class="n">sampling</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sampling</span>
+        <span class="p">)</span>
         <span class="k">for</span> <span class="n">j</span><span class="p">,</span> <span class="n">lon</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">lons</span><span class="p">()):</span>
             <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">lat</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">lats</span><span class="p">()):</span>
                 <span class="n">u</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">f</span><span class="p">((</span><span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">))</span>
+
         <span class="k">return</span> <span class="n">u</span></div>
 
 
-<div class="viewcode-block" id="Sobolev.random_point">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.random_point">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">random_point</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a random point as `[latitude, longitude]`.&quot;&quot;&quot;</span>
-        <span class="n">latitude</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="o">-</span><span class="mf">90.0</span><span class="p">,</span> <span class="mf">90.0</span><span class="p">)</span>
-        <span class="n">longitude</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">360.0</span><span class="p">)</span>
-        <span class="k">return</span> <span class="p">[</span><span class="n">latitude</span><span class="p">,</span> <span class="n">longitude</span><span class="p">]</span></div>
+<div class="viewcode-block" id="SphereHelper.to_coefficient">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.to_coefficient">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_coefficient</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">u</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a function vector to its spherical harmonic coefficients.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">u</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span> <span class="n">csphase</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">csphase</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="Sobolev.low_degree_projection">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.low_degree_projection">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">low_degree_projection</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span>
-        <span class="n">truncation_degree</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-        <span class="o">/</span><span class="p">,</span>
-        <span class="o">*</span><span class="p">,</span>
-        <span class="n">smoother</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">],</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns an operator that projects onto a lower-degree space.</span>
-
-<span class="sd">        This can be used for truncating or smoothing a field in the spherical</span>
-<span class="sd">        harmonic domain.</span>
-
-<span class="sd">        Args:</span>
-<span class="sd">            truncation_degree: The new maximum degree `lmax`.</span>
-<span class="sd">            smoother: An optional callable `f(l)` that applies a degree-dependent</span>
-<span class="sd">                weighting factor during projection.</span>
-
-<span class="sd">        Returns:</span>
-<span class="sd">            A `LinearOperator` that maps from this space to a new, lower-degree</span>
-<span class="sd">            `Sobolev` space.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">truncation_degree</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="n">truncation_degree</span> <span class="k">if</span> <span class="n">truncation_degree</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span>
-        <span class="p">)</span>
-        <span class="c1"># Default smoother is an identity mapping.</span>
-        <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">],</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">smoother</span> <span class="k">if</span> <span class="n">smoother</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="k">lambda</span> <span class="n">l</span><span class="p">:</span> <span class="mf">1.0</span>
-
-        <span class="n">row_dim</span> <span class="o">=</span> <span class="p">(</span><span class="n">truncation_degree</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
-        <span class="n">col_dim</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
-
-        <span class="c1"># Construct the sparse matrix that performs the coordinate projection.</span>
-        <span class="n">row</span><span class="p">,</span> <span class="n">col</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
-        <span class="n">rows</span><span class="p">,</span> <span class="n">cols</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-            <span class="n">fac</span> <span class="o">=</span> <span class="n">f</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
-            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-                <span class="k">if</span> <span class="n">l</span> <span class="o">&lt;=</span> <span class="n">truncation_degree</span><span class="p">:</span>
-                    <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
-                    <span class="n">row</span> <span class="o">+=</span> <span class="mi">1</span>
-                    <span class="n">cols</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">col</span><span class="p">)</span>
-                    <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">fac</span><span class="p">)</span>
-                <span class="n">col</span> <span class="o">+=</span> <span class="mi">1</span>
-
-        <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">truncation_degree</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-            <span class="n">fac</span> <span class="o">=</span> <span class="n">f</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
-            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-                <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
-                <span class="n">row</span> <span class="o">+=</span> <span class="mi">1</span>
-                <span class="n">cols</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">col</span><span class="p">)</span>
-                <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">fac</span><span class="p">)</span>
-                <span class="n">col</span> <span class="o">+=</span> <span class="mi">1</span>
-
-        <span class="n">smat</span> <span class="o">=</span> <span class="n">coo_array</span><span class="p">(</span>
-            <span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">cols</span><span class="p">)),</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="n">row_dim</span><span class="p">,</span> <span class="n">col_dim</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span>
-        <span class="p">)</span><span class="o">.</span><span class="n">tocsc</span><span class="p">()</span>
-
-        <span class="n">codomain</span> <span class="o">=</span> <span class="n">Sobolev</span><span class="p">(</span>
-            <span class="n">truncation_degree</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">order</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="p">,</span>
-            <span class="n">vector_as_SHGrid</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span><span class="p">,</span>
-            <span class="n">radius</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">radius</span><span class="p">,</span>
-            <span class="n">grid</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_grid</span><span class="p">,</span>
-        <span class="p">)</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">u</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-            <span class="n">uc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
-            <span class="n">vc</span> <span class="o">=</span> <span class="n">smat</span> <span class="o">@</span> <span class="n">uc</span>
-            <span class="k">return</span> <span class="n">codomain</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">vc</span><span class="p">)</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">adjoint_mapping</span><span class="p">(</span><span class="n">v</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-            <span class="n">vc</span> <span class="o">=</span> <span class="n">codomain</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
-            <span class="n">uc</span> <span class="o">=</span> <span class="n">smat</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">vc</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">uc</span><span class="p">)</span>
-
-        <span class="k">return</span> <span class="n">LinearOperator</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">codomain</span><span class="p">,</span> <span class="n">mapping</span><span class="p">,</span> <span class="n">adjoint_mapping</span><span class="o">=</span><span class="n">adjoint_mapping</span><span class="p">)</span></div>
+<div class="viewcode-block" id="SphereHelper.from_coefficient">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.from_coefficient">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_coefficient</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ulm</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps spherical harmonic coefficients to a function vector.&quot;&quot;&quot;</span>
+        <span class="n">grid</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">grid</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sampling</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;DH2&quot;</span>
+        <span class="k">return</span> <span class="n">ulm</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">extend</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="Sobolev.dirac">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.dirac">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">dirac</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the linear functional for point evaluation (Dirac measure).</span>
-
-<span class="sd">        Args:</span>
-<span class="sd">            point: A list containing `[latitude, longitude]`.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">latitude</span><span class="p">,</span> <span class="n">longitude</span> <span class="o">=</span> <span class="n">point</span>
-        <span class="n">colatitude</span> <span class="o">=</span> <span class="mf">90.0</span> <span class="o">-</span> <span class="n">latitude</span>
-
-        <span class="n">coeffs</span> <span class="o">=</span> <span class="n">sh</span><span class="o">.</span><span class="n">expand</span><span class="o">.</span><span class="n">spharm</span><span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span><span class="p">,</span>
-            <span class="n">colatitude</span><span class="p">,</span>
-            <span class="n">longitude</span><span class="p">,</span>
-            <span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span>
-            <span class="n">degrees</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_to_components_from_coeffs</span><span class="p">(</span><span class="n">coeffs</span><span class="p">)</span>
-        <span class="c1"># Note: The user confirmed the logic for this return statement is correct</span>
-        <span class="c1"># for their use case, despite the base class returning a LinearForm.</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="Sobolev.invariant_automorphism">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.invariant_automorphism">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">invariant_automorphism</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
-        <span class="n">matrix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">matrix</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
-
-        <span class="k">return</span> <span class="n">LinearOperator</span><span class="o">.</span><span class="n">self_adjoint</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mapping</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="Sobolev.invariant_gaussian_measure">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.invariant_gaussian_measure">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">invariant_gaussian_measure</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">],</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">expectation</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns a Gaussian measure with a covariance of the form `f(Delta)`.</span>
-
-<span class="sd">        Args:</span>
-<span class="sd">            f: The scalar function `f(l(l+1))` defining the covariance.</span>
-<span class="sd">            expectation: The mean of the measure. Defaults to zero.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="n">l</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">f</span><span class="p">(</span><span class="n">l</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sobolev_function</span><span class="p">(</span><span class="n">l</span><span class="p">))</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">h</span><span class="p">(</span><span class="n">l</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_sobolev_function</span><span class="p">(</span><span class="n">l</span><span class="p">)</span> <span class="o">*</span> <span class="n">f</span><span class="p">(</span><span class="n">l</span><span class="p">))</span>
-
-        <span class="n">matrix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span><span class="n">g</span><span class="p">)</span>
-        <span class="n">adjoint_matrix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span><span class="n">h</span><span class="p">)</span>
-        <span class="n">domain</span> <span class="o">=</span> <span class="n">EuclideanSpace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">)</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">matrix</span> <span class="o">@</span> <span class="n">c</span><span class="p">)</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">adjoint_mapping</span><span class="p">(</span><span class="n">u</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">adjoint_matrix</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
-
-        <span class="n">inverse_matrix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span>
-            <span class="k">lambda</span> <span class="n">l</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">g</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
-        <span class="p">)</span>
-        <span class="n">inverse_adjoint_matrix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span>
-            <span class="k">lambda</span> <span class="n">l</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">h</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
-        <span class="p">)</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">inverse_mapping</span><span class="p">(</span><span class="n">u</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">inverse_matrix</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">inverse_adjoint_mapping</span><span class="p">(</span><span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-            <span class="c1"># Note: This is a formal adjoint mapping.</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">inverse_adjoint_matrix</span> <span class="o">@</span> <span class="n">c</span><span class="p">)</span>
-
-        <span class="n">covariance_factor</span> <span class="o">=</span> <span class="n">LinearOperator</span><span class="p">(</span>
-            <span class="n">domain</span><span class="p">,</span> <span class="bp">self</span><span class="p">,</span> <span class="n">mapping</span><span class="p">,</span> <span class="n">adjoint_mapping</span><span class="o">=</span><span class="n">adjoint_mapping</span>
-        <span class="p">)</span>
-        <span class="n">inverse_covariance_factor</span> <span class="o">=</span> <span class="n">LinearOperator</span><span class="p">(</span>
-            <span class="bp">self</span><span class="p">,</span> <span class="n">domain</span><span class="p">,</span> <span class="n">inverse_mapping</span><span class="p">,</span> <span class="n">adjoint_mapping</span><span class="o">=</span><span class="n">inverse_adjoint_mapping</span>
-        <span class="p">)</span>
-
-        <span class="k">return</span> <span class="n">GaussianMeasure</span><span class="p">(</span>
-            <span class="n">covariance_factor</span><span class="o">=</span><span class="n">covariance_factor</span><span class="p">,</span>
-            <span class="n">inverse_covariance_factor</span><span class="o">=</span><span class="n">inverse_covariance_factor</span><span class="p">,</span>
-            <span class="n">expectation</span><span class="o">=</span><span class="n">expectation</span><span class="p">,</span>
-        <span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="Sobolev.plot">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.plot">[docs]</a>
+<div class="viewcode-block" id="SphereHelper.plot">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.plot">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">plot</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">f</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
         <span class="n">projection</span><span class="p">:</span> <span class="s2">&quot;Projection&quot;</span> <span class="o">=</span> <span class="n">ccrs</span><span class="o">.</span><span class="n">PlateCarree</span><span class="p">(),</span>
@@ -687,7 +487,7 @@
 <span class="sd">        Creates a map plot of a function on the sphere using `cartopy`.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            f: The function to be plotted (either an `SHGrid` or `SHCoeffs` object).</span>
+<span class="sd">            u: The element to be plotted.</span>
 <span class="sd">            projection: A `cartopy.crs` projection. Defaults to `PlateCarree`.</span>
 <span class="sd">            contour: If True, creates a filled contour plot. Otherwise, a `pcolormesh` plot.</span>
 <span class="sd">            cmap: The colormap name.</span>
@@ -703,14 +503,9 @@
 <span class="sd">        Returns:</span>
 <span class="sd">            A tuple `(figure, axes, image)` containing the Matplotlib and Cartopy objects.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">field</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="n">f</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span>
-            <span class="k">else</span> <span class="n">f</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span> <span class="n">csphase</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">csphase</span><span class="p">)</span>
-        <span class="p">)</span>
 
-        <span class="n">lons</span> <span class="o">=</span> <span class="n">field</span><span class="o">.</span><span class="n">lons</span><span class="p">()</span>
-        <span class="n">lats</span> <span class="o">=</span> <span class="n">field</span><span class="o">.</span><span class="n">lats</span><span class="p">()</span>
+        <span class="n">lons</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">lons</span><span class="p">()</span>
+        <span class="n">lats</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">lats</span><span class="p">()</span>
 
         <span class="n">figsize</span><span class="p">:</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;figsize&quot;</span><span class="p">,</span> <span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
         <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="n">figsize</span><span class="p">,</span> <span class="n">subplot_kw</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;projection&quot;</span><span class="p">:</span> <span class="n">projection</span><span class="p">})</span>
@@ -726,7 +521,7 @@
 
         <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;cmap&quot;</span><span class="p">,</span> <span class="n">cmap</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">symmetric</span><span class="p">:</span>
-            <span class="n">data_max</span> <span class="o">=</span> <span class="mf">1.2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">nanmax</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">data</span><span class="p">))</span>
+            <span class="n">data_max</span> <span class="o">=</span> <span class="mf">1.2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">nanmax</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">data</span><span class="p">))</span>
             <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;vmin&quot;</span><span class="p">,</span> <span class="o">-</span><span class="n">data_max</span><span class="p">)</span>
             <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;vmax&quot;</span><span class="p">,</span> <span class="n">data_max</span><span class="p">)</span>
 
@@ -736,14 +531,14 @@
             <span class="n">im</span> <span class="o">=</span> <span class="n">ax</span><span class="o">.</span><span class="n">contourf</span><span class="p">(</span>
                 <span class="n">lons</span><span class="p">,</span>
                 <span class="n">lats</span><span class="p">,</span>
-                <span class="n">field</span><span class="o">.</span><span class="n">data</span><span class="p">,</span>
+                <span class="n">u</span><span class="o">.</span><span class="n">data</span><span class="p">,</span>
                 <span class="n">transform</span><span class="o">=</span><span class="n">ccrs</span><span class="o">.</span><span class="n">PlateCarree</span><span class="p">(),</span>
                 <span class="n">levels</span><span class="o">=</span><span class="n">levels</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">im</span> <span class="o">=</span> <span class="n">ax</span><span class="o">.</span><span class="n">pcolormesh</span><span class="p">(</span>
-                <span class="n">lons</span><span class="p">,</span> <span class="n">lats</span><span class="p">,</span> <span class="n">field</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">ccrs</span><span class="o">.</span><span class="n">PlateCarree</span><span class="p">(),</span> <span class="o">**</span><span class="n">kwargs</span>
+                <span class="n">lons</span><span class="p">,</span> <span class="n">lats</span><span class="p">,</span> <span class="n">u</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">ccrs</span><span class="o">.</span><span class="n">PlateCarree</span><span class="p">(),</span> <span class="o">**</span><span class="n">kwargs</span>
             <span class="p">)</span>
 
         <span class="k">if</span> <span class="n">gridlines</span><span class="p">:</span>
@@ -764,28 +559,12 @@
         <span class="k">return</span> <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span><span class="p">,</span> <span class="n">im</span></div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Checks for mathematical equality with another Sobolev space on a sphere.</span>
+    <span class="c1"># --------------------------------------------------------------- #</span>
+    <span class="c1">#                         private methods                         #</span>
+    <span class="c1"># ----------------------------------------------------------------#</span>
 
-<span class="sd">        Two spaces are considered equal if they are of the same type and have</span>
-<span class="sd">        the same defining parameters.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">Sobolev</span><span class="p">):</span>
-            <span class="k">return</span> <span class="bp">NotImplemented</span>
-
-        <span class="k">return</span> <span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">lmax</span>
-            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">order</span>
-            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">scale</span>
-            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">radius</span>
-            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">grid</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">grid</span>
-            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span>
-        <span class="p">)</span>
-
-    <span class="c1"># ==============================================#</span>
-    <span class="c1">#                Private methods                #</span>
-    <span class="c1"># ==============================================#</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_grid_name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">grid</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sampling</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;DH2&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_coefficient_to_component_mapping</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">coo_array</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Builds a sparse matrix to map `pyshtools` coeffs to component vectors.&quot;&quot;&quot;</span>
@@ -815,38 +594,10 @@
             <span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">cols</span><span class="p">)),</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="n">row_dim</span><span class="p">,</span> <span class="n">col_dim</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span>
         <span class="p">)</span><span class="o">.</span><span class="n">tocsc</span><span class="p">()</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_to_components_from_coeffs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coeffs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a component vector from a `pyshtools` coefficient array.&quot;&quot;&quot;</span>
-        <span class="n">f</span> <span class="o">=</span> <span class="n">coeffs</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="n">order</span><span class="o">=</span><span class="s2">&quot;C&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sparse_coeffs_to_component</span> <span class="o">@</span> <span class="n">f</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_to_components_from_SHCoeffs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ulm</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a component vector from an `SHCoeffs` object.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_to_components_from_coeffs</span><span class="p">(</span><span class="n">ulm</span><span class="o">.</span><span class="n">coeffs</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_to_components_from_SHGrid</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">u</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a component vector from an `SHGrid` object.&quot;&quot;&quot;</span>
-        <span class="n">ulm</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span> <span class="n">csphase</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">csphase</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_to_components_from_SHCoeffs</span><span class="p">(</span><span class="n">ulm</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_from_components_to_SHCoeffs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns an `SHCoeffs` object from its component vector.&quot;&quot;&quot;</span>
-        <span class="n">f</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sparse_coeffs_to_component</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">c</span>
-        <span class="n">coeffs</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">reshape</span><span class="p">((</span><span class="mi">2</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
-        <span class="k">return</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="o">.</span><span class="n">from_array</span><span class="p">(</span>
-            <span class="n">coeffs</span><span class="p">,</span> <span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span> <span class="n">csphase</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">csphase</span>
-        <span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_from_components_to_SHGrid</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns an `SHGrid` object from its component vector.&quot;&quot;&quot;</span>
-        <span class="n">ulm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_from_components_to_SHCoeffs</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">ulm</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">extend</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_degree_dependent_scaling_to_diagonal_matrix</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">],</span> <span class="nb">float</span><span class="p">]</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">diags</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_degree_dependent_scaling_values</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">diags</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Creates a diagonal sparse matrix from a function of degree `l`.&quot;&quot;&quot;</span>
-        <span class="n">values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">)</span>
+        <span class="n">dim</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
         <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
             <span class="n">j</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="n">l</span> <span class="o">+</span> <span class="mi">1</span>
@@ -856,67 +607,33 @@
             <span class="n">j</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="n">l</span>
             <span class="n">values</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">f</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
             <span class="n">i</span> <span class="o">=</span> <span class="n">j</span>
-        <span class="k">return</span> <span class="n">diags</span><span class="p">([</span><span class="n">values</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">values</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_sobolev_function</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">l</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;The degree-dependent scaling that defines the Sobolev inner product.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="n">l</span> <span class="o">*</span> <span class="p">(</span><span class="n">l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span> <span class="o">**</span> <span class="bp">self</span><span class="o">.</span><span class="n">order</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_coefficient_to_component</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ulm</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps spherical harmonic coefficients to a component vector.&quot;&quot;&quot;</span>
+        <span class="n">flat_coeffs</span> <span class="o">=</span> <span class="n">ulm</span><span class="o">.</span><span class="n">coeffs</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="n">order</span><span class="o">=</span><span class="s2">&quot;C&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sparse_coeffs_to_component</span> <span class="o">@</span> <span class="n">flat_coeffs</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_to_dual_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">u</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Implements the mapping to the dual space.&quot;&quot;&quot;</span>
-        <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metric_tensor</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_from_dual_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">up</span><span class="p">:</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Implements the mapping from the dual space.&quot;&quot;&quot;</span>
-        <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_metric_tensor</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">up</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_ax_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Custom in-place ax implementation for pyshtools objects.</span>
-<span class="sd">        x := a*x</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span><span class="p">:</span>
-            <span class="c1"># For SHGrid objects, modify the .data array</span>
-            <span class="n">x</span><span class="o">.</span><span class="n">data</span> <span class="o">*=</span> <span class="n">a</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># For SHCoeffs objects, modify the .coeffs array</span>
-            <span class="n">x</span><span class="o">.</span><span class="n">coeffs</span> <span class="o">*=</span> <span class="n">a</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_axpy_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Custom in-place axpy implementation for pyshtools objects.</span>
-<span class="sd">        y := a*x + y</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span><span class="p">:</span>
-            <span class="c1"># For SHGrid objects, modify the .data array</span>
-            <span class="n">y</span><span class="o">.</span><span class="n">data</span> <span class="o">+=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span><span class="o">.</span><span class="n">data</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># For SHCoeffs objects, modify the .coeffs array</span>
-            <span class="n">y</span><span class="o">.</span><span class="n">coeffs</span> <span class="o">+=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span><span class="o">.</span><span class="n">coeffs</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_vector_multiply_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">u1</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">u2</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Implements element-wise multiplication of two fields.&quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_as_SHGrid</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">u1</span> <span class="o">*</span> <span class="n">u2</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">u1_field</span> <span class="o">=</span> <span class="n">u1</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">extend</span><span class="p">)</span>
-            <span class="n">u2_field</span> <span class="o">=</span> <span class="n">u2</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">extend</span><span class="p">)</span>
-            <span class="n">u3_field</span> <span class="o">=</span> <span class="n">u1_field</span> <span class="o">*</span> <span class="n">u2_field</span>
-            <span class="k">return</span> <span class="n">u3_field</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span>
-                <span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span> <span class="n">csphase</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">csphase</span>
-            <span class="p">)</span></div>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_component_to_coefficient</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a component vector to spherical harmonic coefficients.&quot;&quot;&quot;</span>
+        <span class="n">flat_coeffs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sparse_coeffs_to_component</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">c</span>
+        <span class="n">coeffs</span> <span class="o">=</span> <span class="n">flat_coeffs</span><span class="o">.</span><span class="n">reshape</span><span class="p">((</span><span class="mi">2</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="o">.</span><span class="n">from_array</span><span class="p">(</span>
+            <span class="n">coeffs</span><span class="p">,</span> <span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span> <span class="n">csphase</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">csphase</span>
+        <span class="p">)</span></div>
 
 
 
 <div class="viewcode-block" id="Lebesgue">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue">[docs]</a>
-<span class="k">class</span><span class="w"> </span><span class="nc">Lebesgue</span><span class="p">(</span><span class="n">Sobolev</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Lebesgue</span><span class="p">(</span><span class="n">SphereHelper</span><span class="p">,</span> <span class="n">HilbertModule</span><span class="p">,</span> <span class="n">AbstractInvariantLebesgueSpace</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Implements the L^2 space on the two-sphere.</span>
+<span class="sd">    Implementation of the Lebesgue space L² on the sphere.</span>
 
-<span class="sd">    This is a special case of the `Sobolev` class with `order = 0`.</span>
+<span class="sd">    This class represents square-integrable functions on a sphere. A function is</span>
+<span class="sd">    represented by a `pyshtools.SHGrid` object, which stores its values on a</span>
+<span class="sd">    regular grid in latitude and longitude. The L² inner product is defined</span>
+<span class="sd">    in the spherical harmonic domain.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
@@ -924,59 +641,273 @@
         <span class="n">lmax</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="n">vector_as_SHGrid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+        <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
         <span class="n">grid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;DH&quot;</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">extend</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">):</span>
+
+        <span class="k">if</span> <span class="n">lmax</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;lmax must be non-negative&quot;</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dim</span> <span class="o">=</span> <span class="p">(</span><span class="n">lmax</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
+
+        <span class="n">SphereHelper</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">lmax</span><span class="p">,</span> <span class="n">radius</span><span class="p">,</span> <span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dim</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The dimension of the space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dim</span>
+
+<div class="viewcode-block" id="Lebesgue.to_components">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.to_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">u</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+        <span class="n">coeff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_coefficient</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coefficient_to_component</span><span class="p">(</span><span class="n">coeff</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.from_components">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.from_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">:</span>
+        <span class="n">coeff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_component_to_coefficient</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_coefficient</span><span class="p">(</span><span class="n">coeff</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.to_dual">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.to_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">u</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
+        <span class="n">coeff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_coefficient</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>
+        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coefficient_to_component</span><span class="p">(</span><span class="n">coeff</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span><span class="o">**</span><span class="mi">2</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.from_dual">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.from_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">up</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">:</span>
+        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">up</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span><span class="o">**</span><span class="mi">2</span>
+        <span class="n">coeff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_component_to_coefficient</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_coefficient</span><span class="p">(</span><span class="n">coeff</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.ax">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.ax">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ax</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Args:</span>
-<span class="sd">            lmax: The maximum spherical harmonic degree for truncation.</span>
-<span class="sd">            vector_as_SHGrid: If True, elements are `SHGrid` objects. Otherwise,</span>
-<span class="sd">                they are `SHCoeffs` objects.</span>
-<span class="sd">            radius: The radius of the sphere.</span>
-<span class="sd">            grid: The `pyshtools` grid type.</span>
+<span class="sd">        Custom in-place ax implementation for pyshtools objects.</span>
+<span class="sd">        x := a*x</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="n">x</span><span class="o">.</span><span class="n">data</span> <span class="o">*=</span> <span class="n">a</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.axpy">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.axpy">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">axpy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Custom in-place axpy implementation for pyshtools objects.</span>
+<span class="sd">        y := a*x + y</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">y</span><span class="o">.</span><span class="n">data</span> <span class="o">+=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span><span class="o">.</span><span class="n">data</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.vector_multiply">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.vector_multiply">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">vector_multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">,</span> <span class="n">x2</span><span class="p">:</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHGrid</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the pointwise product of two functions.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">x1</span> <span class="o">*</span> <span class="n">x2</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.eigenfunction_norms">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.eigenfunction_norms">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">eigenfunction_norms</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a list of the norms of the eigenfunctions.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">fromiter</span><span class="p">(</span>
+            <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">)],</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Lebesgue.invariant_automorphism">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.invariant_automorphism">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">invariant_automorphism</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_values</span><span class="p">(</span>
+            <span class="k">lambda</span> <span class="n">l</span><span class="p">:</span> <span class="n">f</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">laplacian_eigenvalue</span><span class="p">((</span><span class="n">l</span><span class="p">,</span> <span class="mi">0</span><span class="p">)))</span>
+        <span class="p">)</span>
+        <span class="n">matrix</span> <span class="o">=</span> <span class="n">diags</span><span class="p">([</span><span class="n">values</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">u</span><span class="p">):</span>
+            <span class="n">c</span> <span class="o">=</span> <span class="n">matrix</span> <span class="o">@</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">u</span><span class="p">))</span>
+            <span class="n">coeff</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_component_to_coefficient</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_coefficient</span><span class="p">(</span><span class="n">coeff</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">LinearOperator</span><span class="o">.</span><span class="n">self_adjoint</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mapping</span><span class="p">)</span></div>
+</div>
+
+
+    <span class="c1"># ================================================================ #</span>
+    <span class="c1">#                         Private methods                          #</span>
+    <span class="c1"># ================================================================ #</span>
+
+
+<div class="viewcode-block" id="Sobolev">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Sobolev</span><span class="p">(</span><span class="n">SphereHelper</span><span class="p">,</span> <span class="n">MassWeightedHilbertModule</span><span class="p">,</span> <span class="n">AbstractInvariantSobolevSpace</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Implementation of the Sobolev space Hˢ on the sphere.</span>
+
+<span class="sd">    This class represents functions with a specified degree of smoothness. It is</span>
+<span class="sd">    constructed as a `MassWeightedHilbertModule` over the `Lebesgue` space, where</span>
+<span class="sd">    the mass operator weights the spherical harmonic coefficients to enforce</span>
+<span class="sd">    smoothness. This is the primary class for defining smooth, random function</span>
+<span class="sd">    fields (e.g., for geophysics or climate science).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">lmax</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">order</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="o">/</span><span class="p">,</span>
+        <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">grid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;DH&quot;</span><span class="p">,</span>
+        <span class="n">extend</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">):</span>
+
+        <span class="k">if</span> <span class="n">lmax</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;lmax must be non-negative&quot;</span><span class="p">)</span>
+
+        <span class="n">SphereHelper</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">lmax</span><span class="p">,</span> <span class="n">radius</span><span class="p">,</span> <span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="p">)</span>
+        <span class="n">AbstractInvariantSobolevSpace</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">order</span><span class="p">,</span> <span class="n">scale</span><span class="p">)</span>
+
+        <span class="n">lebesgue</span> <span class="o">=</span> <span class="n">Lebesgue</span><span class="p">(</span><span class="n">lmax</span><span class="p">,</span> <span class="n">radius</span><span class="o">=</span><span class="n">radius</span><span class="p">,</span> <span class="n">grid</span><span class="o">=</span><span class="n">grid</span><span class="p">,</span> <span class="n">extend</span><span class="o">=</span><span class="n">extend</span><span class="p">)</span>
+
+        <span class="n">mass_operator</span> <span class="o">=</span> <span class="n">lebesgue</span><span class="o">.</span><span class="n">invariant_automorphism</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sobolev_function</span><span class="p">)</span>
+        <span class="n">inverse_mass_operator</span> <span class="o">=</span> <span class="n">lebesgue</span><span class="o">.</span><span class="n">invariant_automorphism</span><span class="p">(</span>
+            <span class="k">lambda</span> <span class="n">k</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">sobolev_function</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="n">MassWeightedHilbertModule</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="bp">self</span><span class="p">,</span> <span class="n">lebesgue</span><span class="p">,</span> <span class="n">mass_operator</span><span class="p">,</span> <span class="n">inverse_mass_operator</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="Sobolev.from_sobolev_parameters">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.from_sobolev_parameters">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_sobolev_parameters</span><span class="p">(</span>
+        <span class="n">order</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="o">/</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+        <span class="n">vector_as_SHGrid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">grid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;DH&quot;</span><span class="p">,</span>
+        <span class="n">rtol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span><span class="p">,</span>
+        <span class="n">power_of_two</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Sobolev&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Creates an instance with `lmax` chosen based on the Sobolev parameters.</span>
+
+<span class="sd">        This factory method estimates the spherical harmonic truncation degree</span>
+<span class="sd">        (`lmax`) required to represent the space while meeting a specified</span>
+<span class="sd">        relative tolerance for the truncation error. This is useful when the</span>
+<span class="sd">        required `lmax` is not known a priori.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            order: The order of the Sobolev space, controlling smoothness.</span>
+<span class="sd">            scale: The non-dimensional length-scale for the space.</span>
+<span class="sd">            radius: The radius of the sphere. Defaults to 1.0.</span>
+<span class="sd">            grid: The `pyshtools` grid type (e.g., &#39;DH&#39;). Defaults to &#39;DH&#39;.</span>
+<span class="sd">            rtol: The relative tolerance used to determine the `lmax`.</span>
+<span class="sd">            power_of_two: If True, `lmax` is set to the next power of two.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            An instance of the Sobolev class with a calculated `lmax`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">order</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;This method is only applicable for orders &gt; 1.0&quot;</span><span class="p">)</span>
+
+        <span class="n">summation</span> <span class="o">=</span> <span class="mf">1.0</span>
+        <span class="n">l</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">err</span> <span class="o">=</span> <span class="mf">1.0</span>
+        <span class="n">sobolev_func</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">deg</span><span class="p">:</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">scale</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="n">deg</span> <span class="o">*</span> <span class="p">(</span><span class="n">deg</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span> <span class="o">**</span> <span class="n">order</span>
+
+        <span class="k">while</span> <span class="n">err</span> <span class="o">&gt;</span> <span class="n">rtol</span><span class="p">:</span>
+            <span class="n">l</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">term</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">sobolev_func</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+            <span class="n">summation</span> <span class="o">+=</span> <span class="n">term</span>
+            <span class="n">err</span> <span class="o">=</span> <span class="n">term</span> <span class="o">/</span> <span class="n">summation</span>
+            <span class="k">if</span> <span class="n">l</span> <span class="o">&gt;</span> <span class="mi">10000</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Failed to converge on a stable lmax.&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">power_of_two</span><span class="p">:</span>
+            <span class="n">n</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">l</span><span class="p">))</span>
+            <span class="n">l</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">**</span> <span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">lmax</span> <span class="o">=</span> <span class="n">l</span>
+        <span class="k">return</span> <span class="n">Sobolev</span><span class="p">(</span>
             <span class="n">lmax</span><span class="p">,</span>
-            <span class="mf">0.0</span><span class="p">,</span>
-            <span class="mf">1.0</span><span class="p">,</span>
-            <span class="n">vector_as_SHGrid</span><span class="o">=</span><span class="n">vector_as_SHGrid</span><span class="p">,</span>
+            <span class="n">order</span><span class="p">,</span>
+            <span class="n">scale</span><span class="p">,</span>
             <span class="n">radius</span><span class="o">=</span><span class="n">radius</span><span class="p">,</span>
             <span class="n">grid</span><span class="o">=</span><span class="n">grid</span><span class="p">,</span>
         <span class="p">)</span></div>
 
 
-
-<div class="viewcode-block" id="LowPassFilter">
-<a class="viewcode-back" href="../../../pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.LowPassFilter">[docs]</a>
-<span class="k">class</span><span class="w"> </span><span class="nc">LowPassFilter</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Implements a simple Hann-type low-pass filter in the spherical harmonic domain.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">lower_degree</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">upper_degree</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Args:</span>
-<span class="sd">            lower_degree: Below this degree `l`, the filter gain is 1.</span>
-<span class="sd">            upper_degree: Above this degree `l`, the filter gain is 0.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_lower_degree</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">lower_degree</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_upper_degree</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">upper_degree</span>
+<span class="sd">        Checks for mathematical equality with another Sobolev space on a sphere.</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">l</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-        <span class="k">if</span> <span class="n">l</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lower_degree</span><span class="p">:</span>
-            <span class="k">return</span> <span class="mf">1.0</span>
-        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lower_degree</span> <span class="o">&lt;=</span> <span class="n">l</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_upper_degree</span><span class="p">:</span>
-            <span class="k">return</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span>
-                <span class="mf">1.0</span>
-                <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span>
-                    <span class="n">np</span><span class="o">.</span><span class="n">pi</span>
-                    <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_upper_degree</span> <span class="o">-</span> <span class="n">l</span><span class="p">)</span>
-                    <span class="o">/</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_upper_degree</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lower_degree</span><span class="p">)</span>
-                <span class="p">)</span>
-            <span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="mf">0.0</span></div>
+<span class="sd">        Two spaces are considered equal if they are of the same type and have</span>
+<span class="sd">        the same defining parameters (kmax, order, scale, and radius).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">Sobolev</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">NotImplemented</span>
+
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">lmax</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">radius</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">order</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">scale</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">scale</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="Sobolev.eigenfunction_norms">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.eigenfunction_norms">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">eigenfunction_norms</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a list of the norms of the eigenfunctions.&quot;&quot;&quot;</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_degree_dependent_scaling_values</span><span class="p">(</span>
+            <span class="k">lambda</span> <span class="n">l</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sobolev_function</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">laplacian_eigenvalue</span><span class="p">((</span><span class="n">l</span><span class="p">,</span> <span class="mi">0</span><span class="p">))))</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">fromiter</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Sobolev.dirac">
+<a class="viewcode-back" href="../../../api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.dirac">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dirac</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="p">(</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns the linear functional for point evaluation (Dirac measure).</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            point: A tuple containing `(latitude, longitude)`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">latitude</span><span class="p">,</span> <span class="n">longitude</span> <span class="o">=</span> <span class="n">point</span>
+        <span class="n">colatitude</span> <span class="o">=</span> <span class="mf">90.0</span> <span class="o">-</span> <span class="n">latitude</span>
+
+        <span class="n">coeffs</span> <span class="o">=</span> <span class="n">sh</span><span class="o">.</span><span class="n">expand</span><span class="o">.</span><span class="n">spharm</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">lmax</span><span class="p">,</span>
+            <span class="n">colatitude</span><span class="p">,</span>
+            <span class="n">longitude</span><span class="p">,</span>
+            <span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span>
+            <span class="n">degrees</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">ulm</span> <span class="o">=</span> <span class="n">sh</span><span class="o">.</span><span class="n">SHCoeffs</span><span class="o">.</span><span class="n">from_array</span><span class="p">(</span>
+            <span class="n">coeffs</span><span class="p">,</span>
+            <span class="n">normalization</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">normalization</span><span class="p">,</span>
+            <span class="n">csphase</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">csphase</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coefficient_to_component</span><span class="p">(</span><span class="n">ulm</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span></div>
+</div>
 
 </pre></div>
         </article>

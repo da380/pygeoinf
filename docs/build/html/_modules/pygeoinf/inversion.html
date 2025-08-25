@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,7 +241,16 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.inversion</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module containing the base class for inversion methods.</span>
+<span class="sd">Provides the abstract base class for all inversion algorithms.</span>
+
+<span class="sd">This module defines the `Inversion` class, which serves as a common</span>
+<span class="sd">foundation for various methods that solve an inverse problem. Its primary role</span>
+<span class="sd">is to maintain a reference to the `ForwardProblem` being solved, providing a</span>
+<span class="sd">consistent interface and convenient access to the problem&#39;s core components like</span>
+<span class="sd">the model space and data space.</span>
+
+<span class="sd">It also includes helper methods to assert preconditions required by different</span>
+<span class="sd">inversion techniques, such as the existence of a data error measure.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
@@ -251,14 +260,16 @@
 
 
 <div class="viewcode-block" id="Inversion">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.inversion.Inversion">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.inversion.Inversion">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">Inversion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An abstract base class for inversion methods.</span>
 
 <span class="sd">    This class provides a common structure for different inversion algorithms</span>
-<span class="sd">    (e.g., Bayesian, Least squares). Its primary role is to hold a reference to the</span>
-<span class="sd">    forward problem being solved and provide convenient access to its properties.</span>
+<span class="sd">    (e.g., Bayesian, Least Squares). Its main purpose is to hold a reference</span>
+<span class="sd">    to the forward problem being solved and provide convenient access to its</span>
+<span class="sd">    properties. Subclasses should inherit from this class to implement a</span>
+<span class="sd">    specific inversion technique.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">forward_problem</span><span class="p">:</span> <span class="s2">&quot;LinearForwardProblem&quot;</span><span class="p">,</span> <span class="o">/</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -287,7 +298,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">data_space</span>
 
 <div class="viewcode-block" id="Inversion.assert_data_error_measure">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.inversion.Inversion.assert_data_error_measure">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.inversion.Inversion.assert_data_error_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">assert_data_error_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Checks if a data error measure is set in the forward problem.</span>
@@ -304,12 +315,13 @@
 
 
 <div class="viewcode-block" id="Inversion.assert_inverse_data_covariance">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.inversion.Inversion.assert_inverse_data_covariance">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.inversion.Inversion.assert_inverse_data_covariance">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">assert_inverse_data_covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Checks if the data error measure has an inverse covariance.</span>
 
-<span class="sd">        This is a precondition for methods that require the data precision matrix.</span>
+<span class="sd">        This is a precondition for methods that require the data precision</span>
+<span class="sd">        matrix (the inverse of the data error covariance).</span>
 
 <span class="sd">        Raises:</span>
 <span class="sd">            AttributeError: If no data error measure is set, or if the measure</span>

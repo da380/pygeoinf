@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,12 +241,22 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.forward_problem</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module for defining forward problem classes.</span>
+<span class="sd">Defines the mathematical structure of a forward problem.</span>
 
-<span class="sd">This module provides classes to represent inverse problem formulations, which</span>
-<span class="sd">relate unknown model parameters to observed data through a forward operator.</span>
-<span class="sd">It handles both deterministic (error-free) and statistical (with data errors)</span>
-<span class="sd">scenarios.</span>
+<span class="sd">This module provides classes that encapsulate the core components of an</span>
+<span class="sd">inverse problem. A forward problem describes the physical or mathematical</span>
+<span class="sd">process that maps a set of unknown model parameters `u` to a set of observable</span>
+<span class="sd">data `d`.</span>
+
+<span class="sd">The module handles both the deterministic relationship `d = A(u)` and the more</span>
+<span class="sd">realistic statistical model `d = A(u) + e`, where `e` represents random noise.</span>
+
+<span class="sd">Key Classes</span>
+<span class="sd">-----------</span>
+<span class="sd">- `ForwardProblem`: A general class representing the link between a model</span>
+<span class="sd">  space and a data space via a forward operator, with an optional data error.</span>
+<span class="sd">- `LinearForwardProblem`: A specialization for linear problems where the</span>
+<span class="sd">  forward operator is a `LinearOperator`.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
@@ -260,12 +270,12 @@
 <span class="c1"># This block only runs for type checkers, not at runtime, to prevent</span>
 <span class="c1"># circular import errors while still allowing type hints.</span>
 <span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">T_vec</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">Vector</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 
 
 <div class="viewcode-block" id="ForwardProblem">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.ForwardProblem">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.ForwardProblem">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ForwardProblem</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Represents a general forward problem.</span>
@@ -277,7 +287,7 @@
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">forward_operator</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">,</span>
+        <span class="n">forward_operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
         <span class="n">data_error_measure</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -291,7 +301,7 @@
 <span class="sd">                from which data errors are assumed to be drawn. If None, the</span>
 <span class="sd">                data is considered to be error-free.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_forward_operator</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="n">forward_operator</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_forward_operator</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="n">forward_operator</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_data_error_measure</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">data_error_measure</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_error_measure_set</span><span class="p">:</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_space</span> <span class="o">!=</span> <span class="n">data_error_measure</span><span class="o">.</span><span class="n">domain</span><span class="p">:</span>
@@ -300,7 +310,7 @@
                 <span class="p">)</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">forward_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The forward operator, mapping from model to data space.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_forward_operator</span>
 
@@ -329,19 +339,17 @@
 
 
 <div class="viewcode-block" id="LinearForwardProblem">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearForwardProblem</span><span class="p">(</span><span class="n">ForwardProblem</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Represents a linear forward problem of the form `d = A(u) + e`.</span>
 
 <span class="sd">    Here, `d` is the data, `A` is the linear forward operator, `u` is the model,</span>
-<span class="sd">    and `e` is a random error drawn from a Gaussian distribution. This class</span>
-<span class="sd">    provides methods for statistical analysis, such as generating synthetic data</span>
-<span class="sd">    and performing chi-squared tests.</span>
+<span class="sd">    and `e` is a random error drawn from a Gaussian distribution.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
 <div class="viewcode-block" id="LinearForwardProblem.from_direct_sum">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.from_direct_sum">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.from_direct_sum">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_direct_sum</span><span class="p">(</span>
         <span class="n">forward_problems</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;LinearForwardProblem&quot;</span><span class="p">],</span>
@@ -349,8 +357,9 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Forms a joint forward problem from a list of separate problems.</span>
 
-<span class="sd">        This is useful when a single underlying model is observed through</span>
-<span class="sd">        multiple, independent measurement systems.</span>
+<span class="sd">        This is a powerful tool for joint inversions, where a single underlying</span>
+<span class="sd">        model is observed through multiple, independent measurement systems</span>
+<span class="sd">        (e.g., different types of geophysical surveys).</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            forward_problems: A list of `LinearForwardProblem` instances that</span>
@@ -359,10 +368,6 @@
 <span class="sd">        Returns:</span>
 <span class="sd">            A single `LinearForwardProblem` where the data space is the direct</span>
 <span class="sd">            sum of the individual data spaces.</span>
-
-<span class="sd">        Raises:</span>
-<span class="sd">            ValueError: If the list of problems is empty or if they do not all</span>
-<span class="sd">                share the same model space.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">forward_problems</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Cannot form a direct sum from an empty list.&quot;</span><span class="p">)</span>
@@ -390,8 +395,8 @@
 
 
 <div class="viewcode-block" id="LinearForwardProblem.data_measure">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.data_measure">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">data_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.data_measure">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">data_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the Gaussian measure for the data, given a specific model.</span>
 
@@ -414,8 +419,8 @@
 
 
 <div class="viewcode-block" id="LinearForwardProblem.synthetic_data">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.synthetic_data">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">synthetic_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.synthetic_data">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">synthetic_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Vector&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Generates a synthetic data vector for a given model.</span>
 
@@ -432,10 +437,10 @@
 
 
 <div class="viewcode-block" id="LinearForwardProblem.synthetic_model_and_data">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.synthetic_model_and_data">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.synthetic_model_and_data">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">synthetic_model_and_data</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span> <span class="n">prior</span><span class="p">:</span> <span class="s2">&quot;GaussianMeasure&quot;</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="s2">&quot;T_vec&quot;</span><span class="p">,</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="s2">&quot;Vector&quot;</span><span class="p">,</span> <span class="s2">&quot;Vector&quot;</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Generates a random model and corresponding synthetic data.</span>
 
@@ -456,7 +461,7 @@
 
 
 <div class="viewcode-block" id="LinearForwardProblem.critical_chi_squared">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.critical_chi_squared">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.critical_chi_squared">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">critical_chi_squared</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">significance_level</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the critical value of the chi-squared statistic.</span>
@@ -474,25 +479,21 @@
 
 
 <div class="viewcode-block" id="LinearForwardProblem.chi_squared">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.chi_squared">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">chi_squared</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.chi_squared">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">chi_squared</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Calculates the chi-squared statistic for a given model and data.</span>
 
-<span class="sd">        If a data error measure with an inverse covariance is defined, this is</span>
-<span class="sd">        the weighted misfit: `(d - A(u))^T * C_e^-1 * (d - A(u))`. Otherwise,</span>
-<span class="sd">        it is the squared norm of the data residual: `||d - A(u)||^2`.</span>
-
+<span class="sd">        This measures the misfit between the predicted and observed data.</span>
+<span class="sd">        - If a data error measure with an inverse covariance `C_e^-1` is defined,</span>
+<span class="sd">          this is the weighted misfit: `(d - A(u))^T * C_e^-1 * (d - A(u))`.</span>
+<span class="sd">        - Otherwise, it is the squared L2 norm of the data residual: `||d - A(u)||^2`.</span>
 <span class="sd">        Args:</span>
 <span class="sd">            model: A vector from the model space.</span>
 <span class="sd">            data: An observed data vector from the data space.</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            The chi-squared statistic.</span>
-
-<span class="sd">        Raises:</span>
-<span class="sd">            AttributeError: If a data error measure is set but its inverse</span>
-<span class="sd">                covariance (precision operator) is not available.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">residual</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_space</span><span class="o">.</span><span class="n">subtract</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_operator</span><span class="p">(</span><span class="n">model</span><span class="p">))</span>
 
@@ -511,9 +512,9 @@
 
 
 <div class="viewcode-block" id="LinearForwardProblem.chi_squared_test">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.chi_squared_test">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.chi_squared_test">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">chi_squared_test</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">significance_level</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">significance_level</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Performs a chi-squared test for goodness of fit.</span>

@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,7 +241,24 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.operators</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module defining the Operator, LinearOperator, and DiagonalLinearOperator classes.</span>
+<span class="sd">Defines a class hierarchy for operators between Hilbert spaces.</span>
+
+<span class="sd">This module provides the tools for defining and manipulating mappings between</span>
+<span class="sd">`HilbertSpace` objects. It distinguishes between general non-linear operators</span>
+<span class="sd">and the more structured linear operators, which are the primary focus and</span>
+<span class="sd">support a rich algebra.</span>
+
+<span class="sd">Key Classes</span>
+<span class="sd">-----------</span>
+<span class="sd">- `Operator`: A general, potentially non-linear operator defined by a simple</span>
+<span class="sd">  mapping function.</span>
+<span class="sd">- `LinearOperator`: The main workhorse for linear algebra. It represents a</span>
+<span class="sd">  linear map and provides rich functionality, including composition (`@`),</span>
+<span class="sd">  adjoints (`.adjoint`), duals (`.dual`), and matrix representations (`.matrix`).</span>
+<span class="sd">  It includes numerous factory methods for convenient construction.</span>
+<span class="sd">- `DiagonalLinearOperator`: A specialized, efficient implementation for linear</span>
+<span class="sd">  operators that are diagonal in their component representation, which supports</span>
+<span class="sd">  functional calculus.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
@@ -251,8 +268,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">scipy.sparse.linalg</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span> <span class="k">as</span> <span class="n">ScipyLinOp</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">scipy.sparse</span><span class="w"> </span><span class="kn">import</span> <span class="n">diags</span>
 
-<span class="c1"># This import path assumes `pygeoinf` is on the python path.</span>
-<span class="c1"># For a local package structure, you might use from ..random_matrix import ...</span>
+
 <span class="kn">from</span><span class="w"> </span><span class="nn">.random_matrix</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">fixed_rank_random_range</span><span class="p">,</span>
     <span class="n">variable_rank_random_range</span><span class="p">,</span>
@@ -268,7 +284,7 @@
 
 
 <div class="viewcode-block" id="Operator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.Operator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.Operator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">Operator</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A general, potentially non-linear operator between two Hilbert spaces.</span>
@@ -325,13 +341,19 @@
 
 
 <div class="viewcode-block" id="LinearOperator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearOperator</span><span class="p">(</span><span class="n">Operator</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A linear operator between two Hilbert spaces.</span>
 
-<span class="sd">    This class is the primary workhorse for linear algebraic operations,</span>
-<span class="sd">    supporting composition, adjoints, duals, and matrix representations.</span>
+<span class="sd">    This class is the primary workhorse for linear algebraic operations. An</span>
+<span class="sd">    operator can be defined &quot;on the fly&quot; from a callable mapping. The class</span>
+<span class="sd">    automatically derives the associated `adjoint` and `dual` operators,</span>
+<span class="sd">    which are fundamental for solving linear systems and for optimization.</span>
+
+<span class="sd">    It supports a rich algebra, including composition (`@`), addition (`+`),</span>
+<span class="sd">    and scalar multiplication (`*`). Operators can also be represented as</span>
+<span class="sd">    dense or matrix-free (`scipy`) matrices for use with numerical solvers.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
@@ -343,7 +365,6 @@
         <span class="o">*</span><span class="p">,</span>
         <span class="n">dual_mapping</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">adjoint_mapping</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">formal_adjoint_mapping</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">thread_safe</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">dual_base</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">adjoint_base</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -357,7 +378,6 @@
 <span class="sd">            mapping (callable): The function defining the linear mapping.</span>
 <span class="sd">            dual_mapping (callable, optional): The action of the dual operator.</span>
 <span class="sd">            adjoint_mapping (callable, optional): The action of the adjoint.</span>
-<span class="sd">            formal_adjoint_mapping (callable, optional): The formal adjoint.</span>
 <span class="sd">            thread_safe (bool, optional): True if the mapping is thread-safe.</span>
 <span class="sd">            dual_base (LinearOperator, optional): Internal use for duals.</span>
 <span class="sd">            adjoint_base (LinearOperator, optional): Internal use for adjoints.</span>
@@ -366,17 +386,12 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_dual_base</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="n">dual_base</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_adjoint_base</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="n">adjoint_base</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_thread_safe</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">thread_safe</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">__formal_adjoint_mapping</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">__adjoint_mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">__dual_mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
 
         <span class="k">if</span> <span class="n">dual_mapping</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">adjoint_mapping</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="k">if</span> <span class="n">formal_adjoint_mapping</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">__dual_mapping</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dual_mapping_default</span>
-                <span class="k">else</span><span class="p">:</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">__formal_adjoint_mapping</span> <span class="o">=</span> <span class="n">formal_adjoint_mapping</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">__dual_mapping</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dual_mapping_from_formal_adjoint</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">__dual_mapping</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dual_mapping_default</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">__adjoint_mapping</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_adjoint_mapping_from_dual</span>
             <span class="k">else</span><span class="p">:</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">__adjoint_mapping</span> <span class="o">=</span> <span class="n">adjoint_mapping</span>
@@ -389,7 +404,7 @@
                 <span class="bp">self</span><span class="o">.</span><span class="n">__adjoint_mapping</span> <span class="o">=</span> <span class="n">adjoint_mapping</span>
 
 <div class="viewcode-block" id="LinearOperator.self_dual">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_dual">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.self_dual">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_dual</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
@@ -399,7 +414,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.self_adjoint">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_adjoint</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
@@ -408,18 +423,86 @@
         <span class="k">return</span> <span class="n">LinearOperator</span><span class="p">(</span><span class="n">domain</span><span class="p">,</span> <span class="n">domain</span><span class="p">,</span> <span class="n">mapping</span><span class="p">,</span> <span class="n">adjoint_mapping</span><span class="o">=</span><span class="n">mapping</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="LinearOperator.formally_self_adjoint">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.formally_self_adjoint">[docs]</a>
+<div class="viewcode-block" id="LinearOperator.from_formal_adjoint">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_formal_adjoint">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">formally_self_adjoint</span><span class="p">(</span>
-        <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_formal_adjoint</span><span class="p">(</span>
+        <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">codomain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Creates a formally self-adjoint operator.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="n">LinearOperator</span><span class="p">(</span><span class="n">domain</span><span class="p">,</span> <span class="n">domain</span><span class="p">,</span> <span class="n">mapping</span><span class="p">,</span> <span class="n">formal_adjoint_mapping</span><span class="o">=</span><span class="n">mapping</span><span class="p">)</span></div>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Constructs an operator on weighted spaces from one on the underlying spaces.</span>
+
+<span class="sd">        This is a key method for working with `MassWeightedHilbertSpace`. It takes</span>
+<span class="sd">        an operator `A` that is defined on the simple, unweighted underlying spaces</span>
+<span class="sd">        and &quot;lifts&quot; it to be a proper operator on the mass-weighted spaces. It</span>
+<span class="sd">        correctly defines the new operator&#39;s adjoint with respect to the</span>
+<span class="sd">        weighted inner products.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            domain: The (potentially) mass-weighted domain of the new operator.</span>
+<span class="sd">            codomain: The (potentially) mass-weighted codomain of the new operator.</span>
+<span class="sd">            operator: The original operator defined on the underlying,</span>
+<span class="sd">                unweighted spaces.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A new `LinearOperator` that acts between the mass-weighted spaces.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">MassWeightedHilbertSpace</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">domain</span><span class="p">,</span> <span class="n">MassWeightedHilbertSpace</span><span class="p">):</span>
+            <span class="n">domain_base</span> <span class="o">=</span> <span class="n">domain</span><span class="o">.</span><span class="n">underlying_space</span>
+            <span class="n">domain_inverse_mass_operator</span> <span class="o">=</span> <span class="n">domain</span><span class="o">.</span><span class="n">inverse_mass_operator</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">domain_base</span> <span class="o">=</span> <span class="n">domain</span>
+            <span class="n">domain_inverse_mass_operator</span> <span class="o">=</span> <span class="n">domain</span><span class="o">.</span><span class="n">identity_operator</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">codomain</span><span class="p">,</span> <span class="n">MassWeightedHilbertSpace</span><span class="p">):</span>
+            <span class="n">codomain_base</span> <span class="o">=</span> <span class="n">codomain</span><span class="o">.</span><span class="n">underlying_space</span>
+            <span class="n">codomain_mass_operator</span> <span class="o">=</span> <span class="n">codomain</span><span class="o">.</span><span class="n">mass_operator</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">codomain_base</span> <span class="o">=</span> <span class="n">codomain</span>
+            <span class="n">codomain_mass_operator</span> <span class="o">=</span> <span class="n">codomain</span><span class="o">.</span><span class="n">identity_operator</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">domain_base</span> <span class="o">!=</span> <span class="n">operator</span><span class="o">.</span><span class="n">domain</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Domain mismatch&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">codomain_base</span> <span class="o">!=</span> <span class="n">operator</span><span class="o">.</span><span class="n">codomain</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Codomain mismatch&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">LinearOperator</span><span class="p">(</span>
+            <span class="n">domain</span><span class="p">,</span>
+            <span class="n">codomain</span><span class="p">,</span>
+            <span class="n">operator</span><span class="p">,</span>
+            <span class="n">adjoint_mapping</span><span class="o">=</span><span class="n">domain_inverse_mass_operator</span>
+<div class="viewcode-block" id="LinearOperator.from_formally_self_adjoint">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_formally_self_adjoint">[docs]</a>
+            <span class="o">@</span> <span class="n">operator</span><span class="o">.</span><span class="n">adjoint</span>
+            <span class="o">@</span> <span class="n">codomain_mass_operator</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_formally_self_adjoint</span><span class="p">(</span>
+        <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Method to construct LinearOperators on MassWeightedHilbertSpaces</span>
+<span class="sd">        that are self-adjoint on the underlying space.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            domain (MassWeightedHilbertSpace): The domain of the operator.</span>
+<span class="sd">            operator (LinearOperator): The operator to be converted</span>
+
+<span class="sd">        Notes:</span>
+<span class="sd">            If the domain is not a MassWeightedHilbertSpace, the underlying</span>
+<span class="sd">            domain is taken to be the domain, and the mass operator the identity.</span>
+<span class="sd">            In such cases the method is well-defined but pointless as the output</span>
+<span class="sd">            operator is identical to the input operator.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">LinearOperator</span><span class="o">.</span><span class="n">from_formal_adjoint</span><span class="p">(</span><span class="n">domain</span><span class="p">,</span> <span class="n">domain</span><span class="p">,</span> <span class="n">operator</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="LinearOperator.from_linear_forms">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.from_linear_forms">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_linear_forms">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_linear_forms</span><span class="p">(</span><span class="n">forms</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;LinearForm&quot;</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -453,7 +536,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.from_matrix">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.from_matrix">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_matrix">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_matrix</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -464,15 +547,48 @@
         <span class="n">galerkin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Creates an operator from its matrix representation.</span>
+<span class="sd">        Creates a LinearOperator from its matrix representation.</span>
+
+<span class="sd">        This factory method allows you to define a `LinearOperator` using a</span>
+<span class="sd">        concrete matrix (like a `numpy.ndarray`) that acts on the component</span>
+<span class="sd">        vectors of the abstract Hilbert space vectors. The `galerkin` flag</span>
+<span class="sd">        determines how this matrix action is interpreted.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            domain: The operator&#39;s domain.</span>
-<span class="sd">            codomain: The operator&#39;s codomain.</span>
-<span class="sd">            matrix: The matrix representation.</span>
-<span class="sd">            galerkin: If False (default), matrix maps components to components.</span>
-<span class="sd">                If True, matrix maps components of the domain to dual</span>
-<span class="sd">                components of the codomain.</span>
+<span class="sd">            domain (HilbertSpace): The operator&#39;s domain.</span>
+<span class="sd">            codomain (HilbertSpace): The operator&#39;s codomain.</span>
+<span class="sd">            matrix (MatrixLike): The matrix representation, which can be a dense</span>
+<span class="sd">                NumPy array or a SciPy LinearOperator. Its shape must be</span>
+<span class="sd">                (codomain.dim, domain.dim).</span>
+<span class="sd">            galerkin (bool): Specifies the interpretation of the matrix.</span>
+
+<span class="sd">                - **`galerkin=False` (Default): Standard Component Mapping**</span>
+<span class="sd">                  This is the most direct interpretation. The matrix `M` maps the</span>
+<span class="sd">                  component vector `c_x` of an input vector `x` directly to the</span>
+<span class="sd">                  component vector `c_y` of the output vector `y`.</span>
+
+<span class="sd">                - **`galerkin=True`: Galerkin (or &quot;Weak Form&quot;) Representation**</span>
+<span class="sd">                  This interpretation is standard in the finite element method (FEM)</span>
+<span class="sd">                  and other variational techniques. The matrix `M` maps the component</span>
+<span class="sd">                  vector `c_x` of an input `x` to the component vector `c_yp` of the</span>
+<span class="sd">                  *dual* of the output vector `y`.</span>
+
+<span class="sd">                  - **Matrix Entries**: The matrix elements are defined by inner</span>
+<span class="sd">                    products with basis vectors: `M_ij = inner_product(A(b_j), b_i)`,</span>
+<span class="sd">                    where `b_j` are domain basis vectors and `b_i` are codomain</span>
+<span class="sd">                    basis vectors.</span>
+<span class="sd">                  - **Use Case**: This is critically important for preserving the</span>
+<span class="sd">                    mathematical properties of an operator. For example, if an operator</span>
+<span class="sd">                    `A` is self-adjoint, its Galerkin matrix `M` will be **symmetric**</span>
+<span class="sd">                    (`M.T == M`). This allows the use of highly efficient numerical</span>
+<span class="sd">                    methods like the Conjugate Gradient solver or Cholesky</span>
+<span class="sd">                    factorization, which rely on symmetry. The standard component</span>
+<span class="sd">                    matrix of a self-adjoint operator is generally not symmetric</span>
+<span class="sd">                    unless the basis is orthonormal.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            LinearOperator: A new `LinearOperator` instance whose action is</span>
+<span class="sd">                defined by the provided matrix and interpretation.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">assert</span> <span class="n">matrix</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="p">(</span><span class="n">codomain</span><span class="o">.</span><span class="n">dim</span><span class="p">,</span> <span class="n">domain</span><span class="o">.</span><span class="n">dim</span><span class="p">)</span>
 
@@ -513,7 +629,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.self_adjoint_from_matrix">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint_from_matrix">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint_from_matrix">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_adjoint_from_matrix</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">matrix</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">ScipyLinOp</span><span class="p">]</span>
@@ -530,7 +646,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.from_tensor_product">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.from_tensor_product">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_tensor_product">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_tensor_product</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -568,7 +684,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.self_adjoint_from_tensor_product">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint_from_tensor_product">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint_from_tensor_product">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">self_adjoint_from_tensor_product</span><span class="p">(</span>
         <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
@@ -627,18 +743,51 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_thread_safe</span>
 
 <div class="viewcode-block" id="LinearOperator.matrix">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.matrix">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.matrix">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">matrix</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dense</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">galerkin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">ScipyLinOp</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns a matrix representation of the operator.</span>
 
-<span class="sd">        By default, returns a matrix-free `scipy.sparse.linalg.LinearOperator`.</span>
+<span class="sd">        This method provides a concrete matrix that represents the abstract</span>
+<span class="sd">        linear operator&#39;s action on the underlying component vectors.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            dense: If True, returns a dense `numpy.ndarray`.</span>
-<span class="sd">            galerkin: If True, returns the Galerkin representation.</span>
+<span class="sd">            dense (bool): Determines the format of the returned matrix.</span>
+<span class="sd">                - If `True`, this method computes and returns a dense `numpy.ndarray`.</span>
+<span class="sd">                  Be aware that this can be very memory-intensive for</span>
+<span class="sd">                  high-dimensional spaces.</span>
+<span class="sd">                - If `False` (default), it returns a matrix-free</span>
+<span class="sd">                  `scipy.sparse.linalg.LinearOperator`. This object encapsulates</span>
+<span class="sd">                  the operator&#39;s action (`matvec`) and its transpose action</span>
+<span class="sd">                  (`rmatvec`) without ever explicitly forming the full matrix in memory,</span>
+<span class="sd">                  making it ideal for large-scale problems.</span>
+
+<span class="sd">            galerkin (bool): Specifies the interpretation of the matrix representation. This</span>
+<span class="sd">                flag is crucial for correctly using the matrix with numerical solvers.</span>
+
+<span class="sd">                - **`galerkin=False` (Default): Standard Component Mapping**</span>
+<span class="sd">                  The returned matrix `M` performs a standard component-to-component</span>
+<span class="sd">                  mapping.</span>
+<span class="sd">                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`</span>
+<span class="sd">                    and returns the component vector `c_y` of the output `y`.</span>
+<span class="sd">                  - **`rmatvec` action**: Corresponds to the matrix of the **dual operator**, `A&#39;`.</span>
+
+<span class="sd">                - **`galerkin=True`: Galerkin (or &quot;Weak Form&quot;) Representation**</span>
+<span class="sd">                  The returned matrix `M` represents the operator in a weak form, mapping</span>
+<span class="sd">                  components of a vector to components of a dual vector.</span>
+<span class="sd">                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`</span>
+<span class="sd">                    and returns the component vector `c_yp` of the *dual* of the output `y`.</span>
+<span class="sd">                  - **`rmatvec` action**: Corresponds to the matrix of the **adjoint operator**, `A*`.</span>
+<span class="sd">                  - **Key Property**: This representation is designed to preserve fundamental</span>
+<span class="sd">                    mathematical properties. For instance, if the `LinearOperator` is</span>
+<span class="sd">                    self-adjoint, its Galerkin matrix will be **symmetric**, which is a</span>
+<span class="sd">                    prerequisite for algorithms like the Conjugate Gradient method.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Union[ScipyLinOp, np.ndarray]: The matrix representation of the</span>
+<span class="sd">                operator, either as a dense array or a matrix-free object.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">dense</span><span class="p">:</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compute_dense_matrix</span><span class="p">(</span><span class="n">galerkin</span><span class="p">)</span>
@@ -697,7 +846,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.random_svd">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.random_svd">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.random_svd">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_svd</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -752,7 +901,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.random_eig">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.random_eig">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.random_eig">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_eig</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -794,7 +943,7 @@
 
 
 <div class="viewcode-block" id="LinearOperator.random_cholesky">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.LinearOperator.random_cholesky">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.LinearOperator.random_cholesky">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">random_cholesky</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -843,13 +992,6 @@
         <span class="n">y</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codomain</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">yp</span><span class="p">)</span>
         <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__adjoint_mapping</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_dual_mapping_from_formal_adjoint</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">yp</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-        <span class="n">cyp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codomain</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">yp</span><span class="p">)</span>
-        <span class="n">y</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codomain</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cyp</span><span class="p">)</span>
-        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__formal_adjoint_mapping</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
-        <span class="n">cx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cx</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_adjoint_mapping_from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
         <span class="n">yp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">codomain</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
@@ -948,7 +1090,7 @@
 
 
 <div class="viewcode-block" id="DiagonalLinearOperator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">DiagonalLinearOperator</span><span class="p">(</span><span class="n">LinearOperator</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A LinearOperator that is diagonal in its component representation.</span>
@@ -994,7 +1136,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_diagonal_values</span>
 
 <div class="viewcode-block" id="DiagonalLinearOperator.function">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator.function">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator.function">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">function</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;DiagonalLinearOperator&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Applies a function to the operator via functional calculus.</span>

@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,13 +241,21 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.random_matrix</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module for random matrix factorisations.</span>
+<span class="sd">Implements randomized algorithms for low-rank matrix factorizations.</span>
 
-<span class="sd">This module provides functions for computing low-rank matrix factorisations</span>
-<span class="sd">using randomized algorithms. These methods are particularly effective for large</span>
-<span class="sd">matrices where deterministic methods would be too slow. The implementations</span>
-<span class="sd">are based on the work of Halko, Martinsson, and Tropp (2011).</span>
+<span class="sd">This module provides functions for computing approximate, low-rank matrix</span>
+<span class="sd">factorizations (SVD, Cholesky, Eigendecomposition) using randomized methods.</span>
+<span class="sd">These algorithms are particularly effective for large, high-dimensional matrices</span>
+<span class="sd">where deterministic methods would be computationally prohibitive. They work by</span>
+<span class="sd">finding a low-dimensional subspace that captures most of the &quot;action&quot; of the</span>
+<span class="sd">matrix.</span>
+
+<span class="sd">The implementations are based on the seminal work of Halko, Martinsson, and</span>
+<span class="sd">Tropp, &quot;Finding structure with randomness: Probabilistic algorithms for</span>
+<span class="sd">constructing approximate matrix decompositions&quot; (2011).</span>
 <span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">scipy.linalg</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -258,41 +266,36 @@
     <span class="n">qr</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">scipy.sparse.linalg</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span> <span class="k">as</span> <span class="n">ScipyLinOp</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
+
 
 <span class="c1"># A type for objects that act like matrices (numpy arrays or SciPy LinearOperators)</span>
 <span class="n">MatrixLike</span> <span class="o">=</span> <span class="n">Union</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">ScipyLinOp</span><span class="p">]</span>
 
 
 <div class="viewcode-block" id="fixed_rank_random_range">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.fixed_rank_random_range">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.random_matrix.fixed_rank_random_range">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">fixed_rank_random_range</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">power</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Computes an orthonormal basis for a fixed-rank approximation to the</span>
-<span class="sd">    range of a matrix using a randomized method.</span>
+<span class="sd">    Computes an orthonormal basis for a fixed-rank approximation of a matrix&#39;s range.</span>
 
-<span class="sd">    This is a two-stage algorithm that finds a low-dimensional subspace that</span>
-<span class="sd">    captures most of the action of the matrix.</span>
+<span class="sd">    This randomized algorithm finds a low-dimensional subspace that captures</span>
+<span class="sd">    most of the action of the matrix.</span>
 
 <span class="sd">    Args:</span>
-<span class="sd">        matrix (matrix-like): An (m, n) matrix or LinearOperator whose range</span>
-<span class="sd">            is to be approximated.</span>
-<span class="sd">        rank (int): The desired rank for the approximation. Must be</span>
-<span class="sd">            greater than 1.</span>
-<span class="sd">        power (int): The exponent for power iterations, used to improve the</span>
-<span class="sd">            accuracy of the approximation.</span>
+<span class="sd">        matrix: An (m, n) matrix or scipy.LinearOperator whose range is to be approximated.</span>
+<span class="sd">        rank: The desired rank for the approximation.</span>
+<span class="sd">        power: The number of power iterations to perform. Power iterations</span>
+<span class="sd">            (multiplying by `A*A`) improves the accuracy of the approximation by</span>
+<span class="sd">            amplifying the dominant singular values, but adds to the computational cost.</span>
 
 <span class="sd">    Returns:</span>
-<span class="sd">        numpy.ndarray: An (m, rank) matrix with orthonormal columns whose</span>
-<span class="sd">            span approximates the range of the input matrix.</span>
+<span class="sd">        An (m, rank) matrix with orthonormal columns whose span approximates</span>
+<span class="sd">        the range of the input matrix.</span>
 
 <span class="sd">    Notes:</span>
-<span class="sd">        If the input matrix is a scipy LinearOperator, it must have the</span>
-<span class="sd">        `matmat` and `rmatmat` methods implemented.</span>
-
-<span class="sd">        This method is based on Algorithm 4.4 in Halko et al. 2011.</span>
+<span class="sd">        Based on Algorithm 4.4 in Halko et al. 2011.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">m</span><span class="p">,</span> <span class="n">n</span> <span class="o">=</span> <span class="n">matrix</span><span class="o">.</span><span class="n">shape</span>
@@ -312,7 +315,7 @@
 
 
 <div class="viewcode-block" id="variable_rank_random_range">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.variable_rank_random_range">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.random_matrix.variable_rank_random_range">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">variable_rank_random_range</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">power</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">rtol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
@@ -388,24 +391,25 @@
 
 
 <div class="viewcode-block" id="random_svd">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.random_svd">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.random_matrix.random_svd">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">random_svd</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">qr_factor</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Computes an approximate Singular Value Decomposition (SVD) from a</span>
-<span class="sd">    low-rank range approximation.</span>
+<span class="sd">    Computes an approximate SVD from a low-rank range approximation.</span>
+
+<span class="sd">    This function takes the original matrix and an orthonormal basis for its</span>
+<span class="sd">    approximate range (the `qr_factor`) and projects the problem into a smaller</span>
+<span class="sd">    subspace where a deterministic SVD is cheap to compute.</span>
 
 <span class="sd">    Args:</span>
-<span class="sd">        matrix (matrix-like): The original (m, n) matrix or LinearOperator.</span>
-<span class="sd">        qr_factor (numpy.ndarray): An (m, k) orthonormal basis for the</span>
-<span class="sd">            approximate range of the matrix, typically from a</span>
-<span class="sd">            `random_range` function.</span>
+<span class="sd">        matrix: The original (m, n) matrix or LinearOperator.</span>
+<span class="sd">        qr_factor: An (m, k) orthonormal basis for the approximate range,</span>
+<span class="sd">            typically from a `random_range` function.</span>
 
 <span class="sd">    Returns:</span>
-<span class="sd">        (numpy.ndarray, numpy.ndarray, numpy.ndarray): A tuple (U, S, Vh)</span>
-<span class="sd">            containing the approximate SVD factors, such that A ~= U @ S @ Vh.</span>
-<span class="sd">            S is a 1D array of singular values.</span>
+<span class="sd">        A tuple `(U, S, Vh)` containing the approximate SVD factors, where S is</span>
+<span class="sd">        a 1D array of singular values.</span>
 
 <span class="sd">    Notes:</span>
 <span class="sd">        Based on Algorithm 5.1 of Halko et al. 2011.</span>
@@ -423,7 +427,7 @@
 
 
 <div class="viewcode-block" id="random_eig">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.random_eig">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.random_matrix.random_eig">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">random_eig</span><span class="p">(</span>
     <span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">qr_factor</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
@@ -454,7 +458,7 @@
 
 
 <div class="viewcode-block" id="random_cholesky">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.random_matrix.random_cholesky">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.random_matrix.random_cholesky">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">random_cholesky</span><span class="p">(</span><span class="n">matrix</span><span class="p">:</span> <span class="n">MatrixLike</span><span class="p">,</span> <span class="n">qr_factor</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Computes an approximate Cholesky factorisation for a symmetric positive-</span>

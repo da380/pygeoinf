@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,7 +241,25 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.linear_bayesian</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module for solving inverse problems using Bayesian methods.</span>
+<span class="sd">Implements the Bayesian framework for solving linear inverse problems.</span>
+
+<span class="sd">This module treats the inverse problem from a statistical perspective, aiming to</span>
+<span class="sd">determine the full posterior probability distribution of the unknown model</span>
+<span class="sd">parameters, rather than a single best-fit solution.</span>
+
+<span class="sd">It assumes that the prior knowledge about the model and the statistics of the</span>
+<span class="sd">data errors can be described by Gaussian measures. For a linear forward problem,</span>
+<span class="sd">the resulting posterior distribution for the model is also Gaussian, allowing</span>
+<span class="sd">for an analytical solution.</span>
+
+<span class="sd">Key Classes</span>
+<span class="sd">-----------</span>
+<span class="sd">- `LinearBayesianInversion`: Computes the posterior Gaussian measure `p(u|d)`</span>
+<span class="sd">  for the model `u` given observed data `d`. This provides not only a mean</span>
+<span class="sd">  estimate for the model but also its uncertainty (covariance).</span>
+<span class="sd">- `LinearBayesianInference`: Extends the framework to compute the posterior</span>
+<span class="sd">  distribution for a derived property of the model, `p(B(u)|d)`, where `B` is</span>
+<span class="sd">  some linear operator.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
@@ -254,24 +272,25 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.forward_problem</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForwardProblem</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_solvers</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearSolver</span><span class="p">,</span> <span class="n">IterativeLinearSolver</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">T_vec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">Vector</span>
 
 
 <div class="viewcode-block" id="LinearBayesianInversion">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearBayesianInversion</span><span class="p">(</span><span class="n">Inversion</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Solves a linear inverse problem using Bayesian methods.</span>
 
-<span class="sd">    This class applies to problems of the form `d = A(u) + e`, where the model</span>
-<span class="sd">    `u` and the error `e` are described by Gaussian distributions. It computes</span>
-<span class="sd">    the posterior probability distribution `p(u|d)` for the model parameters.</span>
+<span class="sd">    This class applies to problems of the form `d = A(u) + e`, where the prior</span>
+<span class="sd">    knowledge of the model `u` and the statistics of the error `e` are described</span>
+<span class="sd">    by Gaussian distributions. It computes the full posterior probability</span>
+<span class="sd">    distribution `p(u|d)` for the model parameters given an observation `d`.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">forward_problem</span><span class="p">:</span> <span class="s2">&quot;LinearForwardProblem&quot;</span><span class="p">,</span>
-        <span class="n">model_prior_measure</span><span class="p">:</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">,</span>
+        <span class="n">forward_problem</span><span class="p">:</span> <span class="n">LinearForwardProblem</span><span class="p">,</span>
+        <span class="n">model_prior_measure</span><span class="p">:</span> <span class="n">GaussianMeasure</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -280,21 +299,22 @@
 <span class="sd">            model_prior_measure: The prior Gaussian measure on the model space.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">forward_problem</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_model_prior_measure</span><span class="p">:</span> <span class="s2">&quot;GaussianMeasure&quot;</span> <span class="o">=</span> <span class="n">model_prior_measure</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_model_prior_measure</span><span class="p">:</span> <span class="n">GaussianMeasure</span> <span class="o">=</span> <span class="n">model_prior_measure</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">model_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">model_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The prior Gaussian measure on the model space.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_model_prior_measure</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">normal_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">normal_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the covariance of the prior predictive distribution.</span>
+<span class="sd">        Returns the covariance of the prior predictive distribution, `p(d)`.</span>
 
-<span class="sd">        This operator, `C_d = A * C_u * A^T + C_e`, represents the total</span>
+<span class="sd">        This operator, `C_d = A @ C_u @ A* + C_e`, represents the total</span>
 <span class="sd">        expected covariance in the data space before any data is observed.</span>
-<span class="sd">        It is central to calculating the posterior distribution.</span>
+<span class="sd">        Its inverse is central to calculating the posterior distribution and is</span>
+<span class="sd">        often referred to as the Bayesian normal operator.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">forward_operator</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">forward_operator</span>
         <span class="n">prior_model_covariance</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_prior_measure</span><span class="o">.</span><span class="n">covariance</span>
@@ -308,8 +328,8 @@
             <span class="k">return</span> <span class="n">forward_operator</span> <span class="o">@</span> <span class="n">prior_model_covariance</span> <span class="o">@</span> <span class="n">forward_operator</span><span class="o">.</span><span class="n">adjoint</span>
 
 <div class="viewcode-block" id="LinearBayesianInversion.data_prior_measure">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.data_prior_measure">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">data_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.data_prior_measure">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">data_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the prior predictive distribution on the data, `p(d)`.</span>
 
@@ -333,20 +353,21 @@
 
 
 <div class="viewcode-block" id="LinearBayesianInversion.model_posterior_measure">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.model_posterior_measure">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.model_posterior_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">model_posterior_measure</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">,</span>
-        <span class="n">solver</span><span class="p">:</span> <span class="s2">&quot;LinearSolver&quot;</span><span class="p">,</span>
+        <span class="n">data</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span>
+        <span class="n">solver</span><span class="p">:</span> <span class="n">LinearSolver</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="n">preconditioner</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;LinearOperator&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+        <span class="n">preconditioner</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the posterior Gaussian measure for the model, `p(u|d)`.</span>
 
-<span class="sd">        The posterior mean and covariance are computed analytically using the</span>
-<span class="sd">        standard formulas for linear-Gaussian models.</span>
+<span class="sd">        This measure represents our updated state of knowledge about the model</span>
+<span class="sd">        `u` after observing the data `d`. Its expectation is the most likely</span>
+<span class="sd">        model, and its covariance quantifies the remaining uncertainty.</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            data: The observed data vector.</span>
@@ -387,7 +408,7 @@
         <span class="n">covariance</span> <span class="o">=</span> <span class="n">prior_model_covariance</span> <span class="o">-</span> <span class="p">(</span>
             <span class="n">prior_model_covariance</span>
 <div class="viewcode-block" id="LinearBayesianInference">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference">[docs]</a>
             <span class="o">@</span> <span class="n">forward_operator</span><span class="o">.</span><span class="n">adjoint</span>
             <span class="o">@</span> <span class="n">inverse_normal_operator</span>
             <span class="o">@</span> <span class="n">forward_operator</span>
@@ -401,19 +422,19 @@
 
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearBayesianInference</span><span class="p">(</span><span class="n">LinearBayesianInversion</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Performs Bayesian inference on a derived property of the model.</span>
 
-<span class="sd">    Performs Bayesian inference on a property of the model.</span>
-
-<span class="sd">    This class extends the Bayesian inversion framework to compute the posterior</span>
-<span class="sd">    distribution for a derived property `p = B(u)`, where `B` is a linear</span>
-<span class="sd">    operator acting on the model `u`.</span>
+<span class="sd">    While `LinearBayesianInversion` solves for the model `u` itself, this class</span>
+<span class="sd">    computes the posterior distribution for a property `p = B(u)`, where `B` is a</span>
+<span class="sd">    linear operator acting on the model `u`. This is useful for uncertainty</span>
+<span class="sd">    quantification of derived quantities (e.g., the average value of a field).</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">forward_problem</span><span class="p">:</span> <span class="s2">&quot;LinearForwardProblem&quot;</span><span class="p">,</span>
-        <span class="n">model_prior_measure</span><span class="p">:</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">,</span>
-        <span class="n">property_operator</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">,</span>
+        <span class="n">forward_problem</span><span class="p">:</span> <span class="n">LinearForwardProblem</span><span class="p">,</span>
+        <span class="n">model_prior_measure</span><span class="p">:</span> <span class="n">GaussianMeasure</span><span class="p">,</span>
+        <span class="n">property_operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -426,21 +447,21 @@
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">forward_problem</span><span class="p">,</span> <span class="n">model_prior_measure</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">property_operator</span><span class="o">.</span><span class="n">domain</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">model_space</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Property operator domain must match the model space.&quot;</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_property_operator</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="n">property_operator</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_property_operator</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="n">property_operator</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">property_space</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">property_space</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HilbertSpace</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The Hilbert space in which the property `p` resides.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_property_operator</span><span class="o">.</span><span class="n">codomain</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">property_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">property_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The linear operator `B` that defines the property.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_property_operator</span>
 
 <div class="viewcode-block" id="LinearBayesianInference.property_prior_measure">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_prior_measure">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">property_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_prior_measure">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">property_prior_measure</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the prior measure on the property space, `p(p)`.</span>
 
@@ -451,15 +472,15 @@
 
 
 <div class="viewcode-block" id="LinearBayesianInference.property_posterior_measure">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_posterior_measure">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_posterior_measure">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">property_posterior_measure</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">,</span>
-        <span class="n">solver</span><span class="p">:</span> <span class="s2">&quot;LinearSolver&quot;</span><span class="p">,</span>
+        <span class="n">data</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span>
+        <span class="n">solver</span><span class="p">:</span> <span class="n">LinearSolver</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="n">preconditioner</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;LinearOperator&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+        <span class="n">preconditioner</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the posterior measure on the property space, `p(p|d)`.</span>
 

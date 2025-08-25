@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,7 +241,24 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.gaussian_measure</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module for representing Gaussian measures on abstract Hilbert spaces.</span>
+<span class="sd">Provides a class for representing Gaussian measures on Hilbert spaces.</span>
+
+<span class="sd">This module generalizes the concept of a multivariate normal distribution to</span>
+<span class="sd">the setting of abstract Hilbert spaces. A `GaussianMeasure` is defined by its</span>
+<span class="sd">expectation (a vector in the space) and its covariance (a self-adjoint,</span>
+<span class="sd">positive semi-definite `LinearOperator`).</span>
+
+<span class="sd">This abstraction is fundamental for Bayesian inference, Gaussian processes, and</span>
+<span class="sd">data assimilation in function spaces.</span>
+
+<span class="sd">Key Features</span>
+<span class="sd">------------</span>
+<span class="sd">- Multiple factory methods for creating measures from various inputs (matrices,</span>
+<span class="sd">  samples, standard deviations).</span>
+<span class="sd">- A method for drawing random samples from the measure.</span>
+<span class="sd">- Implementation of the affine transformation rule (`y = A(x) + b`).</span>
+<span class="sd">- Support for creating low-rank approximations of the measure for efficiency.</span>
+<span class="sd">- Overloaded arithmetic operators for intuitive combination of measures.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
@@ -253,9 +270,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">scipy.stats</span><span class="w"> </span><span class="kn">import</span> <span class="n">multivariate_normal</span>
 
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">EuclideanSpace</span><span class="p">,</span>
-<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">EuclideanSpace</span><span class="p">,</span> <span class="n">HilbertModule</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">LinearOperator</span><span class="p">,</span>
@@ -275,31 +290,34 @@
     <span class="kn">from</span><span class="w"> </span><span class="nn">.direct_sum</span><span class="w"> </span><span class="kn">import</span> <span class="n">BlockDiagonalLinearOperator</span>
 
 <span class="c1"># Define a generic type for vectors in a Hilbert space</span>
-<span class="n">T_vec</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;T_vec&quot;</span><span class="p">)</span>
+<span class="n">Vector</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;Vector&quot;</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="GaussianMeasure">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">GaussianMeasure</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Represents a Gaussian measure on a Hilbert space.</span>
 
-<span class="sd">    This class generalizes the concept of a multivariate normal distribution</span>
-<span class="sd">    to abstract, potentially infinite-dimensional, Hilbert spaces. A measure is</span>
-<span class="sd">    defined by its expectation (mean) and its covariance, which is a linear</span>
-<span class="sd">    operator on the space.</span>
+<span class="sd">    This class generalizes the multivariate normal distribution to abstract,</span>
+<span class="sd">    potentially infinite-dimensional, Hilbert spaces. A measure is</span>
+<span class="sd">    defined by its expectation (mean vector) and its covariance, which is a</span>
+<span class="sd">    `LinearOperator` on the space.</span>
+
+<span class="sd">    It provides a powerful toolkit for probabilistic modeling, especially in</span>
+<span class="sd">    the context of Bayesian inversion.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="n">covariance</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">covariance_factor</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">expectation</span><span class="p">:</span> <span class="n">T_vec</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">sample</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">inverse_covariance</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">inverse_covariance_factor</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">covariance</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">covariance_factor</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">expectation</span><span class="p">:</span> <span class="n">Vector</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">sample</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="n">Vector</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">inverse_covariance</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">inverse_covariance_factor</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Initializes the GaussianMeasure.</span>
@@ -331,22 +349,22 @@
                 <span class="s2">&quot;Neither covariance or covariance factor has been provided&quot;</span>
             <span class="p">)</span>
 
-        <span class="bp">self</span><span class="o">.</span><span class="n">_covariance_factor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;LinearOperator&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">covariance_factor</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_covariance</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_covariance_factor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="n">covariance_factor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_covariance</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="p">(</span>
             <span class="n">covariance_factor</span> <span class="o">@</span> <span class="n">covariance_factor</span><span class="o">.</span><span class="n">adjoint</span>
             <span class="k">if</span> <span class="n">covariance</span> <span class="ow">is</span> <span class="kc">None</span>
             <span class="k">else</span> <span class="n">covariance</span>
         <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_covariance</span><span class="o">.</span><span class="n">domain</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_domain</span><span class="p">:</span> <span class="n">HilbertSpace</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_covariance</span><span class="o">.</span><span class="n">domain</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[],</span> <span class="n">Vector</span><span class="p">]]</span> <span class="o">=</span> <span class="p">(</span>
             <span class="n">sample</span> <span class="k">if</span> <span class="n">covariance_factor</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample_from_factor</span>
         <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance_factor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;LinearOperator&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance_factor</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
             <span class="n">inverse_covariance_factor</span>
         <span class="p">)</span>
 
         <span class="k">if</span> <span class="n">inverse_covariance_factor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;LinearOperator&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LinearOperator</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
                 <span class="n">inverse_covariance_factor</span><span class="o">.</span><span class="n">adjoint</span> <span class="o">@</span> <span class="n">inverse_covariance_factor</span>
             <span class="p">)</span>
         <span class="k">elif</span> <span class="n">inverse_covariance</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
@@ -355,20 +373,20 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="k">if</span> <span class="n">expectation</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_expectation</span><span class="p">:</span> <span class="n">T_vec</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">zero</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_expectation</span><span class="p">:</span> <span class="n">Vector</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">zero</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_expectation</span> <span class="o">=</span> <span class="n">expectation</span>
 
 <div class="viewcode-block" id="GaussianMeasure.from_standard_deviation">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviation">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviation">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_standard_deviation</span><span class="p">(</span>
-        <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
+        <span class="n">domain</span><span class="p">:</span> <span class="n">HilbertSpace</span><span class="p">,</span>
         <span class="n">standard_deviation</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="n">expectation</span><span class="p">:</span> <span class="n">T_vec</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+        <span class="n">expectation</span><span class="p">:</span> <span class="n">Vector</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Creates an isotropic Gaussian measure with scaled identity covariance.</span>
 
@@ -391,15 +409,15 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_standard_deviations">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviations">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_standard_deviations">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_standard_deviations</span><span class="p">(</span>
-        <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
+        <span class="n">domain</span><span class="p">:</span> <span class="n">HilbertSpace</span><span class="p">,</span>
         <span class="n">standard_deviations</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="n">expectation</span><span class="p">:</span> <span class="n">T_vec</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+        <span class="n">expectation</span><span class="p">:</span> <span class="n">Vector</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Creates a Gaussian measure with a diagonal covariance operator.</span>
 
@@ -428,26 +446,26 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_covariance_matrix">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_covariance_matrix">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_covariance_matrix">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_covariance_matrix</span><span class="p">(</span>
-        <span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span>
+        <span class="n">domain</span><span class="p">:</span> <span class="n">HilbertSpace</span><span class="p">,</span>
         <span class="n">covariance_matrix</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
         <span class="o">/</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="n">expectation</span><span class="p">:</span> <span class="n">T_vec</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+        <span class="n">expectation</span><span class="p">:</span> <span class="n">Vector</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Creates a Gaussian measure from a dense covariance matrix.</span>
 
 <span class="sd">        The provided matrix is interpreted as the Galerkin representation of</span>
-<span class="sd">        the covariance operator.</span>
+<span class="sd">        the covariance operator. This method computes a Cholesky-like</span>
+<span class="sd">        decomposition of the matrix to create a `covariance_factor`.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            domain (HilbertSpace): The Hilbert space for the measure.</span>
-<span class="sd">            covariance_matrix (np.ndarray): The dense covariance matrix.</span>
-<span class="sd">            expectation (vector, optional): The expectation of the measure.</span>
-<span class="sd">                Defaults to zero.</span>
+<span class="sd">            domain: The Hilbert space the measure is defined on.</span>
+<span class="sd">            covariance_matrix: The dense covariance matrix.</span>
+<span class="sd">            expectation: The expectation (mean) of the measure.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">eigenvalues</span><span class="p">,</span> <span class="n">U</span> <span class="o">=</span> <span class="n">eigh</span><span class="p">(</span><span class="n">covariance_matrix</span><span class="p">)</span>
@@ -476,9 +494,9 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_samples">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_samples">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_samples">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_samples</span><span class="p">(</span><span class="n">domain</span><span class="p">:</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">,</span> <span class="n">samples</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_samples</span><span class="p">(</span><span class="n">domain</span><span class="p">:</span> <span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">samples</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Vector</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Estimates a Gaussian measure from a collection of sample vectors.</span>
 
@@ -500,7 +518,7 @@
         <span class="k">if</span> <span class="n">n</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
             <span class="n">covariance</span> <span class="o">=</span> <span class="n">domain</span><span class="o">.</span><span class="n">zero_operator</span><span class="p">()</span>
 
-            <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
                 <span class="k">return</span> <span class="n">expectation</span>
 
         <span class="k">else</span><span class="p">:</span>
@@ -509,7 +527,7 @@
                 <span class="n">domain</span><span class="p">,</span> <span class="n">offsets</span>
             <span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
 
-            <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
                 <span class="n">x</span> <span class="o">=</span> <span class="n">domain</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">expectation</span><span class="p">)</span>
                 <span class="n">randoms</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">offsets</span><span class="p">))</span>
                 <span class="k">for</span> <span class="n">y</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">offsets</span><span class="p">,</span> <span class="n">randoms</span><span class="p">):</span>
@@ -522,9 +540,9 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.from_direct_sum">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_direct_sum">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_direct_sum">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_direct_sum</span><span class="p">(</span><span class="n">measures</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_direct_sum</span><span class="p">(</span><span class="n">measures</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">GaussianMeasure</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Constructs a product measure from a list of other measures.</span>
 
@@ -548,7 +566,7 @@
             <span class="k">else</span> <span class="kc">None</span>
         <span class="p">)</span>
 
-        <span class="k">def</span><span class="w"> </span><span class="nf">sample_impl</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">]:</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">sample_impl</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Vector</span><span class="p">]:</span>
             <span class="k">return</span> <span class="p">[</span><span class="n">measure</span><span class="o">.</span><span class="n">sample</span><span class="p">()</span> <span class="k">for</span> <span class="n">measure</span> <span class="ow">in</span> <span class="n">measures</span><span class="p">]</span>
 
         <span class="n">sample</span> <span class="o">=</span> <span class="p">(</span>
@@ -564,12 +582,12 @@
 
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">domain</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;HilbertSpace&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">domain</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HilbertSpace</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The Hilbert space the measure is defined on.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_domain</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The covariance operator of the measure.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_covariance</span>
 
@@ -579,7 +597,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">inverse_covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">inverse_covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The inverse covariance (precision) operator.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;Inverse covariance is not set for this measure.&quot;</span><span class="p">)</span>
@@ -591,7 +609,7 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_covariance_factor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">covariance_factor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">covariance_factor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The covariance factor L (s.t. C=LL*).&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_covariance_factor</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;Covariance factor has not been set.&quot;</span><span class="p">)</span>
@@ -603,14 +621,14 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance_factor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">inverse_covariance_factor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">inverse_covariance_factor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The inverse covariance factor.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance_factor</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;Inverse covariance factor has not been set.&quot;</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_covariance_factor</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">expectation</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">expectation</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The expectation (mean) of the measure.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_expectation</span>
 
@@ -620,8 +638,8 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
 <div class="viewcode-block" id="GaussianMeasure.sample">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a single random sample drawn from the measure.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;A sample method is not set for this measure.&quot;</span><span class="p">)</span>
@@ -629,8 +647,8 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.samples">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.samples">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">samples</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">]:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.samples">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">samples</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Vector</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a list of n random samples from the measure.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Number of samples must be a positive integer.&quot;</span><span class="p">)</span>
@@ -638,8 +656,8 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.sample_expectation">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_expectation">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">sample_expectation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_expectation">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample_expectation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Estimates the expectation by drawing n samples.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Number of samples must be a positive integer.&quot;</span><span class="p">)</span>
@@ -647,15 +665,15 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.sample_pointwise_variance">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_pointwise_variance">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">sample_pointwise_variance</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.sample_pointwise_variance">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample_pointwise_variance</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Estimates the pointwise variance by drawing n samples.</span>
 
 <span class="sd">        This method is only available if the domain supports vector</span>
 <span class="sd">        multiplication.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">has_vector_multiply</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="p">,</span> <span class="n">HilbertModule</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
                 <span class="s2">&quot;Pointwise variance requires vector multiplication on the domain.&quot;</span>
             <span class="p">)</span>
@@ -675,24 +693,28 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.affine_mapping">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.affine_mapping">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.affine_mapping">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">affine_mapping</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">operator</span><span class="p">:</span> <span class="s2">&quot;LinearOperator&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">translation</span><span class="p">:</span> <span class="n">T_vec</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">operator</span><span class="p">:</span> <span class="n">LinearOperator</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">translation</span><span class="p">:</span> <span class="n">Vector</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Transforms the measure under the affine map y = A(x) + b.</span>
+<span class="sd">        Transforms the measure under an affine map `y = A(x) + b`.</span>
 
-<span class="sd">        This computes the resulting Gaussian measure for the transformed</span>
-<span class="sd">        random variable y.</span>
+<span class="sd">        If a random variable `x` is distributed according to this Gaussian</span>
+<span class="sd">        measure, `x ~ N(μ, C)`, this method computes the new Gaussian measure</span>
+<span class="sd">        for the transformed variable `y`.</span>
+
+<span class="sd">        The new measure will have:</span>
+<span class="sd">        - Expectation: `μ_y = A @ μ + b`</span>
+<span class="sd">        - Covariance: `C_y = A @ C @ A*`</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            operator (LinearOperator, optional): The linear operator A in the</span>
-<span class="sd">                transformation. Defaults to the identity.</span>
-<span class="sd">            translation (vector, optional): The translation vector b. Defaults</span>
-<span class="sd">                to zero.</span>
+<span class="sd">            operator: The linear operator `A` in the transformation.</span>
+<span class="sd">                Defaults to the identity.</span>
+<span class="sd">            translation: The translation vector `b`. Defaults to zero.</span>
 
 <span class="sd">        Returns:</span>
-<span class="sd">            GaussianMeasure: The transformed measure.</span>
+<span class="sd">            The transformed `GaussianMeasure`.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">_operator</span> <span class="o">=</span> <span class="p">(</span>
             <span class="n">operator</span> <span class="k">if</span> <span class="n">operator</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">identity_operator</span><span class="p">()</span>
@@ -713,7 +735,7 @@
         <span class="k">else</span><span class="p">:</span>
             <span class="n">new_covariance</span> <span class="o">=</span> <span class="n">_operator</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">covariance</span> <span class="o">@</span> <span class="n">_operator</span><span class="o">.</span><span class="n">adjoint</span>
 
-            <span class="k">def</span><span class="w"> </span><span class="nf">new_sample</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">new_sample</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
                 <span class="k">return</span> <span class="n">_operator</span><span class="o">.</span><span class="n">codomain</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">_operator</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sample</span><span class="p">()),</span> <span class="n">_translation</span><span class="p">)</span>
 
             <span class="k">return</span> <span class="n">GaussianMeasure</span><span class="p">(</span>
@@ -724,7 +746,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.as_multivariate_normal">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.as_multivariate_normal">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.as_multivariate_normal">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">as_multivariate_normal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">multivariate_normal</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the measure as a `scipy.stats.multivariate_normal` object.</span>
@@ -743,7 +765,7 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.low_rank_approximation">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.low_rank_approximation">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.low_rank_approximation">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">low_rank_approximation</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
@@ -752,7 +774,7 @@
         <span class="n">power</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
         <span class="n">method</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;fixed&quot;</span><span class="p">,</span>
         <span class="n">rtol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-2</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Constructs a low-rank approximation of the measure.</span>
 
@@ -779,8 +801,8 @@
 
 
 <div class="viewcode-block" id="GaussianMeasure.two_point_covariance">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.two_point_covariance">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">two_point_covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.two_point_covariance">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">two_point_covariance</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Computes the two-point covariance function.</span>
 
@@ -798,7 +820,7 @@
         <span class="k">return</span> <span class="n">cov</span><span class="p">(</span><span class="n">u</span><span class="p">)</span></div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__neg__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__neg__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a measure with a negated expectation.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">covariance_factor_set</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">GaussianMeasure</span><span class="p">(</span>
@@ -817,7 +839,7 @@
                 <span class="n">sample</span><span class="o">=</span><span class="n">new_sample</span><span class="p">,</span>
             <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__mul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__mul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Scales the measure by a scalar alpha.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">covariance_factor_set</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">GaussianMeasure</span><span class="p">(</span>
@@ -836,11 +858,15 @@
             <span class="n">sample</span><span class="o">=</span><span class="n">new_sample</span><span class="p">,</span>
         <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__rmul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__rmul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Scales the measure by a scalar alpha.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span> <span class="o">*</span> <span class="n">alpha</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__add__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__truediv__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the division of the measure by a scalar.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">a</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__add__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">GaussianMeasure</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Adds two independent Gaussian measures defined on the same domain.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
@@ -858,7 +884,7 @@
             <span class="n">sample</span><span class="o">=</span><span class="n">new_sample</span><span class="p">,</span>
         <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;GaussianMeasure&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">GaussianMeasure</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussianMeasure</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Subtracts two independent Gaussian measures on the same domain.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
@@ -876,7 +902,7 @@
             <span class="n">sample</span><span class="o">=</span><span class="n">new_sample</span><span class="p">,</span>
         <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_sample_from_factor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_sample_from_factor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Default sampling method when a covariance factor is provided.&quot;&quot;&quot;</span>
         <span class="n">covariance_factor</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">covariance_factor</span>
         <span class="c1"># Draw from standard normal in the Euclidean space</span>

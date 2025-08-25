@@ -197,13 +197,13 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/tutorial1.html">Tutorial 1: A First Example - Function Inversion on a Circle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/tutorial2.html">Tutorial 2: The HilbertSpace Abstraction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/tutorial3.html">Tutorial 3: Dual Spaces and Hilbert Space Design</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/tutorial4.html">Tutorial 4: Linear Operators, Duals, and Adjoints</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/tutorial5.html">Tutorial 5: Solving Linear Systems</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/tutorial6.html">Tutorial 6: Probabilistic Modeling with Gaussian Measures</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/tutorial10.html">Tutorial 10: A Guide to Symmetric Spaces</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
@@ -251,36 +251,56 @@
           
 <section class="genindex-section">
   <h1 id="index">Index</h1>
-  <div class="genindex-jumpbox"><a href="#A"><strong>A</strong></a> | <a href="#B"><strong>B</strong></a> | <a href="#C"><strong>C</strong></a> | <a href="#D"><strong>D</strong></a> | <a href="#E"><strong>E</strong></a> | <a href="#F"><strong>F</strong></a> | <a href="#G"><strong>G</strong></a> | <a href="#H"><strong>H</strong></a> | <a href="#I"><strong>I</strong></a> | <a href="#K"><strong>K</strong></a> | <a href="#L"><strong>L</strong></a> | <a href="#M"><strong>M</strong></a> | <a href="#N"><strong>N</strong></a> | <a href="#O"><strong>O</strong></a> | <a href="#P"><strong>P</strong></a> | <a href="#R"><strong>R</strong></a> | <a href="#S"><strong>S</strong></a> | <a href="#T"><strong>T</strong></a> | <a href="#V"><strong>V</strong></a> | <a href="#W"><strong>W</strong></a> | <a href="#X"><strong>X</strong></a> | <a href="#Z"><strong>Z</strong></a></div>
+  <div class="genindex-jumpbox"><a href="#A"><strong>A</strong></a> | <a href="#B"><strong>B</strong></a> | <a href="#C"><strong>C</strong></a> | <a href="#D"><strong>D</strong></a> | <a href="#E"><strong>E</strong></a> | <a href="#F"><strong>F</strong></a> | <a href="#G"><strong>G</strong></a> | <a href="#H"><strong>H</strong></a> | <a href="#I"><strong>I</strong></a> | <a href="#K"><strong>K</strong></a> | <a href="#L"><strong>L</strong></a> | <a href="#M"><strong>M</strong></a> | <a href="#N"><strong>N</strong></a> | <a href="#O"><strong>O</strong></a> | <a href="#P"><strong>P</strong></a> | <a href="#R"><strong>R</strong></a> | <a href="#S"><strong>S</strong></a> | <a href="#T"><strong>T</strong></a> | <a href="#U"><strong>U</strong></a> | <a href="#V"><strong>V</strong></a> | <a href="#Z"><strong>Z</strong></a></div>
 </section>
 <section id="A" class="genindex-section">
   <h2>A</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.add">add() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace">AbstractInvariantLebesgueSpace (class in pygeoinf.symmetric_space.symmetric_space)</a>
 </li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace">AbstractInvariantSobolevSpace (class in pygeoinf.symmetric_space.symmetric_space)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.add">add() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.add">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
+        </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.adjoint">adjoint (pygeoinf.operators.LinearOperator property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.affine_mapping">affine_mapping() (pygeoinf.gaussian_measure.GaussianMeasure method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.angle_spacing">angle_spacing (pygeoinf.symmetric_space.circle.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.angle_spacing">angle_spacing (pygeoinf.symmetric_space.circle.CircleHelper property)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.angles">angles() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.angles">angles() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_forms.LinearForm.as_linear_operator">as_linear_operator (pygeoinf.linear_forms.LinearForm property)</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_forms.LinearForm.as_linear_operator">as_linear_operator (pygeoinf.linear_forms.LinearForm property)</a>
-</li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.as_multivariate_normal">as_multivariate_normal() (pygeoinf.gaussian_measure.GaussianMeasure method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.inversion.Inversion.assert_data_error_measure">assert_data_error_measure() (pygeoinf.inversion.Inversion method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.inversion.Inversion.assert_inverse_data_covariance">assert_inverse_data_covariance() (pygeoinf.inversion.Inversion method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.ax">ax() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.ax">ax() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.ax">(pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.axpy">axpy() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.ax">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
 </li>
+        </ul></li>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.axpy">axpy() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.axpy">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.axpy">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
+</li>
+        </ul></li>
     </ul></td>
   </tr></table>
 </section>
@@ -291,9 +311,9 @@
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.basis_vector">basis_vector() (pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.BICGMatrixSolver">BICGMatrixSolver (class in pygeoinf.linear_solvers)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.BICGMatrixSolver">BICGMatrixSolver() (in module pygeoinf.linear_solvers)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.BICGStabMatrixSolver">BICGStabMatrixSolver (class in pygeoinf.linear_solvers)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.BICGStabMatrixSolver">BICGStabMatrixSolver() (in module pygeoinf.linear_solvers)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.BlockDiagonalLinearOperator.block">block() (pygeoinf.direct_sum.BlockDiagonalLinearOperator method)</a>
 
@@ -327,7 +347,7 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.canonical_dual_isomorphism">canonical_dual_isomorphism() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.CGMatrixSolver">CGMatrixSolver (class in pygeoinf.linear_solvers)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.CGMatrixSolver">CGMatrixSolver() (in module pygeoinf.linear_solvers)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.CGSolver">CGSolver (class in pygeoinf.linear_solvers)</a>
 </li>
@@ -336,6 +356,8 @@
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.chi_squared_test">chi_squared_test() (pygeoinf.forward_problem.LinearForwardProblem method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.CholeskySolver">CholeskySolver (class in pygeoinf.linear_solvers)</a>
+</li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper">CircleHelper (class in pygeoinf.symmetric_space.circle)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.Operator.codomain">codomain (pygeoinf.operators.Operator property)</a>
 </li>
@@ -347,15 +369,15 @@
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_forms.LinearForm.components">components (pygeoinf.linear_forms.LinearForm property)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.computational_points">computational_points() (pygeoinf.symmetric_space.line.Sobolev method)</a>
-</li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.coordinate_inclusion">coordinate_inclusion (pygeoinf.hilbert_space.HilbertSpace property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.coordinate_projection">coordinate_projection (pygeoinf.hilbert_space.HilbertSpace property)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.copy">copy() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.copy">copy() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
 
         <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.copy">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
           <li><a href="api/pygeoinf.html#pygeoinf.linear_forms.LinearForm.copy">(pygeoinf.linear_forms.LinearForm method)</a>
 </li>
         </ul></li>
@@ -367,7 +389,7 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.critical_chi_squared">critical_chi_squared() (pygeoinf.forward_problem.LinearForwardProblem method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.csphase">csphase (pygeoinf.symmetric_space.sphere.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.csphase">csphase (pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
 </li>
     </ul></td>
   </tr></table>
@@ -395,21 +417,35 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator">DiagonalLinearOperator (class in pygeoinf.operators)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.dim">dim (pygeoinf.hilbert_space.HilbertSpace property)</a>
-</li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.dirac">dirac() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.dim">dim (pygeoinf.direct_sum.HilbertSpaceDirectSum property)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.dirac">(pygeoinf.symmetric_space.line.Sobolev method)</a>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.dim">(pygeoinf.hilbert_space.DualHilbertSpace property)</a>
 </li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.dirac">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.dim">(pygeoinf.hilbert_space.EuclideanSpace property)</a>
 </li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.dirac">(pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.dim">(pygeoinf.hilbert_space.HilbertSpace property)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.dim">(pygeoinf.hilbert_space.MassWeightedHilbertSpace property)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.dim">(pygeoinf.symmetric_space.circle.Lebesgue property)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.dim">(pygeoinf.symmetric_space.sphere.Lebesgue property)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.dim">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace property)</a>
 </li>
         </ul></li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.dirac_representation">dirac_representation() (pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.dirac">dirac() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.dirac">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.dirac">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.dirac_representation">dirac_representation() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.DirectLinearSolver">DirectLinearSolver (class in pygeoinf.linear_solvers)</a>
 </li>
@@ -421,14 +457,22 @@
           <li><a href="api/pygeoinf.html#pygeoinf.operators.Operator.domain">(pygeoinf.operators.Operator property)</a>
 </li>
         </ul></li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.dual">dual (pygeoinf.hilbert_space.HilbertSpace property)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.dual">dual (pygeoinf.hilbert_space.DualHilbertSpace property)</a>
 
         <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.dual">(pygeoinf.hilbert_space.HilbertSpace property)</a>
+</li>
           <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.dual">(pygeoinf.operators.LinearOperator property)</a>
 </li>
         </ul></li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.duality_product">duality_product() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace">DualHilbertSpace (class in pygeoinf.hilbert_space)</a>
 </li>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.duality_product">duality_product() (pygeoinf.hilbert_space.DualHilbertSpace method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.duality_product">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
+        </ul></li>
     </ul></td>
   </tr></table>
 </section>
@@ -437,13 +481,25 @@
   <h2>E</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace">EuclideanSpace (class in pygeoinf.hilbert_space)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.eigenfunction_norms">eigenfunction_norms() (pygeoinf.symmetric_space.circle.Lebesgue method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.eigenfunction_norms">(pygeoinf.symmetric_space.circle.Sobolev method)</a>
 </li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.eigenfunction_norms">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.eigenfunction_norms">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.eigenfunction_norms">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
+        </ul></li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace">EuclideanSpace (class in pygeoinf.hilbert_space)</a>
+</li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.expectation">expectation (pygeoinf.gaussian_measure.GaussianMeasure property)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.extend">extend (pygeoinf.symmetric_space.sphere.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.extend">extend (pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
 </li>
     </ul></td>
   </tr></table>
@@ -453,9 +509,9 @@
   <h2>F</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.random_matrix.fixed_rank_random_range">fixed_rank_random_range() (in module pygeoinf.random_matrix)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.fft_factor">fft_factor (pygeoinf.symmetric_space.circle.CircleHelper property)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.formally_self_adjoint">formally_self_adjoint() (pygeoinf.operators.LinearOperator static method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.random_matrix.fixed_rank_random_range">fixed_rank_random_range() (in module pygeoinf.random_matrix)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.ForwardProblem.forward_operator">forward_operator (pygeoinf.forward_problem.ForwardProblem property)</a>
 </li>
@@ -463,10 +519,30 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.ForwardProblem">ForwardProblem (class in pygeoinf.forward_problem)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.from_coefficient">from_coefficient() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.from_coefficient">from_coefficient() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.from_coefficient">(pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_components">from_components() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        </ul></li>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.from_components">from_components() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.from_components">(pygeoinf.hilbert_space.DualHilbertSpace method)</a>
 </li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.from_components">(pygeoinf.hilbert_space.EuclideanSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_components">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.from_components">(pygeoinf.hilbert_space.MassWeightedHilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.from_components">(pygeoinf.symmetric_space.circle.Lebesgue method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.from_components">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.from_components">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
+        </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_covariance_matrix">from_covariance_matrix() (pygeoinf.gaussian_measure.GaussianMeasure static method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.from_direct_sum">from_direct_sum() (pygeoinf.forward_problem.LinearForwardProblem static method)</a>
@@ -475,10 +551,28 @@
           <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.from_direct_sum">(pygeoinf.gaussian_measure.GaussianMeasure static method)</a>
 </li>
         </ul></li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_dual">from_dual() (pygeoinf.hilbert_space.HilbertSpace method)</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.from_dual">from_dual() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.from_dual">(pygeoinf.hilbert_space.DualHilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.from_dual">(pygeoinf.hilbert_space.EuclideanSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_dual">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.from_dual">(pygeoinf.hilbert_space.MassWeightedHilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.from_dual">(pygeoinf.symmetric_space.circle.Lebesgue method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.from_dual">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_formal_adjoint">from_formal_adjoint() (pygeoinf.operators.LinearOperator static method)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_formally_self_adjoint">from_formally_self_adjoint() (pygeoinf.operators.LinearOperator static method)</a>
+</li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.from_linear_forms">from_linear_forms() (pygeoinf.operators.LinearOperator static method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_forms.LinearForm.from_linear_operator">from_linear_operator() (pygeoinf.linear_forms.LinearForm static method)</a>
@@ -490,8 +584,6 @@
         <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.from_sobolev_parameters">from_sobolev_parameters() (pygeoinf.symmetric_space.circle.Sobolev static method)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.from_sobolev_parameters">(pygeoinf.symmetric_space.line.Sobolev static method)</a>
-</li>
           <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.from_sobolev_parameters">(pygeoinf.symmetric_space.sphere.Sobolev static method)</a>
 </li>
         </ul></li>
@@ -513,13 +605,13 @@
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure">GaussianMeasure (class in pygeoinf.gaussian_measure)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.GMRESMatrixSolver">GMRESMatrixSolver (class in pygeoinf.linear_solvers)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.GMRESMatrixSolver">GMRESMatrixSolver() (in module pygeoinf.linear_solvers)</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.gram_schmidt">gram_schmidt() (pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.grid">grid (pygeoinf.symmetric_space.sphere.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.grid">grid (pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
 </li>
     </ul></td>
   </tr></table>
@@ -529,9 +621,9 @@
   <h2>H</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.has_vector_multiply">has_vector_multiply (pygeoinf.hilbert_space.HilbertSpace property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.heat_kernel_gaussian_measure">heat_kernel_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.heat_gaussian_measure">heat_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertModule">HilbertModule (class in pygeoinf.hilbert_space)</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
@@ -551,45 +643,39 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.inner_product">inner_product() (pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.invariant_automorphism">invariant_automorphism() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.invariant_automorphism">invariant_automorphism() (pygeoinf.symmetric_space.circle.Lebesgue method)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.invariant_automorphism">(pygeoinf.symmetric_space.line.Sobolev method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.invariant_automorphism">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
 </li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.invariant_automorphism">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.invariant_automorphism">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
 </li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.invariant_automorphism">(pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
-</li>
-        </ul></li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.invariant_gaussian_measure">invariant_gaussian_measure() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
-
-        <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.invariant_gaussian_measure">(pygeoinf.symmetric_space.line.Sobolev method)</a>
-</li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.invariant_gaussian_measure">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
-</li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.invariant_gaussian_measure">(pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.invariant_automorphism">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
 </li>
         </ul></li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.invariant_gaussian_measure">invariant_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator.inverse">inverse (pygeoinf.operators.DiagonalLinearOperator property)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.inverse_covariance">inverse_covariance (pygeoinf.gaussian_measure.GaussianMeasure property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.inverse_covariance_factor">inverse_covariance_factor (pygeoinf.gaussian_measure.GaussianMeasure property)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.inverse_covariance_factor_set">inverse_covariance_factor_set (pygeoinf.gaussian_measure.GaussianMeasure property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.inverse_covariance_set">inverse_covariance_set (pygeoinf.gaussian_measure.GaussianMeasure property)</a>
+</li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.inverse_fft_factor">inverse_fft_factor (pygeoinf.symmetric_space.circle.CircleHelper property)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.inverse_mass_operator">inverse_mass_operator (pygeoinf.hilbert_space.MassWeightedHilbertSpace property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.inverse_riesz">inverse_riesz (pygeoinf.hilbert_space.HilbertSpace property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.inversion.Inversion">Inversion (class in pygeoinf.inversion)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.Operator.is_automorphism">is_automorphism (pygeoinf.operators.Operator property)</a>
-</li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.is_dual">is_dual (pygeoinf.hilbert_space.HilbertSpace property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.is_element">is_element() (pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
@@ -605,12 +691,8 @@
   <h2>K</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.kmax">kmax (pygeoinf.symmetric_space.circle.Sobolev property)</a>
-
-        <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.kmax">(pygeoinf.symmetric_space.line.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.kmax">kmax (pygeoinf.symmetric_space.circle.CircleHelper property)</a>
 </li>
-        </ul></li>
     </ul></td>
   </tr></table>
 </section>
@@ -619,18 +701,22 @@
   <h2>L</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.laplacian_eigenvalue">laplacian_eigenvalue() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.laplacian_eigenvalue">(pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.laplacian_eigenvalue">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
+        </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.least_squares_operator">least_squares_operator() (pygeoinf.linear_optimisation.LinearLeastSquaresInversion method)</a>
 </li>
         <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue">Lebesgue (class in pygeoinf.symmetric_space.circle)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Lebesgue">(class in pygeoinf.symmetric_space.line)</a>
-</li>
           <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue">(class in pygeoinf.symmetric_space.sphere)</a>
 </li>
         </ul></li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.LebesgueSpace">LebesgueSpace (class in pygeoinf.hilbert_space)</a>
-</li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.linear">linear (pygeoinf.operators.LinearOperator property)</a>
 
         <ul>
@@ -639,12 +725,12 @@
         </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference">LinearBayesianInference (class in pygeoinf.linear_bayesian)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion">LinearBayesianInversion (class in pygeoinf.linear_bayesian)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_forms.LinearForm">LinearForm (class in pygeoinf.linear_forms)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem">LinearForwardProblem (class in pygeoinf.forward_problem)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion">LinearLeastSquaresInversion (class in pygeoinf.linear_optimisation)</a>
@@ -655,13 +741,9 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.LinearSolver">LinearSolver (class in pygeoinf.linear_solvers)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.lmax">lmax (pygeoinf.symmetric_space.sphere.Sobolev property)</a>
-</li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.low_degree_projection">low_degree_projection() (pygeoinf.symmetric_space.sphere.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.lmax">lmax (pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.low_rank_approximation">low_rank_approximation() (pygeoinf.gaussian_measure.GaussianMeasure method)</a>
-</li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.LowPassFilter">LowPassFilter (class in pygeoinf.symmetric_space.sphere)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.LUSolver">LUSolver (class in pygeoinf.linear_solvers)</a>
 </li>
@@ -673,6 +755,12 @@
   <h2>M</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.mass_operator">mass_operator (pygeoinf.hilbert_space.MassWeightedHilbertSpace property)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertModule">MassWeightedHilbertModule (class in pygeoinf.hilbert_space)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace">MassWeightedHilbertSpace (class in pygeoinf.hilbert_space)</a>
+</li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.matrix">matrix() (pygeoinf.operators.LinearOperator method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion.minimum_norm_operator">minimum_norm_operator() (pygeoinf.linear_optimisation.LinearMinimumNormInversion method)</a>
@@ -719,8 +807,6 @@
 </li>
           <li><a href="api/pygeoinf.symmetric_space.html#module-pygeoinf.symmetric_space.circle">pygeoinf.symmetric_space.circle</a>
 </li>
-          <li><a href="api/pygeoinf.symmetric_space.html#module-pygeoinf.symmetric_space.line">pygeoinf.symmetric_space.line</a>
-</li>
           <li><a href="api/pygeoinf.symmetric_space.html#module-pygeoinf.symmetric_space.sphere">pygeoinf.symmetric_space.sphere</a>
 </li>
           <li><a href="api/pygeoinf.symmetric_space.html#module-pygeoinf.symmetric_space.symmetric_space">pygeoinf.symmetric_space.symmetric_space</a>
@@ -728,8 +814,12 @@
         </ul></li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.multiply">multiply() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.multiply">multiply() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.multiply">(pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
+        </ul></li>
     </ul></td>
   </tr></table>
 </section>
@@ -742,13 +832,19 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.norm">norm() (pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.normal_operator">normal_operator (pygeoinf.linear_bayesian.LinearBayesianInversion property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.norm_scaled_heat_kernel_gaussian_measure">norm_scaled_heat_kernel_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.norm_scaled_invariant_gaussian_measure">norm_scaled_invariant_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.norm_scaled_sobolev_kernel_gaussian_measure">norm_scaled_sobolev_kernel_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInversion.normal_operator">normal_operator (pygeoinf.linear_bayesian.LinearBayesianInversion property)</a>
+</li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.normal_operator">normal_operator() (pygeoinf.linear_optimisation.LinearLeastSquaresInversion method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.normalization">normalization (pygeoinf.symmetric_space.sphere.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.normalization">normalization (pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.number_of_subspaces">number_of_subspaces (pygeoinf.direct_sum.HilbertSpaceDirectSum property)</a>
 </li>
@@ -764,7 +860,9 @@
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.order">order (pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.order">order (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace property)</a>
+</li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.orthonormalised">orthonormalised() (pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
 </li>
     </ul></td>
   </tr></table>
@@ -774,30 +872,26 @@
   <h2>P</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.plot">plot() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.plot">plot() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.plot">(pygeoinf.symmetric_space.line.Sobolev method)</a>
-</li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.plot">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.plot">(pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
 </li>
         </ul></li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.plot_error_bounds">plot_error_bounds() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.plot_error_bounds">plot_error_bounds() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.plot_pointwise_bounds">plot_pointwise_bounds() (pygeoinf.symmetric_space.line.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.point_evaluation_operator">point_evaluation_operator() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.point_evaluation_operator">point_evaluation_operator() (pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.point_value_scaled_heat_kernel_gaussian_measure">point_value_scaled_heat_kernel_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.point_spacing">point_spacing (pygeoinf.symmetric_space.line.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.point_value_scaled_invariant_gaussian_measure">point_value_scaled_invariant_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.points">points() (pygeoinf.symmetric_space.line.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.point_value_scaled_sobolev_kernel_gaussian_measure">point_value_scaled_sobolev_kernel_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.project_function">project_function() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.project_function">project_function() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.project_function">(pygeoinf.symmetric_space.line.Sobolev method)</a>
-</li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.project_function">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.project_function">(pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
 </li>
         </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.linear_bayesian.LinearBayesianInference.property_operator">property_operator (pygeoinf.linear_bayesian.LinearBayesianInference property)</a>
@@ -909,13 +1003,6 @@
 </li>
         </ul></li>
         <li>
-    pygeoinf.symmetric_space.line
-
-        <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#module-pygeoinf.symmetric_space.line">module</a>
-</li>
-        </ul></li>
-        <li>
     pygeoinf.symmetric_space.sphere
 
         <ul>
@@ -937,10 +1024,10 @@
   <h2>R</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.radius">radius (pygeoinf.symmetric_space.circle.Sobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.radius">radius (pygeoinf.symmetric_space.circle.CircleHelper property)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.radius">(pygeoinf.symmetric_space.sphere.Sobolev property)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.radius">(pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
 </li>
         </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.random">random() (pygeoinf.hilbert_space.HilbertSpace method)</a>
@@ -957,19 +1044,17 @@
           <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.random_eig">(pygeoinf.operators.LinearOperator method)</a>
 </li>
         </ul></li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.random_point">random_point() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.random_point">random_point() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.random_point">(pygeoinf.symmetric_space.line.Sobolev method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.random_point">(pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
 </li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev.random_point">(pygeoinf.symmetric_space.sphere.Sobolev method)</a>
-</li>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.random_point">(pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.random_point">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
 </li>
         </ul></li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.random_points">random_points() (pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.random_points">random_points() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.random_matrix.random_svd">random_svd() (in module pygeoinf.random_matrix)</a>
 
@@ -1005,7 +1090,11 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.samples">samples() (pygeoinf.gaussian_measure.GaussianMeasure method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.scale">scale (pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev property)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.sampling">sampling (pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
+</li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.scale">scale (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace property)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.ScipyIterativeSolver">ScipyIterativeSolver (class in pygeoinf.linear_solvers)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.self_adjoint">self_adjoint() (pygeoinf.operators.LinearOperator static method)</a>
 </li>
@@ -1018,31 +1107,35 @@
         <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev">Sobolev (class in pygeoinf.symmetric_space.circle)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev">(class in pygeoinf.symmetric_space.line)</a>
-</li>
           <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Sobolev">(class in pygeoinf.symmetric_space.sphere)</a>
 </li>
         </ul></li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev.sobolev_gaussian_measure">sobolev_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace.sobolev_function">sobolev_function() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantSobolevSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.IterativeLinearSolver.solve_adjoint_linear_system">solve_adjoint_linear_system() (pygeoinf.linear_solvers.IterativeLinearSolver method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.sobolev_kernel_gaussian_measure">sobolev_kernel_gaussian_measure() (pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.BICGMatrixSolver.solve_linear_system">solve_linear_system() (pygeoinf.linear_solvers.BICGMatrixSolver method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.IterativeLinearSolver.solve_adjoint_linear_system">solve_adjoint_linear_system() (pygeoinf.linear_solvers.IterativeLinearSolver method)</a>
+</li>
+        <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.CGSolver.solve_linear_system">solve_linear_system() (pygeoinf.linear_solvers.CGSolver method)</a>
 
         <ul>
-          <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.BICGStabMatrixSolver.solve_linear_system">(pygeoinf.linear_solvers.BICGStabMatrixSolver method)</a>
-</li>
-          <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.CGMatrixSolver.solve_linear_system">(pygeoinf.linear_solvers.CGMatrixSolver method)</a>
-</li>
-          <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.CGSolver.solve_linear_system">(pygeoinf.linear_solvers.CGSolver method)</a>
-</li>
-          <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.GMRESMatrixSolver.solve_linear_system">(pygeoinf.linear_solvers.GMRESMatrixSolver method)</a>
-</li>
           <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.IterativeLinearSolver.solve_linear_system">(pygeoinf.linear_solvers.IterativeLinearSolver method)</a>
 </li>
+          <li><a href="api/pygeoinf.html#pygeoinf.linear_solvers.ScipyIterativeSolver.solve_linear_system">(pygeoinf.linear_solvers.ScipyIterativeSolver method)</a>
+</li>
         </ul></li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.spatial_dimension">spatial_dimension (pygeoinf.symmetric_space.circle.CircleHelper property)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.spatial_dimension">(pygeoinf.symmetric_space.sphere.SphereHelper property)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.spatial_dimension">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace property)</a>
+</li>
+        </ul></li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper">SphereHelper (class in pygeoinf.symmetric_space.sphere)</a>
+</li>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.DiagonalLinearOperator.sqrt">sqrt (pygeoinf.operators.DiagonalLinearOperator property)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.squared_norm">squared_norm() (pygeoinf.hilbert_space.HilbertSpace method)</a>
@@ -1055,10 +1148,12 @@
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subspaces">subspaces (pygeoinf.direct_sum.HilbertSpaceDirectSum property)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.subtract">subtract() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.subtract">subtract() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.subtract">(pygeoinf.hilbert_space.HilbertSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.SymmetricSpaceSobolev">SymmetricSpaceSobolev (class in pygeoinf.symmetric_space.symmetric_space)</a>
-</li>
+        </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.synthetic_data">synthetic_data() (pygeoinf.forward_problem.LinearForwardProblem method)</a>
 </li>
         <li><a href="api/pygeoinf.html#pygeoinf.forward_problem.LinearForwardProblem.synthetic_model_and_data">synthetic_model_and_data() (pygeoinf.forward_problem.LinearForwardProblem method)</a>
@@ -1073,16 +1168,72 @@
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.operators.LinearOperator.thread_safe">thread_safe (pygeoinf.operators.LinearOperator property)</a>
 </li>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Sobolev.to_coefficient">to_coefficient() (pygeoinf.symmetric_space.circle.Sobolev method)</a>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.to_coefficient">to_coefficient() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.to_coefficient">(pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
 </li>
+        </ul></li>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.to_components">to_components() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.to_components">(pygeoinf.hilbert_space.DualHilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.to_components">(pygeoinf.hilbert_space.EuclideanSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_components">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.to_components">(pygeoinf.hilbert_space.MassWeightedHilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.to_components">(pygeoinf.symmetric_space.circle.Lebesgue method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.to_components">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.to_components">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
+        </ul></li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_components">to_components() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+        <li><a href="api/pygeoinf.html#pygeoinf.direct_sum.HilbertSpaceDirectSum.to_dual">to_dual() (pygeoinf.direct_sum.HilbertSpaceDirectSum method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.to_dual">(pygeoinf.hilbert_space.DualHilbertSpace method)</a>
 </li>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_dual">to_dual() (pygeoinf.hilbert_space.HilbertSpace method)</a>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.to_dual">(pygeoinf.hilbert_space.EuclideanSpace method)</a>
 </li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_dual">(pygeoinf.hilbert_space.HilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.to_dual">(pygeoinf.hilbert_space.MassWeightedHilbertSpace method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.to_dual">(pygeoinf.symmetric_space.circle.Lebesgue method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.to_dual">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.CircleHelper.trace_of_invariant_automorphism">trace_of_invariant_automorphism() (pygeoinf.symmetric_space.circle.CircleHelper method)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.SphereHelper.trace_of_invariant_automorphism">(pygeoinf.symmetric_space.sphere.SphereHelper method)</a>
+</li>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace.trace_of_invariant_automorphism">(pygeoinf.symmetric_space.symmetric_space.AbstractInvariantLebesgueSpace method)</a>
+</li>
+        </ul></li>
         <li><a href="api/pygeoinf.html#pygeoinf.gaussian_measure.GaussianMeasure.two_point_covariance">two_point_covariance() (pygeoinf.gaussian_measure.GaussianMeasure method)</a>
 </li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="U" class="genindex-section">
+  <h2>U</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.underlying_space">underlying_space (pygeoinf.hilbert_space.DualHilbertSpace property)</a>
+
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.underlying_space">(pygeoinf.hilbert_space.MassWeightedHilbertSpace property)</a>
+</li>
+        </ul></li>
     </ul></td>
   </tr></table>
 </section>
@@ -1093,34 +1244,16 @@
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/pygeoinf.html#pygeoinf.random_matrix.variable_rank_random_range">variable_rank_random_range() (in module pygeoinf.random_matrix)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.vector_multiply">vector_multiply() (pygeoinf.hilbert_space.HilbertSpace method)</a>
-</li>
-    </ul></td>
-  </tr></table>
-</section>
+        <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.HilbertModule.vector_multiply">vector_multiply() (pygeoinf.hilbert_space.HilbertModule method)</a>
 
-<section id="W" class="genindex-section">
-  <h2>W</h2>
-  <table style="width: 100%" class="indextable genindextable"><tr>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.width">width (pygeoinf.symmetric_space.line.Sobolev property)</a>
+        <ul>
+          <li><a href="api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertModule.vector_multiply">(pygeoinf.hilbert_space.MassWeightedHilbertModule method)</a>
 </li>
-    </ul></td>
-  </tr></table>
-</section>
-
-<section id="X" class="genindex-section">
-  <h2>X</h2>
-  <table style="width: 100%" class="indextable genindextable"><tr>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.x0">x0 (pygeoinf.symmetric_space.line.Sobolev property)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.circle.Lebesgue.vector_multiply">(pygeoinf.symmetric_space.circle.Lebesgue method)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.line.Sobolev.x1">x1 (pygeoinf.symmetric_space.line.Sobolev property)</a>
+          <li><a href="api/pygeoinf.symmetric_space.html#pygeoinf.symmetric_space.sphere.Lebesgue.vector_multiply">(pygeoinf.symmetric_space.sphere.Lebesgue method)</a>
 </li>
+        </ul></li>
     </ul></td>
   </tr></table>
 </section>

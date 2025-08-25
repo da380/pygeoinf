@@ -405,6 +405,56 @@ class Sobolev(
             self, lebesgue, mass_operator, inverse_mass_operator
         )
 
+    @staticmethod
+    def from_sobolev_parameters(
+        order: float,
+        scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        rtol: float = 1e-6,
+        power_of_two: bool = False,
+    ) -> "Sobolev":
+        """
+        Creates an instance with `kmax` chosen based on Sobolev parameters.
+
+        The method estimates the truncation error for the Dirac measure and is
+        only applicable for spaces with order > 0.5.
+
+        Args:
+            order: The Sobolev order. Must be > 0.5.
+            scale: The Sobolev length-scale.
+            radius: The radius of the circle. Defaults to 1.0.
+            rtol: Relative tolerance used in assessing truncation error.
+                Defaults to 1e-8.
+            power_of_two: If True, `kmax` is set to the next power of two.
+
+        Returns:
+            An instance of the Sobolev class with an appropriate `kmax`.
+
+        Raises:
+            ValueError: If order is <= 0.5.
+        """
+        if order <= 0.5:
+            raise ValueError("This method is only applicable for orders > 0.5")
+
+        summation = 1.0
+        k = 0
+        err = 1.0
+        while err > rtol:
+            k += 1
+            term = (1 + (scale * k / radius) ** 2) ** -order
+            summation += 2 * term
+            err = 2 * term / summation
+            if k > 100000:
+                raise RuntimeError("Failed to converge on a stable kmax.")
+
+        if power_of_two:
+            n = int(np.log2(k))
+            k = 2 ** (n + 1)
+
+        return Sobolev(k, order, scale, radius=radius)
+
     def __eq__(self, other: object) -> bool:
         """
         Checks for mathematical equality with another Sobolev space on a circle.

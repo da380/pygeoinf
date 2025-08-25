@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,10 +241,23 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.linear_optimisation</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module for solving inverse problems using optimisation methods.</span>
+<span class="sd">Implements optimisation-based methods for solving linear inverse problems.</span>
 
-<span class="sd">This module provides classes for finding solutions to inverse problems via</span>
-<span class="sd">regularized least-squares and minimum-norm criteria.</span>
+<span class="sd">This module provides classical, deterministic approaches to inversion that seek</span>
+<span class="sd">a single &quot;best-fit&quot; model. These methods are typically formulated as finding</span>
+<span class="sd">the model `u` that minimizes a cost functional.</span>
+
+<span class="sd">The primary goal is to find a stable solution to an ill-posed problem by</span>
+<span class="sd">incorporating regularization, which balances fitting the data with controlling</span>
+<span class="sd">the complexity or norm of the solution.</span>
+
+<span class="sd">Key Classes</span>
+<span class="sd">-----------</span>
+<span class="sd">- `LinearLeastSquaresInversion`: Solves the inverse problem by minimizing a</span>
+<span class="sd">  Tikhonov-regularized least-squares functional.</span>
+<span class="sd">- `LinearMinimumNormInversion`: Finds the model with the smallest norm that</span>
+<span class="sd">  fits the data to a statistically acceptable degree using the discrepancy</span>
+<span class="sd">  principle.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
@@ -257,18 +270,19 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.forward_problem</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForwardProblem</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_solvers</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearSolver</span><span class="p">,</span> <span class="n">IterativeLinearSolver</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">T_vec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.hilbert_space</span><span class="w"> </span><span class="kn">import</span> <span class="n">Vector</span>
 
 
 <div class="viewcode-block" id="LinearLeastSquaresInversion">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearLeastSquaresInversion</span><span class="p">(</span><span class="n">Inversion</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Solves a linear inverse problem using Tikhonov-regularized least-squares.</span>
 
 <span class="sd">    This method finds the model `u` that minimizes the functional:</span>
-<span class="sd">    `J(u) = ||A(u) - d||^2 + alpha^2 * ||u||^2`</span>
-<span class="sd">    where the norms are appropriately weighted if a data error covariance is provided.</span>
+<span class="sd">    `J(u) = ||A(u) - d||² + α² * ||u||²`</span>
+<span class="sd">    where `α` is the damping parameter. If a data error covariance is provided,</span>
+<span class="sd">    the data misfit norm is appropriately weighted by the inverse covariance.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">forward_problem</span><span class="p">:</span> <span class="s2">&quot;LinearForwardProblem&quot;</span><span class="p">,</span> <span class="o">/</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -282,24 +296,20 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">assert_inverse_data_covariance</span><span class="p">()</span>
 
 <div class="viewcode-block" id="LinearLeastSquaresInversion.normal_operator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.normal_operator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.normal_operator">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">normal_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">damping</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearOperator&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the Tikhonov-regularized normal operator.</span>
 
-<span class="sd">        If a data error covariance `C_e` is provided, the operator is:</span>
-<span class="sd">        `N = A^T * C_e^-1 * A + alpha * I`</span>
-<span class="sd">        Otherwise, it is:</span>
-<span class="sd">        `N = A^T * A + alpha * I`</span>
+<span class="sd">        This operator, often written as `(A* @ W @ A + α*I)`, forms the left-hand</span>
+<span class="sd">        side of the normal equations that must be solved to find the least-squares</span>
+<span class="sd">        solution. `W` is the inverse data covariance (or identity).</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            damping: The Tikhonov damping parameter, `alpha`. Must be non-negative.</span>
+<span class="sd">            damping: The Tikhonov damping parameter, `α`. Must be non-negative.</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            The normal operator as a `LinearOperator`.</span>
-
-<span class="sd">        Raises:</span>
-<span class="sd">            ValueError: If the damping parameter is negative.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">damping</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Damping parameter must be non-negative.&quot;</span><span class="p">)</span>
@@ -320,7 +330,7 @@
 
 
 <div class="viewcode-block" id="LinearLeastSquaresInversion.least_squares_operator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.least_squares_operator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_optimisation.LinearLeastSquaresInversion.least_squares_operator">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">least_squares_operator</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">damping</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
@@ -360,14 +370,14 @@
             <span class="p">)</span>
 
             <span class="c1"># This mapping is affine, not linear, if the error measure has a non-zero mean.</span>
-            <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">:</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Vector&quot;</span><span class="p">:</span>
                 <span class="n">shifted_data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">data_space</span><span class="o">.</span><span class="n">subtract</span><span class="p">(</span>
                     <span class="n">data</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">data_error_measure</span><span class="o">.</span><span class="n">expectation</span>
                 <span class="p">)</span>
                 <span class="k">return</span> <span class="p">(</span>
                     <span class="n">inverse_normal_operator</span>
 <div class="viewcode-block" id="LinearMinimumNormInversion">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion">[docs]</a>
                     <span class="o">@</span> <span class="n">forward_operator</span><span class="o">.</span><span class="n">adjoint</span>
                     <span class="o">@</span> <span class="n">inverse_data_covariance</span>
                 <span class="p">)(</span><span class="n">shifted_data</span><span class="p">)</span>
@@ -382,11 +392,12 @@
 
 <span class="k">class</span><span class="w"> </span><span class="nc">LinearMinimumNormInversion</span><span class="p">(</span><span class="n">Inversion</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Finds the minimum-norm solution to a linear inverse problem.</span>
+<span class="sd">    Finds a regularized solution using the discrepancy principle.</span>
 
-<span class="sd">    This method finds the model `u` with the smallest norm `||u||` that fits</span>
-<span class="sd">    the data `d` to a statistically acceptable level, as determined by a</span>
-<span class="sd">    chi-squared test.</span>
+<span class="sd">    This method automatically selects a Tikhonov damping parameter `α` such that</span>
+<span class="sd">    the resulting solution `u_α` fits the data to a statistically acceptable</span>
+<span class="sd">    level. It finds the model with the smallest norm `||u||` that satisfies</span>
+<span class="sd">    the target misfit, as determined by a chi-squared test.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">forward_problem</span><span class="p">:</span> <span class="s2">&quot;LinearForwardProblem&quot;</span><span class="p">,</span> <span class="o">/</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -400,7 +411,7 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">assert_inverse_data_covariance</span><span class="p">()</span>
 
 <div class="viewcode-block" id="LinearMinimumNormInversion.minimum_norm_operator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion.minimum_norm_operator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.linear_optimisation.LinearMinimumNormInversion.minimum_norm_operator">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">minimum_norm_operator</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">solver</span><span class="p">:</span> <span class="s2">&quot;LinearSolver&quot;</span><span class="p">,</span>
@@ -440,8 +451,8 @@
             <span class="n">lsq_inversion</span> <span class="o">=</span> <span class="n">LinearLeastSquaresInversion</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="p">)</span>
 
             <span class="k">def</span><span class="w"> </span><span class="nf">get_model_for_damping</span><span class="p">(</span>
-                <span class="n">damping</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">,</span> <span class="n">model0</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;T_vec&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
-            <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="s2">&quot;T_vec&quot;</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+                <span class="n">damping</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">,</span> <span class="n">model0</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Vector&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="s2">&quot;Vector&quot;</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
 <span class="w">                </span><span class="sd">&quot;&quot;&quot;Computes the LS model and its chi-squared for a given damping.&quot;&quot;&quot;</span>
                 <span class="n">op</span> <span class="o">=</span> <span class="n">lsq_inversion</span><span class="o">.</span><span class="n">least_squares_operator</span><span class="p">(</span>
                     <span class="n">damping</span><span class="p">,</span> <span class="n">solver</span><span class="p">,</span> <span class="n">preconditioner</span><span class="o">=</span><span class="n">preconditioner</span>
@@ -450,7 +461,7 @@
                 <span class="n">chi_squared</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">chi_squared</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
                 <span class="k">return</span> <span class="n">model</span><span class="p">,</span> <span class="n">chi_squared</span>
 
-            <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;T_vec&quot;</span><span class="p">:</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">mapping</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="s2">&quot;Vector&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Vector&quot;</span><span class="p">:</span>
 <span class="w">                </span><span class="sd">&quot;&quot;&quot;The non-linear mapping from data to the minimum-norm model.&quot;&quot;&quot;</span>
                 <span class="n">model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_space</span><span class="o">.</span><span class="n">zero</span>
                 <span class="n">chi_squared</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_problem</span><span class="o">.</span><span class="n">chi_squared</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>

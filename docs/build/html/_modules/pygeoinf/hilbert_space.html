@@ -196,15 +196,15 @@
   <input type="hidden" name="area" value="default">
 </form>
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
-  <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+  <p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t1.html">Tutorial 1 - A first example</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t2.html">Tutorial 2 - Hilbert spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t3.html">Tutorial 3 - Dual spaces</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t4.html">Tutorial 4 - Linear operators</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t5.html">Tutorial 5 - Gaussian measures</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t6.html">Tutorial 6 - Minumum norm inversions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../tutorials/t7.html">Tutorial 7 - Bayesian inversions</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../api/modules.html">pygeoinf</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of pygeoinf</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../api/pygeoinf.html">pygeoinf package</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><div class="visually-hidden">Toggle navigation of pygeoinf package</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../api/pygeoinf.symmetric_space.html">pygeoinf.symmetric_space package</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 
 </div>
@@ -241,11 +241,40 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for pygeoinf.hilbert_space</h1><div class="highlight"><pre>
 <span></span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">Module defining the core HilbertSpace and EuclideanSpace classes.</span>
+<span class="sd">Defines the foundational abstractions for working with Hilbert spaces.</span>
+
+<span class="sd">This module provides the core `HilbertSpace` abstract base class (ABC), which</span>
+<span class="sd">serves as a mathematical abstraction for real vector spaces equipped with an</span>
+<span class="sd">inner product. The design separates abstract vector operations from their</span>
+<span class="sd">concrete representations (e.g., as NumPy arrays), allowing for generic and</span>
+<span class="sd">reusable implementations of linear operators and algorithms.</span>
+
+<span class="sd">The inner product of a space is defined by its Riesz representation map</span>
+<span class="sd">(`to_dual` and `from_dual` methods), which connects the space to its dual.</span>
+<span class="sd">Concrete subclasses must implement the abstract methods to define a specific</span>
+<span class="sd">type of space.</span>
+
+<span class="sd">Key Classes</span>
+<span class="sd">-----------</span>
+<span class="sd">- `HilbertSpace`: The primary ABC defining the interface for all Hilbert spaces.</span>
+<span class="sd">- `DualHilbertSpace`: A wrapper class representing the dual of a Hilbert space.</span>
+<span class="sd">- `HilbertModule`: An ABC for Hilbert spaces that also support vector multiplication.</span>
+<span class="sd">- `EuclideanSpace`: A concrete implementation for R^n using NumPy arrays.</span>
+<span class="sd">- `MassWeightedHilbertSpace`: A space whose inner product is weighted by a</span>
+<span class="sd">  mass operator relative to an underlying space.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TypeVar</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Generic</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">TypeVar</span><span class="p">,</span>
+    <span class="n">List</span><span class="p">,</span>
+    <span class="n">Optional</span><span class="p">,</span>
+    <span class="n">Any</span><span class="p">,</span>
+    <span class="n">TYPE_CHECKING</span><span class="p">,</span>
+    <span class="n">final</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 
@@ -254,136 +283,242 @@
     <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 
-
 <span class="c1"># Define a generic type for vectors in a Hilbert space</span>
-<span class="n">T_vec</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;T_vec&quot;</span><span class="p">)</span>
+<span class="n">Vector</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;Vector&quot;</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="HilbertSpace">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace">[docs]</a>
-<span class="k">class</span><span class="w"> </span><span class="nc">HilbertSpace</span><span class="p">:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">HilbertSpace</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    A class for real Hilbert spaces.</span>
+<span class="sd">    An abstract base class for real Hilbert spaces.</span>
 
-<span class="sd">    This class provides a mathematical abstraction for vector spaces equipped</span>
-<span class="sd">    with an inner product. It separates the abstract vector operations from</span>
-<span class="sd">    their concrete representation (e.g., as NumPy arrays).</span>
-
-<span class="sd">    To define an instance, a user must provide the space&#39;s dimension, methods</span>
-<span class="sd">    for converting vectors to/from their component representations, and,</span>
-<span class="sd">    critically, the Riesz representation map (`to_dual`). **This map implicitly</span>
-<span class="sd">    defines the space&#39;s inner product.**</span>
+<span class="sd">    This class provides a mathematical abstraction for a vector space equipped</span>
+<span class="sd">    with an inner product. It defines a formal interface that separates</span>
+<span class="sd">    abstract vector operations from their concrete representation (e.g., as</span>
+<span class="sd">    NumPy arrays). Subclasses must implement all abstract methods to be</span>
+<span class="sd">    instantiable.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span>
-        <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-        <span class="n">to_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
-        <span class="n">from_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">],</span>
-        <span class="n">to_dual</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">Any</span><span class="p">],</span>
-        <span class="n">from_dual</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">],</span>
-        <span class="o">/</span><span class="p">,</span>
-        <span class="o">*</span><span class="p">,</span>
-        <span class="n">add</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">subtract</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">multiply</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">ax</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">axpy</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">copy</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">vector_multiply</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">base</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">HilbertSpace</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">):</span>
+    <span class="c1"># ------------------------------------------------------------------- #</span>
+    <span class="c1">#               Abstract methods that must be provided                #</span>
+    <span class="c1"># ------------------------------------------------------------------- #</span>
+
+    <span class="nd">@property</span>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dim</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The finite dimension of the space.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="HilbertSpace.to_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_dual">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Initializes the HilbertSpace.</span>
+<span class="sd">        Maps a vector to its canonical dual vector (a linear functional).</span>
+
+<span class="sd">        This method, along with `from_dual`, defines the Riesz representation</span>
+<span class="sd">        map and implicitly defines the inner product of the space.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            dim (int): The dimension of the space.</span>
-<span class="sd">            to_components (callable): A function mapping vectors to their</span>
-<span class="sd">                NumPy component arrays.</span>
-<span class="sd">            from_components (callable): A function mapping NumPy component</span>
-<span class="sd">                arrays back to vectors.</span>
-<span class="sd">            to_dual (callable): The Riesz map, which maps a vector `x` to its</span>
-<span class="sd">                corresponding dual vector (a `LinearForm`). This function</span>
-<span class="sd">                **implicitly defines the inner product** for the space, as</span>
-<span class="sd">                `inner_product(x, y)` is implemented as `to_dual(x)(y)`.</span>
-<span class="sd">            from_dual (callable): The inverse Riesz map, which maps a dual</span>
-<span class="sd">                 vector back to its representative vector in the primal space.</span>
-<span class="sd">            add (callable, optional): Custom vector addition.</span>
-<span class="sd">            subtract (callable, optional): Custom vector subtraction.</span>
-<span class="sd">            multiply (callable, optional): Custom scalar multiplication.</span>
-<span class="sd">            ax (callable, optional): Custom in-place scaling x := a*x.</span>
-<span class="sd">            axpy (callable, optional): Custom in-place operation y := a*x + y.</span>
-<span class="sd">            copy (callable, optional): Custom deep copy for vectors.</span>
-<span class="sd">            base (HilbertSpace, optional): Used internally for creating</span>
-<span class="sd">                dual spaces. Should not be set by the user.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">dim</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">__to_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="n">to_components</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">__from_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="n">from_components</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">__from_dual</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="n">from_dual</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">__to_dual</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">to_dual</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_base</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">HilbertSpace</span><span class="p">]</span> <span class="o">=</span> <span class="n">base</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_add</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__add</span> <span class="k">if</span> <span class="n">add</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">add</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_subtract</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">__subtract</span> <span class="k">if</span> <span class="n">subtract</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">subtract</span>
-        <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_multiply</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">__multiply</span> <span class="k">if</span> <span class="n">multiply</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">multiply</span>
-        <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_ax</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__ax</span> <span class="k">if</span> <span class="n">ax</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">ax</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_axpy</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">__axpy</span> <span class="k">if</span> <span class="n">axpy</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">axpy</span>
-        <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_copy</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">__copy</span> <span class="k">if</span> <span class="n">copy</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">copy</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_vector_multiply</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="n">vector_multiply</span>
-        <span class="p">)</span>
+<span class="sd">            x: A vector in the primal space.</span>
 
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">dim</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;The dimension of the space.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dim</span>
+<span class="sd">        Returns:</span>
+<span class="sd">            The corresponding vector in the dual space.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
 
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">has_vector_multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;True if multiplication of elements is defined.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_multiply</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;True if the space is a dual space.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_base</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+<div class="viewcode-block" id="HilbertSpace.from_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_dual">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Maps a dual vector back to its representative in the primal space.</span>
+
+<span class="sd">        This is the inverse of the Riesz representation map defined by `to_dual`.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            xp: A vector in the dual space.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The corresponding vector in the primal space.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.to_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_components">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Maps a vector to its representation as a NumPy component array.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            x: A vector in the space.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The components of the vector as a NumPy array.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.from_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_components">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Maps a NumPy component array back to a vector in the space.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            c: The components of the vector as a NumPy array.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The corresponding vector in the space.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+    <span class="c1"># ------------------------------------------------------------------- #</span>
+    <span class="c1">#            Default implementations that can be overridden           #</span>
+    <span class="c1"># ------------------------------------------------------------------- #</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">dual</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HilbertSpace</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        The dual of the Hilbert space.</span>
+<span class="sd">        The dual of this Hilbert space.</span>
 
 <span class="sd">        The dual space is the space of all continuous linear functionals</span>
-<span class="sd">        that map vectors from the Hilbert space to real numbers.</span>
+<span class="sd">        (i.e., `LinearForm` objects) that map vectors from this space to</span>
+<span class="sd">        real numbers. This implementation returns a `DualHilbertSpace` wrapper.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_base</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">HilbertSpace</span><span class="p">(</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_dual_to_components</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_dual_from_components</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">from_dual</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">to_dual</span><span class="p">,</span>
-                <span class="n">base</span><span class="o">=</span><span class="bp">self</span><span class="p">,</span>
-            <span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_base</span>
+        <span class="k">return</span> <span class="n">DualHilbertSpace</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">zero</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the zero vector for the space.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">zero</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The zero vector (additive identity) of the space.&quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">)))</span>
 
+<div class="viewcode-block" id="HilbertSpace.is_element">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.is_element">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_element</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Checks if an object is a valid element of the space.</span>
+
+<span class="sd">        Note: The default implementation checks the object&#39;s type against the</span>
+<span class="sd">        type of the `zero` vector. This may not be robust for all vector</span>
+<span class="sd">        representations and can be overridden if needed.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            x: The object to check.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            True if the object is an element of the space, False otherwise.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">zero</span><span class="p">))</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.duality_product">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.duality_product">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">duality_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the duality product &lt;xp, x&gt;.</span>
+
+<span class="sd">        This evaluates the linear functional `xp` (an element of the dual space)</span>
+<span class="sd">        at the vector `x` (an element of the primal space).</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            xp: The linear functional from the dual space.</span>
+<span class="sd">            x: The vector from the primal space.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The result of the evaluation xp(x).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">xp</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.add">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.add">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes the sum of two vectors. Defaults to `x + y`.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="n">y</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.subtract">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.subtract">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">subtract</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes the difference of two vectors. Defaults to `x - y`.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">-</span> <span class="n">y</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.multiply">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.multiply">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes scalar multiplication. Defaults to `a * x`.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.negative">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.negative">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">negative</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes the additive inverse of a vector. Defaults to `-1 * x`.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span> <span class="o">*</span> <span class="n">x</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.ax">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.ax">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ax</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Performs in-place scaling `x := a*x`. Defaults to `x *= a`.&quot;&quot;&quot;</span>
+        <span class="n">x</span> <span class="o">*=</span> <span class="n">a</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.axpy">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.axpy">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">axpy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Performs in-place operation `y := y + a*x`. Defaults to `y += a*x`.&quot;&quot;&quot;</span>
+        <span class="n">y</span> <span class="o">+=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.copy">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.copy">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">copy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a deep copy of a vector. Defaults to `x.copy()`.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="HilbertSpace.random">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.random">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">random</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Generates a random vector from the space.</span>
+
+<span class="sd">        The vector&#39;s components are drawn from a standard normal distribution.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A new random vector.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">))</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Defines equality between Hilbert spaces.</span>
+
+<span class="sd">        For dual spaces, equality is determined by the equality of their</span>
+<span class="sd">        underlying primal spaces. For non-dual spaces, this is not implemented,</span>
+<span class="sd">        requiring concrete subclasses to define a meaningful comparison.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">DualHilbertSpace</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">(</span>
+                <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">DualHilbertSpace</span><span class="p">)</span>
+                <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">underlying_space</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">underlying_space</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="bp">NotImplemented</span>
+
+    <span class="c1"># ------------------------------------------------------------------- #</span>
+    <span class="c1">#                      Final (Non-Overridable) Methods                #</span>
+    <span class="c1"># ------------------------------------------------------------------- #</span>
+
+    <span class="nd">@final</span>
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">coordinate_inclusion</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the operator mapping coordinate vectors in R^n to vectors</span>
-<span class="sd">        in this Hilbert space.</span>
+<span class="sd">        The linear operator mapping R^n component vectors into this space.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 
@@ -393,7 +528,7 @@
             <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
             <span class="k">return</span> <span class="n">domain</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span>
 
-        <span class="k">def</span><span class="w"> </span><span class="nf">adjoint_mapping</span><span class="p">(</span><span class="n">y</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">adjoint_mapping</span><span class="p">(</span><span class="n">y</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
             <span class="n">yp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">yp</span><span class="p">)</span>
 
@@ -405,11 +540,11 @@
             <span class="n">adjoint_mapping</span><span class="o">=</span><span class="n">adjoint_mapping</span><span class="p">,</span>
         <span class="p">)</span>
 
+    <span class="nd">@final</span>
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">coordinate_projection</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the operator mapping vectors in this Hilbert space to their</span>
-<span class="sd">        coordinate vectors in R^n.</span>
+<span class="sd">        The linear operator projecting vectors from this space to R^n.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 
@@ -419,7 +554,7 @@
             <span class="n">c</span> <span class="o">=</span> <span class="n">codomain</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
 
-        <span class="k">def</span><span class="w"> </span><span class="nf">adjoint_mapping</span><span class="p">(</span><span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">adjoint_mapping</span><span class="p">(</span><span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
             <span class="n">xp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
 
@@ -431,209 +566,148 @@
             <span class="n">adjoint_mapping</span><span class="o">=</span><span class="n">adjoint_mapping</span><span class="p">,</span>
         <span class="p">)</span>
 
+    <span class="nd">@final</span>
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">riesz</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the Riesz map (dual to primal) as a LinearOperator.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The Riesz map (dual to primal) as a `LinearOperator`.&quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 
         <span class="k">return</span> <span class="n">LinearOperator</span><span class="o">.</span><span class="n">self_dual</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_dual</span><span class="p">)</span>
 
+    <span class="nd">@final</span>
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">inverse_riesz</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the inverse Riesz map (primal to dual) as a LinearOperator.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The inverse Riesz map (primal to dual) as a `LinearOperator`.&quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 
         <span class="k">return</span> <span class="n">LinearOperator</span><span class="o">.</span><span class="n">self_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_dual</span><span class="p">)</span>
 
-<div class="viewcode-block" id="HilbertSpace.duality_product">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.duality_product">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">duality_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Computes the duality product of a dual vector and a vector.</span>
-
-<span class="sd">        Note that this method is not symmetric in its arguments with</span>
-<span class="sd">        the linear form always being the first argument.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_dual</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">x</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">xp</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
-
-
 <div class="viewcode-block" id="HilbertSpace.inner_product">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.inner_product">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">inner_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">x2</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes the inner product of two vectors.&quot;&quot;&quot;</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.inner_product">[docs]</a>
+    <span class="nd">@final</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">inner_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span> <span class="n">x2</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the inner product of two vectors, `(x1, x2)`.</span>
+
+<span class="sd">        This is defined via the duality product as `&lt;R(x1), x2&gt;`, where `R` is</span>
+<span class="sd">        the Riesz map (`to_dual`).</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            x1: The first vector.</span>
+<span class="sd">            x2: The second vector.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The inner product as a float.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">duality_product</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">x1</span><span class="p">),</span> <span class="n">x2</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="HilbertSpace.squared_norm">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.squared_norm">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">squared_norm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes the squared norm of a vector.&quot;&quot;&quot;</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.squared_norm">[docs]</a>
+    <span class="nd">@final</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">squared_norm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the squared norm of a vector, `||x||^2`.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            x: The vector.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The squared norm of the vector.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner_product</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="HilbertSpace.norm">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.norm">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">norm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes the norm of a vector.&quot;&quot;&quot;</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.norm">[docs]</a>
+    <span class="nd">@final</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">norm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the norm of a vector, `||x||`.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            x: The vector.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The norm of the vector.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">squared_norm</span><span class="p">(</span><span class="n">x</span><span class="p">))</span></div>
 
 
 <div class="viewcode-block" id="HilbertSpace.gram_schmidt">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.gram_schmidt">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">gram_schmidt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vectors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">]:</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.gram_schmidt">[docs]</a>
+    <span class="nd">@final</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">gram_schmidt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vectors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Vector</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Vector</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Orthonormalizes a list of vectors using the Gram-Schmidt process.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            vectors: A list of linearly independent vectors.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A list of orthonormalized vectors spanning the same subspace.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: If not all items in the list are elements of the space.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">is_element</span><span class="p">(</span><span class="n">vector</span><span class="p">)</span> <span class="k">for</span> <span class="n">vector</span> <span class="ow">in</span> <span class="n">vectors</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Not all vectors are elements of the space&quot;</span><span class="p">)</span>
 
-        <span class="n">orthonormalised_vectors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">orthonormalised_vectors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Vector</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">vector</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">vectors</span><span class="p">):</span>
             <span class="n">vec_copy</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">vector</span><span class="p">)</span>
             <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
                 <span class="n">product</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner_product</span><span class="p">(</span><span class="n">vec_copy</span><span class="p">,</span> <span class="n">orthonormalised_vectors</span><span class="p">[</span><span class="n">j</span><span class="p">])</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">axpy</span><span class="p">(</span><span class="o">-</span><span class="n">product</span><span class="p">,</span> <span class="n">orthonormalised_vectors</span><span class="p">[</span><span class="n">j</span><span class="p">],</span> <span class="n">vec_copy</span><span class="p">)</span>
             <span class="n">norm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">vec_copy</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">norm</span> <span class="o">&lt;</span> <span class="mf">1e-12</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Vectors are not linearly independent.&quot;</span><span class="p">)</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">ax</span><span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="n">norm</span><span class="p">,</span> <span class="n">vec_copy</span><span class="p">)</span>
             <span class="n">orthonormalised_vectors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">vec_copy</span><span class="p">)</span>
 
         <span class="k">return</span> <span class="n">orthonormalised_vectors</span></div>
 
 
-<div class="viewcode-block" id="HilbertSpace.to_dual">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_dual">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a vector to its canonical dual vector (a linear functional).&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__to_dual</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.from_dual">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_dual">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a dual vector to its representative in the primal space.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__from_dual</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.is_element">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.is_element">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_element</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Checks if an object is an element of the space.</span>
-
-<span class="sd">        Note: The current implementation checks type against the zero vector.</span>
-<span class="sd">        This may not be robust for all vector representations.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">zero</span><span class="p">))</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.add">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.add">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Adds two vectors.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_add</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.subtract">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.subtract">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">subtract</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Subtracts two vectors.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subtract</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.multiply">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.multiply">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Performs scalar multiplication, returning a new vector.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_multiply</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.negative">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.negative">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">negative</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the additive inverse of a vector.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">multiply</span><span class="p">(</span><span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.ax">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.ax">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">ax</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Performs the in-place scaling operation x := a*x.&quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_ax</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.axpy">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.axpy">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">axpy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Performs the in-place vector operation y := y + a*x.&quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_axpy</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.copy">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.copy">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">copy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a deep copy of a vector.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_copy</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.vector_multiply">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.vector_multiply">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">vector_multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">x2</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the product of two elements of the space, if defined.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_multiply</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-                <span class="s2">&quot;Vector multiplication not defined on this space.&quot;</span>
-            <span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vector_multiply</span><span class="p">(</span><span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.to_components">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.to_components">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a vector to its NumPy component array.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__to_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="HilbertSpace.from_components">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.from_components">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a NumPy component array to a vector.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span></div>
-
-
 <div class="viewcode-block" id="HilbertSpace.basis_vector">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.basis_vector">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">basis_vector</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the i-th standard basis vector.&quot;&quot;&quot;</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.basis_vector">[docs]</a>
+    <span class="nd">@final</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">basis_vector</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns the i-th standard basis vector.</span>
+
+<span class="sd">        This is the vector whose component array is all zeros except for a one</span>
+<span class="sd">        at index `i`.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            i: The index of the basis vector.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The i-th basis vector.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">)</span>
         <span class="n">c</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span></div>
 
 
-<div class="viewcode-block" id="HilbertSpace.random">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.random">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">random</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns a random vector from the space.</span>
-
-<span class="sd">        The vector&#39;s components are drawn from a standard Gaussian distribution.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dim</span><span class="p">))</span></div>
-
-
 <div class="viewcode-block" id="HilbertSpace.sample_expectation">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.sample_expectation">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">sample_expectation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vectors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">T_vec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Computes the sample mean of a list of vectors.&quot;&quot;&quot;</span>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.sample_expectation">[docs]</a>
+    <span class="nd">@final</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample_expectation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vectors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Vector</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the sample mean of a list of vectors.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            vectors: A list of vectors from the space.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The sample mean (average) vector.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            TypeError: If not all items in the list are elements of the space.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">vectors</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Cannot compute expectation of an empty list.&quot;</span><span class="p">)</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">is_element</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">vectors</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;Not all items in list are elements of the space.&quot;</span><span class="p">)</span>
         <span class="n">xbar</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">zero</span>
@@ -643,27 +717,33 @@
 
 
 <div class="viewcode-block" id="HilbertSpace.identity_operator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.identity_operator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.identity_operator">[docs]</a>
+    <span class="nd">@final</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">identity_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the identity operator on the space.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the identity operator `I` on the space.&quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 
         <span class="k">return</span> <span class="n">LinearOperator</span><span class="p">(</span>
             <span class="bp">self</span><span class="p">,</span>
             <span class="bp">self</span><span class="p">,</span>
             <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
-            <span class="n">dual_mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">yp</span><span class="p">:</span> <span class="n">yp</span><span class="p">,</span>
             <span class="n">adjoint_mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">y</span><span class="p">:</span> <span class="n">y</span><span class="p">,</span>
         <span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="HilbertSpace.zero_operator">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.zero_operator">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertSpace.zero_operator">[docs]</a>
+    <span class="nd">@final</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">zero_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">codomain</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">HilbertSpace</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Returns the zero operator from this space to a codomain.</span>
+<span class="sd">        Returns the zero operator `0` from this space to a codomain.</span>
 
-<span class="sd">        If no codomain is provided, it maps to itself.</span>
+<span class="sd">        Args:</span>
+<span class="sd">            codomain: The target space of the operator. If None, the operator</span>
+<span class="sd">                maps to this space itself.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The zero linear operator.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.operators</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearOperator</span>
 
@@ -675,148 +755,311 @@
             <span class="n">dual_mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">yp</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">zero</span><span class="p">,</span>
             <span class="n">adjoint_mapping</span><span class="o">=</span><span class="k">lambda</span> <span class="n">y</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">zero</span><span class="p">,</span>
         <span class="p">)</span></div>
+</div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_dual_to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">xp</span><span class="o">.</span><span class="n">components</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_dual_from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cp</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
+<div class="viewcode-block" id="DualHilbertSpace">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DualHilbertSpace</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A wrapper class representing the dual of a `HilbertSpace`.</span>
+
+<span class="sd">    An element of a dual space is a continuous linear functional, represented</span>
+<span class="sd">    in this library by the `LinearForm` class. This wrapper provides a full</span>
+<span class="sd">    `HilbertSpace` interface for these `LinearForm` objects, allowing them to be</span>
+<span class="sd">    treated as vectors in their own right.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">space</span><span class="p">:</span> <span class="n">HilbertSpace</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Args:</span>
+<span class="sd">            space: The primal space from which to form the dual.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span> <span class="o">=</span> <span class="n">space</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">underlying_space</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HilbertSpace</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The primal `HilbertSpace` of which this is the dual.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dim</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The dimension of the dual space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span><span class="o">.</span><span class="n">dim</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dual</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HilbertSpace</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The dual of the dual space, which is the original primal space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span>
+
+<div class="viewcode-block" id="DualHilbertSpace.to_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.to_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a dual vector back to its representative in the primal space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DualHilbertSpace.from_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.from_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a primal vector to its corresponding dual `LinearForm`.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DualHilbertSpace.to_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.to_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a `LinearForm` to its NumPy component array.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">components</span></div>
+
+
+<div class="viewcode-block" id="DualHilbertSpace.from_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.from_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Creates a `LinearForm` from a NumPy component array.&quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 
-        <span class="k">return</span> <span class="n">LinearForm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="n">cp</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">LinearForm</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="n">c</span><span class="p">)</span></div>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="n">y</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__subtract</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">x</span> <span class="o">-</span> <span class="n">y</span>
+<div class="viewcode-block" id="DualHilbertSpace.duality_product">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.DualHilbertSpace.duality_product">[docs]</a>
+    <span class="nd">@final</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">duality_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the duality product &lt;x, xp&gt;.</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+<span class="sd">        In this context, `x` is from the primal space and `xp` is the dual</span>
+<span class="sd">        vector (a `LinearForm`). This is unconventional but maintains the</span>
+<span class="sd">        method signature; it evaluates `x(xp)`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">x</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span></div>
+</div>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__ax</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">x</span> <span class="o">*=</span> <span class="n">a</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__axpy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">y</span> <span class="o">+=</span> <span class="n">a</span> <span class="o">*</span> <span class="n">x</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">__copy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span></div>
+<div class="viewcode-block" id="HilbertModule">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertModule">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">HilbertModule</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    An ABC for a `HilbertSpace` where vector multiplication is defined.</span>
+
+<span class="sd">    This acts as a &quot;mixin&quot; interface, adding the `vector_multiply` requirement</span>
+<span class="sd">    to the `HilbertSpace` contract.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="HilbertModule.vector_multiply">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.HilbertModule.vector_multiply">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">vector_multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span> <span class="n">x2</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the product of two vectors.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            x1: The first vector.</span>
+<span class="sd">            x2: The second vector.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The product of the two vectors.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+</div>
 
 
 
 <div class="viewcode-block" id="EuclideanSpace">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace">[docs]</a>
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">EuclideanSpace</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    An n-dimensional Euclidean space, R^n.</span>
 
-<span class="sd">    This is a concrete implementation of HilbertSpace where vectors are</span>
-<span class="sd">    represented directly by NumPy arrays.</span>
+<span class="sd">    This is a concrete `HilbertSpace` where vectors are represented directly by</span>
+<span class="sd">    NumPy arrays, and the inner product is the standard dot product.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Args:</span>
-<span class="sd">            dim (int): Dimension of the space.</span>
+<span class="sd">            dim: The dimension of the space.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
-            <span class="n">dim</span><span class="p">,</span>
-            <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
-            <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_to_dual_impl</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_from_dual_impl</span><span class="p">,</span>
-        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">dim</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Dimension must be a positive integer.&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dim</span> <span class="o">=</span> <span class="n">dim</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_to_dual_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearForm</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dim</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The dimension of the space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dim</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_from_dual_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="n">LinearForm</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Checks for equality with another EuclideanSpace.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">EuclideanSpace</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dim</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">dim</span></div>
+<div class="viewcode-block" id="EuclideanSpace.to_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.to_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the vector itself, as it is already a component array.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">x</span></div>
 
 
+<div class="viewcode-block" id="EuclideanSpace.from_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.from_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the component array itself, as it is the vector.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">c</span></div>
 
-<div class="viewcode-block" id="LebesgueSpace">
-<a class="viewcode-back" href="../../pygeoinf.html#pygeoinf.hilbert_space.LebesgueSpace">[docs]</a>
-<span class="k">class</span><span class="w"> </span><span class="nc">LebesgueSpace</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">,</span> <span class="n">Generic</span><span class="p">[</span><span class="n">T_vec</span><span class="p">]):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;A factory for Hilbert spaces with a standard inner product.</span>
 
-<span class="sd">        This class simplifies the creation of a `HilbertSpace` where the inner</span>
-<span class="sd">        product is the standard Euclidean dot product of the vectors&#39; component</span>
-<span class="sd">        representations.</span>
+<div class="viewcode-block" id="EuclideanSpace.to_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.to_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a vector `x` to a `LinearForm` with the same components.&quot;&quot;&quot;</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
 
-<span class="sd">        By providing only the `to_components` and `from_components` mappings,</span>
-<span class="sd">        this class **automatically defines the necessary Riesz maps**</span>
-<span class="sd">        (`to_dual` and `from_dual`) that are consistent with this standard</span>
-<span class="sd">        inner product.</span>
+        <span class="k">return</span> <span class="n">LinearForm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="n">x</span><span class="p">)</span></div>
 
-<span class="sd">    Example:</span>
-<span class="sd">        If you have a custom vector class `MyVector` and functions</span>
-<span class="sd">        `to_numpy(v: MyVector)` and `from_numpy(arr: np.ndarray)`, you can</span>
-<span class="sd">        define the space simply as:</span>
-<span class="sd">        `space = LebesgueSpace(dim, to_numpy, from_numpy)`</span>
+
+<div class="viewcode-block" id="EuclideanSpace.from_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.EuclideanSpace.from_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a `LinearForm` back to a vector via its components.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="MassWeightedHilbertSpace">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">MassWeightedHilbertSpace</span><span class="p">(</span><span class="n">HilbertSpace</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A Hilbert space with an inner product weighted by a mass operator.</span>
+
+<span class="sd">    This class wraps an existing `HilbertSpace` (let&#39;s call it X) and defines a new</span>
+<span class="sd">    inner product for a space (Y) as: `(u, v)_Y = (M @ u, v)_X`, where `M` is a</span>
+<span class="sd">    self-adjoint, positive-definite mass operator defined on X.</span>
+
+<span class="sd">    This is a common construction in numerical methods like the Finite Element</span>
+<span class="sd">    Method, where the basis functions are not orthonormal.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-        <span class="n">to_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
-        <span class="n">from_components</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">],</span>
-        <span class="o">/</span><span class="p">,</span>
-        <span class="o">*</span><span class="p">,</span>
-        <span class="n">add</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">subtract</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">multiply</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">ax</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">axpy</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">copy</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">vector_multiply</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">T_vec</span><span class="p">,</span> <span class="n">T_vec</span><span class="p">],</span> <span class="n">T_vec</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">underlying_space</span><span class="p">:</span> <span class="n">HilbertSpace</span><span class="p">,</span>
+        <span class="n">mass_operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
+        <span class="n">inverse_mass_operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
     <span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initializes the LebesgueSpace.</span>
-
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Args:</span>
-<span class="sd">            dim (int): The dimension of the space.</span>
-<span class="sd">            to_components (callable): A function mapping abstract vectors to their</span>
-<span class="sd">                NumPy component arrays.</span>
-<span class="sd">            from_components (callable): A function mapping NumPy component</span>
-<span class="sd">                arrays back to abstract vectors.</span>
-<span class="sd">            add (callable, optional): Custom vector addition.</span>
-<span class="sd">            subtract (callable, optional): Custom vector subtraction.</span>
-<span class="sd">            multiply (callable, optional): Custom scalar multiplication.</span>
-<span class="sd">            ax (callable, optional): Custom in-place scaling x := a*x.</span>
-<span class="sd">            axpy (callable, optional): Custom in-place operation y := a*x + y.</span>
-<span class="sd">            copy (callable, optional): Custom deep copy for vectors.</span>
-<span class="sd">            vector_multiply (callable, optional): Custom element-wise product.</span>
+<span class="sd">            underlying_space: The original space (X) on which the inner</span>
+<span class="sd">                product is defined.</span>
+<span class="sd">            mass_operator: The self-adjoint, positive-definite mass</span>
+<span class="sd">                operator (M).</span>
+<span class="sd">            inverse_mass_operator: The inverse of the mass operator.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
-            <span class="n">dim</span><span class="p">,</span>
-            <span class="n">to_components</span><span class="p">,</span>
-            <span class="n">from_components</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_to_dual_from_components</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_from_dual_from_components</span><span class="p">,</span>
-            <span class="n">add</span><span class="o">=</span><span class="n">add</span><span class="p">,</span>
-            <span class="n">subtract</span><span class="o">=</span><span class="n">subtract</span><span class="p">,</span>
-            <span class="n">multiply</span><span class="o">=</span><span class="n">multiply</span><span class="p">,</span>
-            <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">,</span>
-            <span class="n">axpy</span><span class="o">=</span><span class="n">axpy</span><span class="p">,</span>
-            <span class="n">copy</span><span class="o">=</span><span class="n">copy</span><span class="p">,</span>
-            <span class="n">vector_multiply</span><span class="o">=</span><span class="n">vector_multiply</span><span class="p">,</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span> <span class="o">=</span> <span class="n">underlying_space</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_mass_operator</span> <span class="o">=</span> <span class="n">mass_operator</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_mass_operator</span> <span class="o">=</span> <span class="n">inverse_mass_operator</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dim</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The dimension of the space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span><span class="o">.</span><span class="n">dim</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">underlying_space</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">HilbertSpace</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The underlying Hilbert space (X) without mass weighting.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_underlying_space</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">mass_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The mass operator (M) defining the weighted inner product.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mass_operator</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">inverse_mass_operator</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearOperator</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The inverse of the mass operator.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_mass_operator</span>
+
+<div class="viewcode-block" id="MassWeightedHilbertSpace.to_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.to_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Delegates component mapping to the underlying space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">underlying_space</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="MassWeightedHilbertSpace.from_components">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.from_components">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">c</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Delegates vector creation to the underlying space.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">underlying_space</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="MassWeightedHilbertSpace.to_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.to_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the dual mapping `R_Y(x) = R_X(M x)`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.linear_forms</span><span class="w"> </span><span class="kn">import</span> <span class="n">LinearForm</span>
+
+        <span class="n">y</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mass_operator</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">yp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">underlying_space</span><span class="o">.</span><span class="n">to_dual</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">LinearForm</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="n">yp</span><span class="o">.</span><span class="n">components</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="MassWeightedHilbertSpace.from_dual">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertSpace.from_dual">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dual</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes the inverse dual mapping `R_Y^{-1}(xp) = M^{-1} R_X^{-1}(xp)`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Note: This implementation relies on the from_dual operator of the</span>
+        <span class="c1"># underlying space not checking the domain of its argument. This is</span>
+        <span class="c1"># acceptable and avoids an unnecessary copy.</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">underlying_space</span><span class="o">.</span><span class="n">from_dual</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inverse_mass_operator</span><span class="p">(</span><span class="n">x</span><span class="p">)</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="MassWeightedHilbertModule">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertModule">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">MassWeightedHilbertModule</span><span class="p">(</span><span class="n">MassWeightedHilbertSpace</span><span class="p">,</span> <span class="n">HilbertModule</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A mass-weighted Hilbert space that also supports vector multiplication.</span>
+
+<span class="sd">    This class inherits the mass-weighted inner product structure and mixes in</span>
+<span class="sd">    the `HilbertModule` interface, delegating the multiplication operation to</span>
+<span class="sd">    the underlying space.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">underlying_space</span><span class="p">:</span> <span class="n">HilbertModule</span><span class="p">,</span>
+        <span class="n">mass_operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
+        <span class="n">inverse_mass_operator</span><span class="p">:</span> <span class="n">LinearOperator</span><span class="p">,</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Args:</span>
+<span class="sd">            underlying_space: The original space (X) on which the inner</span>
+<span class="sd">                product is defined.</span>
+<span class="sd">            mass_operator: The self-adjoint, positive-definite mass</span>
+<span class="sd">                operator (M).</span>
+<span class="sd">            inverse_mass_operator: The inverse of the mass operator.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">underlying_space</span><span class="p">,</span> <span class="n">HilbertModule</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;Underlying space must be a HilbertModule.&quot;</span><span class="p">)</span>
+
+        <span class="n">MassWeightedHilbertSpace</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="bp">self</span><span class="p">,</span> <span class="n">underlying_space</span><span class="p">,</span> <span class="n">mass_operator</span><span class="p">,</span> <span class="n">inverse_mass_operator</span>
         <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_to_dual_from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">T_vec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a vector to its dual form via its components.&quot;&quot;&quot;</span>
-        <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+<div class="viewcode-block" id="MassWeightedHilbertModule.vector_multiply">
+<a class="viewcode-back" href="../../api/pygeoinf.html#pygeoinf.hilbert_space.MassWeightedHilbertModule.vector_multiply">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">vector_multiply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x1</span><span class="p">:</span> <span class="n">Vector</span><span class="p">,</span> <span class="n">x2</span><span class="p">:</span> <span class="n">Vector</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Vector</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Computes vector multiplication by delegating to the underlying space.</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_from_dual_from_components</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">xp</span><span class="p">:</span> <span class="s2">&quot;LinearForm&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T_vec</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Maps a dual form back to a vector via its components.&quot;&quot;&quot;</span>
-        <span class="n">cp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dual</span><span class="o">.</span><span class="n">to_components</span><span class="p">(</span><span class="n">xp</span><span class="p">)</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_components</span><span class="p">(</span><span class="n">cp</span><span class="p">)</span></div>
+<span class="sd">        Note: This assumes the underlying space provided during initialization</span>
+<span class="sd">        is itself an instance of `HilbertModule`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">underlying_space</span><span class="o">.</span><span class="n">vector_multiply</span><span class="p">(</span><span class="n">x1</span><span class="p">,</span> <span class="n">x2</span><span class="p">)</span></div>
+</div>
 
 </pre></div>
         </article>

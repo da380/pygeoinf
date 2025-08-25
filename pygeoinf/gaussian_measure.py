@@ -28,9 +28,7 @@ from scipy.sparse import diags
 from scipy.stats import multivariate_normal
 
 
-from .hilbert_space import (
-    EuclideanSpace,
-)
+from .hilbert_space import EuclideanSpace, HilbertModule
 
 from .operators import (
     LinearOperator,
@@ -405,7 +403,7 @@ class GaussianMeasure:
         This method is only available if the domain supports vector
         multiplication.
         """
-        if not self.domain.has_vector_multiply:
+        if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
                 "Pointwise variance requires vector multiplication on the domain."
             )

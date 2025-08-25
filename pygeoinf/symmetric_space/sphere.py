@@ -489,12 +489,65 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             self, lebesgue, mass_operator, inverse_mass_operator
         )
 
-    def eigenfunction_norms(self) -> np.ndarray:
-        """Returns a list of the norms of the eigenfunctions."""
-        values = self._degree_dependent_scaling_values(
-            lambda l: np.sqrt(self.sobolev_function(self.laplacian_eigenvalue((l, 0))))
+    @staticmethod
+    def from_sobolev_parameters(
+        order: float,
+        scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        vector_as_SHGrid: bool = True,
+        grid: str = "DH",
+        rtol: float = 1e-8,
+        power_of_two: bool = False,
+    ) -> "Sobolev":
+        """
+        Creates an instance with `lmax` chosen based on the Sobolev parameters.
+
+        This factory method estimates the spherical harmonic truncation degree
+        (`lmax`) required to represent the space while meeting a specified
+        relative tolerance for the truncation error. This is useful when the
+        required `lmax` is not known a priori.
+
+        Args:
+            order: The order of the Sobolev space, controlling smoothness.
+            scale: The non-dimensional length-scale for the space.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The `pyshtools` grid type (e.g., 'DH'). Defaults to 'DH'.
+            rtol: The relative tolerance used to determine the `lmax`.
+            power_of_two: If True, `lmax` is set to the next power of two.
+
+        Returns:
+            An instance of the Sobolev class with a calculated `lmax`.
+        """
+        if order <= 1.0:
+            raise ValueError("This method is only applicable for orders > 1.0")
+
+        summation = 1.0
+        l = 0
+        err = 1.0
+        sobolev_func = lambda deg: (1.0 + scale**2 * deg * (deg + 1)) ** order
+
+        while err > rtol:
+            l += 1
+            term = 1 / sobolev_func(l)
+            summation += term
+            err = term / summation
+            if l > 10000:
+                raise RuntimeError("Failed to converge on a stable lmax.")
+
+        if power_of_two:
+            n = int(np.log2(l))
+            l = 2 ** (n + 1)
+
+        lmax = l
+        return Sobolev(
+            lmax,
+            order,
+            scale,
+            radius=radius,
+            grid=grid,
         )
-        return self.radius * np.fromiter(values, dtype=float)
 
     def __eq__(self, other: object) -> bool:
         """
@@ -512,6 +565,13 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             and self.order == other.order
             and self.scale == other.scale
         )
+
+    def eigenfunction_norms(self) -> np.ndarray:
+        """Returns a list of the norms of the eigenfunctions."""
+        values = self._degree_dependent_scaling_values(
+            lambda l: np.sqrt(self.sobolev_function(self.laplacian_eigenvalue((l, 0))))
+        )
+        return self.radius * np.fromiter(values, dtype=float)
 
     def dirac(self, point: (float, float)) -> LinearForm:
         """
