@@ -425,6 +425,18 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         """
         return x1 * x2
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev space on a sphere.
+
+        Two spaces are considered equal if they are of the same type and have
+        the same defining parameters (kmax, order, scale, and radius).
+        """
+        if not isinstance(other, Lebesgue):
+            return NotImplemented
+
+        return self.lmax == other.lmax and self.radius == other.radius
+
     def eigenfunction_norms(self) -> np.ndarray:
         """Returns a list of the norms of the eigenfunctions."""
         return np.fromiter(
@@ -444,10 +456,6 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
             return self.from_coefficient(coeff)
 
         return LinearOperator.self_adjoint(self, mapping)
-
-    # ================================================================ #
-    #                         Private methods                          #
-    # ================================================================ #
 
 
 class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevSpace):
