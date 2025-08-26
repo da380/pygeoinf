@@ -458,8 +458,14 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         return LinearOperator.self_adjoint(self, mapping)
 
     def __str__(self) -> str:
-        """Returns the string representation of the form's components."""
-        return f"Lebesgue space on sphere\nlmax={self.lmax}\nradius={self.radius}\ngrid={self.grid}\nextend={self.extend}"
+        """Returns a human-readable string summary of the space."""
+        return (
+            f"Lebesgue space on sphere:\n"
+            f"lmax={self.lmax}\n"
+            f"radius={self.radius}\n"
+            f"grid={self.grid}\n"
+            f"extend={self.extend}"
+        )
 
 
 class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevSpace):
@@ -610,3 +616,15 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
 
         c = self._coefficient_to_component(ulm)
         return self.dual.from_components(c)
+
+    def __str__(self) -> str:
+        """Returns a human-readable string summary of the space."""
+        return (
+            f"Lebesgue space on sphere:\n"
+            f"lmax={self.lmax}\n"
+            f"order={self.order}\n"
+            f"scale={self.scale}\n"
+            f"radius={self.radius}\n"
+            f"grid={self.grid}\n"
+            f"extend={self.extend}"
+        )

@@ -118,6 +118,16 @@ class HilbertSpace(ABC):
             The corresponding vector in the space.
         """
 
+    @abstractmethod
+    def __eq__(self, other: object) -> bool:
+        """
+        Defines equality between two HilbertSpace instances.
+
+        This is an abstract method, requiring all concrete subclasses to
+        implement a meaningful comparison. This ensures that equality is
+        defined by mathematical equivalence rather than object identity.
+        """
+
     # ------------------------------------------------------------------- #
     #            Default implementations that can be overridden           #
     # ------------------------------------------------------------------- #
@@ -208,21 +218,6 @@ class HilbertSpace(ABC):
             A new random vector.
         """
         return self.from_components(np.random.randn(self.dim))
-
-    def __eq__(self, other: object) -> bool:
-        """
-        Defines equality between Hilbert spaces.
-
-        For dual spaces, equality is determined by the equality of their
-        underlying primal spaces. For non-dual spaces, this is not implemented,
-        requiring concrete subclasses to define a meaningful comparison.
-        """
-        if isinstance(self, DualHilbertSpace):
-            return (
-                isinstance(other, DualHilbertSpace)
-                and self.underlying_space == other.underlying_space
-            )
-        return NotImplemented
 
     # ------------------------------------------------------------------- #
     #                      Final (Non-Overridable) Methods                #
@@ -498,6 +493,17 @@ class DualHilbertSpace(HilbertSpace):
 
         return LinearForm(self._underlying_space, components=c)
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for equality with another dual space.
+
+        Two dual spaces are considered equal if and only if their underlying
+        primal spaces are equal.
+        """
+        if not isinstance(other, DualHilbertSpace):
+            return NotImplemented
+        return self.underlying_space == other.underlying_space
+
     @final
     def duality_product(self, xp: LinearForm, x: Vector) -> float:
         """
@@ -571,6 +577,11 @@ class EuclideanSpace(HilbertSpace):
     def from_dual(self, xp: "LinearForm") -> np.ndarray:
         """Maps a `LinearForm` back to a vector via its components."""
         return self.dual.to_components(xp)
+
+    def __eq__(self, other: object):
+        if not isinstance(other, EuclideanSpace):
+            return NotImplemented
+        return self.dim == other.dim
 
 
 class MassWeightedHilbertSpace(HilbertSpace):
@@ -650,6 +661,22 @@ class MassWeightedHilbertSpace(HilbertSpace):
         # acceptable and avoids an unnecessary copy.
         x = self.underlying_space.from_dual(xp)
         return self._inverse_mass_operator(x)
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for equality with another MassWeightedHilbertSpace.
+
+        Two mass-weighted spaces are considered equal if they share an equal
+        underlying space and their mass operators are also equal.
+        """
+        if not isinstance(other, MassWeightedHilbertSpace):
+            return NotImplemented
+
+        return (
+            self.underlying_space == other.underlying_space
+            and (self.mass_operator == other.mass_operator)
+            and (self.inverse_mass_operator == other.inverse_mass_operator)
+        )
 
 
 class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):

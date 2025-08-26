@@ -7,41 +7,99 @@ from numpy import pi
 import pygeoinf as inf
 from pygeoinf.symmetric_space.sphere import Lebesgue, Sobolev
 
-X = Sobolev(32, 2, 0.5)
-Y = Sobolev(32, 1, 0.1)
+
+class TestClass:
+
+    def __init__(self, lmax: int, radius: float, grid: str):
+        self.lmax = lmax
+        self.radius = radius
+        self.grid = grid
+
+    def lebesgue_load_space(self) -> Lebesgue:
+        return Lebesgue(
+            self.lmax,
+            radius=self.radius,
+            grid=self.grid,
+        )
+
+    def lebesgue_response_space(self) -> inf.HilbertSpaceDirectSum:
+        field_space = self.lebesgue_load_space()
+        return inf.HilbertSpaceDirectSum(
+            [field_space, field_space, field_space, inf.EuclideanSpace(2)]
+        )
+
+    def sobolev_load_space(self, order: float, scale: float) -> Sobolev:
+        return Sobolev(self.lmax, order, scale, radius=self.radius, grid=self.grid)
+
+    def sobolev_response_space(
+        self, order: float, scale: float
+    ) -> inf.HilbertSpaceDirectSum:
+        field_space = Sobolev(
+            self.lmax, order + 1, scale, radius=self.radius, grid=self.grid
+        )
+        return inf.HilbertSpaceDirectSum(
+            [field_space, field_space, field_space, inf.EuclideanSpace(2)]
+        )
+
+    def as_lebesgue_linear_operator(self) -> inf.LinearOperator:
+
+        domain = self.lebesgue_load_space()
+        codomain = self.lebesgue_response_space()
+
+        def mapping(u):
+            return [u, u, u, np.zeros(2)]
+
+        def adjoint_mapping(response):
+            return sum(response[:3])
+
+        return inf.LinearOperator(
+            domain, codomain, mapping, adjoint_mapping=adjoint_mapping
+        )
+
+    def as_sobolev_linear_operator(self, order: float, scale: float):
+
+        domain = self.sobolev_load_space(order, scale)
+        codomain = self.sobolev_response_space(order, scale)
+
+        lebesgue_operator = self.as_lebesgue_linear_operator()
+
+        for l1, s2 in zip(
+            lebesgue_operator.codomain.subspaces[:3], codomain.subspaces[:3]
+        ):
+            l2 = s2.underlying_space
+            # print(l1.lmax, l1.radius, l1.grid)
+            # print(l2.lmax, l2.radius, l2.grid)
+            # print(l1 == l2)
+
+        return inf.LinearOperator.from_formal_adjoint(
+            domain, codomain, lebesgue_operator
+        )
 
 
-Z = inf.HilbertSpaceDirectSum([Y, Y])
+test = TestClass(32, 1, "DH")
 
-w = X.random()
+A = test.as_lebesgue_linear_operator()
 
-X_base = X.underlying_space
-Z_base = inf.HilbertSpaceDirectSum(
-    [subspace.underlying_space for subspace in Z.subspaces]
-)
+X = A.domain
+Y = A.codomain
 
-print(X_base)
+u = X.random()
+v = Y.random()
 
-A_L2 = inf.LinearOperator(
-    X_base, Z_base, lambda u: [u, 2 * u], adjoint_mapping=lambda v: v[0] + 2 * v[1]
-)
-
-
-u = X_base.random()
-v = Z_base.random()
-
-lhs = Z_base.inner_product(A_L2(u), v)
-rhs = X_base.inner_product(u, A_L2.adjoint(v))
+lhs = Y.inner_product(A(u), v)
+rhs = X.inner_product(u, A.adjoint(v))
 
 print(lhs, rhs)
 
+B = test.as_sobolev_linear_operator(1, 1)
 
-A = inf.LinearOperator.from_formal_adjoint(X, Z, A_L2)
+X = B.domain
+Y = B.codomain
 
 u = X.random()
-v = Z.random()
+v = Y.random()
 
-lhs = Z.inner_product(A(u), v)
-rhs = X.inner_product(u, A.adjoint(v))
+lhs = Y.inner_product(B(u), v)
+rhs = X.inner_product(u, B.adjoint(v))
 
 print(lhs, rhs)
