@@ -232,6 +232,8 @@ class LinearOperator(Operator):
             raise ValueError("Domain mismatch")
 
         if codomain_base != operator.codomain:
+            print(codomain_base)
+            print(operator.codomain)
             raise ValueError("Codomain mismatch")
 
         return LinearOperator(

@@ -5,37 +5,43 @@ from numpy import pi
 
 
 import pygeoinf as inf
-from pygeoinf.symmetric_space.circle import Lebesgue, Sobolev
+from pygeoinf.symmetric_space.sphere import Lebesgue, Sobolev
 
-import pyshtools as sh
-
-
-lmax = 32
-radius = 10
-grid = "DH2"
-extend = True
+X = Sobolev(32, 2, 0.5)
+Y = Sobolev(32, 1, 0.1)
 
 
-order = 2
-scale = 0.1
-X = Sobolev(lmax, order, scale * radius, radius=radius)
-# X = Lebesgue(lmax, radius=radius)
+Z = inf.HilbertSpaceDirectSum([Y, Y])
 
-u = X.project_function(lambda p: 1)
+w = X.random()
 
-print(X.squared_norm(u))
-print(4 * pi * radius * radius)
+X_base = X.underlying_space
+Z_base = inf.HilbertSpaceDirectSum(
+    [subspace.underlying_space for subspace in Z.subspaces]
+)
 
+print(X_base)
 
-mu = X.norm_scaled_heat_kernel_gaussian_measure(0.5 * radius)
-
-us = mu.samples(1000)
-squared_norms = [X.squared_norm(u) for u in us]
-
-print(np.mean(squared_norms))
-plt.hist(squared_norms, bins=100)
+A_L2 = inf.LinearOperator(
+    X_base, Z_base, lambda u: [u, 2 * u], adjoint_mapping=lambda v: v[0] + 2 * v[1]
+)
 
 
-u = mu.sample()
-X.plot(u)
-plt.show()
+u = X_base.random()
+v = Z_base.random()
+
+lhs = Z_base.inner_product(A_L2(u), v)
+rhs = X_base.inner_product(u, A_L2.adjoint(v))
+
+print(lhs, rhs)
+
+
+A = inf.LinearOperator.from_formal_adjoint(X, Z, A_L2)
+
+u = X.random()
+v = Z.random()
+
+lhs = Z.inner_product(A(u), v)
+rhs = X.inner_product(u, A.adjoint(v))
+
+print(lhs, rhs)

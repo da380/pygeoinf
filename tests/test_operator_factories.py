@@ -3,9 +3,16 @@ Tests for the various static factory and construction methods on the LinearOpera
 """
 
 import pytest
-
 import numpy as np
 import pygeoinf as inf
+from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
+from pygeoinf.symmetric_space.sphere import Sobolev as SphereSobolev
+
+
+# For reproducibility in all tests
+@pytest.fixture(autouse=True)
+def set_random_seed():
+    np.random.seed(42)
 
 
 def test_from_matrix_standard():
@@ -165,3 +172,65 @@ def test_from_formal_adjoint_with_direct_sum():
     rhs = domain_full.inner_product(x, A_full.adjoint(y))
 
     assert np.isclose(lhs, rhs)
+
+
+def test_from_formal_adjoint_sobolev():
+    """Tests from_formal_adjoint using Sobolev and Lebesgue spaces on a circle."""
+    sobolev_space = CircleSobolev.from_sobolev_parameters(2.0, 0.1)
+    lebesgue_space = sobolev_space.underlying_space
+
+    def diff_map(u):
+        coeff = lebesgue_space.to_coefficient(u)
+        k = np.arange(coeff.size)
+        diff_coeff = 1j * k * coeff
+        return lebesgue_space.from_coefficient(diff_coeff)
+
+    A_base = inf.LinearOperator(
+        lebesgue_space,
+        lebesgue_space,
+        diff_map,
+        adjoint_mapping=lambda u: -1 * diff_map(u),
+    )
+
+    A_sobolev = inf.LinearOperator.from_formal_adjoint(
+        sobolev_space, sobolev_space, A_base
+    )
+
+    x, y = sobolev_space.random(), sobolev_space.random()
+    lhs = sobolev_space.inner_product(A_sobolev(x), y)
+    rhs = sobolev_space.inner_product(x, A_sobolev.adjoint(y))
+
+    assert np.isclose(lhs, rhs, rtol=1e-5)
+
+
+def test_from_formal_adjoint_symmetric_direct_sum():
+    """
+    Tests from_formal_adjoint on a direct sum of a circle and a sphere
+    Sobolev space, representing a complex, mixed-geometry model space.
+    """
+    # 1. Define the full (weighted) and base (unweighted) spaces
+    circle_sob = CircleSobolev.from_sobolev_parameters(2.0, 0.1)
+    sphere_sob = SphereSobolev.from_sobolev_parameters(2.0, 0.2)
+    domain_full = inf.HilbertSpaceDirectSum([circle_sob, sphere_sob])
+
+    circle_leb = circle_sob.underlying_space
+    sphere_leb = sphere_sob.underlying_space
+    domain_base = inf.HilbertSpaceDirectSum([circle_leb, sphere_leb])
+
+    # 2. Create a base operator on the simple Lebesgue direct sum space.
+    # We can use a block-diagonal invariant operator for this.
+    op1_base = circle_leb.invariant_automorphism(lambda eig: 1.0 / (1.0 + eig))
+    op2_base = sphere_leb.invariant_automorphism(lambda eig: 1.0 / (1.0 + eig))
+    A_base = inf.BlockDiagonalLinearOperator([op1_base, op2_base])
+
+    # 3. Use the method under test to "lift" the L2 operator to the Sobolev space
+    A_full = inf.LinearOperator.from_formal_adjoint(domain_full, domain_full, A_base)
+
+    # 4. Verify the adjoint property holds in the mixed Sobolev space
+    x = domain_full.random()  # x is a list [circle_func, sphere_func]
+    y = domain_full.random()
+
+    lhs = domain_full.inner_product(A_full(x), y)
+    rhs = domain_full.inner_product(x, A_full.adjoint(y))
+
+    assert np.isclose(lhs, rhs, rtol=1e-5)
