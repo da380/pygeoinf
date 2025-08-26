@@ -48,8 +48,8 @@ class Operator:
 
     def __init__(
         self,
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         mapping: Callable[[Any], Any],
     ) -> None:
         """
@@ -61,17 +61,17 @@ class Operator:
             mapping (callable): The function defining the mapping from the
                 domain to the codomain.
         """
-        self._domain: "HilbertSpace" = domain
-        self._codomain: "HilbertSpace" = codomain
+        self._domain: HilbertSpace = domain
+        self._codomain: HilbertSpace = codomain
         self.__mapping: Callable[[Any], Any] = mapping
 
     @property
-    def domain(self) -> "HilbertSpace":
+    def domain(self) -> HilbertSpace:
         """The domain of the operator."""
         return self._domain
 
     @property
-    def codomain(self) -> "HilbertSpace":
+    def codomain(self) -> HilbertSpace:
         """The codomain of the operator."""
         return self._codomain
 
@@ -111,8 +111,8 @@ class LinearOperator(Operator):
 
     def __init__(
         self,
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         mapping: Callable[[Any], Any],
         /,
         *,
@@ -158,21 +158,21 @@ class LinearOperator(Operator):
 
     @staticmethod
     def self_dual(
-        domain: "HilbertSpace", mapping: Callable[[Any], Any]
+        domain: HilbertSpace, mapping: Callable[[Any], Any]
     ) -> LinearOperator:
         """Creates a self-dual operator."""
         return LinearOperator(domain, domain.dual, mapping, dual_mapping=mapping)
 
     @staticmethod
     def self_adjoint(
-        domain: "HilbertSpace", mapping: Callable[[Any], Any]
+        domain: HilbertSpace, mapping: Callable[[Any], Any]
     ) -> LinearOperator:
         """Creates a self-adjoint operator."""
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
     @staticmethod
     def from_formal_adjoint(
-        domain: "HilbertSpace", codomain: "HilbertSpace", operator: LinearOperator
+        domain: HilbertSpace, codomain: HilbertSpace, operator: LinearOperator
     ) -> LinearOperator:
         """
         Constructs an operator on weighted spaces from one on the underlying spaces.
@@ -182,6 +182,10 @@ class LinearOperator(Operator):
         and "lifts" it to be a proper operator on the mass-weighted spaces. It
         correctly defines the new operator's adjoint with respect to the
         weighted inner products.
+
+        This method automatically handles cases where the domain and/or codomain
+        are a `HilbertSpaceDirectSum`, recursively building the necessary
+        block-structured mass operators.
 
         Args:
             domain: The (potentially) mass-weighted domain of the new operator.
@@ -193,23 +197,40 @@ class LinearOperator(Operator):
             A new `LinearOperator` that acts between the mass-weighted spaces.
         """
         from .hilbert_space import MassWeightedHilbertSpace
+        from .direct_sum import HilbertSpaceDirectSum, BlockDiagonalLinearOperator
 
-        if isinstance(domain, MassWeightedHilbertSpace):
-            domain_base = domain.underlying_space
-            domain_inverse_mass_operator = domain.inverse_mass_operator
-        else:
-            domain_base = domain
-            domain_inverse_mass_operator = domain.identity_operator()
+        def get_properties(space: HilbertSpace):
+            if isinstance(space, MassWeightedHilbertSpace):
+                return (
+                    space.underlying_space,
+                    space.mass_operator,
+                    space.inverse_mass_operator,
+                )
+            elif isinstance(space, HilbertSpaceDirectSum):
+                properties = [get_properties(subspace) for subspace in space.subspaces]
+                underlying_space = HilbertSpaceDirectSum(
+                    [property[0] for property in properties]
+                )
+                mass_operator = BlockDiagonalLinearOperator(
+                    [property[1] for property in properties]
+                )
+                inverse_mass_operator = BlockDiagonalLinearOperator(
+                    [property[2] for property in properties]
+                )
+                return (
+                    underlying_space,
+                    mass_operator,
+                    inverse_mass_operator,
+                )
+            else:
+                return space, space.identity_operator(), space.identity_operator()
 
-        if isinstance(codomain, MassWeightedHilbertSpace):
-            codomain_base = codomain.underlying_space
-            codomain_mass_operator = codomain.mass_operator
-        else:
-            codomain_base = codomain
-            codomain_mass_operator = codomain.identity_operator()
+        domain_base, _, domain_inverse_mass_operator = get_properties(domain)
+        codomain_base, codomain_mass_operator, _ = get_properties(codomain)
 
         if domain_base != operator.domain:
             raise ValueError("Domain mismatch")
+
         if codomain_base != operator.codomain:
             raise ValueError("Codomain mismatch")
 
@@ -224,26 +245,25 @@ class LinearOperator(Operator):
 
     @staticmethod
     def from_formally_self_adjoint(
-        domain: "HilbertSpace", operator: LinearOperator
+        domain: HilbertSpace, operator: LinearOperator
     ) -> LinearOperator:
         """
-        Method to construct LinearOperators on MassWeightedHilbertSpaces
-        that are self-adjoint on the underlying space.
+        Constructs a self-adjoint operator on a weighted space.
+
+        This method takes an operator that is formally self-adjoint on an
+        underlying (unweighted) space and promotes it to a truly self-adjoint
+        operator on the `MassWeightedHilbertSpace`. It automatically handles
+        `HilbertSpaceDirectSum` domains.
 
         Args:
-            domain (MassWeightedHilbertSpace): The domain of the operator.
-            operator (LinearOperator): The operator to be converted
-
-        Notes:
-            If the domain is not a MassWeightedHilbertSpace, the underlying
-            domain is taken to be the domain, and the mass operator the identity.
-            In such cases the method is well-defined but pointless as the output
-            operator is identical to the input operator.
+            domain (HilbertSpace): The domain of the operator, which can be a
+                `MassWeightedHilbertSpace` or a `HilbertSpaceDirectSum`.
+            operator (LinearOperator): The operator to be converted.
         """
         return LinearOperator.from_formal_adjoint(domain, domain, operator)
 
     @staticmethod
-    def from_linear_forms(forms: List["LinearForm"]) -> LinearOperator:
+    def from_linear_forms(forms: List[LinearForm]) -> LinearOperator:
         """
         Creates an operator from a list of linear forms.
 
@@ -275,8 +295,8 @@ class LinearOperator(Operator):
 
     @staticmethod
     def from_matrix(
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         matrix: Union[np.ndarray, ScipyLinOp],
         /,
         *,
@@ -365,7 +385,7 @@ class LinearOperator(Operator):
 
     @staticmethod
     def self_adjoint_from_matrix(
-        domain: "HilbertSpace", matrix: Union[np.ndarray, ScipyLinOp]
+        domain: HilbertSpace, matrix: Union[np.ndarray, ScipyLinOp]
     ) -> LinearOperator:
         """Forms a self-adjoint operator from its Galerkin matrix."""
 
@@ -379,8 +399,8 @@ class LinearOperator(Operator):
 
     @staticmethod
     def from_tensor_product(
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         vector_pairs: List[Tuple[Any, Any]],
         /,
         *,
@@ -414,7 +434,7 @@ class LinearOperator(Operator):
 
     @staticmethod
     def self_adjoint_from_tensor_product(
-        domain: "HilbertSpace",
+        domain: HilbertSpace,
         vectors: List[Any],
         /,
         *,
@@ -697,7 +717,7 @@ class LinearOperator(Operator):
             galerkin=True,
         )
 
-    def _dual_mapping_default(self, yp: Any) -> "LinearForm":
+    def _dual_mapping_default(self, yp: Any) -> LinearForm:
         from .linear_forms import LinearForm
 
         return LinearForm(self.domain, mapping=lambda x: yp(self(x)))
@@ -809,8 +829,8 @@ class DiagonalLinearOperator(LinearOperator):
 
     def __init__(
         self,
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         diagonal_values: np.ndarray,
         /,
         *,
