@@ -160,6 +160,17 @@ class SphereHelper:
         l = k[0]
         return l * (l + 1) / self.radius**2
 
+    def degree_from_laplacian_eigenvalue(self, eig: float) -> float:
+        """
+        Returns the degree corresponding to a given eigenvalue.
+
+        Note that the value is returned as a float
+
+        Args:
+            eig: The eigenvalue.
+        """
+        return np.sqrt(self.radius**2 * eig + 0.25)
+
     def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
         """
         Returns the trace of the automorphism of the form f(Δ) with f a function
@@ -444,10 +455,10 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
             dtype=float,
         )
 
-    def invariant_automorphism(self, f: Callable[[float], float]) -> LinearOperator:
-        values = self._degree_dependent_scaling_values(
-            lambda l: f(self.laplacian_eigenvalue((l, 0)))
-        )
+    def invariant_automorphism_from_index_function(
+        self, g: Callable[[(int, int)], float]
+    ) -> LinearOperator:
+        values = self._degree_dependent_scaling_values(lambda l: g((l, 0)))
         matrix = diags([values], [0])
 
         def mapping(u):

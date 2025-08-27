@@ -336,18 +336,21 @@ class Lebesgue(CircleHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
         return self.kmax == other.kmax and self.radius == other.radius
 
-    def invariant_automorphism(self, f: Callable[[float], float]):
+    def invariant_automorphism_from_index_function(self, g: Callable[[int], float]):
         """
         Implements an invariant automorphism of the form f(Δ) using Fourier
         expansions on a circle.
 
+        For this method, the function f is given implicitly in terms of a
+        function, g, of the eigenvalue indices for the space. Letting k(λ) be
+        the index for eigenvalue λ, we then have f(λ) = g(k(λ)).
+
         Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian, Δ.
+            g: A real-valued function of the eigenvalue index.
         """
 
         values = np.fromiter(
-            (f(self.laplacian_eigenvalue(k)) for k in range(self.kmax + 1)),
+            (g(k) for k in range(self.kmax + 1)),
             dtype=float,
         )
         matrix = diags([values], [0])

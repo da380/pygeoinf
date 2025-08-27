@@ -30,6 +30,8 @@ AbstractInvariantSobolevSpace
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Callable, Any, List
+
+
 import numpy as np
 from scipy.sparse import diags
 
@@ -98,6 +100,26 @@ class AbstractInvariantLebesgueSpace(ABC):
         """Returns a list of the norms of the eigenfunctions."""
 
     @abstractmethod
+    def invariant_automorphism_from_index_function(
+        self, g: Callable[[int | tuple[int, ...]], float]
+    ) -> LinearOperator:
+        """
+        Returns an automorphism of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian, Δ.
+
+        In order to be well-defined, the function must have appropriate
+        growth properties. For example, in an L² space we need f to be bounded.
+        In Sobolev spaces Hˢ a more complex condition holds depending on the
+        Sobolev order. These conditions on the function are not checked.
+
+        For this method, the function f is given implicitly in terms of a
+        function, g, of the eigenvalue indices for the space. Letting k(λ) be
+        the index for eigenvalue λ, we then have f(λ) = g(k(λ)).
+
+        Args:
+            g: A function that takes an eigenvalue index and returns a real value.
+        """
+
     def invariant_automorphism(self, f: Callable[[float], float]) -> LinearOperator:
         """
         Returns an automorphism of the form f(Δ) with f a function
@@ -111,7 +133,15 @@ class AbstractInvariantLebesgueSpace(ABC):
         Args:
             f: A real-valued function that is well-defined on the spectrum
                of the Laplacian.
+
+        Notes:
+            This method is a convenience wrapper for the more general
+            `invariant_automorphism_from_index_function`. It could be
+            overriden if computationally advantageous.
         """
+        return self.invariant_automorphism_from_index_function(
+            lambda k: f(self.laplacian_eigenvalue(k))
+        )
 
     @abstractmethod
     def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
@@ -351,16 +381,26 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
             self, EuclideanSpace(dim), matrix, galerkin=True
         )
 
-    def invariant_automorphism(self, f: Callable[[float], float]):
+    def invariant_automorphism_from_index_function(
+        self, g: Callable[[int | tuple[int, ...]], float]
+    ):
         """
-        Returns an invariant automorphism of the form f(Δ) making use of the equivalent
-        operator on the underlying Lebesgue space.
+        Returns an automorphism of the form f(Δ) with f a function
+        that is well-defined on the spectrum of the Laplacian, Δ.
+
+        In order to be well-defined, the function must have appropriate
+        growth properties. For example, in an L² space we need f to be bounded.
+        In Sobolev spaces Hˢ a more complex condition holds depending on the
+        Sobolev order. These conditions on the function are not checked.
+
+        For this method, the function f is given implicitly in terms of a
+        function, g, of the eigenvalue indices for the space. Letting k(λ) be
+        the index for eigenvalue λ, we then have f(λ) = g(k(λ)).
 
         Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian, Δ.
+            g: A function that takes an eigenvalue index and returns a real value.
         """
-        A = self.underlying_space.invariant_automorphism(f)
+        A = self.underlying_space.invariant_automorphism_from_index_function(g)
         return LinearOperator.from_formally_self_adjoint(self, A)
 
     def point_value_scaled_invariant_gaussian_measure(
