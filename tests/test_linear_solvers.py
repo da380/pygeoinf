@@ -4,7 +4,7 @@ Tests for the linear_solvers module.
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.operators import LinearOperator
+from pygeoinf.operators import LinearOperator, DiagonalLinearOperator
 from pygeoinf.linear_solvers import (
     LUSolver,
     CholeskySolver,
@@ -97,6 +97,11 @@ general_iterative_solvers = [
     GMRESMatrixSolver(galerkin=True, rtol=ITERATIVE_SOLVER_TOLERANCE),
 ]
 
+preconditionable_solvers = [
+    CGMatrixSolver(galerkin=True, rtol=ITERATIVE_SOLVER_TOLERANCE),
+    CGSolver(rtol=ITERATIVE_SOLVER_TOLERANCE),
+]
+
 
 @pytest.mark.parametrize("solver", direct_solvers)
 def test_direct_solvers(solver, spd_operator: LinearOperator, x: np.ndarray):
@@ -155,3 +160,31 @@ def test_action_defined_operator_solver(
         rtol=TEST_TOLERANCE,
         atol=TEST_TOLERANCE,
     )
+
+
+@pytest.mark.parametrize("solver", preconditionable_solvers)
+def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarray):
+    """
+    Tests iterative solvers with a preconditioner, checking both the
+    forward and the adjoint solve paths.
+    """
+    space = spd_operator.domain
+    
+    # Create a simple Jacobi (diagonal) preconditioner
+    diag_A = spd_operator.matrix(dense=True,galerkin=True).diagonal()
+    preconditioner = DiagonalLinearOperator(space, space, 1.0 / diag_A, galerkin=True)
+
+    # Get the inverse operator using the preconditioner
+    inverse_op = solver(spd_operator, preconditioner=preconditioner)
+
+    # --- Test 1: Primal solve: (A^-1 @ A) @ x = x ---
+    result_primal = (inverse_op @ spd_operator)(x)
+    assert np.allclose(result_primal, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
+
+    # --- Test 2: Adjoint solve: ((A*)^-1 @ A*) @ x = x ---
+    # Since spd_operator is self-adjoint, A* = A.
+    # The inverse_op.adjoint property will call solve_adjoint_linear_system,
+    # which is where the bug fix was.
+    inverse_op_adj = inverse_op.adjoint
+    result_adjoint = (inverse_op_adj @ spd_operator.adjoint)(x)
+    assert np.allclose(result_adjoint, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)

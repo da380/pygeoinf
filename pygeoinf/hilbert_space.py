@@ -223,6 +223,8 @@ class HilbertSpace(ABC):
     #                      Final (Non-Overridable) Methods                #
     # ------------------------------------------------------------------- #
 
+    
+
     @final
     @property
     def coordinate_inclusion(self) -> LinearOperator:
