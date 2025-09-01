@@ -6,6 +6,7 @@ verifying the mathematical properties of the outputs (e.g., orthonormality)
 and ensuring that the approximation error is within a reasonable tolerance
 compared to exact, deterministic methods.
 """
+
 import pytest
 import numpy as np
 from scipy.linalg import svd
@@ -19,6 +20,7 @@ from pygeoinf.random_matrix import (
 # =============================================================================
 # Fixtures for Test Matrices
 # =============================================================================
+
 
 @pytest.fixture
 def rectangular_matrix() -> np.ndarray:
@@ -52,6 +54,7 @@ def symmetric_matrix() -> np.ndarray:
 # =============================================================================
 # Tests for Randomized Range Finder
 # =============================================================================
+
 
 def test_fixed_rank_random_range_properties():
     """
@@ -99,6 +102,7 @@ def test_fixed_rank_random_range_accuracy(rectangular_matrix):
 # Tests for Randomized Factorizations
 # =============================================================================
 
+
 def test_random_svd(rectangular_matrix):
     """
     Tests the randomized SVD factorization.
@@ -112,10 +116,12 @@ def test_random_svd(rectangular_matrix):
     # 1. Test reconstruction error
     reconstruction = U @ np.diag(s) @ Vh
     reconstruction_error = np.linalg.norm(A - reconstruction)
-    
+
     # Compare to the error of the optimal rank-k approximation from SVD
     U_true, s_true, Vh_true = svd(A, full_matrices=False)
-    optimal_reconstruction = U_true[:, :rank] @ np.diag(s_true[:rank]) @ Vh_true[:rank, :]
+    optimal_reconstruction = (
+        U_true[:, :rank] @ np.diag(s_true[:rank]) @ Vh_true[:rank, :]
+    )
     optimal_error = np.linalg.norm(A - optimal_reconstruction)
 
     assert reconstruction_error < 10 * optimal_error
@@ -144,7 +150,9 @@ def test_random_eig(symmetric_matrix):
     # Eigenvalues are sorted ascending, so we take the largest ones
     s_true = s_true[::-1]
     U_true = U_true[:, ::-1]
-    optimal_reconstruction = U_true[:, :rank] @ np.diag(s_true[:rank]) @ U_true[:, :rank].T
+    optimal_reconstruction = (
+        U_true[:, :rank] @ np.diag(s_true[:rank]) @ U_true[:, :rank].T
+    )
     optimal_error = np.linalg.norm(A - optimal_reconstruction)
 
     assert reconstruction_error < 10 * optimal_error
@@ -171,7 +179,9 @@ def test_random_cholesky(symmetric_matrix):
     s_true, U_true = np.linalg.eigh(A)
     s_true = s_true[::-1]
     U_true = U_true[:, ::-1]
-    optimal_reconstruction = U_true[:, :rank] @ np.diag(s_true[:rank]) @ U_true[:, :rank].T
+    optimal_reconstruction = (
+        U_true[:, :rank] @ np.diag(s_true[:rank]) @ U_true[:, :rank].T
+    )
     optimal_error = np.linalg.norm(A - optimal_reconstruction)
 
     # The Cholesky error can be larger, so we allow more slack.

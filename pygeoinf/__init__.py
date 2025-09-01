@@ -8,7 +8,11 @@ from .random_matrix import (
 
 from .hilbert_space import (
     HilbertSpace,
+    DualHilbertSpace,
     EuclideanSpace,
+    HilbertModule,
+    MassWeightedHilbertSpace,
+    MassWeightedHilbertModule,
 )
 
 
@@ -18,7 +22,7 @@ from .operators import (
     DiagonalLinearOperator,
 )
 
-from .forms import (
+from .linear_forms import (
     LinearForm,
 )
 

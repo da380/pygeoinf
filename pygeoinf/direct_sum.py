@@ -1,5 +1,24 @@
 """
-Module for direct sums of Hilbert spaces and related block operators.
+Implements direct sums of Hilbert spaces and corresponding block operators.
+
+This module provides tools for constructing larger, composite Hilbert spaces and
+operators from smaller ones. This is essential for problems involving multiple
+coupled fields or joint inversions where a single model is constrained by
+data from different experiments.
+
+Key Classes
+-----------
+- `HilbertSpaceDirectSum`: A `HilbertSpace` formed by the direct sum of a
+  list of other spaces. Vectors in this space are lists of vectors from the
+  component subspaces.
+- `BlockLinearOperator`: A `LinearOperator` acting between direct sum spaces,
+  represented as a 2D grid (matrix) of sub-operators.
+- `ColumnLinearOperator`: A specialized block operator mapping from a single
+  space to a direct sum space.
+- `RowLinearOperator`: A specialized block operator mapping from a direct sum
+  space to a single space.
+- `BlockDiagonalLinearOperator`: An efficient representation for block
+  operators with zero off-diagonal blocks.
 """
 
 from __future__ import annotations
@@ -9,15 +28,16 @@ import numpy as np
 
 from .hilbert_space import HilbertSpace
 from .operators import LinearOperator
-from .forms import LinearForm
+from .linear_forms import LinearForm
 
 
 class HilbertSpaceDirectSum(HilbertSpace):
     """
     A Hilbert space formed from the direct sum of a list of other spaces.
 
-    Vectors in this space are represented as lists of vectors, where each
-    element of the list is a vector from the corresponding subspace.
+    A vector in this space is represented as a list of vectors, where the i-th
+    element of the list is a vector from the i-th component subspace. The
+    inner product is the sum of the inner products of the components.
     """
 
     def __init__(self, spaces: List[HilbertSpace]) -> None:
@@ -29,21 +49,57 @@ class HilbertSpaceDirectSum(HilbertSpace):
                 in the direct sum.
         """
         self._spaces: List[HilbertSpace] = spaces
-        dim = sum([space.dim for space in spaces])
-        super().__init__(
-            dim,
-            self.__to_components,
-            self.__from_components,
-            self.__inner_product,
-            self.__to_dual,
-            self.__from_dual,
-            add=self.__add,
-            subtract=self.__subtract,
-            multiply=self.__multiply,
-            ax=self.__ax,
-            axpy=self.__axpy,
-            copy=self.__copy,
+        self._dim = sum([space.dim for space in spaces])
+
+    @property
+    def dim(self) -> int:
+        """Returns the dimension of the direct sum space."""
+        return self._dim
+
+    def to_components(self, xs: List[Any]) -> np.ndarray:
+        cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
+        return np.concatenate(cs, 0)
+
+    def from_components(self, c: np.ndarray) -> List[Any]:
+        xs = []
+        i = 0
+        for space in self._spaces:
+            j = i + space.dim
+            x = space.from_components(c[i:j])
+            xs.append(x)
+            i = j
+        return xs
+
+    def to_dual(self, xs: List[Any]) -> LinearForm:
+        if len(xs) != self.number_of_subspaces:
+            raise ValueError("Input list has incorrect number of vectors.")
+        return self.canonical_dual_isomorphism(
+            [space.to_dual(x) for space, x in zip(self._spaces, xs)]
         )
+
+    def from_dual(self, xp: LinearForm) -> List[Any]:
+        xps = self.canonical_dual_inverse_isomorphism(xp)
+        return [space.from_dual(xip) for space, xip in zip(self._spaces, xps)]
+
+    def add(self, xs: List[Any], ys: List[Any]) -> List[Any]:
+        return [space.add(x, y) for space, x, y in zip(self._spaces, xs, ys)]
+
+    def subtract(self, xs: List[Any], ys: List[Any]) -> List[Any]:
+        return [space.subtract(x, y) for space, x, y in zip(self._spaces, xs, ys)]
+
+    def multiply(self, a: float, xs: List[Any]) -> List[Any]:
+        return [space.multiply(a, x) for space, x in zip(self._spaces, xs)]
+
+    def ax(self, a: float, xs: List[Any]) -> None:
+        for space, x in zip(self._spaces, xs):
+            space.ax(a, x)
+
+    def axpy(self, a: float, xs: List[Any], ys: List[Any]) -> None:
+        for space, x, y in zip(self._spaces, xs, ys):
+            space.axpy(a, x, y)
+
+    def copy(self, xs: List[Any]) -> List[Any]:
+        return [space.copy(x) for space, x in zip(self._spaces, xs)]
 
     def __eq__(self, other: object) -> bool:
         """
@@ -55,7 +111,6 @@ class HilbertSpaceDirectSum(HilbertSpace):
         if not isinstance(other, HilbertSpaceDirectSum):
             return NotImplemented
 
-        # This relies on the subspaces having their own __eq__ methods.
         return self.subspaces == other.subspaces
 
     @property
@@ -119,12 +174,10 @@ class HilbertSpaceDirectSum(HilbertSpace):
         """
         if len(xps) != self.number_of_subspaces:
             raise ValueError("Incorrect number of dual vectors provided.")
-        return LinearForm(
-            self,
-            mapping=lambda x: sum(
-                xp(self.subspace_projection(i)(x)) for i, xp in enumerate(xps)
-            ),
-        )
+
+        cps = [space.dual.to_components(xp) for space, xp in zip(self._spaces, xps)]
+        cp = np.concatenate(cps, 0)
+        return LinearForm(self, components=cp)
 
     def canonical_dual_inverse_isomorphism(self, xp: LinearForm) -> List[LinearForm]:
         """
@@ -136,61 +189,16 @@ class HilbertSpaceDirectSum(HilbertSpace):
         Args:
             xp (LinearForm): A dual vector on the direct sum space.
         """
-        return [
-            LinearForm(space, mapping=lambda x, j=i: xp(self.subspace_inclusion(j)(x)))
-            for i, space in enumerate(self.subspaces)
-        ]
 
-    # ... (Private methods remain the same) ...
-    def __to_components(self, xs: List[Any]) -> np.ndarray:
-        cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
-        return np.concatenate(cs, 0)
-
-    def __from_components(self, c: np.ndarray) -> List[Any]:
-        xs = []
+        cp = self.dual.to_components(xp)
+        xps = []
         i = 0
         for space in self._spaces:
             j = i + space.dim
-            x = space.from_components(c[i:j])
-            xs.append(x)
+            xp = space.dual.from_components(cp[i:j])
+            xps.append(xp)
             i = j
-        return xs
-
-    def __inner_product(self, x1s: List[Any], x2s: List[Any]) -> float:
-        return sum(
-            space.inner_product(x1, x2) for space, x1, x2 in zip(self._spaces, x1s, x2s)
-        )
-
-    def __to_dual(self, xs: List[Any]) -> LinearForm:
-        if len(xs) != self.number_of_subspaces:
-            raise ValueError("Input list has incorrect number of vectors.")
-        return self.canonical_dual_isomorphism(
-            [space.to_dual(x) for space, x in zip(self._spaces, xs)]
-        )
-
-    def __from_dual(self, xp: LinearForm) -> List[Any]:
-        xps = self.canonical_dual_inverse_isomorphism(xp)
-        return [space.from_dual(xip) for space, xip in zip(self._spaces, xps)]
-
-    def __add(self, xs: List[Any], ys: List[Any]) -> List[Any]:
-        return [space.add(x, y) for space, x, y in zip(self._spaces, xs, ys)]
-
-    def __subtract(self, xs: List[Any], ys: List[Any]) -> List[Any]:
-        return [space.subtract(x, y) for space, x, y in zip(self._spaces, xs, ys)]
-
-    def __multiply(self, a: float, xs: List[Any]) -> List[Any]:
-        return [space.multiply(a, x) for space, x in zip(self._spaces, xs)]
-
-    def __ax(self, a: float, xs: List[Any]) -> None:
-        for space, x in zip(self._spaces, xs):
-            space.ax(a, x)
-
-    def __axpy(self, a: float, xs: List[Any], ys: List[Any]) -> None:
-        for space, x, y in zip(self._spaces, xs, ys):
-            space.axpy(a, x, y)
-
-    def __copy(self, xs: List[Any]) -> List[Any]:
-        return [space.copy(x) for space, x in zip(self._spaces, xs)]
+        return xps
 
     def _subspace_projection_mapping(self, i: int, xs: List[Any]) -> Any:
         return xs[i]
@@ -204,21 +212,29 @@ class BlockStructure(ABC):
     An abstract base class for operators with a block structure.
     """
 
-    # ... (class content is the same) ...
     def __init__(self, row_dim: int, col_dim: int) -> None:
         self._row_dim: int = row_dim
         self._col_dim: int = col_dim
 
     @property
     def row_dim(self) -> int:
+        """
+        Returns the number of rows in the block structure.
+        """
         return self._row_dim
 
     @property
     def col_dim(self) -> int:
+        """
+        Returns the number of columns in the block structure.
+        """
         return self._col_dim
 
     @abstractmethod
     def block(self, i: int, j: int) -> "LinearOperator":
+        """
+        Returns the operator in the (i, j)-th sub-block.
+        """
         pass
 
     def _check_block_indices(self, i: int, j: int) -> None:
@@ -230,8 +246,12 @@ class BlockStructure(ABC):
 
 class BlockLinearOperator(LinearOperator, BlockStructure):
     """
-    A linear operator between direct sums of Hilbert spaces, defined by a
-    matrix of sub-operators (blocks).
+    A linear operator between direct sum spaces, defined by a matrix of sub-operators.
+
+    This operator acts like a matrix where each entry is itself a `LinearOperator`.
+    It maps a list of input vectors `[x_1, x_2, ...]` to a list of output
+    vectors `[y_1, y_2, ...]`. The constructor checks for dimensional
+    consistency between the blocks.
     """
 
     def __init__(self, blocks: List[List[LinearOperator]]) -> None:
@@ -245,7 +265,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         """
         if not blocks or not blocks[0]:
             raise ValueError("Block structure cannot be empty.")
-        # ... (rest of the method is the same) ...
+
         domains = [operator.domain for operator in blocks[0]]
         codomains = []
         for row in blocks:
@@ -281,7 +301,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         return self._blocks[i][j]
 
     def __mapping(self, xs: List[Any]) -> List[Any]:
-        # ... (method content is the same) ...
+
         ys = []
         for i in range(self.row_dim):
             codomain = self._codomains[i]
@@ -293,7 +313,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         return ys
 
     def __adjoint_mapping(self, ys: List[Any]) -> List[Any]:
-        # ... (method content is the same) ...
+
         xs = []
         for j in range(self.col_dim):
             domain = self._domains[j]
@@ -307,8 +327,12 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
 
 class ColumnLinearOperator(LinearOperator, BlockStructure):
     """
-    An operator that maps a single Hilbert space to a direct sum of spaces.
-    It is represented as a column of operators.
+    An operator that maps from a single space to a direct sum space.
+
+    It can be visualized as a column vector of operators, `[A_1, A_2, ...]^T`.
+    It takes a single input vector `x` and produces a list of output vectors
+    `[A_1(x), A_2(x), ...]`. This is often used to represent a joint forward
+    operator in an inverse problem.
     """
 
     def __init__(self, operators: List[LinearOperator]) -> None:
@@ -358,8 +382,12 @@ class ColumnLinearOperator(LinearOperator, BlockStructure):
 
 class RowLinearOperator(LinearOperator, BlockStructure):
     """
-    An operator that maps a direct sum of spaces to a single Hilbert space,
-    structured as a row of operator blocks.
+    An operator that maps from a direct sum space to a single space.
+
+    It can be visualized as a row vector of operators, `[A_1, A_2, ...]`.
+    It takes a list of input vectors `[x_1, x_2, ...]` and produces a single
+    output vector `y = A_1(x_1) + A_2(x_2) + ...`. The adjoint of a
+    `ColumnLinearOperator` is a `RowLinearOperator`.
     """
 
     def __init__(self, operators: List[LinearOperator]) -> None:

@@ -1,11 +1,19 @@
 """
-Module for random matrix factorisations.
+Implements randomized algorithms for low-rank matrix factorizations.
 
-This module provides functions for computing low-rank matrix factorisations
-using randomized algorithms. These methods are particularly effective for large
-matrices where deterministic methods would be too slow. The implementations
-are based on the work of Halko, Martinsson, and Tropp (2011).
+This module provides functions for computing approximate, low-rank matrix
+factorizations (SVD, Cholesky, Eigendecomposition) using randomized methods.
+These algorithms are particularly effective for large, high-dimensional matrices
+where deterministic methods would be computationally prohibitive. They work by
+finding a low-dimensional subspace that captures most of the "action" of the
+matrix.
+
+The implementations are based on the seminal work of Halko, Martinsson, and
+Tropp, "Finding structure with randomness: Probabilistic algorithms for
+constructing approximate matrix decompositions" (2011).
 """
+
+from typing import Tuple, Union
 
 import numpy as np
 from scipy.linalg import (
@@ -16,7 +24,7 @@ from scipy.linalg import (
     qr,
 )
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-from typing import Tuple, Union
+
 
 # A type for objects that act like matrices (numpy arrays or SciPy LinearOperators)
 MatrixLike = Union[np.ndarray, ScipyLinOp]
@@ -26,29 +34,24 @@ def fixed_rank_random_range(
     matrix: MatrixLike, rank: int, power: int = 0
 ) -> np.ndarray:
     """
-    Computes an orthonormal basis for a fixed-rank approximation to the
-    range of a matrix using a randomized method.
+    Computes an orthonormal basis for a fixed-rank approximation of a matrix's range.
 
-    This is a two-stage algorithm that finds a low-dimensional subspace that
-    captures most of the action of the matrix.
+    This randomized algorithm finds a low-dimensional subspace that captures
+    most of the action of the matrix.
 
     Args:
-        matrix (matrix-like): An (m, n) matrix or LinearOperator whose range
-            is to be approximated.
-        rank (int): The desired rank for the approximation. Must be
-            greater than 1.
-        power (int): The exponent for power iterations, used to improve the
-            accuracy of the approximation.
+        matrix: An (m, n) matrix or scipy.LinearOperator whose range is to be approximated.
+        rank: The desired rank for the approximation.
+        power: The number of power iterations to perform. Power iterations
+            (multiplying by `A*A`) improves the accuracy of the approximation by
+            amplifying the dominant singular values, but adds to the computational cost.
 
     Returns:
-        numpy.ndarray: An (m, rank) matrix with orthonormal columns whose
-            span approximates the range of the input matrix.
+        An (m, rank) matrix with orthonormal columns whose span approximates
+        the range of the input matrix.
 
     Notes:
-        If the input matrix is a scipy LinearOperator, it must have the
-        `matmat` and `rmatmat` methods implemented.
-
-        This method is based on Algorithm 4.4 in Halko et al. 2011.
+        Based on Algorithm 4.4 in Halko et al. 2011.
     """
 
     m, n = matrix.shape
@@ -143,19 +146,20 @@ def random_svd(
     matrix: MatrixLike, qr_factor: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Computes an approximate Singular Value Decomposition (SVD) from a
-    low-rank range approximation.
+    Computes an approximate SVD from a low-rank range approximation.
+
+    This function takes the original matrix and an orthonormal basis for its
+    approximate range (the `qr_factor`) and projects the problem into a smaller
+    subspace where a deterministic SVD is cheap to compute.
 
     Args:
-        matrix (matrix-like): The original (m, n) matrix or LinearOperator.
-        qr_factor (numpy.ndarray): An (m, k) orthonormal basis for the
-            approximate range of the matrix, typically from a
-            `random_range` function.
+        matrix: The original (m, n) matrix or LinearOperator.
+        qr_factor: An (m, k) orthonormal basis for the approximate range,
+            typically from a `random_range` function.
 
     Returns:
-        (numpy.ndarray, numpy.ndarray, numpy.ndarray): A tuple (U, S, Vh)
-            containing the approximate SVD factors, such that A ~= U @ S @ Vh.
-            S is a 1D array of singular values.
+        A tuple `(U, S, Vh)` containing the approximate SVD factors, where S is
+        a 1D array of singular values.
 
     Notes:
         Based on Algorithm 5.1 of Halko et al. 2011.

@@ -1,8 +1,21 @@
 """
-Module for solving inverse problems using optimisation methods.
+Implements optimisation-based methods for solving linear inverse problems.
 
-This module provides classes for finding solutions to inverse problems via
-regularized least-squares and minimum-norm criteria.
+This module provides classical, deterministic approaches to inversion that seek
+a single "best-fit" model. These methods are typically formulated as finding
+the model `u` that minimizes a cost functional.
+
+The primary goal is to find a stable solution to an ill-posed problem by
+incorporating regularization, which balances fitting the data with controlling
+the complexity or norm of the solution.
+
+Key Classes
+-----------
+- `LinearLeastSquaresInversion`: Solves the inverse problem by minimizing a
+  Tikhonov-regularized least-squares functional.
+- `LinearMinimumNormInversion`: Finds the model with the smallest norm that
+  fits the data to a statistically acceptable degree using the discrepancy
+  principle.
 """
 
 from __future__ import annotations
@@ -15,7 +28,7 @@ from .inversion import Inversion
 from .forward_problem import LinearForwardProblem
 from .operators import LinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
-from .hilbert_space import T_vec
+from .hilbert_space import Vector
 
 
 class LinearLeastSquaresInversion(Inversion):
@@ -23,8 +36,9 @@ class LinearLeastSquaresInversion(Inversion):
     Solves a linear inverse problem using Tikhonov-regularized least-squares.
 
     This method finds the model `u` that minimizes the functional:
-    `J(u) = ||A(u) - d||^2 + alpha^2 * ||u||^2`
-    where the norms are appropriately weighted if a data error covariance is provided.
+    `J(u) = ||A(u) - d||² + α² * ||u||²`
+    where `α` is the damping parameter. If a data error covariance is provided,
+    the data misfit norm is appropriately weighted by the inverse covariance.
     """
 
     def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:
@@ -41,19 +55,15 @@ class LinearLeastSquaresInversion(Inversion):
         """
         Returns the Tikhonov-regularized normal operator.
 
-        If a data error covariance `C_e` is provided, the operator is:
-        `N = A^T * C_e^-1 * A + alpha * I`
-        Otherwise, it is:
-        `N = A^T * A + alpha * I`
+        This operator, often written as `(A* @ W @ A + α*I)`, forms the left-hand
+        side of the normal equations that must be solved to find the least-squares
+        solution. `W` is the inverse data covariance (or identity).
 
         Args:
-            damping: The Tikhonov damping parameter, `alpha`. Must be non-negative.
+            damping: The Tikhonov damping parameter, `α`. Must be non-negative.
 
         Returns:
             The normal operator as a `LinearOperator`.
-
-        Raises:
-            ValueError: If the damping parameter is negative.
         """
         if damping < 0:
             raise ValueError("Damping parameter must be non-negative.")
@@ -111,7 +121,7 @@ class LinearLeastSquaresInversion(Inversion):
             )
 
             # This mapping is affine, not linear, if the error measure has a non-zero mean.
-            def mapping(data: "T_vec") -> "T_vec":
+            def mapping(data: "Vector") -> "Vector":
                 shifted_data = self.forward_problem.data_space.subtract(
                     data, self.forward_problem.data_error_measure.expectation
                 )
@@ -129,11 +139,12 @@ class LinearLeastSquaresInversion(Inversion):
 
 class LinearMinimumNormInversion(Inversion):
     """
-    Finds the minimum-norm solution to a linear inverse problem.
+    Finds a regularized solution using the discrepancy principle.
 
-    This method finds the model `u` with the smallest norm `||u||` that fits
-    the data `d` to a statistically acceptable level, as determined by a
-    chi-squared test.
+    This method automatically selects a Tikhonov damping parameter `α` such that
+    the resulting solution `u_α` fits the data to a statistically acceptable
+    level. It finds the model with the smallest norm `||u||` that satisfies
+    the target misfit, as determined by a chi-squared test.
     """
 
     def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:
@@ -185,8 +196,8 @@ class LinearMinimumNormInversion(Inversion):
             lsq_inversion = LinearLeastSquaresInversion(self.forward_problem)
 
             def get_model_for_damping(
-                damping: float, data: "T_vec", model0: Optional["T_vec"] = None
-            ) -> tuple["T_vec", float]:
+                damping: float, data: "Vector", model0: Optional["Vector"] = None
+            ) -> tuple["Vector", float]:
                 """Computes the LS model and its chi-squared for a given damping."""
                 op = lsq_inversion.least_squares_operator(
                     damping, solver, preconditioner=preconditioner
@@ -195,7 +206,7 @@ class LinearMinimumNormInversion(Inversion):
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 return model, chi_squared
 
-            def mapping(data: "T_vec") -> "T_vec":
+            def mapping(data: "Vector") -> "Vector":
                 """The non-linear mapping from data to the minimum-norm model."""
                 model = self.model_space.zero
                 chi_squared = self.forward_problem.chi_squared(model, data)

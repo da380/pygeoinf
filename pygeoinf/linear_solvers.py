@@ -1,10 +1,26 @@
 """
-Module for linear solvers.
+Provides a collection of solvers for linear systems of equations.
+
+This module offers a unified interface for solving linear systems `A(x) = y`,
+where `A` is a `LinearOperator`. It includes both direct methods based on
+matrix factorization and iterative, matrix-free methods suitable for large-scale
+problems.
+
+The solvers are implemented as callable classes. An instance of a solver can
+be called with an operator to produce a new operator representing its inverse.
+
+Key Classes
+-----------
+- `LUSolver`, `CholeskySolver`: Direct solvers based on matrix factorization.
+- `ScipyIterativeSolver`: A general wrapper for SciPy's iterative algorithms
+  (CG, GMRES, etc.) that operate on matrix representations.
+- `CGSolver`: A pure, matrix-free implementation of the Conjugate Gradient
+  algorithm that operates directly on abstract Hilbert space vectors.
 """
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Optional, Dict, Any
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
@@ -17,7 +33,7 @@ from scipy.linalg import (
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
 from .operators import LinearOperator
-from .hilbert_space import T_vec
+from .hilbert_space import Vector
 
 
 class LinearSolver(ABC):
@@ -130,34 +146,38 @@ class IterativeLinearSolver(LinearSolver):
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         """
         Solves the linear system Ax = y for x.
 
         Args:
             operator (LinearOperator): The operator A of the linear system.
             preconditioner (LinearOperator, optional): The preconditioner.
-            y (T_vec): The right-hand side vector.
-            x0 (T_vec, optional): The initial guess for the solution.
+            y (Vector): The right-hand side vector.
+            x0 (Vector, optional): The initial guess for the solution.
 
         Returns:
-            T_vec: The solution vector x.
+            Vector: The solution vector x.
         """
 
     def solve_adjoint_linear_system(
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        x: T_vec,
-        y0: Optional[T_vec],
-    ) -> T_vec:
+        x: Vector,
+        y0: Optional[Vector],
+    ) -> Vector:
         """
         Solves the adjoint linear system A*y = x for y.
         """
-        # Note: Preconditioner is not used for adjoint solve in this default impl.
-        return self.solve_linear_system(operator.adjoint, None, x, y0)
+        adjoint_preconditioner = (
+            None
+            if preconditioner is None
+            else preconditioner.adjoint
+        )
+        return self.solve_linear_system(operator.adjoint, adjoint_preconditioner, x, y0)
 
     def __call__(
         self,
@@ -189,134 +209,75 @@ class IterativeLinearSolver(LinearSolver):
         )
 
 
-class CGMatrixSolver(IterativeLinearSolver):
+class ScipyIterativeSolver(IterativeLinearSolver):
     """
-    Iterative solver using SciPy's Conjugate Gradient (CG) algorithm on the
-    operator's matrix representation. Assumes the operator is self-adjoint.
+    A general iterative solver that wraps SciPy's iterative algorithms.
+
+    This class provides a unified interface to SciPy's sparse iterative
+    solvers like `cg`, `gmres`, `bicgstab`, etc. The specific algorithm is chosen
+    during instantiation, and keyword arguments are passed directly to the
+    chosen SciPy function.
     """
+
+    _SOLVER_MAP = {
+        "cg": cg,
+        "bicg": bicg,
+        "bicgstab": bicgstab,
+        "gmres": gmres,
+    }
 
     def __init__(
         self,
+        method: str,
         /,
         *,
         galerkin: bool = False,
-        rtol: float = 1.0e-5,
-        atol: float = 0.0,
-        maxiter: Optional[int] = None,
-        callback: Optional[Callable[[np.ndarray], None]] = None,
+        **kwargs,
     ) -> None:
         """
         Args:
+            method (str): The name of the SciPy solver to use (e.g., 'cg', 'gmres').
             galerkin (bool): If True, use the Galerkin matrix representation.
-            rtol (float): Relative tolerance for convergence.
-            atol (float): Absolute tolerance for convergence.
-            maxiter (int, optional): Maximum number of iterations.
-            callback (callable, optional): User-supplied function to call
-                after each iteration.
+            **kwargs: Keyword arguments to be passed directly to the SciPy solver
+                (e.g., rtol, atol, maxiter, restart).
         """
+        if method not in self._SOLVER_MAP:
+            raise ValueError(
+                f"Unknown solver method '{method}'. Available methods: {list(self._SOLVER_MAP.keys())}"
+            )
+
+        self._solver_func = self._SOLVER_MAP[method]
         self._galerkin: bool = galerkin
-        self._rtol: float = rtol
-        self._atol: float = atol
-        self._maxiter: Optional[int] = maxiter
-        self._callback: Optional[Callable[[np.ndarray], None]] = callback
+        self._solver_kwargs: Dict[str, Any] = kwargs
 
     def solve_linear_system(
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
-        domain = operator.codomain
-        matrix = operator.matrix(galerkin=self._galerkin)
-
-        matrix_preconditioner = (
-            None
-            if preconditioner is None
-            else preconditioner.matrix(galerkin=self._galerkin)
-        )
-
-        cx0 = None if x0 is None else domain.to_components(x0)
-        cy = domain.to_components(y)
-
-        cxp, _ = cg(
-            matrix,
-            cy,
-            x0=cx0,
-            rtol=self._rtol,
-            atol=self._atol,
-            maxiter=self._maxiter,
-            M=matrix_preconditioner,
-            callback=self._callback,
-        )
-        if self._galerkin:
-            xp = domain.dual.from_components(cxp)
-            return domain.from_dual(xp)
-        else:
-            return domain.from_components(cxp)
-
-
-class BICGMatrixSolver(IterativeLinearSolver):
-    """
-    Iterative solver using SciPy's Biconjugate Gradient (BiCG) algorithm on
-    the operator's matrix representation. For general square operators.
-    """
-
-    def __init__(
-        self,
-        /,
-        *,
-        galerkin: bool = False,
-        rtol: float = 1.0e-5,
-        atol: float = 0.0,
-        maxiter: Optional[int] = None,
-        callback: Optional[Callable[[np.ndarray], None]] = None,
-    ) -> None:
-        """
-        Args:
-            galerkin (bool): If True, use the Galerkin matrix representation.
-            rtol (float): Relative tolerance for convergence.
-            atol (float): Absolute tolerance for convergence.
-            maxiter (int, optional): Maximum number of iterations.
-            callback (callable, optional): User-supplied function to call
-                after each iteration.
-        """
-        self._galerkin: bool = galerkin
-        self._rtol: float = rtol
-        self._atol: float = atol
-        self._maxiter: Optional[int] = maxiter
-        self._callback: Optional[Callable[[np.ndarray], None]] = callback
-
-    def solve_linear_system(
-        self,
-        operator: LinearOperator,
-        preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         domain = operator.codomain
         codomain = operator.domain
-        matrix = operator.matrix(galerkin=self._galerkin)
 
+        matrix = operator.matrix(galerkin=self._galerkin)
         matrix_preconditioner = (
             None
             if preconditioner is None
             else preconditioner.matrix(galerkin=self._galerkin)
         )
 
-        cx0 = None if x0 is None else domain.to_components(x0)
         cy = domain.to_components(y)
+        cx0 = None if x0 is None else domain.to_components(x0)
 
-        cxp, _ = bicg(
+        cxp, _ = self._solver_func(
             matrix,
             cy,
             x0=cx0,
-            rtol=self._rtol,
-            atol=self._atol,
-            maxiter=self._maxiter,
             M=matrix_preconditioner,
-            callback=self._callback,
+            **self._solver_kwargs,
         )
+
         if self._galerkin:
             xp = codomain.dual.from_components(cxp)
             return codomain.from_dual(xp)
@@ -324,149 +285,20 @@ class BICGMatrixSolver(IterativeLinearSolver):
             return codomain.from_components(cxp)
 
 
-class BICGStabMatrixSolver(IterativeLinearSolver):
-    """
-    Iterative solver using SciPy's Biconjugate Gradient Stabilized (BiCGSTAB)
-    algorithm on the operator's matrix representation. For general square operators.
-    """
-
-    def __init__(
-        self,
-        /,
-        *,
-        galerkin: bool = False,
-        rtol: float = 1.0e-5,
-        atol: float = 0.0,
-        maxiter: Optional[int] = None,
-        callback: Optional[Callable[[np.ndarray], None]] = None,
-    ) -> None:
-        """
-        Args:
-            galerkin (bool): If True, use the Galerkin matrix representation.
-            rtol (float): Relative tolerance for convergence.
-            atol (float): Absolute tolerance for convergence.
-            maxiter (int, optional): Maximum number of iterations.
-            callback (callable, optional): User-supplied function to call
-                after each iteration.
-        """
-        self._galerkin: bool = galerkin
-        self._rtol: float = rtol
-        self._atol: float = atol
-        self._maxiter: Optional[int] = maxiter
-        self._callback: Optional[Callable[[np.ndarray], None]] = callback
-
-    def solve_linear_system(
-        self,
-        operator: LinearOperator,
-        preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
-        domain = operator.codomain
-        codomain = operator.domain
-        matrix = operator.matrix(galerkin=self._galerkin)
-
-        matrix_preconditioner = (
-            None
-            if preconditioner is None
-            else preconditioner.matrix(galerkin=self._galerkin)
-        )
-
-        cx0 = None if x0 is None else domain.to_components(x0)
-        cy = domain.to_components(y)
-
-        cxp, _ = bicgstab(
-            matrix,
-            cy,
-            x0=cx0,
-            rtol=self._rtol,
-            atol=self._atol,
-            maxiter=self._maxiter,
-            M=matrix_preconditioner,
-            callback=self._callback,
-        )
-        if self._galerkin:
-            xp = codomain.dual.from_components(cxp)
-            return codomain.from_dual(xp)
-        else:
-            return codomain.from_components(cxp)
+def CGMatrixSolver(galerkin: bool = False, **kwargs) -> ScipyIterativeSolver:
+    return ScipyIterativeSolver("cg", galerkin=galerkin, **kwargs)
 
 
-class GMRESMatrixSolver(IterativeLinearSolver):
-    """
-    Iterative solver using SciPy's Generalized Minimal Residual (GMRES)
-    algorithm on the operator's matrix representation. For general square operators.
-    """
+def BICGMatrixSolver(galerkin: bool = False, **kwargs) -> ScipyIterativeSolver:
+    return ScipyIterativeSolver("bicg", galerkin=galerkin, **kwargs)
 
-    def __init__(
-        self,
-        /,
-        *,
-        galerkin: bool = False,
-        rtol: float = 1.0e-5,
-        atol: float = 0.0,
-        restart: Optional[int] = None,
-        maxiter: Optional[int] = None,
-        callback: Optional[Callable] = None,
-        callback_type: Optional[str] = None,
-    ) -> None:
-        """
-        Args:
-            galerkin (bool): If True, use the Galerkin matrix representation.
-            rtol (float): Relative tolerance for convergence.
-            atol (float): Absolute tolerance for convergence.
-            restart (int, optional): Number of iterations between restarts.
-            maxiter (int, optional): Maximum number of iterations.
-            callback (callable, optional): User-supplied function to call
-                during iterations.
-            callback_type (str, optional): Type of callback ("x", "pr_norm").
-        """
-        self._galerkin: bool = galerkin
-        self._rtol: float = rtol
-        self._atol: float = atol
-        self._restart: Optional[int] = restart
-        self._maxiter: Optional[int] = maxiter
-        self._callback: Optional[Callable] = callback
-        self._callback_type: Optional[str] = callback_type
 
-    def solve_linear_system(
-        self,
-        operator: LinearOperator,
-        preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
-        domain = operator.codomain
-        codomain = operator.domain
-        matrix = operator.matrix(galerkin=self._galerkin)
+def BICGStabMatrixSolver(galerkin: bool = False, **kwargs) -> ScipyIterativeSolver:
+    return ScipyIterativeSolver("bicgstab", galerkin=galerkin, **kwargs)
 
-        matrix_preconditioner = (
-            None
-            if preconditioner is None
-            else preconditioner.matrix(galerkin=self._galerkin)
-        )
 
-        cx0 = None if x0 is None else domain.to_components(x0)
-        cy = domain.to_components(y)
-
-        cxp, _ = gmres(
-            matrix,
-            cy,
-            x0=cx0,
-            rtol=self._rtol,
-            atol=self._atol,
-            restart=self._restart,
-            maxiter=self._maxiter,
-            M=matrix_preconditioner,
-            callback=self._callback,
-            callback_type=self._callback_type,
-        )
-
-        if self._galerkin:
-            xp = codomain.dual.from_components(cxp)
-            return codomain.from_dual(xp)
-        else:
-            return codomain.from_components(cxp)
+def GMRESMatrixSolver(galerkin: bool = False, **kwargs) -> ScipyIterativeSolver:
+    return ScipyIterativeSolver("gmres", galerkin=galerkin, **kwargs)
 
 
 class CGSolver(IterativeLinearSolver):
@@ -485,7 +317,7 @@ class CGSolver(IterativeLinearSolver):
         rtol: float = 1.0e-5,
         atol: float = 0.0,
         maxiter: Optional[int] = None,
-        callback: Optional[Callable[[T_vec], None]] = None,
+        callback: Optional[Callable[[Vector], None]] = None,
     ) -> None:
         """
         Args:
@@ -507,15 +339,15 @@ class CGSolver(IterativeLinearSolver):
             raise ValueError("maxiter must be None or positive")
         self._maxiter: Optional[int] = maxiter
 
-        self._callback: Optional[Callable[[T_vec], None]] = callback
+        self._callback: Optional[Callable[[Vector], None]] = callback
 
     def solve_linear_system(
         self,
         operator: LinearOperator,
         preconditioner: Optional[LinearOperator],
-        y: T_vec,
-        x0: Optional[T_vec],
-    ) -> T_vec:
+        y: Vector,
+        x0: Optional[Vector],
+    ) -> Vector:
         domain = operator.domain
         x = domain.zero if x0 is None else domain.copy(x0)
 

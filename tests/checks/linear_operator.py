@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from pygeoinf.hilbert_space import HilbertSpace, T_vec
+    from pygeoinf.hilbert_space import HilbertSpace, Vector
     from pygeoinf.operators import LinearOperator
-    from pygeoinf.forms import LinearForm
+    from pygeoinf.linear_forms import LinearForm
 
 
 class LinearOperatorChecks:
@@ -41,22 +41,22 @@ class LinearOperatorChecks:
         return operator.codomain
 
     @pytest.fixture
-    def x(self, domain: "HilbertSpace") -> "T_vec":
+    def x(self, domain: "HilbertSpace") -> Vector:
         """A random vector from the operator's domain."""
         return domain.random()
 
     @pytest.fixture
-    def x2(self, domain: "HilbertSpace") -> "T_vec":
+    def x2(self, domain: "HilbertSpace") -> Vector:
         """A second random vector from the operator's domain for linearity tests."""
         return domain.random()
 
     @pytest.fixture
-    def y(self, codomain: "HilbertSpace") -> "T_vec":
+    def y(self, codomain: "HilbertSpace") -> Vector:
         """A random vector from the operator's codomain for adjoint tests."""
         return codomain.random()
 
     @pytest.fixture
-    def yp(self, codomain: "HilbertSpace", y: "T_vec") -> "LinearForm":
+    def yp(self, codomain: "HilbertSpace", y: Vector) -> "LinearForm":
         """A random dual vector from the codomain's dual space."""
         return codomain.to_dual(y)
 
@@ -79,8 +79,8 @@ class LinearOperatorChecks:
         operator: "LinearOperator",
         domain: "HilbertSpace",
         codomain: "HilbertSpace",
-        x: "T_vec",
-        y: "T_vec",
+        x: Vector,
+        y: Vector,
     ):
         """
         Tests the adjoint property: <A(x), y>_codomain = <x, A*(y)>_domain.
@@ -103,7 +103,7 @@ class LinearOperatorChecks:
     def test_dual_definition(
         self,
         operator: "LinearOperator",
-        x: "T_vec",
+        x: Vector,
         yp: "LinearForm",
     ):
         """
@@ -125,8 +125,8 @@ class LinearOperatorChecks:
         self,
         operator: "LinearOperator",
         domain: "HilbertSpace",
-        x: "T_vec",
-        x2: "T_vec",
+        x: Vector,
+        x2: Vector,
         a: float,
         b: float,
     ):

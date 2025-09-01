@@ -1,5 +1,22 @@
 """
-Module defining the Operator, LinearOperator, and DiagonalLinearOperator classes.
+Defines a class hierarchy for operators between Hilbert spaces.
+
+This module provides the tools for defining and manipulating mappings between
+`HilbertSpace` objects. It distinguishes between general non-linear operators
+and the more structured linear operators, which are the primary focus and
+support a rich algebra.
+
+Key Classes
+-----------
+- `Operator`: A general, potentially non-linear operator defined by a simple
+  mapping function.
+- `LinearOperator`: The main workhorse for linear algebra. It represents a
+  linear map and provides rich functionality, including composition (`@`),
+  adjoints (`.adjoint`), duals (`.dual`), and matrix representations (`.matrix`).
+  It includes numerous factory methods for convenient construction.
+- `DiagonalLinearOperator`: A specialized, efficient implementation for linear
+  operators that are diagonal in their component representation, which supports
+  functional calculus.
 """
 
 from __future__ import annotations
@@ -9,8 +26,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse import diags
 
-# This import path assumes `pygeoinf` is on the python path.
-# For a local package structure, you might use from ..random_matrix import ...
+
 from .random_matrix import (
     fixed_rank_random_range,
     variable_rank_random_range,
@@ -22,7 +38,7 @@ from .random_matrix import (
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, EuclideanSpace
-    from .forms import LinearForm
+    from .linear_forms import LinearForm
 
 
 class Operator:
@@ -32,8 +48,8 @@ class Operator:
 
     def __init__(
         self,
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         mapping: Callable[[Any], Any],
     ) -> None:
         """
@@ -45,17 +61,17 @@ class Operator:
             mapping (callable): The function defining the mapping from the
                 domain to the codomain.
         """
-        self._domain: "HilbertSpace" = domain
-        self._codomain: "HilbertSpace" = codomain
+        self._domain: HilbertSpace = domain
+        self._codomain: HilbertSpace = codomain
         self.__mapping: Callable[[Any], Any] = mapping
 
     @property
-    def domain(self) -> "HilbertSpace":
+    def domain(self) -> HilbertSpace:
         """The domain of the operator."""
         return self._domain
 
     @property
-    def codomain(self) -> "HilbertSpace":
+    def codomain(self) -> HilbertSpace:
         """The codomain of the operator."""
         return self._codomain
 
@@ -83,20 +99,25 @@ class LinearOperator(Operator):
     """
     A linear operator between two Hilbert spaces.
 
-    This class is the primary workhorse for linear algebraic operations,
-    supporting composition, adjoints, duals, and matrix representations.
+    This class is the primary workhorse for linear algebraic operations. An
+    operator can be defined "on the fly" from a callable mapping. The class
+    automatically derives the associated `adjoint` and `dual` operators,
+    which are fundamental for solving linear systems and for optimization.
+
+    It supports a rich algebra, including composition (`@`), addition (`+`),
+    and scalar multiplication (`*`). Operators can also be represented as
+    dense or matrix-free (`scipy`) matrices for use with numerical solvers.
     """
 
     def __init__(
         self,
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         mapping: Callable[[Any], Any],
         /,
         *,
         dual_mapping: Optional[Callable[[Any], Any]] = None,
         adjoint_mapping: Optional[Callable[[Any], Any]] = None,
-        formal_adjoint_mapping: Optional[Callable[[Any], Any]] = None,
         thread_safe: bool = False,
         dual_base: Optional[LinearOperator] = None,
         adjoint_base: Optional[LinearOperator] = None,
@@ -110,7 +131,6 @@ class LinearOperator(Operator):
             mapping (callable): The function defining the linear mapping.
             dual_mapping (callable, optional): The action of the dual operator.
             adjoint_mapping (callable, optional): The action of the adjoint.
-            formal_adjoint_mapping (callable, optional): The formal adjoint.
             thread_safe (bool, optional): True if the mapping is thread-safe.
             dual_base (LinearOperator, optional): Internal use for duals.
             adjoint_base (LinearOperator, optional): Internal use for adjoints.
@@ -119,17 +139,12 @@ class LinearOperator(Operator):
         self._dual_base: Optional[LinearOperator] = dual_base
         self._adjoint_base: Optional[LinearOperator] = adjoint_base
         self._thread_safe: bool = thread_safe
-        self.__formal_adjoint_mapping: Optional[Callable[[Any], Any]]
         self.__adjoint_mapping: Callable[[Any], Any]
         self.__dual_mapping: Callable[[Any], Any]
 
         if dual_mapping is None:
             if adjoint_mapping is None:
-                if formal_adjoint_mapping is None:
-                    self.__dual_mapping = self._dual_mapping_default
-                else:
-                    self.__formal_adjoint_mapping = formal_adjoint_mapping
-                    self.__dual_mapping = self._dual_mapping_from_formal_adjoint
+                self.__dual_mapping = self._dual_mapping_default
                 self.__adjoint_mapping = self._adjoint_mapping_from_dual
             else:
                 self.__adjoint_mapping = adjoint_mapping
@@ -143,27 +158,112 @@ class LinearOperator(Operator):
 
     @staticmethod
     def self_dual(
-        domain: "HilbertSpace", mapping: Callable[[Any], Any]
+        domain: HilbertSpace, mapping: Callable[[Any], Any]
     ) -> LinearOperator:
         """Creates a self-dual operator."""
         return LinearOperator(domain, domain.dual, mapping, dual_mapping=mapping)
 
     @staticmethod
     def self_adjoint(
-        domain: "HilbertSpace", mapping: Callable[[Any], Any]
+        domain: HilbertSpace, mapping: Callable[[Any], Any]
     ) -> LinearOperator:
         """Creates a self-adjoint operator."""
         return LinearOperator(domain, domain, mapping, adjoint_mapping=mapping)
 
     @staticmethod
-    def formally_self_adjoint(
-        domain: "HilbertSpace", mapping: Callable[[Any], Any]
+    def from_formal_adjoint(
+        domain: HilbertSpace, codomain: HilbertSpace, operator: LinearOperator
     ) -> LinearOperator:
-        """Creates a formally self-adjoint operator."""
-        return LinearOperator(domain, domain, mapping, formal_adjoint_mapping=mapping)
+        """
+        Constructs an operator on weighted spaces from one on the underlying spaces.
+
+        This is a key method for working with `MassWeightedHilbertSpace`. It takes
+        an operator `A` that is defined on the simple, unweighted underlying spaces
+        and "lifts" it to be a proper operator on the mass-weighted spaces. It
+        correctly defines the new operator's adjoint with respect to the
+        weighted inner products.
+
+        This method automatically handles cases where the domain and/or codomain
+        are a `HilbertSpaceDirectSum`, recursively building the necessary
+        block-structured mass operators.
+
+        Args:
+            domain: The (potentially) mass-weighted domain of the new operator.
+            codomain: The (potentially) mass-weighted codomain of the new operator.
+            operator: The original operator defined on the underlying,
+                unweighted spaces.
+
+        Returns:
+            A new `LinearOperator` that acts between the mass-weighted spaces.
+        """
+        from .hilbert_space import MassWeightedHilbertSpace
+        from .direct_sum import HilbertSpaceDirectSum, BlockDiagonalLinearOperator
+
+        def get_properties(space: HilbertSpace):
+            if isinstance(space, MassWeightedHilbertSpace):
+                return (
+                    space.underlying_space,
+                    space.mass_operator,
+                    space.inverse_mass_operator,
+                )
+            elif isinstance(space, HilbertSpaceDirectSum):
+                properties = [get_properties(subspace) for subspace in space.subspaces]
+                underlying_space = HilbertSpaceDirectSum(
+                    [property[0] for property in properties]
+                )
+                mass_operator = BlockDiagonalLinearOperator(
+                    [property[1] for property in properties]
+                )
+                inverse_mass_operator = BlockDiagonalLinearOperator(
+                    [property[2] for property in properties]
+                )
+                return (
+                    underlying_space,
+                    mass_operator,
+                    inverse_mass_operator,
+                )
+            else:
+                return space, space.identity_operator(), space.identity_operator()
+
+        domain_base, _, domain_inverse_mass_operator = get_properties(domain)
+        codomain_base, codomain_mass_operator, _ = get_properties(codomain)
+
+        if domain_base != operator.domain:
+            raise ValueError("Domain mismatch")
+
+        if codomain_base != operator.codomain:
+            raise ValueError("Codomain mismatch")
+
+        return LinearOperator(
+            domain,
+            codomain,
+            operator,
+            adjoint_mapping=domain_inverse_mass_operator
+            @ operator.adjoint
+            @ codomain_mass_operator,
+        )
 
     @staticmethod
-    def from_linear_forms(forms: List["LinearForm"]) -> LinearOperator:
+    def from_formally_self_adjoint(
+        domain: HilbertSpace, operator: LinearOperator
+    ) -> LinearOperator:
+        """
+        Constructs a self-adjoint operator on a weighted space.
+
+        This method takes an operator that is formally self-adjoint on an
+        underlying (unweighted) space and promotes it to a truly self-adjoint
+        operator on the `MassWeightedHilbertSpace`. It automatically handles
+        `HilbertSpaceDirectSum` domains.
+
+        Args:
+            domain (HilbertSpace): The domain of the operator, which can be a
+                `MassWeightedHilbertSpace` or a `HilbertSpaceDirectSum`.
+            operator (LinearOperator): The operator to be converted.
+        """
+        return LinearOperator.from_formal_adjoint(domain, domain, operator)
+
+    @staticmethod
+    def from_linear_forms(forms: List[LinearForm]) -> LinearOperator:
         """
         Creates an operator from a list of linear forms.
 
@@ -195,23 +295,56 @@ class LinearOperator(Operator):
 
     @staticmethod
     def from_matrix(
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         matrix: Union[np.ndarray, ScipyLinOp],
         /,
         *,
         galerkin: bool = False,
     ) -> LinearOperator:
         """
-        Creates an operator from its matrix representation.
+        Creates a LinearOperator from its matrix representation.
+
+        This factory method allows you to define a `LinearOperator` using a
+        concrete matrix (like a `numpy.ndarray`) that acts on the component
+        vectors of the abstract Hilbert space vectors. The `galerkin` flag
+        determines how this matrix action is interpreted.
 
         Args:
-            domain: The operator's domain.
-            codomain: The operator's codomain.
-            matrix: The matrix representation.
-            galerkin: If False (default), matrix maps components to components.
-                If True, matrix maps components of the domain to dual
-                components of the codomain.
+            domain (HilbertSpace): The operator's domain.
+            codomain (HilbertSpace): The operator's codomain.
+            matrix (MatrixLike): The matrix representation, which can be a dense
+                NumPy array or a SciPy LinearOperator. Its shape must be
+                (codomain.dim, domain.dim).
+            galerkin (bool): Specifies the interpretation of the matrix.
+
+                - **`galerkin=False` (Default): Standard Component Mapping**
+                  This is the most direct interpretation. The matrix `M` maps the
+                  component vector `c_x` of an input vector `x` directly to the
+                  component vector `c_y` of the output vector `y`.
+
+                - **`galerkin=True`: Galerkin (or "Weak Form") Representation**
+                  This interpretation is standard in the finite element method (FEM)
+                  and other variational techniques. The matrix `M` maps the component
+                  vector `c_x` of an input `x` to the component vector `c_yp` of the
+                  *dual* of the output vector `y`.
+
+                  - **Matrix Entries**: The matrix elements are defined by inner
+                    products with basis vectors: `M_ij = inner_product(A(b_j), b_i)`,
+                    where `b_j` are domain basis vectors and `b_i` are codomain
+                    basis vectors.
+                  - **Use Case**: This is critically important for preserving the
+                    mathematical properties of an operator. For example, if an operator
+                    `A` is self-adjoint, its Galerkin matrix `M` will be **symmetric**
+                    (`M.T == M`). This allows the use of highly efficient numerical
+                    methods like the Conjugate Gradient solver or Cholesky
+                    factorization, which rely on symmetry. The standard component
+                    matrix of a self-adjoint operator is generally not symmetric
+                    unless the basis is orthonormal.
+
+        Returns:
+            LinearOperator: A new `LinearOperator` instance whose action is
+                defined by the provided matrix and interpretation.
         """
         assert matrix.shape == (codomain.dim, domain.dim)
 
@@ -252,7 +385,7 @@ class LinearOperator(Operator):
 
     @staticmethod
     def self_adjoint_from_matrix(
-        domain: "HilbertSpace", matrix: Union[np.ndarray, ScipyLinOp]
+        domain: HilbertSpace, matrix: Union[np.ndarray, ScipyLinOp]
     ) -> LinearOperator:
         """Forms a self-adjoint operator from its Galerkin matrix."""
 
@@ -266,8 +399,8 @@ class LinearOperator(Operator):
 
     @staticmethod
     def from_tensor_product(
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         vector_pairs: List[Tuple[Any, Any]],
         /,
         *,
@@ -301,7 +434,7 @@ class LinearOperator(Operator):
 
     @staticmethod
     def self_adjoint_from_tensor_product(
-        domain: "HilbertSpace",
+        domain: HilbertSpace,
         vectors: List[Any],
         /,
         *,
@@ -361,11 +494,44 @@ class LinearOperator(Operator):
         """
         Returns a matrix representation of the operator.
 
-        By default, returns a matrix-free `scipy.sparse.linalg.LinearOperator`.
+        This method provides a concrete matrix that represents the abstract
+        linear operator's action on the underlying component vectors.
 
         Args:
-            dense: If True, returns a dense `numpy.ndarray`.
-            galerkin: If True, returns the Galerkin representation.
+            dense (bool): Determines the format of the returned matrix.
+                - If `True`, this method computes and returns a dense `numpy.ndarray`.
+                  Be aware that this can be very memory-intensive for
+                  high-dimensional spaces.
+                - If `False` (default), it returns a matrix-free
+                  `scipy.sparse.linalg.LinearOperator`. This object encapsulates
+                  the operator's action (`matvec`) and its transpose action
+                  (`rmatvec`) without ever explicitly forming the full matrix in memory,
+                  making it ideal for large-scale problems.
+
+            galerkin (bool): Specifies the interpretation of the matrix representation. This
+                flag is crucial for correctly using the matrix with numerical solvers.
+
+                - **`galerkin=False` (Default): Standard Component Mapping**
+                  The returned matrix `M` performs a standard component-to-component
+                  mapping.
+                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`
+                    and returns the component vector `c_y` of the output `y`.
+                  - **`rmatvec` action**: Corresponds to the matrix of the **dual operator**, `A'`.
+
+                - **`galerkin=True`: Galerkin (or "Weak Form") Representation**
+                  The returned matrix `M` represents the operator in a weak form, mapping
+                  components of a vector to components of a dual vector.
+                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`
+                    and returns the component vector `c_yp` of the *dual* of the output `y`.
+                  - **`rmatvec` action**: Corresponds to the matrix of the **adjoint operator**, `A*`.
+                  - **Key Property**: This representation is designed to preserve fundamental
+                    mathematical properties. For instance, if the `LinearOperator` is
+                    self-adjoint, its Galerkin matrix will be **symmetric**, which is a
+                    prerequisite for algorithms like the Conjugate Gradient method.
+
+        Returns:
+            Union[ScipyLinOp, np.ndarray]: The matrix representation of the
+                operator, either as a dense array or a matrix-free object.
         """
         if dense:
             return self._compute_dense_matrix(galerkin)
@@ -551,8 +717,8 @@ class LinearOperator(Operator):
             galerkin=True,
         )
 
-    def _dual_mapping_default(self, yp: Any) -> "LinearForm":
-        from .forms import LinearForm
+    def _dual_mapping_default(self, yp: Any) -> LinearForm:
+        from .linear_forms import LinearForm
 
         return LinearForm(self.domain, mapping=lambda x: yp(self(x)))
 
@@ -560,13 +726,6 @@ class LinearOperator(Operator):
         y = self.codomain.from_dual(yp)
         x = self.__adjoint_mapping(y)
         return self.domain.to_dual(x)
-
-    def _dual_mapping_from_formal_adjoint(self, yp: Any) -> Any:
-        cyp = self.codomain.dual.to_components(yp)
-        y = self.codomain.from_components(cyp)
-        x = self.__formal_adjoint_mapping(y)
-        cx = self.domain.to_components(x)
-        return self.domain.dual.from_components(cx)
 
     def _adjoint_mapping_from_dual(self, y: Any) -> Any:
         yp = self.codomain.to_dual(y)
@@ -670,8 +829,8 @@ class DiagonalLinearOperator(LinearOperator):
 
     def __init__(
         self,
-        domain: "HilbertSpace",
-        codomain: "HilbertSpace",
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
         diagonal_values: np.ndarray,
         /,
         *,

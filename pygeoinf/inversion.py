@@ -1,5 +1,14 @@
 """
-Module containing the base class for inversion methods.
+Provides the abstract base class for all inversion algorithms.
+
+This module defines the `Inversion` class, which serves as a common
+foundation for various methods that solve an inverse problem. Its primary role
+is to maintain a reference to the `ForwardProblem` being solved, providing a
+consistent interface and convenient access to the problem's core components like
+the model space and data space.
+
+It also includes helper methods to assert preconditions required by different
+inversion techniques, such as the existence of a data error measure.
 """
 
 from __future__ import annotations
@@ -13,8 +22,10 @@ class Inversion:
     An abstract base class for inversion methods.
 
     This class provides a common structure for different inversion algorithms
-    (e.g., Bayesian, Least squares). Its primary role is to hold a reference to the
-    forward problem being solved and provide convenient access to its properties.
+    (e.g., Bayesian, Least Squares). Its main purpose is to hold a reference
+    to the forward problem being solved and provide convenient access to its
+    properties. Subclasses should inherit from this class to implement a
+    specific inversion technique.
     """
 
     def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:
@@ -60,7 +71,8 @@ class Inversion:
         """
         Checks if the data error measure has an inverse covariance.
 
-        This is a precondition for methods that require the data precision matrix.
+        This is a precondition for methods that require the data precision
+        matrix (the inverse of the data error covariance).
 
         Raises:
             AttributeError: If no data error measure is set, or if the measure
