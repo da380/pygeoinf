@@ -12,7 +12,7 @@ from pygeoinf.hilbert_space import HilbertSpace
 
 
 from pygeoinf.operators import LinearOperator
-from pygeoinf.forms import LinearForm
+from pygeoinf.linear_forms import LinearForm
 from pygeoinf.interval.functions import Function
 from pygeoinf.interval.interval_domain import IntervalDomain
 from pygeoinf.interval.providers import BasisProvider
