@@ -221,9 +221,11 @@ class LinearForwardProblem(ForwardProblem):
         Calculates the chi-squared statistic for a given model and data.
 
         This measures the misfit between the predicted and observed data.
+
         - If a data error measure with an inverse covariance `C_e^-1` is defined,
           this is the weighted misfit: `(d - A(u))^T * C_e^-1 * (d - A(u))`.
         - Otherwise, it is the squared L2 norm of the data residual: `||d - A(u)||^2`.
+
         Args:
             model: A vector from the model space.
             data: An observed data vector from the data space.
@@ -231,6 +233,7 @@ class LinearForwardProblem(ForwardProblem):
         Returns:
             The chi-squared statistic.
         """
+
         residual = self.data_space.subtract(data, self.forward_operator(model))
 
         if self.data_error_measure_set:

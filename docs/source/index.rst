@@ -41,6 +41,7 @@ The library is built on a few key concepts:
    :caption: API Reference
    :hidden:
 
-   api/modules
+   api/pygeoinf
+
 
    

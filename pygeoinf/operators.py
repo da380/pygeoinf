@@ -329,20 +329,14 @@ class LinearOperator(Operator):
                   This interpretation is standard in the finite element method (FEM)
                   and other variational techniques. The matrix `M` maps the component
                   vector `c_x` of an input `x` to the component vector `c_yp` of the
-                  *dual* of the output vector `y`.
-
-                  - **Matrix Entries**: The matrix elements are defined by inner
-                    products with basis vectors: `M_ij = inner_product(A(b_j), b_i)`,
-                    where `b_j` are domain basis vectors and `b_i` are codomain
-                    basis vectors.
-                  - **Use Case**: This is critically important for preserving the
-                    mathematical properties of an operator. For example, if an operator
-                    `A` is self-adjoint, its Galerkin matrix `M` will be **symmetric**
-                    (`M.T == M`). This allows the use of highly efficient numerical
-                    methods like the Conjugate Gradient solver or Cholesky
-                    factorization, which rely on symmetry. The standard component
-                    matrix of a self-adjoint operator is generally not symmetric
-                    unless the basis is orthonormal.
+                  *dual* of the output vector `y`. This is critically important for
+                  preserving the mathematical properties of an operator. For example,
+                  if an operator `A` is self-adjoint, its Galerkin matrix `M` will be
+                  **symmetric** (`M.T == M`). This allows the use of highly efficient
+                  numerical methods like the Conjugate Gradient solver or Cholesky
+                  factorization, which rely on symmetry. The standard component
+                  matrix of a self-adjoint operator is generally not symmetric
+                  unless the basis is orthonormal.
 
         Returns:
             LinearOperator: A new `LinearOperator` instance whose action is
@@ -507,6 +501,7 @@ class LinearOperator(Operator):
 
         Args:
             dense (bool): Determines the format of the returned matrix.
+
                 - If `True`, this method computes and returns a dense `numpy.ndarray`.
                   Be aware that this can be very memory-intensive for
                   high-dimensional spaces.
@@ -522,6 +517,7 @@ class LinearOperator(Operator):
                 - **`galerkin=False` (Default): Standard Component Mapping**
                   The returned matrix `M` performs a standard component-to-component
                   mapping.
+
                   - **`matvec` action**: Takes the component vector `c_x` of an input `x`
                     and returns the component vector `c_y` of the output `y`.
                   - **`rmatvec` action**: Corresponds to the matrix of the **dual operator**, `A'`.
@@ -529,6 +525,7 @@ class LinearOperator(Operator):
                 - **`galerkin=True`: Galerkin (or "Weak Form") Representation**
                   The returned matrix `M` represents the operator in a weak form, mapping
                   components of a vector to components of a dual vector.
+
                   - **`matvec` action**: Takes the component vector `c_x` of an input `x`
                     and returns the component vector `c_yp` of the *dual* of the output `y`.
                   - **`rmatvec` action**: Corresponds to the matrix of the **adjoint operator**, `A*`.
@@ -546,6 +543,7 @@ class LinearOperator(Operator):
             Union[ScipyLinOp, np.ndarray]: The matrix representation of the
                 operator, either as a dense array or a matrix-free object.
         """
+
         if dense:
             return self._compute_dense_matrix(galerkin, parallel, n_jobs)
         else:
@@ -637,8 +635,7 @@ class LinearOperator(Operator):
         Notes:
             The right factor is in transposed form. This means the original
             operator can be approximated as:
-                A = left @ singular_values @ right
-
+            A = left @ singular_values @ right
         """
         from .hilbert_space import EuclideanSpace
 
@@ -701,6 +698,7 @@ class LinearOperator(Operator):
             power (int): The power of the random matrix.
             rtol (float): The relative tolerance for the eigendecomposition.
             method (str): The method to use for the eigendecomposition.
+
                 - "fixed": Use a fixed rank eigendecomposition.
                 - "variable": Use a variable rank eigendecomposition.
             parallel (bool): If True, use parallel computing. Defaults to False.
@@ -712,11 +710,6 @@ class LinearOperator(Operator):
             expansion (LinearOperator): A linear operator that maps coefficients
                 in the eigen-basis to the resulting vector.
             eigenvalues (DiagonalLinearOperator): The eigenvalues.
-
-        Notes:
-            The original operator can be approximated as:
-                A = expansion @ eigenvalues @ expansion.adjoint
-
         """
         from .hilbert_space import EuclideanSpace
 
