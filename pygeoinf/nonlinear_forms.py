@@ -1,0 +1,3 @@
+"""
+Module for defining non-linear operators. To be done...
+"""

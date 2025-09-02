@@ -5,7 +5,7 @@ Tests for the linear_optimisation module.
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.linear_solvers import CholeskySolver

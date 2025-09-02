@@ -8,7 +8,7 @@ from numpy.testing import assert_allclose
 
 from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
 from pygeoinf.symmetric_space.circle import Sobolev
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.direct_sum import (
     HilbertSpaceDirectSum,
     BlockLinearOperator,

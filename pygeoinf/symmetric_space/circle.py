@@ -38,7 +38,7 @@ from pygeoinf.hilbert_space import (
     HilbertModule,
     MassWeightedHilbertModule,
 )
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
 from .symmetric_space import (
     AbstractInvariantLebesgueSpace,

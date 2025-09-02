@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from pygeoinf.hilbert_space import HilbertSpace, Vector
-    from pygeoinf.operators import LinearOperator
+    from pygeoinf.linear_operators import LinearOperator
     from pygeoinf.linear_forms import LinearForm
 
 

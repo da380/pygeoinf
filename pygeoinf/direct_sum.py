@@ -29,7 +29,7 @@ from scipy.linalg import block_diag
 from joblib import Parallel, delayed
 
 from .hilbert_space import HilbertSpace
-from .operators import LinearOperator
+from .linear_operators import LinearOperator
 from .linear_forms import LinearForm
 from .parallel import parallel_compute_dense_matrix_from_scipy_op
 

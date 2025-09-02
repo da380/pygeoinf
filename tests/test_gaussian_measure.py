@@ -1,10 +1,11 @@
 """
 Tests for the gaussian_measure module.
 """
+
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 
 # =============================================================================
@@ -13,8 +14,9 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 
 # Define the different Hilbert space instances we want to test against.
 space_implementations = [
-    EuclideanSpace(dim=4),    
+    EuclideanSpace(dim=4),
 ]
+
 
 @pytest.fixture(params=space_implementations)
 def space(request) -> HilbertSpace:
@@ -30,14 +32,13 @@ def measure(space: HilbertSpace) -> GaussianMeasure:
     cov_matrix = np.diag(np.random.rand(space.dim) + 0.1)
     # Make it symmetric
     cov_matrix = cov_matrix.T @ cov_matrix
-    return GaussianMeasure.from_covariance_matrix(
-        space, cov_matrix, expectation=mean
-    )
+    return GaussianMeasure.from_covariance_matrix(space, cov_matrix, expectation=mean)
 
 
 # =============================================================================
 # Unified Test Suite for GaussianMeasure
 # =============================================================================
+
 
 class TestGaussianMeasure:
     """
@@ -103,16 +104,16 @@ class TestGaussianMeasure:
         C = measure.covariance.matrix(dense=True, galerkin=True)
         A = transform_matrix
         expected_covariance = A @ C @ A.T
-        actual_covariance = transformed_measure.covariance.matrix(dense=True, galerkin=True)
+        actual_covariance = transformed_measure.covariance.matrix(
+            dense=True, galerkin=True
+        )
         assert np.allclose(actual_covariance, expected_covariance)
 
     def test_addition(self, measure: GaussianMeasure):
         """Tests the addition of two independent Gaussian measures."""
         # Create a second measure to add to the first one.
         std_devs = np.random.rand(measure.domain.dim) + 0.1
-        measure2 = GaussianMeasure.from_standard_deviations(
-            measure.domain, std_devs
-        )
+        measure2 = GaussianMeasure.from_standard_deviations(measure.domain, std_devs)
 
         sum_measure = measure + measure2
 
@@ -133,11 +134,9 @@ class TestGaussianMeasure:
     def test_from_standard_deviations(self, space: HilbertSpace):
         """Tests the from_standard_deviations factory method."""
         std_devs = np.random.rand(space.dim) + 0.1
-        measure = GaussianMeasure.from_standard_deviations(
-            space, std_devs
-        )
-        
+        measure = GaussianMeasure.from_standard_deviations(space, std_devs)
+
         expected_cov = np.diag(std_devs**2)
         actual_cov = measure.covariance.matrix(dense=True, galerkin=True)
-        
+
         assert np.allclose(actual_cov, expected_cov)

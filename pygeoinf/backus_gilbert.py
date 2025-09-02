@@ -1,0 +1,3 @@
+"""
+Module for Backus-Gilbert like methods for solving inference problems. To be done...
+"""

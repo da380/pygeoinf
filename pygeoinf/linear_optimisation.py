@@ -21,12 +21,12 @@ Key Classes
 from __future__ import annotations
 from typing import Optional, Union
 
-from .operators import Operator
+from .linear_operators import Operator
 from .inversion import Inversion
 
 
 from .forward_problem import LinearForwardProblem
-from .operators import LinearOperator
+from .linear_operators import LinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector
 

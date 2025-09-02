@@ -11,7 +11,7 @@ from pygeoinf.hilbert_space import (
     EuclideanSpace,
     MassWeightedHilbertSpace,
 )
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from .checks.hilbert_space import HilbertSpaceChecks
 
 

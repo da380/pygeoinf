@@ -38,7 +38,7 @@ import numpy as np
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from .operators import LinearOperator
+    from .linear_operators import LinearOperator
     from .linear_forms import LinearForm
 
 # Define a generic type for vectors in a Hilbert space
@@ -223,15 +223,13 @@ class HilbertSpace(ABC):
     #                      Final (Non-Overridable) Methods                #
     # ------------------------------------------------------------------- #
 
-    
-
     @final
     @property
     def coordinate_inclusion(self) -> LinearOperator:
         """
         The linear operator mapping R^n component vectors into this space.
         """
-        from .operators import LinearOperator
+        from .linear_operators import LinearOperator
 
         domain = EuclideanSpace(self.dim)
 
@@ -257,7 +255,7 @@ class HilbertSpace(ABC):
         """
         The linear operator projecting vectors from this space to R^n.
         """
-        from .operators import LinearOperator
+        from .linear_operators import LinearOperator
 
         codomain = EuclideanSpace(self.dim)
 
@@ -281,7 +279,7 @@ class HilbertSpace(ABC):
     @property
     def riesz(self) -> LinearOperator:
         """The Riesz map (dual to primal) as a `LinearOperator`."""
-        from .operators import LinearOperator
+        from .linear_operators import LinearOperator
 
         return LinearOperator.self_dual(self.dual, self.from_dual)
 
@@ -289,7 +287,7 @@ class HilbertSpace(ABC):
     @property
     def inverse_riesz(self) -> LinearOperator:
         """The inverse Riesz map (primal to dual) as a `LinearOperator`."""
-        from .operators import LinearOperator
+        from .linear_operators import LinearOperator
 
         return LinearOperator.self_dual(self, self.to_dual)
 
@@ -412,7 +410,7 @@ class HilbertSpace(ABC):
     @final
     def identity_operator(self) -> LinearOperator:
         """Returns the identity operator `I` on the space."""
-        from .operators import LinearOperator
+        from .linear_operators import LinearOperator
 
         return LinearOperator(
             self,
@@ -433,7 +431,7 @@ class HilbertSpace(ABC):
         Returns:
             The zero linear operator.
         """
-        from .operators import LinearOperator
+        from .linear_operators import LinearOperator
 
         codomain = self if codomain is None else codomain
         return LinearOperator(

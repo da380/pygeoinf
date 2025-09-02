@@ -32,7 +32,7 @@ from scipy.linalg import (
 )
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
-from .operators import LinearOperator
+from .linear_operators import LinearOperator
 from .hilbert_space import Vector
 
 

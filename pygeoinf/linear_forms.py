@@ -17,7 +17,7 @@ import numpy as np
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, EuclideanSpace
-    from .operators import LinearOperator
+    from .linear_operators import LinearOperator
 
 
 class LinearForm:
@@ -93,7 +93,7 @@ class LinearForm:
         is the scalar result of the form's action.
         """
         from .hilbert_space import EuclideanSpace
-        from .operators import LinearOperator
+        from .linear_operators import LinearOperator
 
         return LinearOperator(
             self.domain,

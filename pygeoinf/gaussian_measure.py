@@ -30,7 +30,7 @@ from scipy.stats import multivariate_normal
 
 from .hilbert_space import EuclideanSpace, HilbertModule
 
-from .operators import (
+from .linear_operators import (
     LinearOperator,
     DiagonalLinearOperator,
 )

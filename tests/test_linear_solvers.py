@@ -5,7 +5,7 @@ Tests for the linear_solvers module.
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.operators import LinearOperator, DiagonalLinearOperator
+from pygeoinf.linear_operators import LinearOperator, DiagonalLinearOperator
 from pygeoinf.linear_solvers import (
     LUSolver,
     CholeskySolver,

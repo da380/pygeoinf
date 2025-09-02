@@ -16,7 +16,7 @@ from .hilbert_space import (
 )
 
 
-from .operators import (
+from .linear_operators import (
     Operator,
     LinearOperator,
     DiagonalLinearOperator,

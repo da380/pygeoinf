@@ -29,7 +29,7 @@ from .direct_sum import ColumnLinearOperator
 # circular import errors while still allowing type hints.
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
-    from .operators import LinearOperator
+    from .linear_operators import LinearOperator
 
 
 class ForwardProblem:
