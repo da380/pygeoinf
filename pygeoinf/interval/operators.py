@@ -18,7 +18,7 @@ from typing import Optional, Union, Literal, List, Callable
 import warnings
 
 from pygeoinf.hilbert_space import EuclideanSpace
-from .l2_space import L2Space
+from .lebesgue_space import Lebesgue
 from .sobolev_space import Sobolev
 from .boundary_conditions import BoundaryConditions
 from pygeoinf.operators import LinearOperator
@@ -75,7 +75,7 @@ class GradientOperator(DifferentialOperator):
 
     def __init__(
         self,
-        domain: Union[L2Space, Sobolev],
+        domain: Union[Lebesgue, Sobolev],
         /,
         *,
         method: Literal[
@@ -89,7 +89,7 @@ class GradientOperator(DifferentialOperator):
         Initialize the gradient operator.
 
         Args:
-            domain: Function space (L2Space or SobolevSpace)
+            domain: Function space (Lebesgue or SobolevSpace)
             method: Differentiation method
                 ('finite_difference', 'automatic')
             fd_order: Order of finite difference stencil (2, 4, 6)
@@ -349,7 +349,7 @@ class LaplacianOperator(DifferentialOperator):
 
     def __init__(
         self,
-        domain: Union[L2Space, Sobolev],
+        domain: Union[Lebesgue, Sobolev],
         boundary_conditions: BoundaryConditions,
         /,
         *,
@@ -361,7 +361,7 @@ class LaplacianOperator(DifferentialOperator):
         Initialize the negative Laplacian operator.
 
         Args:
-            domain: Function space (L2Space or SobolevSpace)
+            domain: Function space (Lebesgue or SobolevSpace)
             boundary_conditions: Boundary conditions for the operator
             method: Discretization method ('spectral', 'finite_difference')
             dofs: Number of degrees of freedom for FD methods
@@ -582,7 +582,7 @@ class LaplacianInverseOperator(LinearOperator):
 
     def __init__(
         self,
-        domain: L2Space,
+        domain: Lebesgue,
         boundary_conditions: BoundaryConditions,
         /,
         *,
@@ -606,10 +606,10 @@ class LaplacianInverseOperator(LinearOperator):
                 - "general": Uses domain's basis functions
                 Note: Both options now use GeneralFEMSolver internally.
         """
-        # Check that domain is an L2 space
-        if not isinstance(domain, L2Space):
+        # Check that domain is a Lebesgue space
+        if not isinstance(domain, Lebesgue):
             raise TypeError(
-                f"domain must be an L2 space, got {type(domain)}"
+                f"domain must be a Lebesgue space, got {type(domain)}"
             )
 
         self._domain = domain
@@ -635,7 +635,7 @@ class LaplacianInverseOperator(LinearOperator):
         ) """
         self._codomain = domain  # FOR TESTING ONLY
 
-        # Get function domain from domain (L2Space and SobolevSpace)
+        # Get function domain from domain (Lebesgue and SobolevSpace)
         self._function_domain = domain.function_domain
 
         # Store scaling factor
@@ -652,12 +652,14 @@ class LaplacianInverseOperator(LinearOperator):
 
         # Create and setup FEM solver
         if self._fem_type == "hat":
-            # Create L2Space with hat functions for optimized performance
-            fem_l2_space = L2Space(
+            # Create Lebesgue space with hat functions for optimized performance
+            # Note: For now create baseless space, then use BasisProvider
+            # TODO: Add direct string-based basis support to Lebesgue
+            fem_l2_space = Lebesgue(
                 dofs,
-                self._function_domain,
-                basis_type='hat_homogeneous'
+                self._function_domain
             )
+            # TODO: Set appropriate BasisProvider for hat_homogeneous functions
             self._fem_solver = GeneralFEMSolver(
                 fem_l2_space,
                 self._boundary_conditions
@@ -785,7 +787,7 @@ class SOLAOperator(LinearOperator):
     against a set of kernel functions, resulting in a vector in the specified
     Euclidean space.
 
-    The operator maps: L2Space -> EuclideanSpace
+    The operator maps: Lebesgue -> EuclideanSpace
 
     The kernel functions can be provided in three ways:
     1. Via a FunctionProvider (original functionality)
@@ -821,7 +823,7 @@ class SOLAOperator(LinearOperator):
         Initialize the SOLA operator.
 
         Args:
-            domain: L2Space instance (the function space)
+            domain: Lebesgue instance (the function space)
             codomain: EuclideanSpace instance that defines the output dimension
             function_provider: Provider for generating kernels.
                               If None and functions is None, creates a default

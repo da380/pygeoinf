@@ -10,7 +10,7 @@ import numpy as np
 
 from pygeoinf.interval.interval_domain import IntervalDomain
 from pygeoinf.interval.boundary_conditions import BoundaryConditions
-from pygeoinf.interval.l2_space import L2Space
+from pygeoinf.interval import L2Space
 from pygeoinf.interval.fem_solvers import GeneralFEMSolver
 from pygeoinf.interval.functions import Function
 

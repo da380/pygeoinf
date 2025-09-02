@@ -19,7 +19,7 @@ try:
         NormalModesProvider, SineFunctionProvider, BumpFunctionProvider
     )
     from pygeoinf.interval.interval_domain import IntervalDomain
-    from pygeoinf.interval.l2_space import L2Space
+    from pygeoinf.interval import L2Space
     from pygeoinf.hilbert_space import EuclideanSpace
     IMPORTS_SUCCESSFUL = True
 except ImportError as e:

@@ -3,7 +3,7 @@ from pygeoinf.interval.function_providers import (
     BumpFunctionProvider,
 )
 from pygeoinf.interval.interval_domain import IntervalDomain
-from pygeoinf.interval.l2_space import L2Space
+from pygeoinf.interval import L2Space
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.interval.operators import SOLAOperator
 from pygeoinf.interval.functions import Function

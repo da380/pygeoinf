@@ -21,11 +21,15 @@ Classes:
 """
 
 # Core functionality that exists
-from .l2_space import L2Space
+from .lebesgue_space import Lebesgue
 from .functions import Function
 from .sobolev_space import Sobolev
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
+
+# Backward compatibility alias during transition
+# TODO: Remove this once all code is migrated
+L2Space = Lebesgue
 
 # LaplacianInverseOperator (native implementation)
 try:
@@ -38,7 +42,8 @@ except ImportError:
     LAPLACIAN_OPERATOR_AVAILABLE = False
 
 __all__ = [
-    'L2Space',
+    'Lebesgue',
+    'L2Space',  # Backward compatibility alias
     'Function',
     'Sobolev',
     'IntervalDomain',

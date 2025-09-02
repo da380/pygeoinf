@@ -30,7 +30,7 @@ class FunctionProvider(ABC):
         Initialize provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
         """
         if space is None:
             raise ValueError(
@@ -135,7 +135,7 @@ class NormalModesProvider(RandomFunctionProvider, ParametricFunctionProvider,
         Initialize with space and random parameters.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
             random_state: Random seed for reproducibility
             n_modes_range: (min, max) number of sine functions to combine
             coeff_range: (min, max) range for linear combination coefficients
@@ -384,7 +384,7 @@ class FourierFunctionProvider(IndexedFunctionProvider):
         Initialize Fourier provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
         """
         super().__init__(space)
 
@@ -443,7 +443,7 @@ class SplineFunctionProvider(IndexedFunctionProvider,
         Initialize spline provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
         """
         super().__init__(space)
 
@@ -535,7 +535,7 @@ class BoxCarFunctionProvider(ParametricFunctionProvider,
         Initialize box-car function provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
             default_width: Default width for indexed access (as fraction of
                           domain)
             centers: Optional array of centers for indexed access. If provided,
@@ -751,7 +751,7 @@ class BumpFunctionProvider(ParametricFunctionProvider,
         Initialize bump function provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
             default_width: Default width for indexed access (as fraction of
                           domain)
             centers: Optional array of centers for indexed access. If provided,
@@ -1010,7 +1010,7 @@ class DiscontinuousFunctionProvider(RandomFunctionProvider):
         Initialize discontinuous function provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
             random_state: Random seed for reproducibility
         """
         super().__init__(space, random_state)
@@ -1067,7 +1067,7 @@ class WaveletFunctionProvider(IndexedFunctionProvider):
         Initialize wavelet provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
             wavelet_type: Type of wavelet ('haar', etc.)
         """
         super().__init__(space)
@@ -1248,7 +1248,7 @@ class HatFunctionProvider(IndexedFunctionProvider):
         Initialize the hat function provider.
 
         Args:
-            space: L2Space instance (contains domain information)
+            space: Lebesgue instance (contains domain information)
             homogeneous: If True, omit boundary nodes (homogeneous Dirichlet)
             n_nodes: Number of nodes. If None, uses space.dim + boundary
                      adjustment

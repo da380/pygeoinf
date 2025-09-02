@@ -17,6 +17,7 @@ Key Classes
   forward operator is a `LinearOperator`.
 """
 
+from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List, Tuple
 
 from scipy.stats import chi2

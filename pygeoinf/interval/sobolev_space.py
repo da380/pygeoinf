@@ -7,7 +7,7 @@ from scipy.sparse import diags
 from typing import Optional
 
 from pygeoinf.operators import LinearOperator
-from pygeoinf.interval.l2_space import L2Space
+from pygeoinf.interval.lebesgue_space import Lebesgue
 from pygeoinf.interval.boundary_conditions import BoundaryConditions
 from pygeoinf.interval.providers import (
     BasisProvider, SpectrumProvider
@@ -15,7 +15,7 @@ from pygeoinf.interval.providers import (
 from pygeoinf.interval.interval_domain import IntervalDomain
 
 
-class Sobolev(L2Space):
+class Sobolev(Lebesgue):
     """
     Implementation of the Sobolev space H^s on a segment [a, b].
 
@@ -146,30 +146,30 @@ class Sobolev(L2Space):
         if basis_type is not None:
             # For basis_type with spectral inner product, create and use
             # SpectrumProvider
-            super().__init__(dim, function_domain, basis_type=basis_type)
+            # TODO: Update to work with Lebesgue constructor
+            super().__init__(dim, function_domain, basis='none')
             # Create eigenvalue provider based on basis type
             eigenvalue_provider = self._create_eigenvalue_provider(basis_type)
             self._spectrum_provider = SpectrumProvider(
                 self, self._basis_provider.function_provider,
                 eigenvalue_provider
             )
-            # Replace the L2Space's basis provider with spectrum provider
+            # Replace the Lebesgue's basis provider with spectrum provider
             self._basis_provider = self._spectrum_provider
 
         elif basis_callables is not None:
             # For basis_callables with spectral, we store eigenvalues directly
-            super().__init__(
-                dim, function_domain, basis_callables=basis_callables
-            )
+            # TODO: Update to work with Lebesgue constructor
+            super().__init__(dim, function_domain, basis=basis_callables)
             # Store eigenvalues directly (no spectrum provider needed)
             self._eigenvalues = eigenvalues
             self._spectrum_provider = None
 
         elif spectrum_provider is not None:
             # Use the provided spectrum provider
-            super().__init__(
-                dim, function_domain, basis_provider=spectrum_provider
-            )
+            # TODO: Update to work with Lebesgue constructor
+            super().__init__(dim, function_domain, basis='none')
+            self.set_basis_provider(spectrum_provider)
             self._spectrum_provider = spectrum_provider
 
     def _create_eigenvalue_provider(self, basis_type):

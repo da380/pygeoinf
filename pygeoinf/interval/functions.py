@@ -2,7 +2,7 @@
 Functions on interval domains.
 
 This module provides function objects that live on IntervalDomain in function
-spaces, including L² spaces and Sobolev spaces.
+spaces, including Lebesgue spaces and Sobolev spaces.
 """
 
 import numpy as np
@@ -10,32 +10,33 @@ from typing import Union, Callable, Optional
 import numbers
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .l2_space import L2Space  # type: ignore[import]
+    from .lebesgue_space import Lebesgue  # type: ignore[import]
 
 
 class Function:
     """
-    A function in L²([a,b]) with both mathematical and computational aspects.
+    A function in Lebesgue space with both mathematical and computational
+    aspects.
 
-    This class represents a function in L² space that knows about the L² space
-    it belongs to. Functions can be defined via callable rules or basis
-    representations.
+    This class represents a function in Lebesgue space that knows about the
+    function space it belongs to. Functions can be defined via callable
+    rules or basis representations.
 
     This serves as the base class for more specialized function spaces.
     """
 
     def __init__(self,
-                 space: "L2Space",
+                 space: "Lebesgue",
                  *,
                  coefficients: Optional[np.ndarray] = None,
                  evaluate_callable: Optional[Callable] = None,
                  name: Optional[str] = None,
                  support: Optional[Union[tuple, list]] = None):
         """
-        Initialize an L² function.
+        Initialize a function in Lebesgue space.
 
         Args:
-            space: The L²Space this function belongs to
+            space: The Lebesgue space this function belongs to
             coefficients: Optional finite-dimensional coefficient
                 representation
             evaluate_callable: Optional callable defining the function rule

@@ -2,7 +2,7 @@
 FEM Solver for Laplacian Inverse Operator
 
 This module provides a Python FEM solver for the LaplacianInverseOperator.
-GeneralFEMSolver works with any basis functions from L2Space and automatically
+GeneralFEMSolver works with any basis functions from Lebesgue and automatically
 optimizes for hat functions when detected.
 
 No external dependencies required.
@@ -16,13 +16,13 @@ from .functions import Function
 
 class GeneralFEMSolver:
     """
-    General FEM solver that works with any basis functions from L2Space.
+    General FEM solver that works with any basis functions from Lebesgue.
 
     This implementation follows the general finite element method described
     in the mathematical formulation, where basis functions {φᵢ} can be any
     suitable functions that span the finite-dimensional subspace Vₕ ⊂ H₀¹(a,b).
 
-    The solver extracts basis functions from the L2Space basis provider and
+    The solver extracts basis functions from the Lebesgue basis provider and
     assembles the stiffness matrix and load vector. For the stiffness matrix:
 
     [K]ᵢⱼ = ∫ φ'ᵢ(x) φ'ⱼ(x) dx
@@ -40,10 +40,10 @@ class GeneralFEMSolver:
 
     def __init__(self, l2_space, boundary_conditions: BoundaryConditions):
         """
-        Initialize general FEM solver with L2Space basis functions.
+        Initialize general FEM solver with Lebesgue basis functions.
 
         Args:
-            l2_space: L2Space object providing the basis functions
+            l2_space: Lebesgue object providing the basis functions
             boundary_conditions: BoundaryConditions object (must be Dirichlet)
         """
         # Validate boundary conditions
@@ -59,16 +59,16 @@ class GeneralFEMSolver:
                 f"conditions, got '{boundary_conditions.type}'"
             )
 
-        # Check that the L2Space basis is compatible with Dirichlet BCs
+        # Check that the Lebesgue basis is compatible with Dirichlet BCs
         # For Dirichlet BCs, basis functions should vanish at boundaries
         if hasattr(l2_space, '_basis_type'):
             basis_type = l2_space._basis_type
             if basis_type not in ['hat_homogeneous', 'sine']:
-                print(f"Warning: L2Space basis type '{basis_type}' may not "
+                print(f"Warning: Lebesgue basis type '{basis_type}' may not "
                       f"satisfy homogeneous Dirichlet boundary conditions. "
                       f"Consider using 'hat_homogeneous' or 'sine'.")
         else:
-            print("Warning: L2Space basis type unknown. Ensure basis "
+            print("Warning: Lebesgue basis type unknown. Ensure basis "
                   "functions vanish at boundaries for Dirichlet BCs.")
 
         self.l2_space = l2_space

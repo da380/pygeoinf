@@ -26,7 +26,7 @@ try:
     )
     from pygeoinf.interval.boundary_conditions import BoundaryConditions
     from pygeoinf.interval.interval_domain import IntervalDomain
-    from pygeoinf.interval.l2_space import L2Space
+    from pygeoinf.interval import L2Space
     IMPORTS_SUCCESSFUL = True
 except ImportError as e:
     print(f"Import error: {e}")
