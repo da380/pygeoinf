@@ -183,12 +183,20 @@ class Lebesgue(HilbertSpace):
             return x.coefficients.copy()
 
         # Case 2: Project onto basis using continuous L² inner product
-        # This uses NUMERICAL INTEGRATION, not the discrete inner product
-        coeffs = np.zeros(self.dim)
+        # For non-orthonormal basis, solve the linear system: G c = b
+        # where G[i,j] = ⟨φᵢ, φⱼ⟩_L² and b[i] = ⟨x, φᵢ⟩_L²
+
+        # Compute right-hand side: b[i] = ⟨x, φᵢ⟩_L²
+        rhs = np.zeros(self.dim)
         for i in range(self.dim):
             basis_func = self.get_basis_function(i)
-            # Compute cᵢ = ⟨x, φᵢ⟩_L² via numerical integration
-            coeffs[i] = self._continuous_l2_inner_product(x, basis_func)
+            rhs[i] = self._continuous_l2_inner_product(x, basis_func)
+
+        # Get the metric tensor (Gram matrix)
+        metric = self.metric
+
+        # Solve G c = b for the coefficients c
+        coeffs = np.linalg.solve(metric, rhs)
 
         return coeffs
 
