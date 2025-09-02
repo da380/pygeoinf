@@ -43,28 +43,6 @@ if TYPE_CHECKING:
     from .linear_forms import LinearForm
 
 
-def _parallel_scipy_op_col(scipy_op: ScipyLinOp, j: int, domain_dim: int) -> np.ndarray:
-    """
-    A top-level helper that applies a scipy.LinearOperator to a basis vector.
-
-    This function is simple and serializable ("picklable").
-
-    Args:
-        scipy_op: The SciPy LinearOperator wrapper for the matrix action.
-        j: The index of the basis vector (column) to compute.
-        domain_dim: The dimension of the domain space.
-
-    Returns:
-        The j-th column of the dense matrix as a NumPy array.
-    """
-    # Create the j-th component basis vector
-    cx = np.zeros(domain_dim)
-    cx[j] = 1.0
-
-    # Apply the SciPy wrapper, which handles all necessary conversions
-    return scipy_op @ cx
-
-
 class Operator:
     """
     A general, potentially non-linear operator between two Hilbert spaces.
