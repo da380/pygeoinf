@@ -25,13 +25,18 @@ from scipy.linalg import (
 )
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 
+from .parallel import parallel_mat_mat
 
 # A type for objects that act like matrices (numpy arrays or SciPy LinearOperators)
 MatrixLike = Union[np.ndarray, ScipyLinOp]
 
 
 def fixed_rank_random_range(
-    matrix: MatrixLike, rank: int, power: int = 0
+    matrix: MatrixLike,
+    rank: int,
+    power: int = 0,
+    parallel: bool = False,
+    n_jobs: int = -1,
 ) -> np.ndarray:
     """
     Computes an orthonormal basis for a fixed-rank approximation of a matrix's range.
@@ -53,17 +58,29 @@ def fixed_rank_random_range(
     Notes:
         Based on Algorithm 4.4 in Halko et al. 2011.
     """
-
     m, n = matrix.shape
     random_matrix = np.random.randn(n, rank)
 
-    product_matrix = matrix @ random_matrix
+    if parallel:
+        product_matrix = parallel_mat_mat(matrix, random_matrix, n_jobs)
+    else:
+        product_matrix = matrix @ random_matrix
+
     qr_factor, _ = qr(product_matrix, overwrite_a=True, mode="economic")
 
     for _ in range(power):
-        tilde_product_matrix = matrix.T @ qr_factor
+        if parallel:
+            tilde_product_matrix = parallel_mat_mat(matrix.T, qr_factor, n_jobs)
+        else:
+            tilde_product_matrix = matrix.T @ qr_factor
+
         tilde_qr_factor, _ = qr(tilde_product_matrix, overwrite_a=True, mode="economic")
-        product_matrix = matrix @ tilde_qr_factor
+
+        if parallel:
+            product_matrix = parallel_mat_mat(matrix, tilde_qr_factor, n_jobs)
+        else:
+            product_matrix = matrix @ tilde_qr_factor
+
         qr_factor, _ = qr(product_matrix, overwrite_a=True, mode="economic")
 
     return qr_factor

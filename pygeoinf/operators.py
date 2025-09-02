@@ -35,10 +35,34 @@ from .random_matrix import (
     random_eig as rm_eig,
 )
 
+from .parallel import parallel_compute_dense_matrix_from_scipy_op
+
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, EuclideanSpace
     from .linear_forms import LinearForm
+
+
+def _parallel_scipy_op_col(scipy_op: ScipyLinOp, j: int, domain_dim: int) -> np.ndarray:
+    """
+    A top-level helper that applies a scipy.LinearOperator to a basis vector.
+
+    This function is simple and serializable ("picklable").
+
+    Args:
+        scipy_op: The SciPy LinearOperator wrapper for the matrix action.
+        j: The index of the basis vector (column) to compute.
+        domain_dim: The dimension of the domain space.
+
+    Returns:
+        The j-th column of the dense matrix as a NumPy array.
+    """
+    # Create the j-th component basis vector
+    cx = np.zeros(domain_dim)
+    cx[j] = 1.0
+
+    # Apply the SciPy wrapper, which handles all necessary conversions
+    return scipy_op @ cx
 
 
 class Operator:
@@ -489,7 +513,13 @@ class LinearOperator(Operator):
         return self._thread_safe
 
     def matrix(
-        self, /, *, dense: bool = False, galerkin: bool = False
+        self,
+        /,
+        *,
+        dense: bool = False,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
     ) -> Union[ScipyLinOp, np.ndarray]:
         """
         Returns a matrix representation of the operator.
@@ -529,12 +559,17 @@ class LinearOperator(Operator):
                     self-adjoint, its Galerkin matrix will be **symmetric**, which is a
                     prerequisite for algorithms like the Conjugate Gradient method.
 
+            parallel (bool): If True, use parallel computing. Defaults to False.
+                This is only relevant for dense matrices.
+            n_jobs (int): Number of parallel jobs. Defaults to -1.
+                This is only relevant for dense matrices.
+
         Returns:
             Union[ScipyLinOp, np.ndarray]: The matrix representation of the
                 operator, either as a dense array or a matrix-free object.
         """
         if dense:
-            return self._compute_dense_matrix(galerkin)
+            return self._compute_dense_matrix(galerkin, parallel, n_jobs)
         else:
             if galerkin:
 
@@ -597,9 +632,35 @@ class LinearOperator(Operator):
         galerkin: bool = False,
         rtol: float = 1e-3,
         method: str = "fixed",
+        parallel: bool = False,
+        n_jobs: int = -1,
     ) -> Tuple[LinearOperator, "DiagonalLinearOperator", LinearOperator]:
         """
         Computes an approximate SVD using a randomized algorithm.
+
+        Args:
+            rank (int): The desired rank of the SVD.
+            power (int): The power of the random matrix.
+            galerkin (bool): If True, use the Galerkin representation.
+            rtol (float): The relative tolerance for the SVD.
+            method (str): The method to use for the SVD.
+                - "fixed": Use a fixed rank SVD.
+                - "variable": Use a variable rank SVD.
+            parallel (bool): If True, use parallel computing. Defaults to False.
+                Only used with fixed rank method.
+            n_jobs (int): Number of parallel jobs. Defaults to -1.
+                Only used with fixed rank method.
+
+        Returns:
+            left (LinearOperator): The left singular vector matrix.
+            singular_values (DiagonalLinearOperator): The singular values.
+            right (LinearOperator): The right singular vector matrix.
+
+        Notes:
+            The right factor is in transposed form. This means the original
+            operator can be approximated as:
+                A = left @ singular_values @ right
+
         """
         from .hilbert_space import EuclideanSpace
 
@@ -610,7 +671,9 @@ class LinearOperator(Operator):
 
         qr_factor: np.ndarray
         if method == "fixed":
-            qr_factor = fixed_rank_random_range(matrix, rank, power=power)
+            qr_factor = fixed_rank_random_range(
+                matrix, rank, power=power, parallel=parallel, n_jobs=n_jobs
+            )
         elif method == "variable":
             qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
         else:
@@ -648,10 +711,34 @@ class LinearOperator(Operator):
         power: int = 0,
         rtol: float = 1e-3,
         method: str = "fixed",
+        parallel: bool = False,
+        n_jobs: int = -1,
     ) -> Tuple[LinearOperator, "DiagonalLinearOperator"]:
         """
         Computes an approximate eigendecomposition for a self-adjoint
         operator using a randomized algorithm.
+
+        Args:
+            rank (int): The desired rank of the eigendecomposition.
+            power (int): The power of the random matrix.
+            rtol (float): The relative tolerance for the eigendecomposition.
+            method (str): The method to use for the eigendecomposition.
+                - "fixed": Use a fixed rank eigendecomposition.
+                - "variable": Use a variable rank eigendecomposition.
+            parallel (bool): If True, use parallel computing. Defaults to False.
+                Only used with fixed rank method.
+            n_jobs (int): Number of parallel jobs. Defaults to -1.
+                Only used with fixed rank method.
+
+        Returns:
+            expansion (LinearOperator): A linear operator that maps coefficients
+                in the eigen-basis to the resulting vector.
+            eigenvalues (DiagonalLinearOperator): The eigenvalues.
+
+        Notes:
+            The original operator can be approximated as:
+                A = expansion @ eigenvalues @ expansion.adjoint
+
         """
         from .hilbert_space import EuclideanSpace
 
@@ -663,7 +750,9 @@ class LinearOperator(Operator):
 
         qr_factor: np.ndarray
         if method == "fixed":
-            qr_factor = fixed_rank_random_range(matrix, rank, power=power)
+            qr_factor = fixed_rank_random_range(
+                matrix, rank, power=power, parallel=parallel, n_jobs=n_jobs
+            )
         elif method == "variable":
             qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
         else:
@@ -687,11 +776,34 @@ class LinearOperator(Operator):
         power: int = 0,
         rtol: float = 1e-3,
         method: str = "fixed",
+        parallel: bool = False,
+        n_jobs: int = -1,
     ) -> LinearOperator:
         """
         Computes an approximate Cholesky decomposition for a positive-definite
         self-adjoint operator using a randomized algorithm.
+
+        Args:
+            rank (int): The desired rank of the Cholesky decomposition.
+            power (int): The power of the random matrix.
+            rtol (float): The relative tolerance for the Cholesky decomposition.
+            method (str): The method to use for the Cholesky decomposition.
+                - "fixed": Use a fixed rank Cholesky decomposition.
+                - "variable": Use a variable rank Cholesky decomposition.
+        parallel (bool): If True, use parallel computing. Defaults to False.
+            Only used with fixed rank method.
+        n_jobs (int): Number of parallel jobs. Defaults to -1.
+                Only used with fixed rank method.
+
+        Returns:
+            factor (LinearOperator): A linear operator from a Euclidean space
+                into the domain of the operator.
+
+        Notes:
+            The original operator can be approximated as:
+                A = factor @ factor.adjoint
         """
+
         from .hilbert_space import EuclideanSpace
 
         assert self.is_automorphism
@@ -702,7 +814,9 @@ class LinearOperator(Operator):
 
         qr_factor: np.ndarray
         if method == "fixed":
-            qr_factor = fixed_rank_random_range(matrix, rank, power=power)
+            qr_factor = fixed_rank_random_range(
+                matrix, rank, power=power, parallel=parallel, n_jobs=n_jobs
+            )
         elif method == "variable":
             qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
         else:
@@ -732,15 +846,24 @@ class LinearOperator(Operator):
         xp = self.__dual_mapping(yp)
         return self.domain.from_dual(xp)
 
-    def _compute_dense_matrix(self, galerkin: bool = False) -> np.ndarray:
-        matrix = np.zeros((self.codomain.dim, self.domain.dim))
-        a = self.matrix(galerkin=galerkin)
-        cx = np.zeros(self.domain.dim)
-        for i in range(self.domain.dim):
-            cx[i] = 1.0
-            matrix[:, i] = (a @ cx)[:]
-            cx[i] = 0.0
-        return matrix
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+
+        scipy_op_wrapper = self.matrix(galerkin=galerkin)
+
+        if not parallel:
+            matrix = np.zeros((self.codomain.dim, self.domain.dim))
+            cx = np.zeros(self.domain.dim)
+            for i in range(self.domain.dim):
+                cx[i] = 1.0
+                matrix[:, i] = (scipy_op_wrapper @ cx)[:]
+                cx[i] = 0.0
+            return matrix
+        else:
+            return parallel_compute_dense_matrix_from_scipy_op(
+                scipy_op_wrapper, n_jobs=n_jobs
+            )
 
     def __neg__(self) -> LinearOperator:
         domain = self.domain

@@ -484,7 +484,9 @@ class GaussianMeasure:
             )
 
         return multivariate_normal(
-            mean=self.expectation, cov=self.covariance.matrix(dense=True)
+            mean=self.expectation,
+            cov=self.covariance.matrix(dense=True),
+            allow_singular=True,
         )
 
     def low_rank_approximation(

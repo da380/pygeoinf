@@ -173,9 +173,7 @@ class IterativeLinearSolver(LinearSolver):
         Solves the adjoint linear system A*y = x for y.
         """
         adjoint_preconditioner = (
-            None
-            if preconditioner is None
-            else preconditioner.adjoint
+            None if preconditioner is None else preconditioner.adjoint
         )
         return self.solve_linear_system(operator.adjoint, adjoint_preconditioner, x, y0)
 

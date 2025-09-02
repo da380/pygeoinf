@@ -150,3 +150,25 @@ class LinearOperatorChecks:
             operator.codomain.to_components(rhs),
             atol=1e-14,
         )
+
+    # In linear_operator.py, inside the LinearOperatorChecks class
+
+    @pytest.mark.parametrize("galerkin", [True, False])
+    def test_matrix_parallel_correctness(
+        self, operator: "LinearOperator", galerkin: bool
+    ):
+        """
+        Ensures the parallel matrix computation gives the same result as serial.
+
+        This test computes the dense matrix representation both serially and
+        in parallel and asserts that the results are numerically identical.
+        It is parametrized to run for both standard and Galerkin representations.
+        """
+        # 1. Compute the matrix using the trusted serial implementation.
+        serial_matrix = operator.matrix(dense=True, galerkin=galerkin, parallel=False)
+
+        # 2. Compute the matrix using the new parallel implementation.
+        parallel_matrix = operator.matrix(dense=True, galerkin=galerkin, parallel=True)
+
+        # 3. Assert that the two matrices are numerically very close.
+        assert np.allclose(serial_matrix, parallel_matrix)
