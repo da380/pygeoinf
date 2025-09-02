@@ -51,7 +51,7 @@ class LinearLeastSquaresInversion(Inversion):
         if self.forward_problem.data_error_measure_set:
             self.assert_inverse_data_covariance()
 
-    def normal_operator(self, damping: float) -> "LinearOperator":
+    def normal_operator(self, damping: float) -> LinearOperator:
         """
         Returns the Tikhonov-regularized normal operator.
 
@@ -88,8 +88,8 @@ class LinearLeastSquaresInversion(Inversion):
         solver: "LinearSolver",
         /,
         *,
-        preconditioner: Optional["LinearOperator"] = None,
-    ) -> Union[Operator, "LinearOperator"]:
+        preconditioner: Optional[LinearOperator] = None,
+    ) -> Union[Operator, LinearOperator]:
         """
         Returns an operator that maps data to the least-squares solution.
 
@@ -121,7 +121,7 @@ class LinearLeastSquaresInversion(Inversion):
             )
 
             # This mapping is affine, not linear, if the error measure has a non-zero mean.
-            def mapping(data: "Vector") -> "Vector":
+            def mapping(data: Vector) -> Vector:
                 shifted_data = self.forward_problem.data_space.subtract(
                     data, self.forward_problem.data_error_measure.expectation
                 )
@@ -162,13 +162,13 @@ class LinearMinimumNormInversion(Inversion):
         solver: "LinearSolver",
         /,
         *,
-        preconditioner: Optional["LinearOperator"] = None,
+        preconditioner: Optional[LinearOperator] = None,
         significance_level: float = 0.95,
         minimum_damping: float = 0.0,
         maxiter: int = 100,
         rtol: float = 1.0e-6,
         atol: float = 0.0,
-    ) -> Union[Operator, "LinearOperator"]:
+    ) -> Union[Operator, LinearOperator]:
         """
         Returns an operator that maps data to the minimum-norm solution.
 
@@ -196,8 +196,8 @@ class LinearMinimumNormInversion(Inversion):
             lsq_inversion = LinearLeastSquaresInversion(self.forward_problem)
 
             def get_model_for_damping(
-                damping: float, data: "Vector", model0: Optional["Vector"] = None
-            ) -> tuple["Vector", float]:
+                damping: float, data: Vector, model0: Optional[Vector] = None
+            ) -> tuple[Vector, float]:
                 """Computes the LS model and its chi-squared for a given damping."""
                 op = lsq_inversion.least_squares_operator(
                     damping, solver, preconditioner=preconditioner
@@ -206,7 +206,7 @@ class LinearMinimumNormInversion(Inversion):
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 return model, chi_squared
 
-            def mapping(data: "Vector") -> "Vector":
+            def mapping(data: Vector) -> Vector:
                 """The non-linear mapping from data to the minimum-norm model."""
                 model = self.model_space.zero
                 chi_squared = self.forward_problem.chi_squared(model, data)

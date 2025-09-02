@@ -48,6 +48,19 @@ class DirectLinearSolver(LinearSolver):
     factorization.
     """
 
+    def __init__(
+        self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
+    ):
+        """
+        Args:
+            galerkin (bool): If True, the Galerkin matrix representation is used.
+            parallel (bool): If True, parallel computation is used.
+            n_jobs (int): Number of parallel jobs.
+        """
+        self._galerkin: bool = galerkin
+        self._parallel: bool = parallel
+        self._n_jobs: int = n_jobs
+
 
 class LUSolver(DirectLinearSolver):
     """
@@ -55,12 +68,16 @@ class LUSolver(DirectLinearSolver):
     dense matrix representation.
     """
 
-    def __init__(self, /, *, galerkin: bool = False) -> None:
+    def __init__(
+        self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
+    ) -> None:
         """
         Args:
             galerkin (bool): If True, the Galerkin matrix representation is used.
+            parallel (bool): If True, parallel computation is used.
+            n_jobs (int): Number of parallel jobs.
         """
-        self._galerkin: bool = galerkin
+        super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
         """
@@ -74,7 +91,12 @@ class LUSolver(DirectLinearSolver):
         """
         assert operator.is_square
 
-        matrix = operator.matrix(dense=True, galerkin=self._galerkin)
+        matrix = operator.matrix(
+            dense=True,
+            galerkin=self._galerkin,
+            parallel=self._parallel,
+            n_jobs=self._n_jobs,
+        )
         factor = lu_factor(matrix, overwrite_a=True)
 
         def matvec(cy: np.ndarray) -> np.ndarray:
@@ -102,12 +124,16 @@ class CholeskySolver(DirectLinearSolver):
     representation is positive-definite.
     """
 
-    def __init__(self, /, *, galerkin: bool = False) -> None:
+    def __init__(
+        self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
+    ) -> None:
         """
         Args:
             galerkin (bool): If True, the Galerkin matrix representation is used.
+            parallel (bool): If True, parallel computation is used.
+            n_jobs (int): Number of parallel jobs.
         """
-        self._galerkin: bool = galerkin
+        super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
         """
@@ -121,7 +147,12 @@ class CholeskySolver(DirectLinearSolver):
         """
         assert operator.is_automorphism
 
-        matrix = operator.matrix(dense=True, galerkin=self._galerkin)
+        matrix = operator.matrix(
+            dense=True,
+            galerkin=self._galerkin,
+            parallel=self._parallel,
+            n_jobs=self._n_jobs,
+        )
         factor = cho_factor(matrix, overwrite_a=False)
 
         def matvec(cy: np.ndarray) -> np.ndarray:

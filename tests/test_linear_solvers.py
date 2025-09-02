@@ -1,6 +1,7 @@
 """
 Tests for the linear_solvers module.
 """
+
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace
@@ -51,7 +52,9 @@ def non_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
     # Add the identity to shift eigenvalues away from zero, ensuring it's
     # well-conditioned and invertible.
     well_conditioned_matrix = matrix + np.eye(space.dim)
-    return LinearOperator.from_matrix(space, space, well_conditioned_matrix, galerkin=True)
+    return LinearOperator.from_matrix(
+        space, space, well_conditioned_matrix, galerkin=True
+    )
 
 
 @pytest.fixture
@@ -79,10 +82,18 @@ ITERATIVE_SOLVER_TOLERANCE = 1e-6
 TEST_TOLERANCE = 10 * ITERATIVE_SOLVER_TOLERANCE
 
 # Direct solvers should be accurate to near machine precision.
+# Test both serial and parallel execution paths.
 direct_solvers = [
-    LUSolver(galerkin=True),
-    CholeskySolver(galerkin=True),
+    pytest.param(LUSolver(galerkin=True, parallel=False), id="LUSolver_serial"),
+    pytest.param(
+        CholeskySolver(galerkin=True, parallel=False), id="CholeskySolver_serial"
+    ),
+    pytest.param(LUSolver(galerkin=True, parallel=True), id="LUSolver_parallel"),
+    pytest.param(
+        CholeskySolver(galerkin=True, parallel=True), id="CholeskySolver_parallel"
+    ),
 ]
+
 
 # Solvers that require or are optimized for symmetric positive-definite matrices
 spd_iterative_solvers = [
@@ -169,9 +180,9 @@ def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarra
     forward and the adjoint solve paths.
     """
     space = spd_operator.domain
-    
+
     # Create a simple Jacobi (diagonal) preconditioner
-    diag_A = spd_operator.matrix(dense=True,galerkin=True).diagonal()
+    diag_A = spd_operator.matrix(dense=True, galerkin=True).diagonal()
     preconditioner = DiagonalLinearOperator(space, space, 1.0 / diag_A, galerkin=True)
 
     # Get the inverse operator using the preconditioner
