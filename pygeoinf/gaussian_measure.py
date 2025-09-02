@@ -497,6 +497,8 @@ class GaussianMeasure:
         power: int = 0,
         method: str = "fixed",
         rtol: float = 1e-2,
+        parallel: bool = False,
+        n_jobs: int = -1,
     ) -> GaussianMeasure:
         """
         Constructs a low-rank approximation of the measure.
@@ -509,12 +511,22 @@ class GaussianMeasure:
             power (int, optional): Power iterations for the randomized algorithm.
             method (str, optional): 'fixed' or 'variable' rank method.
             rtol (float, optional): Relative tolerance for variable rank method.
+            parallel (bool): If True, use parallel computing. Defaults to False.
+            n_jobs (int): Number of parallel jobs. Defaults to -1.
 
         Returns:
             GaussianMeasure: The new, low-rank Gaussian measure.
+
+        Notes:
+            Parallel implemention only currently possible with fixed-rank decompositions.
         """
         covariance_factor = self.covariance.random_cholesky(
-            rank, power=power, method=method, rtol=rtol
+            rank,
+            power=power,
+            method=method,
+            rtol=rtol,
+            parallel=parallel,
+            n_jobs=n_jobs,
         )
 
         return GaussianMeasure(

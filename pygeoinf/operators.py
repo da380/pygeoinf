@@ -610,7 +610,7 @@ class LinearOperator(Operator):
         method: str = "fixed",
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> Tuple[LinearOperator, "DiagonalLinearOperator", LinearOperator]:
+    ) -> Tuple[LinearOperator, DiagonalLinearOperator, LinearOperator]:
         """
         Computes an approximate SVD using a randomized algorithm.
 
@@ -688,28 +688,26 @@ class LinearOperator(Operator):
         method: str = "fixed",
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> Tuple[LinearOperator, "DiagonalLinearOperator"]:
+    ) -> Tuple[LinearOperator, DiagonalLinearOperator]:
         """
-        Computes an approximate eigendecomposition for a self-adjoint
-        operator using a randomized algorithm.
+        Computes an approximate eigen-decomposition using a randomized algorithm.
 
         Args:
-            rank (int): The desired rank of the eigendecomposition.
+            rank (int): The desired rank of the SVD.
             power (int): The power of the random matrix.
-            rtol (float): The relative tolerance for the eigendecomposition.
-            method (str): The method to use for the eigendecomposition.
-
-                - "fixed": Use a fixed rank eigendecomposition.
-                - "variable": Use a variable rank eigendecomposition.
+            rtol (float): The relative tolerance for the SVD.
+            method (str): The method to use for the SVD.
+                - "fixed": Use a fixed rank SVD.
+                - "variable": Use a variable rank SVD.
             parallel (bool): If True, use parallel computing. Defaults to False.
                 Only used with fixed rank method.
             n_jobs (int): Number of parallel jobs. Defaults to -1.
                 Only used with fixed rank method.
 
         Returns:
-            expansion (LinearOperator): A linear operator that maps coefficients
-                in the eigen-basis to the resulting vector.
-            eigenvalues (DiagonalLinearOperator): The eigenvalues.
+            expansion (LinearOperator): Mapping from coefficients in eigen-basis to vectors.
+            eigenvaluevalues (DiagonalLinearOperator): The eigenvalues values.
+
         """
         from .hilbert_space import EuclideanSpace
 
@@ -960,7 +958,7 @@ class DiagonalLinearOperator(LinearOperator):
         """The diagonal entries of the operator's matrix representation."""
         return self._diagonal_values
 
-    def function(self, f: Callable[[float], float]) -> "DiagonalLinearOperator":
+    def function(self, f: Callable[[float], float]) -> DiagonalLinearOperator:
         """
         Applies a function to the operator via functional calculus.
 
@@ -974,7 +972,7 @@ class DiagonalLinearOperator(LinearOperator):
         return DiagonalLinearOperator(self.domain, self.codomain, diagonal_values)
 
     @property
-    def inverse(self) -> "DiagonalLinearOperator":
+    def inverse(self) -> DiagonalLinearOperator:
         """
         The inverse of the operator, computed via functional calculus.
         Requires all diagonal values to be non-zero.
@@ -983,7 +981,7 @@ class DiagonalLinearOperator(LinearOperator):
         return self.function(lambda x: 1 / x)
 
     @property
-    def sqrt(self) -> "DiagonalLinearOperator":
+    def sqrt(self) -> DiagonalLinearOperator:
         """
         The square root of the operator, computed via functional calculus.
         Requires all diagonal values to be non-negative.
