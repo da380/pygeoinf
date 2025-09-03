@@ -15,12 +15,6 @@ from .hilbert_space import (
     MassWeightedHilbertModule,
 )
 
-from .operators import Operator
-
-from .linear_operators import (
-    LinearOperator,
-    DiagonalLinearOperator,
-)
 
 from .nonlinear_forms import (
     NonLinearForm,
@@ -29,6 +23,13 @@ from .nonlinear_forms import (
 
 from .linear_forms import (
     LinearForm,
+)
+
+from .nonlinear_operators import NonLinearOperator
+
+from .linear_operators import (
+    LinearOperator,
+    DiagonalLinearOperator,
 )
 
 

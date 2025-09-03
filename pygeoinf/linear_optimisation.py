@@ -21,7 +21,7 @@ Key Classes
 from __future__ import annotations
 from typing import Optional, Union
 
-from .operators import Operator
+from .nonlinear_operators import NonLinearOperator
 from .inversion import Inversion
 
 
@@ -131,7 +131,7 @@ class LinearLeastSquaresInversion(Inversion):
                     @ inverse_data_covariance
                 )(shifted_data)
 
-            return Operator(self.data_space, self.model_space, mapping)
+            return NonLinearOperator(self.data_space, self.model_space, mapping)
 
         else:
             return inverse_normal_operator @ forward_operator.adjoint
@@ -262,7 +262,7 @@ class LinearMinimumNormInversion(Inversion):
 
                 raise RuntimeError("Bracketing search failed to converge.")
 
-            return Operator(self.data_space, self.model_space, mapping)
+            return NonLinearOperator(self.data_space, self.model_space, mapping)
 
         else:
             # For error-free data, compute the minimum-norm solution via A*(A*A)^-1

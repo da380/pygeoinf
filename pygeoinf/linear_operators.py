@@ -1,22 +1,20 @@
 """
-Defines a class hierarchy for operators between Hilbert spaces.
+Provides classes for linear operators between Hilbert spaces.
 
-This module provides the tools for defining and manipulating mappings between
-`HilbertSpace` objects. It distinguishes between general non-linear operators
-and the more structured linear operators, which are the primary focus and
-support a rich algebra.
+This module is the primary tool for defining and manipulating linear mappings
+between `HilbertSpace` objects. It provides a powerful `LinearOperator` class
+that supports a rich algebra and includes numerous factory methods for
+convenient construction from matrices, forms, or tensor products.
 
 Key Classes
 -----------
-- `Operator`: A general, potentially non-linear operator defined by a simple
-  mapping function.
 - `LinearOperator`: The main workhorse for linear algebra. It represents a
-  linear map and provides rich functionality, including composition (`@`),
-  adjoints (`.adjoint`), duals (`.dual`), and matrix representations (`.matrix`).
-  It includes numerous factory methods for convenient construction.
+  linear map `L(x) = Ax` and provides rich functionality, including composition
+  (`@`), adjoints (`.adjoint`), duals (`.dual`), and matrix representations
+  (`.matrix`).
 - `DiagonalLinearOperator`: A specialized, efficient implementation for linear
-  operators that are diagonal in their component representation, which supports
-  functional calculus.
+  operators that are diagonal in their component representation, notable for
+  supporting functional calculus (e.g., `.inverse`, `.sqrt`).
 """
 
 from __future__ import annotations
@@ -26,7 +24,8 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse import diags
 
-from .operators import Operator
+# from .operators import Operator
+from .nonlinear_operators import NonLinearOperator
 
 from .random_matrix import (
     fixed_rank_random_range,
@@ -44,18 +43,18 @@ if TYPE_CHECKING:
     from .linear_forms import LinearForm
 
 
-class LinearOperator(Operator):
-    """
-    A linear operator between two Hilbert spaces.
+class LinearOperator(NonLinearOperator):
+    """A linear operator between two Hilbert spaces.
 
-    This class is the primary workhorse for linear algebraic operations. An
-    operator can be defined "on the fly" from a callable mapping. The class
-    automatically derives the associated `adjoint` and `dual` operators,
-    which are fundamental for solving linear systems and for optimization.
+    This class represents a linear map `L(x) = Ax` and provides rich
+    functionality for linear algebraic operations. It specializes
+    `NonLinearOperator`, correctly defining its derivative as the operator
+    itself.
 
-    It supports a rich algebra, including composition (`@`), addition (`+`),
-    and scalar multiplication (`*`). Operators can also be represented as
-    dense or matrix-free (`scipy`) matrices for use with numerical solvers.
+    Key features include operator algebra (`@`, `+`, `*`), automatic
+    derivation of adjoint (`.adjoint`) and dual (`.dual`) operators, and
+    multiple matrix representations (`.matrix()`) for use with numerical
+    solvers.
     """
 
     def __init__(
@@ -84,7 +83,10 @@ class LinearOperator(Operator):
             dual_base (LinearOperator, optional): Internal use for duals.
             adjoint_base (LinearOperator, optional): Internal use for adjoints.
         """
-        super().__init__(domain, codomain, mapping)
+        super().__init__(
+            domain, codomain, self._mapping_impl, derivative=self._derivative_impl
+        )
+        self._mapping = mapping
         self._dual_base: Optional[LinearOperator] = dual_base
         self._adjoint_base: Optional[LinearOperator] = adjoint_base
         self._thread_safe: bool = thread_safe
@@ -254,41 +256,25 @@ class LinearOperator(Operator):
         """
         Creates a LinearOperator from its matrix representation.
 
-        This factory method allows you to define a `LinearOperator` using a
-        concrete matrix (like a `numpy.ndarray`) that acts on the component
-        vectors of the abstract Hilbert space vectors. The `galerkin` flag
-        determines how this matrix action is interpreted.
+        This factory defines a `LinearOperator` using a concrete matrix that
+        acts on the component vectors of the abstract Hilbert space vectors.
 
         Args:
-            domain (HilbertSpace): The operator's domain.
-            codomain (HilbertSpace): The operator's codomain.
-            matrix (MatrixLike): The matrix representation, which can be a dense
-                NumPy array or a SciPy LinearOperator. Its shape must be
-                (codomain.dim, domain.dim).
-            galerkin (bool): Specifies the interpretation of the matrix.
-
-                - **`galerkin=False` (Default): Standard Component Mapping**
-                  This is the most direct interpretation. The matrix `M` maps the
-                  component vector `c_x` of an input vector `x` directly to the
-                  component vector `c_y` of the output vector `y`.
-
-                - **`galerkin=True`: Galerkin (or "Weak Form") Representation**
-                  This interpretation is standard in the finite element method (FEM)
-                  and other variational techniques. The matrix `M` maps the component
-                  vector `c_x` of an input `x` to the component vector `c_yp` of the
-                  *dual* of the output vector `y`. This is critically important for
-                  preserving the mathematical properties of an operator. For example,
-                  if an operator `A` is self-adjoint, its Galerkin matrix `M` will be
-                  **symmetric** (`M.T == M`). This allows the use of highly efficient
-                  numerical methods like the Conjugate Gradient solver or Cholesky
-                  factorization, which rely on symmetry. The standard component
-                  matrix of a self-adjoint operator is generally not symmetric
-                  unless the basis is orthonormal.
+            domain: The operator's domain space.
+            codomain: The operator's codomain space.
+            matrix: The matrix representation (NumPy array or SciPy
+                LinearOperator). Shape must be `(codomain.dim, domain.dim)`.
+            galerkin: If `True`, the matrix is interpreted in its "weak form"
+                or Galerkin representation (`M_ij = <basis_j, A(basis_i)>`),
+                which maps a vector's components to the components of its
+                *dual*. This is crucial as it ensures a self-adjoint
+                operator is represented by a symmetric matrix. If `False`
+                (default), it's a standard component-to-component map.
 
         Returns:
-            LinearOperator: A new `LinearOperator` instance whose action is
-                defined by the provided matrix and interpretation.
+            A new `LinearOperator` defined by the matrix action.
         """
+
         assert matrix.shape == (codomain.dim, domain.dim)
 
         if galerkin:
@@ -440,55 +426,26 @@ class LinearOperator(Operator):
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Union[ScipyLinOp, np.ndarray]:
-        """
-        Returns a matrix representation of the operator.
+        """Returns a matrix representation of the operator.
 
-        This method provides a concrete matrix that represents the abstract
-        linear operator's action on the underlying component vectors.
+        This provides a concrete matrix that represents the operator's action
+        on the underlying component vectors.
 
         Args:
-            dense (bool): Determines the format of the returned matrix.
-
-                - If `True`, this method computes and returns a dense `numpy.ndarray`.
-                  Be aware that this can be very memory-intensive for
-                  high-dimensional spaces.
-                - If `False` (default), it returns a matrix-free
-                  `scipy.sparse.linalg.LinearOperator`. This object encapsulates
-                  the operator's action (`matvec`) and its transpose action
-                  (`rmatvec`) without ever explicitly forming the full matrix in memory,
-                  making it ideal for large-scale problems.
-
-            galerkin (bool): Specifies the interpretation of the matrix representation. This
-                flag is crucial for correctly using the matrix with numerical solvers.
-
-                - **`galerkin=False` (Default): Standard Component Mapping**
-                  The returned matrix `M` performs a standard component-to-component
-                  mapping.
-
-                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`
-                    and returns the component vector `c_y` of the output `y`.
-                  - **`rmatvec` action**: Corresponds to the matrix of the **dual operator**, `A'`.
-
-                - **`galerkin=True`: Galerkin (or "Weak Form") Representation**
-                  The returned matrix `M` represents the operator in a weak form, mapping
-                  components of a vector to components of a dual vector.
-
-                  - **`matvec` action**: Takes the component vector `c_x` of an input `x`
-                    and returns the component vector `c_yp` of the *dual* of the output `y`.
-                  - **`rmatvec` action**: Corresponds to the matrix of the **adjoint operator**, `A*`.
-                  - **Key Property**: This representation is designed to preserve fundamental
-                    mathematical properties. For instance, if the `LinearOperator` is
-                    self-adjoint, its Galerkin matrix will be **symmetric**, which is a
-                    prerequisite for algorithms like the Conjugate Gradient method.
-
-            parallel (bool): If True, use parallel computing. Defaults to False.
-                This is only relevant for dense matrices.
-            n_jobs (int): Number of parallel jobs. Defaults to -1.
-                This is only relevant for dense matrices.
+            dense: If `True`, returns a dense `numpy.ndarray`. If `False`
+                (default), returns a memory-efficient, matrix-free
+                `scipy.sparse.linalg.LinearOperator`.
+            galerkin: If `True`, the returned matrix is the Galerkin
+                representation, whose `rmatvec` corresponds to the
+                **adjoint** operator. If `False` (default), the `rmatvec`
+                corresponds to the **dual** operator. The Galerkin form is
+                essential for algorithms that rely on symmetry/self-adjointness.
+            parallel: If `True` and `dense=True`, computes the matrix columns
+                in parallel.
+            n_jobs: Number of parallel jobs to use. `-1` uses all available cores.
 
         Returns:
-            Union[ScipyLinOp, np.ndarray]: The matrix representation of the
-                operator, either as a dense array or a matrix-free object.
+            The matrix representation, either dense or matrix-free.
         """
 
         if dense:
@@ -747,6 +704,12 @@ class LinearOperator(Operator):
             galerkin=True,
         )
 
+    def _mapping_impl(self, x: Any) -> Any:
+        return self._mapping(x)
+
+    def _derivative_impl(self, _: Any) -> LinearOperator:
+        return self
+
     def _dual_mapping_default(self, yp: Any) -> LinearForm:
         from .linear_forms import LinearForm
 
@@ -815,55 +778,126 @@ class LinearOperator(Operator):
     def __truediv__(self, a: float) -> LinearOperator:
         return self * (1.0 / a)
 
-    def __add__(self, other: LinearOperator) -> LinearOperator:
-        domain = self.domain
-        codomain = self.codomain
+    def __add__(
+        self, other: NonLinearOperator | LinearOperator
+    ) -> NonLinearOperator | LinearOperator:
+        """Returns the sum of this operator and another.
 
-        def mapping(x: Any) -> Any:
-            return codomain.add(self(x), other(x))
+        If `other` is also a `LinearOperator`, this performs an optimized
+        addition that preserves linearity and correctly defines the new
+        operator's `adjoint`. Otherwise, it delegates to the general
+        implementation in the `NonLinearOperator` base class.
 
-        def adjoint_mapping(y: Any) -> Any:
-            return domain.add(self.adjoint(y), other.adjoint(y))
+        Args:
+            other: The operator to add to this one.
 
-        return LinearOperator(
-            domain, codomain, mapping, adjoint_mapping=adjoint_mapping
-        )
+        Returns:
+            A new `LinearOperator` if adding two linear operators, otherwise
+            a `NonLinearOperator`.
+        """
 
-    def __sub__(self, other: LinearOperator) -> LinearOperator:
-        domain = self.domain
-        codomain = self.codomain
+        if isinstance(other, LinearOperator):
+            domain = self.domain
+            codomain = self.codomain
 
-        def mapping(x: Any) -> Any:
-            return codomain.subtract(self(x), other(x))
+            def mapping(x: Any) -> Any:
+                return codomain.add(self(x), other(x))
 
-        def adjoint_mapping(y: Any) -> Any:
-            return domain.subtract(self.adjoint(y), other.adjoint(y))
+            def adjoint_mapping(y: Any) -> Any:
+                return domain.add(self.adjoint(y), other.adjoint(y))
 
-        return LinearOperator(
-            domain, codomain, mapping, adjoint_mapping=adjoint_mapping
-        )
+            return LinearOperator(
+                domain, codomain, mapping, adjoint_mapping=adjoint_mapping
+            )
+        else:
+            return super().__add__(other)
 
-    def __matmul__(self, other: LinearOperator) -> LinearOperator:
-        domain = other.domain
-        codomain = self.codomain
+    def __sub__(
+        self, other: NonLinearOperator | LinearOperator
+    ) -> NonLinearOperator | LinearOperator:
+        """Returns the difference between this operator and another.
 
-        def mapping(x: Any) -> Any:
-            return self(other(x))
+        If `other` is also a `LinearOperator`, this performs an optimized
+        subtraction that preserves linearity and correctly defines the new
+        operator's `adjoint`. Otherwise, it delegates to the general
+        implementation in the `NonLinearOperator` base class.
 
-        def adjoint_mapping(y: Any) -> Any:
-            return other.adjoint(self.adjoint(y))
+        Args:
+            other: The operator to subtract from this one.
 
-        return LinearOperator(
-            domain, codomain, mapping, adjoint_mapping=adjoint_mapping
-        )
+        Returns:
+            A new `LinearOperator` if subtracting two linear operators,
+            otherwise a `NonLinearOperator`.
+        """
+
+        if isinstance(other, LinearOperator):
+
+            domain = self.domain
+            codomain = self.codomain
+
+            def mapping(x: Any) -> Any:
+                return codomain.subtract(self(x), other(x))
+
+            def adjoint_mapping(y: Any) -> Any:
+                return domain.subtract(self.adjoint(y), other.adjoint(y))
+
+            return LinearOperator(
+                domain, codomain, mapping, adjoint_mapping=adjoint_mapping
+            )
+        else:
+            return super().__sub__(other)
+
+    def __matmul__(
+        self, other: NonLinearOperator | LinearOperator
+    ) -> NonLinearOperator | LinearOperator:
+        """Composes this operator with another using the @ symbol.
+
+        The composition `(self @ other)` results in a new operator that
+        first applies `other` and then applies `self`, i.e.,
+        `(self @ other)(x) = self(other(x))`.
+
+        If `other` is also a `LinearOperator`, this creates a new `LinearOperator`
+        whose adjoint is correctly defined using the composition rule:
+        `(L1 @ L2)* = L2* @ L1*`. Otherwise, it delegates to the general
+        `NonLinearOperator` implementation.
+
+        Args:
+            other: The operator to compose with (the right-hand operator).
+
+        Returns:
+            A new `LinearOperator` if composing two linear operators,
+            otherwise a `NonLinearOperator`.
+        """
+
+        if isinstance(other, LinearOperator):
+            domain = other.domain
+            codomain = self.codomain
+
+            def mapping(x: Any) -> Any:
+                return self(other(x))
+
+            def adjoint_mapping(y: Any) -> Any:
+                return other.adjoint(self.adjoint(y))
+
+            return LinearOperator(
+                domain, codomain, mapping, adjoint_mapping=adjoint_mapping
+            )
+
+        else:
+            return super().__matmul__(other)
 
     def __str__(self) -> str:
         return self.matrix(dense=True).__str__()
 
 
 class DiagonalLinearOperator(LinearOperator):
-    """
-    A LinearOperator that is diagonal in its component representation.
+    """A LinearOperator that is diagonal in its component representation.
+
+    This provides an efficient implementation for diagonal linear operators.
+    Its key feature is support for **functional calculus**, allowing for the
+    direct computation of operator functions like inverse (`.inverse`) or
+
+    square root (`.sqrt`) by applying the function to the diagonal entries.
     """
 
     def __init__(
@@ -906,14 +940,17 @@ class DiagonalLinearOperator(LinearOperator):
         return self._diagonal_values
 
     def function(self, f: Callable[[float], float]) -> DiagonalLinearOperator:
-        """
-        Applies a function to the operator via functional calculus.
+        """Applies a function to the operator via functional calculus.
 
-        This creates a new DiagonalLinearOperator where each diagonal entry `d_i`
-        is replaced by `f(d_i)`.
+        This creates a new `DiagonalLinearOperator` where the function `f` has
+        been applied to each of the diagonal entries. For example,
+        `op.function(lambda x: 1/x)` computes the inverse.
 
         Args:
-            f: A function that maps a float to a float.
+            f: A scalar function to apply to the diagonal values.
+
+        Returns:
+            A new `DiagonalLinearOperator` with the transformed diagonal.
         """
         diagonal_values = np.array([f(x) for x in self.diagonal_values])
         return DiagonalLinearOperator(self.domain, self.codomain, diagonal_values)

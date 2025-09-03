@@ -172,3 +172,18 @@ class LinearOperatorChecks:
 
         # 3. Assert that the two matrices are numerically very close.
         assert np.allclose(serial_matrix, parallel_matrix)
+
+    # In linear_operator_checks.py, inside the LinearOperatorChecks class
+
+    def test_derivative_is_self(self, operator: "LinearOperator", x: Vector):
+        """
+        Tests that the derivative of a LinearOperator is the operator itself.
+
+        For a linear operator L, its Fréchet derivative L'(x) is the constant
+        function that returns L for all x. This test verifies that specialization.
+        """
+        # Get the derivative at a random point x
+        derivative_operator = operator.derivative(x)
+
+        # The derivative should be the *exact same object* as the operator
+        assert derivative_operator is operator

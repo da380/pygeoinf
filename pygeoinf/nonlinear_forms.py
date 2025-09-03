@@ -13,7 +13,7 @@ from typing import Callable, Optional, Any, TYPE_CHECKING
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, EuclideanSpace, Vector
+    from .hilbert_space import HilbertSpace, Vector
     from .linear_forms import LinearForm
     from .linear_operators import LinearOperator
 
