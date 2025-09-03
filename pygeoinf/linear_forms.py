@@ -1,12 +1,10 @@
 """
-Provides the `LinearForm` class to represent linear functionals.
+Provides the `LinearForm` class for representing linear functionals.
 
 A linear form is a linear mapping from a vector in a Hilbert space to a
-scalar (a real number). This class provides a concrete representation for
-elements of the dual space of a `HilbertSpace`.
-
-A `LinearForm` can be thought of as a dual vector and is a fundamental component
-for defining inner products and adjoint operators within the library.
+scalar. This class provides a concrete, component-based representation for
+elements of the dual space of a `HilbertSpace`. It inherits from `NonLinearForm`,
+specializing it for the linear case.
 """
 
 from __future__ import annotations
@@ -24,12 +22,13 @@ if TYPE_CHECKING:
 
 class LinearForm(NonLinearForm):
     """
-    Represents a linear form, a functional that maps vectors to scalars.
+    Represents a linear form as an efficient, component-based functional.
 
-    A `LinearForm` is an element of a dual `HilbertSpace`. It is defined by its
-    action on vectors from its `domain` space. Internally, this action is
-    represented by a component vector, which when dotted with the component
-    vector of a primal space element, produces the scalar result.
+    A `LinearForm` is an element of a dual `HilbertSpace` and is defined by its
+    action on vectors from its `domain`. Internally, this action is represented
+    by a component vector. This class provides optimized arithmetic operations
+    and correctly defines the gradient (a constant vector) and the Hessian
+    (the zero operator) for any linear functional.
     """
 
     def __init__(
@@ -41,24 +40,28 @@ class LinearForm(NonLinearForm):
         components: Optional[np.ndarray] = None,
     ) -> None:
         """
-        Initializes the LinearForm.
+        Initializes the LinearForm from a mapping or component vector.
 
-        A form can be defined either by its functional mapping or directly
-        by its component vector. If a mapping is provided without components,
-        the components will be computed by evaluating the mapping on the
-        basis vectors of the domain.
+        A form must be defined by exactly one of two methods:
+        1.  **mapping**: A function `f(x)` that defines the form's action.
+            The components will be automatically computed from this mapping.
+        2.  **components**: The explicit component vector representing the form.
 
         Args:
             domain: The Hilbert space on which the form is defined.
-            mapping: A function `f(x)` defining the action of the form.
+            mapping: The functional mapping `f(x)`. Used if `components` is None.
             components: The component representation of the form.
+
+        Raises:
+            AssertionError: If neither or both `mapping` and `components`
+                are specified.
         """
 
         super().__init__(
             domain,
             self._mapping_impl,
             gradient=self._gradient_impl,
-            hessian=domain.zero_operator(),
+            hessian=self._hessian_impl,
         )
 
         if components is None:
@@ -115,10 +118,6 @@ class LinearForm(NonLinearForm):
         """
         return LinearForm(self.domain, components=self.components.copy())
 
-    def __call__(self, x: Vector) -> float:
-        """Applies the linear form to a vector."""
-        return np.dot(self._components, self.domain.to_components(x))
-
     def __neg__(self) -> LinearForm:
         """Returns the additive inverse of the form."""
         return LinearForm(self.domain, components=-self._components)
@@ -135,27 +134,47 @@ class LinearForm(NonLinearForm):
         """Returns the division of the form by a scalar."""
         return self * (1.0 / a)
 
-    def __add__(self, other: LinearForm) -> LinearForm:
-        """Returns the sum of this form and another."""
+    def __add__(self, other: NonLinearForm | LinearForm) -> NonLinearForm | LinearForm:
+        """
+        Returns the sum of this form and another.
+
+        If `other` is also a `LinearForm`, this performs an optimized,
+        component-wise addition. Otherwise, it delegates to the general
+        implementation in the `NonLinearForm` base class.
+
+        Args:
+            other: The form to add to this one.
+
+        Returns:
+            A `LinearForm` if adding two `LinearForm`s, otherwise a `NonLinearForm`.
+        """
         if isinstance(other, LinearForm):
             return LinearForm(
                 self.domain, components=self.components + other.components
             )
-        elif isinstance(other, NonLinearForm):
-            super().__add__(other)
         else:
-            raise TypeError("Other is not of a suitable type")
+            return super().__add__(other)
 
-    def __sub__(self, other: LinearForm) -> LinearForm:
-        """Returns the difference between this form and another."""
+    def __sub__(self, other: NonLinearForm | LinearForm) -> NonLinearForm | LinearForm:
+        """
+        Returns the difference of this form and another.
+
+        If `other` is also a `LinearForm`, this performs an optimized,
+        component-wise subtraction. Otherwise, it delegates to the general
+        implementation in the `NonLinearForm` base class.
+
+        Args:
+            other: The form to subtract from this one.
+
+        Returns:
+            A `LinearForm` if subtracting two `LinearForm`s, otherwise a `NonLinearForm`.
+        """
         if isinstance(other, LinearForm):
             return LinearForm(
                 self.domain, components=self.components - other.components
             )
-        elif isinstance(other, NonLinearForm):
-            super().__sub__(other)
         else:
-            raise TypeError("Other is not of a suitable type")
+            return super().__sub__(other)
 
     def __imul__(self, a: float) -> "LinearForm":
         """
@@ -199,4 +218,10 @@ class LinearForm(NonLinearForm):
         """
         Computes the gradient of the form at a point.
         """
-        return self.domain.dual.from_components(self.components)
+        return self.domain.from_dual(self)
+
+    def _hessian_impl(self, _: Vector) -> LinearOperator:
+        """
+        Computes the Hessian of the form at a point.
+        """
+        return self.domain.zero_operator()

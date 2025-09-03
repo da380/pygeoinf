@@ -18,10 +18,14 @@ from .hilbert_space import (
 from .operators import Operator
 
 from .linear_operators import (
-    Operator,
     LinearOperator,
     DiagonalLinearOperator,
 )
+
+from .nonlinear_forms import (
+    NonLinearForm,
+)
+
 
 from .linear_forms import (
     LinearForm,

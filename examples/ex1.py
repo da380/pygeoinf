@@ -1,105 +1,48 @@
-import matplotlib.pyplot as plt
-
-import numpy as np
-from numpy import pi
-
-
 import pygeoinf as inf
-from pygeoinf.symmetric_space.sphere import Lebesgue, Sobolev
+import numpy as np
 
 
-class TestClass:
+X = inf.EuclideanSpace(3)
 
-    def __init__(self, lmax: int, radius: float, grid: str):
-        self.lmax = lmax
-        self.radius = radius
-        self.grid = grid
+A = inf.LinearOperator(X, X, lambda x: 2 * x)
 
-    def lebesgue_load_space(self) -> Lebesgue:
-        return Lebesgue(
-            self.lmax,
-            radius=self.radius,
-            grid=self.grid,
-        )
+f = inf.NonLinearForm(
+    X,
+    lambda x: 0.5 * X.inner_product(A(x), A(x)),
+    gradient=A.adjoint @ A,
+    hessian=lambda x: A.adjoint @ A,
+)
 
-    def lebesgue_response_space(self) -> inf.HilbertSpaceDirectSum:
-        field_space = self.lebesgue_load_space()
-        return inf.HilbertSpaceDirectSum(
-            [field_space, field_space, field_space, inf.EuclideanSpace(2)]
-        )
+x = X.random()
+dx = X.random()
 
-    def sobolev_load_space(self, order: float, scale: float) -> Sobolev:
-        return Sobolev(self.lmax, order, scale, radius=self.radius, grid=self.grid)
+print(f(x))
+print(f.gradient(x))
+print(f.hessian(x))
 
-    def sobolev_response_space(
-        self, order: float, scale: float
-    ) -> inf.HilbertSpaceDirectSum:
-        field_space = Sobolev(
-            self.lmax, order + 1, scale, radius=self.radius, grid=self.grid
-        )
-        return inf.HilbertSpaceDirectSum(
-            [field_space, field_space, field_space, inf.EuclideanSpace(2)]
-        )
+print(f(x + dx))
+print(
+    f(x)
+    + X.inner_product(f.gradient(x), dx)
+    + 0.5 * X.inner_product(f.hessian(x)(dx), dx)
+)
 
-    def as_lebesgue_linear_operator(self) -> inf.LinearOperator:
+g = f + f
 
-        domain = self.lebesgue_load_space()
-        codomain = self.lebesgue_response_space()
+print(g(x))
+print(g.gradient(x))
+print(g.hessian(x))
 
-        def mapping(u):
-            return [u, u, u, np.zeros(2)]
+h = inf.LinearForm(X, mapping=lambda x: x[0])
 
-        def adjoint_mapping(response):
-            return sum(response[:3])
+print(h(x))
+print(h.gradient(x))
+print(h.hessian(x))
 
-        return inf.LinearOperator(
-            domain, codomain, mapping, adjoint_mapping=adjoint_mapping
-        )
+k = f + h
 
-    def as_sobolev_linear_operator(self, order: float, scale: float):
+print(k(x))
+print(k.gradient(x))
+print(k.hessian(x))
 
-        domain = self.sobolev_load_space(order, scale)
-        codomain = self.sobolev_response_space(order, scale)
-
-        lebesgue_operator = self.as_lebesgue_linear_operator()
-
-        for l1, s2 in zip(
-            lebesgue_operator.codomain.subspaces[:3], codomain.subspaces[:3]
-        ):
-            l2 = s2.underlying_space
-            # print(l1.lmax, l1.radius, l1.grid)
-            # print(l2.lmax, l2.radius, l2.grid)
-            # print(l1 == l2)
-
-        return inf.LinearOperator.from_formal_adjoint(
-            domain, codomain, lebesgue_operator
-        )
-
-
-test = TestClass(32, 1, "DH")
-
-A = test.as_lebesgue_linear_operator()
-
-X = A.domain
-Y = A.codomain
-
-u = X.random()
-v = Y.random()
-
-lhs = Y.inner_product(A(u), v)
-rhs = X.inner_product(u, A.adjoint(v))
-
-print(lhs, rhs)
-
-B = test.as_sobolev_linear_operator(1, 1)
-
-X = B.domain
-Y = B.codomain
-
-u = X.random()
-v = Y.random()
-
-lhs = Y.inner_product(B(u), v)
-rhs = X.inner_product(u, B.adjoint(v))
-
-print(lhs, rhs)
+print(type(k.hessian(x)))
