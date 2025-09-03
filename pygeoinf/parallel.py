@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     MatrixLike = Union[np.ndarray, ScipyLinOp]
 
 
-def parallel_mat_mat(A: "MatrixLike", B: np.ndarray, n_jobs: int = -1) -> np.ndarray:
+def parallel_mat_mat(A: MatrixLike, B: np.ndarray, n_jobs: int = -1) -> np.ndarray:
     """
     Computes the matrix product A @ B in parallel by applying A to each column of B.
 

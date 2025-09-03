@@ -26,6 +26,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse import diags
 
+from .operators import Operator
 
 from .random_matrix import (
     fixed_rank_random_range,
@@ -41,60 +42,6 @@ from .parallel import parallel_compute_dense_matrix_from_scipy_op
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, EuclideanSpace
     from .linear_forms import LinearForm
-
-
-class Operator:
-    """
-    A general, potentially non-linear operator between two Hilbert spaces.
-    """
-
-    def __init__(
-        self,
-        domain: HilbertSpace,
-        codomain: HilbertSpace,
-        mapping: Callable[[Any], Any],
-    ) -> None:
-        """
-        Initializes the Operator.
-
-        Args:
-            domain (HilbertSpace): Domain of the operator.
-            codomain (HilbertSpace): Codomain of the operator.
-            mapping (callable): The function defining the mapping from the
-                domain to the codomain.
-        """
-        self._domain: HilbertSpace = domain
-        self._codomain: HilbertSpace = codomain
-        self.__mapping: Callable[[Any], Any] = mapping
-
-    @property
-    def domain(self) -> HilbertSpace:
-        """The domain of the operator."""
-        return self._domain
-
-    @property
-    def codomain(self) -> HilbertSpace:
-        """The codomain of the operator."""
-        return self._codomain
-
-    @property
-    def is_automorphism(self) -> bool:
-        """True if the operator maps a space into itself."""
-        return self.domain == self.codomain
-
-    @property
-    def is_square(self) -> bool:
-        """True if the operator's domain and codomain have the same dimension."""
-        return self.domain.dim == self.codomain.dim
-
-    @property
-    def linear(self) -> bool:
-        """False for a general operator. Overridden by LinearOperator."""
-        return False
-
-    def __call__(self, x: Any) -> Any:
-        """Applies the operator's mapping to a vector."""
-        return self.__mapping(x)
 
 
 class LinearOperator(Operator):

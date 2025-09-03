@@ -21,7 +21,7 @@ Key Classes
 from __future__ import annotations
 from typing import Optional, Union
 
-from .linear_operators import Operator
+from .operators import Operator
 from .inversion import Inversion
 
 

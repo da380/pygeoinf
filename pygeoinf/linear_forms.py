@@ -14,13 +14,15 @@ from typing import Callable, Optional, Any, TYPE_CHECKING
 
 import numpy as np
 
+from .nonlinear_forms import NonLinearForm
+
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, EuclideanSpace
+    from .hilbert_space import HilbertSpace, EuclideanSpace, Vector
     from .linear_operators import LinearOperator
 
 
-class LinearForm:
+class LinearForm(NonLinearForm):
     """
     Represents a linear form, a functional that maps vectors to scalars.
 
@@ -35,7 +37,7 @@ class LinearForm:
         domain: HilbertSpace,
         /,
         *,
-        mapping: Optional[Callable[[Any], float]] = None,
+        mapping: Optional[Callable[[Vector], float]] = None,
         components: Optional[np.ndarray] = None,
     ) -> None:
         """
@@ -52,7 +54,12 @@ class LinearForm:
             components: The component representation of the form.
         """
 
-        self._domain: HilbertSpace = domain
+        super().__init__(
+            domain,
+            self._mapping_impl,
+            gradient=self._gradient_impl,
+            hessian=domain.zero_operator(),
+        )
 
         if components is None:
             if mapping is None:
@@ -108,7 +115,7 @@ class LinearForm:
         """
         return LinearForm(self.domain, components=self.components.copy())
 
-    def __call__(self, x: Any) -> float:
+    def __call__(self, x: Vector) -> float:
         """Applies the linear form to a vector."""
         return np.dot(self._components, self.domain.to_components(x))
 
@@ -130,11 +137,25 @@ class LinearForm:
 
     def __add__(self, other: LinearForm) -> LinearForm:
         """Returns the sum of this form and another."""
-        return LinearForm(self.domain, components=self.components + other.components)
+        if isinstance(other, LinearForm):
+            return LinearForm(
+                self.domain, components=self.components + other.components
+            )
+        elif isinstance(other, NonLinearForm):
+            super().__add__(other)
+        else:
+            raise TypeError("Other is not of a suitable type")
 
     def __sub__(self, other: LinearForm) -> LinearForm:
         """Returns the difference between this form and another."""
-        return LinearForm(self.domain, components=self.components - other.components)
+        if isinstance(other, LinearForm):
+            return LinearForm(
+                self.domain, components=self.components - other.components
+            )
+        elif isinstance(other, NonLinearForm):
+            super().__sub__(other)
+        else:
+            raise TypeError("Other is not of a suitable type")
 
     def __imul__(self, a: float) -> "LinearForm":
         """
@@ -167,3 +188,15 @@ class LinearForm:
             x = self.domain.from_components(cx)
             self._components[i] = mapping(x)
             cx[i] = 0
+
+    def _mapping_impl(self, x: Vector) -> float:
+        """
+        Maps a vector to its scalar value.
+        """
+        return np.dot(self.components, self.domain.to_components(x))
+
+    def _gradient_impl(self, _: Vector) -> Vector:
+        """
+        Computes the gradient of the form at a point.
+        """
+        return self.domain.dual.from_components(self.components)

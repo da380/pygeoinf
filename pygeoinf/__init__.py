@@ -15,6 +15,7 @@ from .hilbert_space import (
     MassWeightedHilbertModule,
 )
 
+from .operators import Operator
 
 from .linear_operators import (
     Operator,
