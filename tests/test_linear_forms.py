@@ -99,6 +99,15 @@ class TestLinearForm:
         computed_components = form_from_mapping.components
         assert_allclose(computed_components, components)
 
+    def test_parallel_component_computation(
+        self, space: HilbertSpace, components: np.ndarray
+    ):
+        """Tests that components are computed correctly using the parallel backend."""
+        mapping = lambda vec: np.dot(components, space.to_components(vec))
+        form = LinearForm(space, mapping=mapping, parallel=True, n_jobs=-1)
+        computed_components = form.components
+        assert_allclose(computed_components, components)
+
     def test_addition(
         self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: Vector
     ):

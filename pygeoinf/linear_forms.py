@@ -10,6 +10,8 @@ specializing it for the linear case.
 from __future__ import annotations
 from typing import Callable, Optional, Any, TYPE_CHECKING
 
+from joblib import Parallel, delayed
+
 import numpy as np
 
 from .nonlinear_forms import NonLinearForm
@@ -36,25 +38,36 @@ class LinearForm(NonLinearForm):
         domain: HilbertSpace,
         /,
         *,
-        mapping: Optional[Callable[[Vector], float]] = None,
         components: Optional[np.ndarray] = None,
+        mapping: Optional[Callable[[Vector], float]] = None,
+        parallel: bool = False,
+        n_jobs: int = -1,
     ) -> None:
         """
         Initializes the LinearForm from a mapping or component vector.
 
         A form must be defined by exactly one of two methods:
-        1.  **mapping**: A function `f(x)` that defines the form's action.
+        1.  **components**: The explicit component vector representing the form.
+        2.  **mapping**: A function `f(x)` that defines the form's action.
             The components will be automatically computed from this mapping.
-        2.  **components**: The explicit component vector representing the form.
+
 
         Args:
             domain: The Hilbert space on which the form is defined.
-            mapping: The functional mapping `f(x)`. Used if `components` is None.
             components: The component representation of the form.
+            mapping: The functional mapping `f(x)`. Used if `components` is None.
+            parallel: Whether to use parallel computing components from the mapping.
+            n_jobs: The number of jobs to use for parallel computing.
 
         Raises:
             AssertionError: If neither or both `mapping` and `components`
                 are specified.
+
+        Notes:
+            Parallel options only relevant if the form is defined by a mapping.
+
+            If both `components` and `mapping` are specified, `components`
+            will take precedence.
         """
 
         super().__init__(
@@ -67,7 +80,7 @@ class LinearForm(NonLinearForm):
         if components is None:
             if mapping is None:
                 raise AssertionError("Neither mapping nor components specified.")
-            self._compute_components(mapping)
+            self._compute_components(mapping, parallel, n_jobs)
         else:
             self._components: np.ndarray = components
 
@@ -196,17 +209,40 @@ class LinearForm(NonLinearForm):
         """Returns the string representation of the form's components."""
         return self.components.__str__()
 
-    def _compute_components(self, mapping: Callable[[Any], float]):
-        """
-        Computes the component vector of the form.
-        """
-        self._components = np.zeros(self.domain.dim)
-        cx = np.zeros(self.domain.dim)
-        for i in range(self.domain.dim):
-            cx[i] = 1
-            x = self.domain.from_components(cx)
-            self._components[i] = mapping(x)
-            cx[i] = 0
+    def _compute_components(
+        self,
+        mapping: Callable[[Any], float],
+        parallel: bool,
+        n_jobs: Optional[int],
+    ):
+        """Computes the component vector of the form, with an optional parallel backend."""
+        if not parallel:
+            self._components = np.zeros(self.domain.dim)
+            cx = np.zeros(self.domain.dim)
+            for i in range(self.domain.dim):
+                cx[i] = 1.0
+                x = self.domain.from_components(cx)
+                self._components[i] = mapping(x)
+                cx[i] = 0.0
+        else:
+
+            def compute_one_component(i: int) -> float:
+                """
+                Computes a single component for a given basis vector index.
+                This function is sent to each parallel worker.
+                """
+
+                # cx = np.zeros(self.domain.dim)
+                # cx[i] = 1.0
+                # x = self.domain.from_components(cx)
+                x = self.domain.basis_vector(i)
+                return mapping(x)
+
+            # Run the helper function in parallel for each dimension
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(compute_one_component)(i) for i in range(self.domain.dim)
+            )
+            self._components = np.array(results)
 
     def _mapping_impl(self, x: Vector) -> float:
         """

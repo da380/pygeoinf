@@ -307,35 +307,18 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
         """Overloaded method to efficiently compute the dense matrix for a block operator."""
-        if not parallel:
-            block_matrices = [
-                [
-                    self.block(i, j).matrix(
-                        dense=True, galerkin=galerkin, parallel=False
-                    )
-                    for j in range(self.col_dim)
-                ]
-                for i in range(self.row_dim)
-            ]
-            return np.block(block_matrices)
 
-        else:
-            block_scipy_ops = [
-                self.block(i, j).matrix(galerkin=galerkin)
-                for i in range(self.row_dim)
+        block_matrices = [
+            [
+                self.block(i, j).matrix(
+                    dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+                )
                 for j in range(self.col_dim)
             ]
+            for i in range(self.row_dim)
+        ]
 
-            computed_blocks = Parallel(n_jobs=n_jobs)(
-                delayed(parallel_compute_dense_matrix_from_scipy_op)(op, n_jobs=1)
-                for op in block_scipy_ops
-            )
-
-            block_matrices = [
-                computed_blocks[i * self.col_dim : (i + 1) * self.col_dim]
-                for i in range(self.row_dim)
-            ]
-            return np.block(block_matrices)
+        return np.block(block_matrices)
 
     def __mapping(self, xs: List[Any]) -> List[Any]:
 
@@ -420,23 +403,11 @@ class ColumnLinearOperator(LinearOperator, BlockStructure):
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
         """Overloaded method to efficiently compute the dense matrix for a column operator."""
-        if not parallel:
-            block_matrices = [
-                op.matrix(dense=True, galerkin=galerkin, parallel=False)
-                for op in self._operators
-            ]
-            return np.vstack(block_matrices)
-        else:
-            block_scipy_ops = [
-                op.matrix(galerkin=galerkin, parallel=False) for op in self._operators
-            ]
-
-            computed_blocks = Parallel(n_jobs=n_jobs)(
-                delayed(parallel_compute_dense_matrix_from_scipy_op)(op, n_jobs=1)
-                for op in block_scipy_ops
-            )
-
-            return np.vstack(computed_blocks)
+        block_matrices = [
+            op.matrix(dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+            for op in self._operators
+        ]
+        return np.vstack(block_matrices)
 
 
 class RowLinearOperator(LinearOperator, BlockStructure):
@@ -496,23 +467,11 @@ class RowLinearOperator(LinearOperator, BlockStructure):
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
         """Overloaded method to efficiently compute the dense matrix for a row operator."""
-        if not parallel:
-            block_matrices = [
-                op.matrix(dense=True, galerkin=galerkin, parallel=False)
-                for op in self._operators
-            ]
-            return np.hstack(block_matrices)
-        else:
-            block_scipy_ops = [
-                op.matrix(galerkin=galerkin, parallel=False) for op in self._operators
-            ]
-
-            computed_blocks = Parallel(n_jobs=n_jobs)(
-                delayed(parallel_compute_dense_matrix_from_scipy_op)(op, n_jobs=1)
-                for op in block_scipy_ops
-            )
-
-            return np.hstack(computed_blocks)
+        block_matrices = [
+            op.matrix(dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+            for op in self._operators
+        ]
+        return np.hstack(block_matrices)
 
 
 class BlockDiagonalLinearOperator(LinearOperator, BlockStructure):
@@ -559,20 +518,8 @@ class BlockDiagonalLinearOperator(LinearOperator, BlockStructure):
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
         """Overloaded method to efficiently compute the dense matrix for a block-diagonal operator."""
-        if not parallel:
-            block_matrices = [
-                op.matrix(dense=True, galerkin=galerkin, parallel=False)
-                for op in self._operators
-            ]
-            return block_diag(*block_matrices)
-        else:
-            block_scipy_ops = [
-                op.matrix(galerkin=galerkin, parallel=False) for op in self._operators
-            ]
-
-            computed_blocks = Parallel(n_jobs=n_jobs)(
-                delayed(parallel_compute_dense_matrix_from_scipy_op)(op, n_jobs=1)
-                for op in block_scipy_ops
-            )
-
-            return block_diag(*computed_blocks)
+        block_matrices = [
+            op.matrix(dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+            for op in self._operators
+        ]
+        return block_diag(*block_matrices)
