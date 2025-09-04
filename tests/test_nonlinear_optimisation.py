@@ -77,10 +77,10 @@ class TestScipyUnconstrainedOptimiser:
     @pytest.mark.parametrize(
         "method",
         [
-            "BFGS",  # Quasi-Newton method (uses gradient)
-            "Newton-CG",  # Newton method (uses Hessian)
-            "CG",  # Conjugate Gradient (uses gradient)
-            "L-BFGS-B",  # Memory-efficient BFGS (uses gradient)
+            "BFGS",
+            "Newton-CG",
+            "CG",
+            "L-BFGS-B",
         ],
     )
     def test_quadratic_minimisation(self, method: str, quadratic_problem: dict):

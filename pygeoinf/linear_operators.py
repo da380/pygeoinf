@@ -28,8 +28,7 @@ from scipy.sparse import diags
 from .nonlinear_operators import NonLinearOperator
 
 from .random_matrix import (
-    fixed_rank_random_range,
-    variable_rank_random_range,
+    random_range,
     random_svd as rm_svd,
     random_cholesky as rm_chol,
     random_eig as rm_eig,
@@ -505,13 +504,15 @@ class LinearOperator(NonLinearOperator):
 
     def random_svd(
         self,
-        rank: int,
+        size_estimate: int,
         /,
         *,
-        power: int = 0,
         galerkin: bool = False,
-        rtol: float = 1e-3,
-        method: str = "fixed",
+        method: str = "variable",
+        max_rank: int = None,
+        power: int = 2,
+        rtol: float = 1e-4,
+        block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[LinearOperator, DiagonalLinearOperator, LinearOperator]:
@@ -519,17 +520,22 @@ class LinearOperator(NonLinearOperator):
         Computes an approximate SVD using a randomized algorithm.
 
         Args:
-            rank (int): The desired rank of the SVD.
-            power (int): The power of the random matrix.
+            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
+                       method, this is the initial rank to sample.
             galerkin (bool): If True, use the Galerkin representation.
-            rtol (float): The relative tolerance for the SVD.
-            method (str): The method to use for the SVD.
-                - "fixed": Use a fixed rank SVD.
-                - "variable": Use a variable rank SVD.
-            parallel (bool): If True, use parallel computing. Defaults to False.
-                Only used with fixed rank method.
-            n_jobs (int): Number of parallel jobs. Defaults to -1.
-                Only used with fixed rank method.
+            method ({'variable', 'fixed'}): The algorithm to use.
+            - 'variable': (Default) Progressively samples to find the rank needed
+                          to meet tolerance `rtol`, stopping at `max_rank`.
+            - 'fixed': Returns a basis with exactly `size_estimate` columns.
+            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
+                    method='fixed'. Defaults to min(m, n).
+            power: Number of power iterations to improve accuracy.
+            rtol: Relative tolerance for the 'variable' method. Ignored if
+                method='fixed'.
+            block_size: Number of new vectors to sample per iteration in 'variable'
+                        method. Ignored if method='fixed'.
+            parallel: Whether to use parallel matrix multiplication.
+            n_jobs: Number of jobs for parallelism.
 
         Returns:
             left (LinearOperator): The left singular vector matrix.
@@ -546,17 +552,18 @@ class LinearOperator(NonLinearOperator):
         matrix = self.matrix(galerkin=galerkin)
         m, n = matrix.shape
         k = min(m, n)
-        rank = rank if rank <= k else k
 
-        qr_factor: np.ndarray
-        if method == "fixed":
-            qr_factor = fixed_rank_random_range(
-                matrix, rank, power=power, parallel=parallel, n_jobs=n_jobs
-            )
-        elif method == "variable":
-            qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
-        else:
-            raise ValueError("Invalid method selected")
+        qr_factor = random_range(
+            matrix,
+            size_estimate if size_estimate < k else k,
+            method=method,
+            max_rank=max_rank,
+            power=power,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
 
         left_factor_mat, singular_values, right_factor_transposed = rm_svd(
             matrix, qr_factor
@@ -584,12 +591,14 @@ class LinearOperator(NonLinearOperator):
 
     def random_eig(
         self,
-        rank: int,
+        size_estimate: int,
         /,
         *,
-        power: int = 0,
-        rtol: float = 1e-3,
-        method: str = "fixed",
+        method: str = "variable",
+        max_rank: int = None,
+        power: int = 2,
+        rtol: float = 1e-4,
+        block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[LinearOperator, DiagonalLinearOperator]:
@@ -597,16 +606,21 @@ class LinearOperator(NonLinearOperator):
         Computes an approximate eigen-decomposition using a randomized algorithm.
 
         Args:
-            rank (int): The desired rank of the SVD.
-            power (int): The power of the random matrix.
-            rtol (float): The relative tolerance for the SVD.
-            method (str): The method to use for the SVD.
-                - "fixed": Use a fixed rank SVD.
-                - "variable": Use a variable rank SVD.
-            parallel (bool): If True, use parallel computing. Defaults to False.
-                Only used with fixed rank method.
-            n_jobs (int): Number of parallel jobs. Defaults to -1.
-                Only used with fixed rank method.
+            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
+                       method, this is the initial rank to sample.
+            method ({'variable', 'fixed'}): The algorithm to use.
+            - 'variable': (Default) Progressively samples to find the rank needed
+                          to meet tolerance `rtol`, stopping at `max_rank`.
+            - 'fixed': Returns a basis with exactly `size_estimate` columns.
+            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
+                    method='fixed'. Defaults to min(m, n).
+            power: Number of power iterations to improve accuracy.
+            rtol: Relative tolerance for the 'variable' method. Ignored if
+                method='fixed'.
+            block_size: Number of new vectors to sample per iteration in 'variable'
+                        method. Ignored if method='fixed'.
+            parallel: Whether to use parallel matrix multiplication.
+            n_jobs: Number of jobs for parallelism.
 
         Returns:
             expansion (LinearOperator): Mapping from coefficients in eigen-basis to vectors.
@@ -619,17 +633,18 @@ class LinearOperator(NonLinearOperator):
         matrix = self.matrix(galerkin=True)
         m, n = matrix.shape
         k = min(m, n)
-        rank = rank if rank <= k else k
 
-        qr_factor: np.ndarray
-        if method == "fixed":
-            qr_factor = fixed_rank_random_range(
-                matrix, rank, power=power, parallel=parallel, n_jobs=n_jobs
-            )
-        elif method == "variable":
-            qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
-        else:
-            raise ValueError("Invalid method selected")
+        qr_factor = random_range(
+            matrix,
+            size_estimate if size_estimate < k else k,
+            method=method,
+            max_rank=max_rank,
+            power=power,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
 
         eigenvectors, eigenvalues = rm_eig(matrix, qr_factor)
         euclidean = EuclideanSpace(qr_factor.shape[1])
@@ -643,12 +658,14 @@ class LinearOperator(NonLinearOperator):
 
     def random_cholesky(
         self,
-        rank: int,
+        size_estimate: int,
         /,
         *,
-        power: int = 0,
-        rtol: float = 1e-3,
-        method: str = "fixed",
+        method: str = "variable",
+        max_rank: int = None,
+        power: int = 2,
+        rtol: float = 1e-4,
+        block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> LinearOperator:
@@ -657,16 +674,21 @@ class LinearOperator(NonLinearOperator):
         self-adjoint operator using a randomized algorithm.
 
         Args:
-            rank (int): The desired rank of the Cholesky decomposition.
-            power (int): The power of the random matrix.
-            rtol (float): The relative tolerance for the Cholesky decomposition.
-            method (str): The method to use for the Cholesky decomposition.
-                - "fixed": Use a fixed rank Cholesky decomposition.
-                - "variable": Use a variable rank Cholesky decomposition.
-        parallel (bool): If True, use parallel computing. Defaults to False.
-            Only used with fixed rank method.
-        n_jobs (int): Number of parallel jobs. Defaults to -1.
-                Only used with fixed rank method.
+            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
+                       method, this is the initial rank to sample.
+            method ({'variable', 'fixed'}): The algorithm to use.
+            - 'variable': (Default) Progressively samples to find the rank needed
+                          to meet tolerance `rtol`, stopping at `max_rank`.
+            - 'fixed': Returns a basis with exactly `size_estimate` columns.
+            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
+                    method='fixed'. Defaults to min(m, n).
+            power: Number of power iterations to improve accuracy.
+            rtol: Relative tolerance for the 'variable' method. Ignored if
+                method='fixed'.
+            block_size: Number of new vectors to sample per iteration in 'variable'
+                        method. Ignored if method='fixed'.
+            parallel: Whether to use parallel matrix multiplication.
+            n_jobs: Number of jobs for parallelism.
 
         Returns:
             factor (LinearOperator): A linear operator from a Euclidean space
@@ -683,17 +705,18 @@ class LinearOperator(NonLinearOperator):
         matrix = self.matrix(galerkin=True)
         m, n = matrix.shape
         k = min(m, n)
-        rank = rank if rank <= k else k
 
-        qr_factor: np.ndarray
-        if method == "fixed":
-            qr_factor = fixed_rank_random_range(
-                matrix, rank, power=power, parallel=parallel, n_jobs=n_jobs
-            )
-        elif method == "variable":
-            qr_factor = variable_rank_random_range(matrix, rank, power=power, rtol=rtol)
-        else:
-            raise ValueError("Invalid method selected")
+        qr_factor = random_range(
+            matrix,
+            size_estimate if size_estimate < k else k,
+            method=method,
+            max_rank=max_rank,
+            power=power,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
 
         cholesky_factor = rm_chol(matrix, qr_factor)
 

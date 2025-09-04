@@ -491,12 +491,14 @@ class GaussianMeasure:
 
     def low_rank_approximation(
         self,
-        rank: int,
+        size_estimate: int,
         /,
         *,
-        power: int = 0,
-        method: str = "fixed",
-        rtol: float = 1e-2,
+        method: str = "variable",
+        max_rank: int = None,
+        power: int = 2,
+        rtol: float = 1e-4,
+        block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> GaussianMeasure:
@@ -507,12 +509,21 @@ class GaussianMeasure:
         can be much more efficient for sampling and storage.
 
         Args:
-            rank (int): The target rank for the approximation.
-            power (int, optional): Power iterations for the randomized algorithm.
-            method (str, optional): 'fixed' or 'variable' rank method.
-            rtol (float, optional): Relative tolerance for variable rank method.
-            parallel (bool): If True, use parallel computing. Defaults to False.
-            n_jobs (int): Number of parallel jobs. Defaults to -1.
+            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
+                       method, this is the initial rank to sample.
+            method ({'variable', 'fixed'}): The algorithm to use.
+            - 'variable': (Default) Progressively samples to find the rank needed
+                          to meet tolerance `rtol`, stopping at `max_rank`.
+            - 'fixed': Returns a basis with exactly `size_estimate` columns.
+            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
+                    method='fixed'. Defaults to min(m, n).
+            power: Number of power iterations to improve accuracy.
+            rtol: Relative tolerance for the 'variable' method. Ignored if
+                method='fixed'.
+            block_size: Number of new vectors to sample per iteration in 'variable'
+                        method. Ignored if method='fixed'.
+            parallel: Whether to use parallel matrix multiplication.
+            n_jobs: Number of jobs for parallelism.
 
         Returns:
             GaussianMeasure: The new, low-rank Gaussian measure.
@@ -521,10 +532,12 @@ class GaussianMeasure:
             Parallel implemention only currently possible with fixed-rank decompositions.
         """
         covariance_factor = self.covariance.random_cholesky(
-            rank,
-            power=power,
+            size_estimate,
             method=method,
+            max_rank=max_rank,
+            power=power,
             rtol=rtol,
+            block_size=block_size,
             parallel=parallel,
             n_jobs=n_jobs,
         )

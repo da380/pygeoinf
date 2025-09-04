@@ -15,6 +15,8 @@ constructing approximate matrix decompositions" (2011).
 
 from typing import Tuple, Union
 
+import warnings
+
 import numpy as np
 from scipy.linalg import (
     cho_factor,
@@ -87,76 +89,180 @@ def fixed_rank_random_range(
 
 
 def variable_rank_random_range(
-    matrix: MatrixLike, rank: int, /, *, power: int = 0, rtol: float = 1e-6
+    matrix: MatrixLike,
+    initial_rank: int,
+    /,
+    *,
+    max_rank: int = None,
+    power: int = 0,
+    block_size: int = 10,
+    rtol: float = 1e-4,
+    parallel: bool = False,
+    n_jobs: int = -1,
 ) -> np.ndarray:
     """
-    Computes an orthonormal basis for a variable-rank approximation to the
-    range of a matrix using a randomized method.
+    Computes a variable-rank orthonormal basis using a progressive sampling algorithm.
 
-    The algorithm adaptively determines the rank required to meet a given
-    error tolerance.
+    The algorithm starts with `initial_rank` samples, checks for convergence,
+    and then progressively draws new blocks of random samples until the desired
+    tolerance `rtol` is met or `max_rank` is reached.
 
     Args:
-        matrix (matrix-like): An (m, n) matrix or LinearOperator whose range
-            is to be approximated.
-        rank (int): The maximum rank for the approximation. The algorithm
-            may return a basis with a smaller rank.
-        power (int): Exponent for power iterations. Note: This parameter is
-            reserved for future functionality and is currently unused.
-        rtol (float): The relative tolerance for the approximation error, used
-            to determine the output rank.
+        matrix: The (m, n) matrix or LinearOperator.
+        initial_rank: The number of vectors to sample initially.
+        max_rank: A hard limit on the number of basis vectors. Defaults to min(m, n).
+        power: Number of power iterations to improve accuracy on the initial sample.
+        rtol: Relative tolerance for determining the output rank.
+        block_size: The number of new vectors to sample in each iteration.
+        parallel: Whether to use parallel matrix multiplication.
+        n_jobs: Number of jobs for parallelism.
 
     Returns:
-        numpy.ndarray: An (m, k) matrix with orthonormal columns, where k <= rank.
-            Its span approximates the range of the input matrix.
-
-    Notes:
-        If the input matrix is a scipy LinearOperator, it must have the
-        `matvec` method implemented.
-
-        This method is based on Algorithm 4.5 in Halko et al. 2011.
+        An (m, k) matrix with orthonormal columns that approximates the matrix's
+        range to the given tolerance.
     """
-
     m, n = matrix.shape
+    if max_rank is None:
+        max_rank = min(m, n)
 
-    random_vectors = [np.random.randn(n) for _ in range(rank)]
-    ys = [matrix @ x for x in random_vectors]
-    basis_vectors = []
+    # Initial Sample
+    random_matrix = np.random.randn(n, initial_rank)
+    if parallel:
+        ys = parallel_mat_mat(matrix, random_matrix, n_jobs)
+    else:
+        ys = matrix @ random_matrix
 
-    def projection(xs: list, y: np.ndarray) -> np.ndarray:
-        ps = [np.dot(x, y) for x in xs]
-        for p, x in zip(ps, xs):
-            y -= p * x
-        return y
+    # Power Iterations on initial sample for a better starting point
+    for _ in range(power):
+        ys, _ = qr(ys, mode="economic")
+        if parallel:
+            ys_tilde = parallel_mat_mat(matrix.T, ys, n_jobs)
+            ys = parallel_mat_mat(matrix, ys_tilde, n_jobs)
+        else:
+            ys_tilde = matrix.T @ ys
+            ys = matrix @ ys_tilde
 
-    norm = max(np.linalg.norm(y) for y in ys)
+    # Form the initial basis
+    basis_vectors, _ = qr(ys, mode="economic")
 
-    tol = rtol * norm / (10 * np.sqrt(2 / np.pi))
-    error = 2 * tol
-    j = -1
-    while error > tol:
-        j += 1
+    # Progressively sample and check for convergence
+    converged = False
 
-        ys[j] = projection(basis_vectors, ys[j])
-        ys[j] /= np.linalg.norm(ys[j])
-        basis_vectors.append(ys[j])
+    # Dynamically estimate norm for tolerance calculation
+    tol = None
 
-        y = matrix @ np.random.randn(n)
-        y = projection(basis_vectors, y)
-        ys.append(y)
+    while basis_vectors.shape[1] < max_rank:
+        # Generate a NEW block of random vectors for error checking
+        test_vectors = np.random.randn(n, block_size)
+        if parallel:
+            y_test = parallel_mat_mat(matrix, test_vectors, n_jobs)
+        else:
+            y_test = matrix @ test_vectors
 
-        for i in range(j + 1, j + rank):
-            p = np.dot(basis_vectors[j], ys[i])
-            ys[i] -= p * basis_vectors[j]
+        # Estimate norm for tolerance on the first pass
+        if tol is None:
+            # Estimate spectral norm from the first block of test vectors.
+            # A more stable estimate than from a single vector.
+            norm_estimate = np.linalg.norm(y_test) / np.sqrt(block_size)
+            tol = rtol * norm_estimate
 
-        error = max(np.linalg.norm(ys[i]) for i in range(j + 1, j + rank + 1))
+        # Project test vectors onto current basis to find the residual
+        residual = y_test - basis_vectors @ (basis_vectors.T @ y_test)
+        error = np.linalg.norm(residual, ord=2)
 
-        if j > min(n, m):
-            raise RuntimeError("Convergence has failed")
+        # Check for convergence
+        if error < tol:
+            converged = True
+            break
 
-    qr_factor = np.column_stack(basis_vectors)
+        # If not converged, add the new information to the basis
+        new_basis, _ = qr(residual, mode="economic")
 
-    return qr_factor
+        # Append new basis vectors, ensuring we don't exceed max_rank
+        cols_to_add = min(new_basis.shape[1], max_rank - basis_vectors.shape[1])
+        if cols_to_add <= 0:
+            break
+
+        basis_vectors = np.hstack([basis_vectors, new_basis[:, :cols_to_add]])
+
+    if not converged and basis_vectors.shape[1] >= max_rank:
+        warnings.warn(
+            f"Tolerance {rtol} not met before reaching max_rank={max_rank}. "
+            "Result may be inaccurate. Consider increasing `max_rank` or `power`.",
+            UserWarning,
+        )
+
+    return basis_vectors
+
+
+def random_range(
+    matrix: MatrixLike,
+    size_estimate: int,
+    /,
+    *,
+    method: str = "variable",
+    max_rank: int = None,
+    power: int = 2,
+    rtol: float = 1e-4,
+    block_size: int = 10,
+    parallel: bool = False,
+    n_jobs: int = -1,
+) -> np.ndarray:
+    """
+    A unified wrapper for randomized range finding algorithms.
+
+    Args:
+        matrix: The (m, n) matrix or LinearOperator to analyze.
+        size_estimate: For 'fixed' method, the exact target rank. For 'variable'
+                       method, this is the initial rank to sample.
+        method ({'variable', 'fixed'}): The algorithm to use.
+            - 'variable': (Default) Progressively samples to find the rank needed
+                          to meet tolerance `rtol`, stopping at `max_rank`.
+            - 'fixed': Returns a basis with exactly `size_estimate` columns.
+        max_rank: For 'variable' method, a hard limit on the rank. Ignored if
+                  method='fixed'. Defaults to min(m, n).
+        power: Number of power iterations to improve accuracy.
+        rtol: Relative tolerance for the 'variable' method. Ignored if
+              method='fixed'.
+        block_size: Number of new vectors to sample per iteration in 'variable'
+                    method. Ignored if method='fixed'.
+        parallel: Whether to use parallel matrix multiplication.
+        n_jobs: Number of jobs for parallelism.
+
+    Returns:
+        An (m, k) orthonormal matrix approximating the input matrix's range.
+
+    Raises:
+        ValueError: If an unknown method is specified.
+    """
+    if method == "variable":
+        return variable_rank_random_range(
+            matrix,
+            size_estimate,
+            max_rank=max_rank,
+            power=power,
+            block_size=block_size,
+            rtol=rtol,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+    elif method == "fixed":
+        if any([rtol != 1e-4, block_size != 10, max_rank is not None]):
+            warnings.warn(
+                "'rtol', 'block_size', and 'max_rank' are ignored when method='fixed'.",
+                UserWarning,
+            )
+        return fixed_rank_random_range(
+            matrix,
+            rank=size_estimate,
+            power=power,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+    else:
+        raise ValueError(
+            f"Unknown method '{method}'. Choose from 'fixed' or 'variable'."
+        )
 
 
 def random_svd(

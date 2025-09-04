@@ -1,6 +1,7 @@
 from .random_matrix import (
     fixed_rank_random_range,
     variable_rank_random_range,
+    random_range,
     random_svd,
     random_eig,
     random_cholesky,
