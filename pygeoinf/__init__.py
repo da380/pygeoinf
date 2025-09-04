@@ -67,3 +67,7 @@ from .linear_optimisation import (
 )
 
 from .linear_bayesian import LinearBayesianInversion, LinearBayesianInference
+
+from .nonlinear_optimisation import (
+    ScipyUnconstrainedOptimiser,
+)
