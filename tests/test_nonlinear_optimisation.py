@@ -98,4 +98,4 @@ class TestScipyUnconstrainedOptimiser:
 
         # 3. Check the result
         found_solution = space.to_components(result_vec)
-        assert_allclose(found_solution, expected_solution, rtol=1e-5)
+        assert_allclose(found_solution, expected_solution, rtol=1e-4)

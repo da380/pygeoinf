@@ -39,6 +39,15 @@ def spd_operator(space: EuclideanSpace) -> LinearOperator:
 
 
 @pytest.fixture
+def semi_definite_operator(space: EuclideanSpace) -> LinearOperator:
+    """Provides a symmetric positive SEMI-definite operator (singular)."""
+    rank = space.dim - 2
+    matrix = np.random.randn(space.dim, rank)
+    sd_matrix = matrix @ matrix.T
+    return LinearOperator.from_matrix(space, space, sd_matrix, galerkin=True)
+
+
+@pytest.fixture
 def non_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
     """
     Provides a well-conditioned, invertible, non-symmetric operator.

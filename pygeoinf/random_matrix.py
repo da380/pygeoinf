@@ -18,13 +18,7 @@ from typing import Tuple, Union
 import warnings
 
 import numpy as np
-from scipy.linalg import (
-    cho_factor,
-    solve_triangular,
-    eigh,
-    svd,
-    qr,
-)
+from scipy.linalg import cho_factor, solve_triangular, eigh, svd, qr
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 
 from .parallel import parallel_mat_mat
@@ -52,6 +46,8 @@ def fixed_rank_random_range(
         power: The number of power iterations to perform. Power iterations
             (multiplying by `A*A`) improves the accuracy of the approximation by
             amplifying the dominant singular values, but adds to the computational cost.
+        parallel: Whether to use parallel matrix multiplication.
+        n_jobs: Number of jobs for parallelism.
 
     Returns:
         An (m, rank) matrix with orthonormal columns whose span approximates
@@ -326,28 +322,66 @@ def random_eig(
     return qr_factor @ eigenvectors, eigenvalues
 
 
-def random_cholesky(matrix: MatrixLike, qr_factor: np.ndarray) -> np.ndarray:
+def random_cholesky(
+    matrix: MatrixLike, qr_factor: np.ndarray, *, rtol: float = 1e-12
+) -> np.ndarray:
     """
-    Computes an approximate Cholesky factorisation for a symmetric positive-
-    definite matrix from a low-rank range approximation.
+    Computes a robust approximate Cholesky factorization using a fallback strategy.
+
+    It first attempts a direct Cholesky factorization. If that fails, it falls
+    back to a method based on eigendecomposition.
 
     Args:
-        matrix (matrix-like): The original symmetric positive-definite (n, n)
-            matrix or LinearOperator.
+        matrix (matrix-like): The original symmetric (n, n) matrix.
         qr_factor (numpy.ndarray): An (n, k) orthonormal basis for the
             approximate range of the matrix.
+        rtol (float, optional): A relative tolerance used in the fallback path.
+            Any eigenvalue `s` such that `s < rtol * max(eigenvalues)` will be
+            treated as zero. Defaults to 1e-12.
 
     Returns:
         numpy.ndarray: The approximate Cholesky factor F, such that A ~= F @ F.T.
-
-    Notes:
-        Based on Algorithm 5.5 of Halko et al. 2011.
     """
-    small_matrix_1 = matrix @ qr_factor
-    small_matrix_2 = qr_factor.T @ small_matrix_1
-    factor, lower = cho_factor(small_matrix_2, overwrite_a=True)
-    identity_operator = np.identity(factor.shape[0])
-    inverse_factor = solve_triangular(
-        factor, identity_operator, overwrite_b=True, lower=lower
-    )
-    return small_matrix_1 @ inverse_factor
+    try:
+        # --- Fast Path: Try direct Cholesky factorization ---
+        small_matrix_1 = matrix @ qr_factor
+        small_matrix_2 = qr_factor.T @ small_matrix_1
+
+        factor, lower = cho_factor(small_matrix_2, overwrite_a=True)
+
+        identity_operator = np.identity(factor.shape[0])
+        inverse_factor = solve_triangular(
+            factor, identity_operator, overwrite_b=True, lower=lower
+        )
+        return small_matrix_1 @ inverse_factor
+
+    except np.linalg.LinAlgError:
+
+        # --- Fallback Path: Eigendecomposition ---
+        small_matrix = qr_factor.T @ (matrix @ qr_factor)
+        eigenvalues, eigenvectors = eigh(small_matrix, overwrite_a=True)
+
+        # Determine the threshold based on the largest eigenvalue.
+        # eigh returns eigenvalues in ascending order.
+        max_eigenvalue = eigenvalues[-1]
+
+        if max_eigenvalue > 0:
+            threshold = rtol * max_eigenvalue
+        else:
+            # If all eigenvalues are non-positive, all will be set to zero.
+            threshold = 0
+
+        # 2. Apply the threshold to create safe eigenvalues.
+        safe_eigenvalues = eigenvalues.copy()
+        safe_eigenvalues[eigenvalues < threshold] = 0.0
+
+        y_matrix = matrix @ qr_factor
+        temp_factor = y_matrix @ eigenvectors
+
+        # Conditionally compute the inverse square root.
+        sqrt_s = np.sqrt(safe_eigenvalues)
+        sqrt_s_inv = np.where(sqrt_s > 0, np.reciprocal(sqrt_s), 0.0)
+
+        cholesky_factor = temp_factor * sqrt_s_inv
+
+        return cholesky_factor
