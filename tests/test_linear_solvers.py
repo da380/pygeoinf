@@ -9,6 +9,7 @@ from pygeoinf.linear_operators import LinearOperator, DiagonalLinearOperator
 from pygeoinf.linear_solvers import (
     LUSolver,
     CholeskySolver,
+    EigenSolver,
     CGMatrixSolver,
     BICGMatrixSolver,
     BICGStabMatrixSolver,
@@ -97,12 +98,13 @@ direct_solvers = [
     pytest.param(
         CholeskySolver(galerkin=True, parallel=False), id="CholeskySolver_serial"
     ),
+    pytest.param(EigenSolver(galerkin=True, parallel=False), id="EigenSolver_serial"),
     pytest.param(LUSolver(galerkin=True, parallel=True), id="LUSolver_parallel"),
     pytest.param(
         CholeskySolver(galerkin=True, parallel=True), id="CholeskySolver_parallel"
     ),
+    pytest.param(EigenSolver(galerkin=True, parallel=True), id="EigenSolver_parallel"),
 ]
-
 
 # Solvers that require or are optimized for symmetric positive-definite matrices
 spd_iterative_solvers = [
@@ -131,6 +133,19 @@ def test_direct_solvers(solver, spd_operator: LinearOperator, x: np.ndarray):
     result_vector = (inverse_operator @ spd_operator)(x)
     expected_vector = identity(x)
     assert np.allclose(result_vector, expected_vector, atol=1e-12)
+
+
+def test_eigensolver_robustness(semi_definite_operator, x):
+    """
+    Tests that EigenSolver correctly computes a pseudo-inverse for a
+    singular (semi-definite) operator.
+    """
+    eigensolver = EigenSolver(galerkin=True, rtol=1e-14)
+    pseudo_inverse_op = eigensolver(semi_definite_operator)
+    b_in_range = semi_definite_operator(x)
+    x_solution = pseudo_inverse_op(b_in_range)
+    b_reconstructed = semi_definite_operator(x_solution)
+    assert np.allclose(b_in_range, b_reconstructed)
 
 
 @pytest.mark.parametrize("solver", spd_iterative_solvers)
