@@ -57,6 +57,16 @@ class NonLinearForm:
         """The Hilbert space on which the form is defined."""
         return self._domain
 
+    @property
+    def has_gradient(self) -> bool:
+        """True if the form has a gradient."""
+        return self._gradient is not None
+
+    @property
+    def has_hessian(self) -> bool:
+        """True if the form has a Hessian."""
+        return self._hessian is not None
+
     def __call__(self, x: Any) -> float:
         """Applies the linear form to a vector."""
         return self._mapping(x)
@@ -78,6 +88,22 @@ class NonLinearForm:
         if self._gradient is None:
             raise NotImplementedError("Gradient not implemented for this form.")
         return self._gradient(x)
+
+    def derivative(self, x: Vector) -> LinearForm:
+        """
+        Computes the derivative of the form at a given point.
+
+        Args:
+            x: The vector at which to evaluate the derivative.
+
+        Returns:
+            The derivative of the form as a `LinearForm`.
+
+        Raises:
+            NotImplementedError: If a gradient function was not provided
+                during initialization.
+        """
+        return self.domain.to_dual(self.gradient(x))
 
     def hessian(self, x: Any) -> LinearOperator:
         """
