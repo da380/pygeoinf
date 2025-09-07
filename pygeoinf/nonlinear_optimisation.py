@@ -162,7 +162,7 @@ def line_search(
     # Wrap the function.
     def f(xc: np.ndarray) -> float:
         x = domain.from_components(xc)
-        return f(x)
+        return form(x)
 
     # Wrap the derivative. Note that this is given in
     # terms of the components of the derivative (i.e., an element
