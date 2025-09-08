@@ -23,7 +23,7 @@ Key Classes
 from __future__ import annotations
 from typing import Optional
 
-from .inversion import Inversion
+from .inversion import LinearInversion
 from .gaussian_measure import GaussianMeasure
 
 
@@ -33,7 +33,7 @@ from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import HilbertSpace, Vector
 
 
-class LinearBayesianInversion(Inversion):
+class LinearBayesianInversion(LinearInversion):
     """
     Solves a linear inverse problem using Bayesian methods.
 

@@ -698,6 +698,34 @@ class MassWeightedHilbertSpace(HilbertSpace):
         """
         return self.underlying_space.is_element(x)
 
+    def add(self, x: Vector, y: Vector) -> Vector:
+        """Computes the sum of two vectors. Defaults to `x + y`."""
+        return self.underlying_space.add(x, y)
+
+    def subtract(self, x: Vector, y: Vector) -> Vector:
+        """Computes the difference of two vectors. Defaults to `x - y`."""
+        return self.underlying_space.subtract(x, y)
+
+    def multiply(self, a: float, x: Vector) -> Vector:
+        """Computes scalar multiplication. Defaults to `a * x`."""
+        return self.underlying_space.multiply(a, x)
+
+    def negative(self, x: Vector) -> Vector:
+        """Computes the additive inverse of a vector. Defaults to `-1 * x`."""
+        return self.underlying_space.negative(x)
+
+    def ax(self, a: float, x: Vector) -> None:
+        """Performs in-place scaling `x := a*x`. Defaults to `x *= a`."""
+        self.underlying_space.ax(a, x)
+
+    def axpy(self, a: float, x: Vector, y: Vector) -> None:
+        """Performs in-place operation `y := y + a*x`. Defaults to `y += a*x`."""
+        self.underlying_space.axpy(a, x, y)
+
+    def copy(self, x: Vector) -> Vector:
+        """Returns a deep copy of a vector. Defaults to `x.copy()`."""
+        return self.underlying_space.copy(x)
+
 
 class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):
     """

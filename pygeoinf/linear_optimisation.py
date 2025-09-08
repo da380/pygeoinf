@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Optional, Union
 
 from .nonlinear_operators import NonLinearOperator
-from .inversion import Inversion
+from .inversion import LinearInversion
 
 
 from .forward_problem import LinearForwardProblem
@@ -31,7 +31,7 @@ from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector
 
 
-class LinearLeastSquaresInversion(Inversion):
+class LinearLeastSquaresInversion(LinearInversion):
     """
     Solves a linear inverse problem using Tikhonov-regularized least-squares.
 
@@ -89,7 +89,7 @@ class LinearLeastSquaresInversion(Inversion):
         /,
         *,
         preconditioner: Optional[LinearOperator] = None,
-    ) -> Union[Operator, LinearOperator]:
+    ) -> Union[NonLinearOperator, LinearOperator]:
         """
         Returns an operator that maps data to the least-squares solution.
 
@@ -137,7 +137,7 @@ class LinearLeastSquaresInversion(Inversion):
             return inverse_normal_operator @ forward_operator.adjoint
 
 
-class LinearMinimumNormInversion(Inversion):
+class LinearMinimumNormInversion(LinearInversion):
     """
     Finds a regularized solution using the discrepancy principle.
 
@@ -168,7 +168,7 @@ class LinearMinimumNormInversion(Inversion):
         maxiter: int = 100,
         rtol: float = 1.0e-6,
         atol: float = 0.0,
-    ) -> Union[Operator, LinearOperator]:
+    ) -> Union[NonLinearOperator, LinearOperator]:
         """
         Returns an operator that maps data to the minimum-norm solution.
 

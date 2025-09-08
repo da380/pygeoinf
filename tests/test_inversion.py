@@ -10,6 +10,7 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.inversion import Inversion
 
+
 # =============================================================================
 # Fixtures for Different Forward Problem Setups
 # =============================================================================

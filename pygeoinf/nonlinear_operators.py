@@ -71,6 +71,13 @@ class NonLinearOperator:
         """True if the operator's domain and codomain have the same dimension."""
         return self.domain.dim == self.codomain.dim
 
+    @property
+    def has_derivative(self) -> bool:
+        """
+        Returns true if the operators derivative is implemented.
+        """
+        return self._derivative is not None
+
     def __call__(self, x: Any) -> Any:
         """Applies the operator's mapping to a vector."""
         return self._mapping(x)
