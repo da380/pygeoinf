@@ -27,17 +27,17 @@ class HyperEllipsoid:
         radius: float,
         /,
         *,
-        operator: LinearOperator = None,
         centre: Vector = None,
+        operator: LinearOperator = None,
     ) -> None:
         """
         Args:
             space (HilbertSpace): The Hilbert space in which the hyper-ellipsoid is defined.
             radius (float): The radius of the hyper-ellipsoid.
-            operator (LinearOperator): A self-adjoint operator on the space defining the hyper-ellipsoid.
-                The default is None which corresponds to the identity operator.
             centre (Vector); The centre of the hyper-ellipsoid. The default is None which corresponds to
                 the zero-vector.
+            operator (LinearOperator): A self-adjoint operator on the space defining the hyper-ellipsoid.
+                The default is None which corresponds to the identity operator.
         """
 
         if not isinstance(space, HilbertSpace):

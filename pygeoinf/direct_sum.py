@@ -116,6 +116,16 @@ class HilbertSpaceDirectSum(HilbertSpace):
 
         return self.subspaces == other.subspaces
 
+    def is_element(self, xs: Any) -> bool:
+        """
+        Checks if a list of vectors is a valid element of the direct sum space.
+        """
+        if not isinstance(xs, list):
+            return False
+        if len(xs) != self.number_of_subspaces:
+            return False
+        return all(space.is_element(x) for space, x in zip(self._spaces, xs))
+
     @property
     def subspaces(self) -> List[HilbertSpace]:
         """Returns the list of subspaces that form the direct sum."""

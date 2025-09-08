@@ -448,6 +448,20 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
         return self.lmax == other.lmax and self.radius == other.radius
 
+    def is_element(self, x: Any) -> bool:
+        """
+        Checks if an object is a valid element of the space.
+        """
+        if not isinstance(x, sh.SHGrid):
+            return False
+        if not x.lmax == self.lmax:
+            return False
+        if not x.grid == self._grid_name():
+            return False
+        if not x.extend == self.extend:
+            return False
+        return True
+
     def eigenfunction_norms(self) -> np.ndarray:
         """Returns a list of the norms of the eigenfunctions."""
         return np.fromiter(

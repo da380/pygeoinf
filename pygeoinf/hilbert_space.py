@@ -504,6 +504,14 @@ class DualHilbertSpace(HilbertSpace):
             return NotImplemented
         return self.underlying_space == other.underlying_space
 
+    def is_element(self, x: Any) -> bool:
+        """
+        Checks if an object is a valid element of the dual space.
+        """
+        from .linear_forms import LinearForm
+
+        return isinstance(x, LinearForm) and x.domain == self.underlying_space
+
     @final
     def duality_product(self, xp: LinearForm, x: Vector) -> float:
         """
@@ -582,6 +590,12 @@ class EuclideanSpace(HilbertSpace):
         if not isinstance(other, EuclideanSpace):
             return NotImplemented
         return self.dim == other.dim
+
+    def is_element(self, x: Any) -> bool:
+        """
+        Checks if an object is a valid element of the space.
+        """
+        return isinstance(x, np.ndarray) and len(x) == self.dim
 
 
 class MassWeightedHilbertSpace(HilbertSpace):
@@ -677,6 +691,12 @@ class MassWeightedHilbertSpace(HilbertSpace):
             and (self.mass_operator == other.mass_operator)
             and (self.inverse_mass_operator == other.inverse_mass_operator)
         )
+
+    def is_element(self, x: Any) -> bool:
+        """
+        Checks if an object is a valid element of the space.
+        """
+        return self.underlying_space.is_element(x)
 
 
 class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):
