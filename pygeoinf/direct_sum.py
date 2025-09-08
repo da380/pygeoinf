@@ -395,7 +395,6 @@ class ColumnLinearOperator(LinearOperator, BlockStructure):
             x = domain.zero
             for op, y in zip(self._operators, ys):
                 domain.axpy(1.0, op.adjoint(y), x)
-                print(op.adjoint(y).data)
             return x
 
         LinearOperator.__init__(
