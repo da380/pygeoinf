@@ -21,26 +21,30 @@ from pygeoinf.nonlinear_optimisation import ScipyUnconstrainedOptimiser
 @pytest.fixture
 def quadratic_problem() -> dict:
     """
-    Provides a simple quadratic optimisation problem with a known solution.
+    Provides a simple, deterministic quadratic optimisation problem with a
+    known solution.
 
-    The functional is f(x) = 0.5 * x.T @ A @ x - b.T @ x.
-    The minimum is the solution to the linear system A @ x = b.
-    The NonLinearForm is always created with a gradient and a Hessian.
+    The functional is f(x) = sum_{i=0 to n-1} c_i * (x_i - s_i)^2,
+    which is a classic convex bowl shape.
+    The minimum is at x = s.
     """
     dim = 10
     space = EuclideanSpace(dim)
 
-    # Create a random positive-definite matrix A
-    _A = np.random.randn(dim, dim)
-    A = _A.T @ _A + 0.1 * np.eye(dim)
-    A_op = LinearOperator.from_matrix(space, space, A, galerkin=True)
+    # Define the coefficients and the shift for the quadratic bowl
+    coeffs = np.arange(1, dim + 1)  # Make it slightly non-uniform
+    shifts = np.arange(1, dim + 1)  # The known solution
 
-    # Create a random vector b
-    b = np.random.randn(dim)
+    # The quadratic form f(x) = 0.5 * x.T@A@x - b.T@x + const
+    # corresponds to A = diag(2*coeffs) and b = 2*coeffs*shifts
+    A = np.diag(2 * coeffs)
+    b = 2 * coeffs * shifts
+
+    A_op = LinearOperator.from_matrix(space, space, A, galerkin=True)
     b_form = LinearForm(space, components=b)
 
-    # The known solution is the solution to Ax = b
-    known_solution = np.linalg.solve(A, b)
+    # The known solution is simply the vector of shifts
+    known_solution = shifts
 
     # Define the quadratic functional
     def mapping(x: Vector) -> float:
@@ -48,8 +52,7 @@ def quadratic_problem() -> dict:
 
     def gradient(x: Vector) -> Vector:
         # Gradient is Ax - b
-        grad_vec = space.subtract(A_op(x), space.from_dual(b_form))
-        return grad_vec
+        return space.subtract(A_op(x), space.from_dual(b_form))
 
     def hessian(x: Vector) -> LinearOperator:
         # Hessian is the constant operator A
@@ -81,6 +84,13 @@ class TestScipyUnconstrainedOptimiser:
             "Newton-CG",
             "CG",
             "L-BFGS-B",
+            pytest.param(
+                "Nelder-Mead",
+                marks=pytest.mark.xfail(
+                    reason="Nelder-Mead is known to fail to converge on this problem"
+                ),
+            ),
+            "Powell",
         ],
     )
     def test_quadratic_minimisation(self, method: str, quadratic_problem: dict):
@@ -91,11 +101,26 @@ class TestScipyUnconstrainedOptimiser:
         expected_solution = quadratic_problem["solution"]
         space = form.domain
 
-        # 2. Set up and run the optimiser
-        tol = 1e-12
-        optimiser = ScipyUnconstrainedOptimiser(method, tol=tol)
+        # 2. Set different options for different solver types
+        if method == "Nelder-Mead":
+            # This is expected to fail, but we set the options we tested with.
+            options = {"maxiter": 5000, "xatol": 1e-4, "fatol": 1e-6}
+            assertion_rtol = 1e-2
+            optimiser = ScipyUnconstrainedOptimiser(method, **options)
+        elif method == "Powell":
+            # Powell works well, but we use a slightly looser tolerance
+            # as it's a derivative-free method.
+            options = {"maxiter": 5000, "xtol": 1e-5}
+            assertion_rtol = 1e-3
+            optimiser = ScipyUnconstrainedOptimiser(method, **options)
+        else:
+            # Gradient-based methods should be very precise.
+            optimiser = ScipyUnconstrainedOptimiser(method, tol=1e-12)
+            assertion_rtol = 1e-4
+
+        # 3. Run the optimiser
         result_vec = optimiser.minimize(form, x0)
 
-        # 3. Check the result
+        # 4. Check the result with the appropriate tolerance
         found_solution = space.to_components(result_vec)
-        assert_allclose(found_solution, expected_solution, rtol=1e-4)
+        assert_allclose(found_solution, expected_solution, rtol=assertion_rtol)

@@ -17,6 +17,13 @@ from .nonlinear_forms import NonLinearForm
 class ScipyUnconstrainedOptimiser:
     """
     A wrapper for scipy.optimize.minimize that adapts a NonLinearForm.
+
+    Note on derivative-free methods:
+    Internal testing has shown that the 'Nelder-Mead' solver can be unreliable
+    for some problems, failing to converge to the correct minimum while still
+    reporting success. The 'Powell' method appears to be more robust. Users
+    should exercise caution and verify results when using derivative-free
+    methods.
     """
 
     _HESSIAN_METHODS = {

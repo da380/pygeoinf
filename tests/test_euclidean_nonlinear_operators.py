@@ -27,12 +27,32 @@ def quadratic_operator() -> NonLinearOperator:
     )
 
 
-def test_elementwise_quadratic_operator_axioms(quadratic_operator: NonLinearOperator):
+@pytest.fixture
+def cubic_operator() -> NonLinearOperator:
+    """Provides an instance of G(x) = x^3 (element-wise)."""
+    space = EuclideanSpace(10)
+
+    # Define the derivative: a diagonal operator with 3*x^2 on the diagonal
+    def derivative_func(x: Vector) -> DiagonalLinearOperator:
+        return DiagonalLinearOperator(space, space, 3 * x**2)
+
+    return NonLinearOperator(
+        space,
+        space,
+        lambda x: x**3,
+        derivative=derivative_func,
+    )
+
+
+def test_elementwise_operator_axioms(
+    quadratic_operator: NonLinearOperator, cubic_operator: NonLinearOperator
+):
     """
     Verifies that the operator satisfies the non-linear operator axioms
     by calling its internal self-check method.
     """
-    quadratic_operator.check(n_checks=5)
+    # Pass the second operator to the check method to run algebraic checks
+    quadratic_operator.check(n_checks=5, op2=cubic_operator)
 
 
 def test_derivative_taylor_approximation(quadratic_operator: NonLinearOperator):

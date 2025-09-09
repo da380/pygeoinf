@@ -212,7 +212,7 @@ plt.show()
 
 The output of the above script will look similar to the following figure:
 
-![Example of Bayesian Inference on a Circle](figures/fig1.png)
+![Example of Bayesian Inference on a Circle](docs/source/figures/fig1.png)
 
 ## Dependencies
 
