@@ -53,12 +53,57 @@ class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
                 f"Adjoint definition failed: <L(x),y> = {lhs:.4e}, but <x,L*(y)> = {rhs:.4e}"
             )
 
-    def check(self, n_checks: int = 5) -> None:
+    def _check_algebraic_identities(self, op1, op2, x, y, a):
         """
-        Runs all checks for the LinearOperator, including non-linear checks.
+        Verifies the algebraic properties of the adjoint and dual operators.
+        Requires a second compatible operator (op2).
+        """
+        # --- Adjoint Identities ---
+        # (A+B)* = A* + B*
+        op_sum_adj = (op1 + op2).adjoint
+        adj_sum = op1.adjoint + op2.adjoint
+        diff = op1.domain.subtract(op_sum_adj(y), adj_sum(y))
+        if op1.domain.norm(diff) > 1e-9:
+            raise AssertionError("Axiom failed: (A+B)* != A* + B*")
+
+        # (a*A)* = a*A*
+        op_scaled_adj = (a * op1).adjoint
+        adj_scaled = a * op1.adjoint
+        diff = op1.domain.subtract(op_scaled_adj(y), adj_scaled(y))
+        if op1.domain.norm(diff) > 1e-9:
+            raise AssertionError("Axiom failed: (a*A)* != a*A*")
+
+        # (A*)* = A
+        op_adj_adj = op1.adjoint.adjoint
+        diff = op1.codomain.subtract(op_adj_adj(x), op1(x))
+        if op1.codomain.norm(diff) > 1e-9:
+            raise AssertionError("Axiom failed: (A*)* != A")
+
+        # (A@B)* = B*@A*
+        if op1.domain == op2.codomain:
+            op_comp_adj = (op1 @ op2).adjoint
+            adj_comp = op2.adjoint @ op1.adjoint
+            diff = op2.domain.subtract(op_comp_adj(y), adj_comp(y))
+            if op2.domain.norm(diff) > 1e-9:
+                raise AssertionError("Axiom failed: (A@B)* != B*@A*")
+
+        # --- Dual Identities ---
+        # (A+B)' = A' + B'
+        op_sum_dual = (op1 + op2).dual
+        dual_sum = op1.dual + op2.dual
+        y_dual = op1.codomain.to_dual(y)
+        # The result of applying a dual operator is a LinearForm, which supports subtraction
+        diff_dual = op_sum_dual(y_dual) - dual_sum(y_dual)
+        if op1.domain.dual.norm(diff_dual) > 1e-9:
+            raise AssertionError("Axiom failed: (A+B)' != A' + B'")
+
+    def check(self, n_checks: int = 5, op2=None) -> None:
+        """
+        Runs all checks for the LinearOperator, including non-linear checks
+        and algebraic identities.
         """
         # First, run the parent (non-linear) checks from the base class
-        super().check(n_checks)
+        super().check(n_checks, op2=op2)
 
         # Now, run the linear-specific checks
         print(
@@ -72,5 +117,8 @@ class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
 
             self._check_linearity(x1, x2, a, b)
             self._check_adjoint_definition(x1, y)
+
+            if op2:
+                self._check_algebraic_identities(self, op2, x1, y, a)
 
         print(f"✅ All {n_checks} linear operator checks passed successfully.")

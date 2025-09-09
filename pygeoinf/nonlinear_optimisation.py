@@ -175,7 +175,7 @@ def line_search(
     # terms of the components of the derivative (i.e., an element
     # of the dual space) and not the gradient, this meaning that
     # the standard Euclidean pairing with the components on the
-    #  descent direction will yield the correct slope.
+    # descent direction will yield the correct slope.
     def myfprime(c: np.ndarray) -> np.ndarray:
         x = domain.from_components(c)
         g = form.derivative(x)

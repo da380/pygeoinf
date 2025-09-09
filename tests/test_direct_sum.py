@@ -74,7 +74,15 @@ def test_direct_sum_mixed_axioms(mixed_subspaces: list[HilbertSpace]):
 def test_block_linear_operator_axioms(block_operators: list[list[LinearOperator]]):
     """Verifies that the BlockLinearOperator satisfies all axioms."""
     operator = BlockLinearOperator(block_operators)
-    operator.check(n_checks=3)
+    # Create a second, compatible operator for algebraic checks
+    s1 = operator.domain.subspace(0)
+    s2 = operator.domain.subspace(1)
+    op11 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+    op12 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
+    op21 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
+    op22 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
+    operator2 = BlockLinearOperator([[op11, op12], [op21, op22]])
+    operator.check(n_checks=3, op2=operator2)
 
 
 def test_block_diagonal_operator_axioms(euclidean_subspaces: list[EuclideanSpace]):
@@ -83,7 +91,11 @@ def test_block_diagonal_operator_axioms(euclidean_subspaces: list[EuclideanSpace
     op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
     op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
     operator = BlockDiagonalLinearOperator([op1, op2])
-    operator.check(n_checks=3)
+    # Create a second, compatible operator for algebraic checks
+    op3 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+    op4 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
+    operator2 = BlockDiagonalLinearOperator([op3, op4])
+    operator.check(n_checks=3, op2=operator2)
 
 
 def test_row_linear_operator_axioms(euclidean_subspaces: list[EuclideanSpace]):
@@ -92,7 +104,11 @@ def test_row_linear_operator_axioms(euclidean_subspaces: list[EuclideanSpace]):
     op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
     op2 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
     operator = RowLinearOperator([op1, op2])
-    operator.check(n_checks=3)
+    # Create a second, compatible operator for algebraic checks
+    op3 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+    op4 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
+    operator2 = RowLinearOperator([op3, op4])
+    operator.check(n_checks=3, op2=operator2)
 
 
 def test_column_linear_operator_axioms(euclidean_subspaces: list[EuclideanSpace]):
@@ -101,7 +117,11 @@ def test_column_linear_operator_axioms(euclidean_subspaces: list[EuclideanSpace]
     op1 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
     op2 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
     operator = ColumnLinearOperator([op1, op2])
-    operator.check(n_checks=3)
+    # Create a second, compatible operator for algebraic checks
+    op3 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
+    op4 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+    operator2 = ColumnLinearOperator([op3, op4])
+    operator.check(n_checks=3, op2=operator2)
 
 
 # =============================================================================
