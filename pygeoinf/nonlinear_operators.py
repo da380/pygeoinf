@@ -11,13 +11,16 @@ from __future__ import annotations
 from typing import Callable, Optional, Any, TYPE_CHECKING
 
 
+from .checks.nonlinear_operators import NonLinearOperatorAxiomChecks
+
+
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, EuclideanSpace, Vector
     from .linear_operators import LinearOperator
 
 
-class NonLinearOperator:
+class NonLinearOperator(NonLinearOperatorAxiomChecks):
     """
     Represents a general non-linear operator that maps vectors to vectors.
 

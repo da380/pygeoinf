@@ -1,44 +1,27 @@
 """
 Tests for the EuclideanSpace implementation.
-
-This file demonstrates how to use the abstract HilbertSpaceChecks class
-to verify the correctness of a concrete Hilbert space implementation and its
-dual.
 """
 
 import pytest
-from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
-from .checks.hilbert_space import HilbertSpaceChecks
+
+from pygeoinf.hilbert_space import EuclideanSpace
 
 
 @pytest.fixture(scope="module")
 def euclidean_space() -> EuclideanSpace:
-    """
-    A module-scoped fixture for the EuclideanSpace instance.
-    This is created only once and shared between the test classes.
-    """
+    """A module-scoped fixture for the EuclideanSpace instance."""
     return EuclideanSpace(dim=10)
 
 
-class TestEuclideanSpace(HilbertSpaceChecks):
+def test_euclidean_axioms(euclidean_space: EuclideanSpace):
     """
-    Runs the standard suite of Hilbert space checks on the primary
-    EuclideanSpace class.
+    Verifies that the EuclideanSpace instance satisfies all Hilbert space axioms.
     """
-
-    @pytest.fixture
-    def space(self, euclidean_space: EuclideanSpace) -> HilbertSpace:
-        """Provides the primary space to the test suite."""
-        return euclidean_space
+    euclidean_space.check(n_checks=10)
 
 
-class TestEuclideanSpaceDual(HilbertSpaceChecks):
+def test_euclidean_dual_axioms(euclidean_space: EuclideanSpace):
     """
-    Runs the standard suite of Hilbert space checks on the DUAL of the
-    EuclideanSpace class.
+    Verifies that the DUAL of the EuclideanSpace also satisfies all axioms.
     """
-
-    @pytest.fixture
-    def space(self, euclidean_space: EuclideanSpace) -> HilbertSpace:
-        """Provides the DUAL space to the test suite."""
-        return euclidean_space.dual
+    euclidean_space.dual.check(n_checks=10)

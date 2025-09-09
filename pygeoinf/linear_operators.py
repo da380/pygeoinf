@@ -36,13 +36,15 @@ from .random_matrix import (
 
 from .parallel import parallel_compute_dense_matrix_from_scipy_op
 
+from .checks.linear_operators import LinearOperatorAxiomChecks
+
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, EuclideanSpace
     from .linear_forms import LinearForm
 
 
-class LinearOperator(NonLinearOperator):
+class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     """A linear operator between two Hilbert spaces.
 
     This class represents a linear map `L(x) = Ax` and provides rich

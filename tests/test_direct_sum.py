@@ -16,9 +16,6 @@ from pygeoinf.direct_sum import (
     RowLinearOperator,
     ColumnLinearOperator,
 )
-from .checks.hilbert_space import HilbertSpaceChecks
-from .checks.linear_operator import LinearOperatorChecks
-
 
 # =============================================================================
 # Fixtures
@@ -49,64 +46,62 @@ def block_operators(euclidean_subspaces) -> list[list[LinearOperator]]:
 
 
 # =============================================================================
-# Test Suite 1: HilbertSpaceChecks Contract
+# Test Suite 1: Hilbert Space Axiom Checks
 # =============================================================================
 
 
-class TestHilbertSpaceDirectSumEuclidean(HilbertSpaceChecks):
-    @pytest.fixture
-    def space(self, euclidean_subspaces: list[EuclideanSpace]) -> HilbertSpaceDirectSum:
-        return HilbertSpaceDirectSum(euclidean_subspaces)
+def test_direct_sum_euclidean_axioms(euclidean_subspaces: list[EuclideanSpace]):
+    """
+    Verifies axioms for a direct sum of Euclidean spaces.
+    """
+    space = HilbertSpaceDirectSum(euclidean_subspaces)
+    space.check(n_checks=5)
 
 
-class TestHilbertSpaceDirectSumMixed(HilbertSpaceChecks):
-    @pytest.fixture
-    def space(self, mixed_subspaces: list[HilbertSpace]) -> HilbertSpaceDirectSum:
-        return HilbertSpaceDirectSum(mixed_subspaces)
+def test_direct_sum_mixed_axioms(mixed_subspaces: list[HilbertSpace]):
+    """
+    Verifies axioms for a direct sum of mixed space types.
+    """
+    space = HilbertSpaceDirectSum(mixed_subspaces)
+    space.check(n_checks=5)
 
 
 # =============================================================================
-# Test Suite 2: LinearOperatorChecks Contract
+# Test Suite 2: Linear Operator Axiom Checks
 # =============================================================================
 
 
-class TestBlockLinearOperator(LinearOperatorChecks):
-    @pytest.fixture
-    def operator(
-        self, block_operators: list[list[LinearOperator]]
-    ) -> BlockLinearOperator:
-        return BlockLinearOperator(block_operators)
+def test_block_linear_operator_axioms(block_operators: list[list[LinearOperator]]):
+    """Verifies that the BlockLinearOperator satisfies all axioms."""
+    operator = BlockLinearOperator(block_operators)
+    operator.check(n_checks=3)
 
 
-class TestBlockDiagonalLinearOperator(LinearOperatorChecks):
-    @pytest.fixture
-    def operator(
-        self, euclidean_subspaces: list[EuclideanSpace]
-    ) -> BlockDiagonalLinearOperator:
-        s1, s2 = euclidean_subspaces
-        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
-        op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
-        return BlockDiagonalLinearOperator([op1, op2])
+def test_block_diagonal_operator_axioms(euclidean_subspaces: list[EuclideanSpace]):
+    """Verifies that the BlockDiagonalLinearOperator satisfies all axioms."""
+    s1, s2 = euclidean_subspaces
+    op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+    op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
+    operator = BlockDiagonalLinearOperator([op1, op2])
+    operator.check(n_checks=3)
 
 
-class TestRowLinearOperator(LinearOperatorChecks):
-    @pytest.fixture
-    def operator(self, euclidean_subspaces: list[EuclideanSpace]) -> RowLinearOperator:
-        s1, s2 = euclidean_subspaces
-        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
-        op2 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
-        return RowLinearOperator([op1, op2])
+def test_row_linear_operator_axioms(euclidean_subspaces: list[EuclideanSpace]):
+    """Verifies that the RowLinearOperator satisfies all axioms."""
+    s1, s2 = euclidean_subspaces
+    op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+    op2 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
+    operator = RowLinearOperator([op1, op2])
+    operator.check(n_checks=3)
 
 
-class TestColumnLinearOperator(LinearOperatorChecks):
-    @pytest.fixture
-    def operator(
-        self, euclidean_subspaces: list[EuclideanSpace]
-    ) -> ColumnLinearOperator:
-        s1, s2 = euclidean_subspaces
-        op1 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
-        op2 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
-        return ColumnLinearOperator([op1, op2])
+def test_column_linear_operator_axioms(euclidean_subspaces: list[EuclideanSpace]):
+    """Verifies that the ColumnLinearOperator satisfies all axioms."""
+    s1, s2 = euclidean_subspaces
+    op1 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
+    op2 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+    operator = ColumnLinearOperator([op1, op2])
+    operator.check(n_checks=3)
 
 
 # =============================================================================

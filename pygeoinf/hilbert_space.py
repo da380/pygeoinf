@@ -36,6 +36,8 @@ from typing import (
 
 import numpy as np
 
+from .checks.hilbert_space import HilbertSpaceAxiomChecks
+
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
     from .linear_operators import LinearOperator
@@ -45,7 +47,7 @@ if TYPE_CHECKING:
 Vector = TypeVar("Vector")
 
 
-class HilbertSpace(ABC):
+class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
     """
     An abstract base class for real Hilbert spaces.
 
