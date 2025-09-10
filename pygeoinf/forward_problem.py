@@ -237,6 +237,27 @@ class LinearForwardProblem(ForwardProblem):
         """
         return chi2.ppf(significance_level, self.data_space.dim)
 
+    def chi_squared_from_residual(self, residual: Vector) -> float:
+        """
+        Calculates the chi-squared statistic from a residual vector.
+
+        Args:
+            residual: The residual vector.
+
+        Returns:
+            The chi-squared statistic.
+        """
+        if self.data_error_measure_set:
+            residual = self.data_space.subtract(
+                residual, self.data_error_measure.expectation
+            )
+            inverse_data_covariance = self.data_error_measure.inverse_covariance
+            return self.data_space.inner_product(
+                inverse_data_covariance(residual), residual
+            )
+        else:
+            return self.data_space.squared_norm(residual)
+
     def chi_squared(self, model: Vector, data: Vector) -> float:
         """
         Calculates the chi-squared statistic for a given model and data.
@@ -256,19 +277,7 @@ class LinearForwardProblem(ForwardProblem):
         """
 
         residual = self.data_space.subtract(data, self.forward_operator(model))
-
-        if self.data_error_measure_set:
-            # Center the residual with respect to the error measure's mean
-            residual = self.data_space.subtract(
-                residual, self.data_error_measure.expectation
-            )
-            inverse_data_covariance = self.data_error_measure.inverse_covariance
-            return self.data_space.inner_product(
-                inverse_data_covariance(residual), residual
-            )
-        else:
-            # Fallback to the squared L2 norm of the residual
-            return self.data_space.squared_norm(residual)
+        return self.chi_squared_from_residual(residual)
 
     def chi_squared_test(
         self, significance_level: float, model: Vector, data: Vector

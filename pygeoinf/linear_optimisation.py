@@ -21,6 +21,7 @@ Key Classes
 from __future__ import annotations
 from typing import Optional, Union
 
+
 from .nonlinear_operators import NonLinearOperator
 from .inversion import LinearInversion
 
@@ -82,6 +83,27 @@ class LinearLeastSquaresInversion(LinearInversion):
         else:
             return forward_operator.adjoint @ forward_operator + damping * identity
 
+    def normal_rhs(self, data: Vector) -> Vector:
+        """
+        Returns the right hand side of the normal equations for given data.
+        """
+
+        forward_operator = self.forward_problem.forward_operator
+
+        if self.forward_problem.data_error_measure_set:
+            inverse_data_covariance = (
+                self.forward_problem.data_error_measure.inverse_covariance
+            )
+
+            shifted_data = self.forward_problem.data_space.subtract(
+                data, self.forward_problem.data_error_measure.expectation
+            )
+
+            return (forward_operator.adjoint @ inverse_data_covariance)(shifted_data)
+
+        else:
+            return forward_operator.adjoint(data)
+
     def least_squares_operator(
         self,
         damping: float,
@@ -105,6 +127,7 @@ class LinearLeastSquaresInversion(LinearInversion):
         Returns:
             An operator that maps from the data space to the model space.
         """
+
         forward_operator = self.forward_problem.forward_operator
         normal_operator = self.normal_operator(damping)
 
@@ -198,20 +221,33 @@ class LinearMinimumNormInversion(LinearInversion):
             def get_model_for_damping(
                 damping: float, data: Vector, model0: Optional[Vector] = None
             ) -> tuple[Vector, float]:
-                """Computes the LS model and its chi-squared for a given damping."""
-                op = lsq_inversion.least_squares_operator(
-                    damping, solver, preconditioner=preconditioner
-                )
-                model = op(data)
+                """
+                Computes the LS model and its chi-squared for a given damping.
+
+                When an iterative solver is used, an initial guess can be provided.
+                """
+
+                normal_operator = lsq_inversion.normal_operator(damping)
+                normal_rhs = lsq_inversion.normal_rhs(data)
+
+                if isinstance(solver, IterativeLinearSolver):
+                    model = solver.solve_linear_system(
+                        normal_operator, preconditioner, normal_rhs, model0
+                    )
+                else:
+                    inverse_normal_operator = solver(normal_operator)
+                    model = inverse_normal_operator(normal_rhs)
+
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 return model, chi_squared
 
             def mapping(data: Vector) -> Vector:
                 """The non-linear mapping from data to the minimum-norm model."""
-                model = self.model_space.zero
-                chi_squared = self.forward_problem.chi_squared(model, data)
+
+                # Check to see if the zero model fits the data.
+                chi_squared = self.forward_problem.chi_squared_from_residual(data)
                 if chi_squared <= critical_value:
-                    return model
+                    return self.model_space.zero
 
                 # Find upper and lower bounds for the optimal damping parameter
                 damping = 1.0
@@ -246,9 +282,10 @@ class LinearMinimumNormInversion(LinearInversion):
                     )
 
                 # Bracket search for the optimal damping
+                model0 = None
                 for _ in range(maxiter):
                     damping = 0.5 * (damping_lower + damping_upper)
-                    model, chi_squared = get_model_for_damping(damping, data)
+                    model, chi_squared = get_model_for_damping(damping, data, model0)
 
                     if chi_squared < critical_value:
                         damping_lower = damping
@@ -259,6 +296,8 @@ class LinearMinimumNormInversion(LinearInversion):
                         damping_lower + damping_upper
                     ):
                         return model
+
+                    model0 = model
 
                 raise RuntimeError("Bracketing search failed to converge.")
 

@@ -463,7 +463,7 @@ class CGSolver(IterativeLinearSolver):
 
         num = domain.inner_product(r, z)
 
-        for _ in range(maxiter):
+        for i in range(maxiter):
             # Check for convergence
             if domain.squared_norm(r) <= tol_sq:
                 break
