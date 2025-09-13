@@ -2,9 +2,14 @@
 Module for Backus-Gilbert like methods for solving inference problems. To be done...
 """
 
+from __future__ import annotations
+
 from .hilbert_space import HilbertSpace, Vector
 from .linear_operators import LinearOperator
 from .nonlinear_forms import NonLinearForm
+
+from .forward_problem import LinearForwardProblem
+from .inversion import LinearInference
 
 
 class HyperEllipsoid:

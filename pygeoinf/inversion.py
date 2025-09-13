@@ -126,6 +126,10 @@ class Inference(Inversion):
                 relationship between model parameters and data.
             property_operator: A mapping takes elements of the model space to
                 property vector of interest.
+
+        Raises:
+            ValueError: If the domain of the property operator is
+                not equal to the model space.
         """
 
         super().__init__(forward_problem)
@@ -166,6 +170,10 @@ class LinearInference(Inference):
                 relationship between model parameters and data.
             property_operator: A linear mapping takes elements of the model space to
                 property vector of interest.
+
+        Raises:
+            ValueError: If the domain of the property operator is
+                not equal to the model space.
         """
 
         if not isinstance(forward_problem, LinearForwardProblem):

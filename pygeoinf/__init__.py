@@ -1,3 +1,7 @@
+"""
+Unified imports for the package.
+"""
+
 from .random_matrix import (
     fixed_rank_random_range,
     variable_rank_random_range,
@@ -70,6 +74,8 @@ from .linear_optimisation import (
 )
 
 from .linear_bayesian import LinearBayesianInversion, LinearBayesianInference
+
+from .backus_gilbert import HyperEllipsoid
 
 from .nonlinear_optimisation import (
     ScipyUnconstrainedOptimiser,
