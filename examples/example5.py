@@ -34,6 +34,9 @@ data = forward_problem.data_space.random()
 
 model = forward_problem.forward_operator.adjoint(data)
 
-model_space.plot(model)
+fig, ax, im = model_space.plot(
+    model, contour=False, vmin=-10, vmax=10, levels=20, contour_lines=True
+)
+fig.colorbar(im, ax=ax, orientation="horizontal")
 
 plt.show()

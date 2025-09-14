@@ -225,6 +225,9 @@ class SphereHelper:
         map_extent: Optional[List[float]] = None,
         gridlines: bool = True,
         symmetric: bool = False,
+        contour_lines: bool = False,
+        contour_lines_kwargs: Optional[dict] = None,
+        num_levels: int = 10,
         **kwargs,
     ) -> Tuple[Figure, "GeoAxes", Any]:
         """
@@ -241,6 +244,11 @@ class SphereHelper:
             map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` to set map bounds.
             gridlines: If True, draws latitude/longitude gridlines.
             symmetric: If True, centers the color scale symmetrically around zero.
+            contour_lines: If True, overlays contour lines on the plot.
+            contour_lines_kwargs: A dictionary of keyword arguments for styling the
+                contour lines (e.g., {'colors': 'k', 'linewidths': 0.5})
+            num_levels: The number of levels to generate automatically if `levels`
+                is not provided directly.
             **kwargs: Additional keyword arguments forwarded to the plotting function
                 (`ax.contourf` or `ax.pcolormesh`).
 
@@ -269,9 +277,17 @@ class SphereHelper:
             kwargs.setdefault("vmin", -data_max)
             kwargs.setdefault("vmax", data_max)
 
-        levels = kwargs.pop("levels", 10)
+        if "levels" in kwargs:
+            levels = kwargs.pop("levels")
+        else:
+            vmin = kwargs.get("vmin", np.nanmin(u.data))
+            vmax = kwargs.get("vmax", np.nanmax(u.data))
+            levels = np.linspace(vmin, vmax, num_levels)
+
         im: Any
         if contour:
+            kwargs.pop("vmin", None)
+            kwargs.pop("vmax", None)
             im = ax.contourf(
                 lons,
                 lats,
@@ -283,6 +299,20 @@ class SphereHelper:
         else:
             im = ax.pcolormesh(
                 lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs
+            )
+
+        if contour_lines:
+            cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
+            cl_kwargs.setdefault("colors", "k")
+            cl_kwargs.setdefault("linewidths", 0.5)
+
+            ax.contour(
+                lons,
+                lats,
+                u.data,
+                transform=ccrs.PlateCarree(),
+                levels=levels,
+                **cl_kwargs,
             )
 
         if gridlines:
