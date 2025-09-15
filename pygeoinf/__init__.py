@@ -9,6 +9,7 @@ from .random_matrix import (
     random_svd,
     random_eig,
     random_cholesky,
+    random_diagonal,
 )
 
 from .hilbert_space import (

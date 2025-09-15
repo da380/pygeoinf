@@ -1,7 +1,12 @@
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.linear_operators import LinearOperator, DiagonalLinearOperator, NormalSumOperator
+from pygeoinf.linear_operators import (
+    LinearOperator,
+    DiagonalLinearOperator,
+    NormalSumOperator,
+)
+
 
 @pytest.fixture
 def setup_spaces():
@@ -9,11 +14,13 @@ def setup_spaces():
     codomain = EuclideanSpace(2)
     return domain, codomain
 
+
 @pytest.fixture
 def setup_operator(setup_spaces):
     domain, codomain = setup_spaces
     matrix = np.array([[1, 2, 3], [4, 5, 6]])
     return LinearOperator.from_matrix(domain, codomain, matrix)
+
 
 class TestLinearOperatorMatrix:
     def test_matrix_dense(self, setup_operator):
@@ -48,7 +55,7 @@ class TestLinearOperatorMatrix:
     def test_extract_diagonals(self, setup_operator):
         op = setup_operator
         diagonals, offsets = op.extract_diagonals([0, 1], galerkin=False)
-        assert np.allclose(diagonals, np.array([[1., 5.], [0., 2.]]))
+        assert np.allclose(diagonals, np.array([[1.0, 5.0], [0.0, 2.0]]))
         assert offsets == [0, 1]
 
     def test_extract_diagonals_galerkin(self):
@@ -56,7 +63,9 @@ class TestLinearOperatorMatrix:
         matrix = np.array([[1, 2, 3], [2, 5, 6], [3, 6, 9]])
         op = LinearOperator.from_matrix(domain, domain, matrix, galerkin=True)
         diagonals, offsets = op.extract_diagonals([-1, 0, 1], galerkin=True)
-        assert np.allclose(diagonals, np.array([[2., 6., 0.], [1., 5., 9.], [0., 2., 6.]]))
+        assert np.allclose(
+            diagonals, np.array([[2.0, 6.0, 0.0], [1.0, 5.0, 9.0], [0.0, 2.0, 6.0]])
+        )
         assert offsets == [-1, 0, 1]
 
     def test_extract_diagonal_parallel(self, setup_operator):
@@ -67,8 +76,10 @@ class TestLinearOperatorMatrix:
 
     def test_extract_diagonals_parallel(self, setup_operator):
         op = setup_operator
-        diagonals, offsets = op.extract_diagonals([0, 1], galerkin=False, parallel=True, n_jobs=-1)
-        assert np.allclose(diagonals, np.array([[1., 5.], [0., 2.]]))
+        diagonals, offsets = op.extract_diagonals(
+            [0, 1], galerkin=False, parallel=True, n_jobs=-1
+        )
+        assert np.allclose(diagonals, np.array([[1.0, 5.0], [0.0, 2.0]]))
         assert offsets == [0, 1]
 
     def test_extract_diagonals_single_negative_offset(self):
@@ -76,7 +87,7 @@ class TestLinearOperatorMatrix:
         matrix = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
         op = LinearOperator.from_matrix(domain, domain, matrix, galerkin=True)
         diagonals, offsets = op.extract_diagonals([-1], galerkin=True)
-        assert np.allclose(diagonals, np.array([[4., 8., 0.]]))
+        assert np.allclose(diagonals, np.array([[4.0, 8.0, 0.0]]))
         assert offsets == [-1]
 
 
@@ -84,32 +95,36 @@ class TestDiagonalLinearOperator:
     @pytest.fixture
     def setup_diag_operator(self):
         domain = EuclideanSpace(3)
-        diagonal_values = np.array([1., 2., 3.])
+        diagonal_values = np.array([1.0, 2.0, 3.0])
         return DiagonalLinearOperator(domain, domain, diagonal_values)
 
     def test_extract_diagonal_galerkin(self, setup_diag_operator):
         op = setup_diag_operator
         diagonal = op.extract_diagonal(galerkin=True)
-        expected_diagonal = np.array([1., 2., 3.])
+        expected_diagonal = np.array([1.0, 2.0, 3.0])
         assert np.allclose(diagonal, expected_diagonal)
 
     def test_extract_diagonal_no_galerkin(self, setup_diag_operator):
         op = setup_diag_operator
         diagonal = op.extract_diagonal(galerkin=False)
-        expected_diagonal = np.array([1., 2., 3.])
+        expected_diagonal = np.array([1.0, 2.0, 3.0])
         assert np.allclose(diagonal, expected_diagonal)
 
     def test_extract_diagonals_galerkin(self, setup_diag_operator):
         op = setup_diag_operator
         diagonals, offsets = op.extract_diagonals([-1, 0, 1], galerkin=True)
-        expected_diagonals = np.array([[0., 0., 0.], [1., 2., 3.], [0., 0., 0.]])
+        expected_diagonals = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [0.0, 0.0, 0.0]]
+        )
         assert np.allclose(diagonals, expected_diagonals)
         assert offsets == [-1, 0, 1]
 
     def test_extract_diagonals_no_galerkin(self, setup_diag_operator):
         op = setup_diag_operator
         diagonals, offsets = op.extract_diagonals([-1, 0, 1], galerkin=False)
-        expected_diagonals = np.array([[0., 0., 0.], [1., 2., 3.], [0., 0., 0.]])
+        expected_diagonals = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [0.0, 0.0, 0.0]]
+        )
         assert np.allclose(diagonals, expected_diagonals)
 
 
@@ -142,7 +157,7 @@ class TestNormalSumOperator:
         # diag(B) = [1, 2, 3]
         # expected_diagonal = [15, 68, 161]
         diagonal = op.extract_diagonal(galerkin=True)
-        expected_diagonal = np.array([15., 68., 161.])
+        expected_diagonal = np.array([15.0, 68.0, 161.0])
         assert np.allclose(diagonal, expected_diagonal)
 
     def test_extract_diagonals(self, setup_normal_sum_operator):
@@ -150,5 +165,7 @@ class TestNormalSumOperator:
         diagonals, offsets = op.extract_diagonals([-1, 0, 1], galerkin=True)
         # diag(B) = [[1, 1, 0], [1, 2, 3], [0, 1, 1]]
         # diag(AQA.T) = [[30, 102, 0], [14, 66, 158], [0, 30, 102]]
-        expected_diagonals = np.array([[31., 103., 0.], [15., 68., 161.], [0., 31., 103.]])
+        expected_diagonals = np.array(
+            [[31.0, 103.0, 0.0], [15.0, 68.0, 161.0], [0.0, 31.0, 103.0]]
+        )
         assert np.allclose(diagonals, expected_diagonals)

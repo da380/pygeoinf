@@ -10,6 +10,7 @@ compared to exact, deterministic methods.
 import pytest
 import numpy as np
 from scipy.linalg import svd, eigh
+from scipy.sparse import spdiags
 
 # MODIFIED: Import new functions to be tested
 from pygeoinf.random_matrix import (
@@ -19,6 +20,7 @@ from pygeoinf.random_matrix import (
     random_svd,
     random_eig,
     random_cholesky,
+    random_diagonal,
 )
 
 # =============================================================================
@@ -67,6 +69,33 @@ def symmetric_semidefinite_matrix() -> np.ndarray:
     X = np.random.randn(n, rank)
     A = X @ X.T  # A is now positive semi-definite and singular
     return A
+
+
+# NEW: Fixture for diagonal estimation test
+@pytest.fixture
+def matrix_with_known_diagonal():
+    """
+    Provides a sparse square matrix with a clearly defined diagonal.
+    """
+    n_dim = 100
+    # The true diagonal is just a simple sequence
+    true_diag = np.arange(1, n_dim + 1, dtype=float)
+
+    # Add some off-diagonal noise to make the problem non-trivial
+    np.random.seed(42)
+    num_off_diagonals = 3
+    offsets = np.random.choice(
+        np.arange(-n_dim + 1, n_dim), num_off_diagonals, replace=False
+    )
+    data = np.random.randn(num_off_diagonals, n_dim)
+
+    # Combine the off-diagonal noise and the true diagonal
+    all_data = np.vstack([data, true_diag])
+    all_offsets = np.append(offsets, 0)
+
+    matrix = spdiags(all_data, all_offsets, n_dim, n_dim, format="csr")
+
+    return matrix, true_diag
 
 
 # =============================================================================
@@ -285,3 +314,52 @@ def test_random_cholesky_fallback_path(symmetric_semidefinite_matrix):
 
     # The error should be close to the best possible low-rank approximation
     assert reconstruction_error < 1.5 * optimal_error + 1e-9
+
+
+@pytest.mark.parametrize("parallel_flag", [False, True])
+@pytest.mark.parametrize("use_rademacher", [True, False])
+def test_random_diagonal_accuracy_and_properties(
+    matrix_with_known_diagonal, parallel_flag, use_rademacher
+):
+    """
+    Tests the accuracy and output properties of the random_diagonal function.
+    """
+    A, true_diag = matrix_with_known_diagonal
+    n = A.shape[0]
+
+    estimated_diag = random_diagonal(
+        A,
+        100,
+        max_samples=500,  # More samples for a more stable test
+        rtol=1e-3,
+        use_rademacher=use_rademacher,
+        parallel=parallel_flag,
+    )
+
+    # 1. Test output shape
+    assert estimated_diag.shape == (n,)
+
+    # 2. Test accuracy
+    relative_error = np.linalg.norm(estimated_diag - true_diag) / np.linalg.norm(
+        true_diag
+    )
+
+    # Assert that the relative error is reasonably small (e.g., < 5%)
+    # This tolerance is heuristic and may need adjustment, but is a good starting point.
+    assert relative_error < 0.05
+
+
+def test_random_diagonal_max_samples_warning(matrix_with_known_diagonal):
+    """
+    Tests that random_diagonal issues a warning if max_samples is reached
+    before the desired tolerance is met.
+    """
+    A, _ = matrix_with_known_diagonal
+
+    with pytest.warns(UserWarning, match="Tolerance .* not met"):
+        random_diagonal(
+            A,
+            10,
+            max_samples=20,  # Set a low limit to force a stop
+            rtol=1e-12,  # Set an impossible tolerance
+        )

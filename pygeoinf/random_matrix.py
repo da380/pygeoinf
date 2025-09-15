@@ -385,3 +385,109 @@ def random_cholesky(
         cholesky_factor = temp_factor * sqrt_s_inv
 
         return cholesky_factor
+
+
+def random_diagonal(
+    matrix: MatrixLike,
+    initial_samples: int,
+    /,
+    *,
+    max_samples: int = None,
+    block_size: int = 20,
+    rtol: float = 1e-3,
+    use_rademacher: bool = True,
+    parallel: bool = False,
+    n_jobs: int = -1,
+) -> np.ndarray:
+    """
+    Computes an approximate diagonal of a square matrix using Hutchinson's method.
+
+    This algorithm uses a progressive, iterative approach to estimate the diagonal.
+    It starts with an initial number of samples and adds new blocks of random
+    vectors until the estimate of the diagonal converges to a specified tolerance.
+
+    Args:
+        matrix: The square (n, n) matrix or LinearOperator whose diagonal is to be estimated.
+        initial_samples: The number of random vectors to use for the initial estimate.
+        max_samples: A hard limit on the total number of samples. Defaults to n.
+        block_size: The number of new vectors to sample in each iteration.
+        rtol: Relative tolerance for determining convergence. The process stops
+              when `norm(d_new - d_old) / norm(d_new) < rtol`.
+        use_rademacher: If True, use Rademacher random vectors (+1/-1). If False,
+                        use standard Gaussian vectors. Rademacher is often more
+                        efficient.
+        parallel: Whether to use parallel matrix multiplication.
+        n_jobs: Number of jobs for parallelism.
+
+    Returns:
+        A 1D numpy array of size n containing the approximate diagonal of the matrix.
+    """
+    m, n = matrix.shape
+    if m != n:
+        raise ValueError("Input matrix must be square to estimate a diagonal.")
+
+    if max_samples is None:
+        max_samples = 100 * n
+
+    # --- Initial Batch ---
+    num_samples = min(initial_samples, max_samples)
+    if use_rademacher:
+        z = np.random.choice([-1.0, 1.0], size=(n, num_samples))
+    else:
+        z = np.random.randn(n, num_samples)
+
+    if parallel:
+        az = parallel_mat_mat(matrix, z, n_jobs)
+    else:
+        az = matrix @ z
+
+    # Element-wise product and sum to get the unnormalized diagonal
+    diag_sum = np.sum(z * az, axis=1)
+    diag_estimate = diag_sum / num_samples
+
+    if num_samples >= max_samples:
+        return diag_estimate
+
+    # --- Iterative Refinement ---
+    converged = False
+    while num_samples < max_samples:
+        old_diag_estimate = diag_estimate.copy()
+
+        # Generate a NEW block of random vectors
+        samples_to_add = min(block_size, max_samples - num_samples)
+        if use_rademacher:
+            z_new = np.random.choice([-1.0, 1.0], size=(n, samples_to_add))
+        else:
+            z_new = np.random.randn(n, samples_to_add)
+
+        if parallel:
+            az_new = parallel_mat_mat(matrix, z_new, n_jobs)
+        else:
+            az_new = matrix @ z_new
+
+        new_diag_sum = np.sum(z_new * az_new, axis=1)
+
+        # Update the running average
+        total_samples = num_samples + samples_to_add
+        diag_estimate = (diag_sum + new_diag_sum) / total_samples
+
+        # Check for convergence
+        norm_new_diag = np.linalg.norm(diag_estimate)
+        if norm_new_diag > 0:
+            error = np.linalg.norm(diag_estimate - old_diag_estimate) / norm_new_diag
+            if error < rtol:
+                converged = True
+                break
+
+        # Update sums and counts for next iteration
+        diag_sum += new_diag_sum
+        num_samples = total_samples
+
+    if not converged and num_samples >= max_samples:
+        warnings.warn(
+            f"Tolerance {rtol} not met before reaching max_samples={max_samples}. "
+            "Result may be inaccurate. Consider increasing `max_samples` or `rtol`.",
+            UserWarning,
+        )
+
+    return diag_estimate
