@@ -187,7 +187,7 @@ class GaussianMeasure:
             )
         euclidean = EuclideanSpace(domain.dim)
         covariance_factor = DiagonalLinearOperator(
-            euclidean, domain, standard_deviations, galerkin=True
+            euclidean, domain, standard_deviations
         )
         return GaussianMeasure(
             covariance_factor=covariance_factor,

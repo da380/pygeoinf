@@ -32,10 +32,7 @@ from .linear_forms import (
 
 from .nonlinear_operators import NonLinearOperator
 
-from .linear_operators import (
-    LinearOperator,
-    DiagonalLinearOperator,
-)
+from .linear_operators import LinearOperator, DiagonalLinearOperator, NormalSumOperator
 
 
 from .gaussian_measure import (

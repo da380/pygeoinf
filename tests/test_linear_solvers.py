@@ -207,7 +207,7 @@ def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarra
 
     # Create a simple Jacobi (diagonal) preconditioner
     diag_A = spd_operator.matrix(dense=True, galerkin=True).diagonal()
-    preconditioner = DiagonalLinearOperator(space, space, 1.0 / diag_A, galerkin=True)
+    preconditioner = DiagonalLinearOperator(space, space, 1.0 / diag_A)
 
     # Get the inverse operator using the preconditioner
     inverse_op = solver(spd_operator, preconditioner=preconditioner)

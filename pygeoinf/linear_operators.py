@@ -18,11 +18,15 @@ Key Classes
 """
 
 from __future__ import annotations
-from typing import Callable, List, Optional, Any, Union, Tuple, TYPE_CHECKING
+from typing import Callable, List, Optional, Any, Union, Tuple, TYPE_CHECKING, Dict
+
+from collections import defaultdict
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse import diags
+
+from joblib import Parallel, delayed
 
 # from .operators import Operator
 from .nonlinear_operators import NonLinearOperator
@@ -504,6 +508,124 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
                 rmatmat=rmatmat,
             )
 
+    def extract_diagonal(
+        self,
+        /,
+        *,
+        galerkin: bool = True,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
+        """
+        Computes the main diagonal of the operator's matrix representation.
+
+        This method is highly parallelizable and memory-efficient, as it
+        avoids forming the full dense matrix.
+
+        Args:
+            galerkin: If True, computes the diagonal of the Galerkin matrix.
+            parallel: If True, computes the entries in parallel.
+            n_jobs: Number of parallel jobs to use.
+
+        Returns:
+            A NumPy array containing the diagonal entries.
+        """
+
+        dim = min(self.domain.dim, self.codomain.dim)
+        jobs = n_jobs if parallel else 1
+
+        def compute_entry(i: int) -> float:
+            """Worker function to compute a single diagonal entry."""
+            e_i = self.domain.basis_vector(i)
+            L_e_i = self(e_i)
+
+            if galerkin:
+                return self.domain.inner_product(e_i, L_e_i)
+            else:
+                return self.codomain.to_components(L_e_i)[i]
+
+        diagonal_entries = Parallel(n_jobs=jobs)(
+            delayed(compute_entry)(i) for i in range(dim)
+        )
+        return np.array(diagonal_entries)
+
+    def extract_diagonals(
+        self,
+        offsets: List[int],
+        /,
+        *,
+        galerkin: bool = True,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Tuple[np.ndarray, List[int]]:
+        """
+        Computes specified diagonals of the operator's matrix representation.
+
+        This is a memory-efficient and parallelizable method that computes
+        the matrix one column at a time.
+
+        Args:
+            offsets: A list of diagonal offsets to extract (e.g., [0] for
+                the main diagonal, [-1, 0, 1] for a tridiagonal matrix).
+            galerkin: If True, computes the diagonals of the Galerkin matrix.
+            parallel: If True, computes columns in parallel.
+            n_jobs: Number of parallel jobs to use.
+
+        Returns:
+            A tuple containing:
+            - A NumPy array where each row is a diagonal.
+            - The list of offsets.
+            This format is compatible with scipy.sparse.spdiags.
+        """
+        dim = min(self.domain.dim, self.codomain.dim)
+        jobs = n_jobs if parallel else 1
+
+        # Prepare a thread-safe dictionary to store results
+
+        results: Dict[int, Dict[int, float]] = defaultdict(dict)
+
+        def compute_column_entries(j: int) -> Dict[int, Dict[int, float]]:
+            """
+            Worker function to compute all needed entries for column j.
+            """
+            e_j = self.domain.basis_vector(j)
+            L_e_j = self(e_j)
+
+            col_results = defaultdict(dict)
+
+            for k in offsets:
+                i = j - k
+                if 0 <= i < dim:
+                    if galerkin:
+                        e_i = self.domain.basis_vector(i)
+                        val = self.domain.inner_product(e_i, L_e_j)
+                    else:
+                        val = self.codomain.to_components(L_e_j)[i]
+                    col_results[k][i] = val
+            return col_results
+
+        # Run the computation in parallel
+        column_data = Parallel(n_jobs=jobs)(
+            delayed(compute_column_entries)(j) for j in range(dim)
+        )
+
+        # Aggregate results from the parallel computation
+        for col_dict in column_data:
+            for k, entries in col_dict.items():
+                results[k].update(entries)
+
+        # Format the results for spdiags
+        # The array must have padding for shorter off-diagonals.
+        diagonals_array = np.zeros((len(offsets), dim))
+        for idx, k in enumerate(offsets):
+            diag_entries = results[k]
+            for i, val in diag_entries.items():
+                j = i + k
+                if 0 <= j < dim:
+                    diagonals_array[idx, j] = val
+
+        return diagonals_array, offsets
+
     def random_svd(
         self,
         size_estimate: int,
@@ -916,13 +1038,12 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
 
 
 class DiagonalLinearOperator(LinearOperator):
-    """A LinearOperator that is diagonal in its component representation.
+    """A LinearOperator whose Galerkin representation is diagonal.
 
-    This provides an efficient implementation for diagonal linear operators.
+    This class defines a self-adjoint operator from its diagonal eigenvalues.
     Its key feature is support for **functional calculus**, allowing for the
-    direct computation of operator functions like inverse (`.inverse`) or
-
-    square root (`.sqrt`) by applying the function to the diagonal entries.
+    direct computation of operator functions like its inverse (`.inverse`) or
+    square root (`.sqrt`).
     """
 
     def __init__(
@@ -931,27 +1052,19 @@ class DiagonalLinearOperator(LinearOperator):
         codomain: HilbertSpace,
         diagonal_values: np.ndarray,
         /,
-        *,
-        galerkin: bool = False,
     ) -> None:
         """
-        Initializes the DiagonalLinearOperator.
-
-        Args:
-            domain (HilbertSpace): The domain of the operator.
-            codomain (HilbertSpace): The codomain of the operator.
-            diagonal_values (np.ndarray): The diagonal entries of the
-                operator's matrix representation.
-            galerkin (bool): If True, use the Galerkin representation.
+        Initializes the DiagonalLinearOperator from its diagonal
+        Galerkin matrix entries (eigenvalues).
         """
 
         assert domain.dim == codomain.dim
         assert domain.dim == len(diagonal_values)
         self._diagonal_values: np.ndarray = diagonal_values
+
+        # The operator is defined by its diagonal Galerkin matrix.
         matrix = diags([diagonal_values], [0])
-        operator = LinearOperator.from_matrix(
-            domain, codomain, matrix, galerkin=galerkin
-        )
+        operator = LinearOperator.from_matrix(domain, codomain, matrix, galerkin=True)
         super().__init__(
             operator.domain,
             operator.codomain,
@@ -959,41 +1072,266 @@ class DiagonalLinearOperator(LinearOperator):
             adjoint_mapping=operator.adjoint,
         )
 
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """
+        Overloaded method to efficiently compute the dense matrix.
+        """
+        if galerkin:
+            # Fast path: This is how the operator is defined.
+            return np.diag(self._diagonal_values)
+        else:
+            # The user wants the standard matrix, which may differ from the
+            # diagonal Galerkin matrix in non-Euclidean spaces. Fall back
+            # to the safe, general method for this conversion.
+            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)
+
     @property
     def diagonal_values(self) -> np.ndarray:
-        """The diagonal entries of the operator's matrix representation."""
+        """The diagonal entries of the operator's Galerkin matrix."""
         return self._diagonal_values
 
-    def function(self, f: Callable[[float], float]) -> DiagonalLinearOperator:
-        """Applies a function to the operator via functional calculus.
-
-        This creates a new `DiagonalLinearOperator` where the function `f` has
-        been applied to each of the diagonal entries. For example,
-        `op.function(lambda x: 1/x)` computes the inverse.
-
-        Args:
-            f: A scalar function to apply to the diagonal values.
-
-        Returns:
-            A new `DiagonalLinearOperator` with the transformed diagonal.
-        """
-        diagonal_values = np.array([f(x) for x in self.diagonal_values])
-        return DiagonalLinearOperator(self.domain, self.codomain, diagonal_values)
+    def function(self, f: Callable[[float], float]) -> "DiagonalLinearOperator":
+        """Applies a function to the operator via functional calculus."""
+        new_diagonal_values = np.array([f(x) for x in self.diagonal_values])
+        return DiagonalLinearOperator(self.domain, self.codomain, new_diagonal_values)
 
     @property
-    def inverse(self) -> DiagonalLinearOperator:
-        """
-        The inverse of the operator, computed via functional calculus.
-        Requires all diagonal values to be non-zero.
-        """
+    def inverse(self) -> "DiagonalLinearOperator":
+        """The inverse of the operator, computed via functional calculus."""
         assert all(val != 0 for val in self.diagonal_values)
         return self.function(lambda x: 1 / x)
 
     @property
-    def sqrt(self) -> DiagonalLinearOperator:
-        """
-        The square root of the operator, computed via functional calculus.
-        Requires all diagonal values to be non-negative.
-        """
+    def sqrt(self) -> "DiagonalLinearOperator":
+        """The square root of the operator, computed via functional calculus."""
         assert all(val >= 0 for val in self._diagonal_values)
         return self.function(np.sqrt)
+
+    def extract_diagonal(
+        self,
+        /,
+        *,
+        galerkin: bool = True,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
+        """Overrides base method for efficiency."""
+        if galerkin:
+            return self._diagonal_values
+        else:
+            return super().extract_diagonal(
+                galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+    def extract_diagonals(
+        self,
+        offsets: List[int],
+        /,
+        *,
+        galerkin: bool = True,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Tuple[np.ndarray, List[int]]:
+        """Overrides base method for efficiency."""
+        if galerkin:
+            dim = self.domain.dim
+            diagonals_array = np.zeros((len(offsets), dim))
+            for i, offset in enumerate(offsets):
+                if offset == 0:
+                    diagonals_array[i, :] = self._diagonal_values
+            return diagonals_array, offsets
+        else:
+            return super().extract_diagonals(
+                offsets, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+
+class NormalSumOperator(LinearOperator):
+    """
+    Represents a self-adjoint operator of the form N = A @ Q @ A.adjoint + B.
+
+    The operators Q and B are expected to be self-adjoint for the resulting
+    operator to be mathematically correct.
+
+    Q and B are optional. If Q is None, it defaults to the identity operator.
+    If B is None, it defaults to the zero operator.
+
+    This class uses operator algebra for a concise definition and provides an
+    optimized, parallelizable method for computing its dense Galerkin matrix.
+    """
+
+    def __init__(
+        self,
+        A: LinearOperator,
+        Q: Optional[LinearOperator] = None,
+        B: Optional[LinearOperator] = None,
+    ) -> None:
+
+        # This operator's domain is the codomain of A.
+        op_domain = A.codomain
+
+        if Q is None:
+            # Q must be an operator on the domain of A.
+            Q = A.domain.identity_operator()
+
+        if B is None:
+            # B must be an operator on the codomain of A.
+            B = op_domain.zero_operator()
+
+        if A.domain != Q.domain:
+            raise ValueError("The domain of A must match the domain of Q.")
+        if op_domain != B.domain:
+            raise ValueError("The domain of B must match the codomain of A.")
+
+        self._A = A
+        self._Q = Q
+        self._B = B
+
+        # The compositional definition now works with correct dimensions.
+        composite_op = self._A @ self._Q @ self._A.adjoint + self._B
+
+        super().__init__(
+            composite_op.domain,
+            composite_op.codomain,
+            composite_op,
+            adjoint_mapping=composite_op,
+        )
+
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """
+        Overloaded method using the matrix-free approach for Q and a cleaner
+        implementation leveraging the base class's methods.
+        """
+        if not galerkin:
+            # The optimization is specific to the Galerkin representation.
+            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)  #
+
+        domain_Y = self._A.codomain  #
+        dim = self.domain.dim  #
+        jobs = n_jobs if parallel else 1
+
+        # Step 1: Get component vectors c(v_j) where v_j = A*(e_j)
+        print("Step 1: Computing components of v_j = A*(e_j)...")
+        a_star_mat = self._A.adjoint.matrix(
+            dense=True, galerkin=False, parallel=parallel, n_jobs=n_jobs
+        )  #
+
+        # Step 2: Reconstruct v_j vectors and compute w_j = Q(v_j)
+        print("Step 2: Computing w_j = Q(v_j)...")
+        v_vectors = [domain_Y.from_components(a_star_mat[:, j]) for j in range(dim)]  #
+        w_vectors = Parallel(n_jobs=jobs)(delayed(self._Q)(v_j) for v_j in v_vectors)  #
+
+        # Step 3: Compute the inner product matrix M_AQA = <v_i, w_j>
+        print("Step 3: Computing inner product matrix M_AQA...")
+
+        def compute_row(i: int) -> np.ndarray:
+            """Computes the i-th row of the inner product matrix."""
+            v_i = v_vectors[i]
+            return np.array([domain_Y.inner_product(v_i, w_j) for w_j in w_vectors])  #
+
+        rows = Parallel(n_jobs=jobs)(delayed(compute_row)(i) for i in range(dim))
+        m_aqa_mat = np.vstack(rows)
+
+        # Step 4: Compute B_mat
+        print("Step 4: Computing matrix for B...")
+        b_mat = self._B.matrix(
+            dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )  #
+
+        return m_aqa_mat + b_mat
+
+    def extract_diagonal(
+        self,
+        /,
+        *,
+        galerkin: bool = True,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
+        """Overrides base method for efficiency."""
+        if not galerkin:
+            return super().extract_diagonal(
+                galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+        diag_B = self._B.extract_diagonal(
+            galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )
+
+        dim = self.domain.dim
+        jobs = n_jobs if parallel else 1
+
+        def compute_entry(i: int) -> float:
+            e_i = self.domain.basis_vector(i)
+            v_i = self._A.adjoint(e_i)
+            w_i = self._Q(v_i)
+            return self._A.domain.inner_product(v_i, w_i)
+
+        diag_AQA_T = Parallel(n_jobs=jobs)(
+            delayed(compute_entry)(i) for i in range(dim)
+        )
+
+        return np.array(diag_AQA_T) + diag_B
+
+    def extract_diagonals(
+        self,
+        offsets: List[int],
+        /,
+        *,
+        galerkin: bool = True,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Tuple[np.ndarray, List[int]]:
+        """Overrides base method for efficiency."""
+        if not galerkin:
+            return super().extract_diagonals(
+                offsets, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+        diagonals_B, _ = self._B.extract_diagonals(
+            offsets, galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )
+
+        dim = self.domain.dim
+        jobs = n_jobs if parallel else 1
+
+        # Pre-compute A*e_i for all i
+        v_vectors = Parallel(n_jobs=jobs)(
+            delayed(self._A.adjoint)(self.domain.basis_vector(i)) for i in range(dim)
+        )
+
+        def compute_column_entries(j: int) -> Dict[int, Dict[int, float]]:
+            col_results = defaultdict(dict)
+            v_j = v_vectors[j]
+            w_j = self._Q(v_j)
+
+            for k in offsets:
+                i = j - k
+                if 0 <= i < dim:
+                    v_i = v_vectors[i]
+                    val = self._A.domain.inner_product(v_i, w_j)
+                    col_results[k][i] = val
+            return col_results
+
+        column_data = Parallel(n_jobs=jobs)(
+            delayed(compute_column_entries)(j) for j in range(dim)
+        )
+
+        results: Dict[int, Dict[int, float]] = defaultdict(dict)
+        for col_dict in column_data:
+            for k, entries in col_dict.items():
+                results[k].update(entries)
+
+        diagonals_array = np.zeros((len(offsets), dim))
+        for idx, k in enumerate(offsets):
+            diag_entries = results[k]
+            for i, val in diag_entries.items():
+                j = i + k
+                if 0 <= j < dim:
+                    diagonals_array[idx, j] = val
+
+        return diagonals_array + diagonals_B, offsets
