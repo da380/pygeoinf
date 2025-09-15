@@ -12,6 +12,14 @@ Subpackages
 Submodules
 ----------
 
+pygeoinf.backus\_gilbert module
+-------------------------------
+
+.. automodule:: pygeoinf.backus_gilbert
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.direct\_sum module
 ---------------------------
 
@@ -68,6 +76,14 @@ pygeoinf.linear\_forms module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.linear\_operators module
+---------------------------------
+
+.. automodule:: pygeoinf.linear_operators
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.linear\_optimisation module
 ------------------------------------
 
@@ -84,10 +100,26 @@ pygeoinf.linear\_solvers module
    :undoc-members:
    :show-inheritance:
 
-pygeoinf.operators module
--------------------------
+pygeoinf.nonlinear\_forms module
+--------------------------------
 
-.. automodule:: pygeoinf.operators
+.. automodule:: pygeoinf.nonlinear_forms
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pygeoinf.nonlinear\_operators module
+------------------------------------
+
+.. automodule:: pygeoinf.nonlinear_operators
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pygeoinf.nonlinear\_optimisation module
+---------------------------------------
+
+.. automodule:: pygeoinf.nonlinear_optimisation
    :members:
    :undoc-members:
    :show-inheritance:

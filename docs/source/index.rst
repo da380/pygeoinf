@@ -43,7 +43,7 @@ Key Features
    :caption: API Reference
    :hidden:
 
-   api/pygeoinf
+   modules
 
 
    
