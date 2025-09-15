@@ -389,13 +389,14 @@ def random_cholesky(
 
 def random_diagonal(
     matrix: MatrixLike,
-    initial_samples: int,
+    size_estimate: int,
     /,
     *,
+    method: str = "variable",
+    use_rademacher: bool = False,
     max_samples: int = None,
-    block_size: int = 20,
-    rtol: float = 1e-3,
-    use_rademacher: bool = True,
+    rtol: float = 1e-2,
+    block_size: int = 10,
     parallel: bool = False,
     n_jobs: int = -1,
 ) -> np.ndarray:
@@ -407,30 +408,36 @@ def random_diagonal(
     vectors until the estimate of the diagonal converges to a specified tolerance.
 
     Args:
-        matrix: The square (n, n) matrix or LinearOperator whose diagonal is to be estimated.
-        initial_samples: The number of random vectors to use for the initial estimate.
-        max_samples: A hard limit on the total number of samples. Defaults to n.
-        block_size: The number of new vectors to sample in each iteration.
-        rtol: Relative tolerance for determining convergence. The process stops
-              when `norm(d_new - d_old) / norm(d_new) < rtol`.
-        use_rademacher: If True, use Rademacher random vectors (+1/-1). If False,
-                        use standard Gaussian vectors. Rademacher is often more
-                        efficient.
+        matrix: The (m, n) matrix or LinearOperator to analyze.
+        size_estimate: For 'fixed' method, the exact target rank. For 'variable'
+                       method, this is the initial rank to sample.
+        method ({'variable', 'fixed'}): The algorithm to use.
+            - 'variable': (Default) Progressively samples to find the rank needed
+                          to meet tolerance `rtol`, stopping at `max_rank`.
+            - 'fixed': Returns a basis with exactly `size_estimate` columns.
+        use_rademacher: If true, draw components from [-1,1]. Default method draws
+            normally distributed components.
+        max_samples: For 'variable' method, a hard limit on the number of samples.
+                     Ignored if method='fixed'. Defaults to dimension of matrix.
+        rtol: Relative tolerance for the 'variable' method. Ignored if
+              method='fixed'.
+        block_size: Number of new vectors to sample per iteration in 'variable'
+                    method. Ignored if method='fixed'.
         parallel: Whether to use parallel matrix multiplication.
         n_jobs: Number of jobs for parallelism.
 
     Returns:
         A 1D numpy array of size n containing the approximate diagonal of the matrix.
     """
+
     m, n = matrix.shape
     if m != n:
         raise ValueError("Input matrix must be square to estimate a diagonal.")
 
     if max_samples is None:
-        max_samples = 100 * n
+        max_samples = n
 
-    # --- Initial Batch ---
-    num_samples = min(initial_samples, max_samples)
+    num_samples = min(size_estimate, max_samples)
     if use_rademacher:
         z = np.random.choice([-1.0, 1.0], size=(n, num_samples))
     else:
@@ -441,14 +448,15 @@ def random_diagonal(
     else:
         az = matrix @ z
 
-    # Element-wise product and sum to get the unnormalized diagonal
     diag_sum = np.sum(z * az, axis=1)
     diag_estimate = diag_sum / num_samples
+
+    if method == "fixed":
+        return diag_estimate
 
     if num_samples >= max_samples:
         return diag_estimate
 
-    # --- Iterative Refinement ---
     converged = False
     while num_samples < max_samples:
         old_diag_estimate = diag_estimate.copy()
