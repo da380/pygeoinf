@@ -55,8 +55,8 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
 
     This class represents a linear map `L(x) = Ax` and provides rich
     functionality for linear algebraic operations. It specializes
-    `NonLinearOperator`, correctly defining its derivative as the operator
-    itself.
+    `NonLinearOperator`, with the derivative mapping taking the
+    required form (i.e., the derivative is just the operator itself).
 
     Key features include operator algebra (`@`, `+`, `*`), automatic
     derivation of adjoint (`.adjoint`) and dual (`.dual`) operators, and
@@ -87,6 +87,12 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             adjoint_mapping (callable, optional): The action of the adjoint.
             dual_base (LinearOperator, optional): Internal use for duals.
             adjoint_base (LinearOperator, optional): Internal use for adjoints.
+
+        Notes:
+            If neither the dual or adjoint mappings are provided, an they are
+            deduced internally using a correction but very inefficient method.
+            In general this functionality should not be relied on other than
+            for operators between low-dimensional spaces.
         """
         super().__init__(
             domain, codomain, self._mapping_impl, derivative=self._derivative_impl
@@ -256,7 +262,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         /,
         *,
         galerkin: bool = False,
-    ) -> "MatrixLinearOperator":
+    ) -> MatrixLinearOperator:
         """
         Creates the most appropriate LinearOperator from a matrix representation.
 
@@ -316,7 +322,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     def self_adjoint_from_matrix(
         domain: HilbertSpace,
         matrix: Union[np.ndarray, sp.sparray, ScipyLinOp],
-    ) -> "MatrixLinearOperator":
+    ) -> MatrixLinearOperator:
         """
         Creates the most appropriate self-adjoint LinearOperator from a matrix.
 
@@ -644,23 +650,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
 
         return diagonals_array, offsets
 
-    def diagonal(self, /, *, parallel: bool = False, n_jobs: int = -1):
-        """
-        Forms a DiagonalLinearOperator from the given operator.
-
-        Args:
-            parallel: If True, computes columns diagonal values in parallel. Default False.
-            n_jobs: Number of parallel jobs to use. Default -1.
-        """
-
-        if not self.is_square:
-            raise ValueError("Operator must be square")
-
-        diagonal_values = self.extract_diagonal(
-            galerkin=True, parallel=parallel, n_jobs=n_jobs
-        )
-        return DiagonalLinearOperator(self.domain, self.codomain, diagonal_values)
-
     def random_svd(
         self,
         size_estimate: int,
@@ -674,7 +663,11 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> Tuple[LinearOperator, DiagonalLinearOperator, LinearOperator]:
+    ) -> Tuple[
+        DenseMatrixLinearOperator,
+        DiagonalSparseMatrixLinearOperator,
+        DenseMatrixLinearOperator,
+    ]:
         """
         Computes an approximate SVD using a randomized algorithm.
 
@@ -697,9 +690,9 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             n_jobs: Number of jobs for parallelism.
 
         Returns:
-            left (LinearOperator): The left singular vector matrix.
-            singular_values (DiagonalLinearOperator): The singular values.
-            right (LinearOperator): The right singular vector matrix.
+            left (DenseMatrixLinearOperator): The left singular vector matrix.
+            singular_values (DiagonalSparseMatrixLinearOperator): The singular values.
+            right (DenseMatrixLinearOperator): The right singular vector matrix.
 
         Notes:
             The right factor is in transposed form. This means the original
@@ -729,7 +722,9 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         )
 
         euclidean = EuclideanSpace(qr_factor.shape[1])
-        diagonal = DiagonalLinearOperator(euclidean, euclidean, singular_values)
+        diagonal = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            euclidean, euclidean, singular_values
+        )
 
         if galerkin:
             right = LinearOperator.from_matrix(
@@ -760,7 +755,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> Tuple[LinearOperator, DiagonalLinearOperator]:
+    ) -> Tuple[DenseMatrixLinearOperator, DiagonalSparseMatrixLinearOperator]:
         """
         Computes an approximate eigen-decomposition using a randomized algorithm.
 
@@ -782,8 +777,8 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             n_jobs: Number of jobs for parallelism.
 
         Returns:
-            expansion (LinearOperator): Mapping from coefficients in eigen-basis to vectors.
-            eigenvaluevalues (DiagonalLinearOperator): The eigenvalues values.
+            expansion (DenseMatrixLinearOperator): Mapping from coefficients in eigen-basis to vectors.
+            eigenvaluevalues (DiagonalSparseMatrixLinearOperator): The eigenvalues values.
 
         """
         from .hilbert_space import EuclideanSpace
@@ -807,7 +802,9 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
 
         eigenvectors, eigenvalues = rm_eig(matrix, qr_factor)
         euclidean = EuclideanSpace(qr_factor.shape[1])
-        diagonal = DiagonalLinearOperator(euclidean, euclidean, eigenvalues)
+        diagonal = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            euclidean, euclidean, eigenvalues
+        )
 
         expansion = LinearOperator.from_matrix(
             euclidean, self.domain, eigenvectors, galerkin=True
@@ -827,7 +824,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> LinearOperator:
+    ) -> DenseMatrixLinearOperator:
         """
         Computes an approximate Cholesky decomposition for a positive-definite
         self-adjoint operator using a randomized algorithm.
@@ -850,7 +847,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             n_jobs: Number of jobs for parallelism.
 
         Returns:
-            factor (LinearOperator): A linear operator from a Euclidean space
+            factor (DenseMatrixLinearOperator): A linear operator from a Euclidean space
                 into the domain of the operator.
 
         Notes:
@@ -1431,13 +1428,13 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
     @classmethod
     def from_operator(
         cls, operator: LinearOperator, offsets: List[int], /, *, galerkin: bool = True
-    ) -> "DiagonalSparseLinearOperator":
+    ) -> DiagonalSparseMatrixLinearOperator:
         """
         Creates a diagonal approximation of another LinearOperator.
 
         This factory method works by calling the source operator's
         `.extract_diagonals()` method and using the result to construct a
-        new, highly efficient DiagonalSparseLinearOperator.
+        new, highly efficient DiagonalSparseMatrixLinearOperator.
 
         Args:
             operator: The source operator to approximate.
@@ -1445,7 +1442,7 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
             galerkin: Specifies which matrix representation to use.
 
         Returns:
-            A new DiagonalSparseLinearOperator.
+            A new DiagonalSparseMatrixLinearOperator.
         """
         diagonals_data, extracted_offsets = operator.extract_diagonals(
             offsets, galerkin=galerkin
@@ -1581,7 +1578,6 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
                 result = attr(*args, **kwargs)
 
                 if isinstance(result, sp.sparray):
-                    # NEW: Enforce strictly diagonal for element-wise functions
                     if not self.is_strictly_diagonal:
                         raise NotImplementedError(
                             f"Element-wise function '{name}' is only defined for "
@@ -1608,117 +1604,6 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
     def __pow__(self, power):
         """Explicitly handle the power operator (**)."""
         return self.__getattr__("__pow__")(power)
-
-
-class DiagonalLinearOperator(LinearOperator):
-    """A LinearOperator whose Galerkin representation is diagonal.
-
-    This class defines a self-adjoint operator from its diagonal eigenvalues.
-    Its key feature is support for **functional calculus**, allowing for the
-    direct computation of operator functions like its inverse (`.inverse`) or
-    square root (`.sqrt`).
-    """
-
-    def __init__(
-        self,
-        domain: HilbertSpace,
-        codomain: HilbertSpace,
-        diagonal_values: np.ndarray,
-        /,
-    ) -> None:
-        """
-        Initializes the DiagonalLinearOperator from its diagonal
-        Galerkin matrix entries (eigenvalues).
-        """
-
-        assert domain.dim == codomain.dim
-        assert domain.dim == len(diagonal_values)
-        self._diagonal_values: np.ndarray = diagonal_values
-
-        # The operator is defined by its diagonal Galerkin matrix.
-        matrix = diags([diagonal_values], [0])
-        operator = LinearOperator.from_matrix(domain, codomain, matrix, galerkin=True)
-        super().__init__(
-            operator.domain,
-            operator.codomain,
-            operator,
-            adjoint_mapping=operator.adjoint,
-        )
-
-    def _compute_dense_matrix(
-        self, galerkin: bool, parallel: bool, n_jobs: int
-    ) -> np.ndarray:
-        """
-        Overloaded method to efficiently compute the dense matrix.
-        """
-        if galerkin:
-            # Fast path: This is how the operator is defined.
-            return np.diag(self._diagonal_values)
-        else:
-            # The user wants the standard matrix, which may differ from the
-            # diagonal Galerkin matrix in non-Euclidean spaces. Fall back
-            # to the safe, general method for this conversion.
-            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)
-
-    @property
-    def diagonal_values(self) -> np.ndarray:
-        """The diagonal entries of the operator's Galerkin matrix."""
-        return self._diagonal_values
-
-    def function(self, f: Callable[[float], float]) -> "DiagonalLinearOperator":
-        """Applies a function to the operator via functional calculus."""
-        new_diagonal_values = np.array([f(x) for x in self.diagonal_values])
-        return DiagonalLinearOperator(self.domain, self.codomain, new_diagonal_values)
-
-    @property
-    def inverse(self) -> "DiagonalLinearOperator":
-        """The inverse of the operator, computed via functional calculus."""
-        assert all(val != 0 for val in self.diagonal_values)
-        return self.function(lambda x: 1 / x)
-
-    @property
-    def sqrt(self) -> "DiagonalLinearOperator":
-        """The square root of the operator, computed via functional calculus."""
-        assert all(val >= 0 for val in self._diagonal_values)
-        return self.function(np.sqrt)
-
-    def extract_diagonal(
-        self,
-        /,
-        *,
-        galerkin: bool = False,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> np.ndarray:
-        """Overrides base method for efficiency."""
-        if galerkin:
-            return self._diagonal_values
-        else:
-            return super().extract_diagonal(
-                galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
-            )
-
-    def extract_diagonals(
-        self,
-        offsets: List[int],
-        /,
-        *,
-        galerkin: bool = False,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> Tuple[np.ndarray, List[int]]:
-        """Overrides base method for efficiency."""
-        if galerkin:
-            dim = self.domain.dim
-            diagonals_array = np.zeros((len(offsets), dim))
-            for i, offset in enumerate(offsets):
-                if offset == 0:
-                    diagonals_array[i, :] = self._diagonal_values
-            return diagonals_array, offsets
-        else:
-            return super().extract_diagonals(
-                offsets, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
-            )
 
 
 class NormalSumOperator(LinearOperator):

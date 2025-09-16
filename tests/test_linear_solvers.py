@@ -5,7 +5,7 @@ Tests for the linear_solvers module.
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.linear_operators import LinearOperator, DiagonalLinearOperator
+from pygeoinf.linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from pygeoinf.linear_solvers import (
     LUSolver,
     CholeskySolver,
@@ -207,7 +207,9 @@ def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarra
 
     # Create a simple Jacobi (diagonal) preconditioner
     diag_A = spd_operator.matrix(dense=True, galerkin=True).diagonal()
-    preconditioner = DiagonalLinearOperator(space, space, 1.0 / diag_A)
+    preconditioner = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+        space, space, 1.0 / diag_A
+    )
 
     # Get the inverse operator using the preconditioner
     inverse_op = solver(spd_operator, preconditioner=preconditioner)

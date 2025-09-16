@@ -39,7 +39,6 @@ from .linear_operators import (
     DenseMatrixLinearOperator,
     SparseMatrixLinearOperator,
     DiagonalSparseMatrixLinearOperator,
-    DiagonalLinearOperator,
     NormalSumOperator,
 )
 

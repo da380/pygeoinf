@@ -28,27 +28,16 @@ from scipy.sparse import diags
 from scipy.stats import multivariate_normal
 
 
-from .hilbert_space import EuclideanSpace, HilbertModule
+from .hilbert_space import EuclideanSpace, HilbertModule, Vector
 
 from .linear_operators import (
     LinearOperator,
-    DiagonalLinearOperator,
+    DiagonalSparseMatrixLinearOperator,
 )
 
 from .direct_sum import (
     BlockDiagonalLinearOperator,
 )
-
-
-# This block only runs for type checkers, not at runtime, to prevent
-# circular import errors while still allowing type hints.
-if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, EuclideanSpace
-    from .operators import LinearOperator, DiagonalLinearOperator
-    from .direct_sum import BlockDiagonalLinearOperator
-
-# Define a generic type for vectors in a Hilbert space
-Vector = TypeVar("Vector")
 
 
 class GaussianMeasure:
@@ -186,7 +175,7 @@ class GaussianMeasure:
                 "Standard deviation vector does not have the correct length"
             )
         euclidean = EuclideanSpace(domain.dim)
-        covariance_factor = DiagonalLinearOperator(
+        covariance_factor = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
             euclidean, domain, standard_deviations
         )
         return GaussianMeasure(

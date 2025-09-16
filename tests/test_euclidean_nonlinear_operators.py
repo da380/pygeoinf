@@ -7,7 +7,7 @@ import numpy as np
 
 from pygeoinf.hilbert_space import EuclideanSpace, Vector
 from pygeoinf.nonlinear_operators import NonLinearOperator
-from pygeoinf.linear_operators import DiagonalLinearOperator
+from pygeoinf.linear_operators import DiagonalSparseMatrixLinearOperator
 
 
 @pytest.fixture
@@ -16,8 +16,10 @@ def quadratic_operator() -> NonLinearOperator:
     space = EuclideanSpace(10)
 
     # Define the derivative: a diagonal operator with 2*x on the diagonal
-    def derivative_func(x: Vector) -> DiagonalLinearOperator:
-        return DiagonalLinearOperator(space, space, 2 * x)
+    def derivative_func(x: Vector) -> DiagonalSparseMatrixLinearOperator:
+        return DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            space, space, 2 * x
+        )
 
     return NonLinearOperator(
         space,
@@ -33,8 +35,10 @@ def cubic_operator() -> NonLinearOperator:
     space = EuclideanSpace(10)
 
     # Define the derivative: a diagonal operator with 3*x^2 on the diagonal
-    def derivative_func(x: Vector) -> DiagonalLinearOperator:
-        return DiagonalLinearOperator(space, space, 3 * x**2)
+    def derivative_func(x: Vector) -> DiagonalSparseMatrixLinearOperator:
+        return DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            space, space, 3 * x**2
+        )
 
     return NonLinearOperator(
         space,
