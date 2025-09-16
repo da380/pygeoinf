@@ -33,7 +33,15 @@ from .linear_forms import (
 
 from .nonlinear_operators import NonLinearOperator
 
-from .linear_operators import LinearOperator, DiagonalLinearOperator, NormalSumOperator
+from .linear_operators import (
+    LinearOperator,
+    MatrixLinearOperator,
+    DenseMatrixLinearOperator,
+    SparseMatrixLinearOperator,
+    DiagonalSparseMatrixLinearOperator,
+    DiagonalLinearOperator,
+    NormalSumOperator,
+)
 
 
 from .gaussian_measure import (

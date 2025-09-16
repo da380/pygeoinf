@@ -23,8 +23,10 @@ from typing import Callable, List, Optional, Any, Union, Tuple, TYPE_CHECKING, D
 from collections import defaultdict
 
 import numpy as np
+import scipy.sparse as sp
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 from scipy.sparse import diags
+
 
 from joblib import Parallel, delayed
 
@@ -71,7 +73,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         *,
         dual_mapping: Optional[Callable[[Any], Any]] = None,
         adjoint_mapping: Optional[Callable[[Any], Any]] = None,
-        thread_safe: bool = False,
         dual_base: Optional[LinearOperator] = None,
         adjoint_base: Optional[LinearOperator] = None,
     ) -> None:
@@ -84,7 +85,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             mapping (callable): The function defining the linear mapping.
             dual_mapping (callable, optional): The action of the dual operator.
             adjoint_mapping (callable, optional): The action of the adjoint.
-            thread_safe (bool, optional): True if the mapping is thread-safe.
             dual_base (LinearOperator, optional): Internal use for duals.
             adjoint_base (LinearOperator, optional): Internal use for adjoints.
         """
@@ -94,7 +94,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         self._mapping = mapping
         self._dual_base: Optional[LinearOperator] = dual_base
         self._adjoint_base: Optional[LinearOperator] = adjoint_base
-        self._thread_safe: bool = thread_safe
         self.__adjoint_mapping: Callable[[Any], Any]
         self.__dual_mapping: Callable[[Any], Any]
 
@@ -253,83 +252,107 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     def from_matrix(
         domain: HilbertSpace,
         codomain: HilbertSpace,
-        matrix: Union[np.ndarray, ScipyLinOp],
+        matrix: Union[np.ndarray, sp.sparray, ScipyLinOp],
         /,
         *,
         galerkin: bool = False,
-    ) -> LinearOperator:
+    ) -> "MatrixLinearOperator":
         """
-        Creates a LinearOperator from its matrix representation.
+        Creates the most appropriate LinearOperator from a matrix representation.
 
-        This factory defines a `LinearOperator` using a concrete matrix that
-        acts on the component vectors of the abstract Hilbert space vectors.
+        This factory method acts as a dispatcher, inspecting the type of the
+        input matrix and returning the most specialized and optimized operator
+        subclass (e.g., Dense, Sparse, or DiagonalSparse). It also handles
+        matrix-free `scipy.sparse.linalg.LinearOperator` objects.
 
         Args:
             domain: The operator's domain space.
             codomain: The operator's codomain space.
-            matrix: The matrix representation (NumPy array or SciPy
-                LinearOperator). Shape must be `(codomain.dim, domain.dim)`.
-            galerkin: If `True`, the matrix is interpreted in its "weak form"
-                or Galerkin representation (`M_ij = <basis_j, A(basis_i)>`),
-                which maps a vector's components to the components of its
-                *dual*. This is crucial as it ensures a self-adjoint
-                operator is represented by a symmetric matrix. If `False`
-                (default), it's a standard component-to-component map.
+            matrix: The matrix representation (NumPy ndarray, SciPy sparray,
+                    or SciPy LinearOperator).
+            galerkin: If `True`, the matrix is interpreted in Galerkin form.
 
         Returns:
-            A new `LinearOperator` defined by the matrix action.
+            An instance of the most appropriate MatrixLinearOperator subclass.
         """
+        # The order of these checks is important: from most specific to most general.
 
-        assert matrix.shape == (codomain.dim, domain.dim)
-
-        if galerkin:
-
-            def mapping(x: Any) -> Any:
-                cx = domain.to_components(x)
-                cyp = matrix @ cx
-                yp = codomain.dual.from_components(cyp)
-                return codomain.from_dual(yp)
-
-            def adjoint_mapping(y: Any) -> Any:
-                cy = codomain.to_components(y)
-                cxp = matrix.T @ cy
-                xp = domain.dual.from_components(cxp)
-                return domain.from_dual(xp)
-
-            return LinearOperator(
-                domain,
-                codomain,
-                mapping,
-                adjoint_mapping=adjoint_mapping,
+        # 1. Check for the most specific diagonal-sparse format
+        if isinstance(matrix, sp.dia_array):
+            diagonals_tuple = (matrix.data, matrix.offsets)
+            return DiagonalSparseMatrixLinearOperator(
+                domain, codomain, diagonals_tuple, galerkin=galerkin
             )
 
+        # 2. Check for any other modern sparse format
+        elif isinstance(matrix, sp.sparray):
+            return SparseMatrixLinearOperator(
+                domain, codomain, matrix, galerkin=galerkin
+            )
+
+        # 3. Check for a dense NumPy array
+        elif isinstance(matrix, np.ndarray):
+            return DenseMatrixLinearOperator(
+                domain, codomain, matrix, galerkin=galerkin
+            )
+
+        # 4. Check for a matrix-free SciPy LinearOperator
+        elif isinstance(matrix, ScipyLinOp):
+            # This is matrix-free, so the general MatrixLinearOperator is the correct wrapper.
+            return MatrixLinearOperator(domain, codomain, matrix, galerkin=galerkin)
+
+        # 5. Handle legacy sparse matrix formats (optional but robust)
+        elif sp.issparse(matrix):
+            modern_array = sp.csr_array(matrix)
+            return SparseMatrixLinearOperator(
+                domain, codomain, modern_array, galerkin=galerkin
+            )
+
+        # 6. Raise an error for unsupported types
         else:
-
-            def mapping(x: Any) -> Any:
-                cx = domain.to_components(x)
-                cy = matrix @ cx
-                return codomain.from_components(cy)
-
-            def dual_mapping(yp: Any) -> Any:
-                cyp = codomain.dual.to_components(yp)
-                cxp = matrix.T @ cyp
-                return domain.dual.from_components(cxp)
-
-            return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+            raise TypeError(f"Unsupported matrix type: {type(matrix)}")
 
     @staticmethod
     def self_adjoint_from_matrix(
-        domain: HilbertSpace, matrix: Union[np.ndarray, ScipyLinOp]
-    ) -> LinearOperator:
-        """Forms a self-adjoint operator from its Galerkin matrix."""
+        domain: HilbertSpace,
+        matrix: Union[np.ndarray, sp.sparray, ScipyLinOp],
+    ) -> "MatrixLinearOperator":
+        """
+        Creates the most appropriate self-adjoint LinearOperator from a matrix.
 
-        def mapping(x: Any) -> Any:
-            cx = domain.to_components(x)
-            cyp = matrix @ cx
-            yp = domain.dual.from_components(cyp)
-            return domain.from_dual(yp)
+        This factory acts as a dispatcher, returning the most specialized
+        subclass for the given matrix type (e.g., Dense, Sparse).
 
-        return LinearOperator.self_adjoint(domain, mapping)
+        It ALWAYS assumes the provided matrix is the **Galerkin** representation
+        of the operator. The user is responsible for ensuring the input matrix
+        is symmetric (or self-adjoint for ScipyLinOp).
+
+        Args:
+            domain: The operator's domain and codomain space.
+            matrix: The symmetric matrix representation.
+
+        Returns:
+            An instance of the most appropriate MatrixLinearOperator subclass.
+        """
+        # Dispatch to the appropriate subclass, always with galerkin=True
+        if isinstance(matrix, sp.dia_array):
+            diagonals_tuple = (matrix.data, matrix.offsets)
+            return DiagonalSparseMatrixLinearOperator(
+                domain, domain, diagonals_tuple, galerkin=True
+            )
+        elif isinstance(matrix, sp.sparray):
+            return SparseMatrixLinearOperator(domain, domain, matrix, galerkin=True)
+        elif isinstance(matrix, np.ndarray):
+            return DenseMatrixLinearOperator(domain, domain, matrix, galerkin=True)
+        elif isinstance(matrix, ScipyLinOp):
+            return MatrixLinearOperator(domain, domain, matrix, galerkin=True)
+        elif sp.issparse(matrix):
+            modern_array = sp.csr_array(matrix)
+            return SparseMatrixLinearOperator(
+                domain, domain, modern_array, galerkin=True
+            )
+        else:
+            raise TypeError(f"Unsupported matrix type: {type(matrix)}")
 
     @staticmethod
     def from_tensor_product(
@@ -416,11 +439,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             )
         else:
             return self._adjoint_base
-
-    @property
-    def thread_safe(self) -> bool:
-        """True if the operator's mapping is thread-safe."""
-        return self._thread_safe
 
     def matrix(
         self,
@@ -512,7 +530,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         self,
         /,
         *,
-        galerkin: bool = True,
+        galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> np.ndarray:
@@ -554,7 +572,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         offsets: List[int],
         /,
         *,
-        galerkin: bool = True,
+        galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[np.ndarray, List[int]]:
@@ -625,6 +643,23 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
                     diagonals_array[idx, j] = val
 
         return diagonals_array, offsets
+
+    def diagonal(self, /, *, parallel: bool = False, n_jobs: int = -1):
+        """
+        Forms a DiagonalLinearOperator from the given operator.
+
+        Args:
+            parallel: If True, computes columns diagonal values in parallel. Default False.
+            n_jobs: Number of parallel jobs to use. Default -1.
+        """
+
+        if not self.is_square:
+            raise ValueError("Operator must be square")
+
+        diagonal_values = self.extract_diagonal(
+            galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )
+        return DiagonalLinearOperator(self.domain, self.codomain, diagonal_values)
 
     def random_svd(
         self,
@@ -1037,6 +1072,544 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         return self.matrix(dense=True).__str__()
 
 
+class MatrixLinearOperator(LinearOperator):
+    """
+    A sub-class of LinearOperator for which the operator's action is
+    defined internally through its matrix representation.
+
+    This matrix can be either a dense numpy matrix or a
+    scipy LinearOperator.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
+        matrix: Union[np.ndarray, ScipyLinOp],
+        /,
+        *,
+        galerkin=False,
+    ):
+        """
+        Args:
+            domain: The domain of the operator.
+            codomain: The codomain of the operator.
+            matrix: matrix representation of the linear operator in either standard
+                 or Galerkin form.
+            galerkin: If True, galerkin representation used. Default is false.
+        """
+        assert matrix.shape == (codomain.dim, domain.dim)
+
+        self._matrix = matrix
+        self._is_dense = isinstance(matrix, np.ndarray)
+        self._galerkin = galerkin
+
+        if galerkin:
+
+            def mapping(x: Any) -> Any:
+                cx = domain.to_components(x)
+                cyp = matrix @ cx
+                yp = codomain.dual.from_components(cyp)
+                return codomain.from_dual(yp)
+
+            def adjoint_mapping(y: Any) -> Any:
+                cy = codomain.to_components(y)
+                cxp = matrix.T @ cy
+                xp = domain.dual.from_components(cxp)
+                return domain.from_dual(xp)
+
+            super().__init__(domain, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+        else:
+
+            def mapping(x: Any) -> Any:
+                cx = domain.to_components(x)
+                cy = matrix @ cx
+                return codomain.from_components(cy)
+
+            def dual_mapping(yp: Any) -> Any:
+                cyp = codomain.dual.to_components(yp)
+                cxp = matrix.T @ cyp
+                return domain.dual.from_components(cxp)
+
+            super().__init__(domain, codomain, mapping, dual_mapping=dual_mapping)
+
+    @property
+    def is_dense(self) -> bool:
+        """
+        Returns True if the matrix representation is stored internally in dense form.
+        """
+        return self._is_dense
+
+    @property
+    def is_galerkin(self) -> bool:
+        """
+        Returns True if the matrix representation is stored in Galerkin form.
+        """
+        return self._galerkin
+
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """
+        Overloaded method to efficiently compute the dense matrix.
+        """
+
+        if galerkin == self.is_galerkin and self.is_dense:
+            return self._matrix
+        else:
+            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)
+
+    def extract_diagonal(
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
+        """
+        Overload for efficiency.
+        """
+
+        if galerkin == self.is_galerkin and self.is_dense:
+            return self._matrix.diagonal()
+        else:
+            return super().extract_diagonal(
+                galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+    def extract_diagonals(
+        self,
+        offsets: List[int],
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Tuple[np.ndarray, List[int]]:
+        """
+        Overrides the base method for efficiency by extracting diagonals directly
+        from the stored dense matrix when possible.
+        """
+
+        if self.is_dense and galerkin == self.is_galerkin:
+            print("Hi")
+            dim = self.domain.dim
+
+            diagonals_array = np.zeros((len(offsets), dim))
+
+            for i, k in enumerate(offsets):
+                diag_k = np.diag(self._matrix, k=k)
+
+                if k >= 0:
+                    diagonals_array[i, k : k + len(diag_k)] = diag_k
+                else:
+                    diagonals_array[i, : len(diag_k)] = diag_k
+
+            return diagonals_array, offsets
+
+        else:
+            return super().extract_diagonals(
+                offsets, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+
+class DenseMatrixLinearOperator(MatrixLinearOperator):
+    """
+    A specialisation of the MatrixLinearOperator class to instances where
+    the matrix representation is always provided as a numpy array.
+
+    This is a class provides some additional methods for component-wise access.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
+        matrix: np.ndarray,
+        /,
+        *,
+        galerkin=False,
+    ):
+        """
+        domain: The domain of the operator.
+            codomain: The codomain of the operator.
+            matrix: matrix representation of the linear operator in either standard
+                 or Galerkin form.
+            galerkin: If True, galerkin representation used. Default is false.
+        """
+
+        if not isinstance(matrix, np.ndarray):
+            raise ValueError("Matrix must be input in dense form.")
+
+        super().__init__(domain, codomain, matrix, galerkin=galerkin)
+
+    def __getitem__(self, key: tuple[int, int] | int | slice) -> float | np.ndarray:
+        """
+        Provides direct, component-wise access to the underlying matrix.
+
+        This allows for intuitive slicing and indexing, like `op[i, j]` or `op[0, :]`.
+        Note: The access is on the stored matrix, which may be in either
+        standard or Galerkin form depending on how the operator was initialized.
+        """
+        return self._matrix[key]
+
+
+class SparseMatrixLinearOperator(MatrixLinearOperator):
+    """
+    A specialization for operators represented by a modern SciPy sparse array.
+
+    This class requires a `scipy.sparse.sparray` object (e.g., csr_array)
+    and provides optimized methods that delegate to efficient SciPy routines.
+
+    Upon initialization, the internal array is converted to the CSR
+    (Compressed Sparse Row) format to ensure consistently fast matrix-vector
+    products and row-slicing operations.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
+        matrix: sp.sparray,
+        /,
+        *,
+        galerkin: bool = False,
+    ):
+        """
+        Args:
+            domain: The domain of the operator.
+            codomain: The codomain of the operator.
+            matrix: The sparse array representation of the linear operator.
+                    Must be a modern sparray object (e.g., csr_array).
+            galerkin: If True, the matrix is in Galerkin form. Defaults to False.
+        """
+        # Strict check for the modern sparse array type
+        if not isinstance(matrix, sp.sparray):
+            raise TypeError(
+                "Matrix must be a modern SciPy sparray object (e.g., csr_array)."
+            )
+
+        super().__init__(domain, codomain, matrix, galerkin=galerkin)
+        self._matrix = self._matrix.asformat("csr")
+
+    def __getitem__(self, key):
+        """Provides direct component access using SciPy's sparse indexing."""
+        return self._matrix[key]
+
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """
+        Overrides the base method to efficiently compute the dense matrix.
+        """
+        # ⚡️ Fast path: Use the highly optimized .toarray() method.
+        if galerkin == self.is_galerkin:
+            return self._matrix.toarray()
+
+        # Fallback path for when a basis conversion is needed.
+        else:
+            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)
+
+    def extract_diagonal(
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
+        """
+        Overrides the base method to efficiently extract the main diagonal.
+        """
+        if galerkin == self.is_galerkin:
+            return self._matrix.diagonal(k=0)
+        else:
+            return super().extract_diagonal(
+                galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+    def extract_diagonals(
+        self,
+        offsets: List[int],
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Tuple[np.ndarray, List[int]]:
+        """
+        Overrides the base method for efficiency by extracting diagonals
+        directly from the stored sparse array.
+        """
+        if galerkin != self.is_galerkin:
+            return super().extract_diagonals(
+                offsets, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+            )
+
+        dim = self.domain.dim
+        diagonals_array = np.zeros((len(offsets), dim))
+
+        for i, k in enumerate(offsets):
+            # Use the sparse array's fast .diagonal() method
+            diag_k = self._matrix.diagonal(k=k)
+
+            # Place the raw diagonal into the padded output array
+            if k >= 0:
+                diagonals_array[i, k : k + len(diag_k)] = diag_k
+            else:
+                diagonals_array[i, : len(diag_k)] = diag_k
+
+        return diagonals_array, offsets
+
+
+class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
+    """
+    A highly specialized operator for matrices defined purely by a set of
+    non-zero diagonals.
+
+    This class internally stores the operator using a `scipy.sparse.dia_array`
+    for maximum efficiency in storage and matrix-vector products. It provides
+    extremely fast methods for extracting diagonals, as this is its native
+    storage format.
+
+    A key feature of this class is its support for **functional calculus**. It
+    dynamically proxies element-wise mathematical functions (e.g., `.sqrt()`,
+    `.log()`, `abs()`, `**`) to the underlying sparse array. For reasons of
+    mathematical correctness, these operations are restricted to operators that
+    are **strictly diagonal** (i.e., have only a non-zero main diagonal) and
+    will raise a `NotImplementedError` otherwise.
+
+    Aggregation methods that do not return a new operator (e.g., `.sum()`)
+    are not restricted and can be used on any multi-diagonal operator.
+
+    Class Methods
+    -------------
+    from_diagonal_values:
+        Constructs a strictly diagonal operator from a 1D array of values.
+    from_operator:
+        Creates a diagonal approximation of another LinearOperator.
+
+    Properties
+    ----------
+    offsets:
+        The array of stored diagonal offsets.
+    is_strictly_diagonal:
+        True if the operator only has a non-zero main diagonal.
+    inverse:
+        The inverse of a strictly diagonal operator.
+    sqrt:
+        The square root of a strictly diagonal operator.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
+        diagonals: Tuple[np.ndarray, List[int]],
+        /,
+        *,
+        galerkin: bool = False,
+    ):
+        """
+        Args:
+            domain: The domain of the operator.
+            codomain: The codomain of the operator.
+            diagonals: A tuple `(data, offsets)` where `data` is a 2D array
+                       of diagonal values and `offsets` is a list of their
+                       positions. This is the native format for a dia_array.
+            galerkin: If True, the matrix is in Galerkin form. Defaults to False.
+        """
+        shape = (codomain.dim, domain.dim)
+        dia_array = sp.dia_array(diagonals, shape=shape)
+
+        MatrixLinearOperator.__init__(
+            self, domain, codomain, dia_array, galerkin=galerkin
+        )
+
+    @classmethod
+    def from_operator(
+        cls, operator: LinearOperator, offsets: List[int], /, *, galerkin: bool = True
+    ) -> "DiagonalSparseLinearOperator":
+        """
+        Creates a diagonal approximation of another LinearOperator.
+
+        This factory method works by calling the source operator's
+        `.extract_diagonals()` method and using the result to construct a
+        new, highly efficient DiagonalSparseLinearOperator.
+
+        Args:
+            operator: The source operator to approximate.
+            offsets: The list of diagonal offsets to extract and keep.
+            galerkin: Specifies which matrix representation to use.
+
+        Returns:
+            A new DiagonalSparseLinearOperator.
+        """
+        diagonals_data, extracted_offsets = operator.extract_diagonals(
+            offsets, galerkin=galerkin
+        )
+        return cls(
+            operator.domain,
+            operator.codomain,
+            (diagonals_data, extracted_offsets),
+            galerkin=galerkin,
+        )
+
+    @classmethod
+    def from_diagonal_values(
+        cls,
+        domain: HilbertSpace,
+        codomain: HilbertSpace,
+        diagonal_values: np.ndarray,
+        /,
+        *,
+        galerkin: bool = False,
+    ) -> "DiagonalSparseMatrixLinearOperator":
+        """
+        Constructs a purely diagonal operator from a 1D array of values.
+
+        This provides a convenient way to create an operator with non-zero
+        entries only on its main diagonal (offset k=0).
+
+        Args:
+            domain: The domain of the operator.
+            codomain: The codomain of the operator. Must have the same dimension.
+            diagonal_values: A 1D NumPy array of the values for the main diagonal.
+            galerkin: If True, the operator is in Galerkin form.
+
+        Returns:
+            A new DiagonalSparseMatrixLinearOperator.
+        """
+        if domain.dim != codomain.dim or domain.dim != len(diagonal_values):
+            raise ValueError(
+                "Domain, codomain, and diagonal_values must all have the same dimension."
+            )
+
+        # Reshape the 1D array of values into the 2D `data` array format
+        diagonals_data = diagonal_values.reshape(1, -1)
+        offsets = [0]
+
+        return cls(domain, codomain, (diagonals_data, offsets), galerkin=galerkin)
+
+    @property
+    def offsets(self) -> np.ndarray:
+        """Returns the array of stored diagonal offsets."""
+        return self._matrix.offsets
+
+    @property
+    def is_strictly_diagonal(self) -> bool:
+        """
+        True if the operator only has a non-zero main diagonal (offset=0).
+        """
+        return len(self.offsets) == 1 and self.offsets[0] == 0
+
+    @property
+    def inverse(self) -> "DiagonalSparseMatrixLinearOperator":
+        """
+        The inverse of the operator, computed via functional calculus.
+        Requires the operator to be strictly diagonal with no zero entries.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Inverse is only implemented for strictly diagonal operators."
+            )
+
+        if np.any(self._matrix.diagonal(k=0) == 0):
+            raise ValueError("Cannot invert an operator with zeros on the diagonal.")
+
+        return self**-1
+
+    @property
+    def sqrt(self) -> "DiagonalSparseMatrixLinearOperator":
+        """
+        The square root of the operator, computed via functional calculus.
+        Requires the operator to be strictly diagonal with non-negative entries.
+        """
+
+        if np.any(self._matrix.data < 0):
+            raise ValueError(
+                "Cannot take the square root of an operator with negative entries."
+            )
+
+        return self.__getattr__("sqrt")()
+
+    def extract_diagonals(
+        self,
+        offsets: List[int],
+        /,
+        *,
+        galerkin: bool = True,
+        # parallel and n_jobs are ignored but kept for signature consistency
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Tuple[np.ndarray, List[int]]:
+        """
+        Overrides the base method for extreme efficiency.
+
+        This operation is nearly free, as it involves selecting the requested
+        diagonals from the data already stored in the native format.
+        """
+        if galerkin != self.is_galerkin:
+            return super().extract_diagonals(offsets, galerkin=galerkin)
+
+        # Create a result array and fill it with the requested stored diagonals
+        result_diagonals = np.zeros((len(offsets), self.domain.dim))
+
+        # Create a mapping from stored offset to its data row for quick lookup
+        stored_diagonals = dict(zip(self.offsets, self._matrix.data))
+
+        for i, k in enumerate(offsets):
+            if k in stored_diagonals:
+                result_diagonals[i, :] = stored_diagonals[k]
+
+        return result_diagonals, offsets
+
+    def __getattr__(self, name: str):
+        """
+        Dynamically proxies method calls to the underlying dia_array.
+
+        For element-wise mathematical functions that return a new operator,
+        this method enforces that the operator must be strictly diagonal.
+        """
+        attr = getattr(self._matrix, name)
+
+        if callable(attr):
+
+            def wrapper(*args, **kwargs):
+                result = attr(*args, **kwargs)
+
+                if isinstance(result, sp.sparray):
+                    # NEW: Enforce strictly diagonal for element-wise functions
+                    if not self.is_strictly_diagonal:
+                        raise NotImplementedError(
+                            f"Element-wise function '{name}' is only defined for "
+                            "strictly diagonal operators."
+                        )
+
+                    return DiagonalSparseMatrixLinearOperator(
+                        self.domain,
+                        self.codomain,
+                        (result.data, result.offsets),
+                        galerkin=self.is_galerkin,
+                    )
+                else:
+                    return result
+
+            return wrapper
+        else:
+            return attr
+
+    def __abs__(self):
+        """Explicitly handle the built-in abs() function."""
+        return self.__getattr__("__abs__")()
+
+    def __pow__(self, power):
+        """Explicitly handle the power operator (**)."""
+        return self.__getattr__("__pow__")(power)
+
+
 class DiagonalLinearOperator(LinearOperator):
     """A LinearOperator whose Galerkin representation is diagonal.
 
@@ -1113,7 +1686,7 @@ class DiagonalLinearOperator(LinearOperator):
         self,
         /,
         *,
-        galerkin: bool = True,
+        galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> np.ndarray:
@@ -1130,7 +1703,7 @@ class DiagonalLinearOperator(LinearOperator):
         offsets: List[int],
         /,
         *,
-        galerkin: bool = True,
+        galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[np.ndarray, List[int]]:
@@ -1169,15 +1742,12 @@ class NormalSumOperator(LinearOperator):
         B: Optional[LinearOperator] = None,
     ) -> None:
 
-        # This operator's domain is the codomain of A.
         op_domain = A.codomain
 
         if Q is None:
-            # Q must be an operator on the domain of A.
             Q = A.domain.identity_operator()
 
         if B is None:
-            # B must be an operator on the codomain of A.
             B = op_domain.zero_operator()
 
         if A.domain != Q.domain:
@@ -1189,7 +1759,6 @@ class NormalSumOperator(LinearOperator):
         self._Q = Q
         self._B = B
 
-        # The compositional definition now works with correct dimensions.
         composite_op = self._A @ self._Q @ self._A.adjoint + self._B
 
         super().__init__(
@@ -1207,40 +1776,30 @@ class NormalSumOperator(LinearOperator):
         implementation leveraging the base class's methods.
         """
         if not galerkin:
-            # The optimization is specific to the Galerkin representation.
-            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)  #
+            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)
 
-        domain_Y = self._A.codomain  #
-        dim = self.domain.dim  #
+        domain_Y = self._A.codomain
+        dim = self.domain.dim
         jobs = n_jobs if parallel else 1
 
-        # Step 1: Get component vectors c(v_j) where v_j = A*(e_j)
-        print("Step 1: Computing components of v_j = A*(e_j)...")
         a_star_mat = self._A.adjoint.matrix(
             dense=True, galerkin=False, parallel=parallel, n_jobs=n_jobs
-        )  #
+        )
 
-        # Step 2: Reconstruct v_j vectors and compute w_j = Q(v_j)
-        print("Step 2: Computing w_j = Q(v_j)...")
-        v_vectors = [domain_Y.from_components(a_star_mat[:, j]) for j in range(dim)]  #
-        w_vectors = Parallel(n_jobs=jobs)(delayed(self._Q)(v_j) for v_j in v_vectors)  #
-
-        # Step 3: Compute the inner product matrix M_AQA = <v_i, w_j>
-        print("Step 3: Computing inner product matrix M_AQA...")
+        v_vectors = [domain_Y.from_components(a_star_mat[:, j]) for j in range(dim)]
+        w_vectors = Parallel(n_jobs=jobs)(delayed(self._Q)(v_j) for v_j in v_vectors)
 
         def compute_row(i: int) -> np.ndarray:
             """Computes the i-th row of the inner product matrix."""
             v_i = v_vectors[i]
-            return np.array([domain_Y.inner_product(v_i, w_j) for w_j in w_vectors])  #
+            return np.array([domain_Y.inner_product(v_i, w_j) for w_j in w_vectors])
 
         rows = Parallel(n_jobs=jobs)(delayed(compute_row)(i) for i in range(dim))
         m_aqa_mat = np.vstack(rows)
 
-        # Step 4: Compute B_mat
-        print("Step 4: Computing matrix for B...")
         b_mat = self._B.matrix(
             dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
-        )  #
+        )
 
         return m_aqa_mat + b_mat
 
@@ -1248,7 +1807,7 @@ class NormalSumOperator(LinearOperator):
         self,
         /,
         *,
-        galerkin: bool = True,
+        galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> np.ndarray:
@@ -1282,7 +1841,7 @@ class NormalSumOperator(LinearOperator):
         offsets: List[int],
         /,
         *,
-        galerkin: bool = True,
+        galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[np.ndarray, List[int]]:
