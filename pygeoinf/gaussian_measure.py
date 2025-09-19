@@ -65,29 +65,29 @@ class GaussianMeasure:
         inverse_covariance_factor: LinearOperator = None,
     ) -> None:
         """
-        Initializes the GaussianMeasure.
+         Initializes the GaussianMeasure.
 
         The measure can be defined in several ways, primarily by providing
-        either a covariance operator or a covariance factor.
+         either a covariance operator or a covariance factor.
 
-        Args:
-            covariance (LinearOperator, optional): A self-adjoint and positive
-                semi-definite linear operator on the domain.
-            covariance_factor (LinearOperator, optional): A linear operator L
-                such that the covariance C = L @ L*.
-            expectation (vector, optional): The expectation (mean) of the
-                measure. Defaults to the zero vector of the space.
-            sample (callable, optional): A function that returns a random
-                sample from the measure. If a `covariance_factor` is given,
-                a default sampler is created.
-            inverse_covariance (LinearOperator, optional): The inverse of the
-                covariance operator (the precision operator).
-            inverse_covariance_factor (LinearOperator, optional): A factor Li
-                of the inverse covariance, such that C_inv = Li.T @ Li.
+         Args:
+             covariance (LinearOperator, optional): A self-adjoint and positive
+                 semi-definite linear operator on the domain.
+             covariance_factor (LinearOperator, optional): A linear operator L
+                 such that the covariance C = L @ L*.
+             expectation (vector, optional): The expectation (mean) of the
+                 measure. Defaults to the zero vector of the space.
+             sample (callable, optional): A function that returns a random
+                 sample from the measure. If a `covariance_factor` is given,
+                 a default sampler is created.
+             inverse_covariance (LinearOperator, optional): The inverse of the
+                 covariance operator (the precision operator).
+             inverse_covariance_factor (LinearOperator, optional): A factor Li
+                 of the inverse covariance, such that C_inv = Li.T @ Li.
 
-        Raises:
-            ValueError: If neither `covariance` nor `covariance_factor`
-                is provided.
+         Raises:
+             ValueError: If neither `covariance` nor `covariance_factor`
+                 is provided.
         """
         if covariance is None and covariance_factor is None:
             raise ValueError(

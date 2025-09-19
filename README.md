@@ -43,22 +43,15 @@ git clone https://github.com/da380/pygeoinf.git
 cd pygeoinf
 poetry install
 ```
-
-You can install the optional dependencies for running tests, building documentation, or running the tutorials by using the --with flag.
+You can install all optional dependencies for development—including tools for running the test suite, 
+building the documentation, and running the Jupyter tutorials—by using the ```--with``` flag and specifying the ```dev``` group.
 
 ```bash
-# To install dependencies for running the test suite
-poetry install --with tests
-
-# To install dependencies for building the documentation
-poetry install --with docs
-
-# To install dependencies for running the Jupyter tutorials
-poetry install --with tutorials
-
-# You can also combine them
-poetry install --with tests,docs,tutorials
+# Install all development dependencies (for tests, docs, and tutorials)
+poetry install --with dev
 ```
+
+
 
 ## Documentation
 
@@ -224,9 +217,9 @@ The output of the above script will look similar to the following figure:
 
 ## Future Plans
 
-`pygeoinf` is under active development. Future work will focus on expanding the library's capabilities to address a broader range of geophysical problems. Key areas for development include:
+`pygeoinf` is under active development. Current work is focused on expanding the library's capabilities to address a broader range of geophysical problems. Key areas for development include:
 
-* **Generalised Backus-Gilbert Methods**: Implementation of a generalised Backus-Gilbert framework for linear inference problems, building on the work of [Al-Attar(2021)](https://arxiv.org/abs/2104.12256). The focus will be on constructing direct estimates of specific properties of interest (i.e., linear functionals of the model) from data, without needing to first solve for the full model itself.
+* **Generalised Backus-Gilbert Methods**: Implementation of a generalised Backus-Gilbert framework for linear inference problems. The focus will be on constructing direct estimates of specific properties of interest (i.e., linear functionals of the model) from data, without needing to first solve for the full model itself.
 
 * **Non-linear Optimisation**: Extension of the current optimisation framework to handle non-linear inverse problems. This will involve creating a general interface where users can provide their own non-linear forward mapping, a misfit functional, and methods for computing gradients (and optionally Hessians) for use in gradient-based optimisation algorithms.
 

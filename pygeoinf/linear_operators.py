@@ -507,22 +507,34 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
                     return self.domain.dual.to_components(xp)
 
             def matmat(xmat: np.ndarray) -> np.ndarray:
-                n, k = xmat.shape
-                assert n == self.domain.dim
-                ymat = np.zeros((self.codomain.dim, k))
-                for j in range(k):
-                    cx = xmat[:, j]
-                    ymat[:, j] = matvec(cx)
-                return ymat
+                _n, k = xmat.shape
+                assert _n == self.domain.dim
+
+                if not parallel:
+                    ymat = np.zeros((self.codomain.dim, k))
+                    for j in range(k):
+                        ymat[:, j] = matvec(xmat[:, j])
+                    return ymat
+                else:
+                    result_cols = Parallel(n_jobs=n_jobs)(
+                        delayed(matvec)(xmat[:, j]) for j in range(k)
+                    )
+                    return np.column_stack(result_cols)
 
             def rmatmat(ymat: np.ndarray) -> np.ndarray:
-                m, k = ymat.shape
-                assert m == self.codomain.dim
-                xmat = np.zeros((self.domain.dim, k))
-                for j in range(k):
-                    cy = ymat[:, j]
-                    xmat[:, j] = rmatvec(cy)
-                return xmat
+                _m, k = ymat.shape
+                assert _m == self.codomain.dim
+
+                if not parallel:
+                    xmat = np.zeros((self.domain.dim, k))
+                    for j in range(k):
+                        xmat[:, j] = rmatvec(ymat[:, j])
+                    return xmat
+                else:
+                    result_cols = Parallel(n_jobs=n_jobs)(
+                        delayed(rmatvec)(ymat[:, j]) for j in range(k)
+                    )
+                    return np.column_stack(result_cols)
 
             return ScipyLinOp(
                 (self.codomain.dim, self.domain.dim),
@@ -1191,7 +1203,6 @@ class MatrixLinearOperator(LinearOperator):
         """
 
         if self.is_dense and galerkin == self.is_galerkin:
-            print("Hi")
             dim = self.domain.dim
 
             diagonals_array = np.zeros((len(offsets), dim))
@@ -1241,6 +1252,37 @@ class DenseMatrixLinearOperator(MatrixLinearOperator):
             raise ValueError("Matrix must be input in dense form.")
 
         super().__init__(domain, codomain, matrix, galerkin=galerkin)
+
+    @staticmethod
+    def from_linear_operator(
+        operator: LinearOperator,
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> DenseMatrixLinearOperator:
+        """
+        Converts a LinearOperator into a DenseMatrixLinearOperator by forming its dense matrix representation.
+
+        Args:
+            operator: The operator to be converted.
+            galerkin: If True, the Galerkin representation is used. Default is False.
+            parallel: If True, dense matrix calculation is done in parallel. Default is False.
+            n_jobs: Number of jobs used for parallel calculations. Default is False.
+        """
+
+        if isinstance(operator, DenseMatrixLinearOperator):
+            return operator
+
+        domain = operator.domain
+        codomain = operator.codomain
+
+        matrix = operator.matrix(
+            dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+        )
+
+        return DenseMatrixLinearOperator(domain, codomain, matrix, galerkin=galerkin)
 
     def __getitem__(self, key: tuple[int, int] | int | slice) -> float | np.ndarray:
         """
