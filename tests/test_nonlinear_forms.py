@@ -68,7 +68,6 @@ class TestNonLinearForm:
         self, space: HilbertSpace, quadratic_form: NonLinearForm, x: Vector
     ):
         """Tests that the form's action on a vector is correct."""
-        x_components = space.to_components(x)
         expected_value = space.inner_product(x, x)
         actual_value = quadratic_form(x)
         assert np.isclose(actual_value, expected_value)

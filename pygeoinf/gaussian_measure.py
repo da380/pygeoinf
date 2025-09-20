@@ -20,7 +20,7 @@ Key Features
 """
 
 from __future__ import annotations
-from typing import Callable, Optional, Any, List
+from typing import Callable, Optional, Any, List, TYPE_CHECKING
 
 import numpy as np
 from scipy.linalg import eigh
@@ -38,6 +38,12 @@ from .linear_operators import (
 from .direct_sum import (
     BlockDiagonalLinearOperator,
 )
+
+
+# This block is only processed by type checkers, not at runtime.
+if TYPE_CHECKING:
+    from .hilbert_space import HilbertSpace
+    from .typing import Vector
 
 
 class GaussianMeasure:

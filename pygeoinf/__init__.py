@@ -85,3 +85,70 @@ from .backus_gilbert import HyperEllipsoid
 from .nonlinear_optimisation import (
     ScipyUnconstrainedOptimiser,
 )
+
+
+__all__ = [
+    # random_matrix
+    "fixed_rank_random_range",
+    "variable_rank_random_range",
+    "random_range",
+    "random_svd",
+    "random_eig",
+    "random_cholesky",
+    "random_diagonal",
+    # hilbert_space
+    "HilbertSpace",
+    "DualHilbertSpace",
+    "EuclideanSpace",
+    "HilbertModule",
+    "MassWeightedHilbertSpace",
+    "MassWeightedHilbertModule",
+    # nonlinear_forms
+    "NonLinearForm",
+    # linear_forms
+    "LinearForm",
+    # nonlinear_operators
+    "NonLinearOperator",
+    # linear_operators
+    "LinearOperator",
+    "MatrixLinearOperator",
+    "DenseMatrixLinearOperator",
+    "SparseMatrixLinearOperator",
+    "DiagonalSparseMatrixLinearOperator",
+    "NormalSumOperator",
+    # gaussian_measure
+    "GaussianMeasure",
+    # direct_sum
+    "HilbertSpaceDirectSum",
+    "BlockStructure",
+    "BlockLinearOperator",
+    "ColumnLinearOperator",
+    "RowLinearOperator",
+    "BlockDiagonalLinearOperator",
+    # linear_solvers
+    "LinearSolver",
+    "DirectLinearSolver",
+    "LUSolver",
+    "CholeskySolver",
+    "EigenSolver",
+    "IterativeLinearSolver",
+    "ScipyIterativeSolver",
+    "CGMatrixSolver",
+    "BICGMatrixSolver",
+    "BICGStabMatrixSolver",
+    "GMRESMatrixSolver",
+    "CGSolver",
+    # forward_problem
+    "ForwardProblem",
+    "LinearForwardProblem",
+    # linear_optimisation
+    "LinearLeastSquaresInversion",
+    "LinearMinimumNormInversion",
+    # linear_bayesian
+    "LinearBayesianInversion",
+    "LinearBayesianInference",
+    # backus_gilbert
+    "HyperEllipsoid",
+    # nonlinear_optimisation
+    "ScipyUnconstrainedOptimiser",
+]

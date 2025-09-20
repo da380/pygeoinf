@@ -35,3 +35,15 @@ ruff = "^0.5.5"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+
+# --- Added Ruff Configuration ---
+[tool.ruff]
+
+[tool.ruff.lint.per-file-ignores]
+# For any file in the "tests/" directory, ignore the lambda assignment warning (E731).
+"tests/*" = ["E731", "E741"]
+
+# For the sphere.py file, where 'l' is a common variable name for spherical
+# harmonic degree, ignore the ambiguous variable name warning (E741).
+"pygeoinf/symmetric_space/sphere.py" = ["E741"]
