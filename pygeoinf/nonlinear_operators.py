@@ -8,7 +8,7 @@ algebraic operations and an interface for the Frécher derivative.
 """
 
 from __future__ import annotations
-from typing import Callable, Optional, Any, TYPE_CHECKING
+from typing import Callable, Any, TYPE_CHECKING
 
 
 from .checks.nonlinear_operators import NonLinearOperatorAxiomChecks
@@ -16,7 +16,7 @@ from .checks.nonlinear_operators import NonLinearOperatorAxiomChecks
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, EuclideanSpace, Vector
+    from .hilbert_space import HilbertSpace, Vector
     from .linear_operators import LinearOperator
 
 

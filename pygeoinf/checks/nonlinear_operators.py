@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from ..linear_operators import LinearOperator
+    pass
 
 
 class NonLinearOperatorAxiomChecks:

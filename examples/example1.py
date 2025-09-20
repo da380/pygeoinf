@@ -6,7 +6,6 @@ from cartopy import crs as ccrs
 from pygeoinf import (
     GaussianMeasure,
     LinearForwardProblem,
-    LinearLeastSquaresInversion,
     LinearMinimumNormInversion,
     CGSolver,
     CholeskySolver,

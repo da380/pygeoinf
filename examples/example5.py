@@ -1,7 +1,6 @@
-import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.symmetric_space.sphere import Sobolev, Lebesgue
+from pygeoinf.symmetric_space.sphere import Sobolev
 
 
 model_space = Sobolev(64, 2, 0.1)

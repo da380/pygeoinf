@@ -20,7 +20,7 @@ Key Features
 """
 
 from __future__ import annotations
-from typing import Callable, Optional, Any, List, TypeVar, TYPE_CHECKING
+from typing import Callable, Optional, Any, List
 
 import numpy as np
 from scipy.linalg import eigh
