@@ -29,10 +29,16 @@ import matplotlib.ticker as mticker
 import numpy as np
 from scipy.sparse import diags, coo_array
 
-import pyshtools as sh
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+try:
+    import pyshtools as sh
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+except ImportError:
+    raise ImportError(
+        "pyshtools and cartopy are required for the sphere module. "
+        "Please install them with 'pip install pygeoinf[sphere]'"
+    )
 
 from pygeoinf.hilbert_space import (
     HilbertModule,
