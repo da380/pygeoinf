@@ -26,8 +26,14 @@ The library is built on a few key concepts:
 * **Optimisation Methods**: Includes Tikhonov-regularized least-squares and minimum-norm solutions.
 * **Probabilistic Modelling**: Define priors and noise models using `GaussianMeasure` objects on abstract spaces.
 * **Randomized Algorithms**: Utilizes randomized SVD and Cholesky decompositions for efficient low-rank approximations of large operators.
+* **Specialized Operator Variants**: Efficient implementations for `DiagonalSparseMatrixLinearOperator` and `NormalSumOperator`.
 * **Application-Specific Spaces**: Provides concrete `HilbertSpace` implementations for functions on a **line**, **circle**, and the **two-sphere**.
 * **High-Quality Visualisation**: Built-in plotting methods for functions on symmetric spaces, including map projections via `cartopy`.
+
+## Advanced Features
+
+* **Block Operators**: Construct complex operators from smaller components using `BlockLinearOperator`, `ColumnLinearOperator`, and `RowLinearOperator`. This is ideal for coupled inverse problems.
+* **Parallelisation**: Many expensive operations are parallelized with `joblib`, including dense matrix construction and randomized algorithms.
 
 ## Installation
 
@@ -215,17 +221,23 @@ The output of the above script will look similar to the following figure:
 * pyshtools (for `sphere.py`)
 * Cartopy (for plotting in `sphere.py`)
 
+## Recent Updates
+
+`pygeoinf` is under active development, and recent updates have expanded its capabilities to address a broader range of geophysical problems. Key improvements include:
+
+* **Non-Linear Inverse Problems**: The library now supports non-linear inverse problems through the `NonLinearOperator` and `NonLinearForm` classes. This allows you to define and solve problems where the relationship between model parameters and data is non-linear. The framework includes support for Fréchet derivatives, enabling the use of gradient-based optimisation methods.
+
+* **Advanced Optimisation Algorithms**: To complement the non-linear framework, `pygeoinf` now includes a suite of optimisation algorithms. You can use the custom `GradientDescent` solver or leverage the power of SciPy's optimization library with methods like 'BFGS', 'L-BFGS-B', and 'Newton-CG'. Derivative-free methods such as 'Powell' and 'Nelder-Mead' are also supported for problems where gradients are unavailable.
+
+* **Backus-Gilbert Methods**: The foundations for the Backus-Gilbert method have been implemented. While this feature is still evolving, the core components are in place for you to begin exploring this powerful inference technique.
+
 ## Future Plans
 
-`pygeoinf` is under active development. Current work is focused on expanding the library's capabilities to address a broader range of geophysical problems. Key areas for development include:
+Future development will focus on the following areas:
 
-* **Generalised Backus-Gilbert Methods**: Implementation of a generalised Backus-Gilbert framework for linear inference problems. The focus will be on constructing direct estimates of specific properties of interest (i.e., linear functionals of the model) from data, without needing to first solve for the full model itself.
+* **Non-linear Bayesian Inference**: We plan to develop methods for non-linear Bayesian problems, including techniques for linearizing the problem around the maximum a posteriori (MAP) solution to estimate posterior uncertainty. This will also involve constructing efficient proposal distributions for Markov chain Monte Carlo (MCMC) sampling methods.
 
-* **Non-linear Optimisation**: Extension of the current optimisation framework to handle non-linear inverse problems. This will involve creating a general interface where users can provide their own non-linear forward mapping, a misfit functional, and methods for computing gradients (and optionally Hessians) for use in gradient-based optimisation algorithms.
-
-* **Non-linear Bayesian Inference**: Development of methods for non-linear Bayesian problems. Planned approaches include linearizing the problem around the maximum a posteriori (MAP) solution to estimate posterior uncertainty, and using this linearization to construct efficient proposal distributions for Markov chain Monte Carlo (MCMC) sampling methods.
-
-* **New Geophysical Hilbert Spaces**: Addition of further `HilbertSpace` implementations tailored to specific geophysical applications. A primary focus will be on creating spaces for functions defined within a **spherical annulus** (spherical shell), which is essential for problems in global seismology and mantle tomography.
+* **New Geophysical Hilbert Spaces**: We will be adding more `HilbertSpace` implementations for specific geophysical applications. A key focus will be on creating spaces for functions defined within a **spherical annulus** (spherical shell), which is crucial for problems in global seismology and mantle tomography.
 
 
 ## Contributing
