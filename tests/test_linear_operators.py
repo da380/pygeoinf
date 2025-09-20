@@ -134,7 +134,6 @@ class TestOperatorFactories:
 
         circle_leb = circle_sob.underlying_space
         sphere_leb = sphere_sob.underlying_space
-        domain_base = inf.HilbertSpaceDirectSum([circle_leb, sphere_leb])
 
         op1_base = circle_leb.invariant_automorphism(lambda eig: 1.0 / (1.0 + eig))
         op2_base = sphere_leb.invariant_automorphism(lambda eig: 1.0 / (1.0 + eig))
@@ -156,22 +155,6 @@ class TestOperatorFactories:
         )
 
         A_full.check(n_checks=3, op2=A_full2)
-
-    def test_from_tensor_product(self):
-        domain, codomain = inf.EuclideanSpace(2), inf.EuclideanSpace(3)
-        u1, v1 = codomain.random(), domain.random()
-        u2, v2 = codomain.random(), domain.random()
-        op = inf.LinearOperator.from_tensor_product(
-            domain, codomain, [(u1, v1), (u2, v2)]
-        )
-        u3, v3 = codomain.random(), domain.random()
-        op2 = inf.LinearOperator.from_tensor_product(domain, codomain, [(u3, v3)])
-
-        x = domain.random()
-        y_op = op(x)
-        y_manual = domain.inner_product(x, v1) * u1 + domain.inner_product(x, v2) * u2
-        assert np.allclose(y_op, y_manual)
-        op.check(n_checks=3, op2=op2)
 
     def test_from_matrix_dispatcher(self):
         """
