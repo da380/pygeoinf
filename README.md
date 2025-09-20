@@ -37,11 +37,20 @@ The library is built on a few key concepts:
 
 ## Installation
 
-The package can be installed directly using pip:
+The package can be installed directly using pip. By default, this will perform a minimal installation.
 
 ```bash
+# Minimal installation
 pip install pygeoinf
 ```
+
+To include the functionality for functions on the sphere, you can install the `sphere` extra. This provides support for `pyshtools` and `Cartopy`.
+
+```bash
+# Installation with sphere-related features
+pip install pygeoinf[sphere]
+```
+
 For development, you can clone the repository and install using Poetry:
 
 ```bash
@@ -49,6 +58,7 @@ git clone https://github.com/da380/pygeoinf.git
 cd pygeoinf
 poetry install
 ```
+
 You can install all optional dependencies for development—including tools for running the test suite, 
 building the documentation, and running the Jupyter tutorials—by using the ```--with``` flag and specifying the ```dev``` group.
 
@@ -218,8 +228,12 @@ The output of the above script will look similar to the following figure:
 * NumPy
 * SciPy
 * Matplotlib
-* pyshtools (for `sphere.py`)
-* Cartopy (for plotting in `sphere.py`)
+* joblib
+
+### Optional (`sphere`)
+
+* pyshtools
+* Cartopy
 
 ## Recent Updates
 
