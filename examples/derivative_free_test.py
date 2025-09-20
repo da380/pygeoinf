@@ -17,7 +17,7 @@ def objective_function(x):
 x0 = np.zeros(dim)
 
 print("--- Testing SciPy's derivative-free optimizers directly ---")
-print(f"Problem: Minimize sum( (i+1) * (x_i - (i+1))^2 )")
+print("Problem: Minimize sum( (i+1) * (x_i - (i+1))^2 )")
 print(f"Initial guess (x0): {x0}")
 print(f"True minimum:       {shifts}")
 

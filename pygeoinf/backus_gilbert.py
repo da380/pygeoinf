@@ -8,8 +8,6 @@ from .hilbert_space import HilbertSpace, Vector
 from .linear_operators import LinearOperator
 from .nonlinear_forms import NonLinearForm
 
-from .forward_problem import LinearForwardProblem
-from .inversion import LinearInference
 
 
 class HyperEllipsoid:

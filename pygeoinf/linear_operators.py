@@ -25,7 +25,6 @@ from collections import defaultdict
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-from scipy.sparse import diags
 
 
 from joblib import Parallel, delayed
@@ -46,7 +45,7 @@ from .checks.linear_operators import LinearOperatorAxiomChecks
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, EuclideanSpace
+    from .hilbert_space import HilbertSpace
     from .linear_forms import LinearForm
 
 

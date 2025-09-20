@@ -18,7 +18,7 @@ from .nonlinear_forms import NonLinearForm
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, EuclideanSpace, Vector
+    from .hilbert_space import HilbertSpace, Vector
     from .linear_operators import LinearOperator
 
 

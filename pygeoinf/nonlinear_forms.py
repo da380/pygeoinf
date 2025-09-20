@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
     from .linear_forms import LinearForm
     from .linear_operators import LinearOperator
-    from .nonlinear_operators import NonLinearOperator
 
 
 class NonLinearForm:

@@ -26,12 +26,10 @@ from abc import ABC, abstractmethod
 from typing import List, Any
 import numpy as np
 from scipy.linalg import block_diag
-from joblib import Parallel, delayed
 
 from .hilbert_space import HilbertSpace
 from .linear_operators import LinearOperator
 from .linear_forms import LinearForm
-from .parallel import parallel_compute_dense_matrix_from_scipy_op
 
 
 class HilbertSpaceDirectSum(HilbertSpace):
