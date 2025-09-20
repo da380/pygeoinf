@@ -59,3 +59,4 @@ Merging the PR does **not** publish the package. The final step is to create a "
 Once the release is published, the `publish.yml` GitHub Action will automatically run, build the package, and upload it to PyPI.
 
 
+### 4. Restrictions
