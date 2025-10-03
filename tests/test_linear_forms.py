@@ -99,6 +99,15 @@ class TestLinearForm:
         computed_components = form_from_mapping.components
         assert_allclose(computed_components, components)
 
+    def test_parallel_component_computation(
+        self, space: HilbertSpace, components: np.ndarray
+    ):
+        """Tests that components are computed correctly using the parallel backend."""
+        mapping = lambda vec: np.dot(components, space.to_components(vec))
+        form = LinearForm(space, mapping=mapping, parallel=True, n_jobs=-1)
+        computed_components = form.components
+        assert_allclose(computed_components, components)
+
     def test_addition(
         self, form_from_components: LinearForm, form_from_mapping: LinearForm, x: Vector
     ):
@@ -206,3 +215,62 @@ class TestLinearForm:
         assert isinstance(operator_value, np.ndarray)
         assert operator_value.shape == (1,)
         assert np.isclose(form_value, operator_value[0])
+
+    def test_gradient_is_constant(
+        self, space: HilbertSpace, form_from_components: LinearForm, x: Vector
+    ):
+        """Tests that the gradient of a linear form is a constant vector."""
+        # The gradient of a linear form f(x) = c · x is the constant vector c.
+        # The implementation returns this vector via space.from_dual(form).
+        grad_vector = form_from_components.gradient(x)
+        form_as_vector = space.from_dual(form_from_components)
+
+        # The components of the gradient should match the components of the form.
+        assert_allclose(
+            space.to_components(form_as_vector), space.to_components(grad_vector)
+        )
+
+    def test_hessian_is_zero_operator(
+        self, space: HilbertSpace, form_from_components: LinearForm, x: Vector
+    ):
+        """Tests that the Hessian of a linear form is the zero operator."""
+        # The Hessian (second derivative) of a linear function is zero.
+        hessian_operator = form_from_components.hessian(x)
+
+        # Applying the zero operator to any vector should yield the zero vector.
+        zero_vector = hessian_operator(x)
+        expected_zero_components = np.zeros(space.dim)
+
+        assert_allclose(space.to_components(zero_vector), expected_zero_components)
+
+    def test_addition_with_nonlinear_form(
+        self, space: HilbertSpace, form_from_components: LinearForm, x: Vector
+    ):
+        """Tests adding a LinearForm to a general NonLinearForm."""
+        from pygeoinf.nonlinear_forms import NonLinearForm
+
+        # Create a simple quadratic form: f(x) = x · x
+        quadratic_mapping = lambda v: np.dot(
+            space.to_components(v), space.to_components(v)
+        )
+        nonlinear_form = NonLinearForm(space, quadratic_mapping)
+
+        linear_form = form_from_components
+
+        # The result should be a general NonLinearForm, not a LinearForm
+        sum_form = linear_form + nonlinear_form
+        assert isinstance(sum_form, NonLinearForm)
+        assert not isinstance(sum_form, LinearForm)
+
+        # Verify the action of the resulting form
+        expected = linear_form(x) + nonlinear_form(x)
+        assert np.isclose(sum_form(x), expected)
+
+    def test_scalar_division(self, form_from_components: LinearForm, x: Vector):
+        """Tests scalar division: (f / a)(x) = f(x) / a."""
+        scalar = -3.0
+        divided_form = form_from_components / scalar
+        assert np.isclose(divided_form(x), form_from_components(x) / scalar)
+        assert_allclose(
+            divided_form.components, form_from_components.components / scalar
+        )

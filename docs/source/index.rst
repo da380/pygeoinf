@@ -6,7 +6,8 @@ pygeoinf: A Python Library for Geophysical Inference
 
 **pygeoinf** is a Python library for solving geophysical inference and inverse problems in a coordinate-free, abstract framework. It leverages the mathematics of Hilbert spaces to provide a robust and flexible foundation for Bayesian and optimisation-based inference.
 
-## Overview
+Overview
+========
 
 The core philosophy of `pygeoinf` is to separate the abstract mathematical structure of an inverse problem from its concrete numerical implementation. Instead of manipulating NumPy arrays directly, you work with high-level objects like `HilbertSpace`, `LinearOperator`, and `GaussianMeasure`. This allows you to write code that is more readable, less error-prone, and closer to the underlying mathematics.
 
@@ -17,8 +18,9 @@ The library is built on a few key concepts:
 * **`GaussianMeasure`**: Generalizes the multivariate normal distribution to abstract Hilbert spaces, providing a way to define priors and noise models.
 * **`ForwardProblem`**: Encapsulates the mathematical model `d = A(u) + e`, linking the unknown model `u` to the observed data `d`.
 * **Inversion Classes**: High-level classes like `LinearBayesianInversion` and `LinearLeastSquaresInversion` provide ready-to-use algorithms for solving the inverse problem.
-
-## Key Features
+ 
+Key Features
+============
 
 * **Abstract Coordinate-Free Formulation**: Write elegant code that mirrors the mathematics of inverse problems.
 * **Bayesian Inference**: Solve inverse problems in a probabilistic framework to obtain posterior distributions over models.
@@ -37,10 +39,11 @@ The library is built on a few key concepts:
    tutorials
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 4
    :caption: API Reference
    :hidden:
 
-   api/modules
+   modules
+
 
    

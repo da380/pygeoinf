@@ -24,12 +24,14 @@ from scipy.stats import chi2
 
 from .gaussian_measure import GaussianMeasure
 from .direct_sum import ColumnLinearOperator
+from .linear_operators import LinearOperator
+
 
 # This block only runs for type checkers, not at runtime, to prevent
 # circular import errors while still allowing type hints.
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
-    from .operators import LinearOperator
+    from .nonlinear_operators import NonLinearOperator
 
 
 class ForwardProblem:
@@ -43,10 +45,10 @@ class ForwardProblem:
 
     def __init__(
         self,
-        forward_operator: LinearOperator,
+        forward_operator: NonLinearOperator,
         /,
         *,
-        data_error_measure: Optional["GaussianMeasure"] = None,
+        data_error_measure: Optional[GaussianMeasure] = None,
     ) -> None:
         """Initializes the ForwardProblem.
 
@@ -57,8 +59,8 @@ class ForwardProblem:
                 from which data errors are assumed to be drawn. If None, the
                 data is considered to be error-free.
         """
-        self._forward_operator: LinearOperator = forward_operator
-        self._data_error_measure: Optional["GaussianMeasure"] = data_error_measure
+        self._forward_operator: NonLinearOperator = forward_operator
+        self._data_error_measure: Optional[GaussianMeasure] = data_error_measure
         if self.data_error_measure_set:
             if self.data_space != data_error_measure.domain:
                 raise ValueError(
@@ -76,7 +78,7 @@ class ForwardProblem:
         return self._data_error_measure is not None
 
     @property
-    def data_error_measure(self) -> "GaussianMeasure":
+    def data_error_measure(self) -> GaussianMeasure:
         """The measure from which data errors are drawn."""
         if not self.data_error_measure_set:
             raise AttributeError("Data error measure has not been set.")
@@ -101,10 +103,31 @@ class LinearForwardProblem(ForwardProblem):
     and `e` is a random error drawn from a Gaussian distribution.
     """
 
+    def __init__(
+        self,
+        forward_operator: LinearOperator,
+        /,
+        *,
+        data_error_measure: Optional[GaussianMeasure] = None,
+    ) -> None:
+        """
+        Args:
+            forward_operator: The operator that maps from the model space to the
+                data space.
+            data_error_measure: A Gaussian measure representing the distribution
+                from which data errors are assumed to be drawn. If None, the
+                data is considered to be error-free.
+        """
+
+        if not isinstance(forward_operator, LinearOperator):
+            raise ValueError("Forward operator must be a linear operator.")
+
+        super().__init__(forward_operator, data_error_measure=data_error_measure)
+
     @staticmethod
     def from_direct_sum(
-        forward_problems: List["LinearForwardProblem"],
-    ) -> "LinearForwardProblem":
+        forward_problems: List[LinearForwardProblem],
+    ) -> LinearForwardProblem:
         """
         Forms a joint forward problem from a list of separate problems.
 
@@ -144,7 +167,7 @@ class LinearForwardProblem(ForwardProblem):
             joint_forward_operator, data_error_measure=data_error_measure
         )
 
-    def data_measure(self, model: "Vector") -> "GaussianMeasure":
+    def data_measure(self, model: Vector) -> GaussianMeasure:
         """
         Returns the Gaussian measure for the data, given a specific model.
 
@@ -165,7 +188,7 @@ class LinearForwardProblem(ForwardProblem):
             translation=self.forward_operator(model)
         )
 
-    def synthetic_data(self, model: "Vector") -> "Vector":
+    def synthetic_data(self, model: Vector) -> Vector:
         """
         Generates a synthetic data vector for a given model.
 
@@ -180,9 +203,7 @@ class LinearForwardProblem(ForwardProblem):
         """
         return self.data_measure(model).sample()
 
-    def synthetic_model_and_data(
-        self, prior: "GaussianMeasure"
-    ) -> Tuple["Vector", "Vector"]:
+    def synthetic_model_and_data(self, prior: GaussianMeasure) -> Tuple[Vector, Vector]:
         """
         Generates a random model and corresponding synthetic data.
 
@@ -216,25 +237,17 @@ class LinearForwardProblem(ForwardProblem):
         """
         return chi2.ppf(significance_level, self.data_space.dim)
 
-    def chi_squared(self, model: "Vector", data: "Vector") -> float:
+    def chi_squared_from_residual(self, residual: Vector) -> float:
         """
-        Calculates the chi-squared statistic for a given model and data.
+        Calculates the chi-squared statistic from a residual vector.
 
-        This measures the misfit between the predicted and observed data.
-        - If a data error measure with an inverse covariance `C_e^-1` is defined,
-          this is the weighted misfit: `(d - A(u))^T * C_e^-1 * (d - A(u))`.
-        - Otherwise, it is the squared L2 norm of the data residual: `||d - A(u)||^2`.
         Args:
-            model: A vector from the model space.
-            data: An observed data vector from the data space.
+            residual: The residual vector.
 
         Returns:
             The chi-squared statistic.
         """
-        residual = self.data_space.subtract(data, self.forward_operator(model))
-
         if self.data_error_measure_set:
-            # Center the residual with respect to the error measure's mean
             residual = self.data_space.subtract(
                 residual, self.data_error_measure.expectation
             )
@@ -243,11 +256,31 @@ class LinearForwardProblem(ForwardProblem):
                 inverse_data_covariance(residual), residual
             )
         else:
-            # Fallback to the squared L2 norm of the residual
             return self.data_space.squared_norm(residual)
 
+    def chi_squared(self, model: Vector, data: Vector) -> float:
+        """
+        Calculates the chi-squared statistic for a given model and data.
+
+        This measures the misfit between the predicted and observed data.
+
+        - If a data error measure with an inverse covariance `C_e^-1` is defined,
+          this is the weighted misfit: `(d - A(u))^T * C_e^-1 * (d - A(u))`.
+        - Otherwise, it is the squared L2 norm of the data residual: `||d - A(u)||^2`.
+
+        Args:
+            model: A vector from the model space.
+            data: An observed data vector from the data space.
+
+        Returns:
+            The chi-squared statistic.
+        """
+
+        residual = self.data_space.subtract(data, self.forward_operator(model))
+        return self.chi_squared_from_residual(residual)
+
     def chi_squared_test(
-        self, significance_level: float, model: "Vector", data: "Vector"
+        self, significance_level: float, model: Vector, data: Vector
     ) -> bool:
         """
         Performs a chi-squared test for goodness of fit.

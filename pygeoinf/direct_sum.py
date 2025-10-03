@@ -25,9 +25,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List, Any
 import numpy as np
+from scipy.linalg import block_diag
 
 from .hilbert_space import HilbertSpace
-from .operators import LinearOperator
+from .linear_operators import LinearOperator
 from .linear_forms import LinearForm
 
 
@@ -112,6 +113,16 @@ class HilbertSpaceDirectSum(HilbertSpace):
             return NotImplemented
 
         return self.subspaces == other.subspaces
+
+    def is_element(self, xs: Any) -> bool:
+        """
+        Checks if a list of vectors is a valid element of the direct sum space.
+        """
+        if not isinstance(xs, list):
+            return False
+        if len(xs) != self.number_of_subspaces:
+            return False
+        return all(space.is_element(x) for space, x in zip(self._spaces, xs))
 
     @property
     def subspaces(self) -> List[HilbertSpace]:
@@ -300,6 +311,23 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         self._check_block_indices(i, j)
         return self._blocks[i][j]
 
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """Overloaded method to efficiently compute the dense matrix for a block operator."""
+
+        block_matrices = [
+            [
+                self.block(i, j).matrix(
+                    dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+                )
+                for j in range(self.col_dim)
+            ]
+            for i in range(self.row_dim)
+        ]
+
+        return np.block(block_matrices)
+
     def __mapping(self, xs: List[Any]) -> List[Any]:
 
         ys = []
@@ -379,6 +407,16 @@ class ColumnLinearOperator(LinearOperator, BlockStructure):
             raise IndexError("Column index out of range for ColumnLinearOperator.")
         return self._operators[i]
 
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """Overloaded method to efficiently compute the dense matrix for a column operator."""
+        block_matrices = [
+            op.matrix(dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+            for op in self._operators
+        ]
+        return np.vstack(block_matrices)
+
 
 class RowLinearOperator(LinearOperator, BlockStructure):
     """
@@ -433,6 +471,16 @@ class RowLinearOperator(LinearOperator, BlockStructure):
             raise IndexError("Row index out of range for RowLinearOperator.")
         return self._operators[j]
 
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """Overloaded method to efficiently compute the dense matrix for a row operator."""
+        block_matrices = [
+            op.matrix(dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+            for op in self._operators
+        ]
+        return np.hstack(block_matrices)
+
 
 class BlockDiagonalLinearOperator(LinearOperator, BlockStructure):
     """
@@ -473,3 +521,13 @@ class BlockDiagonalLinearOperator(LinearOperator, BlockStructure):
             domain = self._operators[j].domain
             codomain = self._operators[i].codomain
             return domain.zero_operator(codomain)
+
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """Overloaded method to efficiently compute the dense matrix for a block-diagonal operator."""
+        block_matrices = [
+            op.matrix(dense=True, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+            for op in self._operators
+        ]
+        return block_diag(*block_matrices)

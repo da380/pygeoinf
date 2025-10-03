@@ -35,8 +35,8 @@ from typing import Callable, Any, List
 import numpy as np
 from scipy.sparse import diags
 
-from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
-from pygeoinf.operators import LinearOperator
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
 

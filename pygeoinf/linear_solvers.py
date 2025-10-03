@@ -24,15 +24,10 @@ from typing import Callable, Optional, Dict, Any
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
-from scipy.linalg import (
-    cho_factor,
-    cho_solve,
-    lu_factor,
-    lu_solve,
-)
+from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve, eigh
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
-from .operators import LinearOperator
+from .linear_operators import LinearOperator
 from .hilbert_space import Vector
 
 
@@ -48,6 +43,19 @@ class DirectLinearSolver(LinearSolver):
     factorization.
     """
 
+    def __init__(
+        self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
+    ):
+        """
+        Args:
+            galerkin (bool): If True, the Galerkin matrix representation is used.
+            parallel (bool): If True, parallel computation is used.
+            n_jobs (int): Number of parallel jobs.
+        """
+        self._galerkin: bool = galerkin
+        self._parallel: bool = parallel
+        self._n_jobs: int = n_jobs
+
 
 class LUSolver(DirectLinearSolver):
     """
@@ -55,12 +63,16 @@ class LUSolver(DirectLinearSolver):
     dense matrix representation.
     """
 
-    def __init__(self, /, *, galerkin: bool = False) -> None:
+    def __init__(
+        self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
+    ) -> None:
         """
         Args:
             galerkin (bool): If True, the Galerkin matrix representation is used.
+            parallel (bool): If True, parallel computation is used.
+            n_jobs (int): Number of parallel jobs.
         """
-        self._galerkin: bool = galerkin
+        super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
         """
@@ -74,7 +86,12 @@ class LUSolver(DirectLinearSolver):
         """
         assert operator.is_square
 
-        matrix = operator.matrix(dense=True, galerkin=self._galerkin)
+        matrix = operator.matrix(
+            dense=True,
+            galerkin=self._galerkin,
+            parallel=self._parallel,
+            n_jobs=self._n_jobs,
+        )
         factor = lu_factor(matrix, overwrite_a=True)
 
         def matvec(cy: np.ndarray) -> np.ndarray:
@@ -102,12 +119,16 @@ class CholeskySolver(DirectLinearSolver):
     representation is positive-definite.
     """
 
-    def __init__(self, /, *, galerkin: bool = False) -> None:
+    def __init__(
+        self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
+    ) -> None:
         """
         Args:
             galerkin (bool): If True, the Galerkin matrix representation is used.
+            parallel (bool): If True, parallel computation is used.
+            n_jobs (int): Number of parallel jobs.
         """
-        self._galerkin: bool = galerkin
+        super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
         """
@@ -121,7 +142,12 @@ class CholeskySolver(DirectLinearSolver):
         """
         assert operator.is_automorphism
 
-        matrix = operator.matrix(dense=True, galerkin=self._galerkin)
+        matrix = operator.matrix(
+            dense=True,
+            galerkin=self._galerkin,
+            parallel=self._parallel,
+            n_jobs=self._n_jobs,
+        )
         factor = cho_factor(matrix, overwrite_a=False)
 
         def matvec(cy: np.ndarray) -> np.ndarray:
@@ -136,10 +162,94 @@ class CholeskySolver(DirectLinearSolver):
         )
 
 
+class EigenSolver(DirectLinearSolver):
+    """
+    A direct linear solver based on the eigendecomposition of a symmetric operator.
+
+    This solver is robust for symmetric operators that may be singular or
+    numerically ill-conditioned. In such cases, it computes a pseudo-inverse by
+    regularizing the eigenvalues, treating those close to zero (relative to the largest
+    eigenvalue) as exactly zero.
+    """
+
+    def __init__(
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        rtol: float = 1e-12,
+    ) -> None:
+        """
+        Args:
+            galerkin (bool): If True, the Galerkin matrix representation is used.
+            parallel (bool): If True, parallel computation is used.
+            n_jobs (int): Number of parallel jobs.
+            rtol (float): Relative tolerance for treating eigenvalues as zero.
+                An eigenvalue `s` is treated as zero if
+                `abs(s) < rtol * max(abs(eigenvalues))`.
+        """
+        super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+        self._rtol = rtol
+
+    def __call__(self, operator: LinearOperator) -> LinearOperator:
+        """
+        Computes the pseudo-inverse of a self-adjoint LinearOperator.
+        """
+        assert operator.is_automorphism
+
+        matrix = operator.matrix(
+            dense=True,
+            galerkin=self._galerkin,
+            parallel=self._parallel,
+            n_jobs=self._n_jobs,
+        )
+
+        eigenvalues, eigenvectors = eigh(matrix)
+
+        max_abs_eigenvalue = np.max(np.abs(eigenvalues))
+        if max_abs_eigenvalue > 0:
+            threshold = self._rtol * max_abs_eigenvalue
+        else:
+            threshold = 0
+
+        inv_eigenvalues = np.where(
+            np.abs(eigenvalues) > threshold,
+            np.reciprocal(eigenvalues),
+            0.0,
+        )
+
+        def matvec(cy: np.ndarray) -> np.ndarray:
+            z = eigenvectors.T @ cy
+            w = inv_eigenvalues * z
+            return eigenvectors @ w
+
+        inverse_matrix = ScipyLinOp(
+            (operator.domain.dim, operator.codomain.dim), matvec=matvec, rmatvec=matvec
+        )
+
+        return LinearOperator.from_matrix(
+            operator.domain, operator.domain, inverse_matrix, galerkin=self._galerkin
+        )
+
+
 class IterativeLinearSolver(LinearSolver):
     """
     An abstract base class for iterative linear solvers.
     """
+
+    def __init__(self, /, *, preconditioning_method: LinearSolver = None) -> None:
+        """
+        Args:
+            preconditioning_method: A LinearSolver from which to generate a preconditioner
+                once the operator is known.
+
+        Notes:
+            If a preconditioner is provided to either the call or solve_linear_system
+            methods, then it takes precedence over the preconditioning method.
+        """
+        self._preconditioning_method = preconditioning_method
 
     @abstractmethod
     def solve_linear_system(
@@ -165,18 +275,13 @@ class IterativeLinearSolver(LinearSolver):
     def solve_adjoint_linear_system(
         self,
         operator: LinearOperator,
-        preconditioner: Optional[LinearOperator],
+        adjoint_preconditioner: Optional[LinearOperator],
         x: Vector,
         y0: Optional[Vector],
     ) -> Vector:
         """
         Solves the adjoint linear system A*y = x for y.
         """
-        adjoint_preconditioner = (
-            None
-            if preconditioner is None
-            else preconditioner.adjoint
-        )
         return self.solve_linear_system(operator.adjoint, adjoint_preconditioner, x, y0)
 
     def __call__(
@@ -199,12 +304,27 @@ class IterativeLinearSolver(LinearSolver):
                 original operator.
         """
         assert operator.is_automorphism
+
+        if preconditioner is None:
+            if self._preconditioning_method is None:
+                _preconditioner = None
+                _adjoint_preconditions = None
+            else:
+                _preconditioner = self._preconditioning_method(operator)
+        else:
+            _preconditioner = preconditioner
+
+        if _preconditioner is None:
+            _adjoint_preconditioner = None
+        else:
+            _adjoint_preconditioner = _preconditioner.adjoint
+
         return LinearOperator(
             operator.codomain,
             operator.domain,
-            lambda y: self.solve_linear_system(operator, preconditioner, y, None),
+            lambda y: self.solve_linear_system(operator, _preconditioner, y, None),
             adjoint_mapping=lambda x: self.solve_adjoint_linear_system(
-                operator, preconditioner, x, None
+                operator, _adjoint_preconditioner, x, None
             ),
         )
 
@@ -231,6 +351,7 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         method: str,
         /,
         *,
+        preconditioning_method: LinearSolver = None,
         galerkin: bool = False,
         **kwargs,
     ) -> None:
@@ -241,6 +362,9 @@ class ScipyIterativeSolver(IterativeLinearSolver):
             **kwargs: Keyword arguments to be passed directly to the SciPy solver
                 (e.g., rtol, atol, maxiter, restart).
         """
+
+        super().__init__(preconditioning_method=preconditioning_method)
+
         if method not in self._SOLVER_MAP:
             raise ValueError(
                 f"Unknown solver method '{method}'. Available methods: {list(self._SOLVER_MAP.keys())}"
@@ -314,6 +438,7 @@ class CGSolver(IterativeLinearSolver):
         self,
         /,
         *,
+        preconditioning_method: LinearSolver = None,
         rtol: float = 1.0e-5,
         atol: float = 0.0,
         maxiter: Optional[int] = None,
@@ -327,6 +452,9 @@ class CGSolver(IterativeLinearSolver):
             callback (callable, optional): User-supplied function to call
                 after each iteration with the current solution vector.
         """
+
+        super().__init__(preconditioning_method=preconditioning_method)
+
         if not rtol > 0:
             raise ValueError("rtol must be positive")
         self._rtol: float = rtol

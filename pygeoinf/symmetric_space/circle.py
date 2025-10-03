@@ -24,7 +24,7 @@ Key Classes
 
 from __future__ import annotations
 
-from typing import Callable, Tuple, Optional
+from typing import Callable, Tuple, Optional, Any
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.fft import rfft, irfft
@@ -38,7 +38,7 @@ from pygeoinf.hilbert_space import (
     HilbertModule,
     MassWeightedHilbertModule,
 )
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.linear_forms import LinearForm
 from .symmetric_space import (
     AbstractInvariantLebesgueSpace,
@@ -335,6 +335,16 @@ class Lebesgue(CircleHelper, HilbertModule, AbstractInvariantLebesgueSpace):
             return NotImplemented
 
         return self.kmax == other.kmax and self.radius == other.radius
+
+    def is_element(self, u: Any) -> bool:
+        """
+        Checks if an object is a valid element of the space.
+        """
+        if not isinstance(u, np.ndarray):
+            return False
+        if not u.shape == (self.dim,):
+            return False
+        return True
 
     def invariant_automorphism_from_index_function(self, g: Callable[[int], float]):
         """

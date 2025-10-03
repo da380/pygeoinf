@@ -1,13 +1,15 @@
 """
 Tests for the linear_solvers module.
 """
+
 import pytest
 import numpy as np
 from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.operators import LinearOperator, DiagonalLinearOperator
+from pygeoinf.linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from pygeoinf.linear_solvers import (
     LUSolver,
     CholeskySolver,
+    EigenSolver,
     CGMatrixSolver,
     BICGMatrixSolver,
     BICGStabMatrixSolver,
@@ -38,6 +40,15 @@ def spd_operator(space: EuclideanSpace) -> LinearOperator:
 
 
 @pytest.fixture
+def semi_definite_operator(space: EuclideanSpace) -> LinearOperator:
+    """Provides a symmetric positive SEMI-definite operator (singular)."""
+    rank = space.dim - 2
+    matrix = np.random.randn(space.dim, rank)
+    sd_matrix = matrix @ matrix.T
+    return LinearOperator.from_matrix(space, space, sd_matrix, galerkin=True)
+
+
+@pytest.fixture
 def non_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
     """
     Provides a well-conditioned, invertible, non-symmetric operator.
@@ -51,7 +62,9 @@ def non_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
     # Add the identity to shift eigenvalues away from zero, ensuring it's
     # well-conditioned and invertible.
     well_conditioned_matrix = matrix + np.eye(space.dim)
-    return LinearOperator.from_matrix(space, space, well_conditioned_matrix, galerkin=True)
+    return LinearOperator.from_matrix(
+        space, space, well_conditioned_matrix, galerkin=True
+    )
 
 
 @pytest.fixture
@@ -79,9 +92,18 @@ ITERATIVE_SOLVER_TOLERANCE = 1e-6
 TEST_TOLERANCE = 10 * ITERATIVE_SOLVER_TOLERANCE
 
 # Direct solvers should be accurate to near machine precision.
+# Test both serial and parallel execution paths.
 direct_solvers = [
-    LUSolver(galerkin=True),
-    CholeskySolver(galerkin=True),
+    pytest.param(LUSolver(galerkin=True, parallel=False), id="LUSolver_serial"),
+    pytest.param(
+        CholeskySolver(galerkin=True, parallel=False), id="CholeskySolver_serial"
+    ),
+    pytest.param(EigenSolver(galerkin=True, parallel=False), id="EigenSolver_serial"),
+    pytest.param(LUSolver(galerkin=True, parallel=True), id="LUSolver_parallel"),
+    pytest.param(
+        CholeskySolver(galerkin=True, parallel=True), id="CholeskySolver_parallel"
+    ),
+    pytest.param(EigenSolver(galerkin=True, parallel=True), id="EigenSolver_parallel"),
 ]
 
 # Solvers that require or are optimized for symmetric positive-definite matrices
@@ -111,6 +133,19 @@ def test_direct_solvers(solver, spd_operator: LinearOperator, x: np.ndarray):
     result_vector = (inverse_operator @ spd_operator)(x)
     expected_vector = identity(x)
     assert np.allclose(result_vector, expected_vector, atol=1e-12)
+
+
+def test_eigensolver_robustness(semi_definite_operator, x):
+    """
+    Tests that EigenSolver correctly computes a pseudo-inverse for a
+    singular (semi-definite) operator.
+    """
+    eigensolver = EigenSolver(galerkin=True, rtol=1e-14)
+    pseudo_inverse_op = eigensolver(semi_definite_operator)
+    b_in_range = semi_definite_operator(x)
+    x_solution = pseudo_inverse_op(b_in_range)
+    b_reconstructed = semi_definite_operator(x_solution)
+    assert np.allclose(b_in_range, b_reconstructed)
 
 
 @pytest.mark.parametrize("solver", spd_iterative_solvers)
@@ -169,10 +204,12 @@ def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarra
     forward and the adjoint solve paths.
     """
     space = spd_operator.domain
-    
+
     # Create a simple Jacobi (diagonal) preconditioner
-    diag_A = spd_operator.matrix(dense=True,galerkin=True).diagonal()
-    preconditioner = DiagonalLinearOperator(space, space, 1.0 / diag_A, galerkin=True)
+    diag_A = spd_operator.matrix(dense=True, galerkin=True).diagonal()
+    preconditioner = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+        space, space, 1.0 / diag_A
+    )
 
     # Get the inverse operator using the preconditioner
     inverse_op = solver(spd_operator, preconditioner=preconditioner)

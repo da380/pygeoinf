@@ -20,7 +20,7 @@ Key Features
 """
 
 from __future__ import annotations
-from typing import Callable, Optional, Any, List, TypeVar, TYPE_CHECKING
+from typing import Callable, Optional, Any, List, TYPE_CHECKING
 
 import numpy as np
 from scipy.linalg import eigh
@@ -28,11 +28,11 @@ from scipy.sparse import diags
 from scipy.stats import multivariate_normal
 
 
-from .hilbert_space import EuclideanSpace, HilbertModule
+from .hilbert_space import EuclideanSpace, HilbertModule, Vector
 
-from .operators import (
+from .linear_operators import (
     LinearOperator,
-    DiagonalLinearOperator,
+    DiagonalSparseMatrixLinearOperator,
 )
 
 from .direct_sum import (
@@ -40,15 +40,10 @@ from .direct_sum import (
 )
 
 
-# This block only runs for type checkers, not at runtime, to prevent
-# circular import errors while still allowing type hints.
+# This block is only processed by type checkers, not at runtime.
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace, EuclideanSpace
-    from .operators import LinearOperator, DiagonalLinearOperator
-    from .direct_sum import BlockDiagonalLinearOperator
-
-# Define a generic type for vectors in a Hilbert space
-Vector = TypeVar("Vector")
+    from .hilbert_space import HilbertSpace
+    from .typing import Vector
 
 
 class GaussianMeasure:
@@ -76,29 +71,29 @@ class GaussianMeasure:
         inverse_covariance_factor: LinearOperator = None,
     ) -> None:
         """
-        Initializes the GaussianMeasure.
+         Initializes the GaussianMeasure.
 
         The measure can be defined in several ways, primarily by providing
-        either a covariance operator or a covariance factor.
+         either a covariance operator or a covariance factor.
 
-        Args:
-            covariance (LinearOperator, optional): A self-adjoint and positive
-                semi-definite linear operator on the domain.
-            covariance_factor (LinearOperator, optional): A linear operator L
-                such that the covariance C = L @ L*.
-            expectation (vector, optional): The expectation (mean) of the
-                measure. Defaults to the zero vector of the space.
-            sample (callable, optional): A function that returns a random
-                sample from the measure. If a `covariance_factor` is given,
-                a default sampler is created.
-            inverse_covariance (LinearOperator, optional): The inverse of the
-                covariance operator (the precision operator).
-            inverse_covariance_factor (LinearOperator, optional): A factor Li
-                of the inverse covariance, such that C_inv = Li.T @ Li.
+         Args:
+             covariance (LinearOperator, optional): A self-adjoint and positive
+                 semi-definite linear operator on the domain.
+             covariance_factor (LinearOperator, optional): A linear operator L
+                 such that the covariance C = L @ L*.
+             expectation (vector, optional): The expectation (mean) of the
+                 measure. Defaults to the zero vector of the space.
+             sample (callable, optional): A function that returns a random
+                 sample from the measure. If a `covariance_factor` is given,
+                 a default sampler is created.
+             inverse_covariance (LinearOperator, optional): The inverse of the
+                 covariance operator (the precision operator).
+             inverse_covariance_factor (LinearOperator, optional): A factor Li
+                 of the inverse covariance, such that C_inv = Li.T @ Li.
 
-        Raises:
-            ValueError: If neither `covariance` nor `covariance_factor`
-                is provided.
+         Raises:
+             ValueError: If neither `covariance` nor `covariance_factor`
+                 is provided.
         """
         if covariance is None and covariance_factor is None:
             raise ValueError(
@@ -186,8 +181,8 @@ class GaussianMeasure:
                 "Standard deviation vector does not have the correct length"
             )
         euclidean = EuclideanSpace(domain.dim)
-        covariance_factor = DiagonalLinearOperator(
-            euclidean, domain, standard_deviations, galerkin=True
+        covariance_factor = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            euclidean, domain, standard_deviations
         )
         return GaussianMeasure(
             covariance_factor=covariance_factor,
@@ -484,17 +479,23 @@ class GaussianMeasure:
             )
 
         return multivariate_normal(
-            mean=self.expectation, cov=self.covariance.matrix(dense=True)
+            mean=self.expectation,
+            cov=self.covariance.matrix(dense=True),
+            allow_singular=True,
         )
 
     def low_rank_approximation(
         self,
-        rank: int,
+        size_estimate: int,
         /,
         *,
-        power: int = 0,
-        method: str = "fixed",
-        rtol: float = 1e-2,
+        method: str = "variable",
+        max_rank: int = None,
+        power: int = 2,
+        rtol: float = 1e-4,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
     ) -> GaussianMeasure:
         """
         Constructs a low-rank approximation of the measure.
@@ -503,16 +504,37 @@ class GaussianMeasure:
         can be much more efficient for sampling and storage.
 
         Args:
-            rank (int): The target rank for the approximation.
-            power (int, optional): Power iterations for the randomized algorithm.
-            method (str, optional): 'fixed' or 'variable' rank method.
-            rtol (float, optional): Relative tolerance for variable rank method.
+            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
+                       method, this is the initial rank to sample.
+            method ({'variable', 'fixed'}): The algorithm to use.
+            - 'variable': (Default) Progressively samples to find the rank needed
+                          to meet tolerance `rtol`, stopping at `max_rank`.
+            - 'fixed': Returns a basis with exactly `size_estimate` columns.
+            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
+                    method='fixed'. Defaults to min(m, n).
+            power: Number of power iterations to improve accuracy.
+            rtol: Relative tolerance for the 'variable' method. Ignored if
+                method='fixed'.
+            block_size: Number of new vectors to sample per iteration in 'variable'
+                        method. Ignored if method='fixed'.
+            parallel: Whether to use parallel matrix multiplication.
+            n_jobs: Number of jobs for parallelism.
 
         Returns:
             GaussianMeasure: The new, low-rank Gaussian measure.
+
+        Notes:
+            Parallel implemention only currently possible with fixed-rank decompositions.
         """
         covariance_factor = self.covariance.random_cholesky(
-            rank, power=power, method=method, rtol=rtol
+            size_estimate,
+            method=method,
+            max_rank=max_rank,
+            power=power,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
         )
 
         return GaussianMeasure(
