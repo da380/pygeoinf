@@ -781,13 +781,16 @@ class LaplacianInverseOperator(LinearOperator):
 
 class SOLAOperator(LinearOperator):
     """
-    SOLA operator that projects functions onto a basis.
+    SOLA operator that applies kernel functions to input functions via
+    integration.
 
-    This operator takes a function from an L2 space and computes inner products
+    This operator takes a function from a Lebesgue space and computes integrals
     against a set of kernel functions, resulting in a vector in the specified
     Euclidean space.
 
     The operator maps: Lebesgue -> EuclideanSpace
+
+    For each kernel function k_i, it computes: ∫ f(x) * k_i(x) dx
 
     The kernel functions can be provided in three ways:
     1. Via a FunctionProvider (original functionality)
@@ -796,19 +799,19 @@ class SOLAOperator(LinearOperator):
 
     Examples:
         # Using a function provider
-        >>> provider = NormalModesProvider(l2_space)
-        >>> sola_op = SOLAOperator(l2_space, euclidean_space,
+        >>> provider = NormalModesProvider(lebesgue_space)
+        >>> sola_op = SOLAOperator(lebesgue_space, euclidean_space,
         ...                        function_provider=provider)
 
         # Using direct callables
         >>> kernels = [lambda x: np.sin(x), lambda x: np.cos(x)]
-        >>> sola_op = SOLAOperator(l2_space, euclidean_space,
+        >>> sola_op = SOLAOperator(lebesgue_space, euclidean_space,
         ...                        functions=kernels)
 
         # Using Function objects
-        >>> func1 = Function(l2_space, evaluate_callable=lambda x: x**2)
-        >>> func2 = Function(l2_space, evaluate_callable=lambda x: x**3)
-        >>> sola_op = SOLAOperator(l2_space, euclidean_space,
+        >>> func1 = Function(lebesgue_space, evaluate_callable=lambda x: x**2)
+        >>> func2 = Function(lebesgue_space, evaluate_callable=lambda x: x**3)
+        >>> sola_op = SOLAOperator(lebesgue_space, euclidean_space,
         ...                        functions=[func1, func2])
     """
 
@@ -816,9 +819,7 @@ class SOLAOperator(LinearOperator):
                  function_provider: Optional[FunctionProvider] = None,
                  functions: Optional[List[Union[Function, Callable]]] = None,
                  random_state: Optional[int] = None,
-                 cache_functions: bool = False,
-                 integration_method: str = 'simpson',
-                 n_points: int = 1000):
+                 cache_functions: bool = False):
         """
         Initialize the SOLA operator.
 
@@ -842,8 +843,6 @@ class SOLAOperator(LinearOperator):
         self.N_d = codomain.dim
         self.cache_functions = cache_functions
         self._function_cache = {} if cache_functions else None
-        self._integration_method = integration_method
-        self._n_points = n_points
 
         # Check for mutually exclusive arguments
         if function_provider is not None and functions is not None:
@@ -898,8 +897,8 @@ class SOLAOperator(LinearOperator):
 
         # Define the mapping function
         def mapping(func):
-            """Project function onto the kernel basis."""
-            return self._project_function(func)
+            """Apply kernel functions to input function via integration."""
+            return self._apply_kernels(func)
 
         # Define the adjoint mapping
         def adjoint_mapping(data):
@@ -964,9 +963,11 @@ class SOLAOperator(LinearOperator):
 
         return function
 
-    def _project_function(self, func):
+    def _apply_kernels(self, func):
         """
-        Project a function onto the kernels using lazy evaluation.
+        Apply the kernel functions to a function by integrating their product.
+
+        For each kernel k_i, computes ∫ func(x) * k_i(x) dx
 
         Args:
             func: Function from the domain space
@@ -978,14 +979,9 @@ class SOLAOperator(LinearOperator):
 
         for i in range(self.N_d):
             # Lazily get the i-th kernel
-            proj_func = self.get_kernel(i)
-            # Compute inner product with the i-th kernel
-            data[i] = self.domain.inner_product(
-                func,
-                proj_func,
-                method=self._integration_method,
-                n_points=self._n_points
-            )
+            kernel = self.get_kernel(i)
+            # Compute integral of product: ∫ func(x) * kernel(x) dx
+            data[i] = (func * kernel).integrate()
 
         return data
 
@@ -1021,46 +1017,23 @@ class SOLAOperator(LinearOperator):
         """
         return [self.get_kernel(i) for i in range(self.N_d)]
 
-    def evaluate_kernel(self, x):
-        """
-        Evaluate all kernel functions at given points using lazy
-        evaluation.
-
-        Args:
-            x: numpy.ndarray of evaluation points
-
-        Returns:
-            numpy.ndarray: Matrix of shape (N_d, len(x)) with function values
-        """
-        values = np.zeros((self.N_d, len(x)))
-
-        for i in range(self.N_d):
-            proj_func = self.get_kernel(i)
-            values[i, :] = proj_func.evaluate(x)
-
-        return values
-
     def compute_gram_matrix(self):
         """
-        Compute the Gram matrix of the kernels using lazy
-        evaluation.
+        Compute the Gram matrix of the kernels using function integration.
+
+        For kernels k_i, k_j, computes ∫ k_i(x) * k_j(x) dx
 
         Returns:
-            numpy.ndarray: N_d x N_d matrix of inner products between
-                          kernels
+            numpy.ndarray: N_d x N_d matrix of integrals between kernels
         """
         gram = np.zeros((self.N_d, self.N_d))
 
         for i in range(self.N_d):
-            proj_func_i = self.get_kernel(i)
+            kernel_i = self.get_kernel(i)
             for j in range(self.N_d):
-                proj_func_j = self.get_kernel(j)
-                gram[i, j] = self.domain.inner_product(
-                    proj_func_i,
-                    proj_func_j,
-                    method=self._integration_method,
-                    n_points=self._n_points
-                )
+                kernel_j = self.get_kernel(j)
+                # Compute integral: ∫ k_i(x) * k_j(x) dx
+                gram[i, j] = (kernel_i * kernel_j).integrate()
 
         return gram
 

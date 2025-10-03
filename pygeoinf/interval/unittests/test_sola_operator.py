@@ -122,8 +122,8 @@ class TestSOLAOperator(unittest.TestCase):
 
     # === PROJECTION TESTS ===
 
-    def test_project_function_basic(self):
-        """Test basic function projection."""
+    def test_apply_kernels_basic(self):
+        """Test basic kernel application."""
         operator = SOLAOperator(
             self.space, self.euclidean_space, random_state=42
         )
@@ -135,14 +135,14 @@ class TestSOLAOperator(unittest.TestCase):
         from pygeoinf.interval.functions import Function
         test_func = Function(self.space, evaluate_callable=test_func_callable)
 
-        # Project the function
-        data = operator._project_function(test_func)
+        # Apply kernels to the function
+        data = operator._apply_kernels(test_func)
 
         self.assertEqual(len(data), self.euclidean_space.dim)
         self.assertIsInstance(data, np.ndarray)
 
-    def test_project_function_sine_provider(self):
-        """Test function projection with sine provider."""
+    def test_apply_kernels_sine_provider(self):
+        """Test kernel application with sine provider."""
         custom_provider = SineFunctionProvider(self.space)
         operator = SOLAOperator(
             self.space, self.euclidean_space,
@@ -152,20 +152,20 @@ class TestSOLAOperator(unittest.TestCase):
         # Create first sine function as test
         test_func = custom_provider.get_function_by_index(0)
 
-        # Project should give non-zero coefficient for first component
-        data = operator._project_function(test_func)
+        # Apply kernels should give non-zero coefficient for first component
+        data = operator._apply_kernels(test_func)
 
         # First coefficient should be largest due to orthogonality
         self.assertGreater(abs(data[0]), 1e-10)
 
-    def test_project_function_zero_function(self):
-        """Test projecting zero function."""
+    def test_apply_kernels_zero_function(self):
+        """Test applying kernels to zero function."""
         operator = SOLAOperator(
             self.space, self.euclidean_space, random_state=42
         )
 
         zero_func = self.space.zero
-        data = operator._project_function(zero_func)
+        data = operator._apply_kernels(zero_func)
 
         # All coefficients should be close to zero
         np.testing.assert_array_almost_equal(data, np.zeros(5), decimal=10)
@@ -255,8 +255,8 @@ class TestSOLAOperator(unittest.TestCase):
         # Use one of the projection functions as test
         original_func = custom_provider.get_function_by_index(0)
 
-        # Project and reconstruct
-        data = operator._project_function(original_func)
+        # Apply kernels and reconstruct
+        data = operator._apply_kernels(original_func)
         reconstructed = operator._reconstruct_function(data)
 
         # Should be similar (but not exact due to truncation)
@@ -282,26 +282,18 @@ class TestSOLAOperator(unittest.TestCase):
         for func in functions:
             self.assertEqual(func.space, self.space)
 
-    def test_evaluate_kernels(self):
-        """Test evaluating all projection functions at points."""
-        operator = SOLAOperator(
-            self.space, self.euclidean_space, random_state=42
-        )
-
-        x = np.linspace(0, 1, 20)
-        values = operator.evaluate_kernel(x)
-
-        self.assertEqual(values.shape, (self.euclidean_space.dim, len(x)))
-
     def test_compute_gram_matrix(self):
-        """Test computing Gram matrix of projection functions."""
+        """Test computing Gram matrix of kernels."""
         operator = SOLAOperator(
             self.space, self.euclidean_space, random_state=42
         )
 
         gram = operator.compute_gram_matrix()
 
-        self.assertEqual(gram.shape, (self.euclidean_space.dim, self.euclidean_space.dim))
+        self.assertEqual(
+            gram.shape,
+            (self.euclidean_space.dim, self.euclidean_space.dim)
+        )
 
         # Should be symmetric
         np.testing.assert_array_almost_equal(gram, gram.T, decimal=10)
@@ -424,9 +416,9 @@ class TestSOLAOperator(unittest.TestCase):
                 function_provider=provider
             )
 
-            # Test basic projection
+            # Test basic application
             zero_func = self.space.zero
-            data = operator._project_function(zero_func)
+            data = operator._apply_kernels(zero_func)
 
             self.assertEqual(len(data), self.euclidean_space.dim)
 
@@ -460,7 +452,7 @@ class TestSOLAOperator(unittest.TestCase):
 
         # Should still work for basic operations
         zero_func = self.space.zero
-        data = operator._project_function(zero_func)
+        data = operator._apply_kernels(zero_func)
         self.assertEqual(len(data), 100)
 
 
