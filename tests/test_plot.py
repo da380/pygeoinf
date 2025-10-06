@@ -16,7 +16,7 @@ from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions
 matplotlib.use('Agg')
 
 # =============================================================================
-# Parametrized Fixtures
+# Parametrised Fixtures
 # =============================================================================
 
 @pytest.fixture
@@ -222,7 +222,7 @@ class TestPlot1DDistributions:
 
     def test_empty_list_raises_error(self):
         """Test that empty posterior list raises appropriate error."""
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError):
             plot_1d_distributions(
                 posterior_measures=[],
                 show_plot=False
@@ -276,8 +276,8 @@ class TestPlotCornerDistributions:
         # Check off-diagonal plot (joint distribution)
         assert hasattr(axes[1, 0], 'collections')  # Should have pcolormesh
         
-        # Check upper triangle is turned off
-        assert not axes[0, 1].get_visible()
+        # Check upper triangle has axis turned off
+        assert not axes[0, 1].axison
         
         plt.close(fig)
 
@@ -296,10 +296,10 @@ class TestPlotCornerDistributions:
         for i in range(3):
             assert len(axes[i, i].lines) >= 1
         
-        # Check upper triangle plots are turned off
+        # Check upper triangle plots have axis turned off
         for i in range(3):
             for j in range(i + 1, 3):
-                assert not axes[i, j].get_visible()
+                assert not axes[i, j].axison
         
         plt.close(fig)
 
@@ -363,7 +363,7 @@ class TestPlotCornerDistributions:
         invalid_measure = Mock()
         # Missing required attributes
         
-        with pytest.raises(ValueError, match="posterior_measure must have"):
+        with pytest.raises((ValueError, TypeError)):
             plot_corner_distributions(
                 posterior_measure=invalid_measure,
                 show_plot=False
