@@ -327,7 +327,7 @@ def plot_corner_distributions(
         labels_leg.extend(labels2)
     
     # Clean up labels by removing values after colons
-    cleaned_labels = [l.split(":")[0] for l in labels_leg]
+    cleaned_labels = [label.split(":")[0] for label in labels_leg]
     
     fig.legend(
         handles, cleaned_labels,
