@@ -100,10 +100,6 @@ class BasisProvider:
         Raises:
             IndexError: If index is out of range [0, space.dim)
         """
-        if not (0 <= index < self.space.dim):
-            raise IndexError(
-                f"Basis index {index} out of range [0, {self.space.dim})"
-            )
 
         if index not in self._cache:
             func = self.function_provider.get_function_by_index(index)
@@ -126,18 +122,6 @@ class BasisProvider:
         """Allow iteration over basis functions."""
         for i in range(self.space.dim):
             yield self.get_basis_function(i)
-
-    def get_all_basis_functions(self):
-        """
-        Return n basis functions as a list.
-
-        Args:
-            n: Number of basis functions to return (default: space.dim)
-
-        Returns:
-            list: List of Function basis functions
-        """
-        return [self.get_basis_function(i) for i in range(self.space.dim)]
 
 
 class SpectrumProvider(BasisProvider):
@@ -179,13 +163,7 @@ class SpectrumProvider(BasisProvider):
         Returns:
             float: Eigenvalue corresponding to the eigenfunction
 
-        Raises:
-            IndexError: If index is out of range [0, space.dim)
         """
-        if not (0 <= index < self.space.dim):
-            raise IndexError(
-                f"Eigenvalue index {index} out of range [0, {self.space.dim})"
-            )
 
         if index not in self._eigenvalue_cache:
             self._eigenvalue_cache[index] = (

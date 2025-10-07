@@ -6,8 +6,9 @@ import numpy as np
 from scipy.sparse import diags
 from typing import Optional
 
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.interval.lebesgue_space import Lebesgue
+from pygeoinf.hilbert_space import HilbertSpace, MassWeightedHilbertSpace
 from pygeoinf.interval.boundary_conditions import BoundaryConditions
 from pygeoinf.interval.providers import (
     BasisProvider, SpectrumProvider
@@ -15,7 +16,29 @@ from pygeoinf.interval.providers import (
 from pygeoinf.interval.interval_domain import IntervalDomain
 
 
-class Sobolev(Lebesgue):
+class Sobolev(MassWeightedHilbertSpace):
+    def __init__(
+        self,
+        order: float,
+        scale: float,
+        underlying_operator: LinearOperator,
+        underlying_space: HilbertSpace,
+    ):
+
+        self._order = order
+        self._scale = scale
+        self._underlying_operator = underlying_operator
+        self._underlying_space = underlying_space
+
+        # Compute the inverse mass operator
+        super().__init__(
+            underlying_space,
+            mass_operator,
+            inverse_mass_operator
+        )
+
+
+class Sobolev2(Lebesgue):
     """
     Implementation of the Sobolev space H^s on a segment [a, b].
 

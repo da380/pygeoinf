@@ -84,7 +84,7 @@ class Lebesgue(HilbertSpace):
 
         # Cached computations
         self._metric = None
-        self._inverse_metric = None
+        self._inverse_metric_chol = None
 
     # ================================================================
     # Abstract methods that MUST be implemented for HilbertSpace
@@ -97,18 +97,35 @@ class Lebesgue(HilbertSpace):
 
     @property
     def metric(self) -> np.ndarray:
-        """The metric tensor (Gram matrix) G[i,j] = ⟨φᵢ,φⱼ⟩_L² of the basis functions."""
+        self._require_basis()
+
         if self._metric is None:
             self._compute_metric()
+            # Symmetrize hard to dampen quadrature asymmetry
+            self._metric = 0.5 * (self._metric + self._metric.T)
         return self._metric
 
+    def _compute_inverse_metric_chol(self) -> np.ndarray:
+        if self._inverse_metric_chol is None:
+            G = self.metric
+            try:
+                self._inverse_metric_chol = np.linalg.cholesky(G)
+            except np.linalg.LinAlgError:
+                # Minimal Tikhonov regularization if noise makes G semidefinite
+                eps = 1e-12 * max(1.0, np.linalg.norm(G, ord=2))
+                self._inverse_metric_chol = np.linalg.cholesky(G + eps * np.eye(G.shape[0]))
+        return self._inverse_metric_chol
+
     @property
-    def inverse_metric(self) -> np.ndarray:
-        """The inverse metric tensor."""
-        if self._inverse_metric is None:
-            metric = self.metric  # This triggers computation if needed
-            self._inverse_metric = np.linalg.inv(metric)
-        return self._inverse_metric
+    def inverse_metric_chol(self) -> np.ndarray:
+        if self._inverse_metric_chol is None:
+            self._compute_inverse_metric_chol()
+        return self._inverse_metric_chol
+
+    def _spd_solve(self, b: np.ndarray) -> np.ndarray:
+        L = self.inverse_metric_chol
+        y = np.linalg.solve(L, b)
+        return np.linalg.solve(L.T, y)
 
     def to_dual(self, x: "Function") -> Any:
         """
@@ -157,7 +174,7 @@ class Lebesgue(HilbertSpace):
         dual_components = xp.components
 
         # Apply inverse metric to get primal components
-        primal_components = self.inverse_metric @ dual_components
+        primal_components = self._spd_solve(dual_components)
 
         return self.from_components(primal_components)
 
@@ -185,18 +202,15 @@ class Lebesgue(HilbertSpace):
         # Case 2: Project onto basis using continuous L² inner product
         # For non-orthonormal basis, solve the linear system: G c = b
         # where G[i,j] = ⟨φᵢ, φⱼ⟩_L² and b[i] = ⟨x, φᵢ⟩_L²
-
+        self._require_basis()
         # Compute right-hand side: b[i] = ⟨x, φᵢ⟩_L²
         rhs = np.zeros(self.dim)
         for i in range(self.dim):
             basis_func = self.get_basis_function(i)
             rhs[i] = self._continuous_l2_inner_product(x, basis_func)
 
-        # Get the metric tensor (Gram matrix)
-        metric = self.metric
-
         # Solve G c = b for the coefficients c
-        coeffs = np.linalg.solve(metric, rhs)
+        coeffs = self._spd_solve(rhs)
 
         return coeffs
 
@@ -364,6 +378,10 @@ class Lebesgue(HilbertSpace):
     # ================================================================
     # Additional methods for basis function management
     # ================================================================
+    def _require_basis(self):
+        if self._basis_type == 'none':
+            raise RuntimeError("This operation requires a basis; set a BasisProvider or direct basis first.")
+
     def _initialize_basis(self, basis):
         """
         Initialize basis from simplified single parameter.
@@ -558,3 +576,7 @@ class Lebesgue(HilbertSpace):
                 inner_prod = self._continuous_l2_inner_product(basis_i, basis_j)
                 self._metric[i, j] = inner_prod
                 self._metric[j, i] = inner_prod  # Symmetric
+
+    def _clear_metric_caches(self):
+        self._metric = None
+        self._chol = None

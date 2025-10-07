@@ -13,21 +13,21 @@ boundary conditions through the underlying function spaces.
 """
 
 import numpy as np
+import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Union, Literal, List, Callable
-import warnings
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from .lebesgue_space import Lebesgue
 from .sobolev_space import Sobolev
 from .boundary_conditions import BoundaryConditions
-from pygeoinf.operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator
 from .functions import Function
 from .providers import create_laplacian_spectrum_provider
 # FEM import only needed for LaplacianInverseOperator
 from pygeoinf.interval.fem_solvers import GeneralFEMSolver
 from pygeoinf.interval.function_providers import (
-    FunctionProvider, IndexedFunctionProvider, NormalModesProvider
+    IndexedFunctionProvider,
 )
 
 
@@ -39,19 +39,9 @@ class DifferentialOperator(LinearOperator, ABC):
     and error handling.
     """
 
-    def __init__(self, domain, codomain, boundary_conditions,
-                 method='spectral'):
+    def __init__(self, domain, codomain, boundary_conditions):
         self.boundary_conditions = boundary_conditions
-        self.method = method
-        self._validate_method()
         super().__init__(domain, codomain, self._apply)
-
-    def _validate_method(self):
-        """Validate the chosen discretization method."""
-        valid_methods = ['spectral', 'finite_difference']
-        if self.method not in valid_methods:
-            raise ValueError(f"Unknown method '{self.method}'. "
-                             f"Valid methods: {valid_methods}")
 
     @abstractmethod
     def _apply(self, f: Function) -> Function:
@@ -78,9 +68,6 @@ class GradientOperator(DifferentialOperator):
         domain: Union[Lebesgue, Sobolev],
         /,
         *,
-        method: Literal[
-            'finite_difference', 'automatic'
-        ] = 'finite_difference',
         fd_order: int = 2,
         fd_step: Optional[float] = None,
         boundary_treatment: str = 'one_sided'
@@ -99,58 +86,18 @@ class GradientOperator(DifferentialOperator):
                 ('one_sided', 'extrapolate')
         """
         self._domain = domain
+        self._codomain = domain
         self._fd_order = fd_order
         self._fd_step = fd_step
         self._boundary_treatment = boundary_treatment
-
-        # Determine codomain based on method and domain
-        if isinstance(domain, Sobolev):
-            # Ensure domain has sufficient regularity for gradient
-            if domain.order < 1.0:
-                warnings.warn(
-                    f"Gradient requires domain with Sobolev order ≥ 1, "
-                    f"got {domain.order}. Consider using H¹ space."
-                )
-
-            # Create codomain with one order less regularity
-            target_order = domain.order - 1.0
-            if hasattr(domain, '_basis_type'):
-                basis_type = domain._basis_type
-            else:
-                basis_type = 'fourier'
-
-            codomain = Sobolev(
-                domain.dim, domain.function_domain,
-                target_order,
-                basis_type=basis_type
-            )
-        else:
-            # For L2 domain (H⁰), gradient maps to H⁻¹
-            codomain = Sobolev(
-                domain.dim, domain.function_domain,
-                -1.0,
-                basis_type='fourier'
-            )
+        # logger
+        self._log = logging.getLogger(__name__)
 
         # No boundary conditions needed for gradient (unlike Laplacian)
-        super().__init__(domain, codomain, None, method)
+        super().__init__(domain, domain, None)
 
         # Initialize method-specific components
-        self._setup_method()
-
-    def _validate_method(self):
-        """Override to validate gradient-specific methods."""
-        valid_methods = ['finite_difference', 'automatic']
-        if self.method not in valid_methods:
-            raise ValueError(f"Unknown method '{self.method}'. "
-                             f"Valid methods: {valid_methods}")
-
-    def _setup_method(self):
-        """Setup method-specific components."""
-        if self.method == 'finite_difference':
-            self._setup_finite_difference()
-        elif self.method == 'automatic':
-            self._setup_automatic_differentiation()
+        self._setup_finite_difference()
 
     def _setup_finite_difference(self):
         """Setup finite difference method."""
@@ -161,177 +108,116 @@ class GradientOperator(DifferentialOperator):
             # Use a fraction of the domain size
             self._fd_step = (b - a) / 1000
 
-        print(f"GradientOperator (finite difference, order {self._fd_order}) "
-              f"initialized with step size {self._fd_step:.2e}")
+        self._log.debug(
+            "GradientOperator (finite difference, order %s) initialized with "
+            "step size %.2e",
+            self._fd_order,
+            self._fd_step,
+        )
 
-    def _setup_automatic_differentiation(self):
-        """Setup automatic differentiation method."""
+    # ------------------------------------------------------------------
+    # Small helpers for finite-difference evaluation
+    # ------------------------------------------------------------------
+    def _fd_stencil(self, order: int, location: str = "center"):
+        """Return (offsets, coeffs) for first-derivative finite-difference.
+
+        offsets are integer multiples of h; coeffs are the weights to be
+        applied and divided by h when computing df/dx.
+        """
+        if order == 2:
+            if location == "center":
+                return np.array([-1, 1]), np.array([-0.5, 0.5])
+            if location == "forward":
+                # forward 2nd-order: (-3/2, 2, -1/2)
+                return np.array([0, 1, 2]), np.array([-1.5, 2.0, -0.5])
+            if location == "backward":
+                return np.array([-2, -1, 0]), np.array([0.5, -2.0, 1.5])
+        if order == 4:
+            if location == "center":
+                # coefficients for central 4th-order: 1/12, -2/3, 2/3,
+                # -1/12
+                offsets = np.array([-2, -1, 1, 2])
+                coeffs = np.array([1/12, -2/3, 2/3, -1/12])
+                return offsets, coeffs
+            # For one-sided 4th-order coefficients, fall back to 2nd-order
+            if location in ("forward", "backward"):
+                return self._fd_stencil(2, location)
+        raise ValueError(
+            f"Unsupported fd_order={order} or location={location}"
+        )
+
+    def _safe_eval(self, func: Function, x: np.ndarray) -> np.ndarray:
+        """Evaluate Function `func` on array x safely.
+
+        Tries to call func(x) directly; if that fails (user's Function only
+        accepts scalars), falls back to list comprehension.
+        """
         try:
-            import jax  # noqa: F401
-            import jax.numpy as jnp  # noqa: F401
-            from jax import grad  # noqa: F401
-            self._jax = jax
-            self._jnp = jnp
-            self._grad = grad
-            print("GradientOperator (automatic differentiation) "
-                  "initialized with JAX")
-        except ImportError:
-            raise ImportError(
-                "JAX is required for automatic differentiation. "
-                "Install with: pip install jax jaxlib"
-            )
+            return np.asarray(func(x))
+        except Exception:
+            # Fall back to Python loop
+            return np.asarray([func(float(xi)) for xi in x])
 
     def _apply(self, f: Function) -> Function:
-        """Apply the gradient operator to function f."""
-        if self.method == 'finite_difference':
-            return self._apply_finite_difference(f)
-        elif self.method == 'automatic':
-            return self._apply_automatic(f)
-        else:
-            raise ValueError(f"Unknown method '{self.method}'")
+        """Apply gradient using finite difference method (vectorized).
 
-    def _apply_finite_difference(self, f: Function) -> Function:
-        """Apply gradient using finite difference method."""
+        This implementation evaluates the user's function on shifted arrays
+        (when possible) which greatly reduces Python-level loops and is much
+        faster for array inputs. It falls back to scalar evaluation if
+        necessary.
+        """
 
         def gradient_func(x):
-            """Compute gradient at points x using finite differences."""
-            # Handle scalar input
-            if np.isscalar(x):
-                x = np.array([x])
-                scalar_input = True
-            else:
-                scalar_input = False
+            scalar_input = np.isscalar(x)
+            x_arr = np.asarray([x]) if scalar_input else np.asarray(x)
 
-            df_dx = np.zeros_like(x)
             h = self._fd_step
+            a = self._domain.function_domain.a
+            b = self._domain.function_domain.b
 
-            for i, xi in enumerate(x):
-                # Check boundaries
-                a, b = (self._domain.function_domain.a,
-                        self._domain.function_domain.b)
+            # Prepare output container
+            y = np.empty_like(x_arr, dtype=float)
 
-                if self._boundary_treatment == 'one_sided':
-                    # Use one-sided differences at boundaries
-                    if xi <= a + h:
-                        # Forward difference at left boundary
-                        if self._fd_order == 2:
-                            df_dx[i] = (
-                                -3*f(xi) + 4*f(xi + h) - f(xi + 2*h)
-                            ) / (2*h)
-                        else:  # Higher order forward
-                            df_dx[i] = (
-                                -f(xi + 2*h) + 8*f(xi + h) - 8*f(xi) + f(xi)
-                            ) / (12*h)
-                    elif xi >= b - h:
-                        # Backward difference at right boundary
-                        if self._fd_order == 2:
-                            df_dx[i] = (
-                                3*f(xi) - 4*f(xi - h) + f(xi - 2*h)
-                            ) / (2*h)
-                        else:  # Higher order backward
-                            df_dx[i] = (
-                                f(xi - 2*h) - 8*f(xi - h) + 8*f(xi) - f(xi)
-                            ) / (12*h)
-                    else:
-                        # Central difference in interior
-                        if self._fd_order == 2:
-                            df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
-                        elif self._fd_order == 4:
-                            df_dx[i] = (
-                                -f(xi + 2*h) + 8*f(xi + h) - 8*f(xi - h) +
-                                f(xi - 2*h)
-                            ) / (12*h)
-                        else:
-                            # Default to 2nd order
-                            df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
-                else:
-                    # Simple central difference everywhere (boundary issues)
-                    if self._fd_order == 2:
-                        df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
-                    elif self._fd_order == 4:
-                        df_dx[i] = (
-                            -f(xi + 2*h) + 8*f(xi + h) - 8*f(xi - h) +
-                            f(xi - 2*h)
-                        ) / (12*h)
-                    else:
-                        df_dx[i] = (f(xi + h) - f(xi - h)) / (2*h)
+            # Masks for boundary/interior
+            left_mask = x_arr <= a + h
+            right_mask = x_arr >= b - h
+            interior_mask = ~(left_mask | right_mask)
 
-            return df_dx[0] if scalar_input else df_dx
+            # Interior points: central stencil
+            if np.any(interior_mask):
+                xi = x_arr[interior_mask]
+                offs, coeffs = self._fd_stencil(self._fd_order, "center")
+                shifts = (xi[None, :] + offs[:, None] * h)
+                vals = self._safe_eval(f, shifts)
+                # vals.shape == (len(offs), n_points)
+                y[interior_mask] = (coeffs[:, None] * vals).sum(axis=0) / h
+
+            # Left boundary: forward one-sided
+            if np.any(left_mask):
+                xi = x_arr[left_mask]
+                offs, coeffs = self._fd_stencil(self._fd_order, "forward")
+                shifts = (xi[None, :] + offs[:, None] * h)
+                vals = self._safe_eval(f, shifts)
+                y[left_mask] = (coeffs[:, None] * vals).sum(axis=0) / h
+
+            # Right boundary: backward one-sided
+            if np.any(right_mask):
+                xi = x_arr[right_mask]
+                offs, coeffs = self._fd_stencil(self._fd_order, "backward")
+                shifts = (xi[None, :] + offs[:, None] * h)
+                vals = self._safe_eval(f, shifts)
+                y[right_mask] = (coeffs[:, None] * vals).sum(axis=0) / h
+
+            return float(y[0]) if scalar_input else y
 
         return Function(
             self.codomain,
             evaluate_callable=gradient_func,
-            name=f"∇({f.name})" if hasattr(f, 'name') else "∇f"
+            name=f"∇({getattr(f, 'name', 'f')})",
         )
 
-    def _apply_automatic(self, f: Function) -> Function:
-        """Apply gradient using automatic differentiation."""
 
-        def gradient_func(x):
-            """Compute gradient using JAX automatic differentiation."""
-            if not hasattr(f, 'evaluate_callable'):
-                raise ValueError(
-                    "Function must have evaluate_callable for "
-                    "automatic differentiation"
-                )
-
-            # Create a JAX-native version of the function
-            # This requires the user's function to be JAX-compatible
-            original_func = f.evaluate_callable
-
-            def jax_compatible_func(xi):
-                """JAX-compatible wrapper that works with JAX arrays."""
-                try:
-                    # Try to call the function with JAX arrays directly
-                    return original_func(xi)
-                except Exception:
-                    # If that fails, the function may not be JAX-compatible
-                    # Convert to numpy, compute, then back to JAX
-                    if hasattr(xi, 'shape'):  # It's an array-like
-                        xi_np = np.asarray(xi)
-                        result_np = original_func(xi_np)
-                        return self._jnp.asarray(result_np)
-                    else:  # It's a scalar
-                        xi_float = float(xi)
-                        result_float = original_func(xi_float)
-                        return self._jnp.asarray(result_float)
-
-            # Get the gradient function
-            grad_jax_func = self._grad(jax_compatible_func)
-
-            # Handle scalar vs array input
-            if np.isscalar(x):
-                x_jax = self._jnp.array(float(x))
-                result_jax = grad_jax_func(x_jax)
-                return float(result_jax)
-            else:
-                # For array input, compute gradient at each point individually
-                # This avoids vectorization issues with JAX tracing
-                results = []
-                for xi in x:
-                    x_jax = self._jnp.array(float(xi))
-                    result_jax = grad_jax_func(x_jax)
-                    results.append(float(result_jax))
-                return np.array(results)
-
-        return Function(
-            self.codomain,
-            evaluate_callable=gradient_func,
-            name=f"∇({f.name})" if hasattr(f, 'name') else "∇f"
-        )
-
-    @property
-    def fd_step(self) -> Optional[float]:
-        """Get the finite difference step size."""
-        return self._fd_step
-
-    @property
-    def fd_order(self) -> int:
-        """Get the finite difference order."""
-        return self._fd_order
-
-
-class LaplacianOperator(DifferentialOperator):
+class Laplacian(DifferentialOperator):
     """
     The negative Laplacian operator (-Δ) on interval domains.
 
@@ -349,7 +235,7 @@ class LaplacianOperator(DifferentialOperator):
 
     def __init__(
         self,
-        domain: Union[Lebesgue, Sobolev],
+        domain: Lebesgue,
         boundary_conditions: BoundaryConditions,
         /,
         *,
@@ -361,77 +247,40 @@ class LaplacianOperator(DifferentialOperator):
         Initialize the negative Laplacian operator.
 
         Args:
-            domain: Function space (Lebesgue or SobolevSpace)
+            domain: Function space (Lebesgue)
             boundary_conditions: Boundary conditions for the operator
             method: Discretization method ('spectral', 'finite_difference')
-            dofs: Number of degrees of freedom for FD methods
+            dofs: Number of degrees of freedom for FD or spectral methods
                   (default: domain.dim)
             fd_order: Order of finite difference stencil (2, 4, 6)
         """
         self._domain = domain
-        self._dofs = dofs or domain.dim
+        self._dofs = dofs if dofs is not None else domain.dim
         self._fd_order = fd_order
+        self._method = method
 
-        # Determine codomain based on method
-        if method == 'spectral':
-            # Spectral methods preserve the space (with proper basis)
-            codomain = domain
-        else:
-            # FD/FE methods: Laplacian maps H^s → H^(s-2)
-            # For Laplacian, domain should be at least H^2
-            if isinstance(domain, Sobolev):
-                # Ensure domain has sufficient regularity for Laplacian
-                if domain.order < 2.0:
-                    warnings.warn(
-                        f"Laplacian requires domain with Sobolev order ≥ 2, "
-                        f"got {domain.order}. Consider using H² space."
-                    )
-
-                # Create codomain with two orders less regularity
-                target_order = domain.order - 2.0
-                # Get basis type if available, default to fourier
-                if hasattr(domain, '_basis_type'):
-                    basis_type = domain._basis_type
-                else:
-                    basis_type = 'fourier'
-                codomain = Sobolev(
-                    domain.dim, domain.function_domain,
-                    target_order, domain._inner_product_type,
-                    basis_type=basis_type,
-                    boundary_conditions=boundary_conditions
-                )
-            else:
-                # For L2 domain (H⁰), Laplacian maps to H⁻²
-                # Create H⁻² space
-                codomain = Sobolev(
-                    domain.dim, domain.function_domain,
-                    -2.0, 'spectral',  # Default to spectral for negative order
-                    basis_type='fourier',
-                    boundary_conditions=boundary_conditions
-                )
-
-        super().__init__(domain, codomain, boundary_conditions, method)
+        super().__init__(domain, domain, boundary_conditions)
 
         # Initialize method-specific components
-        self._setup_method()
-
-    def _setup_method(self):
-        """Setup method-specific components."""
-        if self.method == 'spectral':
-            self._setup_spectral()
-        elif self.method == 'finite_difference':
-            self._setup_finite_difference()
-
-    def _setup_spectral(self):
-        """Setup spectral method using eigenfunction expansion."""
-        # Create spectrum provider for eigenvalues/eigenfunctions
         self._spectrum_provider = create_laplacian_spectrum_provider(
             self._domain, self.boundary_conditions, inverse=False
         )
+        if self._method == 'finite_difference':
+            self._setup_finite_difference()
 
-        # For spectral methods, we use the analytical eigendecomposition
-        print(f"LaplacianOperator (spectral) initialized with "
-              f"{self.boundary_conditions} boundary conditions")
+    def get_eigenvalue(self, index: int) -> float:
+        """Get the eigenvalue at a specific index."""
+        if self._method == 'spectral':
+            return self._spectrum_provider.get_eigenvalue(index)
+        else:
+            raise NotImplementedError("Eigenvalue retrieval is not implemented for this method.")
+
+    def get_eigenfunction(self, index: int) -> Function:
+        """Get the eigenfunction at a specific index."""
+        if self._method == 'spectral':
+            return self._spectrum_provider.get_eigenfunction(index)
+        else:
+            raise NotImplementedError("Eigenfunction retrieval is not implemented for this method.")
 
     def _setup_finite_difference(self):
         """Setup finite difference discretization."""
@@ -443,46 +292,88 @@ class LaplacianOperator(DifferentialOperator):
         # Create finite difference matrix
         self._fd_matrix = self._create_fd_matrix()
 
-        print(f"LaplacianOperator (finite difference, order {self._fd_order}) "
-              f"initialized with {self._dofs} grid points")
+        # use module logger if available
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "LaplacianOperator (finite difference, order %s) "
+            "initialized with %s grid points",
+            self._fd_order,
+            self._dofs,
+        )
 
     def _create_fd_matrix(self):
         """Create finite difference matrix for the negative Laplacian."""
         n = self._dofs
         dx2 = self._dx**2
 
+        def _second_derivative_stencil(order: int, location: str = "center"):
+            """Return offsets and coefficients for second-derivative FD.
+
+            Offsets are integer multiples of h; coeffs should be applied and
+            divided by h**2 when computing d2/dx2.
+            """
+            if order == 2:
+                if location == "center":
+                    return np.array([-1, 0, 1]), np.array([1.0, -2.0, 1.0])
+                if location == "near_left":
+                    # one-sided second derivative (3-point) at left boundary
+                    return np.array([0, 1, 2]), np.array([1.0, -2.0, 1.0])
+                if location == "near_right":
+                    return np.array([-2, -1, 0]), np.array([1.0, -2.0, 1.0])
+            if order == 4:
+                if location == "center":
+                    # 5-point fourth-order accurate second derivative
+                    offsets = np.array([-2, -1, 0, 1, 2])
+                    coeffs = np.array([1.0, -16.0, 30.0, -16.0, 1.0]) / 12.0
+                    return offsets, coeffs
+                # near boundaries, fall back to second-order
+                if location in ("near_left", "near_right"):
+                    return _second_derivative_stencil(2, location)
+            raise ValueError(
+                "Unsupported fd_order or location for second derivative"
+            )
+
         if self._fd_order == 2:
-            # Second-order centered differences: [-1, 2, -1] / dx²
             matrix = np.zeros((n, n))
 
-            # Interior points
+            # Fill interior with central stencil
+            offsets, coeffs = _second_derivative_stencil(2, "center")
             for i in range(1, n-1):
-                matrix[i, i-1] = -1.0 / dx2
-                matrix[i, i] = 2.0 / dx2
-                matrix[i, i+1] = -1.0 / dx2
+                for off, c in zip(offsets, coeffs):
+                    # Negative Laplacian: -d2/dx2
+                    matrix[i, i + off] = -c / dx2
 
-            # Apply boundary conditions
-            self._apply_fd_boundary_conditions(matrix)
+            # Fill near-boundary rows using one-sided stencils
+            # left boundary (i=0)
+            offsets, coeffs = _second_derivative_stencil(2, "near_left")
+            for off, c in zip(offsets, coeffs):
+                matrix[0, 0 + off] = -c / dx2
+
+            # right boundary (i=n-1)
+            offsets, coeffs = _second_derivative_stencil(2, "near_right")
+            for off, c in zip(offsets, coeffs):
+                matrix[n-1, n-1 + off] = -c / dx2
 
         elif self._fd_order == 4:
-            # Fourth-order centered differences: [1, -8, 12, -8, 1] / 12dx²
             matrix = np.zeros((n, n))
 
-            # Interior points (need at least 2 points from boundary)
+            # Interior with 4th-order central stencil
+            offsets, coeffs = _second_derivative_stencil(4, "center")
             for i in range(2, n-2):
-                matrix[i, i-2] = 1.0 / (12 * dx2)
-                matrix[i, i-1] = -8.0 / (12 * dx2)
-                matrix[i, i] = 12.0 / (12 * dx2)
-                matrix[i, i+1] = -8.0 / (12 * dx2)
-                matrix[i, i+2] = 1.0 / (12 * dx2)
+                for off, c in zip(offsets, coeffs):
+                    matrix[i, i + off] = -c / dx2
 
-            # Near-boundary points use second-order
-            for i in [1, n-2]:
-                matrix[i, i-1] = -1.0 / dx2
-                matrix[i, i] = 2.0 / dx2
-                matrix[i, i+1] = -1.0 / dx2
+            # Near-boundary points use lower-order stencils. Use the
+            # appropriate left- and right-sided stencils so column indices
+            # stay in bounds (avoid writing to column index == n).
+            offsets_left, coeffs_left = _second_derivative_stencil(2, "near_left")
+            offsets_right, coeffs_right = _second_derivative_stencil(2, "near_right")
 
-            self._apply_fd_boundary_conditions(matrix)
+            for off, c in zip(offsets_left, coeffs_left):
+                matrix[1, 1 + off] = -c / dx2
+
+            for off, c in zip(offsets_right, coeffs_right):
+                matrix[n-2, n-2 + off] = -c / dx2
 
         else:
             raise ValueError(
@@ -491,69 +382,32 @@ class LaplacianOperator(DifferentialOperator):
 
         return matrix
 
-    def _apply_fd_boundary_conditions(self, matrix):
-        """Apply boundary conditions to finite difference matrix."""
-        if self.boundary_conditions.type == 'dirichlet':
-            # Dirichlet: u = 0 at boundaries
-            matrix[0, :] = 0
-            matrix[0, 0] = 1
-            matrix[-1, :] = 0
-            matrix[-1, -1] = 1
-
-        elif self.boundary_conditions.type == 'neumann':
-            # Neumann: du/dx = 0 at boundaries (second-order)
-            # Left boundary: u_0 = u_1
-            matrix[0, :] = 0
-            matrix[0, 0] = -1
-            matrix[0, 1] = 1
-
-            # Right boundary: u_n = u_{n-1}
-            matrix[-1, :] = 0
-            matrix[-1, -1] = -1
-            matrix[-1, -2] = 1
-
-        elif self.boundary_conditions.type == 'periodic':
-            # Periodic: handle wraparound
-            # This is more complex and requires special treatment
-            warnings.warn(
-                "Periodic boundary conditions for FD not fully implemented"
-            )
-
-        else:
-            raise ValueError(
-                f"Boundary condition {self.boundary_conditions.type} "
-                f"not supported for finite differences"
-            )
-
     def _apply(self, f: Function) -> Function:
         """Apply the negative Laplacian operator to function f."""
-        if self.method == 'spectral':
+        if self._method == 'spectral':
             return self._apply_spectral(f)
-        elif self.method == 'finite_difference':
+        elif self._method == 'finite_difference':
             return self._apply_finite_difference(f)
         else:
-            raise ValueError(f"Unknown method '{self.method}'")
+            raise ValueError(f"Unknown method '{self._method}'")
 
     def _apply_spectral(self, f: Function) -> Function:
         """Apply Laplacian using spectral method (eigenfunction expansion)."""
         # Project f onto eigenfunctions and apply eigenvalues
-        if not hasattr(self._domain, 'to_components'):
-            raise ValueError(
-                "Spectral method requires domain with "
-                "coefficient representation"
+        f_new = self._domain.zero
+        for i in range(self._dofs):
+            # Get the basis functions
+            basis_func = self.get_eigenfunction(i)
+            eigenvalue = self.get_eigenvalue(i)
+            # Compute coefficient via inner product
+            coeff = (
+                (basis_func * f).integrate(method='simpson', n_points=1000)
             )
+            coeff *= eigenvalue  # Scale by eigenvalue
 
-        # Get coefficients of f in the eigenfunction basis
-        coeffs = self._domain.to_components(f)
+            f_new += coeff * basis_func
 
-        # Apply eigenvalues (multiply by λᵢ for -Δ)
-        laplacian_coeffs = np.zeros_like(coeffs)
-        for i in range(len(coeffs)):
-            eigenvalue = self._spectrum_provider.get_eigenvalue(i)
-            laplacian_coeffs[i] = eigenvalue * coeffs[i]
-
-        # Reconstruct function in the codomain
-        return self.codomain.from_components(laplacian_coeffs)
+        return f_new
 
     def _apply_finite_difference(self, f: Function) -> Function:
         """Apply Laplacian using finite difference method."""
@@ -570,7 +424,7 @@ class LaplacianOperator(DifferentialOperator):
         return Function(self.codomain, evaluate_callable=laplacian_func)
 
 
-class LaplacianInverseOperator(LinearOperator):
+class InverseLaplacian(LinearOperator):
     """
     Inverse Laplacian operator that acts as a covariance operator.
 
@@ -623,16 +477,6 @@ class LaplacianInverseOperator(LinearOperator):
                 f"fem_type must be 'hat' or 'general', got '{fem_type}'"
             )
 
-        # Create the Sobolev space as codomain
-        # IN TESTING NOW!!!!
-        """ self._codomain = Sobolev(
-            domain.dim,
-            domain.function_domain,
-            2.0,
-            'spectral',
-            basis_type='fourier',  # Use Fourier basis for spectral approach
-            boundary_conditions=boundary_conditions
-        ) """
         self._codomain = domain  # FOR TESTING ONLY
 
         # Get function domain from domain (Lebesgue and SobolevSpace)
@@ -650,42 +494,32 @@ class LaplacianInverseOperator(LinearOperator):
             domain, self._boundary_conditions, inverse=True
         )
 
-        # Create and setup FEM solver
-        if self._fem_type == "hat":
-            # Create Lebesgue space with hat functions for optimized performance
-            # Note: For now create baseless space, then use BasisProvider
-            # TODO: Add direct string-based basis support to Lebesgue
-            fem_l2_space = Lebesgue(
-                dofs,
-                self._function_domain
-            )
-            # TODO: Set appropriate BasisProvider for hat_homogeneous functions
-            self._fem_solver = GeneralFEMSolver(
-                fem_l2_space,
-                self._boundary_conditions
-            )
-            solver_description = "hat function FEM solver"
-        elif self._fem_type == "general":
-            # Use general implementation with domain's basis functions
-            self._fem_solver = GeneralFEMSolver(
-                domain,  # Pass the L2Space directly
-                self._boundary_conditions
-            )
-            solver_description = "general FEM solver"
+        self._initialize_fem_solver()
 
-        self._fem_solver.setup()
-
-        print(
-            f"LaplacianInverseOperator initialized with {solver_description}, "
-            f"{self._boundary_conditions} BCs"
+        # logger
+        self._log = logging.getLogger(__name__)
+        self._log.info(
+            "InverseLaplacian initialized: dofs=%s, fem_type=%s, alpha=%s",
+            self._dofs,
+            self._fem_type,
+            self._alpha,
         )
 
         # Initialize LinearOperator with L2 domain and Sobolev codomain
         # The operator maps (-Δ)⁻¹: L² → H^s
         super().__init__(
-            domain, self._codomain,
+            self._domain, self._codomain,
             self._solve_laplacian,
             adjoint_mapping=None  # Adjoint maps H^s → L²
+        )
+
+    def _initialize_fem_solver(self):
+        # Create and setup FEM solver
+        self._fem_solver = GeneralFEMSolver(
+            function_domain=self._function_domain,
+            dofs=self._dofs,
+            operator_domain=self._domain,
+            boundary_conditions=self._boundary_conditions
         )
 
     def _solve_laplacian(self, f: Function) -> Function:
@@ -765,11 +599,17 @@ class LaplacianInverseOperator(LinearOperator):
 
     def get_solver_info(self) -> dict:
         """Get information about the current solver."""
+        # Some FEM solvers may not implement get_coordinates; guard access
+        try:
+            coords = self._fem_solver.get_coordinates()
+        except Exception:
+            coords = None
+
         return {
             'fem_type': self._fem_type,
             'boundary_conditions': self._boundary_conditions,
             'dofs': self._dofs,
-            'fem_coordinates': self._fem_solver.get_coordinates(),
+            'fem_coordinates': coords,
             'spectrum_available': True,
             'eigenvalue_range': (
                 self.get_eigenvalue(0) if self._domain.dim > 0 else None,
@@ -815,11 +655,18 @@ class SOLAOperator(LinearOperator):
         ...                        functions=[func1, func2])
     """
 
-    def __init__(self, domain, codomain: EuclideanSpace,
-                 function_provider: Optional[FunctionProvider] = None,
-                 functions: Optional[List[Union[Function, Callable]]] = None,
-                 random_state: Optional[int] = None,
-                 cache_functions: bool = False):
+    def __init__(
+        self,
+        domain: Lebesgue,
+        codomain: EuclideanSpace,
+        kernels: Optional[
+            Union[
+                IndexedFunctionProvider,
+                List[Union[Function, Callable]]
+            ]
+        ] = None,
+        cache_kernels: bool = False
+    ):
         """
         Initialize the SOLA operator.
 
@@ -840,60 +687,14 @@ class SOLAOperator(LinearOperator):
                 ('simpson', 'trapezoid')
             n_points: Number of points for numerical integration
         """
+        self._domain = domain
+        self._codomain = codomain
         self.N_d = codomain.dim
-        self.cache_functions = cache_functions
-        self._function_cache = {} if cache_functions else None
+        self._kernels_provider = None
+        self.cache_kernels = cache_kernels
+        self._kernels_cache = {} if cache_kernels else None
 
-        # Check for mutually exclusive arguments
-        if function_provider is not None and functions is not None:
-            raise ValueError(
-                "Cannot specify both function_provider and functions. "
-                "Please provide only one."
-            )
-
-        # Handle direct function list
-        if functions is not None:
-            if len(functions) != self.N_d:
-                raise ValueError(
-                    f"Number of functions ({len(functions)}) must match "
-                    f"codomain dimension ({self.N_d})"
-                )
-
-            # Convert callables to Function instances if needed
-            self._functions = []
-            for i, func in enumerate(functions):
-                if callable(func) and not isinstance(func, Function):
-                    # Convert callable to Function instance
-                    self._functions.append(
-                        Function(domain, evaluate_callable=func)
-                    )
-                elif isinstance(func, Function):
-                    self._functions.append(func)
-                else:
-                    raise TypeError(
-                        f"Function at index {i} must be either a Function "
-                        f"instance or a callable, got {type(func)}"
-                    )
-
-            self.function_provider = None
-            self._use_direct_functions = True
-        else:
-            # Create or use provided FunctionProvider
-            if function_provider is None:
-                self.function_provider = NormalModesProvider(
-                    domain,
-                    random_state=random_state,
-                    n_modes_range=(2, 5),
-                    coeff_range=(-1.0, 1.0),
-                    freq_range=(0.5, 5.0),
-                    gaussian_width_percent_range=(20.0, 40.0)
-                )
-            else:
-                # Store the function provider for lazy evaluation
-                self.function_provider = function_provider
-
-            self._functions = None
-            self._use_direct_functions = False
+        self._initialize_kernels(kernels)
 
         # Define the mapping function
         def mapping(func):
@@ -912,6 +713,34 @@ class SOLAOperator(LinearOperator):
             adjoint_mapping=adjoint_mapping
         )
 
+    def _initialize_kernels(
+        self,
+        kernels: Optional[
+            Union[
+                IndexedFunctionProvider,
+                List[Union[Function, Callable]]
+            ]
+        ] = None
+    ):
+        if isinstance(kernels, list):
+            if len(kernels) != self.N_d:
+                raise ValueError(
+                    f"Number of kernels ({len(kernels)}) must match "
+                    f"codomain dimension ({self.N_d})"
+                )
+            if isinstance(kernels[0], Function):
+                # Directly use provided Function instances
+                self._kernels = kernels
+            elif isinstance(kernels[0], Callable):
+                # Convert callables to Function instances
+                self._kernels = [
+                    Function(self._domain.function_domain, evaluate_callable=func)
+                    for func in kernels
+                ]
+        elif isinstance(kernels, IndexedFunctionProvider):
+            self._kernels_provider = kernels
+            self._kernels = None
+
     def get_kernel(self, index: int):
         """
         Lazily get the i-th kernel with optional caching.
@@ -922,46 +751,13 @@ class SOLAOperator(LinearOperator):
         Returns:
             Function: The i-th kernel
         """
-        # If using direct functions, simply return the indexed function
-        if self._use_direct_functions:
-            if (self.cache_functions and self._function_cache is not None
-                    and index in self._function_cache):
-                return self._function_cache[index]
+        # If kernels are directly provided, return from list
+        if self._kernels is not None:
+            return self._kernels[index]
 
-            assert self._functions is not None  # For type checker
-            function = self._functions[index]
-
-            # Cache the function if caching is enabled
-            if self.cache_functions and self._function_cache is not None:
-                self._function_cache[index] = function
-
-            return function
-
-        # Otherwise use function provider logic
-        # Check cache first if caching is enabled
-        if (self.cache_functions and self._function_cache is not None
-                and index in self._function_cache):
-            return self._function_cache[index]
-
-        # Generate the function using the appropriate provider method
-        assert self.function_provider is not None  # For type checker
-        if isinstance(self.function_provider, IndexedFunctionProvider):
-            # Use the indexed access for providers that support it
-            function = self.function_provider.get_function_by_index(index)
-        elif hasattr(self.function_provider, 'sample_function'):
-            # Fall back to sampling for providers that support it
-            function = getattr(self.function_provider, 'sample_function')()
-        else:
-            raise ValueError(
-                f"Function provider {type(self.function_provider)} does not "
-                "support either indexed access or sampling"
-            )
-
-        # Cache the function if caching is enabled
-        if self.cache_functions and self._function_cache is not None:
-            self._function_cache[index] = function
-
-        return function
+        # Otherwise use the provider to get the kernel
+        assert self._kernels_provider is not None  # For type checker
+        return self._kernels_provider.get_function_by_index(index)
 
     def _apply_kernels(self, func):
         """

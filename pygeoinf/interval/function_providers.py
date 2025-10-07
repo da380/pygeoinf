@@ -1288,18 +1288,10 @@ class HatFunctionProvider(IndexedFunctionProvider):
         if index not in self._cache:
             # Determine which node this function corresponds to
             if self.homogeneous:
-                if not (0 <= index < self.space.dim):
-                    raise IndexError(
-                        f"Index {index} out of range [0, {self.space.dim})"
-                    )
                 # Skip first boundary node: effective_index = index + 1
                 effective_index = index + 1
                 node_position = self.nodes[effective_index]
             else:
-                if not (0 <= index < self.n_nodes):
-                    raise IndexError(
-                        f"Index {index} out of range [0, {self.n_nodes})"
-                    )
                 effective_index = index
                 node_position = self.nodes[effective_index]
 
