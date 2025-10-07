@@ -264,6 +264,9 @@ class Lebesgue(HilbertSpace):
         # For now, same dimension + same domain = equal spaces
         return True
 
+    @property
+    def zero(self):
+        return Function(self, evaluate_callable=lambda x: np.zeros_like(x))
     # ================================================================
     # Overridden methods
     # ================================================================

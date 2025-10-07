@@ -650,3 +650,57 @@ class GaussianMeasure:
         value = covariance_factor(w)
         # Add the expectation
         return self.domain.add(value, self.expectation)
+
+    # ------------------------------------------------------------------
+    # Spectral / KL style factory
+    # ------------------------------------------------------------------
+    @staticmethod
+    def from_spectral(
+        operator,
+        /,
+        *,
+        expectation=None,
+        n_modes: int | None = None,
+        energy_tol: float | None = None,
+        max_modes: int | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> "GaussianMeasure":
+        """Construct a GaussianMeasure from a spectral (eigen) decomposition.
+
+        The provided operator must implement `get_eigenvalue(i)` and
+        `get_eigenfunction(i)` (e.g. an `InverseLaplacian`). A truncated
+        covariance factor L is built so that C ≈ L L* where
+            L w = Σ sqrt(λ_i) w_i φ_i.
+
+        Parameters
+        ----------
+        operator : LinearOperator with spectral interface
+            Covariance operator (self-adjoint, PSD assumed).
+        expectation : Vector, optional
+            Mean (defaults to zero of operator.domain).
+        n_modes : int, optional
+            Explicit number of modes to retain (takes precedence).
+        energy_tol : float in (0,1], optional
+            Heuristic cumulative energy criterion (ignored if n_modes set).
+        max_modes : int, optional
+            Maximum modes when using energy_tol.
+        rng : np.random.Generator, optional
+            Source of randomness for sampling.
+        """
+        from .interval.spectral_sampling import SpectralSampler  # local import
+
+        sampler = SpectralSampler(
+            operator,
+            mean=expectation,
+            n_modes=n_modes,
+            energy_tol=energy_tol,
+            max_modes=max_modes,
+            rng=rng,
+        )
+        factor = sampler.covariance_factor()
+        return GaussianMeasure(
+            covariance_factor=factor,
+            expectation=(
+                factor.codomain.zero if expectation is None else expectation
+            ),
+        )

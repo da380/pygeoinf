@@ -383,6 +383,9 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             eigenval = self.alpha * (k * math.pi / length)**2
 
         elif self.boundary_conditions.type == 'neumann':
+            if self.inverse:
+                index += 1  # jump over the first index to mimick restriction to mean-zero subspace
+
             if index == 0:
                 # Constant mode has eigenvalue 0 for -Δ
                 eigenval = 0.0
@@ -392,6 +395,9 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
                 eigenval = self.alpha * (k * math.pi / length)**2
 
         elif self.boundary_conditions.type == 'periodic':
+            if self.inverse:
+                index += 1  # jump over the first index to mimick restriction to mean-zero subspace
+
             if index == 0:
                 # Constant mode has eigenvalue 0 for -Δ
                 eigenval = 0.0

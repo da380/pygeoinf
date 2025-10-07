@@ -93,12 +93,6 @@ class GeneralFEMSolver:
             self._function_domain.b,
         )
 
-        # Quadrature points and cached basis evaluations
-        a, b = self._function_domain.a, self._function_domain.b
-        self._quad_x = np.linspace(a, b, self.n_integration_points)
-        self._basis_on_quad = None
-        self._cache_basis_on_quadrature()
-
     def _assemble_stiffness_matrix(self) -> np.ndarray:
         """
         Assemble stiffness matrix analytically for hat functions.
@@ -193,34 +187,14 @@ class GeneralFEMSolver:
                 f"rhs_function must be Function, got {type(rhs_function)}"
             )
 
-        # Vectorized assembly using cached basis values on quadrature
         f_vec = np.zeros(self._dofs)
-
-        # Evaluate RHS on quadrature
-        f_vals = np.asarray(rhs_function(self._quad_x))
-
-        # Select integration routine
-        if self.integration_method == 'simpson':
-            try:
-                from scipy.integrate import simpson
-
-                def integrator(y):
-                    return float(simpson(y, x=self._quad_x))
-            except Exception:
-                def integrator(y):
-                    return float(np.trapz(y, x=self._quad_x))
-        else:
-            def integrator(y):
-                return float(np.trapz(y, x=self._quad_x))
-
-        # basis_on_quad shape: (n_basis, n_quad)
-        assert (
-            self._basis_on_quad is not None
-        ), "basis values on quadrature not cached"
         for i in range(self._dofs):
-            phi_vals = self._basis_on_quad[i]
-            integrand = f_vals * phi_vals
-            f_vec[i] = integrator(integrand)
+            phi_i = self._provider.get_function_by_index(i)
+            f_phi_i = rhs_function * phi_i
+            f_vec[i] = f_phi_i.integrate(
+                method=self.integration_method,
+                n_points=self.n_integration_points
+            )
 
         if self._boundary_conditions.type == 'dirichlet' and \
             self._boundary_conditions.is_homogeneous:
@@ -228,21 +202,8 @@ class GeneralFEMSolver:
         elif self._boundary_conditions.type == 'neumann' and \
             self._boundary_conditions.is_homogeneous:
             return np.append(f_vec, 0)
-
-    def _cache_basis_on_quadrature(self) -> None:
-        """Precompute basis function values on the quadrature points.
-
-        This speeds up repeated assembly calls and avoids re-evaluating
-        basis functions inside tight loops.
-        """
-        n_q = self._quad_x.size
-        n_b = self._dofs
-        basis_vals = np.zeros((n_b, n_q))
-        for i in range(n_b):
-            phi_i = self._provider.get_function_by_index(i)
-            basis_vals[i, :] = np.asarray(phi_i(self._quad_x))
-
-        self._basis_on_quad = basis_vals
+        elif self._boundary_conditions.type == 'periodic':
+            return np.append(f_vec, 0)
 
     # ------------------------------------------------------------------
     # Convenience accessors
@@ -288,6 +249,8 @@ class GeneralFEMSolver:
             return solution_coeffs
         elif self._boundary_conditions.type == 'neumann' and \
             self._boundary_conditions.is_homogeneous:
+            return solution_coeffs[0:-1]
+        elif self._boundary_conditions.type == 'periodic':
             return solution_coeffs[0:-1]
 
     def solution_to_function(self, coefficients: np.ndarray) -> Function:

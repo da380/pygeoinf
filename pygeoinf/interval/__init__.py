@@ -27,10 +27,6 @@ from .sobolev_space import Sobolev
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
 
-# Backward compatibility alias during transition
-# TODO: Remove this once all code is migrated
-L2Space = Lebesgue
-
 # LaplacianInverseOperator (native implementation)
 try:
     import importlib
@@ -43,7 +39,6 @@ except ImportError:
 
 __all__ = [
     'Lebesgue',
-    'L2Space',  # Backward compatibility alias
     'Function',
     'Sobolev',
     'IntervalDomain',
