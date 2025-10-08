@@ -4,8 +4,6 @@ Tests for the gaussian_measure module.
 
 import pytest
 import numpy as np
-import warnings
-from scipy.stats import multivariate_normal
 from scipy.stats._multivariate import multivariate_normal_frozen
 from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
 from pygeoinf.linear_operators import LinearOperator
