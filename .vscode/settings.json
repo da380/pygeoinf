@@ -1,0 +1,11 @@
+{
+  "python.defaultInterpreterPath": "/home/adrian/miniconda3/envs/inferences3/bin/python",
+  "python.pythonPath": "/home/adrian/miniconda3/envs/inferences3/bin/python",
+  "python.linting.enabled": true,
+  "python.linting.flake8Enabled": true,
+  "python.linting.flake8Path": "/home/adrian/miniconda3/envs/inferences3/bin/flake8",
+  "python.linting.ruffEnabled": true,
+  "python.linting.ruffPath": "/home/adrian/miniconda3/envs/inferences3/bin/ruff",
+  "python.analysis.indexing": true,
+  "python.analysis.autoSearchPaths": true
+}

@@ -30,6 +30,31 @@ from pygeoinf.interval.function_providers import (
     IndexedFunctionProvider,
 )
 
+class SpectralOperator(LinearOperator, ABC):
+    """
+    Abstract base class for spectral operators on interval domains.
+
+    Provides common functionality for eigenvalue/eigenfunction access
+    and error handling.
+    """
+
+    def __init__(self, domain, codomain, spectrum_provider: IndexedFunctionProvider):
+        self._spectrum_provider = spectrum_provider
+        super().__init__(domain, codomain, self._apply)
+
+    @abstractmethod
+    def _apply(self, f: Function) -> Function:
+        """Apply the operator to a function."""
+        pass
+
+    def get_eigenvalue(self, index: int) -> float:
+        """Get the eigenvalue at a specific index."""
+        return self._spectrum_provider.get_eigenvalue(index)
+
+    def get_eigenfunction(self, index: int) -> Function:
+        """Get the eigenfunction at a specific index."""
+        return self._spectrum_provider.get_eigenfunction(index)
+
 
 class DifferentialOperator(LinearOperator, ABC):
     """
@@ -219,7 +244,7 @@ class GradientOperator(DifferentialOperator):
 
 class Laplacian(DifferentialOperator):
     """
-    The negative Laplacian operator (-Δ) on interval domains.
+    The Laplacian operator (-Δ) on interval domains.
 
     This operator computes -d²u/dx² with specified boundary conditions.
     Multiple discretization methods are available:
@@ -270,17 +295,11 @@ class Laplacian(DifferentialOperator):
 
     def get_eigenvalue(self, index: int) -> float:
         """Get the eigenvalue at a specific index."""
-        if self._method == 'spectral':
-            return self._spectrum_provider.get_eigenvalue(index)
-        else:
-            raise NotImplementedError("Eigenvalue retrieval is not implemented for this method.")
+        return self._spectrum_provider.get_eigenvalue(index)
 
     def get_eigenfunction(self, index: int) -> Function:
         """Get the eigenfunction at a specific index."""
-        if self._method == 'spectral':
-            return self._spectrum_provider.get_eigenfunction(index)
-        else:
-            raise NotImplementedError("Eigenfunction retrieval is not implemented for this method.")
+        return self._spectrum_provider.get_eigenfunction(index)
 
     def _setup_finite_difference(self):
         """Setup finite difference discretization."""
@@ -401,7 +420,7 @@ class Laplacian(DifferentialOperator):
             eigenvalue = self.get_eigenvalue(i)
             # Compute coefficient via inner product
             coeff = (
-                (basis_func * f).integrate(method='simpson', n_points=1000)
+                (basis_func * f).integrate(method='simpson', n_points=10000)
             )
             coeff *= eigenvalue  # Scale by eigenvalue
 
@@ -414,8 +433,8 @@ class Laplacian(DifferentialOperator):
         # Evaluate function on grid
         f_values = f(self._x_grid)
 
-        # Apply finite difference matrix
-        laplacian_values = self._fd_matrix @ f_values
+        # Apply finite difference matrix (this is where we apply the negative 1!!)
+        laplacian_values = -self._fd_matrix @ f_values
 
         # Create result function by interpolation
         def laplacian_func(x):
@@ -617,6 +636,186 @@ class InverseLaplacian(LinearOperator):
                  if self._domain.dim > 0 else None)
             )
         }
+
+
+class BesselSobolev(LinearOperator):
+    """
+    Bessel potential operator that maps between Sobolev and Lebesgue spaces.
+
+    This operator implements the Bessel potential of order s, which acts as
+    a smoothing operator. It maps functions from a Sobolev space H^s to a
+    Lebesgue space L², effectively reducing the regularity of the function.
+
+    The operator is defined via its action on the Fourier coefficients of
+    the input function, scaling them by (k^2I - \Delta)^(s).
+
+    The operator maps: Sobolev -> Lebesgue
+
+    Examples:
+        # Create a Sobolev space H^1 on [0, 1] with 100 basis functions
+        >>> from pygeoinf.interval import Sobolev, BoundaryConditions
+        >>> sobolev_space = Sobolev(1, (0, 1), 100, BoundaryConditions('dirichlet'))
+
+        # Create a Lebesgue space L2 on [0, 1] with 100 basis functions
+        >>> from pygeoinf.interval import Lebesgue
+        >>> lebesgue_space = Lebesgue((0, 1), 100)
+
+        # Create the Bessel potential operator of order 1
+        >>> bessel_op = BeselSobolev(sobolev_space, lebesgue_space)
+
+        # Apply the operator to a function in H^1
+        >>> from pygeoinf.interval import Function
+        >>> f = Function(sobolev_space, evaluate_callable=lambda x: x*(1-x))
+        >>> g = bessel_op(f)
+    """
+
+    def __init__(self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float, L: SpectralOperator, dofs: Optional[int] = None):
+        """
+        Initialize the Bessel potential operator.
+
+        Args:
+            domain: Sobolev instance (the function space H^s)
+            codomain: Lebesgue instance (the function space L²)
+        """
+
+        self._domain = domain
+        self._codomain = codomain
+        self._L = L
+        self._k = k
+        self._s = s
+        self._dofs = dofs if dofs is not None else domain.dim
+
+        super().__init__(domain, codomain, self._apply)
+
+
+    def _apply(self, f: Function) -> Function:
+        """
+        Apply the Bessel potential operator to a function.
+
+        Args:
+            f: Function from the domain space
+
+        Returns:
+            Function: Resulting function in the codomain space
+        """
+        for i in range(self._dofs):
+            eigval = self._L.get_eigenvalue(i)
+            if eigval is None:
+                raise ValueError("Eigenvalue not available for index {i}")
+            if eigval < 0:
+                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
+            eigfunc = self._L.get_eigenfunction(i)
+            if eigfunc is None:
+                raise ValueError("Eigenfunction not available for index {i}")
+            coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
+            scale = (self._k**2 + eigval)**(self._s)
+            if i == 0:
+                f_new = scale * coeff * eigfunc # Initialize
+            else:
+                f_new += scale * coeff * eigfunc
+
+        return f_new
+
+    def get_eigenfunction(self, index: int) -> Function:
+        """Get the eigenfunction at a specific index."""
+        return self._L.get_eigenfunction(index)
+
+    def get_eigenvalue(self, index: int) -> float:
+        """Get the eigenvalue at a specific index."""
+        eigval = self._L.get_eigenvalue(index)
+        if eigval is None:
+            raise ValueError("Eigenvalue not available for index {index}")
+        if eigval < 0:
+            raise ValueError(f"Negative eigenvalue {eigval} at index {index}")
+        return (self._k**2 + eigval)**(self._s)
+
+class BesselSobolevInverse(LinearOperator):
+    """
+    Inverse Bessel potential operator that maps between Lebesgue and Sobolev spaces.
+
+    This operator implements the inverse of the Bessel potential of order s,
+    which acts as a smoothing operator. It maps functions from a Lebesgue space
+    L² to a Sobolev space H^s, effectively increasing the regularity of the function.
+
+    The operator is defined via its action on the Fourier coefficients of
+    the input function, scaling them by (k^2I - \Delta)^(-s).
+
+    The operator maps: Lebesgue -> Sobolev
+
+    Examples:
+        # Create a Lebesgue space L2 on [0, 1] with 100 basis functions
+        >>> from pygeoinf.interval import Lebesgue
+        >>> lebesgue_space = Lebesgue((0, 1), 100)
+
+        # Create a Sobolev space H^1 on [0, 1] with 100 basis functions
+        >>> from pygeoinf.interval import Sobolev, BoundaryConditions
+        >>> sobolev_space = Sobolev(1, (0, 1), 100, BoundaryConditions('dirichlet'))
+        # Create the inverse Bessel potential operator of order 1
+        >>> bessel_inv_op = BesselSobolevInverse(lebesgue_space, sobolev_space)
+        # Apply the operator to a function in L2
+        >>> from pygeoinf.interval import Function
+        >>> f = Function(lebesgue_space, evaluate_callable=lambda x: np.sin(np.pi*x))
+        >>> g = bessel_inv_op(f)
+    """
+
+    def __init__(self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float, L: SpectralOperator, dofs: Optional[int] = None):
+        """
+        Initialize the inverse Bessel potential operator.
+
+        Args:
+            domain: Lebesgue instance (the function space L²)
+            codomain: Sobolev instance (the function space H^s)
+        """
+
+        self._domain = domain
+        self._codomain = codomain
+        self._L = L
+        self._k = k
+        self._s = s
+        self._dofs = dofs if dofs is not None else domain.dim
+
+        super().__init__(domain, codomain, self._apply)
+
+    def _apply(self, f: Function) -> Function:
+        """
+        Apply the inverse Bessel potential operator to a function.
+
+        Args:
+            f: Function from the domain space
+
+        Returns:
+            Function: Resulting function in the codomain space
+        """
+        for i in range(self._dofs):
+            eigval = self._L.get_eigenvalue(i)
+            if eigval is None:
+                raise ValueError("Eigenvalue not available for index {i}")
+            if eigval < 0:
+                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
+            eigfunc = self._L.get_eigenfunction(i)
+            if eigfunc is None:
+                raise ValueError("Eigenfunction not available for index {i}")
+            coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
+            scale = (self._k**2 + eigval)**(-self._s)
+            if i == 0:
+                f_new = scale * coeff * eigfunc # Initialize
+            else:
+                f_new += scale * coeff * eigfunc
+
+        return f_new
+
+    def get_eigenfunction(self, index: int) -> Function:
+        """Get the eigenfunction at a specific index."""
+        return self._L.get_eigenfunction(index)
+
+    def get_eigenvalue(self, index: int) -> float:
+        """Get the eigenvalue at a specific index."""
+        eigval = self._L.get_eigenvalue(index)
+        if eigval is None:
+            raise ValueError("Eigenvalue not available for index {index}")
+        if eigval < 0:
+            raise ValueError(f"Negative eigenvalue {eigval} at index {index}")
+        return (self._k**2 + eigval)**(-self._s)
 
 
 class SOLAOperator(LinearOperator):

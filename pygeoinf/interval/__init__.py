@@ -26,16 +26,9 @@ from .functions import Function
 from .sobolev_space import Sobolev
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
+from .operators import SOLAOperator, Laplacian, InverseLaplacian, BesselSobolev, BesselSobolevInverse
 
 # LaplacianInverseOperator (native implementation)
-try:
-    import importlib
-    if importlib.util.find_spec("pygeoinf.interval.laplacian_operator"):
-        LAPLACIAN_OPERATOR_AVAILABLE = True
-    else:
-        LAPLACIAN_OPERATOR_AVAILABLE = False
-except ImportError:
-    LAPLACIAN_OPERATOR_AVAILABLE = False
 
 __all__ = [
     'Lebesgue',
@@ -43,7 +36,10 @@ __all__ = [
     'Sobolev',
     'IntervalDomain',
     'BoundaryConditions',
+    'SOLAOperator',
+    'Laplacian',
+    'InverseLaplacian',
+    'BesselSobolev',
+    'BesselSobolevInverse'
 ]
 
-if LAPLACIAN_OPERATOR_AVAILABLE:
-    __all__.append('LaplacianInverseOperator')
