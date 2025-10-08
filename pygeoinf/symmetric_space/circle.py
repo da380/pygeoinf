@@ -158,11 +158,11 @@ class CircleHelper:
         """
         return np.fromiter((f(theta) for theta in self.angles()), float)
 
-    def to_coefficient(self, u: np.ndarray) -> np.ndarray:
+    def to_coefficients(self, u: np.ndarray) -> np.ndarray:
         """Maps a function vector to its complex Fourier coefficients."""
         return rfft(u) * self.fft_factor
 
-    def from_coefficient(self, coeff: np.ndarray) -> np.ndarray:
+    def from_coefficients(self, coeff: np.ndarray) -> np.ndarray:
         """Maps complex Fourier coefficients to a function vector."""
         return irfft(coeff, n=2 * self.kmax) * self._inverse_fft_factor
 
@@ -235,7 +235,7 @@ class CircleHelper:
         # a minimal, non-redundant representation.
         return np.concatenate((coeff.real, coeff.imag[1 : self.kmax]))
 
-    def _component_to_coefficient(self, c: np.ndarray) -> np.ndarray:
+    def _component_to_coefficients(self, c: np.ndarray) -> np.ndarray:
         """Unpacks a real component vector into complex Fourier coefficients."""
         # This is the inverse of `_coefficient_to_component`. It reconstructs
         # the full complex coefficient array that irfft expects. We re-insert
@@ -290,26 +290,26 @@ class Lebesgue(CircleHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
     def to_components(self, u: np.ndarray) -> np.ndarray:
         """Converts a function vector to its real component representation."""
-        coeff = self.to_coefficient(u)
+        coeff = self.to_coefficients(u)
         return self._coefficient_to_component(coeff)
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
         """Converts a real component vector back to a function vector."""
-        coeff = self._component_to_coefficient(c)
-        return self.from_coefficient(coeff)
+        coeff = self._component_to_coefficients(c)
+        return self.from_coefficients(coeff)
 
     def to_dual(self, u: np.ndarray) -> "LinearForm":
         """Maps a vector `u` to its dual representation `u*`."""
-        coeff = self.to_coefficient(u)
+        coeff = self.to_coefficients(u)
         cp = self._coefficient_to_component(self._metric @ coeff)
         return self.dual.from_components(cp)
 
     def from_dual(self, up: "LinearForm") -> np.ndarray:
         """Maps a dual vector `u*` back to its primal representation `u`."""
         cp = self.dual.to_components(up)
-        dual_coeff = self._component_to_coefficient(cp)
+        dual_coeff = self._component_to_coefficients(cp)
         primal_coeff = self._inverse_metric @ dual_coeff
-        return self.from_coefficient(primal_coeff)
+        return self.from_coefficients(primal_coeff)
 
     def vector_multiply(self, x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
         """
@@ -366,9 +366,9 @@ class Lebesgue(CircleHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         matrix = diags([values], [0])
 
         def mapping(u):
-            coeff = self.to_coefficient(u)
+            coeff = self.to_coefficients(u)
             coeff = matrix @ coeff
-            return self.from_coefficient(coeff)
+            return self.from_coefficients(coeff)
 
         return LinearOperator.self_adjoint(self, mapping)
 
@@ -467,6 +467,31 @@ class Sobolev(
             k = 2 ** (n + 1)
 
         return Sobolev(k, order, scale, radius=radius)
+
+    @property
+    def derivative_operator(self) -> LinearOperator:
+        """
+        Returns the derivative operator from the space to one with a lower order.
+        """
+
+        codomain = Sobolev(self.kmax, self.order - 1, self.scale, radius=self.radius)
+
+        lebesgue_space = self.underlying_space
+        k = np.arange(self.kmax + 1)
+
+        def mapping(u):
+            coeff = lebesgue_space.to_coefficients(u)
+            diff_coeff = 1j * k * coeff
+            return lebesgue_space.from_coefficients(diff_coeff)
+
+        op_L2 = LinearOperator(
+            lebesgue_space,
+            lebesgue_space,
+            mapping,
+            adjoint_mapping=lambda u: -1 * mapping(u),
+        )
+
+        return LinearOperator.from_formal_adjoint(self, codomain, op_L2)
 
     def __eq__(self, other: object) -> bool:
         """

@@ -45,8 +45,8 @@ class TestSphereSobolevSpecifics:
             lat_rad, lon_rad = np.deg2rad(point[0]), np.deg2rad(point[1])
             return 2 * np.sin(lat_rad) + np.cos(lat_rad) ** 2 * np.cos(2 * lon_rad)
 
-        dirac_functional = space.dirac(test_point)  #
-        func_vector = space.project_function(test_func)  #
+        dirac_functional = space.dirac(test_point)
+        func_vector = space.project_function(test_func)
 
         functional_evaluation = space.duality_product(dirac_functional, func_vector)
         direct_evaluation = test_func(test_point)
@@ -63,7 +63,7 @@ class TestSphereSobolevSpecifics:
 
         coeffs = sh.SHCoeffs.from_zeros(space.lmax, normalization="ortho", csphase=1)
         coeffs.set_coeffs(1.0, l, m)
-        harmonic_grid = space.from_coefficient(coeffs)  #
+        harmonic_grid = space.from_coefficients(coeffs)  #
 
         numerical_norm = space.norm(harmonic_grid)
 

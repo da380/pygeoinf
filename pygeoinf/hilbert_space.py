@@ -166,6 +166,22 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         """
         return isinstance(x, type(self.zero))
 
+    def inner_product(self, x1: Vector, x2: Vector) -> float:
+        """
+        Computes the inner product of two vectors, `(x1, x2)`.
+
+        This is defined via the duality product as `<R(x1), x2>`, where `R` is
+        the Riesz map (`to_dual`).
+
+        Args:
+            x1: The first vector.
+            x2: The second vector.
+
+        Returns:
+            The inner product as a float.
+        """
+        return self.duality_product(self.to_dual(x1), x2)
+
     def duality_product(self, xp: LinearForm, x: Vector) -> float:
         """
         Computes the duality product <xp, x>.
@@ -292,23 +308,6 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         from .linear_operators import LinearOperator
 
         return LinearOperator.self_dual(self, self.to_dual)
-
-    @final
-    def inner_product(self, x1: Vector, x2: Vector) -> float:
-        """
-        Computes the inner product of two vectors, `(x1, x2)`.
-
-        This is defined via the duality product as `<R(x1), x2>`, where `R` is
-        the Riesz map (`to_dual`).
-
-        Args:
-            x1: The first vector.
-            x2: The second vector.
-
-        Returns:
-            The inner product as a float.
-        """
-        return self.duality_product(self.to_dual(x1), x2)
 
     @final
     def squared_norm(self, x: Vector) -> float:
@@ -588,6 +587,15 @@ class EuclideanSpace(HilbertSpace):
         """Maps a `LinearForm` back to a vector via its components."""
         return self.dual.to_components(xp)
 
+    def inner_product(self, x1: np.ndarray, x2: np.ndarray) -> float:
+        """
+        Computes the inner product of two vectors.
+
+        Notes:
+            Default implementation overrident for efficiency.
+        """
+        return np.dot(x1, x2)
+
     def __eq__(self, other: object):
         if not isinstance(other, EuclideanSpace):
             return NotImplemented
@@ -597,7 +605,7 @@ class EuclideanSpace(HilbertSpace):
         """
         Checks if an object is a valid element of the space.
         """
-        return isinstance(x, np.ndarray) and len(x) == self.dim
+        return isinstance(x, np.ndarray) and x.shape == (self.dim,)
 
 
 class MassWeightedHilbertSpace(HilbertSpace):
@@ -677,6 +685,15 @@ class MassWeightedHilbertSpace(HilbertSpace):
         # acceptable and avoids an unnecessary copy.
         x = self.underlying_space.from_dual(xp)
         return self._inverse_mass_operator(x)
+
+    def inner_product(self, x1: Vector, x2: Vector) -> float:
+        """
+        Computes the inner product of two vectors.
+
+        Notes:
+            Default implementation overrident for efficiency.
+        """
+        return self._underlying_space.inner_product(self._mass_operator(x1), x2)
 
     def __eq__(self, other: object) -> bool:
         """
