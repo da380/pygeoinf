@@ -28,8 +28,8 @@ class Lebesgue(HilbertSpace):
     Lebesgue space L² on an interval [a,b] with inner product
     ⟨u,v⟩ = ∫_a^b u(x)v(x) dx.
 
-    This class properly inherits from the pygeoinf HilbertSpace abstract base class,
-    using Function objects as the Vector type. It provides:
+    This class properly inherits from the pygeoinf HilbertSpace abstract base
+    class, using Function objects as the Vector type. It provides:
     - L² inner product and norm via integration
     - Basis function management (Fourier, hat functions, etc.)
     - Function evaluation and coefficient transformations
@@ -53,12 +53,17 @@ class Lebesgue(HilbertSpace):
 
         Args:
             dim: Dimension of the finite-dimensional approximation space
-            function_domain: IntervalDomain object specifying [a,b] and boundary conditions
+            function_domain: IntervalDomain object specifying [a,b] and
+                boundary conditions
             basis: Basis specification, can be:
-                - str: 'fourier', 'hat', 'sine', etc. (auto-generated but not fully implemented)
-                - str: 'none' (creates baseless space for temporary use)
-                - list: [func1, func2, ...] (custom callable functions)
-                - None: 'none' basis (default - create baseless space)
+                - str: 'fourier', 'hat', 'sine', etc.
+                  (auto-generated but not fully implemented)
+                - str: 'none'
+                  (creates baseless space for temporary use)
+                - list: [func1, func2, ...]
+                  (custom callable functions)
+                - None: 'none' basis
+                  (default - create baseless space)
 
         Examples:
             >>> # Create baseless space (typical workflow)
@@ -66,11 +71,18 @@ class Lebesgue(HilbertSpace):
             >>> space = Lebesgue(dim=50, function_domain=domain, basis='none')
 
             >>> # Custom functions (immediate setup)
-            >>> space = Lebesgue(dim=3, function_domain=domain,
-            ...                  basis=[lambda x: 1, lambda x: x, lambda x: x**2])
+            >>> space = Lebesgue(
+            ...     dim=3,
+            ...     function_domain=domain,
+            ...     basis=[lambda x: 1, lambda x: x, lambda x: x**2]
+            ... )
 
             >>> # Standard basis types (when implemented)
-            >>> space = Lebesgue(dim=50, function_domain=domain, basis='fourier')
+            >>> space = Lebesgue(
+            ...     dim=50,
+            ...     function_domain=domain,
+            ...     basis='fourier'
+            ... )
         """
         self._dim = dim
         self._function_domain = function_domain
@@ -383,7 +395,10 @@ class Lebesgue(HilbertSpace):
     # ================================================================
     def _require_basis(self):
         if self._basis_type == 'none':
-            raise RuntimeError("This operation requires a basis; set a BasisProvider or direct basis first.")
+            raise RuntimeError(
+                "This operation requires a basis; set a BasisProvider "
+                "or direct basis first."
+            )
 
     def _initialize_basis(self, basis):
         """
@@ -394,14 +409,14 @@ class Lebesgue(HilbertSpace):
         """
         if isinstance(basis, str):
             if basis == 'none':
-                # Create a baseless space - useful for temporary spaces when creating BasisProviders
+                # Create a baseless space - useful for temporary spaces when
+                # creating BasisProviders
                 self._basis_type = 'none'
                 self._basis_functions = None
                 self.basis_provider = None
                 self._use_basis_provider = False
             else:
                 # String-based standard basis types using provider factory
-                from pygeoinf.interval.providers import create_basis_provider
                 try:
                     basis_provider = create_basis_provider(self, basis)
                     self._basis_type = basis
@@ -412,7 +427,8 @@ class Lebesgue(HilbertSpace):
                     raise ValueError(f"Unsupported basis type '{basis}': {e}")
 
         elif isinstance(basis, list):
-            # List of callables/functions provided directly - transform to Functions
+            # List of callables/functions provided directly - transform to
+            # Functions
             if len(basis) != self._dim:
                 raise ValueError(
                     f"Number of basis functions ({len(basis)}) "
@@ -430,7 +446,8 @@ class Lebesgue(HilbertSpace):
         else:
             # Invalid input type
             raise TypeError(
-                f"basis must be a string or list of callables, got {type(basis)}"
+                "basis must be a string or list of callables, got "
+                f"{type(basis)}"
             )
 
     def _create_function_from_callable(self, callable_func):
@@ -459,15 +476,18 @@ class Lebesgue(HilbertSpace):
     def basis_functions(self) -> list["Function"]:
         """List of basis functions for this space."""
         if self._basis_type == 'none':
-            raise RuntimeError("No basis functions available - space is baseless")
+            raise RuntimeError(
+                "No basis functions available - space is baseless"
+            )
 
         if self._use_basis_provider:
-            # Use BasisProvider for lazy evaluation (set via set_basis_provider)
+            # Use BasisProvider for lazy evaluation (set via
+            # set_basis_provider)
             if self.basis_provider is None:
                 raise RuntimeError("No basis provider available")
             if hasattr(self.basis_provider, 'get_basis_function'):
-                return [self.basis_provider.get_basis_function(i)
-                        for i in range(self.dim)]
+                return [f for i in range(self.dim)
+                        if (f := self.basis_provider.get_basis_function(i)) is not None]
             else:
                 raise RuntimeError("BasisProvider missing get_basis_function")
         else:
@@ -583,3 +603,54 @@ class Lebesgue(HilbertSpace):
     def _clear_metric_caches(self):
         self._metric = None
         self._chol = None
+
+
+def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
+    """
+    Factory function to create a BasisProvider for a given Lebesgue space.
+
+    Args:
+        space: The Lebesgue space to create the basis for
+        basis_type: Type of basis ('fourier', 'hat', etc.)
+
+    Returns:
+        An instance of BasisProvider for the specified basis type
+    """
+    from pygeoinf.interval.function_providers import (
+        FourierFunctionProvider,
+        HatFunctionProvider,
+        SineFunctionProvider,
+        CosineFunctionProvider
+    )
+    from pygeoinf.interval.providers import CustomBasisProvider
+
+    if basis_type == 'fourier':
+        return CustomBasisProvider(
+            space,
+            functions_provider=FourierFunctionProvider(space),
+            orthonormal=True,
+            basis_type='fourier'
+        )
+    elif basis_type == 'hat':
+        return CustomBasisProvider(
+            space,
+            functions_provider=HatFunctionProvider(space),
+            orthonormal=False,
+            basis_type='hat'
+        )
+    elif basis_type == 'sine':
+        return CustomBasisProvider(
+            space,
+            functions_provider=SineFunctionProvider(space),
+            orthonormal=True,
+            basis_type='sine'
+        )
+    elif basis_type == 'cosine':
+        return CustomBasisProvider(
+            space,
+            functions_provider=CosineFunctionProvider(space),
+            orthonormal=True,
+            basis_type='cosine'
+        )
+    else:
+        raise ValueError(f"Unknown basis type: {basis_type}")

@@ -26,7 +26,16 @@ from .functions import Function
 from .sobolev_space import Sobolev
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
-from .operators import SOLAOperator, Laplacian, InverseLaplacian, BesselSobolev, BesselSobolevInverse
+from .operators import (
+    SOLAOperator,
+    Laplacian,
+    InverseLaplacian,
+    BesselSobolev,
+    BesselSobolevInverse,
+    SpectralOperator,
+    Gradient
+)
+from .providers import SpectrumProvider
 
 # LaplacianInverseOperator (native implementation)
 
@@ -40,6 +49,9 @@ __all__ = [
     'Laplacian',
     'InverseLaplacian',
     'BesselSobolev',
-    'BesselSobolevInverse'
+    'BesselSobolevInverse',
+    'SpectralOperator',
+    'SpectrumProvider',
+    'Gradient'
 ]
 

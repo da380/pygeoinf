@@ -27,7 +27,7 @@ try:
         HatFunctionProvider
     )
     from pygeoinf.interval.interval_domain import IntervalDomain
-    from pygeoinf.interval import L2Space
+    from pygeoinf.interval import Lebesgue
     IMPORTS_SUCCESSFUL = True
 except ImportError as e:
     print(f"Import error: {e}")
@@ -41,7 +41,7 @@ class TestFunctionProviders(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.domain = IntervalDomain(0.0, 1.0)
-        self.space = L2Space(10, self.domain)
+        self.space = Lebesgue(10, self.domain)
 
     # === ABSTRACT BASE CLASS TESTS ===
 
@@ -396,7 +396,7 @@ class TestFunctionProviders(unittest.TestCase):
     def test_different_domains(self):
         """Test providers work with different domains."""
         domain2 = IntervalDomain(-1.0, 2.0)
-        space2 = L2Space(5, domain2)
+        space2 = Lebesgue(5, domain2)
 
         provider = SineFunctionProvider(space2)
         func = provider.get_function_by_index(0)

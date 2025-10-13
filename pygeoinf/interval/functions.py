@@ -11,6 +11,7 @@ import numbers
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .lebesgue_space import Lebesgue  # type: ignore[import]
+    from .sobolev_space import Sobolev  # type: ignore[import]
 
 
 class Function:
@@ -26,7 +27,7 @@ class Function:
     """
 
     def __init__(self,
-                 space: "Lebesgue",
+                 space: Union["Lebesgue", "Sobolev"],
                  *,
                  coefficients: Optional[np.ndarray] = None,
                  evaluate_callable: Optional[Callable] = None,

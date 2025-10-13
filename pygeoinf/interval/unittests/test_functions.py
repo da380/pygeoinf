@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 from pygeoinf.interval.functions import Function
 from pygeoinf.interval.interval_domain import IntervalDomain
-from pygeoinf.interval import L2Space
+from pygeoinf.interval import Lebesgue
 
 
 class TestFunction(unittest.TestCase):
@@ -25,7 +25,7 @@ class TestFunction(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.domain = IntervalDomain(0.0, 1.0)
-        self.space = L2Space(5, self.domain)
+        self.space = Lebesgue(5, self.domain, basis='fourier')
 
         # Test functions
         self.coeffs = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -467,7 +467,7 @@ class TestFunction(unittest.TestCase):
     def test_arithmetic_with_incompatible_spaces(self):
         """Test arithmetic operations with functions from different spaces."""
         other_domain = IntervalDomain(1.0, 2.0)
-        other_space = L2Space(3, other_domain)
+        other_space = Lebesgue(3, other_domain)
 
         func1 = Function(self.space, evaluate_callable=self.simple_func)
         func2 = Function(other_space, evaluate_callable=self.constant_func)
