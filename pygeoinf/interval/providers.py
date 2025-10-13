@@ -434,7 +434,7 @@ class LaplacianSpectrumProvider(SpectrumProvider):
             basis_type: String identifier for the type of basis functions
         """
         self._boundary_conditions = boundary_conditions
-
+        self._inverse = inverse
         super().__init__(space, orthonormal=True, basis_type='')
 
         self._eigenvalue_provider = LaplacianEigenvalueProvider(
@@ -451,10 +451,12 @@ class LaplacianSpectrumProvider(SpectrumProvider):
         if self._boundary_conditions.type == 'dirichlet':
             return self._function_provider.get_function_by_index(index)
         elif self._boundary_conditions.type == 'neumann':
-            index += 1
+            if self._inverse:
+                index += 1
             return self._function_provider.get_function_by_index(index)
         elif self._boundary_conditions.type == 'periodic':
-            index += 1
+            if self._inverse:
+                index += 1
             return self._function_provider.get_function_by_index(index)
 
     def _choose_basis(self):

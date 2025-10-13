@@ -14,7 +14,7 @@ is sampled uniformly on the domain.
 """
 
 import numpy as np
-from scipy.fft import dst, dct, fft, ifft
+from scipy.fft import dst, dct, fft
 from typing import Literal, Tuple, Optional
 import logging
 
@@ -58,7 +58,9 @@ def fast_spectral_coefficients(
     elif boundary_condition == 'periodic':
         return _fast_periodic_coefficients(f_samples, domain_length, n_coeffs)
     else:
-        raise ValueError(f"Unsupported boundary condition: {boundary_condition}")
+        raise ValueError(
+            f"Unsupported boundary condition: {boundary_condition}"
+        )
 
 
 def _fast_dirichlet_coefficients(
@@ -139,29 +141,41 @@ def _fast_periodic_coefficients(
     n_samples = len(f_samples)
 
     # Compute DFT
-    coeffs_fft = fft(f_samples)
+    coeffs_fft = np.asarray(fft(f_samples), dtype=np.complex128)
 
-    # Apply normalization: DFT gives coefficients for e^(2πikx/N)
-    # We want coefficients for e^(2πikx/L) / √L
-    scaling = (domain_length / n_samples) / np.sqrt(domain_length)
-    coeffs_normalized = coeffs_fft * scaling
+    # Apply normalization: DFT gives coefficients for e^(-2πijk/N)
+    # We want inner products with the orthonormal complex basis
+    # ϕ_k(x) = e^{i 2π k (x-a)/L} / √L. Using the trapezoidal rule,
+    # a_k ≈ (Δx/√L) * FFT[-k]. For real signals, FFT[-k] = conj(FFT[k]).
+    # We'll work directly with FFT[k] and handle signs below.
+    dx_over_sqrtL = (domain_length / n_samples) / np.sqrt(domain_length)
 
-    # For real functions, we typically want the real Fourier series
-    # Convert complex coefficients to real ones
+    # Convert complex coefficients to real cos/sin coefficients that match
+    # the orthonormal real basis used in FourierFunctionProvider:
+    #   index 0: φ0 = 1/√L
+    #   odd  (2k-1): √(2/L) cos(2πk(x-a)/L) → coefficient = √2·Re(a_k)
+    #   even (2k):   √(2/L) sin(2πk(x-a)/L) → coefficient = √2·Im(a_k)
+    # With a_k from FFT[-k], Im(a_k) = -(Δx/√L)·Im(FFT[k]).
+    sqrt2 = np.sqrt(2.0)
     coeffs_real = np.zeros(n_coeffs)
 
     # DC component (k=0)
     if n_coeffs > 0:
-        coeffs_real[0] = coeffs_fft[0].real * scaling
+        coeffs_real[0] = coeffs_fft[0].real * dx_over_sqrtL
 
-    # Alternating cos/sin modes
-    for k in range(1, min(n_coeffs, n_samples//2 + 1)):
-        if 2*k-1 < n_coeffs:
-            # Cosine coefficient: cos(2πkx/L)
-            coeffs_real[2*k-1] = 2 * coeffs_fft[k].real * scaling
-        if 2*k < n_coeffs:
-            # Sine coefficient: sin(2πkx/L)
-            coeffs_real[2*k] = -2 * coeffs_fft[k].imag * scaling
+    # Alternating cos/sin modes with correct √2 scaling
+    max_k = min(n_coeffs, n_samples // 2 + 1)
+    for k in range(1, max_k):
+        if 2 * k - 1 < n_coeffs:
+            # Cosine coefficient: √2 · Re(a_k)
+            coeffs_real[2 * k - 1] = (
+                sqrt2 * coeffs_fft[k].real * dx_over_sqrtL
+            )
+        if 2 * k < n_coeffs:
+            # Sine coefficient: √2 · Im(a_k) with FFT sign adjustment
+            coeffs_real[2 * k] = (
+                -sqrt2 * coeffs_fft[k].imag * dx_over_sqrtL
+            )
 
     return coeffs_real
 
@@ -196,7 +210,9 @@ def create_uniform_samples(
         # For periodic, exclude the right endpoint (periodic)
         x = np.linspace(a, b, n_samples + 1)[:-1]
     else:
-        raise ValueError(f"Unsupported boundary condition: {boundary_condition}")
+        raise ValueError(
+            f"Unsupported boundary condition: {boundary_condition}"
+        )
 
     return func(x)
 
@@ -222,15 +238,20 @@ def benchmark_integration_methods(
     domain_length = b - a
 
     # Create function samples
-    f_samples = create_uniform_samples(func, domain, n_samples, boundary_condition)
+    f_samples = create_uniform_samples(
+        func, domain, n_samples, boundary_condition
+    )
 
     # Fast transform method
     start_time = time.time()
-    coeffs_fast = fast_spectral_coefficients(f_samples, boundary_condition, domain_length, n_coeffs)
+    coeffs_fast = fast_spectral_coefficients(
+        f_samples, boundary_condition, domain_length, n_coeffs
+    )
     fast_time = time.time() - start_time
 
-    # Note: For a full comparison, we'd need to implement the slow numerical integration
-    # method here, but that would require the full function space infrastructure
+    # Note: For a full comparison, we'd need to implement the slow numerical
+    # integration method here, but that would require the full function space
+    # infrastructure
 
     results = {
         'fast_transform_time': fast_time,
@@ -240,7 +261,10 @@ def benchmark_integration_methods(
         'method': boundary_condition,
     }
 
-    logger.info(f"Fast transform ({boundary_condition}): {fast_time:.6f}s for {n_coeffs} coefficients")
+    logger.info(
+        f"Fast transform ({boundary_condition}): {fast_time:.6f}s for "
+        f"{n_coeffs} coefficients"
+    )
 
     return results
 
@@ -257,5 +281,11 @@ if __name__ == "__main__":
     for bc in boundary_conditions:
         print(f"\\nTesting {bc} boundary conditions:")
         bc_typed = cast(Literal['dirichlet', 'neumann', 'periodic'], bc)
-        results = benchmark_integration_methods(test_func, domain, bc_typed, n_coeffs=50, n_samples=512)
-        print(f"  Computed {results['coefficients_computed']} coefficients in {results['fast_transform_time']:.6f}s")
+        results = benchmark_integration_methods(
+            test_func, domain, bc_typed, n_coeffs=50, n_samples=512
+        )
+        print(
+            "  Computed "
+            f"{results['coefficients_computed']} coefficients in "
+            f"{results['fast_transform_time']:.6f}s"
+        )

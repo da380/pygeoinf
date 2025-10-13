@@ -16,7 +16,6 @@ import numpy as np
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Union, Literal, List, Callable
-logger = logging.getLogger(__name__)
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from .lebesgue_space import Lebesgue
@@ -635,51 +634,8 @@ class InverseLaplacian(LinearOperator):
         return self._alpha * self._spectrum_provider.get_eigenvalue(index)
 
     def get_eigenfunction(self, index: int) -> Function:
-        """
-        Get eigenfunction of the inverse Laplacian operator.
+        return self._spectrum_provider.get_eigenfunction(index)
 
-        Args:
-            index: Index of the eigenfunction (0 to dim-1)
-
-        Returns:
-            Function: Eigenfunction φₖ of (-Δ)^(-1)
-        """
-        return self._spectrum_provider.get_basis_function(index)
-
-    from typing import Optional
-
-    def get_all_eigenvalues(self, n: Optional[int] = None) -> np.ndarray:
-        """
-        Get all eigenvalues of the inverse Laplacian operator.
-        Args:
-            n: Number of eigenvalues to compute (default: space.dim)
-        Returns:
-            np.ndarray: Array of all eigenvalues
-        """
-        if n is None:
-            n = self._domain.dim
-        return self._alpha * self._spectrum_provider.get_all_eigenvalues(n)
-
-    def get_solver_info(self) -> dict:
-        """Get information about the current solver."""
-        # Some FEM solvers may not implement get_coordinates; guard access
-        try:
-            coords = self._fem_solver.get_coordinates()
-        except Exception:
-            coords = None
-
-        return {
-            'fem_type': self._fem_type,
-            'boundary_conditions': self._boundary_conditions,
-            'dofs': self._dofs,
-            'fem_coordinates': coords,
-            'spectrum_available': True,
-            'eigenvalue_range': (
-                self.get_eigenvalue(0) if self._domain.dim > 0 else None,
-                (self.get_eigenvalue(self._domain.dim - 1)
-                 if self._domain.dim > 0 else None)
-            )
-        }
 
 
 class BesselSobolev(LinearOperator):
@@ -701,23 +657,10 @@ class BesselSobolev(LinearOperator):
     def __init__(self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float,
                  L: SpectralOperator, dofs: Optional[int] = None,
                  n_samples: int = 1024, use_fast_transforms: bool = True):
-    def __init__(self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float,
-                 L: SpectralOperator, dofs: Optional[int] = None,
-                 n_samples: int = 1024, use_fast_transforms: bool = True):
         """
-        Initialize the fast Bessel potential operator.
         Initialize the fast Bessel potential operator.
 
         Args:
-            domain: Lebesgue space (input)
-            codomain: Lebesgue space (output)
-            k: Bessel parameter k²
-            s: Sobolev order s
-            L: Spectral operator (should be Laplacian for fast transforms)
-            dofs: Number of degrees of freedom
-            n_samples: Number of samples for fast transform (should be >= dofs)
-            use_fast_transforms: If False, fall back to slow numerical integration
-        """
             domain: Lebesgue space (input)
             codomain: Lebesgue space (output)
             k: Bessel parameter k²
@@ -733,26 +676,6 @@ class BesselSobolev(LinearOperator):
         self._k = k
         self._s = s
         self._dofs = dofs if dofs is not None else domain.dim
-        self._n_samples = max(n_samples, self._dofs)  # Ensure enough samples
-        self._use_fast_transforms = use_fast_transforms
-
-        # Detect if we can use fast transforms
-        self._boundary_condition = self._detect_boundary_condition()
-        self._can_use_fast_transforms = (
-            self._use_fast_transforms and
-            self._boundary_condition is not None
-        )
-
-        if self._can_use_fast_transforms:
-            logger.info(f"FastBesselSobolev: Using fast {self._boundary_condition} transforms")
-        else:
-            logger.info("FastBesselSobolev: Using slow numerical integration (fallback)")
-
-        super().__init__(domain, codomain, self._apply)
-
-    def _detect_boundary_condition(self) -> Optional[Literal['dirichlet', 'neumann', 'periodic']]:
-        """
-        Detect boundary condition type from the spectral operator.
         self._n_samples = max(n_samples, self._dofs)  # Ensure enough samples
         self._use_fast_transforms = use_fast_transforms
 
@@ -828,34 +751,8 @@ class BesselSobolev(LinearOperator):
             eigval = self._L.get_eigenvalue(i)
             if eigval is None:
                 raise ValueError(f"Eigenvalue not available for index {i}")
-                raise ValueError(f"Eigenvalue not available for index {i}")
             if eigval < 0:
                 raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
-            # Bessel scaling: (k² + λᵢ)^s
-            scale = (self._k**2 + eigval)**(self._s)
-            coeff = coefficients[i] * scale
-
-            if abs(coeff) > 1e-14:  # Skip negligible coefficients
-                eigfunc = self._L.get_eigenfunction(i)
-                if i == 0:
-                    f_new = coeff * eigfunc
-                else:
-                    f_new += coeff * eigfunc
-
-        return f_new
-
-    def _apply_slow(self, f: Function) -> Function:
-        """Apply using slow numerical integration (fallback)."""
-        # This is the original implementation
-        f_new = self._domain.zero
-        for i in range(self._dofs):
-            eigval = self._L.get_eigenvalue(i)
-            if eigval is None:
-                raise ValueError(f"Eigenvalue not available for index {i}")
-            if eigval < 0:
-                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
 
             # Bessel scaling: (k² + λᵢ)^s
             scale = (self._k**2 + eigval)**(self._s)
@@ -886,15 +783,10 @@ class BesselSobolev(LinearOperator):
                 raise ValueError(f"Eigenfunction not available for index {i}")
 
             # Slow numerical integration
-                raise ValueError(f"Eigenfunction not available for index {i}")
-
-            # Slow numerical integration
             coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
             scale = (self._k**2 + eigval)**(self._s)
 
-
             if i == 0:
-                f_new = scale * coeff * eigfunc
                 f_new = scale * coeff * eigfunc
             else:
                 f_new += scale * coeff * eigfunc
@@ -910,7 +802,6 @@ class BesselSobolev(LinearOperator):
         eigval = self._L.get_eigenvalue(index)
         if eigval is None:
             raise ValueError(f"Eigenvalue not available for index {index}")
-            raise ValueError(f"Eigenvalue not available for index {index}")
         if eigval < 0:
             raise ValueError(f"Negative eigenvalue {eigval} at index {index}")
         return (self._k**2 + eigval)**(self._s)
@@ -919,15 +810,7 @@ class BesselSobolev(LinearOperator):
 class BesselSobolevInverse(LinearOperator):
     """
     Fast inverse Bessel potential operator using fast transforms.
-    Fast inverse Bessel potential operator using fast transforms.
 
-    This is a drop-in replacement for BesselSobolevInverse that uses fast transforms
-    instead of numerical integration for coefficient computation.
-    """
-
-    def __init__(self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float,
-                 L: SpectralOperator, dofs: Optional[int] = None,
-                 n_samples: int = 1024, use_fast_transforms: bool = True):
     This is a drop-in replacement for BesselSobolevInverse that uses fast transforms
     instead of numerical integration for coefficient computation.
     """
@@ -936,19 +819,9 @@ class BesselSobolevInverse(LinearOperator):
                  L: SpectralOperator, dofs: Optional[int] = None,
                  n_samples: int = 1024, use_fast_transforms: bool = True):
         """
-        Initialize the fast inverse Bessel potential operator.
         Initialize the fast inverse Bessel potential operator.
 
         Args:
-            domain: Lebesgue space (input)
-            codomain: Lebesgue space (output)
-            k: Bessel parameter k²
-            s: Sobolev order s
-            L: Spectral operator (should be Laplacian for fast transforms)
-            dofs: Number of degrees of freedom
-            n_samples: Number of samples for fast transform
-            use_fast_transforms: If False, fall back to slow method
-        """
             domain: Lebesgue space (input)
             codomain: Lebesgue space (output)
             k: Bessel parameter k²
@@ -978,43 +851,8 @@ class BesselSobolevInverse(LinearOperator):
             logger.info(f"FastBesselSobolevInverse: Using fast {self._boundary_condition} transforms")
         else:
             logger.info("FastBesselSobolevInverse: Using slow numerical integration (fallback)")
-        self._n_samples = max(n_samples, self._dofs)
-        self._use_fast_transforms = use_fast_transforms
-
-        # Detect boundary condition
-        self._boundary_condition = self._detect_boundary_condition()
-        self._can_use_fast_transforms = (
-            self._use_fast_transforms and
-            self._boundary_condition is not None
-        )
-
-        if self._can_use_fast_transforms:
-            logger.info(f"FastBesselSobolevInverse: Using fast {self._boundary_condition} transforms")
-        else:
-            logger.info("FastBesselSobolevInverse: Using slow numerical integration (fallback)")
 
         super().__init__(domain, codomain, self._apply)
-
-    def _detect_boundary_condition(self) -> Optional[Literal['dirichlet', 'neumann', 'periodic']]:
-        """Detect boundary condition type from the spectral operator."""
-        # Same logic as FastBesselSobolev
-        if hasattr(self._L, '_spectrum_provider'):
-            provider = self._L._spectrum_provider
-            if hasattr(provider, 'type'):
-                if provider.type == 'sine_dirichlet':
-                    return 'dirichlet'
-                elif provider.type == 'cosine_neumann':
-                    return 'neumann'
-                elif provider.type == 'fourier_periodic':
-                    return 'periodic'
-
-        if hasattr(self._L, 'boundary_conditions'):
-            bc = self._L.boundary_conditions
-            if hasattr(bc, 'type'):
-                if bc.type in ['dirichlet', 'neumann', 'periodic']:
-                    return bc.type
-
-        return None
 
     def _detect_boundary_condition(self) -> Optional[Literal['dirichlet', 'neumann', 'periodic']]:
         """Detect boundary condition type from the spectral operator."""
@@ -1063,63 +901,12 @@ class BesselSobolevInverse(LinearOperator):
 
         # Apply inverse Bessel scaling to coefficients
         f_new = self._domain.zero
-        """Apply the inverse Bessel potential operator to a function."""
-        if self._can_use_fast_transforms:
-            return self._apply_fast(f)
-        else:
-            return self._apply_slow(f)
-
-    def _apply_fast(self, f: Function) -> Function:
-        """Apply using fast transforms."""
-        # Get domain information
-        domain_interval = self._domain.function_domain
-        domain_tuple = (domain_interval.a, domain_interval.b)
-        domain_length = domain_interval.b - domain_interval.a
-
-        # Create uniform samples of the input function
-        f_samples = create_uniform_samples(
-            f, domain_tuple, self._n_samples, self._boundary_condition
-        )
-
-        # Compute all spectral coefficients at once
-        coefficients = fast_spectral_coefficients(
-            f_samples, self._boundary_condition, domain_length, self._dofs
-        )
-
-        # Apply inverse Bessel scaling to coefficients
-        f_new = self._domain.zero
-        for i in range(self._dofs):
-            eigval = self._L.get_eigenvalue(i)
-            if eigval is None:
-                raise ValueError(f"Eigenvalue not available for index {i}")
-                raise ValueError(f"Eigenvalue not available for index {i}")
-            if eigval < 0:
-                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
-            # Inverse Bessel scaling: (k² + λᵢ)^(-s)
-            scale = (self._k**2 + eigval)**(-self._s)
-            coeff = coefficients[i] * scale
-
-            if abs(coeff) > 1e-14:  # Skip negligible coefficients
-                eigfunc = self._L.get_eigenfunction(i)
-                if i == 0:
-                    f_new = coeff * eigfunc
-                else:
-                    f_new += coeff * eigfunc
-
-        return f_new
-
-    def _apply_slow(self, f: Function) -> Function:
-        """Apply using slow numerical integration (fallback)."""
-        # Original implementation
-        f_new = self._domain.zero
         for i in range(self._dofs):
             eigval = self._L.get_eigenvalue(i)
             if eigval is None:
                 raise ValueError(f"Eigenvalue not available for index {i}")
             if eigval < 0:
                 raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
 
             # Inverse Bessel scaling: (k² + λᵢ)^(-s)
             scale = (self._k**2 + eigval)**(-self._s)
@@ -1150,15 +937,10 @@ class BesselSobolevInverse(LinearOperator):
                 raise ValueError(f"Eigenfunction not available for index {i}")
 
             # Slow numerical integration
-                raise ValueError(f"Eigenfunction not available for index {i}")
-
-            # Slow numerical integration
             coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
             scale = (self._k**2 + eigval)**(-self._s)
 
-
             if i == 0:
-                f_new = scale * coeff * eigfunc
                 f_new = scale * coeff * eigfunc
             else:
                 f_new += scale * coeff * eigfunc
@@ -1174,10 +956,10 @@ class BesselSobolevInverse(LinearOperator):
         eigval = self._L.get_eigenvalue(index)
         if eigval is None:
             raise ValueError(f"Eigenvalue not available for index {index}")
-            raise ValueError(f"Eigenvalue not available for index {index}")
         if eigval < 0:
             raise ValueError(f"Negative eigenvalue {eigval} at index {index}")
         return (self._k**2 + eigval)**(-self._s)
+
 
 class SOLAOperator(LinearOperator):
     """
