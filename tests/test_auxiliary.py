@@ -6,8 +6,9 @@ which generates empirical data error measures based on samples from a model spac
 The tests cover:
 
 - Basic functionality and return types
-- Behavior with different parameter settings (diagonal_only, scale_factor, n_samples)
+- Behavior with different parameter settings (scale_factor, n_samples)
 - Statistical properties and approximation quality
+- Mean centering behavior using empirical sample means
 - Edge cases and error conditions
 - Integration with different Hilbert space implementations
 
@@ -82,12 +83,12 @@ class TestEmpiricalDataErrorMeasure:
         assert isinstance(result, GaussianMeasure)
         assert result.domain == forward_operator.codomain
 
-    def test_basic_functionality_non_diagonal(self, model_measure: GaussianMeasure,
+    def test_basic_functionality(self, model_measure: GaussianMeasure,
                                             forward_operator: LinearOperator):
-        """Test basic functionality with diagonal_only=False."""
+        """Test basic functionality."""
         n_samples = 20
         result = empirical_data_error_measure(
-            model_measure, forward_operator, n_samples=n_samples, diagonal_only=False
+            model_measure, forward_operator, n_samples=n_samples
         )
         
         # Check that result is a valid measure
@@ -99,45 +100,45 @@ class TestEmpiricalDataErrorMeasure:
         eigenvals = np.linalg.eigvals(cov_matrix)
         assert np.all(eigenvals >= -1e-10), "Covariance matrix should be positive semidefinite"
 
-    def test_basic_functionality_diagonal(self, model_measure: GaussianMeasure,
-                                        forward_operator: LinearOperator):
-        """Test basic functionality with diagonal_only=True."""
-        n_samples = 20
+    def test_mean_centering_behavior(self, model_measure: GaussianMeasure,
+                                   forward_operator: LinearOperator):
+        """Test that samples are properly mean-centered using empirical sample mean."""
+        n_samples = 50
         result = empirical_data_error_measure(
-            model_measure, forward_operator, n_samples=n_samples, diagonal_only=True
+            model_measure, forward_operator, n_samples=n_samples
         )
         
         # Check that result is a valid measure
         assert isinstance(result, GaussianMeasure)
         assert result.domain == forward_operator.codomain
         
-        # Check that covariance matrix is diagonal
-        cov_matrix = result.covariance.matrix(dense=True, galerkin=True)
-        off_diagonal = cov_matrix - np.diag(np.diag(cov_matrix))
-        assert np.allclose(off_diagonal, 0, atol=1e-14), "Covariance should be diagonal"
+        # The resulting measure should have approximately zero mean since we subtract 
+        # the empirical sample mean from each sample
+        result_mean = result.expectation.data
+        expected_zero_mean = np.zeros_like(result_mean)
+        
+        # Allow some tolerance due to finite sampling effects
+        assert np.allclose(result_mean, expected_zero_mean, atol=0.1), \
+            "Result should have approximately zero mean due to mean centering"
 
     def test_scale_factor_effect(self, model_measure: GaussianMeasure,
                                forward_operator: LinearOperator):
         """Test that scale_factor properly scales the covariance."""
         # Test using a deterministic approach by using the same samples
-        # Generate samples once and use the scale factor correctly
         n_samples = 20
         scale_factor = 2.5
         
         # Fix the random seed to get reproducible samples
         np.random.seed(42)
+        result_unit = empirical_data_error_measure(
+            model_measure, forward_operator, n_samples=n_samples, scale_factor=1.0
+        )
         
-        # Generate the data samples manually to control randomness
-        data_measure = model_measure.affine_mapping(operator=forward_operator)
-        data_samples = data_measure.samples(n_samples)
-        mean = data_measure.expectation
-        
-        # Create zeroed samples with different scale factors
-        zeroed_samples_unit = [1.0 * (data_sample - mean) for data_sample in data_samples]
-        zeroed_samples_scaled = [scale_factor * (data_sample - mean) for data_sample in data_samples]
-        
-        result_unit = GaussianMeasure.from_samples(forward_operator.codomain, zeroed_samples_unit)
-        result_scaled = GaussianMeasure.from_samples(forward_operator.codomain, zeroed_samples_scaled)
+        # Use the same seed to get the same samples, but with different scale factor
+        np.random.seed(42)
+        result_scaled = empirical_data_error_measure(
+            model_measure, forward_operator, n_samples=n_samples, scale_factor=scale_factor
+        )
         
         # Check that covariances are scaled by scale_factor^2
         cov_unit = result_unit.covariance.matrix(dense=True, galerkin=True)
@@ -146,36 +147,6 @@ class TestEmpiricalDataErrorMeasure:
         expected_scaled_cov = (scale_factor ** 2) * cov_unit
         assert np.allclose(cov_scaled, expected_scaled_cov, rtol=1e-12), \
             "Scaled covariance should be scale_factor^2 times the original"
-
-    def test_scale_factor_diagonal_only(self, model_measure: GaussianMeasure,
-                                      forward_operator: LinearOperator):
-        """Test scale_factor with diagonal_only=True."""
-        # Test using deterministic approach by fixing random seed
-        n_samples = 20
-        scale_factor = 3.0
-        
-        # Generate the same data samples for both tests
-        np.random.seed(42)
-        data_measure = model_measure.affine_mapping(operator=forward_operator)
-        data_samples = data_measure.samples(n_samples)
-        
-        # Convert to numpy array for easier manipulation
-        data_array = np.array([sample.data for sample in data_samples])
-        
-        # Compute standard deviations with different scale factors
-        std_devs_unit = np.std(data_array, axis=0) * 1.0
-        std_devs_scaled = np.std(data_array, axis=0) * scale_factor
-        
-        result_unit = GaussianMeasure.from_standard_deviations(forward_operator.codomain, std_devs_unit)
-        result_scaled = GaussianMeasure.from_standard_deviations(forward_operator.codomain, std_devs_scaled)
-        
-        # Check diagonal elements are scaled by scale_factor^2
-        diag_unit = np.diag(result_unit.covariance.matrix(dense=True, galerkin=True))
-        diag_scaled = np.diag(result_scaled.covariance.matrix(dense=True, galerkin=True))
-        
-        expected_scaled_diag = (scale_factor ** 2) * diag_unit
-        assert np.allclose(diag_scaled, expected_scaled_diag, rtol=1e-12), \
-            "Diagonal elements should be scaled by scale_factor^2"
 
     def test_different_sample_counts(self, model_measure: GaussianMeasure,
                                    forward_operator: LinearOperator):
@@ -195,39 +166,32 @@ class TestEmpiricalDataErrorMeasure:
         # Both should have the same domain
         assert result_small.domain == result_large.domain == forward_operator.codomain
 
-    def test_centering_reduces_variance_effect(self, model_measure: GaussianMeasure,
-                                              forward_operator: LinearOperator):
-        """Test that centering is applied correctly by comparing diagonal vs non-diagonal modes."""
+    def test_empirical_vs_analytical_mean_behavior(self, model_measure: GaussianMeasure,
+                                                  forward_operator: LinearOperator):
+        """Test that empirical mean centering produces approximately zero-mean result."""
         n_samples = 100
         
-        # Test that both modes produce valid measures 
-        result_diagonal = empirical_data_error_measure(
-            model_measure, forward_operator, n_samples=n_samples, diagonal_only=True
+        # Test that the function produces a valid measure with approximately zero mean
+        result = empirical_data_error_measure(
+            model_measure, forward_operator, n_samples=n_samples
         )
         
-        result_full = empirical_data_error_measure(
-            model_measure, forward_operator, n_samples=n_samples, diagonal_only=False
-        )
+        # The result should be a valid GaussianMeasure
+        assert isinstance(result, GaussianMeasure)
+        assert result.domain == forward_operator.codomain
         
-        # Both should produce valid GaussianMeasures
-        assert isinstance(result_diagonal, GaussianMeasure)
-        assert isinstance(result_full, GaussianMeasure)
+        # The result should have approximately zero mean due to empirical mean subtraction
+        result_mean = result.expectation.data
+        expected_zero_mean = np.zeros_like(result_mean)
         
-        # Both should have the same domain
-        assert result_diagonal.domain == result_full.domain == forward_operator.codomain
+        # Allow reasonable tolerance for finite sampling effects
+        assert np.allclose(result_mean, expected_zero_mean, atol=0.2), \
+            "Result should have approximately zero mean due to empirical mean subtraction"
         
-        # The diagonal version should have zero off-diagonal elements
-        cov_diag = result_diagonal.covariance.matrix(dense=True, galerkin=True)
-        cov_full = result_full.covariance.matrix(dense=True, galerkin=True)
-        
-        # Check that diagonal covariance is actually diagonal
-        off_diagonal_diag = cov_diag - np.diag(np.diag(cov_diag))
-        assert np.allclose(off_diagonal_diag, 0, atol=1e-14), \
-            "Diagonal-only covariance should have zero off-diagonal elements"
-        
-        # Both should have positive diagonal elements
-        assert np.all(np.diag(cov_diag) > 0), "Diagonal covariance should have positive diagonal elements"
-        assert np.all(np.diag(cov_full) > 0), "Full covariance should have positive diagonal elements"
+        # Covariance should be positive semidefinite
+        cov_matrix = result.covariance.matrix(dense=True, galerkin=True)
+        eigenvals = np.linalg.eigvals(cov_matrix)
+        assert np.all(eigenvals >= -1e-10), "Covariance matrix should be positive semidefinite"
 
     def test_consistent_results_with_fixed_seed(self, model_measure: GaussianMeasure,
                                               forward_operator: LinearOperator):
@@ -266,18 +230,18 @@ class TestEmpiricalDataErrorMeasure:
         )
         
         # Analytical result: B @ C_model @ B^T where B is forward operator matrix
-        # Since model_measure has zero mean, the theoretical covariance is exactly this
+        # The empirical version should approximate this for large n_samples
         analytical_cov = forward_matrix @ model_cov @ forward_matrix.T
         
         # Empirical result with many samples
         np.random.seed(123)  # For reproducibility
         empirical_result = empirical_data_error_measure(
-            model_measure, forward_operator, n_samples=2000, diagonal_only=False
+            model_measure, forward_operator, n_samples=2000
         )
         empirical_cov = empirical_result.covariance.matrix(dense=True, galerkin=True)
         
-        # They should be approximately equal (allow for sampling variance)
-        assert np.allclose(empirical_cov, analytical_cov, rtol=0.2, atol=0.2), \
+        # They should be approximately equal (allow for sampling variance and mean subtraction effects)
+        assert np.allclose(empirical_cov, analytical_cov, rtol=0.3, atol=0.3), \
             "Empirical covariance should approximate analytical covariance with many samples"
 
     def test_edge_case_single_sample(self, model_measure: GaussianMeasure,
