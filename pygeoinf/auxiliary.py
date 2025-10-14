@@ -6,7 +6,7 @@ def empirical_data_error_measure(model_measure, forward_operator, n_samples=10, 
     to define a reasonable data error measure for synthetic testing, and need the covariance matrix to be easily accessible.
     
     Args:
-        model_measure: The measure on the model space used as a basis for the error measure (e.g. the model prior measure)
+        model_measure: The measure on the model space used as a basis for the error measure (e.g., the model prior measure)
         forward_operator: Linear operator mapping from model space to data space (e.g., operator B)
         n_samples: Number of samples to generate for computing statistics (default: 10)
         scale_factor: Scaling factor for the standard deviations (default: 1.0)
