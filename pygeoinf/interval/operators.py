@@ -102,13 +102,7 @@ class Gradient(LinearOperator):
         self._domain = domain
 
         # Create codomain with s-1 regularity
-        self._codomain = Sobolev(
-            domain._underlying_space,
-            domain._s,
-            domain._k,
-            domain._L,
-            dofs=domain._dofs
-        )
+        self._codomain = domain
         self._fd_order = fd_order
         self._fd_step = fd_step
         self._boundary_treatment = boundary_treatment

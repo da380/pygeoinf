@@ -381,9 +381,9 @@ class TestLaplacianOperators(unittest.TestCase):
 
         # Compute L2 norms
         diff_norm = np.sqrt(
-            np.trapezoid((numerical_values - analytical_values)**2, x_eval)
+            np.trapz((numerical_values - analytical_values)**2, x_eval)
         )
-        analytical_norm = np.sqrt(np.trapezoid(analytical_values**2, x_eval))
+        analytical_norm = np.sqrt(np.trapz(analytical_values**2, x_eval))
 
         # Handle zero analytical solution case
         if analytical_norm < 1e-15:
