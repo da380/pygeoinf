@@ -3,7 +3,8 @@ import numpy as np
 
 def empirical_data_error_measure(model_measure, forward_operator, n_samples=10, scale_factor=1.0, diagonal_only=False):
     """
-    Generate an empirical data error measure based on samples from a measure on the model space.
+    Generate an empirical data error measure based on samples from a measure on the model space. Useful for when you need
+    to define a reasonable data error measure for synthetic testing, and need the covariance matrix to be easily accessible.
     
     Args:
         model_measure: The measure on the model space used as a basis for the error measure (e.g., the model prior measure)
