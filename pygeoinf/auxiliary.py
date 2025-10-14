@@ -1,5 +1,4 @@
 from .gaussian_measure import GaussianMeasure
-import numpy as np
 
 def empirical_data_error_measure(model_measure, forward_operator, n_samples=10, scale_factor=1.0):
     """
