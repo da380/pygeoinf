@@ -543,18 +543,10 @@ class InverseLaplacian(LinearOperator):
             self._alpha,
         )
 
-        # Initialize LinearOperator with L2 domain and Sobolev codomain
-        # The operator maps (-Δ)⁻¹: L² → H^s
-        super().__init__(
-            self._domain, self._codomain,
-            self._solve_laplacian,
-            adjoint_mapping=None  # Adjoint maps H^s → L²
-        )
-
     def _initialize_fem_solver(self):
         # Create and setup FEM solver
         self._fem_solver = GeneralFEMSolver(
-            function_domain=self._function_domain,
+            function_domain=self._domain._function_domain,
             dofs=self._dofs,
             operator_domain=self._domain,
             boundary_conditions=self._boundary_conditions
@@ -575,13 +567,27 @@ class InverseLaplacian(LinearOperator):
         domain_tuple = (domain_interval.a, domain_interval.b)
         domain_length = domain_interval.b - domain_interval.a
         # Create uniform samples of the input function
-        f_samples = create_uniform_samples(
-            f, domain_tuple, self._dofs, self._boundary_conditions.type
-        )
-        # Compute all spectral coefficients at once using fast transforms
-        coefficients = fast_spectral_coefficients(
-            f_samples, self._boundary_conditions.type, domain_length, self._dofs
-        )
+        if self._boundary_conditions.type == 'neumann' or \
+           self._boundary_conditions.type == 'periodic':
+            f_samples = create_uniform_samples(
+                f, domain_tuple, self._dofs + 1, self._boundary_conditions.type
+            )
+            # Compute all spectral coefficients at once using fast transforms
+            coefficients = fast_spectral_coefficients(
+                f_samples, self._boundary_conditions.type, domain_length, self._dofs + 1
+            )
+        else:
+            f_samples = create_uniform_samples(
+                f, domain_tuple, self._dofs, self._boundary_conditions.type
+            )
+            # Compute all spectral coefficients at once using fast transforms
+            coefficients = fast_spectral_coefficients(
+                f_samples, self._boundary_conditions.type, domain_length, self._dofs
+            )
+        if self._boundary_conditions.type == 'neumann' or \
+           self._boundary_conditions.type == 'periodic':
+            # For Dirichlet and periodic, zero eigenvalue is not present
+            coefficients = coefficients[1:]
 
         f_new = self._domain.zero
         for i in range(self._dofs):

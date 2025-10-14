@@ -502,8 +502,28 @@ class Function:
                     self.space, coefficients=new_coeffs, support=new_support
                 )
             else:
+                # Avoid calling self.evaluate/other.evaluate inside the
+                # returned callable because those may perform domain checks
+                # or dispatch that (indirectly) call back into this
+                # binary-op machinery and create recursion. Instead, capture
+                # the lowest-level evaluators available for each operand.
+                def _get_eval_callable(fn):
+                    # Prefer an explicit evaluate_callable if provided
+                    if getattr(fn, 'evaluate_callable', None) is not None:
+                        return fn.evaluate_callable
+                    # Fall back to coefficient-based evaluation
+                    if getattr(fn, 'coefficients', None) is not None:
+                        return lambda x: fn._evaluate_from_coefficients(x)
+                    # Last resort: use the public evaluate but disable domain
+                    # checks to avoid re-entering higher-level code paths.
+                    return lambda x: fn.evaluate(x, check_domain=False)
+
+                eval_self = _get_eval_callable(self)
+                eval_other = _get_eval_callable(other)
+
                 def op_callable(x):
-                    return op(self.evaluate(x), other.evaluate(x))
+                    return op(eval_self(x), eval_other(x))
+
                 return self.__class__(
                     self.space,
                     evaluate_callable=op_callable,
