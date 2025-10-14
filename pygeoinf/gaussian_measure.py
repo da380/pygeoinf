@@ -687,9 +687,9 @@ class GaussianMeasure:
         rng : np.random.Generator, optional
             Source of randomness for sampling.
         """
-        from .interval.spectral_sampling import SpectralSampler  # local import
+        from .interval.KL_sampler import KLSampler  # local import
 
-        sampler = SpectralSampler(
+        sampler = KLSampler(
             operator,
             mean=expectation,
             n_modes=n_modes,

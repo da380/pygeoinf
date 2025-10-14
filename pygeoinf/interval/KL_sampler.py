@@ -11,25 +11,14 @@ Also returns a covariance factor L so that C ≈ L L*.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Protocol, runtime_checkable
-
+from typing import List, Optional, TYPE_CHECKING
 import numpy as np
 
-from pygeoinf.hilbert_space import HilbertSpace, EuclideanSpace
-from pygeoinf.linear_operators import LinearOperator
-
-
-@runtime_checkable
-class _SpectralOperatorProtocol(Protocol):
-    """Protocol describing the minimal spectral interface we rely upon."""
-
-    domain: HilbertSpace
-
-    def get_eigenvalue(self, index: int) -> float:  # pragma: no cover
-        ...
-
-    def get_eigenfunction(self, index: int):  # pragma: no cover
-        ...
+if TYPE_CHECKING:
+    from .operators import SpectralOperator
+    from .functions import Function
+    from pygeoinf.linear_operators import LinearOperator
+from pygeoinf.hilbert_space import EuclideanSpace
 
 
 @dataclass
@@ -39,7 +28,7 @@ class TruncationInfo:
     energy_fraction: Optional[float] = None
 
 
-class SpectralSampler:
+class KLSampler:
     """Sampler for Gaussian measures using a spectral (KL) expansion.
 
     Parameters
@@ -64,25 +53,16 @@ class SpectralSampler:
 
     def __init__(
         self,
-        operator: _SpectralOperatorProtocol,
+        operator: 'SpectralOperator',
         *,
-        mean=None,
+        mean: Optional[Function] = None,
         n_modes: Optional[int] = None,
         energy_tol: Optional[float] = None,
         max_modes: Optional[int] = None,
         rng: Optional[np.random.Generator] = None,
         cache: bool = True,
     ) -> None:
-        if not isinstance(operator, _SpectralOperatorProtocol):
-            missing = [
-                attr
-                for attr in ("get_eigenvalue", "get_eigenfunction", "domain")
-                if not hasattr(operator, attr)
-            ]
-            msg = "Operator lacks spectral protocol attributes: " + ", ".join(
-                missing
-            )
-            raise TypeError(msg)
+
         if n_modes is not None and n_modes < 1:
             raise ValueError("n_modes must be positive")
         if energy_tol is not None:
@@ -177,7 +157,7 @@ class SpectralSampler:
     def eigenfunction(self, i: int):
         return self._fetch_eigenpair(i)[1]
 
-    def covariance_factor(self) -> LinearOperator:
+    def covariance_factor(self) -> 'LinearOperator':
         """Return a covariance factor L : R^k → H with C ≈ L L*.
 
         Adjoint mapping implements L*: H → R^k via inner products with
