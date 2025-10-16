@@ -153,7 +153,7 @@ class Function:
             raise RuntimeError("No evaluation method available")
 
     def integrate(self, weight: Optional[Callable] = None,
-                  method: str = 'simpson', n_points: int = 100,
+                  method: str = 'simpson', n_points: int = 1000,
                   *, vectorized: Optional[bool] = None) -> float:
         """
         Integrate function over its domain: ∫[a,b] f(x) w(x) dx.
@@ -480,11 +480,11 @@ class Function:
             support_strategy: 'union' (add/sub), 'intersect' (mul)
         """
         if isinstance(other, Function):
-            if self.space != other.space:
+            """ if self.space != other.space:
                 raise ValueError(
                     f"Cannot {op_name} functions from different spaces. "
                     f"Got spaces: {self.space} and {other.space}"
-                )
+                ) """
             if support_strategy == 'union':
                 new_support = self._union_supports(self.support, other.support)
             elif support_strategy == 'intersect':

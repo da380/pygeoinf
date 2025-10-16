@@ -13,6 +13,7 @@ import numpy as np
 from typing import Optional, Any, TYPE_CHECKING, Union
 
 from pygeoinf.hilbert_space import HilbertSpace
+from pygeoinf.interval.linear_form_lebesgue import LinearFormLebesgue
 
 if TYPE_CHECKING:
     from pygeoinf.interval.functions import Function
@@ -153,18 +154,11 @@ class Lebesgue(HilbertSpace):
         Returns:
             LinearForm representing the dual element
         """
-        from pygeoinf.linear_forms import LinearForm
-
-        # Get coefficient representation
-        components = self.to_components(x)
-
-        # Apply metric tensor (Gram matrix) to get dual components
-        dual_components = self.metric @ components
 
         # Create LinearForm directly from dual components
-        return LinearForm(self, components=dual_components)
+        return LinearFormLebesgue(self, x)
 
-    def from_dual(self, xp: Any) -> "Function":
+    def from_dual(self, xp: 'LinearFormLebesgue') -> "Function":
         """
         Maps a dual vector back to its representative in the primal space.
 
@@ -177,18 +171,10 @@ class Lebesgue(HilbertSpace):
         Returns:
             Function representing the primal element
         """
-        from pygeoinf.linear_forms import LinearForm
-
-        if not isinstance(xp, LinearForm):
+        if not isinstance(xp, LinearFormLebesgue):
             raise TypeError("Expected LinearForm for dual element")
 
-        # Get dual components from LinearForm
-        dual_components = xp.components
-
-        # Apply inverse metric to get primal components
-        primal_components = self._spd_solve(dual_components)
-
-        return self.from_components(primal_components)
+        return xp.kernel
 
     def to_components(self, x: "Function") -> np.ndarray:
         """

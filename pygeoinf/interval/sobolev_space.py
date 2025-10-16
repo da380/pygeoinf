@@ -4,6 +4,7 @@ Sobolev spaces on a segment/interval [a, b].
 
 from typing import TYPE_CHECKING
 from pygeoinf import MassWeightedHilbertSpace
+from pygeoinf.interval.linear_form_lebesgue import LinearFormSobolev
 from .functions import Function
 import numpy as np
 
@@ -70,3 +71,11 @@ class Sobolev(MassWeightedHilbertSpace):
     @property
     def zero(self):
         return Function(self, evaluate_callable=lambda x: np.zeros_like(x))
+
+    def to_dual(self, x: Function) -> 'LinearFormLebesgue':
+        from .linear_form_lebesgue import LinearFormSobolev
+        if not isinstance(x, Function):
+            raise TypeError("Expected Function for primal element")
+
+        if
+        return LinearFormLebesgue(self, x)

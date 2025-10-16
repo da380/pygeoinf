@@ -15,7 +15,7 @@ boundary conditions through the underlying function spaces.
 import numpy as np
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Union, Literal, List, Callable
+from typing import Optional, Union, Literal, List, Callable, Any
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from .lebesgue_space import Lebesgue
@@ -27,6 +27,7 @@ from pygeoinf.interval.fem_solvers import GeneralFEMSolver
 from pygeoinf.interval.function_providers import (
     IndexedFunctionProvider,
 )
+from pygeoinf.interval.linear_form_lebesgue import LinearFormLebesgue
 from pygeoinf.interval.providers import LaplacianSpectrumProvider
 from .sobolev_space import Sobolev
 from .fast_spectral_integration import (
@@ -34,6 +35,9 @@ from .fast_spectral_integration import (
     create_uniform_samples
 )
 from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pygeoinf import LinearForm
 
 logger = logging.getLogger(__name__)
 
@@ -755,7 +759,7 @@ class BesselSobolev(LinearOperator):
                 raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
 
             # Bessel scaling: (k² + λᵢ)^s
-            scale = (self._k**2 + eigval)**(self._s)
+            scale = (self._k**2 + eigval)**(self._s / 2)
             coeff = coefficients[i] * scale
 
             if abs(coeff) > 1e-14:  # Skip negligible coefficients
@@ -784,7 +788,7 @@ class BesselSobolev(LinearOperator):
 
             # Slow numerical integration
             coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
-            scale = (self._k**2 + eigval)**(self._s)
+            scale = (self._k**2 + eigval)**(self._s / 2)
 
             if i == 0:
                 f_new = scale * coeff * eigfunc
@@ -804,7 +808,7 @@ class BesselSobolev(LinearOperator):
             raise ValueError(f"Eigenvalue not available for index {index}")
         if eigval < 0:
             raise ValueError(f"Negative eigenvalue {eigval} at index {index}")
-        return (self._k**2 + eigval)**(self._s)
+        return (self._k**2 + eigval)**(self._s / 2)
 
 
 class BesselSobolevInverse(LinearOperator):
@@ -909,7 +913,7 @@ class BesselSobolevInverse(LinearOperator):
                 raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
 
             # Inverse Bessel scaling: (k² + λᵢ)^(-s)
-            scale = (self._k**2 + eigval)**(-self._s)
+            scale = (self._k**2 + eigval)**(-self._s / 2)
             coeff = coefficients[i] * scale
 
             if abs(coeff) > 1e-14:  # Skip negligible coefficients
@@ -938,7 +942,7 @@ class BesselSobolevInverse(LinearOperator):
 
             # Slow numerical integration
             coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
-            scale = (self._k**2 + eigval)**(-self._s)
+            scale = (self._k**2 + eigval)**(-self._s / 2)
 
             if i == 0:
                 f_new = scale * coeff * eigfunc
@@ -958,7 +962,7 @@ class BesselSobolevInverse(LinearOperator):
             raise ValueError(f"Eigenvalue not available for index {index}")
         if eigval < 0:
             raise ValueError(f"Negative eigenvalue {eigval} at index {index}")
-        return (self._k**2 + eigval)**(-self._s)
+        return (self._k**2 + eigval)**(-self._s / 2)
 
 
 class SOLAOperator(LinearOperator):
@@ -1038,22 +1042,21 @@ class SOLAOperator(LinearOperator):
 
         self._initialize_kernels(kernels)
 
-        # Define the mapping function
-        def mapping(func):
-            """Apply kernel functions to input function via integration."""
-            return self._apply_kernels(func)
-
-        # Define the adjoint mapping
-        def adjoint_mapping(data):
-            """Reconstruct function from data."""
-            return self._reconstruct_function(data)
-
         super().__init__(
             domain,
             codomain,
-            mapping,
-            adjoint_mapping=adjoint_mapping
+            self._mapping,
+            dual_mapping=self._dual_mapping
         )
+
+    # Define the mapping function
+    def _mapping(self, f: 'Function') -> np.ndarray:
+        """Apply kernel functions to input function via integration."""
+        return self._apply_kernels(f)
+
+    def _dual_mapping(self, yp: 'LinearForm'):
+        kernel = self._reconstruct_function(yp.components)
+        return LinearFormLebesgue(self.domain, kernel)
 
     def _initialize_kernels(
         self,
