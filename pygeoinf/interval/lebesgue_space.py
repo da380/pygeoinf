@@ -156,7 +156,7 @@ class Lebesgue(HilbertSpace):
         """
 
         # Create LinearForm directly from dual components
-        return LinearFormLebesgue(self, x)
+        return LinearFormLebesgue(self, kernel=x)
 
     def from_dual(self, xp: 'LinearFormLebesgue') -> "Function":
         """

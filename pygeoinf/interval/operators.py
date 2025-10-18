@@ -12,32 +12,43 @@ The operators implement proper function space mappings and support
 boundary conditions through the underlying function spaces.
 """
 
-import numpy as np
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Union, Literal, List, Callable, Any
+from typing import (
+    Optional,
+    Union,
+    Literal,
+    List,
+    Callable,
+    Any,
+    TYPE_CHECKING,
+)
 
+import numpy as np
+
+# Project imports
 from pygeoinf.hilbert_space import EuclideanSpace
-from .lebesgue_space import Lebesgue
-from .boundary_conditions import BoundaryConditions
 from pygeoinf.linear_operators import LinearOperator
+
+# Local/relative imports
+from .lebesgue_space import Lebesgue
+from .sobolev_space import Sobolev
+from .boundary_conditions import BoundaryConditions
 from .functions import Function
+
 # FEM import only needed for LaplacianInverseOperator
 from pygeoinf.interval.fem_solvers import GeneralFEMSolver
-from pygeoinf.interval.function_providers import (
-    IndexedFunctionProvider,
-)
+from pygeoinf.interval.function_providers import IndexedFunctionProvider
 from pygeoinf.interval.linear_form_lebesgue import LinearFormLebesgue
 from pygeoinf.interval.providers import LaplacianSpectrumProvider
-from .sobolev_space import Sobolev
 from .fast_spectral_integration import (
     fast_spectral_coefficients,
-    create_uniform_samples
+    create_uniform_samples,
 )
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pygeoinf import LinearForm
+    from pygeoinf.hilbert_space import Vector
 
 logger = logging.getLogger(__name__)
 
@@ -716,8 +727,8 @@ class BesselSobolev(LinearOperator):
                     return 'periodic'
 
         # Try to access boundary conditions directly
-        if hasattr(self._L, 'boundary_conditions'):
-            bc = self._L.boundary_conditions
+        if hasattr(self._L, '_boundary_conditions'):
+            bc = self._L._boundary_conditions
             if hasattr(bc, 'type'):
                 if bc.type in ['dirichlet', 'neumann', 'periodic']:
                     return bc.type
@@ -840,7 +851,7 @@ class BesselSobolevInverse(LinearOperator):
         self._L = L
         self._k = k
         self._s = s
-        self._dofs = dofs if dofs is not None else domain.dim
+        self._dofs = dofs
         self._n_samples = max(n_samples, self._dofs)
         self._use_fast_transforms = use_fast_transforms
 
@@ -871,8 +882,8 @@ class BesselSobolevInverse(LinearOperator):
                 elif provider.type == 'fourier_periodic':
                     return 'periodic'
 
-        if hasattr(self._L, 'boundary_conditions'):
-            bc = self._L.boundary_conditions
+        if hasattr(self._L, '_boundary_conditions'):
+            bc = self._L._boundary_conditions
             if hasattr(bc, 'type'):
                 if bc.type in ['dirichlet', 'neumann', 'periodic']:
                     return bc.type
@@ -1003,7 +1014,7 @@ class SOLAOperator(LinearOperator):
 
     def __init__(
         self,
-        domain: Union[Lebesgue, Sobolev],
+        domain: Sobolev,
         codomain: EuclideanSpace,
         kernels: Optional[
             Union[
@@ -1054,9 +1065,10 @@ class SOLAOperator(LinearOperator):
         """Apply kernel functions to input function via integration."""
         return self._apply_kernels(f)
 
-    def _dual_mapping(self, yp: 'LinearForm'):
+    def _dual_mapping(self, yp: 'LinearForm') -> 'LinearFormLebesgue':
+        """Reconstruct function from data using kernel functions."""
         kernel = self._reconstruct_function(yp.components)
-        return LinearFormLebesgue(self.domain, kernel)
+        return LinearFormLebesgue(self.domain, kernel=kernel)
 
     def _initialize_kernels(
         self,
