@@ -110,6 +110,36 @@ class RandomFunctionProvider(FunctionProvider):
 
 # Concrete implementations for common function families
 
+class NullFunctionProvider(IndexedFunctionProvider):
+    """Provider for the null (zero) function."""
+
+    def __init__(self, space):
+        """
+        Initialize null function provider.
+
+        Args:
+            space: Lebesgue instance (contains domain information)
+        """
+        super().__init__(space)
+
+    def get_function_by_index(self, index: int, **kwargs) -> 'Function':
+        """
+        Get the null function by index.
+
+        All indices return the same zero function.
+        """
+        from .functions import Function
+
+        def zero_func(x):
+            return np.zeros_like(x, dtype=float)
+
+        return Function(
+            self.space,
+            evaluate_callable=zero_func,
+            name='null_function'
+        )
+
+
 class NormalModesProvider(RandomFunctionProvider, ParametricFunctionProvider,
                           IndexedFunctionProvider):
     """

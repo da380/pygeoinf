@@ -10,9 +10,9 @@ pygeoinf ecosystem.
 from __future__ import annotations
 
 import numpy as np
-from typing import Optional, Any, TYPE_CHECKING, Union
+from typing import Optional, Any, TYPE_CHECKING, Union, List
 
-from pygeoinf.hilbert_space import HilbertSpace
+from pygeoinf import HilbertSpace, HilbertSpaceDirectSum
 from pygeoinf.interval.linear_form_lebesgue import LinearFormLebesgue
 
 if TYPE_CHECKING:
@@ -640,3 +640,16 @@ def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
         )
     else:
         raise ValueError(f"Unknown basis type: {basis_type}")
+
+
+class LebesgueSpaceDirectSum(HilbertSpaceDirectSum):
+    def to_dual(self, xs: List[Function]) -> LinearFormLebesgue:
+        if len(xs) != self.number_of_subspaces:
+            raise ValueError("Input list has incorrect number of vectors.")
+        return LinearFormLebesgue(
+            self,
+            kernel=xs
+        )
+
+    def from_dual(self, xp: LinearFormLebesgue) -> List[Function]:
+        return xp.kernel

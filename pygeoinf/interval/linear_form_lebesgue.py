@@ -1,7 +1,8 @@
 from pygeoinf import LinearForm
-from typing import TYPE_CHECKING, Optional, Callable, Union
+from typing import TYPE_CHECKING, Optional, Callable, Union, List
+from pygeoinf.interval.functions import Function
 if TYPE_CHECKING:
-    from pygeoinf.interval import Function, Lebesgue, Sobolev
+    from pygeoinf.interval import Lebesgue
 import numpy as np
 
 
@@ -12,7 +13,7 @@ class LinearFormLebesgue(LinearForm):
         /,
         *,
         mapping: Optional[Callable[['Function'], float]] = None,
-        kernel: Optional['Function'] = None,
+        kernel: Optional[Union['Function', List['Function']]] = None,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> None:
@@ -41,9 +42,17 @@ class LinearFormLebesgue(LinearForm):
             n_jobs=n_jobs
         )
 
-    def _mapping_impl(self, v: 'Function') -> float:
-        return (self._kernel * v).integrate()
+    def _mapping_impl(self, v: Union[Function, List[Function]]) -> float:
+        # If kernel is a list, expect v to be list/tuple of functions
+        if isinstance(self._kernel, list):
+            if not isinstance(v, list):
+                raise ValueError("Input must be a list of functions")
+            return sum((k * vi).integrate() for k, vi in zip(self._kernel, v))
+        else:
+            if not isinstance(v, Function):
+                raise ValueError("Input must be a function")
+            return (self._kernel * v).integrate()
 
     @property
-    def kernel(self) -> Union['Function', None]:
+    def kernel(self) -> Union[Function, List[Function], None]:
         return self._kernel
