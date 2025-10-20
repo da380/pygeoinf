@@ -9,11 +9,15 @@ pygeoinf ecosystem.
 
 from __future__ import annotations
 
+import logging
 import numpy as np
 from typing import Optional, Any, TYPE_CHECKING, Union, List
 
-from pygeoinf import HilbertSpace, HilbertSpaceDirectSum
+from pygeoinf import HilbertSpace, HilbertSpaceDirectSum, LinearForm
 from pygeoinf.interval.linear_form_lebesgue import LinearFormLebesgue
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pygeoinf.interval.functions import Function
@@ -158,7 +162,7 @@ class Lebesgue(HilbertSpace):
         # Create LinearForm directly from dual components
         return LinearFormLebesgue(self, kernel=x)
 
-    def from_dual(self, xp: 'LinearFormLebesgue') -> "Function":
+    def from_dual(self, xp: Union[LinearFormLebesgue, LinearForm]) -> "Function":
         """
         Maps a dual vector back to its representative in the primal space.
 
@@ -171,10 +175,11 @@ class Lebesgue(HilbertSpace):
         Returns:
             Function representing the primal element
         """
-        if not isinstance(xp, LinearFormLebesgue):
-            raise TypeError("Expected LinearForm for dual element")
-
-        return xp.kernel
+        if isinstance(xp, LinearFormLebesgue) and xp.kernel is not None:
+            return xp.kernel
+        else:
+            primal_components = self._spd_solve(xp.components)
+            return self.from_components(primal_components)
 
     def to_components(self, x: "Function") -> np.ndarray:
         """

@@ -472,7 +472,7 @@ class Laplacian(SpectralOperator):
         return Function(self.codomain, evaluate_callable=laplacian_func)
 
 
-class InverseLaplacian(LinearOperator):
+class InverseLaplacian(SpectralOperator):
     """
     Inverse Laplacian operator that acts as a covariance operator.
 
@@ -647,6 +647,12 @@ class InverseLaplacian(LinearOperator):
 
     def get_eigenvalue(self, index: int) -> float:
         return self._alpha * self._spectrum_provider.get_eigenvalue(index)
+
+    def get_eigenvalues(self, indices: List[int]) -> List[float]:
+        return [
+            self._alpha * self._spectrum_provider.get_eigenvalue(i)
+            for i in indices
+        ]
 
     def get_eigenfunction(self, index: int) -> Function:
         return self._spectrum_provider.get_eigenfunction(index)

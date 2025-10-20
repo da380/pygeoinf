@@ -14,30 +14,32 @@ class LinearFormLebesgue(LinearForm):
         *,
         mapping: Optional[Callable[['Function'], float]] = None,
         kernel: Optional[Union['Function', List['Function']]] = None,
+        components: Optional[np.ndarray] = None,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> None:
 
-        if mapping is None and kernel is None:
-            raise ValueError("Either mapping or kernel must be provided")
-        if mapping is not None and kernel is not None:
-            raise ValueError("Specify either mapping or kernel, not both")
-        if mapping is None and kernel is not None:
+        if kernel is not None:
             self._kernel = kernel
             mapping = self._mapping_impl
-        if mapping is not None and kernel is None:
+            components = np.zeros((domain.dim,))
+        elif mapping is not None:
             self._kernel = None  # type: ignore
+            components = np.zeros((domain.dim,))
+        elif components is not None:
+            self._kernel = None  # type: ignore
+        else:
+            raise ValueError("Either mapping, kernel, or components must be provided")
 
         # We will do something cheeky here. By  default LinearOperator computes
         # the components if they don't exist, but we don't want to work with
         # components, so we will give it fake components just so it stops from
         # trying to compute them(which would call for basis, which we may not
         # want to have)
-        fake_components = np.zeros((domain.dim,))  # type: ignore
         super().__init__(
             domain,
             mapping=mapping,
-            components=fake_components,
+            components=components,
             parallel=parallel,
             n_jobs=n_jobs
         )

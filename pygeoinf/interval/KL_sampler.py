@@ -17,8 +17,7 @@ import numpy as np
 if TYPE_CHECKING:
     from .operators import SpectralOperator
     from .functions import Function
-    from pygeoinf.linear_operators import LinearOperator
-from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf import EuclideanSpace, LinearOperator
 
 
 @dataclass
