@@ -378,7 +378,10 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             fourier_provider = FourierEigenvalueProvider(length)
             eigenval = fourier_provider.get_eigenvalue(index)
 
-        return eigenval * self._alpha
+        if self._inverse:
+            return 1.0 / (eigenval * self._alpha)
+        else:
+            return eigenval * self._alpha
 
 
 class CustomEigenvalueProvider(EigenvalueProvider):

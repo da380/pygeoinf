@@ -606,7 +606,7 @@ class InverseLaplacian(SpectralOperator):
                 continue  # Skip zero eigenvalue
 
             # Compute coefficient via inner product
-            coeff = coefficients[i] / eigval  # Note: divide by eigval for inverse
+            coeff = coefficients[i] * eigval  # Note: divide by eigval for inverse
 
             if abs(coeff) > 1e-14:
                 eigenfunc = self.get_eigenfunction(i)
@@ -646,11 +646,11 @@ class InverseLaplacian(SpectralOperator):
         return self._spectrum_provider
 
     def get_eigenvalue(self, index: int) -> float:
-        return self._alpha * self._spectrum_provider.get_eigenvalue(index)
+        return self._spectrum_provider.get_eigenvalue(index)
 
     def get_eigenvalues(self, indices: List[int]) -> List[float]:
         return [
-            self._alpha * self._spectrum_provider.get_eigenvalue(i)
+            self._spectrum_provider.get_eigenvalue(i)
             for i in indices
         ]
 

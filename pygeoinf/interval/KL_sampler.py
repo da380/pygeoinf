@@ -160,7 +160,7 @@ class KLSampler:
         """Return a covariance factor L : R^k → H with C ≈ L L*.
 
         Adjoint mapping implements L*: H → R^k via inner products with
-        eigenfunctions divided by sqrt(λ_i) (assuming orthonormality).
+        eigenfunctions multiplied by sqrt(λ_i) (assuming orthonormality).
         """
         k = self.n_modes
         eigvals = np.array([self.eigenvalue(i) for i in range(k)])
@@ -170,12 +170,20 @@ class KLSampler:
         codomain = self._domain
 
         def mapping(w):  # w in R^k
-            result = codomain.zero
-            for coeff, lam_sqrt, phi in zip(w, sqrt_lam, eigfuncs):
-                if coeff != 0.0:
-                    # contribution sqrt(λ_i) * coeff * φ_i
-                    result = codomain.add(result, (lam_sqrt * coeff) * phi)
-            return result
+            # Avoid deep recursion by accumulating via direct evaluation
+            # instead of nested Function operations
+            from .functions import Function
+
+            def evaluate_sum(x):
+                # Evaluate eigenfunctions at x, sum weighted contributions
+                result = np.zeros_like(x) if isinstance(x, np.ndarray) \
+                    else 0.0
+                for coeff, lam_sqrt, phi in zip(w, sqrt_lam, eigfuncs):
+                    if coeff != 0.0:
+                        result = result + (lam_sqrt * coeff) * phi.evaluate(x)
+                return result
+
+            return Function(codomain, evaluate_callable=evaluate_sum)
 
         def adjoint_mapping(v):  # v in H
             comps = np.zeros(k)
@@ -202,8 +210,6 @@ class KLSampler:
         codomain = self._domain
 
         # Special-case Euclidean spaces (component-wise variance)
-        from pygeoinf.hilbert_space import EuclideanSpace
-
         if isinstance(codomain, EuclideanSpace):
             # Accumulate variance in component form
             var = np.zeros(codomain.dim)
@@ -216,33 +222,44 @@ class KLSampler:
             # Return as element of the space
             return codomain.from_components(var)
 
-        # General function-space case: use function multiplication
-        result = codomain.zero
-        for i in range(k):
-            lam = self.eigenvalue(i)
-            phi = self.eigenfunction(i)
-            # phi * phi should yield a Function in the same codomain
-            phi_sq = phi * phi
-            result = codomain.add(result, codomain.multiply(lam, phi_sq))
+        # General function-space case: Avoid deep recursion
+        from .functions import Function
+        eigvals = [self.eigenvalue(i) for i in range(k)]
+        eigfuncs = [self.eigenfunction(i) for i in range(k)]
 
-        return result
+        def evaluate_variance(x):
+            var = np.zeros_like(x) if isinstance(x, np.ndarray) else 0.0
+            for lam, phi in zip(eigvals, eigfuncs):
+                phi_val = phi.evaluate(x)
+                var = var + lam * (phi_val ** 2)
+            return var
+
+        return Function(codomain, evaluate_callable=evaluate_variance)
 
     def sample(self):
         """Draw a single sample (Function / element of domain)."""
         k = self.n_modes
         z = self._rng.standard_normal(k)
         eigvals = [self.eigenvalue(i) for i in range(k)]
-        sample = self._domain.copy(self._mean)
-        for i, lam in enumerate(eigvals):
-            if lam <= 0:
-                continue
-            phi = self.eigenfunction(i)
-            coeff = np.sqrt(lam) * z[i]
-            sample = self._domain.add(sample, coeff * phi)
-        return sample
+        eigfuncs = [self.eigenfunction(i) for i in range(k)]
+        sqrt_lam = np.sqrt(np.maximum(eigvals, 0))
+
+        # Avoid deep recursion by direct evaluation
+        from .functions import Function
+
+        def evaluate_sample(x):
+            # Start with mean
+            result = self._mean.evaluate(x)
+            # Add KL contributions
+            for coeff, lam_sqrt, phi in zip(z, sqrt_lam, eigfuncs):
+                if lam_sqrt > 0 and coeff != 0:
+                    result = result + lam_sqrt * coeff * phi.evaluate(x)
+            return result
+
+        return Function(self._domain, evaluate_callable=evaluate_sample)
 
     def samples(self, n: int):
         return [self.sample() for _ in range(n)]
 
 
-__all__ = ["SpectralSampler", "TruncationInfo"]
+__all__ = ["KLSampler", "TruncationInfo"]
