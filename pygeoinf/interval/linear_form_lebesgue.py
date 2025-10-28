@@ -1,4 +1,4 @@
-from pygeoinf import LinearForm
+from pygeoinf import LinearForm, HilbertSpace
 from typing import TYPE_CHECKING, Optional, Callable, Union, List
 from pygeoinf.interval.functions import Function
 if TYPE_CHECKING:
@@ -6,10 +6,10 @@ if TYPE_CHECKING:
 import numpy as np
 
 
-class LinearFormLebesgue(LinearForm):
+class LinearFormKernel(LinearForm):
     def __init__(
         self,
-        domain: 'Lebesgue',
+        domain: HilbertSpace,
         /,
         *,
         mapping: Optional[Callable[['Function'], float]] = None,

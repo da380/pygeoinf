@@ -23,9 +23,12 @@ logger = logging.getLogger(__name__)
 
 def fast_spectral_coefficients(
     f_samples: np.ndarray,
-    boundary_condition: Literal['dirichlet', 'neumann', 'periodic'],
+    boundary_condition: Literal['dirichlet', 'neumann', 'periodic',
+                                'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'],
     domain_length: float = 1.0,
-    n_coeffs: Optional[int] = None
+    n_coeffs: Optional[int] = None,
+    left_bc_type: Optional[str] = None,
+    right_bc_type: Optional[str] = None
 ) -> np.ndarray:
     """
     Compute spectral coefficients using fast transforms.
@@ -38,6 +41,10 @@ def fast_spectral_coefficients(
         boundary_condition: Type of boundary conditions
         domain_length: Length of the domain (b - a)
         n_coeffs: Number of coefficients to return (default: len(f_samples))
+        left_bc_type: For mixed BCs, type at left boundary
+            ('dirichlet' or 'neumann') - DEPRECATED, inferred from boundary_condition
+        right_bc_type: For mixed BCs, type at right boundary
+            ('dirichlet' or 'neumann') - DEPRECATED, inferred from boundary_condition
 
     Returns:
         np.ndarray: Spectral coefficients for the given basis
@@ -46,6 +53,8 @@ def fast_spectral_coefficients(
         - For Dirichlet: Uses DST-I (Discrete Sine Transform Type I)
         - For Neumann: Uses DCT-I (Discrete Cosine Transform Type I)
         - For Periodic: Uses DFT (Discrete Fourier Transform)
+        - For Mixed D-N: Uses DST-II (shifted sine basis)
+        - For Mixed N-D: Uses DCT-II (shifted cosine basis)
     """
     n_samples = len(f_samples)
     if n_coeffs is None:
@@ -57,6 +66,14 @@ def fast_spectral_coefficients(
         return _fast_neumann_coefficients(f_samples, domain_length, n_coeffs)
     elif boundary_condition == 'periodic':
         return _fast_periodic_coefficients(f_samples, domain_length, n_coeffs)
+    elif boundary_condition == 'mixed_dirichlet_neumann':
+        return _fast_mixed_coefficients(
+            f_samples, domain_length, n_coeffs, 'dirichlet', 'neumann'
+        )
+    elif boundary_condition == 'mixed_neumann_dirichlet':
+        return _fast_mixed_coefficients(
+            f_samples, domain_length, n_coeffs, 'neumann', 'dirichlet'
+        )
     else:
         raise ValueError(
             f"Unsupported boundary condition: {boundary_condition}"
@@ -180,20 +197,78 @@ def _fast_periodic_coefficients(
     return coeffs_real
 
 
+def _fast_mixed_coefficients(
+    f_samples: np.ndarray,
+    domain_length: float,
+    n_coeffs: int,
+    left_bc_type: str,
+    right_bc_type: str
+) -> np.ndarray:
+    """
+    Fast computation of mixed BC coefficients using DST-II or DCT-II.
+
+    For mixed BCs, the eigenfunctions are shifted sines or cosines:
+    - Dirichlet-Neumann: φₖ(x) = √(2/L) sin((k+½)πx/L) → Use DST-II
+    - Neumann-Dirichlet: φₖ(x) = √(2/L) cos((k+½)πx/L) → Use DCT-II
+    """
+    n_samples = len(f_samples)
+
+    if left_bc_type == 'dirichlet' and right_bc_type == 'neumann':
+        # Eigenfunctions: φₖ(x) = √(2/L) sin((k+½)πx/L)
+        # Use DST-IV (Type 4)
+        # DST-IV formula: y[k] = 2 * sum_n x[n] * sin(π(k+½)(n+½)/N)
+        # With half-integer sampling x_n = (n+½)L/N, this computes:
+        #   2 * sum_n f(x_n) * sin((k+½)(n+½)π/N)
+        # We need coefficients for orthonormal basis: φₖ = √(2/L) sin((k+½)πx/L)
+        # Inner product: ⟨f, φₖ⟩ = ∫ f(x) φₖ(x) dx
+        #                        ≈ (L/N) * sum_n f(x_n) * φₖ(x_n)
+        #                        = (L/N) * √(2/L) * sum_n f(x_n) * sin((k+½)(n+½)π/N)
+        # DST-IV gives 2*sum, so: ⟨f, φₖ⟩ = DST-IV * (L/N) * √(2/L) / 2
+        coeffs_raw = dst(f_samples, type=4)
+
+        # Scaling: (L/N) * √(2/L) / 2 = √(L/2) / N
+        scaling = np.sqrt(domain_length / 2.0) / n_samples
+        coeffs_normalized = coeffs_raw * scaling
+
+    elif left_bc_type == 'neumann' and right_bc_type == 'dirichlet':
+        # Eigenfunctions: φₖ(x) = √(2/L) cos((k+½)πx/L)
+        # Use DCT-IV (Type 4)
+        # DCT-IV formula: y[k] = 2 * sum_n x[n] * cos(π(k+½)(n+½)/N)
+        coeffs_raw = dct(f_samples, type=4)
+
+        # Same scaling as DST-IV
+        scaling = np.sqrt(domain_length / 2.0) / n_samples
+        coeffs_normalized = coeffs_raw * scaling
+
+    else:
+        raise ValueError(
+            f"Unsupported mixed BC combination: "
+            f"left={left_bc_type}, right={right_bc_type}. "
+            "Only 'dirichlet-neumann' and 'neumann-dirichlet' are supported."
+        )
+
+    return coeffs_normalized[:n_coeffs]
+
+
 def create_uniform_samples(
     func,
     domain: Tuple[float, float],
     n_samples: int,
-    boundary_condition: Literal['dirichlet', 'neumann', 'periodic']
+    boundary_condition: Literal['dirichlet', 'neumann', 'periodic',
+                                'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'],
+    left_bc_type: Optional[str] = None,
+    right_bc_type: Optional[str] = None
 ) -> np.ndarray:
     """
-    Create uniform samples of a function for fast transform computation.
+    Create uniform samples of a function on the domain.
 
     Args:
         func: Function to sample (callable)
         domain: (a, b) domain endpoints
         n_samples: Number of sample points
         boundary_condition: Affects sampling strategy
+        left_bc_type: DEPRECATED - inferred from boundary_condition
+        right_bc_type: DEPRECATED - inferred from boundary_condition
 
     Returns:
         np.ndarray: Function samples at appropriate points
@@ -209,6 +284,16 @@ def create_uniform_samples(
     elif boundary_condition == 'periodic':
         # For periodic, exclude the right endpoint (periodic)
         x = np.linspace(a, b, n_samples + 1)[:-1]
+    elif boundary_condition == 'mixed_dirichlet_neumann':
+        # DST-II: sample at (k+½)Δx for k=0..N-1
+        # Eigenfunctions: sin((n+½)πx/L)
+        dx = (b - a) / n_samples
+        x = a + (np.arange(n_samples) + 0.5) * dx
+    elif boundary_condition == 'mixed_neumann_dirichlet':
+        # DCT-II: sample at (k+½)Δx for k=0..N-1
+        # Eigenfunctions: cos((n+½)πx/L)
+        dx = (b - a) / n_samples
+        x = a + (np.arange(n_samples) + 0.5) * dx
     else:
         raise ValueError(
             f"Unsupported boundary condition: {boundary_condition}"

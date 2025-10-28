@@ -14,7 +14,7 @@ import numpy as np
 from typing import Optional, Any, TYPE_CHECKING, Union, List
 
 from pygeoinf import HilbertSpace, HilbertSpaceDirectSum, LinearForm
-from pygeoinf.interval.linear_form_lebesgue import LinearFormLebesgue
+from pygeoinf.interval.linear_form_lebesgue import LinearFormKernel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class Lebesgue(HilbertSpace):
 
         # Integration settings (internal variables with defaults)
         self._integration_method = 'simpson'
-        self._integration_npoints = 1000
+        self._integration_npoints = 500
 
         # Initialize basis (simplified single-parameter approach)
         self._initialize_basis(basis or 'none')
@@ -160,9 +160,9 @@ class Lebesgue(HilbertSpace):
         """
 
         # Create LinearForm directly from dual components
-        return LinearFormLebesgue(self, kernel=x)
+        return LinearFormKernel(self, kernel=x)
 
-    def from_dual(self, xp: Union[LinearFormLebesgue, LinearForm]) -> "Function":
+    def from_dual(self, xp: Union[LinearFormKernel, LinearForm]) -> "Function":
         """
         Maps a dual vector back to its representative in the primal space.
 
@@ -175,7 +175,7 @@ class Lebesgue(HilbertSpace):
         Returns:
             Function representing the primal element
         """
-        if isinstance(xp, LinearFormLebesgue) and xp.kernel is not None:
+        if isinstance(xp, LinearFormKernel) and xp.kernel is not None:
             return xp.kernel
         else:
             primal_components = self._spd_solve(xp.components)
@@ -648,13 +648,18 @@ def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
 
 
 class LebesgueSpaceDirectSum(HilbertSpaceDirectSum):
-    def to_dual(self, xs: List[Function]) -> LinearFormLebesgue:
+    def to_dual(self, xs: List[Function]) -> LinearFormKernel:
         if len(xs) != self.number_of_subspaces:
             raise ValueError("Input list has incorrect number of vectors.")
-        return LinearFormLebesgue(
+        return LinearFormKernel(
             self,
             kernel=xs
         )
 
-    def from_dual(self, xp: LinearFormLebesgue) -> List[Function]:
-        return xp.kernel
+    def from_dual(self, xp) -> List[Function]:
+        # Handle both LinearFormKernel (specific) and generic LinearForm
+        if isinstance(xp, LinearFormKernel):
+            return xp.kernel
+        else:
+            # Delegate to base class for generic LinearForm objects
+            return super().from_dual(xp)

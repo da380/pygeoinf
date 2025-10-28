@@ -39,7 +39,7 @@ from .functions import Function
 # FEM import only needed for LaplacianInverseOperator
 from pygeoinf.interval.fem_solvers import GeneralFEMSolver
 from pygeoinf.interval.function_providers import IndexedFunctionProvider
-from pygeoinf.interval.linear_form_lebesgue import LinearFormLebesgue
+from pygeoinf.interval.linear_form_lebesgue import LinearFormKernel
 from pygeoinf.interval.providers import LaplacianSpectrumProvider
 from .fast_spectral_integration import (
     fast_spectral_coefficients,
@@ -274,7 +274,9 @@ class Laplacian(SpectralOperator):
         method: Literal['spectral', 'fd'] = 'spectral',
         dofs: Optional[int] = None,
         fd_order: int = 2,
-        n_samples: int = 512
+        n_samples: int = 512,
+        integration_method: Literal['trapz', 'simpson'] = 'simpson',
+        npoints: int = 1000
     ):
         """
         Initialize the negative Laplacian operator.
@@ -286,6 +288,10 @@ class Laplacian(SpectralOperator):
             dofs: Number of degrees of freedom for FD or spectral methods
                   (default: domain.dim)
             fd_order: Order of finite difference stencil (2, 4, 6)
+            n_samples: Number of samples for fast spectral transforms
+            integration_method: Method for numerical integration fallback
+                ('trapz', 'simpson')
+            npoints: Number of points for numerical integration fallback
         """
         self._domain = domain
         self._boundary_conditions = boundary_conditions
@@ -294,6 +300,8 @@ class Laplacian(SpectralOperator):
         self._fd_order = fd_order
         self._method = method
         self._n_samples = max(n_samples, self._dofs)  # Ensure enough samples
+        self._integration_method = integration_method
+        self._npoints = npoints
 
         super().__init__(domain, domain, self._apply)
 
@@ -303,6 +311,12 @@ class Laplacian(SpectralOperator):
             boundary_conditions,
             alpha
         )
+
+        # Check if fast transforms are available for this BC type
+        self._can_use_fast_transforms = boundary_conditions.type in [
+            'dirichlet', 'neumann', 'periodic',
+            'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'
+        ]
 
         if self._method == 'fd':
             self._setup_finite_difference()
@@ -426,21 +440,33 @@ class Laplacian(SpectralOperator):
 
     def _apply_spectral(self, f: Function) -> Function:
         """Apply Laplacian using spectral method (eigenfunction expansion)."""
+        if self._can_use_fast_transforms:
+            return self._apply_spectral_fast(f)
+        else:
+            return self._apply_spectral_slow(f)
+
+    def _apply_spectral_fast(self, f: Function) -> Function:
+        """Apply Laplacian using fast transforms (Dirichlet/Neumann/Periodic/Mixed)."""
         # Project f onto eigenfunctions and apply eigenvalues
         # Get domain information
         domain_interval = self._domain.function_domain
         domain_tuple = (domain_interval.a, domain_interval.b)
         domain_length = domain_interval.b - domain_interval.a
+
         # Create uniform samples of the input function
         f_samples = create_uniform_samples(
-            f, domain_tuple, self._n_samples, self._boundary_conditions.type
-        )
-        # Compute all spectral coefficients at once using fast transforms
-        coefficients = fast_spectral_coefficients(
-            f_samples, self._boundary_conditions.type, domain_length, self._dofs
+            f, domain_tuple, self._n_samples,
+            self._boundary_conditions.type
         )
 
-        f_new = self._domain.zero
+        # Compute all spectral coefficients at once using fast transforms
+        coefficients = fast_spectral_coefficients(
+            f_samples, self._boundary_conditions.type, domain_length,
+            self._dofs
+        )
+
+        # Collect terms to avoid deep recursion from repeated +=
+        terms = []
         for i in range(self._dofs):
             # Get the basis functions
             eigval = self.get_eigenvalue(i)
@@ -450,12 +476,51 @@ class Laplacian(SpectralOperator):
 
             if abs(coeff) > 1e-14:
                 eigenfunc = self.get_eigenfunction(i)
-                if i == 0:
-                    f_new = coeff * eigenfunc
-                else:
-                    f_new += coeff * eigenfunc
+                terms.append((coeff, eigenfunc))
 
-        return f_new
+        # Create single callable that evaluates all terms
+        if not terms:
+            return self._domain.zero
+
+        def f_new_eval(x):
+            result = (np.zeros_like(x, dtype=float)
+                      if isinstance(x, np.ndarray) else 0.0)
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new_eval)
+
+    def _apply_spectral_slow(self, f: Function) -> Function:
+        """Apply Laplacian using numerical integration (Robin/Mixed BCs)."""
+        # Collect terms to avoid deep recursion from repeated +=
+        terms = []
+        for i in range(self._dofs):
+            eigval = self.get_eigenvalue(i)
+            eigfunc = self.get_eigenfunction(i)
+
+            # Compute coefficient via numerical integration
+            coeff = (f * eigfunc).integrate(
+                method=self._integration_method,
+                n_points=self._npoints
+            )
+            scaled_coeff = coeff * eigval
+
+            if abs(scaled_coeff) > 1e-14:
+                terms.append((scaled_coeff, eigfunc))
+
+        # Create single callable that evaluates all terms
+        if not terms:
+            return self._domain.zero
+
+        def f_new_eval(x):
+            result = (np.zeros_like(x, dtype=float)
+                      if isinstance(x, np.ndarray) else 0.0)
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new_eval)
 
     def _apply_finite_difference(self, f: Function) -> Function:
         """Apply Laplacian using finite difference method."""
@@ -491,7 +556,10 @@ class InverseLaplacian(SpectralOperator):
         *,
         method: Literal['fem', 'spectral'],
         dofs: int = 100,
-        fem_type: str = "hat"
+        fem_type: str = "hat",
+        n_samples: int = 512,
+        integration_method: Literal['trapz', 'simpson'] = 'simpson',
+        npoints: int = 1000
     ):
         """
         Initialize the Laplacian inverse operator.
@@ -508,6 +576,10 @@ class InverseLaplacian(SpectralOperator):
                 - "hat": Uses hat function basis (default)
                 - "general": Uses domain's basis functions
                 Note: Both options now use GeneralFEMSolver internally.
+            n_samples: Number of samples for fast spectral transforms
+            integration_method: Method for numerical integration fallback
+                ('trapz', 'simpson')
+            npoints: Number of points for numerical integration fallback
         """
         # Check that domain is a Lebesgue space
         if not isinstance(domain, Lebesgue):
@@ -521,6 +593,9 @@ class InverseLaplacian(SpectralOperator):
         self._method = method
         self._dofs = dofs if dofs is not None else domain.dim
         self._fem_type = fem_type
+        self._n_samples = max(n_samples, self._dofs)
+        self._integration_method = integration_method
+        self._npoints = npoints
 
         # Validate fem_type
         if fem_type not in ["hat", "general"]:
@@ -539,6 +614,12 @@ class InverseLaplacian(SpectralOperator):
             alpha,
             inverse=True
         )
+
+        # Check if fast transforms are available for this BC type
+        self._can_use_fast_transforms = boundary_conditions.type in [
+            'dirichlet', 'neumann', 'periodic',
+            'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'
+        ]
 
         if method == 'fem':
             self._initialize_fem_solver()
@@ -570,35 +651,48 @@ class InverseLaplacian(SpectralOperator):
 
     def _apply_spectral(self, f: Function) -> Function:
         """Apply inverse Laplacian using spectral method."""
+        if self._can_use_fast_transforms:
+            return self._apply_spectral_fast(f)
+        else:
+            return self._apply_spectral_slow(f)
+
+    def _apply_spectral_fast(self, f: Function) -> Function:
+        """Apply inverse Laplacian using fast transforms."""
         # Project f onto eigenfunctions and apply inverse eigenvalues
         # Get domain information
         domain_interval = self._domain.function_domain
         domain_tuple = (domain_interval.a, domain_interval.b)
         domain_length = domain_interval.b - domain_interval.a
+
         # Create uniform samples of the input function
         if self._boundary_conditions.type == 'neumann' or \
            self._boundary_conditions.type == 'periodic':
             f_samples = create_uniform_samples(
-                f, domain_tuple, self._dofs + 1, self._boundary_conditions.type
+                f, domain_tuple, self._dofs + 1,
+                self._boundary_conditions.type
             )
-            # Compute all spectral coefficients at once using fast transforms
+            # Compute all spectral coefficients at once
             coefficients = fast_spectral_coefficients(
-                f_samples, self._boundary_conditions.type, domain_length, self._dofs + 1
+                f_samples, self._boundary_conditions.type,
+                domain_length, self._dofs + 1
             )
         else:
             f_samples = create_uniform_samples(
-                f, domain_tuple, self._dofs, self._boundary_conditions.type
+                f, domain_tuple, self._dofs,
+                self._boundary_conditions.type
             )
-            # Compute all spectral coefficients at once using fast transforms
+            # Compute all spectral coefficients at once
             coefficients = fast_spectral_coefficients(
-                f_samples, self._boundary_conditions.type, domain_length, self._dofs
+                f_samples, self._boundary_conditions.type,
+                domain_length, self._dofs
             )
         if self._boundary_conditions.type == 'neumann' or \
            self._boundary_conditions.type == 'periodic':
-            # For Dirichlet and periodic, zero eigenvalue is not present
+            # For Neumann and periodic, skip zero eigenvalue
             coefficients = coefficients[1:]
 
-        f_new = self._domain.zero
+        # Collect terms to avoid deep recursion from repeated +=
+        terms = []
         for i in range(self._dofs):
             eigval = self.get_eigenvalue(i)
 
@@ -606,16 +700,59 @@ class InverseLaplacian(SpectralOperator):
                 continue  # Skip zero eigenvalue
 
             # Compute coefficient via inner product
-            coeff = coefficients[i] * eigval  # Note: divide by eigval for inverse
+            coeff = coefficients[i] * eigval
 
             if abs(coeff) > 1e-14:
                 eigenfunc = self.get_eigenfunction(i)
-                if i == 0:
-                    f_new = coeff * eigenfunc
-                else:
-                    f_new += coeff * eigenfunc
+                terms.append((coeff, eigenfunc))
 
-        return f_new
+        # Create single callable that evaluates all terms
+        if not terms:
+            return self._domain.zero
+
+        def f_new_eval(x):
+            result = (np.zeros_like(x, dtype=float)
+                      if isinstance(x, np.ndarray) else 0.0)
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new_eval)
+
+    def _apply_spectral_slow(self, f: Function) -> Function:
+        """Apply inverse Laplacian using numerical integration."""
+        # Collect terms to avoid deep recursion from repeated +=
+        terms = []
+        for i in range(self._dofs):
+            eigval = self.get_eigenvalue(i)
+
+            if abs(eigval) < 1e-14:
+                continue  # Skip zero eigenvalue
+
+            eigenfunc = self.get_eigenfunction(i)
+
+            # Compute coefficient via numerical integration
+            coeff = (f * eigenfunc).integrate(
+                method=self._integration_method,
+                n_points=self._npoints
+            )
+            scaled_coeff = coeff * eigval
+
+            if abs(scaled_coeff) > 1e-14:
+                terms.append((scaled_coeff, eigenfunc))
+
+        # Create single callable that evaluates all terms
+        if not terms:
+            return self._domain.zero
+
+        def f_new_eval(x):
+            result = (np.zeros_like(x, dtype=float)
+                      if isinstance(x, np.ndarray) else 0.0)
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new_eval)
 
     def _apply_fem(self, f: Function) -> Function:
         f = self._alpha * f  # Scale input by alpha
@@ -675,9 +812,12 @@ class BesselSobolev(LinearOperator):
     For non-Laplacian operators, falls back to the original slow method.
     """
 
-    def __init__(self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float,
+    def __init__(
+        self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float,
                  L: SpectralOperator, dofs: Optional[int] = None,
-                 n_samples: int = 1024, use_fast_transforms: bool = True):
+                 n_samples: int = 1024, use_fast_transforms: bool = True,
+                 integration_method: Literal['trapz', 'simpson'] = 'simpson',
+                 npoints: int = 100):
         """
         Initialize the fast Bessel potential operator.
 
@@ -699,6 +839,8 @@ class BesselSobolev(LinearOperator):
         self._dofs = dofs if dofs is not None else domain.dim
         self._n_samples = max(n_samples, self._dofs)  # Ensure enough samples
         self._use_fast_transforms = use_fast_transforms
+        self._integration_method = integration_method
+        self._npoints = npoints
 
         # Detect if we can use fast transforms
         self._boundary_condition = self._detect_boundary_condition()
@@ -714,7 +856,10 @@ class BesselSobolev(LinearOperator):
 
         super().__init__(domain, codomain, self._apply)
 
-    def _detect_boundary_condition(self) -> Optional[Literal['dirichlet', 'neumann', 'periodic']]:
+    def _detect_boundary_condition(self) -> Optional[Literal[
+        'dirichlet', 'neumann', 'periodic',
+        'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'
+    ]]:
         """
         Detect boundary condition type from the spectral operator.
 
@@ -736,7 +881,10 @@ class BesselSobolev(LinearOperator):
         if hasattr(self._L, '_boundary_conditions'):
             bc = self._L._boundary_conditions
             if hasattr(bc, 'type'):
-                if bc.type in ['dirichlet', 'neumann', 'periodic']:
+                # Support all fast-transform-capable BCs including mixed
+                if bc.type in ['dirichlet', 'neumann', 'periodic',
+                               'mixed_dirichlet_neumann',
+                               'mixed_neumann_dirichlet']:
                     return bc.type
 
         return None
@@ -767,7 +915,8 @@ class BesselSobolev(LinearOperator):
         )
 
         # Apply Bessel scaling to coefficients
-        f_new = self._domain.zero
+        # Collect terms to avoid deep recursion from repeated +=
+        terms = []
         for i in range(self._dofs):
             eigval = self._L.get_eigenvalue(i)
             if eigval is None:
@@ -781,17 +930,24 @@ class BesselSobolev(LinearOperator):
 
             if abs(coeff) > 1e-14:  # Skip negligible coefficients
                 eigfunc = self._L.get_eigenfunction(i)
-                if i == 0:
-                    f_new = coeff * eigfunc
-                else:
-                    f_new += coeff * eigfunc
+                terms.append((coeff, eigfunc))
 
-        return f_new
+        # Create single callable that evaluates all terms
+        if not terms:
+            return self._domain.zero
+
+        def f_new(x):
+            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new)
 
     def _apply_slow(self, f: Function) -> Function:
         """Apply using slow numerical integration (fallback)."""
-        # This is the original implementation
-        f_new = self._domain.zero
+        # Collect terms to avoid deep recursion from repeated +=
+        terms = []
         for i in range(self._dofs):
             eigval = self._L.get_eigenvalue(i)
             if eigval is None:
@@ -804,15 +960,24 @@ class BesselSobolev(LinearOperator):
                 raise ValueError(f"Eigenfunction not available for index {i}")
 
             # Slow numerical integration
-            coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
+            coeff = (f * eigfunc).integrate(method=self._integration_method, n_points=self._npoints)
             scale = (self._k**2 + eigval)**(self._s / 2)
 
-            if i == 0:
-                f_new = scale * coeff * eigfunc
-            else:
-                f_new += scale * coeff * eigfunc
+            scaled_coeff = scale * coeff
+            if abs(scaled_coeff) > 1e-14:
+                terms.append((scaled_coeff, eigfunc))
 
-        return f_new
+        # Create single callable that evaluates all terms
+        if not terms:
+            return self._domain.zero
+
+        def f_new(x):
+            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new)
 
     def get_eigenfunction(self, index: int) -> Function:
         """Get the eigenfunction at a specific index."""
@@ -875,7 +1040,10 @@ class BesselSobolevInverse(LinearOperator):
 
         super().__init__(domain, codomain, self._apply)
 
-    def _detect_boundary_condition(self) -> Optional[Literal['dirichlet', 'neumann', 'periodic']]:
+    def _detect_boundary_condition(self) -> Optional[Literal[
+        'dirichlet', 'neumann', 'periodic',
+        'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'
+    ]]:
         """Detect boundary condition type from the spectral operator."""
         # Same logic as FastBesselSobolev
         if hasattr(self._L, '_spectrum_provider'):
@@ -891,7 +1059,10 @@ class BesselSobolevInverse(LinearOperator):
         if hasattr(self._L, '_boundary_conditions'):
             bc = self._L._boundary_conditions
             if hasattr(bc, 'type'):
-                if bc.type in ['dirichlet', 'neumann', 'periodic']:
+                # Support all fast-transform-capable BCs including mixed
+                if bc.type in ['dirichlet', 'neumann', 'periodic',
+                               'mixed_dirichlet_neumann',
+                               'mixed_neumann_dirichlet']:
                     return bc.type
 
         return None
@@ -921,7 +1092,7 @@ class BesselSobolevInverse(LinearOperator):
         )
 
         # Apply inverse Bessel scaling to coefficients
-        f_new = self._domain.zero
+        terms = []
         for i in range(self._dofs):
             eigval = self._L.get_eigenvalue(i)
             if eigval is None:
@@ -935,17 +1106,21 @@ class BesselSobolevInverse(LinearOperator):
 
             if abs(coeff) > 1e-14:  # Skip negligible coefficients
                 eigfunc = self._L.get_eigenfunction(i)
-                if i == 0:
-                    f_new = coeff * eigfunc
-                else:
-                    f_new += coeff * eigfunc
 
-        return f_new
+                terms.append((coeff, eigfunc))
+
+        def f_new(x):
+            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new)
 
     def _apply_slow(self, f: Function) -> Function:
         """Apply using slow numerical integration (fallback)."""
-        # Original implementation
-        f_new = self._domain.zero
+        # Collect terms to avoid deep recursion from repeated +=
+        terms = []
         for i in range(self._dofs):
             eigval = self._L.get_eigenvalue(i)
             if eigval is None:
@@ -961,12 +1136,21 @@ class BesselSobolevInverse(LinearOperator):
             coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
             scale = (self._k**2 + eigval)**(-self._s / 2)
 
-            if i == 0:
-                f_new = scale * coeff * eigfunc
-            else:
-                f_new += scale * coeff * eigfunc
+            scaled_coeff = scale * coeff
+            if abs(scaled_coeff) > 1e-14:
+                terms.append((scaled_coeff, eigfunc))
 
-        return f_new
+        # Create single callable that evaluates all terms
+        if not terms:
+            return self._domain.zero
+
+        def f_new(x):
+            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
+            for coeff, eigfunc in terms:
+                result += coeff * eigfunc(x)
+            return result
+
+        return Function(self._codomain, evaluate_callable=f_new)
 
     def get_eigenfunction(self, index: int) -> Function:
         """Get the eigenfunction at a specific index."""
@@ -1028,7 +1212,11 @@ class SOLAOperator(LinearOperator):
                 List[Union[Function, Callable]]
             ]
         ] = None,
-        cache_kernels: bool = False
+        cache_kernels: bool = False,
+        integration_method: Optional[
+            Literal['simpson', 'trapezoid']
+        ] = 'simpson',
+        n_points: Optional[int] = 1000
     ):
         """
         Initialize the SOLA operator.
@@ -1057,6 +1245,9 @@ class SOLAOperator(LinearOperator):
         self.cache_kernels = cache_kernels
         self._kernels_cache = {} if cache_kernels else None
 
+        self._integration_method = integration_method
+        self._npoints = n_points
+
         self._initialize_kernels(kernels)
 
         super().__init__(
@@ -1071,10 +1262,10 @@ class SOLAOperator(LinearOperator):
         """Apply kernel functions to input function via integration."""
         return self._apply_kernels(f)
 
-    def _dual_mapping(self, yp: 'LinearForm') -> 'LinearFormLebesgue':
+    def _dual_mapping(self, yp: 'LinearForm') -> 'LinearFormKernel':
         """Reconstruct function from data using kernel functions."""
         kernel = self._reconstruct_function(yp.components)
-        return LinearFormLebesgue(self.domain, kernel=kernel)
+        return LinearFormKernel(self.domain, kernel=kernel)
 
     def _initialize_kernels(
         self,
@@ -1143,7 +1334,15 @@ class SOLAOperator(LinearOperator):
             # Lazily get the i-th kernel
             kernel = self.get_kernel(i)
             # Compute integral of product: ∫ func(x) * kernel(x) dx
-            data[i] = (func * kernel).integrate()
+            # Avoid creating intermediate Function to prevent deep recursion
+            def product_callable(x):
+                return func.evaluate(x) * kernel.evaluate(x)
+
+            product_func = Function(self.domain, evaluate_callable=product_callable)
+            data[i] = product_func.integrate(
+                method=self._integration_method,
+                n_points=self._npoints
+            )
 
         return data
 
@@ -1157,17 +1356,24 @@ class SOLAOperator(LinearOperator):
         Returns:
             Function: Reconstructed function in the domain space
         """
-        # Start with zero function
-        reconstructed = self.domain.zero
-
-        # Add weighted kernels
+        # Collect non-zero terms to avoid deep recursion
+        terms = []
         for i, coeff in enumerate(data):
             if abs(coeff) > 1e-14:  # Avoid numerical noise
-                # Lazily get the i-th kernel
-                proj_func = self.get_kernel(i)
-                reconstructed += coeff * proj_func
+                kernel = self.get_kernel(i)
+                terms.append((coeff, kernel))
 
-        return reconstructed
+        # Create a single callable that evaluates all terms
+        if not terms:
+            return self.domain.zero
+
+        def evaluate_sum(x):
+            result = np.zeros_like(x) if isinstance(x, np.ndarray) else 0.0
+            for coeff, kernel in terms:
+                result = result + coeff * kernel.evaluate(x)
+            return result
+
+        return Function(self.domain, evaluate_callable=evaluate_sum)
 
     def get_kernels(self):
         """
@@ -1195,7 +1401,18 @@ class SOLAOperator(LinearOperator):
             for j in range(self.N_d):
                 kernel_j = self.get_kernel(j)
                 # Compute integral: ∫ k_i(x) * k_j(x) dx
-                gram[i, j] = (kernel_i * kernel_j).integrate()
+                # Avoid creating intermediate Function to prevent deep recursion
+
+                def product_callable(x):
+                    return kernel_i.evaluate(x) * kernel_j.evaluate(x)
+
+                product_func = Function(
+                    self.domain, evaluate_callable=product_callable
+                )
+                gram[i, j] = product_func.integrate(
+                    method=self._integration_method,
+                    n_points=self._npoints
+                )
 
         return gram
 

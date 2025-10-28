@@ -47,7 +47,10 @@ class BoundaryConditions:
 
     def _validate(self):
         """Validate boundary condition parameters."""
-        valid_types = {'dirichlet', 'neumann', 'robin', 'periodic'}
+        valid_types = {
+            'dirichlet', 'neumann', 'robin', 'periodic',
+            'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'
+        }
 
         if self.type not in valid_types:
             raise ValueError(
@@ -80,6 +83,14 @@ class BoundaryConditions:
             # No additional parameters needed
             pass
 
+        elif self.type == 'mixed_dirichlet_neumann':
+            self._params.setdefault('left', 0.0)  # Dirichlet at left
+            self._params.setdefault('right', 0.0)  # Neumann at right
+
+        elif self.type == 'mixed_neumann_dirichlet':
+            self._params.setdefault('left', 0.0)  # Neumann at left
+            self._params.setdefault('right', 0.0)  # Dirichlet at right
+
     @property
     def is_homogeneous(self) -> bool:
         """Check if boundary conditions are homogeneous."""
@@ -91,6 +102,12 @@ class BoundaryConditions:
                     self._params.get('right', 0) == 0)
         elif self.type == 'periodic':
             return True  # Periodic BCs are considered homogeneous
+        elif self.type == 'mixed_dirichlet_neumann':
+            return (self._params.get('left', 0) == 0 and
+                    self._params.get('right', 0) == 0)
+        elif self.type == 'mixed_neumann_dirichlet':
+            return (self._params.get('left', 0) == 0 and
+                    self._params.get('right', 0) == 0)
         else:
             return False
 
@@ -145,6 +162,32 @@ class BoundaryConditions:
         Periodic boundary conditions: u(a) = u(b), u'(a) = u'(b).
         """
         return cls('periodic')
+
+    @classmethod
+    def mixed_dirichlet_neumann(cls, left_value: float = 0,
+                                right_derivative: float = 0) -> 'BoundaryConditions':
+        """
+        Mixed Dirichlet-Neumann boundary conditions:
+        u(a) = left_value, u'(b) = right_derivative.
+
+        Args:
+            left_value: Value at left boundary
+            right_derivative: Derivative value at right boundary
+        """
+        return cls('mixed_dirichlet_neumann', left=left_value, right=right_derivative)
+
+    @classmethod
+    def mixed_neumann_dirichlet(cls, left_derivative: float = 0,
+                                right_value: float = 0) -> 'BoundaryConditions':
+        """
+        Mixed Neumann-Dirichlet boundary conditions:
+        u'(a) = left_derivative, u(b) = right_value.
+
+        Args:
+            left_derivative: Derivative value at left boundary
+            right_value: Value at right boundary
+        """
+        return cls('mixed_neumann_dirichlet', left=left_derivative, right=right_value)
 
     def __str__(self) -> str:
         """String representation."""

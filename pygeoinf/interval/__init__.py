@@ -21,9 +21,9 @@ Classes:
 """
 
 # Core functionality that exists
-from .lebesgue_space import Lebesgue
+from .lebesgue_space import Lebesgue, LebesgueSpaceDirectSum
 from .functions import Function
-from .sobolev_space import Sobolev
+from .sobolev_space import Sobolev, SobolevSpaceDirectSum
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
 from .operators import (
@@ -43,6 +43,7 @@ __all__ = [
     'Lebesgue',
     'Function',
     'Sobolev',
+    'SobolevSpaceDirectSum',
     'IntervalDomain',
     'BoundaryConditions',
     'SOLAOperator',
@@ -52,5 +53,6 @@ __all__ = [
     'BesselSobolevInverse',
     'SpectralOperator',
     'SpectrumProvider',
-    'Gradient'
+    'Gradient',
+    'LebesgueSpaceDirectSum',
 ]

@@ -274,7 +274,7 @@ class SineEigenvalueProvider(EigenvalueProvider):
         self.domain_length = domain_length
 
     def get_eigenvalue(self, index: int) -> float:
-        """Compute eigenvalue for the negative Laplacian operator."""
+        """Compute eigenvalue for the Laplacian operator."""
         # Sine functions start from k=1
         k = index + 1
         return (k * math.pi / self.domain_length) ** 2
@@ -351,6 +351,8 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
         self._inverse = inverse
         self._alpha = alpha
         self._eigenvalue_cache = {}
+        # robin cache (μ_k roots)
+        self._robin_mu = []   # type: list[float]
 
     def get_eigenvalue(self, index: int) -> float:
         """Get eigenvalue for given index."""
@@ -378,10 +380,106 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             fourier_provider = FourierEigenvalueProvider(length)
             eigenval = fourier_provider.get_eigenvalue(index)
 
+        elif self._boundary_conditions.type == 'mixed_dirichlet_neumann':
+            return (((index + 0.5) * np.pi) / length)**2
+
+        elif self._boundary_conditions.type == 'mixed_neumann_dirichlet':
+            return (((index + 0.5) * np.pi) / length)**2
+
+        # ---- general separated Robin
+        elif self._boundary_conditions.type == 'robin':
+            mu = self._robin_mu_at(index)   # compute & cache μ_k
+            eigenval = mu * mu
+        else:
+            raise ValueError(f"Unknown boundary condition type: {self._boundary_conditions.type}")
+
+        # Apply alpha scaling and inverse if needed
         if self._inverse:
             return 1.0 / (eigenval * self._alpha)
         else:
             return eigenval * self._alpha
+
+    # ---------- ROBIN root finding  ----------
+    def _robin_mu_at(self, k: int) -> float:
+        # ensure we have μ_0,...,μ_k
+        while len(self._robin_mu) <= k:
+            # Pass the target index k (not the current length) to get the right bracket
+            self._append_next_robin_root(k)
+        return self._robin_mu[k]
+
+    def _append_next_robin_root(self, target_index: int):
+        a, b = self._function_domain.a, self._function_domain.b
+        L = b - a
+        alpha_0 = float(self._boundary_conditions.get_parameter('left_alpha'))
+        beta_0 = float(self._boundary_conditions.get_parameter('left_beta'))
+        alpha_L = float(self._boundary_conditions.get_parameter('right_alpha'))
+        beta_L = float(self._boundary_conditions.get_parameter('right_beta'))
+
+        def D(mu: float) -> float:
+            # Characteristic: (alpha_0 alpha_L + beta_0 beta_L μ^2) sin(μL) + μ(alpha_0 beta_L − beta_0 alpha_L) cos(μL)
+            return ((alpha_0*alpha_L + beta_0*beta_L*mu*mu) * math.sin(mu*L)
+                    + mu*(alpha_0*beta_L - beta_0*alpha_L) * math.cos(mu*L))
+
+        # special zero-mode only if pure Neumann at both ends
+        if not self._robin_mu:
+            if beta_0 == 0.0 and beta_L == 0.0:
+                # DD → no zero root
+                pass
+            elif alpha_0 == 0.0 and alpha_L == 0.0:
+                # NN → μ0 = 0 (only if not inverse we will use it)
+                self._robin_mu.append(0.0)
+
+        # bracket the next root ~ near nπ/L
+        # Use target_index directly to determine bracket
+        # The nth eigenvalue (index n) has root roughly at (n+1)*π/L
+        # We want index=target_index, so root near (target_index+1)*π/L
+        n = target_index + 1
+        # Search bracket centered on nπ/L: [(n-0.5)π/L, (n+0.5)π/L]
+        # This ensures exactly one root in the bracket
+        left = (n - 0.5) * math.pi / L
+        right = (n + 0.5) * math.pi / L
+
+        # robustify: expand bracket until sign change or up to a few attempts
+        Dl, Dr = D(left), D(right)
+        attempts = 0
+        while Dl * Dr > 0 and attempts < 6:
+            # gently expand to catch tangential crossings
+            left *= 0.9
+            right *= 1.1
+            Dl, Dr = D(left), D(right)
+            attempts += 1
+        if Dl * Dr > 0:
+            # fallback: scan midpoints in the interval to locate sign change
+            M = 64
+            xs = np.linspace(left, right, M+1)
+            vals = np.array([D(xi) for xi in xs])
+            sign = np.sign(vals)
+            idx = np.where(sign[:-1] * sign[1:] <= 0)[0]
+            if len(idx) == 0:
+                raise RuntimeError("Failed to bracket Robin eigenvalue root.")
+            i0 = idx[0]
+            left, right = xs[i0], xs[i0+1]
+
+        mu = self._bisect(D, left, right, tol=1e-12, maxit=100)
+        self._robin_mu.append(mu)
+
+    @staticmethod
+    def _bisect(F, a, b, tol=1e-12, maxit=100):
+        fa, fb = F(a), F(b)
+        if fa == 0.0: return a
+        if fb == 0.0: return b
+        if fa * fb > 0:
+            raise ValueError("Bisection: no sign change on [a,b].")
+        for _ in range(maxit):
+            c = 0.5*(a+b)
+            fc = F(c)
+            if abs(fc) < tol or 0.5*(b-a) < tol:
+                return c
+            if fa*fc <= 0:
+                b, fb = c, fc
+            else:
+                a, fa = c, fc
+        return 0.5*(a+b)
 
 
 class CustomEigenvalueProvider(EigenvalueProvider):
@@ -461,6 +559,10 @@ class LaplacianSpectrumProvider(SpectrumProvider):
             if self._inverse:
                 index += 1
             return self._function_provider.get_function_by_index(index)
+        elif self._boundary_conditions.type in ['mixed_dirichlet_neumann',
+                                                'mixed_neumann_dirichlet',
+                                                'robin']:
+            return self._function_provider.get_function_by_index(index)
 
     def _choose_basis(self):
         # Import here to avoid circular imports
@@ -468,6 +570,9 @@ class LaplacianSpectrumProvider(SpectrumProvider):
             SineFunctionProvider,
             CosineFunctionProvider,
             FourierFunctionProvider,
+            MixedDNFunctionProvider,
+            MixedNDFunctionProvider,
+            RobinFunctionProvider
         )
 
         # Choose appropriate function provider based on boundary conditions
@@ -477,6 +582,15 @@ class LaplacianSpectrumProvider(SpectrumProvider):
             function_provider = CosineFunctionProvider(self.space)
         elif self._boundary_conditions.type == 'periodic':
             function_provider = FourierFunctionProvider(self.space)
+        elif self._boundary_conditions.type == 'mixed_dirichlet_neumann':
+            function_provider = MixedDNFunctionProvider(self.space)
+        elif self._boundary_conditions.type == 'mixed_neumann_dirichlet':
+            function_provider = MixedNDFunctionProvider(self.space)
+        elif self._boundary_conditions.type == 'robin':
+            function_provider = RobinFunctionProvider(
+                self.space,
+                self._boundary_conditions
+            )
         else:
             raise ValueError(f"Unsupported boundary condition: "
                              f"{self._boundary_conditions.type}")
