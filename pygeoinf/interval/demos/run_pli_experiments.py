@@ -4,6 +4,35 @@ Automated Parameter Sweep for Probabilistic Linear Inference (PLI)
 This script runs the PLI inference pipeline with various parameter configurations
 and saves all results (images, metadata, timings) in an organized directory structure.
 
+Configuration Parameters:
+- N: Model space dimension
+- N_d: Number of data points
+- N_p: Number of property points
+- K: KL expansion modes for prior representation
+- basis: Basis type ('sine', 'cosine', etc.)
+- alpha: Prior regularization parameter (smoothness)
+- noise_level: Data noise level (relative to signal)
+- compute_model_posterior: Whether to compute full model posterior (slower)
+- random_seed: Random seed for reproducibility
+- n_jobs: Number of parallel workers for computations (default: 8)
+- bc_config: Boundary conditions for prior covariance (dict)
+
+Boundary Condition Formats:
+1. Dirichlet (fixed value):
+   {'bc_type': 'dirichlet', 'left': value, 'right': value}
+   Example: {'bc_type': 'dirichlet', 'left': 0, 'right': 0}
+
+2. Neumann (fixed derivative):
+   {'bc_type': 'neumann', 'left': value, 'right': value}
+   Example: {'bc_type': 'neumann', 'left': 0, 'right': 0}
+
+3. Robin (linear combination):
+   {'bc_type': 'robin', 'left': {'alpha': a, 'beta': b},
+    'right': {'alpha': a, 'beta': b}}
+   where a*u + b*u' = 0 at boundaries
+   Example: {'bc_type': 'robin', 'left': {'alpha': 1, 'beta': 1},
+             'right': {'alpha': 1, 'beta': 1}}
+
 Directory structure:
 experiments/
 └── sweep_YYYYMMDD_HHMMSS/
@@ -78,6 +107,15 @@ class PLIExperiment:
         self.noise_level = config['noise_level']  # Data noise level
         self.compute_model_posterior = config.get('compute_model_posterior', False)
         self.random_seed = config.get('random_seed', 42)
+
+        # Parallelization parameter (number of jobs for parallel computations)
+        self.n_jobs = config.get('n_jobs', 8)  # Default to 8 workers
+
+        # Boundary condition parameters (default to Dirichlet if not specified)
+        # Format: {'bc_type': 'dirichlet', 'left': 0, 'right': 0}
+        # or: {'bc_type': 'neumann', 'left': 0, 'right': 0}
+        # or: {'bc_type': 'robin', 'left': {'alpha': 1, 'beta': 0}, 'right': {'alpha': 1, 'beta': 0}}
+        self.bc_config = config.get('bc_config', {'bc_type': 'dirichlet', 'left': 0, 'right': 0})
 
         # Storage for results
         self.timings = {}
@@ -265,15 +303,23 @@ class PLIExperiment:
         """Set up prior measure on model space."""
         t0 = time.time()
 
-        # Prior covariance operator
-        bc_dirichlet = BoundaryConditions(bc_type='dirichlet', left=0, right=0)
-        C_0 = InverseLaplacian(self.M, bc_dirichlet, self.alpha, method='fem', dofs=100)
+        # Prior covariance operator with configurable boundary conditions
+        bc_type = self.bc_config['bc_type']
+        bc_left = self.bc_config['left']
+        bc_right = self.bc_config['right']
+
+        bc = BoundaryConditions(bc_type=bc_type, left=bc_left, right=bc_right)
+        C_0 = InverseLaplacian(
+            self.M, bc, self.alpha, method='fem', dofs=100
+        )
 
         # Prior mean
         m_0 = Function(self.M, evaluate_callable=lambda x: x)
 
         # Create Gaussian measure with KL expansion
-        self.M_prior = GaussianMeasure.from_spectral(C_0, expectation=m_0, n_modes=self.K)
+        self.M_prior = GaussianMeasure.from_spectral(
+            C_0, expectation=m_0, n_modes=self.K
+        )
 
         self.timings['setup_prior'] = time.time() - t0
 
@@ -309,7 +355,8 @@ class PLIExperiment:
 
         # Property prior
         prior_P = self.M_prior.affine_mapping(operator=self.T)
-        std_P = np.sqrt(np.diag(prior_P.covariance.matrix(dense=True, parallel=True, n_jobs=8)))
+        std_P = np.sqrt(np.diag(prior_P.covariance.matrix(
+            dense=True, parallel=True, n_jobs=self.n_jobs)))
         mean_prop = self.T(self.M_prior.expectation)
         true_props = self.T(self.m_bar)
 
@@ -339,7 +386,7 @@ class PLIExperiment:
         # Setup
         forward_problem = LinearForwardProblem(self.G, data_error_measure=self.gaussian_D_noise)
         bayesian_inference = LinearBayesianInference(forward_problem, self.M_prior, self.T)
-        solver = CholeskySolver(parallel=True, n_jobs=8)
+        solver = CholeskySolver(parallel=True, n_jobs=self.n_jobs)
 
         if self.compute_model_posterior:
             # Workflow 1: Full model posterior
@@ -349,7 +396,8 @@ class PLIExperiment:
             self.timings['model_posterior_compute'] = t2 - t1
 
             t3 = time.time()
-            C_M_matrix = posterior_model.covariance.matrix(dense=True, parallel=True, n_jobs=8)
+            C_M_matrix = posterior_model.covariance.matrix(
+                dense=True, parallel=True, n_jobs=self.n_jobs)
             t4 = time.time()
             self.timings['model_covariance_extract'] = t4 - t3
 
@@ -361,7 +409,8 @@ class PLIExperiment:
             t5 = time.time()
             property_posterior = mu_M.affine_mapping(operator=self.T)
             self.p_tilde = property_posterior.expectation
-            cov_P_matrix = property_posterior.covariance.matrix(dense=True, parallel=True, n_jobs=8)
+            cov_P_matrix = property_posterior.covariance.matrix(
+                dense=True, parallel=True, n_jobs=self.n_jobs)
             t6 = time.time()
             self.timings['property_posterior_compute'] = t6 - t5
 
@@ -380,7 +429,8 @@ class PLIExperiment:
             self.timings['property_mapping'] = t4 - t3
 
             t5 = time.time()
-            cov_P_matrix = property_posterior.covariance.matrix(dense=True, parallel=True, n_jobs=8)
+            cov_P_matrix = property_posterior.covariance.matrix(
+                dense=True, parallel=True, n_jobs=self.n_jobs)
             t6 = time.time()
             self.timings['property_covariance_extract'] = t6 - t5
 
@@ -487,19 +537,25 @@ class PLIExperiment:
 class PLISweep:
     """Run a parameter sweep of PLI experiments."""
 
-    def __init__(self, base_dir: str = "experiments"):
+    def __init__(self, base_dir: str = "experiments", sweep_name: Optional[str] = None):
         """
         Initialize parameter sweep.
 
         Args:
             base_dir: Base directory for all experiments
+            sweep_name: Optional descriptive name for the sweep (e.g., 'kl_truncation')
+                       If provided, directory will be named '{sweep_name}_{timestamp}'
+                       If not provided, directory will be named 'sweep_{timestamp}'
         """
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True)
 
-        # Create sweep directory with timestamp
+        # Create sweep directory with optional name and timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.sweep_dir = self.base_dir / f"sweep_{timestamp}"
+        if sweep_name:
+            self.sweep_dir = self.base_dir / f"{sweep_name}_{timestamp}"
+        else:
+            self.sweep_dir = self.base_dir / f"sweep_{timestamp}"
         self.sweep_dir.mkdir()
 
         print(f"Created sweep directory: {self.sweep_dir}")
@@ -597,7 +653,7 @@ class PLISweep:
 
 def example_sweep_K_values():
     """Example: Sweep over different K (KL expansion) values."""
-    sweep = PLISweep()
+    sweep = PLISweep(sweep_name="example_K_values")
 
     # Fixed parameters
     base_config = {
@@ -653,7 +709,7 @@ def example_sweep_K_values():
 
 def example_sweep_multiple_params():
     """Example: Sweep over multiple parameters."""
-    sweep = PLISweep()
+    sweep = PLISweep(sweep_name="multiple_params")
 
     base_config = {
         'basis': 'sine',

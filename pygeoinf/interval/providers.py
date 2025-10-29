@@ -381,10 +381,12 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
             eigenval = fourier_provider.get_eigenvalue(index)
 
         elif self._boundary_conditions.type == 'mixed_dirichlet_neumann':
-            return (((index + 0.5) * np.pi) / length)**2
+            # Eigenvalues: λₖ = ((k+1/2)π/L)² for k=0,1,2,...
+            eigenval = (((index + 0.5) * np.pi) / length)**2
 
         elif self._boundary_conditions.type == 'mixed_neumann_dirichlet':
-            return (((index + 0.5) * np.pi) / length)**2
+            # Eigenvalues: λₖ = ((k+1/2)π/L)² for k=0,1,2,...
+            eigenval = (((index + 0.5) * np.pi) / length)**2
 
         # ---- general separated Robin
         elif self._boundary_conditions.type == 'robin':
@@ -596,4 +598,3 @@ class LaplacianSpectrumProvider(SpectrumProvider):
                              f"{self._boundary_conditions.type}")
 
         return function_provider
-

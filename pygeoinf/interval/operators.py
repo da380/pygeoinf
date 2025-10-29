@@ -755,7 +755,7 @@ class InverseLaplacian(SpectralOperator):
         return Function(self._codomain, evaluate_callable=f_new_eval)
 
     def _apply_fem(self, f: Function) -> Function:
-        f = self._alpha * f  # Scale input by alpha
+        f = (1/self._alpha) * f  # Scale input by alpha
 
         # Solve PDE using GeneralFEMSolver
         # Both hat and general types now use GeneralFEMSolver

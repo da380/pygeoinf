@@ -108,6 +108,9 @@ class BoundaryConditions:
         elif self.type == 'mixed_neumann_dirichlet':
             return (self._params.get('left', 0) == 0 and
                     self._params.get('right', 0) == 0)
+        elif self.type == 'robin':
+            return (self._params.get('left_value', 0) == 0 and
+                    self._params.get('right_value', 0) == 0)
         else:
             return False
 

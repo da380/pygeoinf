@@ -1,0 +1,14 @@
+{
+  "snr": 5.0,
+  "noise_std": 0.20196827071205803,
+  "model_rms_error": 0.23925086168847437,
+  "model_relative_error": 0.3874414924120548,
+  "property_mean_abs_error": 0.12635887432578208,
+  "property_rms_error": 0.15878354891792978,
+  "property_max_error": 0.3383379626358769,
+  "properties_within_2sigma": 20,
+  "properties_within_2sigma_pct": 100.0,
+  "data_misfit_posterior": 1.102487042088969,
+  "data_misfit_prior": 1.9511042608673992,
+  "data_fit_improvement_pct": 43.49420150418625
+}
