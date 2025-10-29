@@ -549,7 +549,7 @@ class InverseLaplacian(SpectralOperator):
 
     def __init__(
         self,
-        domain: Lebesgue,
+        domain: Union[Lebesgue, Sobolev],
         boundary_conditions: BoundaryConditions,
         alpha: float = 1.0,
         /,
@@ -564,11 +564,11 @@ class InverseLaplacian(SpectralOperator):
         """
         Initialize the Laplacian inverse operator.
 
-        The operator maps from L² space to Sobolev space:
-        (-Δ)⁻¹: L² → H^s with specified boundary conditions
+        The operator maps within the function space:
+        (-Δ)⁻¹: L² → L² or H^s → H^s with specified boundary conditions
 
         Args:
-            domain: The L2 space (domain of the operator)
+            domain: The function space (Lebesgue or Sobolev)
             boundary_conditions: Boundary conditions for the operator
             alpha: Scaling factor for the operator (default: 1.0)
             dofs: Number of degrees of freedom (default: 100)
@@ -581,10 +581,10 @@ class InverseLaplacian(SpectralOperator):
                 ('trapz', 'simpson')
             npoints: Number of points for numerical integration fallback
         """
-        # Check that domain is a Lebesgue space
-        if not isinstance(domain, Lebesgue):
+        # Check that domain is a Lebesgue or Sobolev space
+        if not isinstance(domain, (Lebesgue, Sobolev)):
             raise TypeError(
-                f"domain must be a Lebesgue space, got {type(domain)}"
+                f"domain must be a Lebesgue or Sobolev space, got {type(domain)}"
             )
 
         self._domain = domain

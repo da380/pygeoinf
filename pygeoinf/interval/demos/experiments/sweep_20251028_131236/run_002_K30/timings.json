@@ -1,0 +1,11 @@
+{
+  "setup_spaces": 7.009506225585938e-05,
+  "create_operators": 0.00028133392333984375,
+  "generate_data": 0.04029560089111328,
+  "setup_prior": 0.0006308555603027344,
+  "model_posterior_compute": 1.6872365474700928,
+  "property_mapping": 0.02102184295654297,
+  "property_covariance_extract": 3.4475255012512207,
+  "inference_total": 5.155866622924805,
+  "total": 8.959589719772339
+}
