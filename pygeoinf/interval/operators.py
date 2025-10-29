@@ -617,7 +617,9 @@ class InverseLaplacian(SpectralOperator):
 
         # Check if fast transforms are available for this BC type
         self._can_use_fast_transforms = boundary_conditions.type in [
-            'dirichlet', 'neumann', 'periodic',
+            'dirichlet',
+            'neumann',
+            'periodic',
             'mixed_dirichlet_neumann', 'mixed_neumann_dirichlet'
         ]
 
@@ -665,26 +667,27 @@ class InverseLaplacian(SpectralOperator):
         domain_length = domain_interval.b - domain_interval.a
 
         # Create uniform samples of the input function
+        # Use self._n_samples (not self._dofs) to get accurate integration
         if self._boundary_conditions.type == 'neumann' or \
            self._boundary_conditions.type == 'periodic':
             f_samples = create_uniform_samples(
-                f, domain_tuple, self._dofs + 1,
+                f, domain_tuple, self._n_samples + 1,
                 self._boundary_conditions.type
             )
             # Compute all spectral coefficients at once
             coefficients = fast_spectral_coefficients(
                 f_samples, self._boundary_conditions.type,
-                domain_length, self._dofs + 1
+                domain_length, self._dofs + 1  # Only need self._dofs + 1 coefficients
             )
         else:
             f_samples = create_uniform_samples(
-                f, domain_tuple, self._dofs,
+                f, domain_tuple, self._n_samples,
                 self._boundary_conditions.type
             )
             # Compute all spectral coefficients at once
             coefficients = fast_spectral_coefficients(
                 f_samples, self._boundary_conditions.type,
-                domain_length, self._dofs
+                domain_length, self._dofs  # Only need self._dofs coefficients
             )
         if self._boundary_conditions.type == 'neumann' or \
            self._boundary_conditions.type == 'periodic':

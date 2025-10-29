@@ -240,6 +240,8 @@ def sweep_boundary_conditions():
         'compute_model_posterior': False,
         'random_seed': 42,
         'n_jobs': 30,
+        'method': 'spectral',
+        'dofs': 100
     }
 
     # Define different boundary condition configurations

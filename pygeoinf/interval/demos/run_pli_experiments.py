@@ -16,6 +16,8 @@ Configuration Parameters:
 - random_seed: Random seed for reproducibility
 - n_jobs: Number of parallel workers for computations (default: 8)
 - bc_config: Boundary conditions for prior covariance (dict)
+- method: Method for inverse Laplacian ('fem' or 'spectral', default: 'spectral')
+- dofs: Degrees of freedom for inverse Laplacian (default: 100)
 
 Boundary Condition Formats:
 1. Dirichlet (fixed value):
@@ -79,6 +81,7 @@ from pygeoinf.interval.operators import InverseLaplacian
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.linear_bayesian import LinearBayesianInference
 from pygeoinf.linear_solvers import CholeskySolver
+from pygeoinf.interval.KL_sampler import KLSampler
 
 
 class PLIExperiment:
@@ -116,6 +119,10 @@ class PLIExperiment:
         # or: {'bc_type': 'neumann', 'left': 0, 'right': 0}
         # or: {'bc_type': 'robin', 'left': {'alpha': 1, 'beta': 0}, 'right': {'alpha': 1, 'beta': 0}}
         self.bc_config = config.get('bc_config', {'bc_type': 'dirichlet', 'left': 0, 'right': 0})
+
+        # Inverse Laplacian method and dofs
+        self.method = config.get('method', 'spectral')  # 'fem' or 'spectral'
+        self.dofs = config.get('dofs', 100)  # Degrees of freedom
 
         # Storage for results
         self.timings = {}
@@ -310,15 +317,19 @@ class PLIExperiment:
 
         bc = BoundaryConditions(bc_type=bc_type, left=bc_left, right=bc_right)
         C_0 = InverseLaplacian(
-            self.M, bc, self.alpha, method='fem', dofs=100
+            self.M, bc, self.alpha, method=self.method, dofs=self.dofs
         )
 
         # Prior mean
         m_0 = Function(self.M, evaluate_callable=lambda x: x)
 
-        # Create Gaussian measure with KL expansion
-        self.M_prior = GaussianMeasure.from_spectral(
-            C_0, expectation=m_0, n_modes=self.K
+        # Create Gaussian measure with KL expansion using KLSampler
+        # This matches the approach in the pli.ipynb notebook
+        sampler = KLSampler(C_0, mean=m_0, n_modes=self.K)
+        self.M_prior = GaussianMeasure(
+            covariance=C_0,
+            expectation=m_0,
+            sample=sampler.sample
         )
 
         self.timings['setup_prior'] = time.time() - t0
@@ -664,7 +675,9 @@ def example_sweep_K_values():
         'alpha': 0.1,
         'noise_level': 0.1,
         'compute_model_posterior': False,
-        'random_seed': 42
+        'random_seed': 42,
+        'method': 'spectral',  # or 'fem'
+        'dofs': 100
     }
 
     # Varying parameters
@@ -716,7 +729,9 @@ def example_sweep_multiple_params():
         'alpha': 0.1,
         'noise_level': 0.1,
         'compute_model_posterior': False,
-        'random_seed': 42
+        'random_seed': 42,
+        'method': 'spectral',
+        'dofs': 100
     }
 
     param_grid = {
