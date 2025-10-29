@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .operators import SpectralOperator
     from .functions import Function
 from pygeoinf import EuclideanSpace, LinearOperator
-
+from pygeoinf import MassWeightedHilbertSpace
 
 @dataclass
 class TruncationInfo:
@@ -92,6 +92,7 @@ class KLSampler:
         if i < len(self._eigenvalues):
             return self._eigenvalues[i], self._eigenfunctions[i]
         # Pull from operator
+
         lam = float(self._op.get_eigenvalue(i))
         if lam < 0:
             # Defensive clamp (should not happen for covariance)

@@ -97,6 +97,30 @@ class Sobolev(MassWeightedHilbertSpace):
             basis=basis
         )
 
+    @property
+    def mass_operator_factor(self):
+        from .operators import BesselSobolev
+        return BesselSobolev(
+            self._underlying_space,
+            self._underlying_space,
+            k=self._k,
+            s=self._s,
+            L=self._L,
+            dofs=self._dofs
+        )
+
+    @property
+    def inverse_mass_operator_factor(self):
+        from .operators import BesselSobolevInverse
+        return BesselSobolevInverse(
+            self._underlying_space,
+            self._underlying_space,
+            k=self._k,
+            s=self._s,
+            L=self._L,
+            dofs=self._dofs
+        )
+
 
 class SobolevSpaceDirectSum(HilbertSpaceDirectSum):
     """

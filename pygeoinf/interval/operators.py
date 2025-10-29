@@ -327,7 +327,12 @@ class Laplacian(SpectralOperator):
 
     def get_eigenfunction(self, index: int) -> Function:
         """Get the eigenfunction at a specific index."""
-        return self._spectrum_provider.get_eigenfunction(index)
+        if isinstance(self._domain, Sobolev):
+            # Eigenfunctions are stored in dual space; convert back
+            func = self._spectrum_provider.get_eigenfunction(index)
+            return self._domain.inverse_mass_operator_factor(func)
+        else:
+            return self._spectrum_provider.get_eigenfunction(index)
 
     def _setup_finite_difference(self):
         """Setup finite difference discretization."""
@@ -795,8 +800,12 @@ class InverseLaplacian(SpectralOperator):
         ]
 
     def get_eigenfunction(self, index: int) -> Function:
-        return self._spectrum_provider.get_eigenfunction(index)
-
+        if isinstance(self._domain, Sobolev):
+            # Eigenfunctions are stored in dual space; convert back
+            func = self._spectrum_provider.get_eigenfunction(index)
+            return self._domain.inverse_mass_operator_factor(func)
+        else:
+            return self._spectrum_provider.get_eigenfunction(index)
 
 
 class BesselSobolev(LinearOperator):
@@ -851,11 +860,6 @@ class BesselSobolev(LinearOperator):
             self._use_fast_transforms and
             self._boundary_condition is not None
         )
-
-        if self._can_use_fast_transforms:
-            logger.info(f"FastBesselSobolev: Using fast {self._boundary_condition} transforms")
-        else:
-            logger.info("FastBesselSobolev: Using slow numerical integration (fallback)")
 
         super().__init__(domain, codomain, self._apply)
 
@@ -1036,11 +1040,6 @@ class BesselSobolevInverse(LinearOperator):
             self._boundary_condition is not None
         )
 
-        if self._can_use_fast_transforms:
-            logger.info(f"FastBesselSobolevInverse: Using fast {self._boundary_condition} transforms")
-        else:
-            logger.info("FastBesselSobolevInverse: Using slow numerical integration (fallback)")
-
         super().__init__(domain, codomain, self._apply)
 
     def _detect_boundary_condition(self) -> Optional[Literal[
@@ -1167,6 +1166,10 @@ class BesselSobolevInverse(LinearOperator):
         if eigval < 0:
             raise ValueError(f"Negative eigenvalue {eigval} at index {index}")
         return (self._k**2 + eigval)**(-self._s / 2)
+
+    def get_eigenvalues(self, indices: List[int]) -> List[float]:
+        """Get multiple eigenvalues at specified indices."""
+        return [self.get_eigenvalue(i) for i in indices]
 
 
 class SOLAOperator(LinearOperator):

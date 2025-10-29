@@ -1,8 +1,9 @@
 """
 Automated Parameter Sweep for Probabilistic Linear Inference (PLI)
 
-This script runs the PLI inference pipeline with various parameter configurations
-and saves all results (images, metadata, timings) in an organized directory structure.
+This script runs the PLI inference pipeline with various parameter
+configurations and saves all results (images, metadata, timings) in an
+organized directory structure.
 
 Configuration Parameters:
 - N: Model space dimension
@@ -10,14 +11,30 @@ Configuration Parameters:
 - N_p: Number of property points
 - K: KL expansion modes for prior representation
 - basis: Basis type ('sine', 'cosine', etc.)
-- alpha: Prior regularization parameter (smoothness)
 - noise_level: Data noise level (relative to signal)
 - compute_model_posterior: Whether to compute full model posterior (slower)
 - random_seed: Random seed for reproducibility
 - n_jobs: Number of parallel workers for computations (default: 8)
 - bc_config: Boundary conditions for prior covariance (dict)
-- method: Method for inverse Laplacian ('fem' or 'spectral', default: 'spectral')
-- dofs: Degrees of freedom for inverse Laplacian (default: 100)
+
+Prior Covariance Operator:
+- prior_type: Type of prior covariance operator (default: 'bessel_sobolev')
+  * 'inverse_laplacian': C_0 = (αL)^(-1)
+  * 'bessel_sobolev': C_0 = (k²I + L)^(-s)
+
+Bessel-Sobolev Parameters (used when prior_type='bessel_sobolev'):
+- k: Bessel parameter k² (default: 1.0)
+- s: Sobolev order s (default: 1.0)
+- alpha: Laplacian scaling parameter (default: 0.1)
+- method: Method for Laplacian ('spectral' or 'fd', default: 'spectral')
+- dofs: Degrees of freedom (default: 100)
+- n_samples: Number of samples for fast transforms (default: 1024)
+- use_fast_transforms: Use fast spectral transforms (default: True)
+
+Inverse Laplacian Parameters (used when prior_type='inverse_laplacian'):
+- alpha: Prior regularization parameter (smoothness)
+- method: Method for inverse Laplacian ('spectral' or 'fem')
+- dofs: Degrees of freedom (default: 100)
 
 Boundary Condition Formats:
 1. Dirichlet (fixed value):
@@ -77,7 +94,9 @@ from pygeoinf.interval.operators import SOLAOperator
 from pygeoinf.interval.functions import Function
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.interval.boundary_conditions import BoundaryConditions
-from pygeoinf.interval.operators import InverseLaplacian
+from pygeoinf.interval.operators import (
+    InverseLaplacian, Laplacian, BesselSobolevInverse
+)
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.linear_bayesian import LinearBayesianInference
 from pygeoinf.linear_solvers import CholeskySolver
@@ -106,23 +125,36 @@ class PLIExperiment:
         self.N_p = config['N_p']  # Number of property points
         self.K = config['K']  # KL expansion modes
         self.basis = config['basis']  # Basis type
-        self.alpha = config['alpha']  # Prior regularization
         self.noise_level = config['noise_level']  # Data noise level
-        self.compute_model_posterior = config.get('compute_model_posterior', False)
+        self.compute_model_posterior = config.get(
+            'compute_model_posterior', False)
         self.random_seed = config.get('random_seed', 42)
 
-        # Parallelization parameter (number of jobs for parallel computations)
+        # Parallelization parameter
         self.n_jobs = config.get('n_jobs', 8)  # Default to 8 workers
 
-        # Boundary condition parameters (default to Dirichlet if not specified)
+        # Boundary condition parameters (default to Dirichlet)
         # Format: {'bc_type': 'dirichlet', 'left': 0, 'right': 0}
         # or: {'bc_type': 'neumann', 'left': 0, 'right': 0}
-        # or: {'bc_type': 'robin', 'left': {'alpha': 1, 'beta': 0}, 'right': {'alpha': 1, 'beta': 0}}
-        self.bc_config = config.get('bc_config', {'bc_type': 'dirichlet', 'left': 0, 'right': 0})
+        # or: {'bc_type': 'robin', 'left': {...}, 'right': {...}}
+        default_bc = {'bc_type': 'dirichlet', 'left': 0, 'right': 0}
+        self.bc_config = config.get('bc_config', default_bc)
 
-        # Inverse Laplacian method and dofs
-        self.method = config.get('method', 'spectral')  # 'fem' or 'spectral'
+        # Prior covariance operator type
+        # 'inverse_laplacian': C_0 = (αL)^(-1)
+        # 'bessel_sobolev': C_0 = (k²I + L)^(-s)
+        self.prior_type = config.get('prior_type', 'bessel_sobolev')
+
+        # Bessel-Sobolev parameters (only used if prior_type='bessel_sobolev')
+        self.k = config.get('k', 1.0)  # Bessel parameter k²
+        self.s = config.get('s', 1.0)  # Sobolev order s
+
+        # Laplacian parameters
+        self.alpha = config.get('alpha', 0.1)  # Laplacian scaling
+        self.method = config.get('method', 'spectral')  # 'spectral' or 'fd'
         self.dofs = config.get('dofs', 100)  # Degrees of freedom
+        self.n_samples = config.get('n_samples', 1024)  # For fast transforms
+        self.use_fast_transforms = config.get('use_fast_transforms', True)
 
         # Storage for results
         self.timings = {}
@@ -310,15 +342,39 @@ class PLIExperiment:
         """Set up prior measure on model space."""
         t0 = time.time()
 
-        # Prior covariance operator with configurable boundary conditions
+        # Setup boundary conditions
         bc_type = self.bc_config['bc_type']
         bc_left = self.bc_config['left']
         bc_right = self.bc_config['right']
+        bc = BoundaryConditions(
+            bc_type=bc_type, left=bc_left, right=bc_right)
 
-        bc = BoundaryConditions(bc_type=bc_type, left=bc_left, right=bc_right)
-        C_0 = InverseLaplacian(
-            self.M, bc, self.alpha, method=self.method, dofs=self.dofs
-        )
+        # Create prior covariance operator based on prior_type
+        if self.prior_type == 'inverse_laplacian':
+            # C_0 = (αL)^(-1) - simple inverse Laplacian
+            C_0 = InverseLaplacian(
+                self.M, bc, self.alpha,
+                method=self.method, dofs=self.dofs
+            )
+        elif self.prior_type == 'bessel_sobolev':
+            # C_0 = (k²I + L)^(-s) - Bessel-Sobolev inverse
+            # First create the Laplacian operator L
+            L = Laplacian(
+                self.M, bc, self.alpha,
+                method=self.method, dofs=self.dofs,
+                n_samples=self.n_samples
+            )
+            # Then create the Bessel-Sobolev inverse
+            C_0 = BesselSobolevInverse(
+                self.M, self.M, self.k, self.s, L,
+                dofs=self.dofs, n_samples=self.n_samples,
+                use_fast_transforms=self.use_fast_transforms
+            )
+        else:
+            raise ValueError(
+                f"Unknown prior_type: {self.prior_type}. "
+                f"Use 'inverse_laplacian' or 'bessel_sobolev'"
+            )
 
         # Prior mean
         m_0 = Function(self.M, evaluate_callable=lambda x: x)
@@ -666,18 +722,24 @@ def example_sweep_K_values():
     """Example: Sweep over different K (KL expansion) values."""
     sweep = PLISweep(sweep_name="example_K_values")
 
-    # Fixed parameters
+    # Fixed parameters - using Bessel-Sobolev prior by default
     base_config = {
         'N': 100,
         'N_d': 50,
         'N_p': 20,
         'basis': 'sine',
-        'alpha': 0.1,
         'noise_level': 0.1,
         'compute_model_posterior': False,
         'random_seed': 42,
-        'method': 'spectral',  # or 'fem'
-        'dofs': 100
+        # Bessel-Sobolev prior parameters (default)
+        'prior_type': 'bessel_sobolev',
+        'k': 1.0,
+        's': 1.0,
+        'alpha': 0.1,
+        'method': 'spectral',
+        'dofs': 100,
+        'n_samples': 1024,
+        'use_fast_transforms': True
     }
 
     # Varying parameters
@@ -726,12 +788,18 @@ def example_sweep_multiple_params():
 
     base_config = {
         'basis': 'sine',
-        'alpha': 0.1,
         'noise_level': 0.1,
         'compute_model_posterior': False,
         'random_seed': 42,
+        # Bessel-Sobolev prior parameters (default)
+        'prior_type': 'bessel_sobolev',
+        'k': 1.0,
+        's': 1.0,
+        'alpha': 0.1,
         'method': 'spectral',
-        'dofs': 100
+        'dofs': 100,
+        'n_samples': 1024,
+        'use_fast_transforms': True
     }
 
     param_grid = {
