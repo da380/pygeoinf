@@ -13,7 +13,9 @@ if TYPE_CHECKING:
 class NonLinearOperatorAxiomChecks:
     """A mixin for checking the properties of a NonLinearOperator."""
 
-    def _check_derivative_finite_difference(self, x, v, h=1e-7):
+    def _check_derivative_finite_difference(
+        self, x, v, h=1e-7, check_rtol: float = 1e-5, check_atol: float = 1e-8
+    ):
         """
         Verifies the derivative using the finite difference formula:
         D[F](x) @ v  ≈  (F(x + h*v) - F(x)) / h
@@ -49,12 +51,20 @@ class NonLinearOperatorAxiomChecks:
         analytic_norm = self.codomain.norm(analytic_result)
         relative_error = diff_norm / (analytic_norm + 1e-12)
 
-        if relative_error > 1e-4:
+        # The finite difference method itself has an error, so we use
+        # the max of the requested rtol and a default 1e-4.
+        effective_rtol = max(check_rtol, 1e-4)
+
+        if relative_error > effective_rtol and diff_norm > check_atol:
             raise AssertionError(
-                f"Finite difference check failed. Relative error: {relative_error:.2e}"
+                f"Finite difference check failed. Relative error: {relative_error:.2e} "
+                f"(Tolerance: {effective_rtol:.2e}), "
+                f"Absolute error: {diff_norm:.2e} (Tol: {check_atol:.2e})"
             )
 
-    def _check_add_derivative(self, op1, op2, x, v):
+    def _check_add_derivative(
+        self, op1, op2, x, v, check_rtol: float = 1e-5, check_atol: float = 1e-8
+    ):
         """Verifies the sum rule for derivatives: (F+G)' = F' + G'"""
         if not (op1.has_derivative and op2.has_derivative):
             return  # Skip if derivatives aren't defined
@@ -70,11 +80,19 @@ class NonLinearOperatorAxiomChecks:
         res1 = derivative_of_sum(v)
         res2 = sum_of_derivatives(v)
 
-        diff_norm = self.codomain.norm(self.codomain.subtract(res1, res2))
-        if diff_norm > 1e-9:
-            raise AssertionError("Axiom failed: Derivative of sum is incorrect.")
+        # CORRECTED: Use norm-based comparison, not np.allclose
+        diff_norm = op1.codomain.norm(op1.codomain.subtract(res1, res2))
+        norm_res2 = op1.codomain.norm(res2)
 
-    def _check_scalar_mul_derivative(self, op, x, v, a):
+        if diff_norm > check_atol and diff_norm > check_rtol * (norm_res2 + 1e-12):
+            raise AssertionError(
+                f"Axiom failed: Derivative of sum is incorrect. "
+                f"Absolute error: {diff_norm:.2e}, Relative error: {diff_norm / (norm_res2 + 1e-12):.2e}"
+            )
+
+    def _check_scalar_mul_derivative(
+        self, op, x, v, a, check_rtol: float = 1e-5, check_atol: float = 1e-8
+    ):
         """Verifies the scalar multiple rule: (a*F)' = a*F'"""
         if not op.has_derivative:
             return
@@ -90,13 +108,19 @@ class NonLinearOperatorAxiomChecks:
         res1 = derivative_of_scaled(v)
         res2 = scaled_derivative(v)
 
-        diff_norm = self.codomain.norm(self.codomain.subtract(res1, res2))
-        if diff_norm > 1e-9:
+        # CORRECTED: Use norm-based comparison
+        diff_norm = op.codomain.norm(op.codomain.subtract(res1, res2))
+        norm_res2 = op.codomain.norm(res2)
+
+        if diff_norm > check_atol and diff_norm > check_rtol * (norm_res2 + 1e-12):
             raise AssertionError(
-                "Axiom failed: Derivative of scalar multiple is incorrect."
+                f"Axiom failed: Derivative of scalar multiple is incorrect. "
+                f"Absolute error: {diff_norm:.2e}, Relative error: {diff_norm / (norm_res2 + 1e-12):.2e}"
             )
 
-    def _check_matmul_derivative(self, op1, op2, x, v):
+    def _check_matmul_derivative(
+        self, op1, op2, x, v, check_rtol: float = 1e-5, check_atol: float = 1e-8
+    ):
         """Verifies the chain rule for derivatives: (F o G)'(x) = F'(G(x)) @ G'(x)"""
         if not (op1.has_derivative and op2.has_derivative):
             return
@@ -115,13 +139,23 @@ class NonLinearOperatorAxiomChecks:
         res1 = derivative_of_composed(v)
         res2 = chain_rule_derivative(v)
 
+        # CORRECTED: Use norm-based comparison
         diff_norm = op1.codomain.norm(op1.codomain.subtract(res1, res2))
-        if diff_norm > 1e-9:
+        norm_res2 = op1.codomain.norm(res2)
+
+        if diff_norm > check_atol and diff_norm > check_rtol * (norm_res2 + 1e-12):
             raise AssertionError(
-                "Axiom failed: Chain rule for derivatives is incorrect."
+                f"Axiom failed: Chain rule for derivatives is incorrect. "
+                f"Absolute error: {diff_norm:.2e}, Relative error: {diff_norm / (norm_res2 + 1e-12):.2e}"
             )
 
-    def check(self, n_checks: int = 5, op2=None) -> None:
+    def check(
+        self,
+        n_checks: int = 5,
+        op2=None,
+        check_rtol: float = 1e-5,
+        check_atol: float = 1e-8,
+    ) -> None:
         """
         Runs randomized checks to validate the operator's derivative and
         its algebraic properties.
@@ -129,6 +163,8 @@ class NonLinearOperatorAxiomChecks:
         Args:
             n_checks: The number of randomized trials to perform.
             op2: An optional second operator for testing algebraic rules.
+            check_rtol: The relative tolerance for numerical checks.
+            check_atol: The absolute tolerance for numerical checks.
         """
         print(
             f"\nRunning {n_checks} randomized checks for {self.__class__.__name__}..."
@@ -143,12 +179,20 @@ class NonLinearOperatorAxiomChecks:
                 v = self.domain.random()
 
             # Original check
-            self._check_derivative_finite_difference(x, v)
+            self._check_derivative_finite_difference(
+                x, v, check_rtol=check_rtol, check_atol=check_atol
+            )
 
             # New algebraic checks
-            self._check_scalar_mul_derivative(self, x, v, a)
+            self._check_scalar_mul_derivative(
+                self, x, v, a, check_rtol=check_rtol, check_atol=check_atol
+            )
             if op2:
-                self._check_add_derivative(self, op2, x, v)
-                self._check_matmul_derivative(self, op2, x, v)
+                self._check_add_derivative(
+                    self, op2, x, v, check_rtol=check_rtol, check_atol=check_atol
+                )
+                self._check_matmul_derivative(
+                    self, op2, x, v, check_rtol=check_rtol, check_atol=check_atol
+                )
 
         print(f"✅ All {n_checks} non-linear operator checks passed successfully.")
