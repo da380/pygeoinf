@@ -140,6 +140,15 @@ pygeoinf.random\_matrix module
    :undoc-members:
    :show-inheritance:
 
+
+pygeoinf.auxiliary module
+------------------------------
+
+.. automodule:: pygeoinf.auxiliary
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Module contents
 ---------------
 
