@@ -121,6 +121,162 @@ class Sobolev(MassWeightedHilbertSpace):
             dofs=self._dofs
         )
 
+    @classmethod
+    def with_discontinuities(
+        cls,
+        dim: int,
+        function_domain: "IntervalDomain",
+        discontinuity_points: list,
+        s: float,
+        k: float,
+        bcs,
+        alpha: float,
+        *,
+        basis: Optional[Union[str, list]] = None,
+        dim_per_subspace: Optional[list] = None,
+        basis_per_subspace: Optional[list] = None,
+        laplacian_method: str = 'spectral',
+        dofs: int = 100,
+        n_samples: int = 2048,
+    ) -> "SobolevSpaceDirectSum":
+        """
+        Create a SobolevSpaceDirectSum with discontinuities.
+
+        This factory method creates a direct sum of Sobolev spaces, where
+        each component space is defined on a subinterval separated by
+        discontinuity points. This allows modeling of functions with jump
+        discontinuities in Sobolev spaces.
+
+        The total dimension `dim` is distributed across the subspaces.
+        By default, dimension is allocated proportionally to subinterval
+        lengths, but you can specify custom dimensions.
+
+        Args:
+            dim: Total dimension across all subspaces
+            function_domain: The full interval domain
+            discontinuity_points: List of points where discontinuities occur
+            s: Sobolev regularity parameter
+            k: Sobolev scaling parameter
+            bcs: Boundary conditions to use for Laplacian operators
+            alpha: Laplacian scaling parameter
+            basis: Basis type for ALL subspaces (string like 'fourier',
+                'sine', etc., or 'none'). Ignored if basis_per_subspace
+                is provided.
+            dim_per_subspace: Optional list specifying dimension of each
+                subspace. If None, dimensions are allocated proportionally
+                to subinterval lengths. Must sum to `dim`.
+            basis_per_subspace: Optional list of basis specifications, one
+                for each subspace. Must have length equal to number of
+                subspaces.
+            laplacian_method: Method for Laplacian operators ('spectral', etc.)
+            dofs: Number of degrees of freedom for Laplacian operators
+            n_samples: Number of samples for spectral operators
+
+        Returns:
+            SobolevSpaceDirectSum representing the space with discontinuities
+
+        Example:
+            >>> from pygeoinf.interval.boundary_conditions import BoundaryConditions
+            >>> domain = IntervalDomain(0, 1)
+            >>> bcs = BoundaryConditions(bc_type='dirichlet', left=0, right=0)
+            >>> space = Sobolev.with_discontinuities(
+            ...     100, domain, [0.5],
+            ...     s=1, k=1, bcs=bcs, alpha=0.1
+            ... )
+        """
+        from .lebesgue_space import Lebesgue
+        from .operators import Laplacian
+
+        # Validate basis parameter
+        if isinstance(basis, list):
+            raise ValueError(
+                "Providing a list of basis functions is not supported for "
+                "discontinuous spaces. Use basis_per_subspace to specify "
+                "basis type for each subspace, or use basis='none' and set "
+                "basis providers manually after creation."
+            )
+
+        # Split domain at discontinuities
+        subdomains = function_domain.split_at_discontinuities(
+            discontinuity_points
+        )
+        n_subspaces = len(subdomains)
+
+        # Determine dimensions for each subspace
+        if dim_per_subspace is None:
+            # Allocate proportionally to subdomain lengths
+            lengths = [sd.length for sd in subdomains]
+            total_length = sum(lengths)
+
+            # Start with proportional allocation (floored)
+            dims = [int(dim * length / total_length)
+                    for length in lengths]
+
+            # Distribute remaining dimensions
+            remainder = dim - sum(dims)
+            # Add to largest subdomains first
+            length_indices = sorted(range(n_subspaces),
+                                    key=lambda i: lengths[i],
+                                    reverse=True)
+            for i in range(remainder):
+                dims[length_indices[i % n_subspaces]] += 1
+        else:
+            # Use provided dimensions
+            if len(dim_per_subspace) != n_subspaces:
+                raise ValueError(
+                    f"dim_per_subspace must have length {n_subspaces}, "
+                    f"got {len(dim_per_subspace)}"
+                )
+            if sum(dim_per_subspace) != dim:
+                raise ValueError(
+                    f"dim_per_subspace must sum to {dim}, "
+                    f"got {sum(dim_per_subspace)}"
+                )
+            dims = list(dim_per_subspace)
+
+        # Determine basis for each subspace
+        if basis_per_subspace is not None:
+            # Use provided basis for each subspace
+            if len(basis_per_subspace) != n_subspaces:
+                raise ValueError(
+                    f"basis_per_subspace must have length {n_subspaces}, "
+                    f"got {len(basis_per_subspace)}"
+                )
+            bases = list(basis_per_subspace)
+        else:
+            # Use same basis for all subspaces
+            bases = [basis] * n_subspaces
+
+        # Create subspaces with their own Laplacian operators
+        subspaces = []
+        for d, subdomain, b in zip(dims, subdomains, bases):
+            # Create underlying Lebesgue space for this subdomain
+            M_lebesgue = Lebesgue(0, subdomain, basis=None)
+
+            # Create Laplacian operator for this subdomain
+            laplacian = Laplacian(
+                M_lebesgue,
+                bcs,
+                alpha,
+                method=laplacian_method,
+                dofs=dofs,
+                n_samples=n_samples
+            )
+
+            # Create Sobolev space on this subdomain
+            sobolev_subspace = cls(
+                d,
+                subdomain,
+                s,
+                k,
+                laplacian,
+                basis=b
+            )
+            subspaces.append(sobolev_subspace)
+
+        # Return direct sum
+        return SobolevSpaceDirectSum(subspaces)
+
 
 class SobolevSpaceDirectSum(HilbertSpaceDirectSum):
     """
