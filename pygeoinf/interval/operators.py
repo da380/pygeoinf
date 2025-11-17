@@ -541,6 +541,71 @@ class Laplacian(SpectralOperator):
 
         return Function(self.codomain, evaluate_callable=laplacian_func)
 
+    def restrict(self, restricted_space, new_bcs=None):
+        """
+        Restrict Laplacian operator to a subspace with new boundary conditions.
+
+        This creates a new Laplacian operator on a restricted domain,
+        optionally with different boundary conditions. This is useful when
+        splitting a domain at discontinuities where the boundary conditions
+        at the new interior boundaries may differ from the original.
+
+        Args:
+            restricted_space: Lebesgue or Sobolev space on subdomain.
+                The function domain must be a subset of the original domain.
+            new_bcs: New boundary conditions for the restricted operator.
+                If None, uses the same boundary conditions as the original.
+
+        Returns:
+            New Laplacian operator on the restricted space.
+
+        Example:
+            >>> # Laplacian on [0, 1] with Dirichlet BCs
+            >>> bcs_dd = BoundaryConditions(bc_type='dirichlet',
+            ...                             left=0, right=0)
+            >>> L_full = Laplacian(domain_full, bcs_dd, alpha=0.1)
+            >>>
+            >>> # Restrict to [0, 0.5] with Dirichlet-Neumann BCs
+            >>> bcs_dn = BoundaryConditions(bc_type='mixed',
+            ...                             left=0, right=None)
+            >>> L_restricted = L_full.restrict(domain_restricted, bcs_dn)
+        """
+        # Validate that restricted_space domain is subset of original
+        from .lebesgue_space import Lebesgue
+        from .sobolev_space import Sobolev
+
+        if not isinstance(restricted_space, (Lebesgue, Sobolev)):
+            raise TypeError("restricted_space must be Lebesgue or Sobolev")
+
+        orig_domain = self.domain.function_domain
+        rest_domain = restricted_space.function_domain
+
+        # Check if restricted domain is contained in original
+        if not (orig_domain.a <= rest_domain.a and
+                rest_domain.b <= orig_domain.b):
+            raise ValueError(
+                f"Restricted domain {rest_domain} is not contained "
+                f"in original domain {orig_domain}"
+            )
+
+        # Use new boundary conditions if provided, otherwise keep original
+        bcs_to_use = (new_bcs if new_bcs is not None
+                      else self._boundary_conditions)
+
+        # Create new Laplacian on restricted space
+        # Note: domain, boundary_conditions, alpha are positional-only
+        return Laplacian(
+            restricted_space,
+            bcs_to_use,
+            self._alpha,  # Positional parameter
+            method=self._method,
+            dofs=self._dofs,
+            fd_order=self._fd_order,
+            n_samples=self._n_samples,
+            integration_method=self._integration_method,
+            npoints=self._npoints
+        )
+
 
 class InverseLaplacian(SpectralOperator):
     """
@@ -789,6 +854,68 @@ class InverseLaplacian(SpectralOperator):
     def spectrum_provider(self):
         """Get the spectrum provider for eigenvalue computations."""
         return self._spectrum_provider
+
+    def restrict(self, restricted_space, new_bcs=None):
+        """
+        Restrict Laplacian operator to a subspace with new boundary conditions.
+
+        This creates a new Laplacian operator on a restricted domain,
+        optionally with different boundary conditions. This is useful when
+        splitting a domain at discontinuities where the boundary conditions
+        at the new interior boundaries may differ from the original.
+
+        Args:
+            restricted_space: Lebesgue or Sobolev space on subdomain.
+                The function domain must be a subset of the original domain.
+            new_bcs: New boundary conditions for the restricted operator.
+                If None, uses the same boundary conditions as the original.
+
+        Returns:
+            New Laplacian operator on the restricted space.
+
+        Example:
+            >>> # Original Laplacian on [0, 1] with DD boundary conditions
+            >>> M = Lebesgue(100, IntervalDomain(0, 1), basis=None)
+            >>> bcs_dd = BoundaryConditions(bc_type='dirichlet',
+            ...                             left=0, right=0)
+            >>> L_full = Laplacian(M, bcs_dd, alpha=0.1)
+            >>>
+            >>> # Restrict to [0, 0.5] with DN boundary conditions
+            >>> M_lower = Lebesgue(50, IntervalDomain(0, 0.5), basis=None)
+            >>> bcs_dn = BoundaryConditions(bc_type='mixed',
+            ...                             left=0, right=None)
+            >>> L_lower = L_full.restrict(M_lower, new_bcs=bcs_dn)
+        """
+        # Validate that restricted_space domain is a subdomain
+        restricted_domain = restricted_space.function_domain
+        if not self._domain.function_domain.contains(restricted_domain.a):
+            raise ValueError(
+                f"Restricted domain {restricted_domain} is not a subdomain "
+                f"of original domain {self._domain.function_domain}"
+            )
+        if not self._domain.function_domain.contains(restricted_domain.b):
+            raise ValueError(
+                f"Restricted domain {restricted_domain} is not a subdomain "
+                f"of original domain {self._domain.function_domain}"
+            )
+
+        # Use new boundary conditions if provided, otherwise keep original
+        bcs_to_use = (new_bcs if new_bcs is not None
+                      else self._boundary_conditions)
+
+        # Create new Laplacian on restricted space
+        # Note: domain, boundary_conditions, alpha are positional-only
+        return Laplacian(
+            restricted_space,
+            bcs_to_use,
+            self._alpha,  # Positional parameter
+            method=self._method,
+            dofs=self._dofs,
+            fd_order=self._fd_order,
+            n_samples=self._n_samples,
+            integration_method=self._integration_method,
+            npoints=self._npoints
+        )
 
     def get_eigenvalue(self, index: int) -> float:
         return self._spectrum_provider.get_eigenvalue(index)

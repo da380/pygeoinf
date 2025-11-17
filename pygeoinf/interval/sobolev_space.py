@@ -81,8 +81,20 @@ class Sobolev(MassWeightedHilbertSpace):
         return LinearFormKernel(self, kernel=kernel)
 
     def from_dual(self, xp: 'LinearFormKernel') -> 'Function':
-        x = self._inverse_mass_operator(xp.kernel)
-        return x
+        # Handle both LinearFormKernel and generic LinearForm
+        if isinstance(xp, LinearFormKernel):
+            # Direct kernel representation - basis-free path
+            x = self._inverse_mass_operator(xp.kernel)
+            return x
+        else:
+            # Generic LinearForm - delegate to underlying Lebesgue space
+            # The Lebesgue space's from_dual will extract the kernel
+            # representation from the generic LinearForm
+            kernel = self._underlying_space.from_dual(xp)
+
+            # Apply inverse mass to convert from Lebesgue to Sobolev
+            x = self._inverse_mass_operator(kernel)
+            return x
 
     def _create_underlying_space(
         self,
@@ -121,6 +133,87 @@ class Sobolev(MassWeightedHilbertSpace):
             dofs=self._dofs
         )
 
+    def restrict(self, restricted_space: "Sobolev", new_bcs=None):
+        """
+        Restrict Sobolev space to a subspace with new boundary conditions.
+
+        This creates a new Sobolev space on a restricted domain by
+        restricting the underlying Laplacian operator. The new space
+        can have different boundary conditions at the new boundaries.
+
+        Args:
+            restricted_space: Target Sobolev space with restricted domain.
+                Must have the same regularity parameters (s, k) as the
+                original space. The function domain must be a subset of
+                the original domain.
+            new_bcs: New boundary conditions for the Laplacian operator.
+                If None, uses the same boundary conditions as the original.
+
+        Returns:
+            New Sobolev space on the restricted domain.
+
+        Example:
+            >>> # Original Sobolev space on [0, 1]
+            >>> M_full = Sobolev(...)
+            >>> # Restrict to [0, 0.5] with new boundary conditions
+            >>> M_lower = M_full.restrict(
+            ...     restricted_space=Sobolev_lower,
+            ...     new_bcs=BoundaryConditions(bc_type='mixed',
+            ...                                left=0, right=None)
+            ... )
+        """
+        # Validate regularity parameters match
+        if not hasattr(restricted_space, '_s') or \
+           restricted_space._s != self._s:
+            raise ValueError(
+                f"Regularity parameter s must match: "
+                f"original={self._s}, restricted={restricted_space._s}"
+            )
+        if not hasattr(restricted_space, '_k') or \
+           restricted_space._k != self._k:
+            raise ValueError(
+                f"Scaling parameter k must match: "
+                f"original={self._k}, restricted={restricted_space._k}"
+            )
+
+        # Restrict the underlying Laplacian operator
+        L_restricted = self._L.restrict(
+            restricted_space._underlying_space,
+            new_bcs=new_bcs
+        )
+
+        # Note: We don't create a new Sobolev space here,
+        # we just update the Laplacian of the provided restricted_space
+        # This is because the restricted_space is already constructed
+        # with the correct domain and dimensions
+        restricted_space._L = L_restricted
+
+        # Update the mass operators with the new Laplacian
+        from .operators import BesselSobolev, BesselSobolevInverse
+
+        M_op = BesselSobolev(
+            restricted_space._underlying_space,
+            restricted_space._underlying_space,
+            k=restricted_space._k,
+            s=2 * restricted_space._s,
+            L=L_restricted,
+            dofs=L_restricted._dofs
+        )
+        M_op_inv = BesselSobolevInverse(
+            restricted_space._underlying_space,
+            restricted_space._underlying_space,
+            k=restricted_space._k,
+            s=2 * restricted_space._s,
+            L=L_restricted,
+            dofs=L_restricted._dofs
+        )
+
+        # Update the mass operators
+        restricted_space._mass_operator = M_op
+        restricted_space._inverse_mass_operator = M_op_inv
+
+        return restricted_space
+
     @classmethod
     def with_discontinuities(
         cls,
@@ -135,6 +228,7 @@ class Sobolev(MassWeightedHilbertSpace):
         basis: Optional[Union[str, list]] = None,
         dim_per_subspace: Optional[list] = None,
         basis_per_subspace: Optional[list] = None,
+        bcs_per_subspace: Optional[list] = None,
         laplacian_method: str = 'spectral',
         dofs: int = 100,
         n_samples: int = 2048,
@@ -157,7 +251,8 @@ class Sobolev(MassWeightedHilbertSpace):
             discontinuity_points: List of points where discontinuities occur
             s: Sobolev regularity parameter
             k: Sobolev scaling parameter
-            bcs: Boundary conditions to use for Laplacian operators
+            bcs: Default boundary conditions for Laplacian operators.
+                Used for all subspaces unless bcs_per_subspace is provided.
             alpha: Laplacian scaling parameter
             basis: Basis type for ALL subspaces (string like 'fourier',
                 'sine', etc., or 'none'). Ignored if basis_per_subspace
@@ -168,6 +263,11 @@ class Sobolev(MassWeightedHilbertSpace):
             basis_per_subspace: Optional list of basis specifications, one
                 for each subspace. Must have length equal to number of
                 subspaces.
+            bcs_per_subspace: Optional list of boundary conditions, one
+                for each subspace. This allows specifying different boundary
+                conditions at the discontinuities (e.g., DN for first subspace,
+                ND for second). If None, the same `bcs` is used for all.
+                Must have length equal to number of subspaces.
             laplacian_method: Method for Laplacian operators ('spectral', etc.)
             dofs: Number of degrees of freedom for Laplacian operators
             n_samples: Number of samples for spectral operators
@@ -176,12 +276,29 @@ class Sobolev(MassWeightedHilbertSpace):
             SobolevSpaceDirectSum representing the space with discontinuities
 
         Example:
-            >>> from pygeoinf.interval.boundary_conditions import BoundaryConditions
+            >>> from pygeoinf.interval.boundary_conditions import (
+            ...     BoundaryConditions
+            ... )
             >>> domain = IntervalDomain(0, 1)
-            >>> bcs = BoundaryConditions(bc_type='dirichlet', left=0, right=0)
+            >>> bcs = BoundaryConditions(bc_type='dirichlet',
+            ...                          left=0, right=0)
+            >>> # Same boundary conditions for all subspaces
             >>> space = Sobolev.with_discontinuities(
             ...     100, domain, [0.5],
             ...     s=1, k=1, bcs=bcs, alpha=0.1
+            ... )
+            >>>
+            >>> # Different boundary conditions per subspace
+            >>> # DN on (0, 0.5), ND on (0.5, 1]
+            >>> bcs_lower = BoundaryConditions(bc_type='dirichlet',
+            ...                                left=0, right=None)
+            >>> bcs_upper = BoundaryConditions(bc_type='neumann',
+            ...                                left=None, right=0)
+            >>> space = Sobolev.with_discontinuities(
+            ...     100, domain, [0.5],
+            ...     s=1, k=1, bcs=bcs,  # Default, will be overridden
+            ...     alpha=0.1,
+            ...     bcs_per_subspace=[bcs_lower, bcs_upper]
             ... )
         """
         from .lebesgue_space import Lebesgue
@@ -247,16 +364,30 @@ class Sobolev(MassWeightedHilbertSpace):
             # Use same basis for all subspaces
             bases = [basis] * n_subspaces
 
+        # Determine boundary conditions for each subspace
+        if bcs_per_subspace is not None:
+            # Use provided boundary conditions for each subspace
+            if len(bcs_per_subspace) != n_subspaces:
+                raise ValueError(
+                    f"bcs_per_subspace must have length {n_subspaces}, "
+                    f"got {len(bcs_per_subspace)}"
+                )
+            bcs_list = list(bcs_per_subspace)
+        else:
+            # Use same boundary conditions for all subspaces
+            bcs_list = [bcs] * n_subspaces
+
         # Create subspaces with their own Laplacian operators
         subspaces = []
-        for d, subdomain, b in zip(dims, subdomains, bases):
+        for d, subdomain, b, bc in zip(dims, subdomains, bases, bcs_list):
             # Create underlying Lebesgue space for this subdomain
             M_lebesgue = Lebesgue(0, subdomain, basis=None)
 
             # Create Laplacian operator for this subdomain
+            # This uses the new boundary conditions specific to this subspace
             laplacian = Laplacian(
                 M_lebesgue,
-                bcs,
+                bc,  # Per-subspace boundary conditions
                 alpha,
                 method=laplacian_method,
                 dofs=dofs,
