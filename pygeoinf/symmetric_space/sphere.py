@@ -208,11 +208,11 @@ class SphereHelper:
 
         return u
 
-    def to_coefficient(self, u: sh.SHGrid) -> sh.SHCoeffs:
+    def to_coefficients(self, u: sh.SHGrid) -> sh.SHCoeffs:
         """Maps a function vector to its spherical harmonic coefficients."""
         return u.expand(normalization=self.normalization, csphase=self.csphase)
 
-    def from_coefficient(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
+    def from_coefficients(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
         """Maps spherical harmonic coefficients to a function vector."""
         grid = self.grid if self._sampling == 1 else "DH2"
         return ulm.expand(grid=grid, extend=self.extend)
@@ -393,7 +393,7 @@ class SphereHelper:
         flat_coeffs = ulm.coeffs.flatten(order="C")
         return self._sparse_coeffs_to_component @ flat_coeffs
 
-    def _component_to_coefficient(self, c: np.ndarray) -> sh.SHCoeffs:
+    def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
         """Maps a component vector to spherical harmonic coefficients."""
         flat_coeffs = self._sparse_coeffs_to_component.T @ c
         coeffs = flat_coeffs.reshape((2, self.lmax + 1, self.lmax + 1))
@@ -435,22 +435,22 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         return self._dim
 
     def to_components(self, u: sh.SHGrid) -> np.ndarray:
-        coeff = self.to_coefficient(u)
+        coeff = self.to_coefficients(u)
         return self._coefficient_to_component(coeff)
 
     def from_components(self, c: np.ndarray) -> sh.SHGrid:
-        coeff = self._component_to_coefficient(c)
-        return self.from_coefficient(coeff)
+        coeff = self._component_to_coefficients(c)
+        return self.from_coefficients(coeff)
 
     def to_dual(self, u: sh.SHGrid) -> LinearForm:
-        coeff = self.to_coefficient(u)
+        coeff = self.to_coefficients(u)
         cp = self._coefficient_to_component(coeff) * self.radius**2
         return self.dual.from_components(cp)
 
     def from_dual(self, up: LinearForm) -> sh.SHGrid:
         cp = self.dual.to_components(up) / self.radius**2
-        coeff = self._component_to_coefficient(cp)
-        return self.from_coefficient(coeff)
+        coeff = self._component_to_coefficients(cp)
+        return self.from_coefficients(coeff)
 
     def ax(self, a: float, x: sh.SHGrid) -> None:
         """
@@ -513,8 +513,8 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
         def mapping(u):
             c = matrix @ (self.to_components(u))
-            coeff = self._component_to_coefficient(c)
-            return self.from_coefficient(coeff)
+            coeff = self._component_to_coefficients(c)
+            return self.from_coefficients(coeff)
 
         return LinearOperator.self_adjoint(self, mapping)
 

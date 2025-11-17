@@ -21,6 +21,7 @@ Key Features
 
 from __future__ import annotations
 from typing import Callable, Optional, Any, List, TYPE_CHECKING
+import warnings
 
 import numpy as np
 from scipy.linalg import eigh
@@ -197,6 +198,7 @@ class GaussianMeasure:
         /,
         *,
         expectation: Vector = None,
+        rtol: float = 1e-10,
     ) -> GaussianMeasure:
         """
         Creates a Gaussian measure from a dense covariance matrix.
@@ -205,15 +207,36 @@ class GaussianMeasure:
         the covariance operator. This method computes a Cholesky-like
         decomposition of the matrix to create a `covariance_factor`.
 
+        It includes a check to handle numerical precision issues, allowing for
+        eigenvalues that are slightly negative within a relative tolerance.
+
         Args:
             domain: The Hilbert space the measure is defined on.
             covariance_matrix: The dense covariance matrix.
             expectation: The expectation (mean) of the measure.
+            rtol: The relative tolerance used to check for negative eigenvalues.
         """
 
         eigenvalues, U = eigh(covariance_matrix)
-        if any(val < 0 for val in eigenvalues):
-            raise ValueError("Covariance matrix is not non-negative")
+
+        if np.any(eigenvalues < 0):
+            max_eig = np.max(np.abs(eigenvalues))
+            min_eig = np.min(eigenvalues)
+
+            # Check if the most negative eigenvalue is outside the tolerance
+            if min_eig < -rtol * max_eig:
+                raise ValueError(
+                    "Covariance matrix has significantly negative eigenvalues, "
+                    "indicating it is not positive semi-definite."
+                )
+            else:
+                # If negative eigenvalues are within tolerance, warn and correct
+                warnings.warn(
+                    "Covariance matrix has small negative eigenvalues due to "
+                    "numerical error. Clipping them to zero.",
+                    UserWarning,
+                )
+                eigenvalues[eigenvalues < 0] = 0
 
         values = np.sqrt(eigenvalues)
         D = diags([values], [0])
@@ -466,23 +489,56 @@ class GaussianMeasure:
                 sample=new_sample if self.sample_set else None,
             )
 
-    def as_multivariate_normal(self) -> multivariate_normal:
+    def as_multivariate_normal(
+        self, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> multivariate_normal:
         """
         Returns the measure as a `scipy.stats.multivariate_normal` object.
 
         This is only possible if the measure is defined on a EuclideanSpace.
-        """
 
+        If the covariance matrix has small negative eigenvalues due to numerical
+        precision issues, this method attempts to correct them by setting them
+        to zero.
+
+        Args:
+            parallel (bool, optional): If `True`, computes the dense covariance
+                matrix in parallel. Defaults to `False`.
+            n_jobs (int, optional): The number of parallel jobs to use. `-1`
+                uses all available cores. Defaults to -1.
+        """
         if not isinstance(self.domain, EuclideanSpace):
             raise NotImplementedError(
                 "Method only defined for measures on Euclidean space."
             )
 
-        return multivariate_normal(
-            mean=self.expectation,
-            cov=self.covariance.matrix(dense=True),
-            allow_singular=True,
+        mean_vector = self.expectation
+
+        # Pass the parallelization arguments directly to the matrix creation method
+        cov_matrix = self.covariance.matrix(
+            dense=True, parallel=parallel, n_jobs=n_jobs
         )
+
+        try:
+            # First, try to create the distribution directly.
+            return multivariate_normal(
+                mean=mean_vector, cov=cov_matrix, allow_singular=True
+            )
+        except ValueError:
+            # If it fails, clean the covariance matrix and try again.
+            warnings.warn(
+                "Covariance matrix is not positive semi-definite due to "
+                "numerical errors. Setting negative eigenvalues to zero.",
+                UserWarning,
+            )
+
+            eigenvalues, eigenvectors = eigh(cov_matrix)
+            eigenvalues[eigenvalues < 0] = 0
+            cleaned_cov = eigenvectors @ diags(eigenvalues) @ eigenvectors.T
+
+            return multivariate_normal(
+                mean=mean_vector, cov=cleaned_cov, allow_singular=True
+            )
 
     def low_rank_approximation(
         self,

@@ -46,6 +46,23 @@ class HilbertSpaceAxiomChecks:
         if not norm_sum <= self.norm(x) + self.norm(y):
             raise AssertionError("Axiom failed: Triangle inequality")
 
+    def _check_riesz_representation(self, x, y):
+        """
+        Checks that the inner product is consistent with the Riesz map (to_dual).
+        This ensures that <x, y> == (R(x))(y).
+        """
+        # Value from the (potentially optimized) direct inner product method
+        direct_inner_product = self.inner_product(x, y)
+
+        # Value from the Riesz map definition
+        dual_x = self.to_dual(x)
+        riesz_inner_product = self.duality_product(dual_x, y)
+
+        if not np.isclose(direct_inner_product, riesz_inner_product):
+            raise AssertionError(
+                "Axiom failed: Inner product is not consistent with the Riesz map."
+            )
+
     def _check_mapping_identities(self, x):
         """Checks that component and dual mappings are self-consistent."""
         # from_components(to_components(x)) == x
@@ -176,6 +193,7 @@ class HilbertSpaceAxiomChecks:
             # Run all checks
             self._check_vector_space_axioms(x, y, a)
             self._check_inner_product_axioms(x, y, z, a, b)
+            # self._check_riesz_representation(x, y)
             self._check_mapping_identities(x)
             self._check_inplace_operations(x, y, a)
             self._check_copy(x)
