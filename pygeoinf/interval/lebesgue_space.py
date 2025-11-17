@@ -339,6 +339,224 @@ class Lebesgue(HilbertSpace):
         """The interval domain [a,b] for this space."""
         return self._function_domain
 
+    def restrict_to_subinterval(
+        self,
+        subdomain: "IntervalDomain",
+    ) -> "Lebesgue":
+        """
+        Create a new Lebesgue space restricted to a subinterval.
+
+        This method creates a new Lebesgue space defined on a subinterval
+        of the current function domain. The new space has the same dimension
+        and inherits the integration settings, but has a smaller domain.
+        This is useful for modeling discontinuities by breaking a space into
+        pieces.
+
+        Args:
+            subdomain: An IntervalDomain representing the subinterval.
+                Must be contained within the current function_domain.
+
+        Returns:
+            A new Lebesgue space defined on the subinterval.
+
+        Raises:
+            ValueError: If subdomain is not contained in function_domain.
+
+        Example:
+            >>> domain = IntervalDomain(0, 1)
+            >>> space = Lebesgue(100, domain)
+            >>> subdomain = IntervalDomain(0, 0.5)
+            >>> restricted_space = space.restrict_to_subinterval(subdomain)
+        """
+        # Validate that subdomain is within current domain
+        if not (self.function_domain.a <= subdomain.a and
+                subdomain.b <= self.function_domain.b):
+            raise ValueError(
+                f"Subdomain {subdomain} must be contained in "
+                f"function domain {self.function_domain}"
+            )
+
+        # Create new space with same dimension but restricted domain
+        # Start with a baseless space
+        restricted_space = Lebesgue(
+            self.dim,
+            subdomain,
+            basis='none',
+            weight=self._weight
+        )
+
+        # Copy integration settings
+        restricted_space._integration_method = self._integration_method
+        restricted_space._integration_npoints = self._integration_npoints
+
+        # If the current space has a basis, we need to handle it
+        # For now, we create a baseless space - the user can set a basis
+        # later if needed. A more sophisticated approach would be to
+        # restrict basis functions to the subinterval, but this requires
+        # more complex logic.
+
+        return restricted_space
+
+    @classmethod
+    def with_discontinuities(
+        cls,
+        dim: int,
+        function_domain: "IntervalDomain",
+        discontinuity_points: list,
+        /,
+        *,
+        basis: Optional[Union[str, list]] = None,
+        weight: Optional[Callable] = None,
+        dim_per_subspace: Optional[list] = None,
+        basis_per_subspace: Optional[list] = None,
+    ) -> LebesgueSpaceDirectSum:
+        """
+        Create a LebesgueSpaceDirectSum with discontinuities.
+
+        This factory method creates a direct sum of Lebesgue spaces, where
+        each component space is defined on a subinterval separated by
+        discontinuity points. This allows modeling of functions with jump
+        discontinuities.
+
+        The total dimension `dim` is distributed across the subspaces.
+        By default, dimension is allocated proportionally to subinterval
+        lengths, but you can specify custom dimensions.
+
+        Args:
+            dim: Total dimension across all subspaces
+            function_domain: The full interval domain
+            discontinuity_points: List of points where discontinuities occur
+            basis: Basis type for ALL subspaces (string like 'fourier',
+                'sine', etc., or 'none'). Ignored if basis_per_subspace
+                is provided. If basis is a list of functions, raises an
+                error (use basis_per_subspace instead).
+            weight: Weight function for inner product
+            dim_per_subspace: Optional list specifying dimension of each
+                subspace. If None, dimensions are allocated proportionally
+                to subinterval lengths. Must sum to `dim`.
+            basis_per_subspace: Optional list of basis specifications, one
+                for each subspace. Each element can be a string (basis type)
+                or 'none'. If provided, overrides the `basis` parameter.
+                Must have length equal to number of subspaces.
+
+        Returns:
+            LebesgueSpaceDirectSum representing the space with discontinuities
+
+        Raises:
+            ValueError: If basis is a list (not supported for discontinuous
+                spaces), or if basis_per_subspace has wrong length.
+
+        Example:
+            >>> # Create space with discontinuity at x=0.5
+            >>> domain = IntervalDomain(0, 1)
+            >>> space = Lebesgue.with_discontinuities(
+            ...     100, domain, [0.5]
+            ... )
+            >>> # Creates direct sum: [Lebesgue(50, [0,0.5]),
+            >>> #                       Lebesgue(50, [0.5,1])]
+
+            >>> # With custom dimensions per subspace
+            >>> space = Lebesgue.with_discontinuities(
+            ...     100, domain, [0.5], dim_per_subspace=[30, 70]
+            ... )
+
+            >>> # With same basis type for all subspaces
+            >>> space = Lebesgue.with_discontinuities(
+            ...     100, domain, [0.5], basis='fourier'
+            ... )
+
+            >>> # With different basis for each subspace
+            >>> space = Lebesgue.with_discontinuities(
+            ...     100, domain, [0.5],
+            ...     basis_per_subspace=['fourier', 'sine']
+            ... )
+
+            >>> # With no basis initially (set manually later)
+            >>> space = Lebesgue.with_discontinuities(
+            ...     100, domain, [0.5], basis='none'
+            ... )
+            >>> # Later: set basis on individual subspaces
+            >>> from pygeoinf.interval.providers import CustomBasisProvider
+            >>> space.subspace(0).set_basis_provider(my_provider_0)
+            >>> space.subspace(1).set_basis_provider(my_provider_1)
+
+        Notes:
+            - If basis is a list of functions, this raises an error because
+              function restriction to subdomains is not implemented. Use
+              basis_per_subspace to specify basis for each subdomain, or
+              use 'none' and set basis providers manually afterward.
+            - String-based bases ('fourier', 'sine', etc.) are automatically
+              created for each subdomain with appropriate domain.
+        """
+        # Validate basis parameter
+        if isinstance(basis, list):
+            raise ValueError(
+                "Providing a list of basis functions is not supported for "
+                "discontinuous spaces. Use basis_per_subspace to specify "
+                "basis type for each subspace, or use basis='none' and set "
+                "basis providers manually after creation."
+            )
+
+        # Split domain at discontinuities
+        subdomains = function_domain.split_at_discontinuities(
+            discontinuity_points
+        )
+        n_subspaces = len(subdomains)
+
+        # Determine dimensions for each subspace
+        if dim_per_subspace is None:
+            # Allocate proportionally to subdomain lengths
+            lengths = [sd.length for sd in subdomains]
+            total_length = sum(lengths)
+
+            # Start with proportional allocation (floored)
+            dims = [int(dim * length / total_length)
+                    for length in lengths]
+
+            # Distribute remaining dimensions
+            remainder = dim - sum(dims)
+            # Add to largest subdomains first
+            length_indices = sorted(range(n_subspaces),
+                                    key=lambda i: lengths[i],
+                                    reverse=True)
+            for i in range(remainder):
+                dims[length_indices[i % n_subspaces]] += 1
+        else:
+            # Use provided dimensions
+            if len(dim_per_subspace) != n_subspaces:
+                raise ValueError(
+                    f"dim_per_subspace must have length {n_subspaces}, "
+                    f"got {len(dim_per_subspace)}"
+                )
+            if sum(dim_per_subspace) != dim:
+                raise ValueError(
+                    f"dim_per_subspace must sum to {dim}, "
+                    f"got {sum(dim_per_subspace)}"
+                )
+            dims = list(dim_per_subspace)
+
+        # Determine basis for each subspace
+        if basis_per_subspace is not None:
+            # Use provided basis for each subspace
+            if len(basis_per_subspace) != n_subspaces:
+                raise ValueError(
+                    f"basis_per_subspace must have length {n_subspaces}, "
+                    f"got {len(basis_per_subspace)}"
+                )
+            bases = list(basis_per_subspace)
+        else:
+            # Use same basis for all subspaces
+            bases = [basis] * n_subspaces
+
+        # Create subspaces
+        subspaces = [
+            cls(d, subdomain, basis=b, weight=weight)
+            for d, subdomain, b in zip(dims, subdomains, bases)
+        ]
+
+        # Return direct sum
+        return LebesgueSpaceDirectSum(subspaces)
+
     # ================================================================
     # Additional methods for numerical integration
     # ================================================================

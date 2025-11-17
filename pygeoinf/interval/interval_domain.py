@@ -228,6 +228,83 @@ class IntervalDomain:
             raise ValueError("subinterval outside domain")
         return IntervalDomain(a, b, boundary_type=self.boundary_type)
 
+    def split_at_discontinuities(
+        self,
+        discontinuity_points: list,
+    ) -> list:
+        """
+        Split the domain at specified discontinuity points.
+
+        This method divides the interval into non-overlapping subintervals
+        separated by discontinuity points. This is useful for modeling
+        functions with jump discontinuities.
+
+        Args:
+            discontinuity_points: List of points where discontinuities occur.
+                Must be strictly increasing and lie within (a, b).
+
+        Returns:
+            List of IntervalDomain objects representing the subintervals.
+
+        Example:
+            >>> domain = IntervalDomain(0, 1, boundary_type='closed')
+            >>> subdomains = domain.split_at_discontinuities([0.3, 0.7])
+            >>> # Returns: [IntervalDomain(0, 0.3), IntervalDomain(0.3, 0.7),
+            >>> #           IntervalDomain(0.7, 1)]
+        """
+        if not discontinuity_points:
+            return [self]
+
+        # Convert to sorted list and validate
+        disc_points = sorted(discontinuity_points)
+
+        # Check all points are in the interior
+        for point in disc_points:
+            if not (self.a < point < self.b):
+                raise ValueError(
+                    f"Discontinuity point {point} must be in interior "
+                    f"({self.a}, {self.b})"
+                )
+
+        # Check for duplicates
+        if len(disc_points) != len(set(disc_points)):
+            raise ValueError("Discontinuity points must be unique")
+
+        # Build subintervals
+        subdomains = []
+        boundaries = [self.a] + disc_points + [self.b]
+
+        for i in range(len(boundaries) - 1):
+            a_sub = boundaries[i]
+            b_sub = boundaries[i + 1]
+
+            # Determine boundary types for subinterval
+            # First subinterval: inherits left boundary, right is open
+            # Last subinterval: left is open, inherits right boundary
+            # Middle subintervals: both boundaries open
+            if i == 0:
+                # First subinterval
+                if self.boundary_type in ['closed', 'left_open']:
+                    if self.boundary_type == 'left_open':
+                        bt = 'left_open'
+                    else:
+                        bt = 'right_open'
+                else:
+                    bt = 'open'
+            elif i == len(boundaries) - 2:
+                # Last subinterval
+                if self.boundary_type in ['closed', 'right_open']:
+                    bt = 'left_open'
+                else:
+                    bt = 'left_open'
+            else:
+                # Middle subintervals
+                bt = 'open'
+
+            subdomains.append(IntervalDomain(a_sub, b_sub, boundary_type=bt))
+
+        return subdomains
+
     def _format_name(self) -> str:
         if self.boundary_type == "closed":
             return f"[{self.a}, {self.b}]"

@@ -598,6 +598,63 @@ class Function:
         """Right multiplication (for scalar * function)."""
         return self.__mul__(other)
 
+    def restrict(self, restricted_space: Union["Lebesgue", "Sobolev"]):
+        """
+        Restrict this function to a subspace.
+
+        Creates a new Function on a restricted domain. The original function
+        must be evaluable (have evaluate_callable), as coefficient-based
+        functions cannot be easily restricted.
+
+        Args:
+            restricted_space: The target space to restrict to. Must have
+                a function_domain that is a subset of this function's domain.
+
+        Returns:
+            Function: A new function on the restricted space that evaluates
+                to the same values as the original within the subdomain.
+
+        Raises:
+            ValueError: If function is not evaluable or if restricted domain
+                is not a subset of original domain.
+
+        Example:
+            >>> # Function on [0, 1]
+            >>> f = Function(space_full, evaluate_callable=lambda x: x**2)
+            >>> # Restrict to [0, 0.5]
+            >>> f_restricted = f.restrict(space_lower)
+            >>> # f_restricted(0.3) == f(0.3) == 0.09
+        """
+        if self.evaluate_callable is None:
+            raise ValueError(
+                "Can only restrict functions with evaluate_callable. "
+                "Coefficient-based functions cannot be easily restricted."
+            )
+
+        # Check that restricted domain is subset of original domain
+        orig_domain = self.space.function_domain
+        rest_domain = restricted_space.function_domain
+
+        # Simple subset check: restricted interval must be within original
+        if not (orig_domain.a <= rest_domain.a and
+                rest_domain.b <= orig_domain.b):
+            raise ValueError(
+                f"Restricted domain {rest_domain} is not a subset of "
+                f"original domain {orig_domain}"
+            )
+
+        # Create new function that evaluates using original callable
+        # but lives on restricted space
+        # NOTE: We don't copy support - the restricted domain itself
+        # provides the support constraint. The original support may
+        # extend beyond the restricted domain.
+        return Function(
+            restricted_space,
+            evaluate_callable=self.evaluate_callable,
+            name=f"{self.name}_restricted" if self.name else None,
+            support=None  # Let restricted domain define support
+        )
+
     def __repr__(self) -> str:
         return (f"Function(domain={self.space.function_domain}, "
                 f"name={self.name})")

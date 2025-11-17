@@ -61,6 +61,71 @@ class IndexedFunctionProvider(FunctionProvider):
         """Get multiple functions by indices."""
         return [self.get_function_by_index(i, **kwargs) for i in indices]
 
+    def restrict(self, restricted_space):
+        """
+        Create a restricted version of this provider.
+
+        Returns a new provider that generates functions on the restricted
+        space by taking the restriction of functions from the original
+        provider.
+
+        Args:
+            restricted_space: The target space to restrict to.
+
+        Returns:
+            RestrictedFunctionProvider: A provider that returns restricted
+                versions of the original provider's functions.
+
+        Example:
+            >>> # Provider on [0, 1]
+            >>> provider = NormalModesProvider(space_full, ...)
+            >>> # Restrict to [0, 0.5]
+            >>> provider_restricted = provider.restrict(space_lower)
+            >>> # Gets restricted kernels
+            >>> kernel = provider_restricted.get_function_by_index(0)
+        """
+        return RestrictedFunctionProvider(self, restricted_space)
+
+
+class RestrictedFunctionProvider(IndexedFunctionProvider):
+    """
+    A provider that returns restricted versions of another provider's
+    functions.
+
+    This wraps an existing IndexedFunctionProvider and restricts all
+    generated functions to a smaller domain.
+    """
+
+    def __init__(self, original_provider: IndexedFunctionProvider,
+                 restricted_space):
+        """
+        Initialize restricted provider.
+
+        Args:
+            original_provider: The provider to restrict
+            restricted_space: The target space for restrictions
+        """
+        super().__init__(restricted_space)
+        self.original_provider = original_provider
+
+    def get_function_by_index(self, index: int, **kwargs) -> 'Function':
+        """
+        Get restricted version of function at given index.
+
+        Args:
+            index: Function index
+            **kwargs: Additional arguments passed to original provider
+
+        Returns:
+            Function: Restricted function on the restricted space
+        """
+        # Get function from original provider
+        original_func = self.original_provider.get_function_by_index(
+            index, **kwargs
+        )
+        # Restrict it to our space
+        return original_func.restrict(self.space)
+
 
 class ParametricFunctionProvider(FunctionProvider):
     """

@@ -1190,6 +1190,10 @@ class SOLAOperator(LinearOperator):
     2. Via a list of Function objects
     3. Via a list of callables (automatically converted to Function objects)
 
+    For direct sum domains (LebesgueSpaceDirectSum), use the static method
+    `for_direct_sum` to create a RowLinearOperator that operates on each
+    subspace independently.
+
     Examples:
         # Using a function provider
         >>> provider = NormalModesProvider(lebesgue_space)
@@ -1206,11 +1210,19 @@ class SOLAOperator(LinearOperator):
         >>> func2 = Function(lebesgue_space, evaluate_callable=lambda x: x**3)
         >>> sola_op = SOLAOperator(lebesgue_space, euclidean_space,
         ...                        functions=[func1, func2])
+
+        # For direct sum spaces (discontinuous functions)
+        >>> from pygeoinf.direct_sum import RowLinearOperator
+        >>> direct_sum_space = Lebesgue.with_discontinuities(...)
+        >>> provider = NormalModesProvider(direct_sum_space, ...)
+        >>> sola_op = SOLAOperator.for_direct_sum(
+        ...     direct_sum_space, euclidean_space, provider
+        ... )
     """
 
     def __init__(
         self,
-        domain: Sobolev,
+        domain: Union[Lebesgue, Sobolev],
         codomain: EuclideanSpace,
         kernels: Optional[
             Union[
@@ -1243,7 +1255,20 @@ class SOLAOperator(LinearOperator):
             integration_method: Method for numerical integration
                 ('simpson', 'trapezoid')
             n_points: Number of points for numerical integration
+
+        Note:
+            For direct sum domains (LebesgueSpaceDirectSum), use the
+            `for_direct_sum` class method instead.
         """
+        # Check if domain is a direct sum - if so, give helpful error
+        from pygeoinf.direct_sum import HilbertSpaceDirectSum
+        if isinstance(domain, HilbertSpaceDirectSum):
+            raise TypeError(
+                "SOLAOperator constructor does not directly support "
+                "HilbertSpaceDirectSum domains. Use the class method "
+                "SOLAOperator.for_direct_sum() instead."
+            )
+
         self._domain = domain
         self._codomain = codomain
         self.N_d = codomain.dim
@@ -1291,11 +1316,11 @@ class SOLAOperator(LinearOperator):
             if isinstance(kernels[0], Function):
                 # Directly use provided Function instances
                 self._kernels = kernels
-            elif isinstance(kernels[0], Callable):
+            elif callable(kernels[0]):
                 # Convert callables to Function instances
                 self._kernels = [
                     Function(
-                        self._domain.function_domain,
+                        self._domain,
                         evaluate_callable=func
                     )
                     for func in kernels
@@ -1342,7 +1367,11 @@ class SOLAOperator(LinearOperator):
             # Compute integral of product: ∫ func(x) * kernel(x) dx
             # Avoid creating intermediate Function to prevent deep recursion
             def product_callable(x):
-                return func.evaluate(x) * kernel.evaluate(x)
+                # Disable domain checking for kernel evaluation since:
+                # 1. Kernel may be defined on larger domain than func
+                # 2. Integration points are guaranteed to be in func's domain
+                # 3. Boundary points are handled correctly by uniform_mesh
+                return func.evaluate(x) * kernel.evaluate(x, check_domain=False)
 
             product_func = Function(self.domain, evaluate_callable=product_callable)
             data[i] = product_func.integrate(
@@ -1447,15 +1476,123 @@ class SOLAOperator(LinearOperator):
 
     def __str__(self):
         """String representation of the SOLA operator."""
-        if self._use_direct_functions:
-            return (f"SOLAOperator: {self.domain} -> {self.codomain}\n"
-                    f"  Uses {self.N_d} direct function kernels\n"
-                    f"  Domain dimension: {self.domain.dim}\n"
-                    f"  Codomain dimension: {self.codomain.dim}")
-        else:
-            provider_type = type(self.function_provider).__name__
-            return (f"SOLAOperator: {self.domain} -> {self.codomain}\n"
-                    f"  Uses {self.N_d} kernels "
-                    f"from {provider_type}\n"
-                    f"  Domain dimension: {self.domain.dim}\n"
-                    f"  Codomain dimension: {self.codomain.dim}")
+        provider_type = (type(self._kernels_provider).__name__
+                        if self._kernels_provider else "direct functions")
+        return (f"SOLAOperator: {self.domain} -> {self.codomain}\n"
+                f"  Uses {self.N_d} kernels from {provider_type}\n"
+                f"  Domain dimension: {self.domain.dim}\n"
+                f"  Codomain dimension: {self.codomain.dim}")
+
+    @staticmethod
+    def for_direct_sum(
+        domain,  # HilbertSpaceDirectSum
+        codomain: EuclideanSpace,
+        kernels: Union[
+            IndexedFunctionProvider,
+            List[Union[Function, Callable]]
+        ],
+        cache_kernels: bool = False,
+        integration_method: Optional[
+            Literal['simpson', 'trapezoid']
+        ] = 'simpson',
+        n_points: Optional[int] = 1000
+    ):  # Returns RowLinearOperator
+        """
+        Create SOLAOperator for direct sum domain (discontinuous functions).
+
+        This method creates a RowLinearOperator where each block operates
+        on one of the subspaces of the direct sum. The kernel functions
+        are used on each subdomain independently.
+
+        Args:
+            domain: HilbertSpaceDirectSum (e.g., LebesgueSpaceDirectSum)
+            codomain: EuclideanSpace defining the output dimension
+            kernels: Provider or list of kernels defined on the full domain
+            cache_kernels: If True, cache kernels after first access
+            integration_method: Method for numerical integration
+            n_points: Number of points for numerical integration
+
+        Returns:
+            RowLinearOperator mapping from the direct sum space to the
+            codomain by integrating against kernels on each subdomain.
+
+        Example:
+            >>> # Create a space with discontinuity
+            >>> M = Lebesgue.with_discontinuities(
+            ...     200, domain, [0.5], basis=None
+            ... )
+            >>> # Create kernels that span the full domain
+            >>> provider = NormalModesProvider(M, ...)
+            >>> # Create the operator
+            >>> G = SOLAOperator.for_direct_sum(M, D, provider)
+            >>> # G can act on discontinuous functions:
+            >>> # G([f_lower, f_upper])
+        """
+        from pygeoinf.direct_sum import (
+            HilbertSpaceDirectSum,
+            RowLinearOperator
+        )
+        from .lebesgue_space import Lebesgue as LebesgueSpace
+        from .function_providers import IndexedFunctionProvider
+
+        if not isinstance(domain, HilbertSpaceDirectSum):
+            raise TypeError(
+                f"domain must be HilbertSpaceDirectSum, "
+                f"got {type(domain)}"
+            )
+
+        # Create a SOLA operator for each subspace
+        operators = []
+        for i in range(domain.number_of_subspaces):
+            subspace = domain.subspace(i)
+
+            # Type assertion for type checker (LebesgueSpaceDirectSum
+            # subspaces are Lebesgue instances)
+            if not isinstance(subspace, (LebesgueSpace, Sobolev)):
+                raise TypeError(
+                    f"SOLAOperator requires Lebesgue or Sobolev subspaces,"
+                    f" got {type(subspace)}"
+                )
+
+            # Restrict kernels to this subspace
+            # If kernels is a provider, use restrict() method
+            # If kernels is a list, restrict each function individually
+            if isinstance(kernels, IndexedFunctionProvider):
+                # Use provider restriction - this is the clean way!
+                restricted_kernels = kernels.restrict(subspace)
+            elif isinstance(kernels, list):
+                # Restrict each function in the list
+                restricted_kernels = []
+                for kernel in kernels:
+                    if isinstance(kernel, Function):
+                        restricted_kernels.append(kernel.restrict(subspace))
+                    elif callable(kernel):
+                        # For callable, wrap in Function first
+                        # This assumes the callable is defined on a larger
+                        # domain
+                        raise NotImplementedError(
+                            "Cannot automatically restrict callable kernels."
+                            " Please provide a FunctionProvider or "
+                            "pre-restricted Functions."
+                        )
+                    else:
+                        raise TypeError(f"Unknown kernel type: {type(kernel)}")
+            else:
+                raise TypeError(
+                    f"kernels must be IndexedFunctionProvider or list, "
+                    f"got {type(kernels)}"
+                )
+
+            # Create SOLAOperator with restricted kernels
+            sola_sub = SOLAOperator(
+                subspace,
+                codomain,
+                kernels=restricted_kernels,
+                cache_kernels=cache_kernels,
+                integration_method=integration_method,
+                n_points=n_points
+            )
+            operators.append(sola_sub)
+
+        # Create and return row operator
+        return RowLinearOperator(operators)
