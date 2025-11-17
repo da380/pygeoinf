@@ -31,7 +31,9 @@ class LinearFormKernel(LinearForm):
         else:
             raise ValueError("Either mapping, kernel, or components must be provided")
 
-        self._weight = domain._weight
+        # Get weight from domain if it has one (e.g., Lebesgue space)
+        # Otherwise assume no weight (weight = None means standard inner product)
+        self._weight = getattr(domain, '_weight', None)
         # We will do something cheeky here. By  default LinearOperator computes
         # the components if they don't exist, but we don't want to work with
         # components, so we will give it fake components just so it stops from
@@ -63,7 +65,11 @@ class LinearFormKernel(LinearForm):
     def kernel(self) -> Union[Function, List[Function], None]:
         if self._kernel is None:
             return self._kernel
+        elif self._weight is None:
+            # No weight function - return kernel as-is
+            return self._kernel
         else:
+            # With weight function - adjust kernel by 1/weight
             return self._kernel * Function(
                 self.domain,
                 evaluate_callable=lambda x: 1 / self._weight(x)
