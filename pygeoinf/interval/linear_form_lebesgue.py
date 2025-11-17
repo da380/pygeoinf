@@ -31,6 +31,7 @@ class LinearFormKernel(LinearForm):
         else:
             raise ValueError("Either mapping, kernel, or components must be provided")
 
+        self._weight = domain._weight
         # We will do something cheeky here. By  default LinearOperator computes
         # the components if they don't exist, but we don't want to work with
         # components, so we will give it fake components just so it stops from
@@ -49,12 +50,21 @@ class LinearFormKernel(LinearForm):
         if isinstance(self._kernel, list):
             if not isinstance(v, list):
                 raise ValueError("Input must be a list of functions")
-            return sum((k * vi).integrate() for k, vi in zip(self._kernel, v))
+            return sum(
+                (k * vi).integrate(weight=self._weight)
+                for k, vi in zip(self._kernel, v)
+            )
         else:
             if not isinstance(v, Function):
                 raise ValueError("Input must be a function")
-            return (self._kernel * v).integrate()
+            return (self._kernel * v).integrate(weight=self._weight)
 
     @property
     def kernel(self) -> Union[Function, List[Function], None]:
-        return self._kernel
+        if self._kernel is None:
+            return self._kernel
+        else:
+            return self._kernel * Function(
+                self.domain,
+                evaluate_callable=lambda x: 1 / self._weight(x)
+            )

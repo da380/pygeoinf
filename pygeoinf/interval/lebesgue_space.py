@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import numpy as np
-from typing import Optional, Any, TYPE_CHECKING, Union, List
+from typing import Optional, Any, TYPE_CHECKING, Union, List, Callable
 
 from pygeoinf import HilbertSpace, HilbertSpaceDirectSum, LinearForm
 from pygeoinf.interval.linear_form_lebesgue import LinearFormKernel
@@ -52,6 +52,7 @@ class Lebesgue(HilbertSpace):
         /,
         *,
         basis: Optional[Union[str, list]] = None,
+        weight: Optional[Callable] = None
     ):
         """
         Initialize a Lebesgue space L²([a,b]).
@@ -95,6 +96,7 @@ class Lebesgue(HilbertSpace):
         # Integration settings (internal variables with defaults)
         self._integration_method = 'simpson'
         self._integration_npoints = 500
+        self._weight = weight
 
         # Initialize basis (simplified single-parameter approach)
         self._initialize_basis(basis or 'none')
@@ -538,11 +540,14 @@ class Lebesgue(HilbertSpace):
     # Private helper methods
     # ================================================================
 
-    def _continuous_l2_inner_product(self, u: "Function", v: "Function") -> float:
+    def _continuous_l2_inner_product(
+        self, u: "Function", v: "Function"
+    ) -> float:
         """
         Compute the continuous L² inner product via numerical integration.
 
-        This is different from the discrete inner product of the finite-dimensional
+        This is different from the discrete inner product of the
+        finite-dimensional
         space. It's used for projecting external functions onto the basis.
 
         ⟨u, v⟩_L² = ∫_a^b u(x) v(x) dx
@@ -557,7 +562,8 @@ class Lebesgue(HilbertSpace):
         product = u * v  # Function.__mul__ handles this properly
         return product.integrate(
             method=self.integration_method,
-            n_points=self.integration_npoints
+            n_points=self.integration_npoints,
+            weight=self._weight
         )
 
     def _compute_metric(self):

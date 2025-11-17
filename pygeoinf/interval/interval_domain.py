@@ -152,14 +152,14 @@ class IntervalDomain:
             return float(total)
 
         if support is None:
-            a = self.a
-            b = self.b
+            # Use uniform_mesh which respects boundary_type
+            xs = self.uniform_mesh(max(3, n_points))
         else:
             a, b = support
             if not (self.a <= a < b <= self.b):
                 raise ValueError("support outside domain")
-
-        xs = np.linspace(a, b, max(3, n_points))
+            # For subinterval integration, always use closed interval
+            xs = np.linspace(a, b, max(3, n_points))
 
         def eval_mesh(xs_vals: np.ndarray) -> np.ndarray:
             if vectorized is True:

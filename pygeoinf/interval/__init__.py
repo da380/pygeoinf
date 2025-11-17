@@ -35,6 +35,10 @@ from .operators import (
     SpectralOperator,
     Gradient
 )
+from .radial_operators import (
+    RadialLaplacian,
+    InverseRadialLaplacian
+)
 from .providers import SpectrumProvider
 
 # LaplacianInverseOperator (native implementation)
@@ -55,4 +59,6 @@ __all__ = [
     'SpectrumProvider',
     'Gradient',
     'LebesgueSpaceDirectSum',
+    'RadialLaplacian',
+    'InverseRadialLaplacian',
 ]
