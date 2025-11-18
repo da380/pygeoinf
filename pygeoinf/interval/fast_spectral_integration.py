@@ -279,29 +279,18 @@ def create_uniform_samples(
         # For Dirichlet, exclude boundary points (where basis functions = 0)
         x = np.linspace(a, b, n_samples + 2)[1:-1]
     elif boundary_condition == 'neumann':
-        # For Neumann, check if function domain excludes any boundaries
-        # If so, exclude those boundaries to avoid domain errors
-        exclude_left = False
-        exclude_right = False
-
+        # For Neumann, use domain's uniform_mesh which respects boundary type
+        # and open_epsilon parameter for open/semi-open intervals
         if hasattr(func, 'space') and hasattr(func.space, 'function_domain'):
             domain_obj = func.space.function_domain
-            if hasattr(domain_obj, 'boundary_type'):
-                bt = domain_obj.boundary_type
-                # Check for open boundaries
-                if bt == 'open':
-                    exclude_left = exclude_right = True
-                elif bt == 'left_open':
-                    exclude_left = True
-                elif bt == 'right_open':
-                    exclude_right = True
-
-        if exclude_left or exclude_right:
-            # Function domain has open boundaries - sample interior points
-            # Use the same strategy as Dirichlet (exclude boundaries)
-            x = np.linspace(a, b, n_samples + 2)[1:-1]
+            if hasattr(domain_obj, 'uniform_mesh'):
+                # Use domain's uniform_mesh method which handles epsilon correctly
+                x = domain_obj.uniform_mesh(n_samples)
+            else:
+                # Fallback: closed interval
+                x = np.linspace(a, b, n_samples)
         else:
-            # Include boundary points (standard Neumann on closed domain)
+            # No domain object available - assume closed interval
             x = np.linspace(a, b, n_samples)
     elif boundary_condition == 'periodic':
         # For periodic, exclude the right endpoint (periodic)

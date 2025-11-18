@@ -943,7 +943,9 @@ def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
         FourierFunctionProvider,
         HatFunctionProvider,
         SineFunctionProvider,
-        CosineFunctionProvider
+        CosineFunctionProvider,
+        MixedDNFunctionProvider,
+        MixedNDFunctionProvider
     )
     from pygeoinf.interval.providers import CustomBasisProvider
 
@@ -953,6 +955,16 @@ def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
             functions_provider=FourierFunctionProvider(space),
             orthonormal=True,
             basis_type='fourier'
+        )
+    elif basis_type == 'fourier_non_constant':
+        return CustomBasisProvider(
+            space,
+            functions_provider=FourierFunctionProvider(
+                space,
+                non_constant_only=True
+            ),
+            orthonormal=True,
+            basis_type='fourier_non_constant'
         )
     elif basis_type == 'hat':
         return CustomBasisProvider(
@@ -974,6 +986,30 @@ def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
             functions_provider=CosineFunctionProvider(space),
             orthonormal=True,
             basis_type='cosine'
+        )
+    elif basis_type == 'cosine_non_constant':
+        return CustomBasisProvider(
+            space,
+            functions_provider=CosineFunctionProvider(
+                space,
+                non_constant_only=True
+            ),
+            orthonormal=True,
+            basis_type='cosine_non_constant'
+        )
+    elif basis_type == 'DN':
+        return CustomBasisProvider(
+            space,
+            functions_provider=MixedDNFunctionProvider(space),
+            orthonormal=True,
+            basis_type='DN'
+        )
+    elif basis_type == 'ND':
+        return CustomBasisProvider(
+            space,
+            functions_provider=MixedNDFunctionProvider(space),
+            orthonormal=True,
+            basis_type='ND'
         )
     else:
         raise ValueError(f"Unknown basis type: {basis_type}")

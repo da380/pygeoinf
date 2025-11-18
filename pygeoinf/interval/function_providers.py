@@ -474,7 +474,7 @@ class NormalModesProvider(RandomFunctionProvider, ParametricFunctionProvider,
 class FourierFunctionProvider(IndexedFunctionProvider):
     """Provider for Fourier basis functions."""
 
-    def __init__(self, space):
+    def __init__(self, space, non_constant_only: bool = False):
         """
         Initialize Fourier provider.
 
@@ -482,6 +482,7 @@ class FourierFunctionProvider(IndexedFunctionProvider):
             space: Lebesgue instance (contains domain information)
         """
         super().__init__(space)
+        self.non_constant_only = non_constant_only
 
     def get_function_by_index(self, index: int, **kwargs) -> 'Function':
         """
@@ -495,6 +496,9 @@ class FourierFunctionProvider(IndexedFunctionProvider):
 
         a, b = self.domain.a, self.domain.b
         L = b - a
+
+        if self.non_constant_only:
+            index += 1
 
         if index == 0:
             # Constant function
@@ -1276,13 +1280,17 @@ class CosineFunctionProvider(IndexedFunctionProvider):
     on the negative Laplacian operator (with constant mode for k=0).
     """
 
-    def __init__(self, space):
+    def __init__(self, space, non_constant_only: bool = False):
         """Initialize the cosine function provider."""
         super().__init__(space)
         self._cache = {}
+        self.non_constant_only = non_constant_only
 
     def get_function_by_index(self, index: int):
         """Get cosine function or constant for index 0."""
+        # If non_constant_only is True, shift index by 1
+        if self.non_constant_only:
+            index += 1
         if index not in self._cache:
             a, b = self.space.function_domain.a, self.space.function_domain.b
             length = b - a

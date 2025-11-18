@@ -18,12 +18,26 @@ class IntervalDomain:
         *,
         boundary_type: str = "closed",
         name: Optional[str] = None,
+        open_epsilon: Optional[float] = None,
     ):
         if a >= b:
             raise ValueError("a must be < b")
         self.a = float(a)
         self.b = float(b)
         self.boundary_type = boundary_type
+
+        # open_epsilon for open/semi-open intervals: shifts mesh points inward
+        # If not specified, use adaptive default based on interval length
+        if open_epsilon is None:
+            # Default: shift by 0.1% of interval length from each boundary
+            self.open_epsilon = 0.001 * (b - a)
+        else:
+            self.open_epsilon = float(open_epsilon)
+            if self.open_epsilon < 0:
+                raise ValueError("open_epsilon must be non-negative")
+            if self.open_epsilon >= 0.5 * (b - a):
+                raise ValueError("open_epsilon too large for interval")
+
         # name defaults to the string representation used in tests
         if name is None:
             self.name = self._format_name()
@@ -54,21 +68,38 @@ class IntervalDomain:
         raise ValueError("unknown boundary_type")
 
     def uniform_mesh(self, n: int) -> np.ndarray:
+        """Generate uniform mesh respecting boundary type.
+
+        For open/semi-open intervals, instead of removing points (which breaks
+        orthogonality for spectral methods), we generate n points on a slightly
+        contracted interval [a+ε, b-ε] or variants, where ε = self.open_epsilon.
+
+        Args:
+            n: Number of mesh points
+
+        Returns:
+            Array of n uniformly spaced points
+        """
         if self.boundary_type == "closed":
             return np.linspace(self.a, self.b, n, endpoint=True)
         if self.boundary_type == "open":
-            return np.linspace(self.a, self.b, n + 2)[1:-1]
+            # Generate n points on [a+ε, b-ε]
+            return np.linspace(self.a + self.open_epsilon, self.b - self.open_epsilon, n)
         if self.boundary_type == "left_open":
-            return np.linspace(self.a, self.b, n + 1)[1:]
+            # Generate n points on (a+ε, b]
+            return np.linspace(self.a + self.open_epsilon, self.b, n)
         if self.boundary_type == "right_open":
-            return np.linspace(self.a, self.b, n, endpoint=False)
+            # Generate n points on [a, b-ε)
+            return np.linspace(self.a, self.b - self.open_epsilon, n)
         raise ValueError("unknown boundary_type")
 
     def interior(self) -> "IntervalDomain":
-        return IntervalDomain(self.a, self.b, boundary_type="open")
+        return IntervalDomain(self.a, self.b, boundary_type="open",
+                              open_epsilon=self.open_epsilon)
 
     def closure(self) -> "IntervalDomain":
-        return IntervalDomain(self.a, self.b, boundary_type="closed")
+        return IntervalDomain(self.a, self.b, boundary_type="closed",
+                              open_epsilon=self.open_epsilon)
 
     def boundary_points(self) -> Tuple[float, float]:
         return (self.a, self.b)
@@ -226,7 +257,8 @@ class IntervalDomain:
             raise ValueError("invalid subinterval")
         if not (self.a <= a and b <= self.b):
             raise ValueError("subinterval outside domain")
-        return IntervalDomain(a, b, boundary_type=self.boundary_type)
+        return IntervalDomain(a, b, boundary_type=self.boundary_type,
+                              open_epsilon=self.open_epsilon)
 
     def split_at_discontinuities(
         self,
@@ -301,7 +333,10 @@ class IntervalDomain:
                 # Middle subintervals
                 bt = 'open'
 
-            subdomains.append(IntervalDomain(a_sub, b_sub, boundary_type=bt))
+            subdomains.append(
+                IntervalDomain(a_sub, b_sub, boundary_type=bt,
+                               open_epsilon=self.open_epsilon)
+            )
 
         return subdomains
 
