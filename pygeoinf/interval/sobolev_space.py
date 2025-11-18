@@ -24,10 +24,37 @@ class Sobolev(MassWeightedHilbertSpace):
         L: "SpectralOperator",
         /, *,
         basis: Optional[Union[str, list]] = None,
+        integration_config=None,
+        parallel_config=None,
     ):
+        """
+        Initialize a Sobolev space.
+
+        Args:
+            dim: Dimension of the space
+            function_domain: Domain for functions
+            s: Regularity parameter (order)
+            k: Scaling parameter
+            L: Spectral operator (typically Laplacian)
+            basis: Basis type for underlying Lebesgue space
+            integration_config: Integration configuration (passed to
+                underlying Lebesgue space). Can be IntegrationConfig or
+                LebesgueIntegrationConfig. If None, extracts from L if
+                available.
+            parallel_config: Parallel configuration (passed to underlying
+                Lebesgue space). Can be ParallelConfig or
+                LebesgueParallelConfig.
+        """
+        # Extract configs from Laplacian operator if not provided
+        if integration_config is None and hasattr(L, '_integration_config'):
+            integration_config = L._integration_config
+        if parallel_config is None and hasattr(L, '_parallel_config'):
+            parallel_config = L._parallel_config
 
         # Attributes if Sobolev space
-        self._underlying_space = self._create_underlying_space(dim, function_domain, basis)
+        self._underlying_space = self._create_underlying_space(
+            dim, function_domain, basis, integration_config, parallel_config
+        )
         self._s = s
         self._k = k
         self._L = L
@@ -109,12 +136,16 @@ class Sobolev(MassWeightedHilbertSpace):
         dim,
         function_domain,
         basis,
+        integration_config,
+        parallel_config,
     ) -> 'Lebesgue':
         from .lebesgue_space import Lebesgue
         return Lebesgue(
             dim,
             function_domain,
-            basis=basis
+            basis=basis,
+            integration_config=integration_config,
+            parallel_config=parallel_config,
         )
 
     @property
@@ -389,13 +420,19 @@ class Sobolev(MassWeightedHilbertSpace):
         # Create default integration config if not provided
         from .configs import IntegrationConfig
         if integration_config is None:
-            integration_config = IntegrationConfig(method='simpson', n_points=1000)
+            integration_config = IntegrationConfig(
+                method='simpson',
+                n_points=1000
+            )
 
         # Create subspaces with their own Laplacian operators
         subspaces = []
         for d, subdomain, b, bc in zip(dims, subdomains, bases, bcs_list):
             # Create underlying Lebesgue space for this subdomain
-            M_lebesgue = Lebesgue(0, subdomain, basis=None)
+            M_lebesgue = Lebesgue(
+                0, subdomain, basis=None,
+                integration_config=integration_config
+            )
 
             # Create Laplacian operator for this subdomain
             # This uses the new boundary conditions specific to this subspace
@@ -410,13 +447,15 @@ class Sobolev(MassWeightedHilbertSpace):
             )
 
             # Create Sobolev space on this subdomain
+            # Pass configs to ensure consistency
             sobolev_subspace = cls(
                 d,
                 subdomain,
                 s,
                 k,
                 laplacian,
-                basis=b
+                basis=b,
+                integration_config=integration_config
             )
             subspaces.append(sobolev_subspace)
 
@@ -454,11 +493,17 @@ class SobolevSpaceDirectSum(HilbertSpaceDirectSum):
         # This returns a list of LinearFormKernel objects with mass-weighted kernels
         kernels = [space.to_dual(x).kernel for space, x in zip(self._spaces, xs)]
 
-        # Get integration config from first subspace's underlying Lebesgue space
+        # Get config from first subspace's underlying Lebesgue space
         # All subspaces should have the same config
         first_subspace = self._spaces[0]
-        int_cfg = first_subspace._underlying_space.integration.dual
-        par_cfg = first_subspace._underlying_space.parallel.dual
+        # Access via attribute to avoid type checker issues
+        underlying = getattr(first_subspace, '_underlying_space', None)
+        if underlying:
+            int_cfg = underlying.integration.dual
+            par_cfg = underlying.parallel.dual
+        else:
+            int_cfg = None
+            par_cfg = None
         return LinearFormKernel(
             self,
             kernel=kernels,
@@ -481,12 +526,18 @@ class SobolevSpaceDirectSum(HilbertSpaceDirectSum):
             # The kernel is a list of mass-weighted functions
             # Apply from_dual to each to get back the original functions
             if isinstance(xp.kernel, list):
-                # Use the integration config from xp (the parent LinearFormKernel)
-                int_cfg = xp.integration_config
-                par_cfg = xp.parallel_config
-                return [space.from_dual(LinearFormKernel(
-                    space, kernel=k, integration_config=int_cfg, parallel_config=par_cfg
-                )) for space, k in zip(self._spaces, xp.kernel)]
+                # Get config from parent LinearFormKernel
+                int_cfg = getattr(xp, 'integration_config', None)
+                par_cfg = getattr(xp, 'parallel_config', None)
+                return [
+                    space.from_dual(
+                        LinearFormKernel(
+                            space, kernel=k,
+                            integration_config=int_cfg,
+                            parallel_config=par_cfg
+                        )
+                    ) for space, k in zip(self._spaces, xp.kernel)
+                ]
             else:
                 raise ValueError("Expected kernel to be a list for direct sum")
         else:

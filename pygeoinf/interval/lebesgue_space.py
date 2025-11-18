@@ -144,26 +144,18 @@ class Lebesgue(HilbertSpace):
         self._function_domain = function_domain
         self._weight = weight
 
-        # Integration configuration (hierarchical with backward compatibility)
+        # Integration configuration (hierarchical)
         if integration_config is None:
-            # No config provided, use old parameters for backward compatibility
+            # No config provided, use defaults
             self.integration = LebesgueIntegrationConfig()
-            # Set all subsystems from old params
-            for cfg in [self.integration.inner_product,
-                        self.integration.dual,
-                        self.integration.general]:
-                cfg.method = integration_method  # type: ignore
-                cfg.n_points = integration_npoints
+        elif isinstance(integration_config, IntegrationConfig):
+            # Single config: use for all subsystems
+            self.integration = LebesgueIntegrationConfig.from_single(
+                integration_config
+            )
         else:
-            # New API: use provided config
-            if isinstance(integration_config, IntegrationConfig):
-                # Single config: use for all subsystems
-                self.integration = LebesgueIntegrationConfig.from_single(
-                    integration_config
-                )
-            else:
-                # Hierarchical config: use as-is
-                self.integration = integration_config
+            # Hierarchical config: use as-is
+            self.integration = integration_config
 
         # Parallelization configuration
         if parallel_config is None:
