@@ -14,7 +14,13 @@ import numpy as np
 from typing import Optional, Any, TYPE_CHECKING, Union, List, Callable
 
 from pygeoinf import HilbertSpace, HilbertSpaceDirectSum, LinearForm
-from pygeoinf.interval.linear_form_lebesgue import LinearFormKernel
+from pygeoinf.interval.linear_form_kernel import LinearFormKernel
+from pygeoinf.interval.configs import (
+    IntegrationConfig,
+    LebesgueIntegrationConfig,
+    ParallelConfig,
+    LebesgueParallelConfig
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,7 +58,15 @@ class Lebesgue(HilbertSpace):
         /,
         *,
         basis: Optional[Union[str, list]] = None,
-        weight: Optional[Callable] = None
+        weight: Optional[Callable] = None,
+        integration_config: Optional[Union[
+            IntegrationConfig,
+            LebesgueIntegrationConfig
+        ]] = None,
+        parallel_config: Optional[Union[
+            ParallelConfig,
+            LebesgueParallelConfig
+        ]] = None,
     ):
         """
         Initialize a Lebesgue space L²([a,b]).
@@ -70,33 +84,101 @@ class Lebesgue(HilbertSpace):
                   (custom callable functions)
                 - None: 'none' basis
                   (default - create baseless space)
+            weight: Optional weight function for weighted L² space
+            integration_config: Hierarchical integration configuration.
+                Can be IntegrationConfig (same for all subsystems) or
+                LebesgueIntegrationConfig (different for inner_product,
+                dual, and general operations). If None, uses old parameters.
+            parallel_config: Hierarchical parallelization configuration.
+                Can be ParallelConfig (same for all subsystems) or
+                LebesgueParallelConfig (different for inner_product, dual,
+                and general operations). If None, defaults to serial.
 
         Examples:
-            >>> # Create baseless space (typical workflow)
+            >>> # Simple - just works with good defaults
             >>> space = Lebesgue(dim=50, function_domain=domain)
-            >>> space = Lebesgue(dim=50, function_domain=domain, basis='none')
+            >>> space = Lebesgue(dim=50, function_domain=domain, basis='sine')
 
-            >>> # Custom functions (immediate setup)
-            >>> space = Lebesgue(
-            ...     dim=3,
-            ...     function_domain=domain,
-            ...     basis=[lambda x: 1, lambda x: x, lambda x: x**2]
-            ... )
-
-            >>> # Standard basis types (when implemented)
+            >>> # Old API still works (backward compatible)
             >>> space = Lebesgue(
             ...     dim=50,
             ...     function_domain=domain,
-            ...     basis='fourier'
+            ...     basis='sine',
+            ...     integration_npoints=5000
+            ... )
+
+            >>> # Modify after construction (old API)
+            >>> space.integration_npoints = 10000
+
+            >>> # New hierarchical API - different settings per subsystem
+            >>> space = Lebesgue(dim=50, function_domain=domain, basis='sine')
+            >>> space.integration.inner_product.n_points = 20000  # Gram
+            >>> space.parallel.dual.enabled = True  # Parallel dual ops
+            >>> space.parallel.dual.n_jobs = 8
+
+            >>> # Use preset configurations
+            >>> from pygeoinf.interval.integration_config import (
+            ...     LebesgueIntegrationConfig,
+            ...     LebesgueParallelConfig
+            ... )
+            >>> int_cfg = LebesgueIntegrationConfig.high_accuracy_galerkin()
+            >>> par_cfg = LebesgueParallelConfig.parallel_dual()
+            >>> space = Lebesgue(
+            ...     dim=100,
+            ...     function_domain=domain,
+            ...     basis='sine',
+            ...     integration_config=int_cfg,
+            ...     parallel_config=par_cfg
+            ... )
+
+            >>> # Adaptive config based on dimension
+            >>> config = LebesgueIntegrationConfig.adaptive_spectral(dim=100)
+            >>> space = Lebesgue(
+            ...     dim=100,
+            ...     function_domain=domain,
+            ...     basis='sine',
+            ...     integration_config=config
             ... )
         """
         self._dim = dim
         self._function_domain = function_domain
-
-        # Integration settings (internal variables with defaults)
-        self._integration_method = 'simpson'
-        self._integration_npoints = 500
         self._weight = weight
+
+        # Integration configuration (hierarchical with backward compatibility)
+        if integration_config is None:
+            # No config provided, use old parameters for backward compatibility
+            self.integration = LebesgueIntegrationConfig()
+            # Set all subsystems from old params
+            for cfg in [self.integration.inner_product,
+                        self.integration.dual,
+                        self.integration.general]:
+                cfg.method = integration_method  # type: ignore
+                cfg.n_points = integration_npoints
+        else:
+            # New API: use provided config
+            if isinstance(integration_config, IntegrationConfig):
+                # Single config: use for all subsystems
+                self.integration = LebesgueIntegrationConfig.from_single(
+                    integration_config
+                )
+            else:
+                # Hierarchical config: use as-is
+                self.integration = integration_config
+
+        # Parallelization configuration
+        if parallel_config is None:
+            # Default: no parallelization
+            self.parallel = LebesgueParallelConfig()
+        else:
+            # New API: use provided config
+            if isinstance(parallel_config, ParallelConfig):
+                # Single config: use for all subsystems
+                self.parallel = LebesgueParallelConfig.from_single(
+                    parallel_config
+                )
+            else:
+                # Hierarchical config: use as-is
+                self.parallel = parallel_config
 
         # Initialize basis (simplified single-parameter approach)
         self._initialize_basis(basis or 'none')
@@ -113,6 +195,55 @@ class Lebesgue(HilbertSpace):
     def dim(self) -> int:
         """The finite dimension of the space."""
         return self._dim
+
+    # ================================================================
+    # Backward-compatible properties for old integration API
+    # ================================================================
+
+    @property
+    def integration_method(self) -> str:
+        """
+        Get integration method (backward compatible).
+
+        Returns the method from general config. To set different methods
+        for different subsystems, use the hierarchical config:
+            space.integration.inner_product.method = 'simpson'
+            space.integration.dual.method = 'trapz'
+        """
+        return self.integration.general.method
+
+    @integration_method.setter
+    def integration_method(self, value: str):
+        """
+        Set integration method for all subsystems (backward compatible).
+
+        This sets the method for inner_product, dual, and general configs.
+        For fine-grained control, modify configs directly:
+            space.integration.inner_product.method = 'simpson'
+        """
+        for cfg in [self.integration.inner_product,
+                    self.integration.dual,
+                    self.integration.general]:
+            cfg.method = value  # type: ignore
+
+    @property
+    def integration_npoints(self) -> int:
+        """Get integration points (backward compatible)."""
+        return self.integration.general.n_points
+
+    @integration_npoints.setter
+    def integration_npoints(self, value: int):
+        """
+        Set integration points for all subsystems (backward compatible).
+        """
+        for cfg in [self.integration.inner_product,
+                    self.integration.dual,
+                    self.integration.general]:
+            cfg.n_points = value
+
+    # ================================================================
+    # Core HilbertSpace abstract methods
+    # ================================================================
 
     @property
     def metric(self) -> np.ndarray:
@@ -154,15 +285,25 @@ class Lebesgue(HilbertSpace):
         for u ∈ L², the dual element is computed as G * c_u where G is the
         metric (Gram matrix) and c_u are the coefficients of u.
 
+        Uses self.integration.dual and self.parallel.dual configs for
+        the LinearFormKernel, allowing different integration and
+        parallelization settings for dual operations than for inner products.
+
         Args:
             x: A Function in this Lebesgue space
 
         Returns:
             LinearForm representing the dual element
         """
-
-        # Create LinearForm directly from dual components
-        return LinearFormKernel(self, kernel=x)
+        # Use dual configs for LinearFormKernel
+        int_cfg = self.integration.dual
+        par_cfg = self.parallel.dual
+        return LinearFormKernel(
+            self,
+            kernel=x,
+            integration_config=int_cfg,
+            parallel_config=par_cfg,
+        )
 
     def from_dual(self, xp: Union[LinearFormKernel, LinearForm]) -> "Function":
         """
@@ -385,9 +526,13 @@ class Lebesgue(HilbertSpace):
             weight=self._weight
         )
 
-        # Copy integration settings
-        restricted_space._integration_method = self._integration_method
-        restricted_space._integration_npoints = self._integration_npoints
+        # Copy integration and parallel settings from parent space
+        # Use deepcopy to preserve hierarchical per-subsystem settings
+        import copy as _copy
+        if hasattr(self, 'integration'):
+            restricted_space.integration = _copy.deepcopy(self.integration)
+        if hasattr(self, 'parallel'):
+            restricted_space.parallel = _copy.deepcopy(self.parallel)
 
         # If the current space has a basis, we need to handle it
         # For now, we create a baseless space - the user can set a basis
@@ -558,48 +703,11 @@ class Lebesgue(HilbertSpace):
         return LebesgueSpaceDirectSum(subspaces)
 
     # ================================================================
-    # Additional methods for numerical integration
-    # ================================================================
-
-    @property
-    def integration_method(self) -> str:
-        """The numerical integration method used for inner products."""
-        return self._integration_method
-
-    @integration_method.setter
-    def integration_method(self, method: str) -> None:
-        """Set the numerical integration method."""
-        if not isinstance(method, str):
-            raise TypeError("Integration method must be a string")
-
-        # Optional: Add validation for supported methods
-        supported_methods = {'simpson', 'trapz', 'gauss', 'adaptive'}
-        if method not in supported_methods:
-            raise ValueError(f"Unsupported integration method '{method}'. "
-                             f"Supported methods: {supported_methods}")
-
-        self._integration_method = method
-        # Clear cached matrices when integration settings change
-        self._metric = None
-        self._inverse_metric = None
-
-    @property
-    def integration_npoints(self) -> int:
-        """The number of points used for numerical integration."""
-        return self._integration_npoints
-
-    @integration_npoints.setter
-    def integration_npoints(self, npoints: int) -> None:
-        """Set the number of integration points."""
-        if not isinstance(npoints, int):
-            raise TypeError("Number of integration points must be an integer")
-        if npoints <= 0:
-            raise ValueError("Number of integration points must be positive")
-
-        self._integration_npoints = npoints
-        # Clear cached matrices when integration settings change
-        self._metric = None
-        self._inverse_metric = None
+    # NOTE: Legacy _integration_method/_integration_npoints properties
+    # were removed to avoid duplication with the hierarchical
+    # `self.integration` configuration. Use the `integration` config
+    # object (and `self.integration_npoints`/`self.integration_method`
+    # backward-compatible properties earlier in the class) instead.
 
     # ================================================================
     # Additional methods for basis function management
@@ -875,9 +983,22 @@ class LebesgueSpaceDirectSum(HilbertSpaceDirectSum):
     def to_dual(self, xs: List[Function]) -> LinearFormKernel:
         if len(xs) != self.number_of_subspaces:
             raise ValueError("Input list has incorrect number of vectors.")
+        # Use default config for direct sum
+        # Get integration config from first subspace
+        from .configs import IntegrationConfig, ParallelConfig
+        subspace = self.subspace(0)
+        if hasattr(subspace, 'integration'):
+            int_cfg = subspace.integration.dual  # type: ignore
+            par_cfg = subspace.parallel.dual  # type: ignore
+        else:
+            # Default config if subspace doesn't have config
+            int_cfg = IntegrationConfig(method='trapz', n_points=1000)
+            par_cfg = ParallelConfig(enabled=False, n_jobs=-1)
         return LinearFormKernel(
             self,
-            kernel=xs
+            kernel=xs,
+            integration_config=int_cfg,
+            parallel_config=par_cfg,
         )
 
     def from_dual(self, xp) -> List[Function]:

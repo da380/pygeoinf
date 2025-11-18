@@ -35,11 +35,12 @@ from .lebesgue_space import Lebesgue
 from .sobolev_space import Sobolev
 from .boundary_conditions import BoundaryConditions
 from .functions import Function
+from .configs import IntegrationConfig, ParallelConfig
 
 # FEM import only needed for LaplacianInverseOperator
 from pygeoinf.interval.fem_solvers import GeneralFEMSolver
 from pygeoinf.interval.function_providers import IndexedFunctionProvider
-from pygeoinf.interval.linear_form_lebesgue import LinearFormKernel
+from pygeoinf.interval.linear_form_kernel import LinearFormKernel
 from pygeoinf.interval.providers import LaplacianSpectrumProvider
 from .fast_spectral_integration import (
     fast_spectral_coefficients,
@@ -275,8 +276,7 @@ class Laplacian(SpectralOperator):
         dofs: Optional[int] = None,
         fd_order: int = 2,
         n_samples: int = 512,
-        integration_method: Literal['trapz', 'simpson'] = 'simpson',
-        npoints: int = 1000
+        integration_config: IntegrationConfig,
     ):
         """
         Initialize the negative Laplacian operator.
@@ -289,9 +289,7 @@ class Laplacian(SpectralOperator):
                   (default: domain.dim)
             fd_order: Order of finite difference stencil (2, 4, 6)
             n_samples: Number of samples for fast spectral transforms
-            integration_method: Method for numerical integration fallback
-                ('trapz', 'simpson')
-            npoints: Number of points for numerical integration fallback
+            integration_config: Integration configuration
         """
         self._domain = domain
         self._boundary_conditions = boundary_conditions
@@ -300,8 +298,9 @@ class Laplacian(SpectralOperator):
         self._fd_order = fd_order
         self._method = method
         self._n_samples = max(n_samples, self._dofs)  # Ensure enough samples
-        self._integration_method = integration_method
-        self._npoints = npoints
+
+        # Store integration config
+        self.integration = integration_config
 
         super().__init__(domain, domain, self._apply)
 
@@ -506,8 +505,8 @@ class Laplacian(SpectralOperator):
 
             # Compute coefficient via numerical integration
             coeff = (f * eigfunc).integrate(
-                method=self._integration_method,
-                n_points=self._npoints
+                method=self.integration.method,
+                n_points=self.integration.n_points
             )
             scaled_coeff = coeff * eigval
 
@@ -602,8 +601,7 @@ class Laplacian(SpectralOperator):
             dofs=self._dofs,
             fd_order=self._fd_order,
             n_samples=self._n_samples,
-            integration_method=self._integration_method,
-            npoints=self._npoints
+            integration_config=self.integration
         )
 
 
@@ -628,8 +626,7 @@ class InverseLaplacian(SpectralOperator):
         dofs: int = 100,
         fem_type: str = "hat",
         n_samples: int = 512,
-        integration_method: Literal['trapz', 'simpson'] = 'simpson',
-        npoints: int = 1000
+        integration_config: IntegrationConfig,
     ):
         """
         Initialize the Laplacian inverse operator.
@@ -647,9 +644,7 @@ class InverseLaplacian(SpectralOperator):
                 - "general": Uses domain's basis functions
                 Note: Both options now use GeneralFEMSolver internally.
             n_samples: Number of samples for fast spectral transforms
-            integration_method: Method for numerical integration fallback
-                ('trapz', 'simpson')
-            npoints: Number of points for numerical integration fallback
+            integration_config: Integration configuration
         """
         # Check that domain is a Lebesgue or Sobolev space
         if not isinstance(domain, (Lebesgue, Sobolev)):
@@ -664,8 +659,9 @@ class InverseLaplacian(SpectralOperator):
         self._dofs = dofs if dofs is not None else domain.dim
         self._fem_type = fem_type
         self._n_samples = max(n_samples, self._dofs)
-        self._integration_method = integration_method
-        self._npoints = npoints
+
+        # Store integration config
+        self.integration = integration_config
 
         # Validate fem_type
         if fem_type not in ["hat", "general"]:
@@ -806,8 +802,8 @@ class InverseLaplacian(SpectralOperator):
 
             # Compute coefficient via numerical integration
             coeff = (f * eigenfunc).integrate(
-                method=self._integration_method,
-                n_points=self._npoints
+                method=self.integration.method,
+                n_points=self.integration.n_points
             )
             scaled_coeff = coeff * eigval
 
@@ -903,18 +899,17 @@ class InverseLaplacian(SpectralOperator):
         bcs_to_use = (new_bcs if new_bcs is not None
                       else self._boundary_conditions)
 
-        # Create new Laplacian on restricted space
+        # Create new InverseLaplacian on restricted space
         # Note: domain, boundary_conditions, alpha are positional-only
-        return Laplacian(
+        return InverseLaplacian(
             restricted_space,
             bcs_to_use,
             self._alpha,  # Positional parameter
             method=self._method,
             dofs=self._dofs,
-            fd_order=self._fd_order,
+            fem_type=self._fem_type,
             n_samples=self._n_samples,
-            integration_method=self._integration_method,
-            npoints=self._npoints
+            integration_config=self.integration
         )
 
     def get_eigenvalue(self, index: int) -> float:
@@ -955,8 +950,7 @@ class BesselSobolev(LinearOperator):
         self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float,
                  L: SpectralOperator, dofs: Optional[int] = None,
                  n_samples: int = 1024, use_fast_transforms: bool = True,
-                 integration_method: Literal['trapz', 'simpson'] = 'simpson',
-                 npoints: int = 100):
+                 integration_config: IntegrationConfig = IntegrationConfig(method='simpson', n_points=100)):
         """
         Initialize the fast Bessel potential operator.
 
@@ -969,6 +963,7 @@ class BesselSobolev(LinearOperator):
             dofs: Number of degrees of freedom
             n_samples: Number of samples for fast transform (should be >= dofs)
             use_fast_transforms: If False, fall back to slow numerical integration
+            integration_config: Integration configuration
         """
         self._domain = domain
         self._codomain = codomain
@@ -978,8 +973,9 @@ class BesselSobolev(LinearOperator):
         self._dofs = dofs if dofs is not None else domain.dim
         self._n_samples = max(n_samples, self._dofs)  # Ensure enough samples
         self._use_fast_transforms = use_fast_transforms
-        self._integration_method = integration_method
-        self._npoints = npoints
+
+        # Store integration config
+        self.integration = integration_config
 
         # Detect if we can use fast transforms
         self._boundary_condition = self._detect_boundary_condition()
@@ -1094,7 +1090,10 @@ class BesselSobolev(LinearOperator):
                 raise ValueError(f"Eigenfunction not available for index {i}")
 
             # Slow numerical integration
-            coeff = (f * eigfunc).integrate(method=self._integration_method, n_points=self._npoints)
+            coeff = (f * eigfunc).integrate(
+                method=self.integration.method,
+                n_points=self.integration.n_points
+            )
             scale = (self._k**2 + eigval)**(self._s / 2)
 
             scaled_coeff = scale * coeff
@@ -1358,10 +1357,7 @@ class SOLAOperator(LinearOperator):
             ]
         ] = None,
         cache_kernels: bool = False,
-        integration_method: Optional[
-            Literal['simpson', 'trapezoid']
-        ] = 'simpson',
-        n_points: Optional[int] = 1000
+        integration_config: IntegrationConfig = IntegrationConfig(method='simpson', n_points=1000),
     ):
         """
         Initialize the SOLA operator.
@@ -1379,9 +1375,7 @@ class SOLAOperator(LinearOperator):
             random_state: Random seed for reproducible function generation
             cache_functions: If True, cache kernels after first
                            access for faster repeated operations
-            integration_method: Method for numerical integration
-                ('simpson', 'trapezoid')
-            n_points: Number of points for numerical integration
+            integration_config: Integration configuration
 
         Note:
             For direct sum domains (LebesgueSpaceDirectSum), use the
@@ -1403,8 +1397,8 @@ class SOLAOperator(LinearOperator):
         self.cache_kernels = cache_kernels
         self._kernels_cache = {} if cache_kernels else None
 
-        self._integration_method = integration_method
-        self._npoints = n_points
+        # Store integration config
+        self.integration = integration_config
 
         self._initialize_kernels(kernels)
 
@@ -1423,7 +1417,7 @@ class SOLAOperator(LinearOperator):
     def _dual_mapping(self, yp: 'LinearForm') -> 'LinearFormKernel':
         """Reconstruct function from data using kernel functions."""
         kernel = self._reconstruct_function(yp.components)
-        return LinearFormKernel(self.domain, kernel=kernel)
+        return LinearFormKernel(self.domain, kernel=kernel, integration_config=self.integration)
 
     def _initialize_kernels(
         self,
@@ -1502,8 +1496,8 @@ class SOLAOperator(LinearOperator):
 
             product_func = Function(self.domain, evaluate_callable=product_callable)
             data[i] = product_func.integrate(
-                method=self._integration_method,
-                n_points=self._npoints
+                method=self.integration.method,
+                n_points=self.integration.n_points
             )
 
         return data
@@ -1572,8 +1566,8 @@ class SOLAOperator(LinearOperator):
                     self.domain, evaluate_callable=product_callable
                 )
                 gram[i, j] = product_func.integrate(
-                    method=self._integration_method,
-                    n_points=self._npoints
+                    method=self.integration.method,
+                    n_points=self.integration.n_points
                 )
 
         return gram
@@ -1619,10 +1613,7 @@ class SOLAOperator(LinearOperator):
             List[Union[Function, Callable]]
         ],
         cache_kernels: bool = False,
-        integration_method: Optional[
-            Literal['simpson', 'trapezoid']
-        ] = 'simpson',
-        n_points: Optional[int] = 1000
+        integration_config: IntegrationConfig = IntegrationConfig(method='simpson', n_points=1000),
     ):  # Returns RowLinearOperator
         """
         Create SOLAOperator for direct sum domain (discontinuous functions).
@@ -1636,8 +1627,7 @@ class SOLAOperator(LinearOperator):
             codomain: EuclideanSpace defining the output dimension
             kernels: Provider or list of kernels defined on the full domain
             cache_kernels: If True, cache kernels after first access
-            integration_method: Method for numerical integration
-            n_points: Number of points for numerical integration
+            integration_config: Integration configuration
 
         Returns:
             RowLinearOperator mapping from the direct sum space to the
@@ -1716,8 +1706,7 @@ class SOLAOperator(LinearOperator):
                 codomain,
                 kernels=restricted_kernels,
                 cache_kernels=cache_kernels,
-                integration_method=integration_method,
-                n_points=n_points
+                integration_config=integration_config
             )
             operators.append(sola_sub)
 

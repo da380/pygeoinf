@@ -26,6 +26,13 @@ from .functions import Function
 from .sobolev_space import Sobolev, SobolevSpaceDirectSum
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
+from .linear_form_kernel import LinearFormKernel
+from .configs import (
+    IntegrationConfig,
+    LebesgueIntegrationConfig,
+    ParallelConfig,
+    LebesgueParallelConfig
+)
 from .operators import (
     SOLAOperator,
     Laplacian,
@@ -61,4 +68,9 @@ __all__ = [
     'LebesgueSpaceDirectSum',
     'RadialLaplacian',
     'InverseRadialLaplacian',
+    'LinearFormKernel',
+    'IntegrationConfig',
+    'LebesgueIntegrationConfig',
+    'ParallelConfig',
+    'LebesgueParallelConfig',
 ]

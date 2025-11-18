@@ -5,7 +5,7 @@ Sobolev spaces on a segment/interval [a, b].
 from typing import TYPE_CHECKING, Optional, Union, List
 from pygeoinf import MassWeightedHilbertSpace, HilbertSpaceDirectSum
 from .functions import Function
-from .linear_form_lebesgue import LinearFormKernel
+from .linear_form_kernel import LinearFormKernel
 
 import numpy as np
 
@@ -78,7 +78,15 @@ class Sobolev(MassWeightedHilbertSpace):
         if not isinstance(x, Function):
             raise TypeError("Expected Function for primal element")
         kernel = self._mass_operator(x)
-        return LinearFormKernel(self, kernel=kernel)
+        # Get integration config from underlying Lebesgue space
+        int_cfg = self._underlying_space.integration.dual
+        par_cfg = self._underlying_space.parallel.dual
+        return LinearFormKernel(
+            self,
+            kernel=kernel,
+            integration_config=int_cfg,
+            parallel_config=par_cfg
+        )
 
     def from_dual(self, xp: 'LinearFormKernel') -> 'Function':
         # Handle both LinearFormKernel and generic LinearForm
@@ -232,6 +240,7 @@ class Sobolev(MassWeightedHilbertSpace):
         laplacian_method: str = 'spectral',
         dofs: int = 100,
         n_samples: int = 2048,
+        integration_config = None,
     ) -> "SobolevSpaceDirectSum":
         """
         Create a SobolevSpaceDirectSum with discontinuities.
@@ -377,6 +386,11 @@ class Sobolev(MassWeightedHilbertSpace):
             # Use same boundary conditions for all subspaces
             bcs_list = [bcs] * n_subspaces
 
+        # Create default integration config if not provided
+        from .configs import IntegrationConfig
+        if integration_config is None:
+            integration_config = IntegrationConfig(method='simpson', n_points=1000)
+
         # Create subspaces with their own Laplacian operators
         subspaces = []
         for d, subdomain, b, bc in zip(dims, subdomains, bases, bcs_list):
@@ -391,7 +405,8 @@ class Sobolev(MassWeightedHilbertSpace):
                 alpha,
                 method=laplacian_method,
                 dofs=dofs,
-                n_samples=n_samples
+                n_samples=n_samples,
+                integration_config=integration_config
             )
 
             # Create Sobolev space on this subdomain
@@ -439,7 +454,17 @@ class SobolevSpaceDirectSum(HilbertSpaceDirectSum):
         # This returns a list of LinearFormKernel objects with mass-weighted kernels
         kernels = [space.to_dual(x).kernel for space, x in zip(self._spaces, xs)]
 
-        return LinearFormKernel(self, kernel=kernels)
+        # Get integration config from first subspace's underlying Lebesgue space
+        # All subspaces should have the same config
+        first_subspace = self._spaces[0]
+        int_cfg = first_subspace._underlying_space.integration.dual
+        par_cfg = first_subspace._underlying_space.parallel.dual
+        return LinearFormKernel(
+            self,
+            kernel=kernels,
+            integration_config=int_cfg,
+            parallel_config=par_cfg
+        )
 
     def from_dual(self, xp: LinearFormKernel) -> List[Function]:
         """
@@ -456,8 +481,12 @@ class SobolevSpaceDirectSum(HilbertSpaceDirectSum):
             # The kernel is a list of mass-weighted functions
             # Apply from_dual to each to get back the original functions
             if isinstance(xp.kernel, list):
-                return [space.from_dual(LinearFormKernel(space, kernel=k))
-                        for space, k in zip(self._spaces, xp.kernel)]
+                # Use the integration config from xp (the parent LinearFormKernel)
+                int_cfg = xp.integration_config
+                par_cfg = xp.parallel_config
+                return [space.from_dual(LinearFormKernel(
+                    space, kernel=k, integration_config=int_cfg, parallel_config=par_cfg
+                )) for space, k in zip(self._spaces, xp.kernel)]
             else:
                 raise ValueError("Expected kernel to be a list for direct sum")
         else:

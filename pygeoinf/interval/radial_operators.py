@@ -18,6 +18,7 @@ from .sobolev_space import Sobolev
 from .boundary_conditions import BoundaryConditions
 from .functions import Function
 from .providers import SpectrumProvider, EigenvalueProvider
+from .configs import IntegrationConfig, ParallelConfig
 
 
 class RadialLaplacianEigenvalueProvider(EigenvalueProvider):
@@ -479,8 +480,7 @@ class RadialLaplacian(SpectralOperator):
         ell: int = 0,
         fd_order: int = 2,
         n_samples: int = 512,
-        integration_method: Literal['trapz', 'simpson'] = 'simpson',
-        npoints: int = 1000
+        integration_config: IntegrationConfig,
     ):
         """
         Initialize the radial Laplacian operator.
@@ -494,8 +494,7 @@ class RadialLaplacian(SpectralOperator):
             ell: Angular momentum quantum number (default: 0)
             fd_order: Order of finite difference stencil (2, 4, 6)
             n_samples: Number of samples for spectral transforms
-            integration_method: Method for numerical integration
-            npoints: Number of points for numerical integration
+            integration_config: Integration configuration
         """
         self._domain = domain
         self._boundary_conditions = boundary_conditions
@@ -505,8 +504,9 @@ class RadialLaplacian(SpectralOperator):
         self._fd_order = fd_order
         self._method = method
         self._n_samples = max(n_samples, self._dofs)
-        self._integration_method = integration_method
-        self._npoints = npoints
+
+        # Store integration config
+        self.integration = integration_config
 
         super().__init__(domain, domain, self._apply)
 
@@ -689,8 +689,7 @@ class InverseRadialLaplacian(SpectralOperator):
         ell: int = 0,
         fem_type: str = "hat",
         n_samples: int = 512,
-        integration_method: Literal['trapz', 'simpson'] = 'simpson',
-        npoints: int = 1000
+        integration_config: IntegrationConfig,
     ):
         """
         Initialize the inverse radial Laplacian operator.
@@ -704,8 +703,7 @@ class InverseRadialLaplacian(SpectralOperator):
             ell: Angular momentum quantum number (default: 0)
             fem_type: FEM type ('hat' or 'general')
             n_samples: Number of samples for spectral transforms
-            integration_method: Method for numerical integration
-            npoints: Number of points for numerical integration
+            integration_config: Integration configuration
         """
         if not isinstance(domain, (Lebesgue, Sobolev)):
             raise TypeError(
@@ -720,8 +718,9 @@ class InverseRadialLaplacian(SpectralOperator):
         self._ell = ell
         self._fem_type = fem_type
         self._n_samples = max(n_samples, self._dofs)
-        self._integration_method = integration_method
-        self._npoints = npoints
+
+        # Store integration config
+        self.integration = integration_config
 
         super().__init__(domain, domain, self._apply)
 
