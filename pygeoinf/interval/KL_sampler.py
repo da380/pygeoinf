@@ -6,6 +6,11 @@ eigenpairs (λ_i, φ_i). Generates samples using truncated expansion:
     u = m + Σ_{i<k} sqrt(λ_i) ξ_i φ_i,  ξ_i ~ N(0,1).
 
 Also returns a covariance factor L so that C ≈ L L*.
+
+Supports both Lebesgue (unweighted) and Sobolev (mass-weighted) spaces:
+- In L² spaces: Uses eigenvalues λ_i directly from the covariance operator
+- In H^s spaces: Adjusts eigenvalues to λ_i' = λ_i / μ_i where μ_i are the
+  mass operator eigenvalues, automatically handling the weighted inner product
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ if TYPE_CHECKING:
 from pygeoinf import EuclideanSpace, LinearOperator
 from pygeoinf import MassWeightedHilbertSpace
 
+
 @dataclass
 class TruncationInfo:
     n_modes: int
@@ -29,6 +35,10 @@ class TruncationInfo:
 
 class KLSampler:
     """Sampler for Gaussian measures using a spectral (KL) expansion.
+
+    Automatically handles both Lebesgue (unweighted) and Sobolev (mass-weighted)
+    spaces. For Sobolev spaces, eigenvalues are adjusted to account for the
+    mass operator: λ_i' = λ_i / μ_i where μ_i are the mass eigenvalues.
 
     Parameters
     ----------
@@ -85,23 +95,114 @@ class KLSampler:
         self._eigenfunctions: List = []
         self._truncation: Optional[TruncationInfo] = None
 
+        # Detect and configure mass weighting
+        self._setup_mass_weighting()
+
+    # ------------------------------------------------------------------
+    # Mass weighting detection and configuration
+    # ------------------------------------------------------------------
+    def _setup_mass_weighting(self) -> None:
+        """
+        Detect if domain is mass-weighted and configure eigenvalue adjustment.
+
+        For Sobolev spaces (MassWeightedHilbertSpace), the covariance operator
+        eigenvalues must be adjusted: λ_i' = λ_i / μ_i where μ_i are the
+        mass operator eigenvalues.
+        """
+        self._is_weighted = isinstance(self._domain, MassWeightedHilbertSpace)
+
+        if not self._is_weighted:
+            # Unweighted space - no adjustment needed
+            self._mass_operator = None
+            return
+
+        # Extract mass operator from the weighted space
+        self._mass_operator = self._domain.mass_operator
+
+        # Check if mass operator is BesselSobolev (has spectral decomposition)
+        self._is_bessel_sobolev = self._detect_bessel_sobolev()
+
+        if not self._is_bessel_sobolev:
+            raise NotImplementedError(
+                "KLSampler currently only supports BesselSobolev mass "
+                "operators. General mass-weighted spaces require numerical "
+                "eigenvalue computation, which is not yet implemented."
+            )
+
+    def _detect_bessel_sobolev(self) -> bool:
+        """Check if mass operator is a BesselSobolev operator."""
+        # Avoid circular import
+        from .operators import BesselSobolev
+        return isinstance(self._mass_operator, BesselSobolev)
+
+    def _get_mass_eigenvalue(self, i: int) -> float:
+        """
+        Get the i-th eigenvalue of the mass operator squared.
+
+        For BesselSobolev mass operator M with parameters (k, s):
+        - M has eigenvalues μ_i = (k² + λ_i^L)^(s/2)
+        - The squared mass operator M² has eigenvalues μ_i² = (k² + λ_i^L)^s
+        - We need μ_i² for the covariance adjustment: C' = M^{-2} C
+
+        Returns 1.0 for unweighted spaces (backward compatible).
+
+        Parameters
+        ----------
+        i : int
+            Eigenvalue index
+
+        Returns
+        -------
+        float
+            The squared mass eigenvalue μ_i²
+        """
+        if not self._is_weighted:
+            return 1.0
+
+        # For BesselSobolev: eigenvalue is (k² + λ_i^L)^(s/2)
+        # We need the square: μ_i² = (k² + λ_i^L)^s
+        return self._mass_operator.get_eigenvalue(i)
+
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
     def _fetch_eigenpair(self, i: int):
+        """
+        Fetch eigenvalue and eigenfunction, adjusting for mass weighting.
+
+        For mass-weighted spaces (Sobolev), returns adjusted eigenvalue:
+            λ_i' = λ_i / μ_i²
+        where λ_i is the raw eigenvalue from the covariance operator and
+        μ_i² is the squared mass operator eigenvalue.
+
+        Eigenfunctions remain unchanged (same basis in L² and H^s).
+        """
         if i < len(self._eigenvalues):
             return self._eigenvalues[i], self._eigenfunctions[i]
-        # Pull from operator
 
-        lam = float(self._op.get_eigenvalue(i))
-        if lam < 0:
+        # Get raw eigenvalue from covariance operator (in L² sense)
+        lam_raw = float(self._op.get_eigenvalue(i))
+        if lam_raw < 0:
             # Defensive clamp (should not happen for covariance)
-            lam = 0.0
+            lam_raw = 0.0
+
+        # Adjust for mass weighting: λ' = λ / μ²
+        mu = self._get_mass_eigenvalue(i)
+        if mu > 0:
+            lam_adjusted = lam_raw / mu
+        else:
+            # Should not happen for positive-definite mass operators
+            lam_adjusted = 0.0
+
+        # Eigenfunction remains unchanged (same basis in both spaces)
         func = self._op.get_eigenfunction(i)
+
         if self._cache_enabled:
-            self._eigenvalues.append(lam)
+            self._eigenvalues.append(lam_adjusted)
             self._eigenfunctions.append(func)
-        return lam, func
+
+        return lam_adjusted, func
 
     def _determine_truncation(self) -> TruncationInfo:
         if self._truncation is not None:
@@ -160,10 +261,14 @@ class KLSampler:
     def covariance_factor(self) -> 'LinearOperator':
         """Return a covariance factor L : R^k → H with C ≈ L L*.
 
+        For mass-weighted spaces, this returns the adjusted covariance factor
+        L' = M^{-1} L where eigenvalues are already scaled by 1/μ_i².
+
         Adjoint mapping implements L*: H → R^k via inner products with
-        eigenfunctions multiplied by sqrt(λ_i) (assuming orthonormality).
+        eigenfunctions multiplied by sqrt(λ_i) (already adjusted).
         """
         k = self.n_modes
+        # Eigenvalues already adjusted for mass weighting in _fetch_eigenpair
         eigvals = np.array([self.eigenvalue(i) for i in range(k)])
         eigfuncs = [self.eigenfunction(i) for i in range(k)]
         sqrt_lam = np.sqrt(eigvals)
@@ -238,9 +343,16 @@ class KLSampler:
         return Function(codomain, evaluate_callable=evaluate_variance)
 
     def sample(self):
-        """Draw a single sample (Function / element of domain)."""
+        """
+        Draw a single sample (Function / element of domain).
+
+        For mass-weighted spaces, uses adjusted eigenvalues automatically:
+            u = m + Σ sqrt(λ_i / μ_i²) ξ_i φ_i
+        where eigenvalues are already adjusted in _fetch_eigenpair.
+        """
         k = self.n_modes
         z = self._rng.standard_normal(k)
+        # Eigenvalues already adjusted for mass weighting
         eigvals = [self.eigenvalue(i) for i in range(k)]
         eigfuncs = [self.eigenfunction(i) for i in range(k)]
         sqrt_lam = np.sqrt(np.maximum(eigvals, 0))
