@@ -103,6 +103,8 @@ true_model_functions = {
     'step': lambda x: np.where(x < 0.5, 0.2, 0.8),
     'peak': lambda x: np.exp(-50*(x-0.5)**2),
     'polynomial': lambda x: 2*x**3 - 3*x**2 + x,
+    'sine_linear': lambda x: np.exp(-((x - function_domain.center)/0.5)**2) * np.sin(5 * np.pi * x) + x,
+
 }
 
 # Initial selections
