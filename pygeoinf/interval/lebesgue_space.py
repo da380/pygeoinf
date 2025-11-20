@@ -546,6 +546,8 @@ class Lebesgue(HilbertSpace):
         weight: Optional[Callable] = None,
         dim_per_subspace: Optional[list] = None,
         basis_per_subspace: Optional[list] = None,
+        integration_config = None,
+        parallel_config = None,
     ) -> LebesgueSpaceDirectSum:
         """
         Create a LebesgueSpaceDirectSum with discontinuities.
@@ -575,6 +577,10 @@ class Lebesgue(HilbertSpace):
                 for each subspace. Each element can be a string (basis type)
                 or 'none'. If provided, overrides the `basis` parameter.
                 Must have length equal to number of subspaces.
+            integration_config: Integration configuration for all subspaces.
+                If None, uses default configuration.
+            parallel_config: Parallel configuration for all subspaces.
+                If None, uses default configuration.
 
         Returns:
             LebesgueSpaceDirectSum representing the space with discontinuities
@@ -687,7 +693,9 @@ class Lebesgue(HilbertSpace):
 
         # Create subspaces
         subspaces = [
-            cls(d, subdomain, basis=b, weight=weight)
+            cls(d, subdomain, basis=b, weight=weight,
+                integration_config=integration_config,
+                parallel_config=parallel_config)
             for d, subdomain, b in zip(dims, subdomains, bases)
         ]
 

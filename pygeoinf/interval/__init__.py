@@ -27,6 +27,7 @@ from .sobolev_space import Sobolev, SobolevSpaceDirectSum
 from .interval_domain import IntervalDomain
 from .boundary_conditions import BoundaryConditions
 from .linear_form_kernel import LinearFormKernel
+from .KL_sampler import KLSampler
 from .configs import (
     IntegrationConfig,
     LebesgueIntegrationConfig,
@@ -73,4 +74,5 @@ __all__ = [
     'LebesgueIntegrationConfig',
     'ParallelConfig',
     'LebesgueParallelConfig',
+    'KLSampler'
 ]

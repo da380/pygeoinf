@@ -272,6 +272,7 @@ class Sobolev(MassWeightedHilbertSpace):
         dofs: int = 100,
         n_samples: int = 2048,
         integration_config = None,
+        parallel_config = None,
     ) -> "SobolevSpaceDirectSum":
         """
         Create a SobolevSpaceDirectSum with discontinuities.
@@ -311,6 +312,10 @@ class Sobolev(MassWeightedHilbertSpace):
             laplacian_method: Method for Laplacian operators ('spectral', etc.)
             dofs: Number of degrees of freedom for Laplacian operators
             n_samples: Number of samples for spectral operators
+            integration_config: Integration configuration for all subspaces.
+                If None, uses default configuration.
+            parallel_config: Parallel configuration for all subspaces.
+                If None, uses default configuration.
 
         Returns:
             SobolevSpaceDirectSum representing the space with discontinuities
@@ -431,7 +436,8 @@ class Sobolev(MassWeightedHilbertSpace):
             # Create underlying Lebesgue space for this subdomain
             M_lebesgue = Lebesgue(
                 0, subdomain, basis=None,
-                integration_config=integration_config
+                integration_config=integration_config,
+                parallel_config=parallel_config
             )
 
             # Create Laplacian operator for this subdomain

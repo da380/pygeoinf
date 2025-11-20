@@ -276,7 +276,7 @@ class Laplacian(SpectralOperator):
         dofs: Optional[int] = None,
         fd_order: int = 2,
         n_samples: int = 512,
-        integration_config: IntegrationConfig,
+        integration_config: IntegrationConfig = None,
     ):
         """
         Initialize the negative Laplacian operator.
@@ -300,10 +300,11 @@ class Laplacian(SpectralOperator):
         self._n_samples = max(n_samples, self._dofs)  # Ensure enough samples
 
         # Store integration config
+        if integration_config is None:
+            integration_config = IntegrationConfig(method='simpson', n_points=1000)
         self.integration = integration_config
 
         super().__init__(domain, domain, self._apply)
-
         # Initialize method-specific components
         self._spectrum_provider = LaplacianSpectrumProvider(
             domain,

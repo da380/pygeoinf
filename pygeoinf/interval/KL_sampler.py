@@ -163,7 +163,6 @@ class KLSampler:
         # We need the square: μ_i² = (k² + λ_i^L)^s
         return self._mass_operator.get_eigenvalue(i)
 
-
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -182,27 +181,20 @@ class KLSampler:
             return self._eigenvalues[i], self._eigenfunctions[i]
 
         # Get raw eigenvalue from covariance operator (in L² sense)
-        lam_raw = float(self._op.get_eigenvalue(i))
-        if lam_raw < 0:
-            # Defensive clamp (should not happen for covariance)
-            lam_raw = 0.0
+        lam = float(self._op.get_eigenvalue(i))
 
         # Adjust for mass weighting: λ' = λ / μ²
         mu = self._get_mass_eigenvalue(i)
-        if mu > 0:
-            lam_adjusted = lam_raw / mu
-        else:
-            # Should not happen for positive-definite mass operators
-            lam_adjusted = 0.0
 
         # Eigenfunction remains unchanged (same basis in both spaces)
         func = self._op.get_eigenfunction(i)
+        func_adjusted = func * (np.power(np.sqrt(mu), -1.0))
 
         if self._cache_enabled:
-            self._eigenvalues.append(lam_adjusted)
-            self._eigenfunctions.append(func)
+            self._eigenvalues.append(lam)
+            self._eigenfunctions.append(func_adjusted)
 
-        return lam_adjusted, func
+        return lam, func_adjusted
 
     def _determine_truncation(self) -> TruncationInfo:
         if self._truncation is not None:
