@@ -6,6 +6,11 @@ from typing import Union, Optional, Literal, List
 import numpy as np
 
 from .base import SpectralOperator
+from .spectral_helpers import (
+    build_eigenfunction_expansion,
+    compute_spectral_coefficients_fast,
+    compute_spectral_coefficients_slow,
+)
 from ..lebesgue_space import Lebesgue
 from ..sobolev_space import Sobolev
 from ..boundary_conditions import BoundaryConditions
@@ -240,62 +245,26 @@ class Laplacian(SpectralOperator):
             self._dofs
         )
 
-        # Collect terms to avoid deep recursion from repeated +=
-        terms = []
-        for i in range(self._dofs):
-            # Get the basis functions
-            eigval = self.get_eigenvalue(i)
-
-            # Compute coefficient via inner product
-            coeff = coefficients[i] * (eigval)
-
-            if abs(coeff) > 1e-14:
-                eigenfunc = self.get_eigenfunction(i)
-                terms.append((coeff, eigenfunc))
-
-        # Create single callable that evaluates all terms
-        if not terms:
-            return self._domain.zero
-
-        def f_new_eval(x):
-            result = (np.zeros_like(x, dtype=float)
-                      if isinstance(x, np.ndarray) else 0.0)
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new_eval)
+        # Build eigenfunction expansion using helper
+        terms = compute_spectral_coefficients_fast(
+            self, f, coefficients,
+            scale_func=lambda i, ev: ev  # Laplacian scales by eigenvalue
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def _apply_spectral_slow(self, f: Function) -> Function:
         """Apply Laplacian using numerical integration (Robin/Mixed BCs)."""
-        # Collect terms to avoid deep recursion from repeated +=
-        terms = []
-        for i in range(self._dofs):
-            eigval = self.get_eigenvalue(i)
-            eigfunc = self.get_eigenfunction(i)
-
-            # Compute coefficient via numerical integration
-            coeff = (f * eigfunc).integrate(
-                method=self.integration.method,
-                n_points=self.integration.n_points
-            )
-            scaled_coeff = coeff * eigval
-
-            if abs(scaled_coeff) > 1e-14:
-                terms.append((scaled_coeff, eigfunc))
-
-        # Create single callable that evaluates all terms
-        if not terms:
-            return self._domain.zero
-
-        def f_new_eval(x):
-            result = (np.zeros_like(x, dtype=float)
-                      if isinstance(x, np.ndarray) else 0.0)
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new_eval)
+        terms = compute_spectral_coefficients_slow(
+            self, f, self._dofs,
+            self.integration.method,
+            self.integration.n_points,
+            scale_func=lambda i, ev: ev  # Laplacian scales by eigenvalue
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def _apply_finite_difference(self, f: Function) -> Function:
         """Apply Laplacian using finite difference method."""
@@ -531,68 +500,27 @@ class InverseLaplacian(SpectralOperator):
             # For Neumann and periodic, skip zero eigenvalue
             coefficients = coefficients[1:]
 
-        # Collect terms to avoid deep recursion from repeated +=
-        terms = []
-        for i in range(self._dofs):
-            eigval = self.get_eigenvalue(i)
-
-            if abs(eigval) < 1e-14:
-                continue  # Skip zero eigenvalue
-
-            # Compute coefficient via inner product
-            coeff = coefficients[i] * eigval
-
-            if abs(coeff) > 1e-14:
-                eigenfunc = self.get_eigenfunction(i)
-                terms.append((coeff, eigenfunc))
-
-        # Create single callable that evaluates all terms
-        if not terms:
-            return self._domain.zero
-
-        def f_new_eval(x):
-            result = (np.zeros_like(x, dtype=float)
-                      if isinstance(x, np.ndarray) else 0.0)
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new_eval)
+        # Use spectral helpers for eigenfunction expansion
+        terms = compute_spectral_coefficients_fast(
+            self, f, coefficients,
+            scale_func=lambda i, ev: ev  # InverseLaplacian uses eigenvalue
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def _apply_spectral_slow(self, f: Function) -> Function:
         """Apply inverse Laplacian using numerical integration."""
-        # Collect terms to avoid deep recursion from repeated +=
-        terms = []
-        for i in range(self._dofs):
-            eigval = self.get_eigenvalue(i)
-
-            if abs(eigval) < 1e-14:
-                continue  # Skip zero eigenvalue
-
-            eigfunc = self.get_eigenfunction(i)
-
-            # Compute coefficient via numerical integration
-            coeff = (f * eigfunc).integrate(
-                method=self.integration.method,
-                n_points=self.integration.n_points
-            )
-            scaled_coeff = coeff * eigval
-
-            if abs(scaled_coeff) > 1e-14:
-                terms.append((scaled_coeff, eigfunc))
-
-        # Create single callable that evaluates all terms
-        if not terms:
-            return self._domain.zero
-
-        def f_new_eval(x):
-            result = (np.zeros_like(x, dtype=float)
-                      if isinstance(x, np.ndarray) else 0.0)
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new_eval)
+        terms = compute_spectral_coefficients_slow(
+            self, f, self._dofs,
+            self.integration.method,
+            self.integration.n_points,
+            scale_func=lambda i, ev: ev,  # InverseLaplacian uses eigenvalue
+            skip_zero_eigenvalues=True  # Skip zero modes for inverse
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def _apply_fem(self, f: Function) -> Function:
         f = (1/self._alpha) * f  # Scale input by alpha

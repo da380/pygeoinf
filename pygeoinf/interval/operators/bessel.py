@@ -14,6 +14,12 @@ from ..fast_spectral_integration import (
     fast_spectral_coefficients,
     create_uniform_samples,
 )
+from .spectral_helpers import (
+    build_eigenfunction_expansion,
+    compute_spectral_coefficients_fast,
+    compute_spectral_coefficients_slow,
+    validate_eigenvalue,
+)
 
 
 class BesselSobolev(LinearOperator):
@@ -130,73 +136,26 @@ class BesselSobolev(LinearOperator):
             f_samples, self._boundary_condition, domain_length, self._dofs
         )
 
-        # Apply Bessel scaling to coefficients
-        # Collect terms to avoid deep recursion from repeated +=
-        terms = []
-        for i in range(self._dofs):
-            eigval = self._L.get_eigenvalue(i)
-            if eigval is None:
-                raise ValueError(f"Eigenvalue not available for index {i}")
-            if eigval < 0:
-                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
-            # Bessel scaling: (k² + λᵢ)^s
-            scale = (self._k**2 + eigval)**(self._s / 2)
-            coeff = coefficients[i] * scale
-
-            if abs(coeff) > 1e-14:  # Skip negligible coefficients
-                eigfunc = self._L.get_eigenfunction(i)
-                terms.append((coeff, eigfunc))
-
-        # Create single callable that evaluates all terms
-        if not terms:
-            return self._domain.zero
-
-        def f_new(x):
-            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new)
+        # Use spectral helpers for eigenfunction expansion with Bessel scaling
+        terms = compute_spectral_coefficients_fast(
+            self._L, f, coefficients,
+            scale_func=lambda i, ev: (self._k**2 + ev)**(self._s / 2)
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def _apply_slow(self, f: Function) -> Function:
         """Apply using slow numerical integration (fallback)."""
-        # Collect terms to avoid deep recursion from repeated +=
-        terms = []
-        for i in range(self._dofs):
-            eigval = self._L.get_eigenvalue(i)
-            if eigval is None:
-                raise ValueError(f"Eigenvalue not available for index {i}")
-            if eigval < 0:
-                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
-            eigfunc = self._L.get_eigenfunction(i)
-            if eigfunc is None:
-                raise ValueError(f"Eigenfunction not available for index {i}")
-
-            # Slow numerical integration
-            coeff = (f * eigfunc).integrate(
-                method=self.integration.method,
-                n_points=self.integration.n_points
-            )
-            scale = (self._k**2 + eigval)**(self._s / 2)
-
-            scaled_coeff = scale * coeff
-            if abs(scaled_coeff) > 1e-14:
-                terms.append((scaled_coeff, eigfunc))
-
-        # Create single callable that evaluates all terms
-        if not terms:
-            return self._domain.zero
-
-        def f_new(x):
-            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new)
+        terms = compute_spectral_coefficients_slow(
+            self._L, f, self._dofs,
+            self.integration.method,
+            self.integration.n_points,
+            scale_func=lambda i, ev: (self._k**2 + ev)**(self._s / 2)
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def get_eigenfunction(self, index: int) -> Function:
         """Get the eigenfunction at a specific index."""
@@ -305,66 +264,26 @@ class BesselSobolevInverse(LinearOperator):
             f_samples, self._boundary_condition, domain_length, self._dofs
         )
 
-        # Apply inverse Bessel scaling to coefficients
-        terms = []
-        for i in range(self._dofs):
-            eigval = self._L.get_eigenvalue(i)
-            if eigval is None:
-                raise ValueError(f"Eigenvalue not available for index {i}")
-            if eigval < 0:
-                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
-            # Inverse Bessel scaling: (k² + λᵢ)^(-s)
-            scale = (self._k**2 + eigval)**(-self._s / 2)
-            coeff = coefficients[i] * scale
-
-            if abs(coeff) > 1e-14:  # Skip negligible coefficients
-                eigfunc = self._L.get_eigenfunction(i)
-
-                terms.append((coeff, eigfunc))
-
-        def f_new(x):
-            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new)
+        # Use spectral helpers for eigenfunction expansion with inverse Bessel scaling
+        terms = compute_spectral_coefficients_fast(
+            self._L, f, coefficients,
+            scale_func=lambda i, ev: (self._k**2 + ev)**(-self._s / 2)
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def _apply_slow(self, f: Function) -> Function:
         """Apply using slow numerical integration (fallback)."""
-        # Collect terms to avoid deep recursion from repeated +=
-        terms = []
-        for i in range(self._dofs):
-            eigval = self._L.get_eigenvalue(i)
-            if eigval is None:
-                raise ValueError(f"Eigenvalue not available for index {i}")
-            if eigval < 0:
-                raise ValueError(f"Negative eigenvalue {eigval} at index {i}")
-
-            eigfunc = self._L.get_eigenfunction(i)
-            if eigfunc is None:
-                raise ValueError(f"Eigenfunction not available for index {i}")
-
-            # Slow numerical integration
-            coeff = (f * eigfunc).integrate(method='simpson', n_points=10000)
-            scale = (self._k**2 + eigval)**(-self._s / 2)
-
-            scaled_coeff = scale * coeff
-            if abs(scaled_coeff) > 1e-14:
-                terms.append((scaled_coeff, eigfunc))
-
-        # Create single callable that evaluates all terms
-        if not terms:
-            return self._domain.zero
-
-        def f_new(x):
-            result = np.zeros_like(x, dtype=float) if isinstance(x, np.ndarray) else 0.0
-            for coeff, eigfunc in terms:
-                result += coeff * eigfunc(x)
-            return result
-
-        return Function(self._codomain, evaluate_callable=f_new)
+        terms = compute_spectral_coefficients_slow(
+            self._L, f, self._dofs,
+            'simpson',
+            10000,
+            scale_func=lambda i, ev: (self._k**2 + ev)**(-self._s / 2)
+        )
+        return build_eigenfunction_expansion(
+            terms, self._domain, self._codomain
+        )
 
     def get_eigenfunction(self, index: int) -> Function:
         """Get the eigenfunction at a specific index."""
