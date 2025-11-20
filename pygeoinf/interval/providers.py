@@ -20,6 +20,8 @@ import math
 from abc import ABC, abstractmethod
 from typing import Optional, Union, TYPE_CHECKING
 
+from .utils.robin_utils import RobinRootFinder
+
 if TYPE_CHECKING:
     from .lebesgue_space import Lebesgue
     from .sobolev_space import Sobolev
@@ -417,71 +419,14 @@ class LaplacianEigenvalueProvider(EigenvalueProvider):
         alpha_L = float(self._boundary_conditions.get_parameter('right_alpha'))
         beta_L = float(self._boundary_conditions.get_parameter('right_beta'))
 
-        def D(mu: float) -> float:
-            # Characteristic: (alpha_0 alpha_L + beta_0 beta_L μ^2) sin(μL) + μ(alpha_0 beta_L − beta_0 alpha_L) cos(μL)
-            return ((alpha_0*alpha_L + beta_0*beta_L*mu*mu) * math.sin(mu*L)
-                    + mu*(alpha_0*beta_L - beta_0*alpha_L) * math.cos(mu*L))
-
-        # special zero-mode only if pure Neumann at both ends
-        if not self._robin_mu:
-            if beta_0 == 0.0 and beta_L == 0.0:
-                # DD → no zero root
-                pass
-            elif alpha_0 == 0.0 and alpha_L == 0.0:
-                # NN → μ0 = 0 (only if not inverse we will use it)
-                self._robin_mu.append(0.0)
-
-        # bracket the next root ~ near nπ/L
-        # Use target_index directly to determine bracket
-        # The nth eigenvalue (index n) has root roughly at (n+1)*π/L
-        # We want index=target_index, so root near (target_index+1)*π/L
-        n = target_index + 1
-        # Search bracket centered on nπ/L: [(n-0.5)π/L, (n+0.5)π/L]
-        # This ensures exactly one root in the bracket
-        left = (n - 0.5) * math.pi / L
-        right = (n + 0.5) * math.pi / L
-
-        # robustify: expand bracket until sign change or up to a few attempts
-        Dl, Dr = D(left), D(right)
-        attempts = 0
-        while Dl * Dr > 0 and attempts < 6:
-            # gently expand to catch tangential crossings
-            left *= 0.9
-            right *= 1.1
-            Dl, Dr = D(left), D(right)
-            attempts += 1
-        if Dl * Dr > 0:
-            # fallback: scan midpoints in the interval to locate sign change
-            M = 64
-            xs = np.linspace(left, right, M+1)
-            vals = np.array([D(xi) for xi in xs])
-            sign = np.sign(vals)
-            idx = np.where(sign[:-1] * sign[1:] <= 0)[0]
-            if len(idx) == 0:
-                raise RuntimeError("Failed to bracket Robin eigenvalue root.")
-            i0 = idx[0]
-            left, right = xs[i0], xs[i0+1]
-
-        mu = self._bisect(D, left, right, tol=1e-12, maxit=100)
+        # Use shared RobinRootFinder utility
+        mu = RobinRootFinder.compute_robin_eigenvalue(
+            target_index, alpha_0, beta_0, alpha_L, beta_L, L,
+            tol=1e-12, maxit=100
+        )
         self._robin_mu.append(mu)
 
-    @staticmethod
-    def _bisect(F, a, b, tol=1e-12, maxit=100):
-        fa, fb = F(a), F(b)
-        if fa == 0.0: return a
-        if fb == 0.0: return b
-        if fa * fb > 0:
-            raise ValueError("Bisection: no sign change on [a,b].")
-        for _ in range(maxit):
-            c = 0.5*(a+b)
-            fc = F(c)
-            if abs(fc) < tol or 0.5*(b-a) < tol:
-                return c
-            if fa*fc <= 0:
-                b, fb = c, fc
-            else:
-                a, fa = c, fc
-        return 0.5*(a+b)
+    # Note: _bisect method removed - now using RobinRootFinder.bisect
 
 
 class CustomEigenvalueProvider(EigenvalueProvider):
