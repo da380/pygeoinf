@@ -366,7 +366,7 @@ class InverseLaplacian(SpectralOperator):
         dofs: int = 100,
         fem_type: str = "hat",
         n_samples: int = 512,
-        integration_config: IntegrationConfig,
+        integration_config: IntegrationConfig = None,
     ):
         """
         Initialize the Laplacian inverse operator.
@@ -400,7 +400,9 @@ class InverseLaplacian(SpectralOperator):
         self._fem_type = fem_type
         self._n_samples = max(n_samples, self._dofs)
 
-        # Store integration config
+        # Store integration config with default if not provided
+        if integration_config is None:
+            integration_config = IntegrationConfig(method='simpson', n_points=1000)
         self.integration = integration_config
 
         # Validate fem_type

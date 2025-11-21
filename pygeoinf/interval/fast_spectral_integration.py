@@ -277,7 +277,14 @@ def create_uniform_samples(
 
     if boundary_condition == 'dirichlet':
         # For Dirichlet, exclude boundary points (where basis functions = 0)
-        x = np.linspace(a, b, n_samples + 2)[1:-1]
+        if hasattr(func, 'space') and hasattr(func.space, 'function_domain'):
+            domain_obj = func.space.function_domain
+            if hasattr(domain_obj, 'uniform_mesh'):
+                # Use domain's uniform_mesh method which handles epsilon correctly
+                x = domain_obj.uniform_mesh(n_samples + 2)[1:-1]
+            else:
+                # Fallback: closed interval
+                x = np.linspace(a, b, n_samples + 2)[1:-1]
     elif boundary_condition == 'neumann':
         # For Neumann, use domain's uniform_mesh which respects boundary type
         # and open_epsilon parameter for open/semi-open intervals
@@ -294,10 +301,18 @@ def create_uniform_samples(
             x = np.linspace(a, b, n_samples)
     elif boundary_condition == 'periodic':
         # For periodic, exclude the right endpoint (periodic)
-        x = np.linspace(a, b, n_samples + 1)[:-1]
+        if hasattr(func, 'space') and hasattr(func.space, 'function_domain'):
+            domain_obj = func.space.function_domain
+            if hasattr(domain_obj, 'uniform_mesh'):
+                # Use domain's uniform_mesh method which handles periodicity
+                x = domain_obj.uniform_mesh(n_samples + 1)[:-1]
+            else:
+                # Fallback: closed interval minus last point
+                x = np.linspace(a, b, n_samples + 1)[:-1]
     elif boundary_condition == 'mixed_dirichlet_neumann':
         # DST-II: sample at (k+½)Δx for k=0..N-1
         # Eigenfunctions: sin((n+½)πx/L)
+
         dx = (b - a) / n_samples
         x = a + (np.arange(n_samples) + 0.5) * dx
     elif boundary_condition == 'mixed_neumann_dirichlet':

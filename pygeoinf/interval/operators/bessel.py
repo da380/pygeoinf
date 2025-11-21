@@ -181,7 +181,8 @@ class BesselSobolevInverse(LinearOperator):
 
     def __init__(self, domain: Lebesgue, codomain: Lebesgue, k: float, s: float,
                  L: SpectralOperator, dofs: Optional[int] = None,
-                 n_samples: int = 1024, use_fast_transforms: bool = True):
+                 n_samples: int = 1024, use_fast_transforms: bool = True,
+                 integration_config: IntegrationConfig = IntegrationConfig(method='simpson', n_points=10000)):
         """
         Initialize the fast inverse Bessel potential operator.
 
@@ -194,15 +195,19 @@ class BesselSobolevInverse(LinearOperator):
             dofs: Number of degrees of freedom
             n_samples: Number of samples for fast transform
             use_fast_transforms: If False, fall back to slow method
+            integration_config: Integration configuration for slow path
         """
         self._domain = domain
         self._codomain = codomain
         self._L = L
         self._k = k
         self._s = s
-        self._dofs = dofs
+        self._dofs = dofs if dofs is not None else domain.dim
         self._n_samples = max(n_samples, self._dofs)
         self._use_fast_transforms = use_fast_transforms
+
+        # Store integration config
+        self.integration = integration_config
 
         # Detect boundary condition
         self._boundary_condition = self._detect_boundary_condition()
@@ -277,8 +282,8 @@ class BesselSobolevInverse(LinearOperator):
         """Apply using slow numerical integration (fallback)."""
         terms = compute_spectral_coefficients_slow(
             self._L, f, self._dofs,
-            'simpson',
-            10000,
+            self.integration.method,
+            self.integration.n_points,
             scale_func=lambda i, ev: (self._k**2 + ev)**(-self._s / 2)
         )
         return build_eigenfunction_expansion(

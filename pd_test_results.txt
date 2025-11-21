@@ -1,0 +1,308 @@
+================================================================================
+SYSTEMATIC POSITIVE DEFINITENESS TEST
+================================================================================
+
+Problem setup:
+  Model dimension: 200
+  Data dimension: 50
+  Model space: Discontinuous (2 subspaces)
+
+Creating operators...
+Creating prior covariance C_0...
+
+================================================================================
+EXTRACTING MATRICES
+================================================================================
+
+Extracting G matrix...
+Extracting C_0 matrix...
+Creating C_D matrix...
+
+================================================================================
+TESTING INDIVIDUAL COMPONENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+TEST 1: Data covariance C_D
+--------------------------------------------------------------------------------
+
+C_D:
+  Shape: (50, 50)
+  Symmetric: True
+  Min eigenvalue: 1.238546e-02
+  Max eigenvalue: 1.238546e-02
+  Condition number: 1.00e+00
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 2: Inverse data covariance C_D^{-1}
+--------------------------------------------------------------------------------
+
+C_D^{-1}:
+  Shape: (50, 50)
+  Symmetric: True
+  Min eigenvalue: 8.073984e+01
+  Max eigenvalue: 8.073984e+01
+  Condition number: 1.00e+00
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 3: Prior covariance C_0
+--------------------------------------------------------------------------------
+
+C_0:
+  Shape: (200, 200)
+  Symmetric: True
+  Min eigenvalue: 6.542835e-08
+  Max eigenvalue: 8.284091e-01
+  Condition number: 1.27e+07
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 4: Inverse prior covariance C_0^{-1}
+--------------------------------------------------------------------------------
+Computing C_0^{-1} using pseudo-inverse...
+
+C_0^{-1}:
+  Shape: (200, 200)
+  Symmetric: False
+  Asymmetry: 9.024853e-05
+  Min eigenvalue: 1.207133e+00
+  Max eigenvalue: 1.528389e+07
+  Condition number: 1.27e+07
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✗ NOT POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 5: G^T @ G
+--------------------------------------------------------------------------------
+
+G^T @ G:
+  Shape: (200, 200)
+  Symmetric: True
+  Min eigenvalue: -7.285476e-15
+  Max eigenvalue: 3.783421e+01
+  Condition number: 5.19e+15
+  Negative eigenvalues: 74
+  Significantly negative (< -1e-10): 0
+  ⚠ POSITIVE SEMI-DEFINITE (numerically)
+
+--------------------------------------------------------------------------------
+TEST 6: G @ G^T
+--------------------------------------------------------------------------------
+
+G @ G^T:
+  Shape: (50, 50)
+  Symmetric: True
+  Min eigenvalue: 1.625233e-03
+  Max eigenvalue: 3.783421e+01
+  Condition number: 2.33e+04
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 7: G^T @ C_D^{-1} @ G
+--------------------------------------------------------------------------------
+
+G^T @ C_D^{-1} @ G:
+  Shape: (200, 200)
+  Symmetric: True
+  Min eigenvalue: -5.199401e-13
+  Max eigenvalue: 3.054728e+03
+  Condition number: 5.88e+15
+  Negative eigenvalues: 76
+  Significantly negative (< -1e-10): 0
+  ⚠ POSITIVE SEMI-DEFINITE (numerically)
+
+--------------------------------------------------------------------------------
+TEST 8: G @ C_0 @ G^T
+--------------------------------------------------------------------------------
+
+G @ C_0 @ G^T:
+  Shape: (50, 50)
+  Symmetric: True
+  Min eigenvalue: 1.576513e-08
+  Max eigenvalue: 9.027108e+00
+  Condition number: 5.73e+08
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+================================================================================
+TESTING COMBINATIONS (Normal Equation Form)
+================================================================================
+
+--------------------------------------------------------------------------------
+TEST 9: Normal operator = G^T @ C_D^{-1} @ G + C_0^{-1}
+--------------------------------------------------------------------------------
+
+Normal operator:
+  Shape: (200, 200)
+  Symmetric: False
+  Asymmetry: 9.024853e-05
+  Min eigenvalue: 7.680114e+01
+  Max eigenvalue: 1.528389e+07
+  Condition number: 1.99e+05
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✗ NOT POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 10: Symmetrized normal operator
+--------------------------------------------------------------------------------
+
+Symmetrized normal operator:
+  Shape: (200, 200)
+  Symmetric: True
+  Min eigenvalue: 7.680114e+01
+  Max eigenvalue: 1.528389e+07
+  Condition number: 1.99e+05
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+================================================================================
+TESTING COMBINATIONS (Standard Form)
+================================================================================
+
+--------------------------------------------------------------------------------
+TEST 11: G @ C_0 @ G^T + C_D
+--------------------------------------------------------------------------------
+
+Innovation covariance:
+  Shape: (50, 50)
+  Symmetric: True
+  Min eigenvalue: 1.238548e-02
+  Max eigenvalue: 9.039493e+00
+  Condition number: 7.30e+02
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 12: (G @ C_0 @ G^T + C_D)^{-1}
+--------------------------------------------------------------------------------
+
+Inverse innovation covariance:
+  Shape: (50, 50)
+  Symmetric: True
+  Min eigenvalue: 1.106257e-01
+  Max eigenvalue: 8.073973e+01
+  Condition number: 7.30e+02
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 13: Posterior C_M = C_0 - C_0 @ G^T @ (G @ C_0 @ G^T + C_D)^{-1} @ G @ C_0
+--------------------------------------------------------------------------------
+
+C_M (standard form):
+  Shape: (200, 200)
+  Symmetric: True
+  Min eigenvalue: 6.542835e-08
+  Max eigenvalue: 1.302064e-02
+  Condition number: 1.99e+05
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 14: Posterior C_M = (G^T @ C_D^{-1} @ G + C_0^{-1})^{-1}
+--------------------------------------------------------------------------------
+
+C_M (normal equation form):
+  Shape: (200, 200)
+  Symmetric: True
+  Min eigenvalue: 6.542835e-08
+  Max eigenvalue: 1.302064e-02
+  Condition number: 1.99e+05
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+--------------------------------------------------------------------------------
+TEST 15: Posterior C_M = (Symmetrized normal operator)^{-1}
+--------------------------------------------------------------------------------
+
+C_M (symmetrized normal):
+  Shape: (200, 200)
+  Symmetric: True
+  Min eigenvalue: 6.542835e-08
+  Max eigenvalue: 1.302064e-02
+  Condition number: 1.99e+05
+  Negative eigenvalues: 0
+  Significantly negative (< -1e-10): 0
+  ✓ POSITIVE DEFINITE
+
+================================================================================
+SUMMARY OF RESULTS
+================================================================================
+
+Component                      PD         PSD        Min Eigenvalue 
+--------------------------------------------------------------------------------
+C_D                            ✓          ✓          1.238546e-02
+C_D^{-1}                       ✓          ✓          8.073984e+01
+C_0                            ✓          ✓          6.542835e-08
+C_0^{-1}                       ✗          ✗          1.207133e+00
+G^T @ G                        ✗          ✓          -7.285476e-15
+G @ G^T                        ✓          ✓          1.625233e-03
+G^T @ C_D^{-1} @ G             ✗          ✓          -5.199401e-13
+G @ C_0 @ G^T                  ✓          ✓          1.576513e-08
+Normal operator                ✗          ✗          7.680114e+01
+Symmetrized normal             ✓          ✓          7.680114e+01
+Innovation covariance          ✓          ✓          1.238548e-02
+Inverse innovation             ✓          ✓          1.106257e-01
+C_M (standard)                 ✓          ✓          6.542835e-08
+C_M (normal)                   ✓          ✓          6.542835e-08
+C_M (sym normal)               ✓          ✓          6.542835e-08
+
+================================================================================
+DIAGNOSIS
+================================================================================
+
+⚠️  PROBLEMATIC COMPONENTS:
+
+  C_0^{-1}:
+    Min eigenvalue: 1.207133e+00
+    Significantly negative eigenvalues: 0
+    Ratio to max: 7.898073e-08
+
+  Normal operator:
+    Min eigenvalue: 7.680114e+01
+    Significantly negative eigenvalues: 0
+    Ratio to max: 5.024972e-06
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+Based on the analysis:
+
+1. If G^T @ C_D^{-1} @ G has negative eigenvalues:
+   → This is purely numerical error (mathematically impossible)
+   → Fix: Symmetrize before use
+   → Fix: Add small Tikhonov regularization
+
+2. If C_0^{-1} has issues:
+   → May indicate ill-conditioned prior
+   → Fix: Use pseudo-inverse with appropriate tolerance
+   → Fix: Increase alpha to improve conditioning
+
+3. If normal operator has negative eigenvalues:
+   → Combination of errors from G^T @ C_D^{-1} @ G and C_0^{-1}
+   → Fix: Symmetrize and add regularization
+   → Fix: Use SVD-based solver
+
+4. If posterior C_M has negative eigenvalues:
+   → Error propagated through inversion
+   → Fix: All of the above + increase rtol in GaussianMeasure
+
