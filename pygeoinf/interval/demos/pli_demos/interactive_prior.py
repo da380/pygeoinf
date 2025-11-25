@@ -75,8 +75,8 @@ random_seed = 42
 bc_types = {
     'neumann': ('neumann', 0, 0),
     'dirichlet': ('dirichlet', 0, 0),
-    'mixed_dn': ('mixed', 0, 0),  # Dirichlet left, Neumann right
-    'mixed_nd': ('mixed', 1, 0),  # Neumann left, Dirichlet right
+    'mixed_dn': ('mixed_neumann_dirichlet', 0, 0),  # Dirichlet left, Neumann right
+    'mixed_nd': ('mixed_dirichlet_neumann', 1, 0),  # Neumann left, Dirichlet right
     'periodic': ('periodic', None, None),
 }
 

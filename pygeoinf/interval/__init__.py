@@ -43,7 +43,7 @@ from .operators import (
     SpectralOperator,
     Gradient
 )
-from .radial_operators import (
+from .operators.radial_operators import (
     RadialLaplacian,
     InverseRadialLaplacian
 )

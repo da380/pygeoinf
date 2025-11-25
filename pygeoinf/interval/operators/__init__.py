@@ -20,6 +20,7 @@ from .gradient import Gradient
 from .laplacian import Laplacian, InverseLaplacian
 from .bessel import BesselSobolev, BesselSobolevInverse
 from .sola import SOLAOperator
+from .radial_operators import RadialLaplacian, InverseRadialLaplacian
 
 __all__ = [
     'SpectralOperator',
@@ -29,4 +30,6 @@ __all__ = [
     'BesselSobolev',
     'BesselSobolevInverse',
     'SOLAOperator',
+    'RadialLaplacian',
+    'InverseRadialLaplacian',
 ]
