@@ -226,9 +226,6 @@ class RadialLaplacianEigenvalueProvider(EigenvalueProvider):
         # tan(kL) = kb
         F = lambda k: k * b
         k_root = RobinRootFinder.solve_tan_equation(F, L, index-1)
-        # I have used index-1 because the tan solver looks by default for the
-        # first solution between pi/2 and 3pi/2, but the first solution of the
-        # DN is between -pi/2 and pi/2
         return k_root ** 2
 
     def _compute_nd_eigenvalue(
@@ -274,7 +271,8 @@ class RadialLaplacianEigenvalueProvider(EigenvalueProvider):
         # tan(kL) = (1/b - 1/a) / (k + 1/(abk))
         numerator = 1.0/b - 1.0/a
         F = lambda k: numerator / (k + 1.0/(a * b * k))
-        # index is 1-based, so use (index-1) for pole interval
+        # index is 1-based for nonzero modes (index=1 is first nonzero)
+        # so solve for (index-1)-th root
         k_root = RobinRootFinder.solve_tan_equation(F, L, index - 1)
         return k_root ** 2
 
@@ -282,6 +280,9 @@ class RadialLaplacianEigenvalueProvider(EigenvalueProvider):
 class RadialLaplacianSpectrumProvider(SpectrumProvider):
     """
     Spectrum provider for radial Laplacian eigenfunctions and eigenvalues.
+
+    This provider delegates to the appropriate function provider based on
+    the domain and boundary conditions.
     """
 
     def __init__(
@@ -315,6 +316,49 @@ class RadialLaplacianSpectrumProvider(SpectrumProvider):
             ell
         )
 
+        # Initialize the appropriate function provider
+        self._function_provider = self._create_function_provider()
+
+    def _create_function_provider(self):
+        """Create the appropriate function provider based on domain and BC."""
+        from ..function_providers import (
+            RadialLaplacianDirichletProvider,
+            RadialLaplacianNeumannProvider,
+            RadialLaplacianDDProvider,
+            RadialLaplacianDNProvider,
+            RadialLaplacianNDProvider,
+            RadialLaplacianNNProvider,
+        )
+
+        a = self.space.function_domain.a
+        bc_type = self._boundary_conditions.type
+
+        # Case A: Domain (0, R) with regularity at r=0
+        if np.isclose(a, 0.0, atol=1e-10):
+            if bc_type == 'dirichlet':
+                return RadialLaplacianDirichletProvider(self.space)
+            elif bc_type == 'neumann':
+                return RadialLaplacianNeumannProvider(self.space)
+            else:
+                raise NotImplementedError(
+                    f"Radial Laplacian on (0,R) with BC type '{bc_type}' not implemented"
+                )
+
+        # Case B: Domain (a, b) with 0 < a < b
+        else:
+            if bc_type == 'dirichlet':
+                return RadialLaplacianDDProvider(self.space)
+            elif bc_type == 'mixed_dirichlet_neumann':
+                return RadialLaplacianDNProvider(self.space)
+            elif bc_type == 'mixed_neumann_dirichlet':
+                return RadialLaplacianNDProvider(self.space)
+            elif bc_type == 'neumann':
+                return RadialLaplacianNNProvider(self.space)
+            else:
+                raise NotImplementedError(
+                    f"Radial Laplacian on (a,b) with BC type '{bc_type}' not implemented"
+                )
+
     def get_eigenvalue(self, index: int) -> float:
         """Get eigenvalue at given index."""
         return self._eigenvalue_provider.get_eigenvalue(index)
@@ -323,103 +367,10 @@ class RadialLaplacianSpectrumProvider(SpectrumProvider):
         """
         Get eigenfunction at given index.
 
-        For ℓ=0:
-
-        Case A: Domain (0, R) with regularity at r=0:
-            1. regularity-Dirichlet: φₖ(r) = sqrt(2/R) * sin(kπr/R) / r
-            2. regularity-Neumann: More complex, involves normalization of solutions to tan(kR)=kR
-
-        Case B: Domain (a, b) with 0 < a < b:
-            Standard eigenfunctions for the operator -d²/dr² - (2/r)d/dr on (a,b)
-            (These require more careful derivation)
-
+        Delegates to the appropriate function provider based on domain and BC.
         These are orthonormal with respect to ⟨f,g⟩ = ∫ f(r)g(r) r² dr.
         """
-        a = self.space.function_domain.a
-        b = self.space.function_domain.b
-        L = b - a
-
-        if self._ell == 0:
-            # Case A: Domain includes r=0 (regularity condition)
-            if np.isclose(a, 0.0, atol=1e-10):
-                if self._boundary_conditions.type == 'dirichlet':
-                    # regularity-Dirichlet
-                    k = index + 1
-                    # Eigenfunction: sin(kπr/R)/r, normalized
-                    # Normalization: ∫₀ᴿ |sin(kπr/R)/r|² r² dr = ∫₀ᴿ sin²(kπr/R) dr = R/2
-                    # So normalization factor is sqrt(2/R)
-                    norm = np.sqrt(2.0 / L)
-
-                    def eigenfunction(r):
-                        # Handle r=0 carefully (limit is kπ/R)
-                        r_array = np.atleast_1d(r)
-                        result = np.zeros_like(r_array, dtype=float)
-
-                        # For r > 0
-                        nonzero = r_array > 1e-10
-                        r_nz = r_array[nonzero]
-                        result[nonzero] = norm * np.sin(k * np.pi * r_nz / L) / r_nz
-
-                        # For r ≈ 0, use limit: lim_{r→0} sin(kr)/r = k
-                        zero = ~nonzero
-                        result[zero] = norm * k * np.pi / L
-
-                        return result if r_array.shape else float(result[0])
-
-                    return Function(self.space, evaluate_callable=eigenfunction)
-
-                elif self._boundary_conditions.type in ['neumann']:
-                    # regularity-Neumann: requires normalization of sin(k_n r)/r
-                    # where k_n are roots of tan(kR) = kR
-                    raise NotImplementedError(
-                        "Radial Laplacian eigenfunctions for regularity-Neumann "
-                        "not yet implemented"
-                    )
-                else:
-                    raise ValueError(
-                        f"For domain containing r=0, only 'dirichlet' or 'neumann' "
-                        f"boundary conditions are supported. Got: '{self._boundary_conditions.type}'"
-                    )
-
-            # Case B: Domain does not include r=0
-            else:
-                if self._boundary_conditions.type == 'dirichlet':
-                    # Dirichlet-Dirichlet: need eigenfunctions of -d²/dr² - (2/r)d/dr on (a,b)
-                    # For now, use simple approximation or raise NotImplementedError
-                    raise NotImplementedError(
-                        "Radial Laplacian eigenfunctions for Dirichlet-Dirichlet on (a,b) "
-                        "with a>0 not yet implemented. Use FD method instead."
-                    )
-
-                elif self._boundary_conditions.type == 'neumann':
-                    # Neumann-Neumann
-                    raise NotImplementedError(
-                        "Radial Laplacian eigenfunctions for Neumann-Neumann on (a,b) "
-                        "with a>0 not yet implemented. Use FD method instead."
-                    )
-
-                elif self._boundary_conditions.type == 'mixed_dirichlet_neumann':
-                    # Dirichlet-Neumann
-                    raise NotImplementedError(
-                        "Radial Laplacian eigenfunctions for Dirichlet-Neumann on (a,b) "
-                        "with a>0 not yet implemented. Use FD method instead."
-                    )
-
-                elif self._boundary_conditions.type == 'mixed_neumann_dirichlet':
-                    # Neumann-Dirichlet
-                    raise NotImplementedError(
-                        "Radial Laplacian eigenfunctions for Neumann-Dirichlet on (a,b) "
-                        "with a>0 not yet implemented. Use FD method instead."
-                    )
-
-                else:
-                    raise ValueError(
-                        f"Unsupported boundary condition type: '{self._boundary_conditions.type}'"
-                    )
-        else:
-            raise NotImplementedError(
-                f"Radial Laplacian eigenfunctions for ℓ={self._ell} not yet implemented"
-            )
+        return self._function_provider.get_function_by_index(index)
 
 
 class RadialLaplacian(SpectralOperator):

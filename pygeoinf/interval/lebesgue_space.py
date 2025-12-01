@@ -1011,6 +1011,54 @@ def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
             orthonormal=True,
             basis_type='ND'
         )
+    elif basis_type == 'radial_dirichlet':
+        from pygeoinf.interval.function_providers import RadialLaplacianDirichletProvider
+        return CustomBasisProvider(
+            space,
+            functions_provider=RadialLaplacianDirichletProvider(space),
+            orthonormal=True,
+            basis_type='radial_dirichlet'
+        )
+    elif basis_type == 'radial_neumann':
+        from pygeoinf.interval.function_providers import RadialLaplacianNeumannProvider
+        return CustomBasisProvider(
+            space,
+            functions_provider=RadialLaplacianNeumannProvider(space),
+            orthonormal=True,
+            basis_type='radial_neumann'
+        )
+    elif basis_type == 'radial_DD':
+        from pygeoinf.interval.function_providers import RadialLaplacianDDProvider
+        return CustomBasisProvider(
+            space,
+            functions_provider=RadialLaplacianDDProvider(space),
+            orthonormal=True,
+            basis_type='radial_DD'
+        )
+    elif basis_type == 'radial_DN':
+        from pygeoinf.interval.function_providers import RadialLaplacianDNProvider
+        return CustomBasisProvider(
+            space,
+            functions_provider=RadialLaplacianDNProvider(space),
+            orthonormal=True,
+            basis_type='radial_DN'
+        )
+    elif basis_type == 'radial_ND':
+        from pygeoinf.interval.function_providers import RadialLaplacianNDProvider
+        return CustomBasisProvider(
+            space,
+            functions_provider=RadialLaplacianNDProvider(space),
+            orthonormal=True,
+            basis_type='radial_ND'
+        )
+    elif basis_type == 'radial_NN':
+        from pygeoinf.interval.function_providers import RadialLaplacianNNProvider
+        return CustomBasisProvider(
+            space,
+            functions_provider=RadialLaplacianNNProvider(space),
+            orthonormal=True,
+            basis_type='radial_NN'
+        )
     else:
         raise ValueError(f"Unknown basis type: {basis_type}")
 

@@ -35,6 +35,14 @@ from .boxcar import BoxCarFunctionProvider
 from .discontinuous import DiscontinuousFunctionProvider
 from .bump_gradient import BumpFunctionGradientProvider
 from .kernel import KernelProvider
+from .radial import (
+    RadialLaplacianDirichletProvider,
+    RadialLaplacianNeumannProvider,
+    RadialLaplacianDDProvider,
+    RadialLaplacianDNProvider,
+    RadialLaplacianNDProvider,
+    RadialLaplacianNNProvider,
+)
 
 # All providers have been extracted - no need for dynamic loading
 
@@ -63,4 +71,10 @@ __all__ = [
     'DiscontinuousFunctionProvider',
     'BumpFunctionGradientProvider',
     'KernelProvider',
+    'RadialLaplacianDirichletProvider',
+    'RadialLaplacianNeumannProvider',
+    'RadialLaplacianDDProvider',
+    'RadialLaplacianDNProvider',
+    'RadialLaplacianNDProvider',
+    'RadialLaplacianNNProvider',
 ]
