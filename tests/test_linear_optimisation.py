@@ -9,9 +9,12 @@ from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.linear_solvers import CholeskySolver
+from pygeoinf.subspaces import AffineSubspace, LinearSubspace
 from pygeoinf.linear_optimisation import (
     LinearLeastSquaresInversion,
     LinearMinimumNormInversion,
+    ConstrainedLinearLeastSquaresInversion,
+    ConstrainedLinearMinimumNormInversion,
 )
 
 # =============================================================================
@@ -97,6 +100,101 @@ class TestLinearLeastSquaresInversion:
 
 
 # =============================================================================
+# Tests for ConstrainedLinearLeastSquaresInversion
+# =============================================================================
+
+
+class TestConstrainedLinearLeastSquaresInversion:
+    """Tests for the subspace-constrained solver."""
+
+    def test_constrained_solver_explicit_geometry(self):
+        """
+        Test using a manually constructed geometric constraint.
+        Problem: d = u (Identity), subject to u lying on plane z=1.
+        Data: (10, 10, 10).
+        Expected: (10, 10, 1).
+        """
+        r3 = EuclideanSpace(dim=3)
+
+        # 1. Forward Problem: Identity
+        I = r3.identity_operator()
+        fp = LinearForwardProblem(I)
+
+        # 2. Constraint: Affine plane z=1
+        # Tangent space is XY plane (spanned by e1, e2)
+        e1 = r3.basis_vector(0)
+        e2 = r3.basis_vector(1)
+
+        # Use the new API: LinearSubspace.from_basis
+        tangent_space = LinearSubspace.from_basis(r3, [e1, e2])
+
+        # Translation to z=1
+        z_offset = r3.from_components(np.array([0.0, 0.0, 1.0]))
+
+        # Construct affine subspace manually
+        constraint = AffineSubspace(tangent_space.projector, translation=z_offset)
+
+        # 3. Solve
+        solver = ConstrainedLinearLeastSquaresInversion(fp, constraint)
+
+        # Very small damping to mimic pure projection
+        ls_op = solver.least_squares_operator(1e-8, CholeskySolver(galerkin=True))
+
+        data = r3.from_components(np.array([10.0, 10.0, 10.0]))
+        u_sol = ls_op(data)
+
+        # 4. Verify
+        expected = r3.from_components(np.array([10.0, 10.0, 1.0]))
+        assert np.allclose(u_sol, expected, atol=1e-5)
+        assert constraint.is_element(u_sol)
+
+    def test_constrained_solver_implicit_equation(self):
+        """
+        Test using a constraint defined by a linear equation B(u) = w.
+        Problem: Minimize ||u - data||^2 subject to mean(u) = 2.
+        """
+        # Setup: 5D space
+        domain = EuclideanSpace(5)
+
+        # Forward problem: Identity (denoising)
+        fp = LinearForwardProblem(domain.identity_operator())
+
+        # Constraint Operator B: u -> mean(u) (maps R5 -> R1)
+        # B = [0.2, 0.2, 0.2, 0.2, 0.2]
+        codomain = EuclideanSpace(1)
+        ones = np.ones((1, 5)) / 5.0
+        B = LinearOperator.from_matrix(domain, codomain, ones)
+
+        # Target value w = 2.0
+        w = codomain.from_components(np.array([2.0]))
+
+        # Create Subspace implicitly
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        # Solve
+        solver = ConstrainedLinearLeastSquaresInversion(fp, constraint)
+        ls_op = solver.least_squares_operator(1e-8, CholeskySolver(galerkin=True))
+
+        # Data: Random vector
+        data_vec = np.array([1.0, 2.0, 3.0, 4.0, 5.0])  # Mean is 3.0
+        data = domain.from_components(data_vec)
+
+        u_sol = ls_op(data)
+        u_vec = domain.to_components(u_sol)
+
+        # Verification 1: Constraint Satisfaction
+        # The mean of the solution should be exactly 2.0
+        assert np.isclose(np.mean(u_vec), 2.0)
+
+        # Verification 2: Geometry
+        # The solution should be the projection of 'data' onto the plane sum(u)=10.
+        # This corresponds to subtracting the difference in means.
+        # Diff = 3.0 - 2.0 = 1.0.  u_expected = data - 1.0
+        expected_vec = data_vec - 1.0
+        assert np.allclose(u_vec, expected_vec, atol=1e-5)
+
+
+# =============================================================================
 # Tests for LinearMinimumNormInversion
 # =============================================================================
 
@@ -147,3 +245,55 @@ class TestLinearMinimumNormInversion:
 
         final_chi_squared = forward_problem.chi_squared(model_solution, synthetic_data)
         assert final_chi_squared <= (target_chi_squared + 1.0e-5)
+
+
+# =============================================================================
+# Tests for ConstrainedLinearMinimumNormInversion
+# =============================================================================
+
+
+class TestConstrainedLinearMinimumNormInversion:
+    """Tests for the constrained discrepancy principle solver."""
+
+    def test_constrained_min_norm_simple(self):
+        """
+        Test problem:
+        Data matches the constrained minimum norm solution to verify the
+        zero-perturbation behavior.
+
+        Constraint: Mean(u) = 10.
+        u_base (solution closest to origin) is [10, 10, 10, 10, 10].
+
+        If we set Data = [10, 10, ...], then u_base fits the data perfectly.
+        The reduced problem sees data_tilde = d - A(u_base) = 0.
+        It should return w=0, so u = u_base.
+        """
+        domain = EuclideanSpace(5)
+        # Forward operator is Identity
+        fp = LinearForwardProblem(
+            domain.identity_operator(),
+            data_error_measure=GaussianMeasure.from_standard_deviation(domain, 1.0),
+        )
+
+        # Constraint: Mean(u) = 10
+        codomain = EuclideanSpace(1)
+        ones = np.ones((1, 5)) / 5.0
+        B = LinearOperator.from_matrix(domain, codomain, ones)
+        w = codomain.from_components(np.array([10.0]))
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        solver = ConstrainedLinearMinimumNormInversion(fp, constraint)
+        op = solver.minimum_norm_operator(
+            CholeskySolver(galerkin=True), significance_level=0.5
+        )
+
+        # Set data equal to the expected base solution to ensure fit is possible
+        data = domain.from_components(np.full(5, 10.0))
+        u_sol = op(data)
+
+        # The solution should be the uniform vector [10, ...]
+        expected = np.full(5, 10.0)
+        u_vec = domain.to_components(u_sol)
+
+        assert np.allclose(u_vec, expected)
+        assert constraint.is_element(u_sol)
