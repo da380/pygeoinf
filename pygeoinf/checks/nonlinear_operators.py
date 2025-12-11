@@ -151,4 +151,4 @@ class NonLinearOperatorAxiomChecks:
                 self._check_add_derivative(self, op2, x, v)
                 self._check_matmul_derivative(self, op2, x, v)
 
-        print(f"✅ All {n_checks} non-linear operator checks passed successfully.")
+        print(f"[✓] All {n_checks} non-linear operator checks passed successfully.")

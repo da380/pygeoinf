@@ -198,4 +198,4 @@ class HilbertSpaceAxiomChecks:
             self._check_inplace_operations(x, y, a)
             self._check_copy(x)
 
-        print(f"✅ All {n_checks} Hilbert space axiom checks passed successfully.")
+        print(f"[✓] All {n_checks} Hilbert space axiom checks passed successfully.")

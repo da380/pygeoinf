@@ -121,4 +121,4 @@ class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
             if op2:
                 self._check_algebraic_identities(self, op2, x1, y, a)
 
-        print(f"✅ All {n_checks} linear operator checks passed successfully.")
+        print(f"[✓] All {n_checks} linear operator checks passed successfully.")
