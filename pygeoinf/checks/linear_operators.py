@@ -194,4 +194,4 @@ class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
                     self, op2, x1, y, a, check_rtol=check_rtol, check_atol=check_atol
                 )
 
-        print(f"✅ All {n_checks} linear operator checks passed successfully.")
+        print(f"[✓] All {n_checks} linear operator checks passed successfully.")

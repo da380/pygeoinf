@@ -28,6 +28,7 @@ from abc import ABC, abstractmethod
 from typing import (
     TypeVar,
     List,
+    Union,
     Optional,
     Any,
     TYPE_CHECKING,
@@ -606,6 +607,50 @@ class EuclideanSpace(HilbertSpace):
         Checks if an object is a valid element of the space.
         """
         return isinstance(x, np.ndarray) and x.shape == (self.dim,)
+
+    def subspace_projection(self, indices: Union[int, List[int]]) -> "LinearOperator":
+        """
+        Returns a projection operator onto specified coordinates.
+
+        This creates a linear operator that extracts the components at the given
+        indices, projecting from this space to a lower-dimensional Euclidean space.
+
+        Args:
+            indices: Single index or list of indices to project onto (0-indexed).
+
+        Returns:
+            LinearOperator from this space to EuclideanSpace(len(indices)).
+
+        Raises:
+            IndexError: If any index is out of range for this space's dimension.
+        """
+        from .linear_operators import LinearOperator
+
+        if isinstance(indices, int):
+            indices = [indices]
+
+        indices_array = np.array(indices)
+        if np.any(indices_array < 0) or np.any(indices_array >= self.dim):
+            raise IndexError(
+                f"Indices {indices_array} out of range for dimension {self.dim}"
+            )
+
+        target_space = EuclideanSpace(len(indices))
+
+        def forward(x: np.ndarray) -> np.ndarray:
+            return x[indices_array]
+
+        def adjoint_mapping(y: np.ndarray) -> np.ndarray:
+            result = np.zeros(self.dim)
+            result[indices_array] = y
+            return result
+
+        return LinearOperator(
+            self,
+            target_space,
+            forward,
+            adjoint_mapping=adjoint_mapping,
+        )
 
 
 class MassWeightedHilbertSpace(HilbertSpace):

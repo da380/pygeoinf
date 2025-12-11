@@ -247,7 +247,7 @@ def plot_corner_distributions(
                 sigma = np.sqrt(cov_posterior[i, i])
                 
                 # Create x-axis range
-                x = np.linspace(mu - 4 * sigma, mu + 4 * sigma, 200)
+                x = np.linspace(mu - 3.75 * sigma, mu + 3.75 * sigma, 200)
                 pdf = stats.norm.pdf(x, mu, sigma)
                 
                 # Plot the PDF
@@ -276,10 +276,10 @@ def plot_corner_distributions(
                 sigma_j = np.sqrt(cov_posterior[j, j])
                 sigma_i = np.sqrt(cov_posterior[i, i])
                 
-                x_range = np.linspace(mean_2d[0] - 3.5 * sigma_j, 
-                                    mean_2d[0] + 3.5 * sigma_j, 100)
-                y_range = np.linspace(mean_2d[1] - 3.5 * sigma_i, 
-                                    mean_2d[1] + 3.5 * sigma_i, 100)
+                x_range = np.linspace(mean_2d[0] - 3.75 * sigma_j, 
+                                    mean_2d[0] + 3.75 * sigma_j, 100)
+                y_range = np.linspace(mean_2d[1] - 3.75 * sigma_i, 
+                                    mean_2d[1] + 3.75 * sigma_i, 100)
                 
                 X, Y = np.meshgrid(x_range, y_range)
                 pos = np.dstack((X, Y))

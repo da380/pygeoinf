@@ -195,4 +195,4 @@ class NonLinearOperatorAxiomChecks:
                     self, op2, x, v, check_rtol=check_rtol, check_atol=check_atol
                 )
 
-        print(f"✅ All {n_checks} non-linear operator checks passed successfully.")
+        print(f"[✓] All {n_checks} non-linear operator checks passed successfully.")
