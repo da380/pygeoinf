@@ -392,7 +392,7 @@ class ColumnLinearOperator(LinearOperator, BlockStructure):
             """
             x = domain.zero
             for op, y in zip(self._operators, ys):
-                domain.axpy(1.0, op.adjoint(y), x)
+                x = domain.axpy(1.0, op.adjoint(y), x)
             return x
 
         LinearOperator.__init__(

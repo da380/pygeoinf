@@ -148,6 +148,9 @@ class SOLAOperator(LinearOperator):
             ]
         ] = None
     ):
+        # Default to None - will use provider if set
+        self._kernels = None
+
         if isinstance(kernels, list):
             if len(kernels) != self.N_d:
                 raise ValueError(
@@ -168,7 +171,7 @@ class SOLAOperator(LinearOperator):
                 ]
         elif isinstance(kernels, IndexedFunctionProvider):
             self._kernels_provider = kernels
-            self._kernels = None
+            # _kernels already set to None above
 
     def get_kernel(self, index: int):
         """
@@ -181,8 +184,10 @@ class SOLAOperator(LinearOperator):
             Function: The i-th kernel
         """
         # If kernels are directly provided, return from list
-        if self._kernels is not None:
-            return self._kernels[index]
+        # Use getattr for backwards compatibility with old instances
+        kernels = getattr(self, '_kernels', None)
+        if kernels is not None:
+            return kernels[index]
 
         # Otherwise use the provider to get the kernel
         assert self._kernels_provider is not None  # For type checker

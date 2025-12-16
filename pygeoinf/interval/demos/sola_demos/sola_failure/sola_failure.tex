@@ -1,0 +1,307 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{float}
+
+% Page geometry
+\geometry{margin=2.5cm}
+
+% Custom commands
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\| #1 \right\|}
+\newcommand{\inner}[2]{\left\langle #1, #2 \right\rangle}
+\newcommand{\mtrue}{m_{\text{true}}}
+\newcommand{\mnorm}{\tilde{m}}
+\newcommand{\dtilde}{\tilde{d}}
+\newcommand{\ptrue}{p_{\text{true}}}
+\newcommand{\psola}{p_{\text{SOLA}}}
+
+% Theorem environments
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{remark}{Remark}
+
+\title{The Failure of SOLA: A Demonstration of\\Implicit Assumptions in Linear Inverse Problems}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+The Subtractive Optimally Localized Averages (SOLA) method is widely used for inferring model properties from observational data in geophysical inverse problems. While SOLA provides property estimates with associated uncertainty quantification, its validity relies on an implicit assumption that is often overlooked: the true model must have small norm. This document presents a constructive demonstration of how SOLA can catastrophically fail when this assumption is violated. We show that it is possible to construct pathological true models that fit observed data perfectly yet have properties that are completely opposite to SOLA's estimates. This highlights a fundamental limitation of SOLA and similar methods that rely on minimum-norm solutions.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+Linear inverse problems arise throughout the geosciences when we seek to infer properties of a continuous field (such as Earth's density or seismic velocity) from discrete observations. The Subtractive Optimally Localized Averages (SOLA) method, introduced by Pijpers \& Thompson (1992, 1994), provides a framework for estimating localized averages of the model with associated uncertainty quantification.
+
+The appeal of SOLA lies in its apparent objectivity: given data and their uncertainties, it produces property estimates with error bars, seemingly without requiring subjective prior information about the model. However, this apparent objectivity masks an implicit assumption that can lead to catastrophic failure.
+
+In this document, we demonstrate that:
+\begin{enumerate}
+    \item SOLA implicitly assumes the true model has \textbf{small norm}.
+    \item When this assumption is violated, SOLA's estimates can be \textbf{arbitrarily wrong}.
+    \item The stated uncertainties become \textbf{meaningless}---actual errors can exceed stated uncertainties by orders of magnitude.
+    \item There is \textbf{no way to detect} this failure from the data alone.
+\end{enumerate}
+
+%==============================================================================
+\section{Problem Formulation}
+%==============================================================================
+
+\subsection{The Forward Problem}
+
+Consider a model space $M = L^2([0,1])$ of square-integrable functions on the unit interval. The forward operator $G: M \to D$ maps models to data, where $D = \R^{N_d}$ is the data space. We assume $G$ is a linear integral operator defined by sensitivity kernels $K_i(x)$:
+\begin{equation}
+    d_i = \int_0^1 K_i(x) \, m(x) \, dx, \quad i = 1, \ldots, N_d.
+\end{equation}
+
+In our demonstration, we use $N_d = 100$ sensitivity kernels generated from random combinations of normal modes, as shown in \Cref{fig:sensitivity_kernels}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{sensitivity_kernels.pdf}
+    \caption{Sensitivity kernels $K_i(x)$ for the forward operator $G$. Each curve represents the sensitivity of one data point to the model at position $x$.}
+    \label{fig:sensitivity_kernels}
+\end{figure}
+
+\subsection{Target Properties}
+
+We are interested in estimating $N_p = 20$ localized averages of the model, defined by target kernels $T^{(k)}(x)$:
+\begin{equation}
+    p_k = \int_0^1 T^{(k)}(x) \, m(x) \, dx, \quad k = 1, \ldots, N_p.
+\end{equation}
+
+These target kernels are bump functions centered at different locations across the domain, as shown in \Cref{fig:target_kernels}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{target_kernels.pdf}
+    \caption{Target kernels $T^{(k)}(x)$. Each kernel defines a localized average of the model that we wish to estimate.}
+    \label{fig:target_kernels}
+\end{figure}
+
+\subsection{The Data}
+
+We observe noisy data $\dtilde = \bar{d} + \eta$, where $\bar{d} = G(\mtrue)$ is the true data and $\eta \sim \mathcal{N}(0, C_D)$ is Gaussian measurement noise with known covariance $C_D$. \Cref{fig:observed_data} shows the observed data with uncertainty.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{observed_data.pdf}
+    \caption{Observed data with measurement uncertainty (±1$\sigma$).}
+    \label{fig:observed_data}
+\end{figure}
+
+%==============================================================================
+\section{The SOLA Method}
+%==============================================================================
+
+\subsection{Construction of the SOLA Operator}
+
+SOLA constructs a linear operator $X: D \to P$ that maps data to property estimates. The construction proceeds as follows:
+
+\begin{enumerate}
+    \item Compute the Gram matrix $\Lambda = GG^*$.
+    \item Form the regularized inverse $W^{-1} = (\Lambda + C_D)^{-1}$.
+    \item Compute the generalized inverse $G^\dagger = G^* W^{-1}$.
+    \item Form the SOLA operator $X = T G^\dagger$.
+\end{enumerate}
+
+A unimodularity constraint is typically applied to ensure that $X$ correctly recovers constant fields.
+
+\subsection{Property Estimates and Uncertainty}
+
+Given data $\dtilde$, SOLA produces:
+\begin{itemize}
+    \item \textbf{Property estimates}: $\psola = X(\dtilde)$
+    \item \textbf{Uncertainty}: The covariance $\text{Cov}(\psola) = X C_D X^*$
+\end{itemize}
+
+\Cref{fig:sola_estimates} shows the SOLA property estimates with their ±2$\sigma$ uncertainty bands.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{sola_property_estimates.pdf}
+    \caption{SOLA property estimates with ±2$\sigma$ uncertainty bands. From the analyst's perspective, these results appear satisfactory.}
+    \label{fig:sola_estimates}
+\end{figure}
+
+\subsection{Resolving Kernels}
+
+To assess the quality of the SOLA solution, we examine the \textit{resolving kernels} $A^{(k)}(x)$, defined implicitly by:
+\begin{equation}
+    \psola_k = \int_0^1 A^{(k)}(x) \, \mnorm(x) \, dx,
+\end{equation}
+where $\mnorm = G^\dagger \dtilde$ is the least-norm model reconstruction.
+
+Ideally, the resolving kernel $A^{(k)}$ should match the target kernel $T^{(k)}$. \Cref{fig:resolving_kernels} compares the resolving kernels (colored by misfit) with the target kernels (orange, in background).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{resolving_kernels.pdf}
+    \caption{Resolving kernels (colored by misfit percentage) overlaid on target kernels (orange). The close match suggests SOLA should work well---but this is misleading.}
+    \label{fig:resolving_kernels}
+\end{figure}
+
+The resolving kernels match the target kernels quite well, with small misfits. This would typically give the analyst confidence that SOLA is performing correctly.
+
+%==============================================================================
+\section{Constructing Failure: The Pathological Model}
+%==============================================================================
+
+\subsection{The Hidden Setup}
+
+We now reveal what was hidden from the ``analyst.'' The true model was deliberately constructed to make SOLA fail.
+
+\subsubsection{Step 1: A Normal True Model}
+
+We first created a ``normal'' true model $m_{\text{normal}}$ with moderate norm:
+\begin{equation}
+    m_{\text{normal}}(x) = e^{-((x-0.5)/0.5)^2} \sin(5\pi x) + x.
+\end{equation}
+
+From this, we computed:
+\begin{itemize}
+    \item True data: $\bar{d} = G(m_{\text{normal}})$
+    \item Normal true properties: $p_{\text{normal}} = T(m_{\text{normal}})$
+\end{itemize}
+
+\subsubsection{Step 2: The Pathological Model}
+
+We then constructed a \textit{pathological} model $\mtrue$ that:
+\begin{enumerate}
+    \item Produces the \textbf{same data} as $m_{\text{normal}}$: $G(\mtrue) = \bar{d}$
+    \item Has \textbf{opposite properties}: $T(\mtrue) = -p_{\text{normal}}$
+\end{enumerate}
+
+This is achieved by solving the joint constraint problem:
+\begin{equation}
+    \begin{pmatrix} G \\ T \end{pmatrix} \mtrue = \begin{pmatrix} \bar{d} \\ -p_{\text{normal}} \end{pmatrix}.
+\end{equation}
+
+Such a model exists because the target properties lie (at least partially) in the null space of $G$---they represent information about the model that is not constrained by the data.
+
+\subsection{Properties of the Pathological Model}
+
+The pathological model has significantly larger norm than the normal model. This violates SOLA's implicit assumption that the true model has small norm.
+
+%==============================================================================
+\section{The Catastrophic Failure}
+%==============================================================================
+
+\subsection{SOLA vs. Truth}
+
+\Cref{fig:sola_failure} reveals the comparison between SOLA's estimates and the true properties.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{sola_failure_revealed.pdf}
+    \caption{\textbf{SOLA has catastrophically failed.} The SOLA estimates (blue) are completely opposite to the true properties (red crosses). Note that the true values lie far outside the stated ±2$\sigma$ uncertainty bands.}
+    \label{fig:sola_failure}
+\end{figure}
+
+The failure is dramatic:
+\begin{itemize}
+    \item The true properties are \textbf{negative} where SOLA predicts \textbf{positive} values (and vice versa).
+    \item The errors exceed the stated uncertainties by a factor of 10 or more.
+    \item Essentially \textbf{none} of the true values fall within the ±2$\sigma$ bounds (vs.\ the expected 95\%).
+\end{itemize}
+
+\subsection{Why Did SOLA Fail?}
+
+SOLA's property estimate is effectively:
+\begin{equation}
+    \psola = T(\mnorm) = T(G^\dagger \dtilde),
+\end{equation}
+where $\mnorm = G^\dagger \dtilde$ is the \textit{least-norm} model that fits the data.
+
+When the true model has small norm, $\mnorm \approx \mtrue$, so $T(\mnorm) \approx T(\mtrue)$.
+
+But when the true model has large norm (like our pathological model), the least-norm solution can be completely different from the true model, even though both fit the data equally well.
+
+\Cref{fig:models_comparison} shows the pathological true model alongside the least-norm reconstruction.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{true_model_vs_least_norm_solution.pdf}
+    \caption{The pathological true model (red) vs.\ the least-norm solution (blue dashed). Both models fit the observed data equally well, but they have completely different properties.}
+    \label{fig:models_comparison}
+\end{figure}
+
+The key insight is that both models explain the data equally well:
+\begin{equation}
+    \norm{G(\mtrue) - \bar{d}} \approx 0, \quad \norm{G(\mnorm) - \dtilde} \approx 0.
+\end{equation}
+
+But their properties differ dramatically because $\mtrue - \mnorm$ lies in the null space of $G$.
+
+%==============================================================================
+\section{Discussion}
+%==============================================================================
+
+\subsection{The Implicit Assumption}
+
+SOLA (and related methods like Backus-Gilbert) implicitly assume that the true model has \textbf{small norm}. This assumption is rarely stated explicitly and is often overlooked.
+
+Mathematically, SOLA's uncertainty quantification is only valid under the implicit prior:
+\begin{equation}
+    m \sim \mathcal{N}(0, \sigma^2 I),
+\end{equation}
+which favors models with small $L^2$ norm. When the true model violates this prior, SOLA's estimates and uncertainties become meaningless.
+
+\subsection{Detection}
+
+\textbf{There is no way to detect SOLA's failure from the data alone.} The resolving kernels match the target kernels well (\Cref{fig:resolving_kernels}), the data are well-fitted, and the uncertainty quantification appears reasonable (\Cref{fig:sola_estimates}). All standard diagnostics suggest the method is working correctly.
+
+Only by knowing the true model---which we never do in practice---can we see that SOLA has failed.
+
+\subsection{Implications}
+
+This demonstration highlights a fundamental limitation:
+\begin{enumerate}
+    \item \textbf{SOLA is not assumption-free}: It implicitly assumes small model norm.
+    \item \textbf{Uncertainty is conditional}: The stated uncertainties are only valid if the implicit assumption holds.
+    \item \textbf{Prior information is unavoidable}: To obtain reliable property estimates, one must incorporate explicit prior information about the model.
+\end{enumerate}
+
+%==============================================================================
+\section{Conclusion}
+%==============================================================================
+
+We have demonstrated that SOLA can fail catastrophically when its implicit assumptions are violated. By constructing a pathological true model that fits the observed data but has properties opposite to SOLA's estimates, we showed that:
+
+\begin{itemize}
+    \item SOLA's property estimates can be \textbf{arbitrarily wrong}.
+    \item The stated uncertainties can underestimate actual errors by \textbf{orders of magnitude}.
+    \item This failure is \textbf{undetectable} from standard diagnostics.
+\end{itemize}
+
+The lesson is clear: SOLA's apparent objectivity is illusory. Like all inverse methods, it relies on assumptions about the model. When those assumptions are violated, the method fails---silently and catastrophically.
+
+For reliable inference, explicit prior information must be incorporated, and the dependence of results on prior assumptions must be carefully assessed.
+
+%==============================================================================
+% References (optional - add if desired)
+%==============================================================================
+% \bibliographystyle{apalike}
+% \bibliography{references}
+
+\end{document}

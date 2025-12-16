@@ -468,7 +468,8 @@ class Function:
     def _binary_op(
             self, other, op, op_name,
             scalar_allowed=True,
-            support_strategy='union'
+            support_strategy='union',
+            is_linear=True
             ):
         """
         General helper for binary operations (add, sub, mul).
@@ -478,6 +479,9 @@ class Function:
             op_name: String for error messages
             scalar_allowed: Whether to allow scalar as other
             support_strategy: 'union' (add/sub), 'intersect' (mul)
+            is_linear: Whether operation is linear (add/sub). Only linear
+                operations can use coefficient shortcut. For multiplication,
+                we must compute pointwise products via evaluate_callable.
         """
         if isinstance(other, Function):
             """ if self.space != other.space:
@@ -493,8 +497,13 @@ class Function:
                 )
             else:
                 new_support = None
-            # Try coefficient operation if possible
-            if (self.coefficients is not None and
+            # Try coefficient operation if possible - BUT ONLY FOR LINEAR OPS!
+            # For multiplication, coefficient-wise operation is WRONG because:
+            #   (c₁φ₁)(d₁φ₁) = c₁d₁φ₁² ≠ c₁d₁φ₁ (unless φ₁² = φ₁)
+            # Only addition/subtraction preserve coefficients:
+            #   (c₁φ₁ + c₂φ₂) + (d₁φ₁ + d₂φ₂) = (c₁+d₁)φ₁ + (c₂+d₂)φ₂
+            if (is_linear and
+                    self.coefficients is not None and
                     other.coefficients is not None and
                     len(self.coefficients) == len(other.coefficients)):
                 new_coeffs = op(self.coefficients, other.coefficients)
@@ -591,7 +600,8 @@ class Function:
             operator.mul,
             'multiply',
             scalar_allowed=True,
-            support_strategy='intersect'
+            support_strategy='intersect',
+            is_linear=False  # CRITICAL: multiplication is NOT linear!
         )
 
     def __rmul__(self, other):

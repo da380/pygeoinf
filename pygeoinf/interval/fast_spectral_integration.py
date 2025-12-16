@@ -98,9 +98,11 @@ def _fast_dirichlet_coefficients(
     coeffs_raw = dst(f_samples, type=1)
 
     # Apply correct normalization factors
-    # To get ∫₀ᴸ f(x) sin(kπx/L) dx from DST, divide by 2*(N+1)
-    # Then multiply by √(2/L) for the normalized eigenfunction
-    scaling = np.sqrt(2.0 / domain_length) / (2.0 * (n_samples + 1))
+    # DST-I on N samples approximates: ∫₀ᴸ f(x) sin(kπx/L) dx ≈ DST[k] * L/(2*(N+1))
+    # For normalized basis φₖ = √(2/L) sin(kπx/L), the coefficient is: ⟨f, φₖ⟩
+    # = ∫₀ᴸ f(x) √(2/L) sin(kπx/L) dx = √(2/L) * [DST[k] * L/(2*(N+1))]
+    # = DST[k] * √(2L) / (2*(N+1))
+    scaling = np.sqrt(2.0 * domain_length) / (2.0 * (n_samples + 1))
     coeffs_normalized = coeffs_raw * scaling
 
     # Return only the requested number of coefficients
@@ -132,13 +134,15 @@ def _fast_neumann_coefficients(
     N = n_samples - 1
 
     # Constant mode (k=0): c₀ = (1/√L) * ∫₀ᴸ f(x) dx
+    # DCT-I: ∫₀ᴸ f(x) dx ≈ DCT[0] * L / (2*N)
     if n_coeffs > 0:
-        integral_0 = coeffs_raw[0] / (2.0 * N)  # type: ignore
+        integral_0 = coeffs_raw[0] * domain_length / (2.0 * N)  # type: ignore
         coeffs_normalized[0] = (1.0 / np.sqrt(domain_length)) * integral_0
 
     # Cosine modes (k≥1): cₖ = √(2/L) * ∫₀ᴸ f(x) cos(kπx/L) dx
+    # DCT-I: ∫₀ᴸ f(x) cos(kπx/L) dx ≈ DCT[k] * L / (2*N)
     for k in range(1, min(n_coeffs, len(coeffs_raw))):
-        integral_k = coeffs_raw[k] / (2.0 * N)  # type: ignore
+        integral_k = coeffs_raw[k] * domain_length / (2.0 * N)  # type: ignore
         coeffs_normalized[k] = np.sqrt(2.0 / domain_length) * integral_k
 
     return coeffs_normalized

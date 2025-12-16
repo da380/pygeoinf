@@ -450,18 +450,23 @@ class Lebesgue(HilbertSpace):
         else:
             raise ValueError("Cannot perform in-place operation on function without coefficients")
 
-    def axpy(self, a: float, x: "Function", y: "Function") -> None:
+    def axpy(self, a: float, x: "Function", y: "Function") -> "Function":
         """
-        Performs in-place operation y := y + a*x.
+        Performs operation y := y + a*x and returns the result.
 
-        Since Function objects don't support in-place operations,
-        we modify the coefficients directly.
+        For functions with coefficients, modifies coefficients in place.
+        For baseless functions, returns a new function (cannot truly be in-place).
+
+        Note: For baseless functions, the caller must capture the return value
+        since true in-place modification is not possible for immutable callables.
         """
         if (hasattr(y, 'coefficients') and y.coefficients is not None and
             hasattr(x, 'coefficients') and x.coefficients is not None):
             y.coefficients += a * x.coefficients
+            return y
         else:
-            raise ValueError("Cannot perform in-place operation on functions without coefficients")
+            # For baseless functions, return a new function
+            return self.add(y, self.multiply(a, x))
 
     # ================================================================
     # Additional methods specific to function spaces
@@ -1061,6 +1066,581 @@ def create_basis_provider(space: Lebesgue, basis_type: str) -> "BasisProvider":
         )
     else:
         raise ValueError(f"Unknown basis type: {basis_type}")
+
+
+# =============================================================================
+# Partitioned Lebesgue Space for Known Regions
+# =============================================================================
+
+
+class KnownRegion:
+    """
+    Specification of a region where the model is known (fixed).
+
+    A known region is a sub-interval of the full domain where the model
+    value is fixed and not part of the inference. For example, shear wave
+    velocity (Vs) in the Earth's outer core is known to be zero.
+
+    Attributes:
+        interval: The IntervalDomain where the model is known.
+        value: A Function instance representing the known value on this
+            interval. The function must be defined on a Lebesgue space
+            with the same function_domain as the interval.
+
+    Example:
+        >>> from pygeoinf.interval import IntervalDomain, Lebesgue, Function
+        >>> # Define outer core region (Vs = 0)
+        >>> outer_core_domain = IntervalDomain(1217.5, 3480.0)  # radii in km
+        >>> outer_core_space = Lebesgue(10, outer_core_domain, basis='none')
+        >>> zero_function = Function(
+        ...     outer_core_space,
+        ...     evaluate_callable=lambda r: 0.0
+        ... )
+        >>> outer_core = KnownRegion(outer_core_domain, zero_function)
+    """
+
+    def __init__(
+        self,
+        interval: "IntervalDomain",
+        value: "Function",
+    ):
+        """
+        Initialize a KnownRegion.
+
+        Args:
+            interval: The IntervalDomain where the model is known.
+            value: A Function instance representing the known value.
+                Must be defined on a space with the same function_domain
+                as the interval.
+
+        Raises:
+            TypeError: If value is not a Function instance.
+            ValueError: If the function's domain doesn't match the interval.
+        """
+        # Import here to avoid circular imports
+        from pygeoinf.interval.functions import Function as FunctionClass
+
+        if not isinstance(value, FunctionClass):
+            raise TypeError(
+                f"value must be a Function instance, "
+                f"got {type(value).__name__}. "
+                "Create a Function with evaluate_callable for known values."
+            )
+
+        # Check that function's domain matches the interval
+        func_domain = value.space.function_domain
+        if not (func_domain.a == interval.a and func_domain.b == interval.b):
+            raise ValueError(
+                f"Function's domain {func_domain} does not match "
+                f"the known region interval {interval}"
+            )
+
+        self.interval = interval
+        self.value = value
+
+    @classmethod
+    def zero(
+        cls,
+        interval: "IntervalDomain",
+        dim: int = 10,
+        **lebesgue_kwargs
+    ) -> "KnownRegion":
+        """
+        Convenience factory for creating a known region with zero value.
+
+        Args:
+            interval: The IntervalDomain where the model is zero.
+            dim: Dimension of the temporary Lebesgue space (only used
+                for creating the Function; doesn't affect computations).
+            **lebesgue_kwargs: Additional arguments passed to Lebesgue.
+
+        Returns:
+            A KnownRegion with value = 0 everywhere on the interval.
+
+        Example:
+            >>> outer_core_domain = IntervalDomain(1217.5, 3480.0)
+            >>> outer_core = KnownRegion.zero(outer_core_domain)
+        """
+        from pygeoinf.interval.functions import Function as FunctionClass
+
+        # Create a minimal Lebesgue space for the zero function
+        space = Lebesgue(dim, interval, basis='none', **lebesgue_kwargs)
+
+        def zero_callable(x):
+            return np.zeros_like(np.asarray(x), dtype=float)
+
+        zero_func = FunctionClass(
+            space,
+            evaluate_callable=zero_callable,
+            name="zero"
+        )
+        return cls(interval, zero_func)
+
+    @classmethod
+    def constant(
+        cls,
+        interval: "IntervalDomain",
+        constant_value: float,
+        dim: int = 10,
+        **lebesgue_kwargs
+    ) -> "KnownRegion":
+        """
+        Convenience factory for creating a known region with constant value.
+
+        Args:
+            interval: The IntervalDomain where the model is constant.
+            constant_value: The constant value of the model.
+            dim: Dimension of the temporary Lebesgue space.
+            **lebesgue_kwargs: Additional arguments passed to Lebesgue.
+
+        Returns:
+            A KnownRegion with a constant value on the interval.
+        """
+        from pygeoinf.interval.functions import Function as FunctionClass
+
+        space = Lebesgue(dim, interval, basis='none', **lebesgue_kwargs)
+        const_func = FunctionClass(
+            space,
+            evaluate_callable=lambda x: np.full_like(
+                np.asarray(x), constant_value, dtype=float
+            ),
+            name=f"constant_{constant_value}"
+        )
+        return cls(interval, const_func)
+
+    def __repr__(self) -> str:
+        return f"KnownRegion(interval={self.interval}, value={self.value})"
+
+
+class PartitionedLebesgueSpace:
+    """
+    A Lebesgue space partitioned into known and unknown regions.
+
+    This class handles the common case in geophysical inversions where the
+    model is known (fixed) on some sub-intervals and unknown on others.
+    For example, shear wave velocity (Vs) is known to be zero in the
+    Earth's outer core, so only the inner core and mantle regions need
+    to be inferred.
+
+    The class creates a direct sum of Lebesgue spaces for the unknown
+    regions, which serves as the model space for inference. It also
+    provides methods to:
+    - Extend a model from unknown regions to the full domain
+    - Restrict functions (like sensitivity kernels) to unknown regions
+    - Create forward operators that correctly handle the partition
+
+    Attributes:
+        full_domain: The complete IntervalDomain.
+        known_regions: List of KnownRegion specifications.
+        unknown_intervals: List of IntervalDomain for unknown regions.
+        unknown_spaces: List of Lebesgue spaces for unknown regions.
+        model_space: HilbertSpaceDirectSum of unknown spaces (use this
+            as the model space for inference).
+
+    Example:
+        >>> # Earth model: Vs is zero in outer core
+        >>> full_domain = IntervalDomain(0, 6371)  # radius in km
+        >>>
+        >>> # Define known region (outer core, Vs = 0)
+        >>> outer_core_interval = IntervalDomain(1217.5, 3480.0)
+        >>> outer_core = KnownRegion.zero(outer_core_interval)
+        >>>
+        >>> # Create partitioned space
+        >>> partitioned = PartitionedLebesgueSpace(
+        ...     full_domain=full_domain,
+        ...     known_regions=[outer_core],
+        ...     dims=[50, 50],  # dimensions for [inner_core, mantle]
+        ...     basis='cosine'
+        ... )
+        >>>
+        >>> # Use model_space for inference
+        >>> M_vs = partitioned.model_space  # DirectSum
+    """
+
+    def __init__(
+        self,
+        full_domain: "IntervalDomain",
+        known_regions: List[KnownRegion],
+        dims: List[int],
+        *,
+        basis: Optional[Union[str, list]] = None,
+        bases: Optional[List[Optional[Union[str, list]]]] = None,
+        integration_config: Optional[Union[
+            IntegrationConfig,
+            LebesgueIntegrationConfig
+        ]] = None,
+        parallel_config: Optional[Union[
+            ParallelConfig,
+            LebesgueParallelConfig
+        ]] = None,
+        weight: Optional[Callable] = None,
+    ):
+        """
+        Initialize a PartitionedLebesgueSpace.
+
+        Args:
+            full_domain: The complete IntervalDomain.
+            known_regions: List of KnownRegion specifications. Must be
+                non-overlapping and contained within full_domain.
+            dims: List of dimensions for each unknown region. The number
+                of elements must match the number of unknown regions
+                (which is len(known_regions) + 1 if known regions don't
+                touch boundaries, or fewer if they do).
+            basis: Basis type for ALL unknown region spaces. Use 'none',
+                'fourier', 'sine', 'cosine', etc.
+            bases: Optional list of basis types, one per unknown region.
+                Overrides `basis` if provided.
+            integration_config: Integration configuration for all spaces.
+            parallel_config: Parallel configuration for all spaces.
+            weight: Weight function for inner product.
+
+        Raises:
+            ValueError: If known regions overlap, are outside full_domain,
+                or if dims doesn't match the number of unknown regions.
+        """
+        self.full_domain = full_domain
+        self.known_regions = sorted(
+            known_regions, key=lambda kr: kr.interval.a
+        )
+
+        # Validate known regions
+        self._validate_known_regions()
+
+        # Compute unknown intervals
+        self.unknown_intervals = self._compute_unknown_intervals()
+
+        # Validate dims
+        n_unknown = len(self.unknown_intervals)
+        if len(dims) != n_unknown:
+            raise ValueError(
+                f"dims must have {n_unknown} elements "
+                f"(one per unknown region), got {len(dims)}. "
+                f"Unknown regions: {self.unknown_intervals}"
+            )
+
+        # Determine basis for each unknown region
+        if bases is not None:
+            if len(bases) != n_unknown:
+                raise ValueError(
+                    f"bases must have {n_unknown} elements, got {len(bases)}"
+                )
+            region_bases = bases
+        else:
+            region_bases = [basis] * n_unknown
+
+        # Create Lebesgue spaces for unknown regions
+        self.unknown_spaces: List[Lebesgue] = []
+        for i, (interval, dim, region_basis) in enumerate(
+            zip(self.unknown_intervals, dims, region_bases)
+        ):
+            space = Lebesgue(
+                dim,
+                interval,
+                basis=region_basis,
+                weight=weight,
+                integration_config=integration_config,
+                parallel_config=parallel_config,
+            )
+            self.unknown_spaces.append(space)
+
+        # Create the model space as direct sum of unknown spaces
+        self.model_space = LebesgueSpaceDirectSum(self.unknown_spaces)
+
+    def _validate_known_regions(self) -> None:
+        """Validate known regions are non-overlapping and within domain."""
+        for i, kr in enumerate(self.known_regions):
+            # Check within full domain
+            if kr.interval.a < self.full_domain.a:
+                raise ValueError(
+                    f"Known region {i} starts at {kr.interval.a}, which is "
+                    f"before full_domain start {self.full_domain.a}"
+                )
+            if kr.interval.b > self.full_domain.b:
+                raise ValueError(
+                    f"Known region {i} ends at {kr.interval.b}, which is "
+                    f"after full_domain end {self.full_domain.b}"
+                )
+
+            # Check non-overlapping with previous region
+            if i > 0:
+                prev_kr = self.known_regions[i - 1]
+                if kr.interval.a < prev_kr.interval.b:
+                    raise ValueError(
+                        f"Known regions {i-1} and {i} overlap: "
+                        f"{prev_kr.interval} and {kr.interval}"
+                    )
+
+    def _compute_unknown_intervals(self) -> List["IntervalDomain"]:
+        """
+        Compute the unknown intervals by subtracting known regions.
+
+        Returns a list of IntervalDomain for each unknown region,
+        ordered from low to high.
+        """
+        from pygeoinf.interval.interval_domain import IntervalDomain
+
+        if not self.known_regions:
+            # No known regions, entire domain is unknown
+            return [self.full_domain]
+
+        unknown = []
+        current_start = self.full_domain.a
+
+        for kr in self.known_regions:
+            # Add unknown region before this known region (if any)
+            if kr.interval.a > current_start:
+                unknown.append(IntervalDomain(
+                    current_start,
+                    kr.interval.a,
+                    boundary_type=self.full_domain.boundary_type
+                ))
+            current_start = kr.interval.b
+
+        # Add unknown region after last known region (if any)
+        if current_start < self.full_domain.b:
+            unknown.append(IntervalDomain(
+                current_start,
+                self.full_domain.b,
+                boundary_type=self.full_domain.boundary_type
+            ))
+
+        return unknown
+
+    @property
+    def n_unknown_regions(self) -> int:
+        """Number of unknown regions."""
+        return len(self.unknown_intervals)
+
+    @property
+    def n_known_regions(self) -> int:
+        """Number of known regions."""
+        return len(self.known_regions)
+
+    def get_unknown_space(self, index: int) -> Lebesgue:
+        """Get the Lebesgue space for the i-th unknown region."""
+        return self.unknown_spaces[index]
+
+    def get_known_region(self, index: int) -> KnownRegion:
+        """Get the i-th known region."""
+        return self.known_regions[index]
+
+    def extend_to_full_domain(
+        self,
+        unknown_model: List["Function"],
+        name: Optional[str] = None
+    ) -> "Function":
+        """
+        Extend a model from unknown regions to the full domain.
+
+        Takes a list of Functions (one per unknown region) and creates
+        a single Function on the full domain that:
+        - Evaluates to the given functions on unknown regions
+        - Evaluates to the known values on known regions
+
+        Args:
+            unknown_model: List of Functions, one per unknown region.
+                Must have length equal to n_unknown_regions.
+            name: Optional name for the resulting function.
+
+        Returns:
+            A Function on the full domain.
+
+        Raises:
+            ValueError: If unknown_model has wrong length or types.
+        """
+        from pygeoinf.interval.functions import Function as FunctionClass
+
+        if len(unknown_model) != self.n_unknown_regions:
+            raise ValueError(
+                f"unknown_model must have {self.n_unknown_regions} elements, "
+                f"got {len(unknown_model)}"
+            )
+
+        # Validate types
+        for i, func in enumerate(unknown_model):
+            if not isinstance(func, FunctionClass):
+                raise ValueError(
+                    f"unknown_model[{i}] must be a Function, "
+                    f"got {type(func).__name__}"
+                )
+
+        # Create a temporary space on the full domain for the extended function
+        # Use min dimension across unknown spaces
+        min_dim = min(space.dim for space in self.unknown_spaces)
+        full_space = Lebesgue(min_dim, self.full_domain, basis='none')
+
+        # Build the callable that evaluates correctly on each region
+        def extended_callable(x):
+            x_arr = np.atleast_1d(np.asarray(x))
+            result = np.zeros_like(x_arr, dtype=float)
+
+            # Evaluate on unknown regions
+            for interval, func in zip(self.unknown_intervals, unknown_model):
+                mask = (x_arr >= interval.a) & (x_arr <= interval.b)
+                if np.any(mask):
+                    result[mask] = func.evaluate(x_arr[mask], check_domain=False)
+
+            # Evaluate on known regions
+            for kr in self.known_regions:
+                mask = (x_arr >= kr.interval.a) & (x_arr <= kr.interval.b)
+                if np.any(mask):
+                    result[mask] = kr.value.evaluate(x_arr[mask], check_domain=False)
+
+            # Return scalar if input was scalar
+            if np.ndim(x) == 0:
+                return float(result[0])
+            return result
+
+        return FunctionClass(
+            full_space,
+            evaluate_callable=extended_callable,
+            name=name or "extended_model"
+        )
+
+    def restrict_function(
+        self,
+        full_function: "Function",
+        region_index: int
+    ) -> "Function":
+        """
+        Restrict a function from the full domain to an unknown region.
+
+        This is useful for restricting sensitivity kernels (defined on
+        the full domain) to individual unknown regions for creating
+        forward operators.
+
+        Args:
+            full_function: A Function defined on the full domain.
+            region_index: Index of the unknown region (0-indexed).
+
+        Returns:
+            A Function on the specified unknown region's space.
+
+        Raises:
+            IndexError: If region_index is out of range.
+            ValueError: If full_function cannot be restricted.
+        """
+        if region_index < 0 or region_index >= self.n_unknown_regions:
+            raise IndexError(
+                f"region_index {region_index} out of range "
+                f"[0, {self.n_unknown_regions})"
+            )
+
+        target_space = self.unknown_spaces[region_index]
+        return full_function.restrict(target_space)
+
+    def create_restricted_kernel_provider(
+        self,
+        base_provider,
+        region_index: int
+    ):
+        """
+        Create a kernel provider that restricts kernels to an unknown region.
+
+        This wraps a base kernel provider (like SensitivityKernelProvider)
+        to automatically restrict each kernel to the specified unknown region.
+
+        Args:
+            base_provider: An IndexedFunctionProvider that provides kernels
+                on the full domain.
+            region_index: Index of the unknown region.
+
+        Returns:
+            A RestrictedKernelProvider for the specified region.
+        """
+        return RestrictedKernelProvider(
+            base_provider,
+            self.unknown_spaces[region_index]
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"PartitionedLebesgueSpace(\n"
+            f"  full_domain={self.full_domain},\n"
+            f"  n_unknown_regions={self.n_unknown_regions},\n"
+            f"  unknown_intervals={self.unknown_intervals},\n"
+            f"  n_known_regions={self.n_known_regions},\n"
+            f"  known_intervals={[kr.interval for kr in self.known_regions]}\n"
+            f")"
+        )
+
+
+from .function_providers.base import IndexedFunctionProvider
+
+
+class RestrictedKernelProvider(IndexedFunctionProvider):
+    """
+    A kernel provider that restricts kernels to a sub-interval.
+
+    This wraps a base kernel provider (like SensitivityKernelProvider)
+    and restricts each kernel function to a specified Lebesgue space
+    defined on a sub-interval.
+
+    This is used when building forward operators for partitioned model
+    spaces, where the forward operator for each unknown region only
+    integrates the kernel over that region.
+
+    Attributes:
+        base_provider: The underlying kernel provider.
+        restricted_space: The Lebesgue space to restrict to.
+
+    Example:
+        >>> # Create restricted provider for inner core
+        >>> vs_kernel_full = SensitivityKernelProvider(
+        ...     full_space, catalog, kernel_type='vs'
+        ... )
+        >>> vs_kernel_inner_core = RestrictedKernelProvider(
+        ...     vs_kernel_full, inner_core_space
+        ... )
+        >>> # Each kernel is now restricted to inner core domain
+        >>> kernel_0 = vs_kernel_inner_core.get_function_by_index(0)
+    """
+
+    def __init__(
+        self,
+        base_provider,
+        restricted_space: Lebesgue
+    ):
+        """
+        Initialize a RestrictedKernelProvider.
+
+        Args:
+            base_provider: An IndexedFunctionProvider that provides kernels.
+                Must have get_function_by_index(i) and __len__ methods.
+            restricted_space: The Lebesgue space to restrict kernels to.
+                Its function_domain must be a subset of the base provider's
+                space domain.
+        """
+        self.base_provider = base_provider
+        self.restricted_space = restricted_space
+        self.space = restricted_space  # For compatibility with IndexedFunctionProvider
+
+    def get_function_by_index(self, index: int) -> "Function":
+        """
+        Get the restricted kernel function for the i-th index.
+
+        Args:
+            index: The index of the kernel to retrieve.
+
+        Returns:
+            A Function on the restricted_space.
+        """
+        # Get the full kernel
+        full_kernel = self.base_provider.get_function_by_index(index)
+        # Restrict to sub-interval
+        return full_kernel.restrict(self.restricted_space)
+
+    def __len__(self) -> int:
+        """Return the number of available kernels."""
+        return len(self.base_provider)
+
+    def __repr__(self) -> str:
+        return (
+            f"RestrictedKernelProvider(\n"
+            f"  base_provider={self.base_provider},\n"
+            f"  restricted_domain={self.restricted_space.function_domain}\n"
+            f")"
+        )
 
 
 class LebesgueSpaceDirectSum(HilbertSpaceDirectSum):

@@ -1,0 +1,43 @@
+{
+  "N": 50,
+  "N_d": 25,
+  "N_p": 10,
+  "basis": "sine",
+  "domain_a": 0.0,
+  "domain_b": 1.0,
+
+  "prior_type": "bessel_sobolev",
+  "s": 3.0,
+  "length_scale": 0.5,
+  "overall_variance": 1.0,
+  "K": 30,
+
+  "alpha": null,
+  "method": "spectral",
+  "dofs": 50,
+  "n_samples": 128,
+  "use_fast_transforms": true,
+
+  "bc_type": "dirichlet",
+  "bc_left": 0,
+  "bc_right": 0,
+
+  "noise_level": 0.1,
+  "random_seed": 42,
+
+  "n_modes_range": [1, 50],
+  "coeff_range": [-5, 5],
+  "gaussian_width_percent_range": [1, 5],
+  "freq_range": [0.1, 20],
+
+  "target_width": 0.2,
+
+  "compute_model_posterior": false,
+  "integration_method": "simpson",
+  "integration_n_points": 500,
+  "parallel_enabled": true,
+  "parallel_n_jobs": 12,
+
+  "name": "c0_pd_fast_base",
+  "description": "Fast base config for C_0 positive-definiteness checks (small N, conservative settings)"
+}
