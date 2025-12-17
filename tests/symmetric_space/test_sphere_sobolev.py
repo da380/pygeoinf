@@ -7,6 +7,7 @@ import numpy as np
 import pyshtools as sh
 
 from pygeoinf.symmetric_space.sphere import Sobolev
+from pygeoinf.symmetric_space.sh_tools import SHVectorConverter
 
 
 @pytest.mark.parametrize("lmax, radius, grid", [(8, 1.0, "DH"), (16, 6371.0, "GLQ")])
@@ -72,3 +73,45 @@ class TestSphereSobolevSpecifics:
         analytical_norm = space.radius * scaling_factor
 
         assert np.isclose(numerical_norm, analytical_norm)
+
+    def test_sobolev_coefficient_operators_axioms(self, sobolev_space: Sobolev):
+        """
+        Verifies that the Sobolev coefficient operators satisfy all
+        LinearOperator axioms using the standard check() method.
+        """
+        lmax = sobolev_space.lmax
+
+        op_to = sobolev_space.to_coefficient_operator(lmax)
+        op_to.check(n_checks=5)
+
+        op_from = sobolev_space.from_coefficient_operator(lmax)
+        op_from.check(n_checks=5)
+
+    def test_sobolev_coefficient_mapping(self, sobolev_space: Sobolev):
+        """
+        Tests the coefficient operators specifically within the Sobolev context
+        to ensure they map to the correct underlying coefficients.
+        """
+        lmax = sobolev_space.lmax
+
+        # Generate a known coefficient vector
+        converter = SHVectorConverter(lmax)
+        vec_in = np.zeros(converter.vector_size)
+
+        # Set a specific coefficient (e.g., l=2, m=0) to 1.0
+        # Index calculation: l=0(1) + l=1(3) = 4. l=2 starts at 4. m=0 is +2 offset -> 6.
+        target_idx = 6
+        vec_in[target_idx] = 1.0
+
+        op_from = sobolev_space.from_coefficient_operator(lmax)
+        op_to = sobolev_space.to_coefficient_operator(lmax)
+
+        # Map vector to Sobolev field and back
+        u = op_from(vec_in)
+        vec_out = op_to(u)
+
+        assert np.allclose(vec_in, vec_out)
+
+        # Verify directly against pyshtools to ensure semantic correctness
+        coeffs = sobolev_space.to_coefficients(u)
+        assert np.isclose(coeffs.coeffs[0, 2, 0], 1.0)
