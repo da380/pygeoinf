@@ -76,9 +76,15 @@ from .forward_problem import ForwardProblem, LinearForwardProblem
 from .linear_optimisation import (
     LinearLeastSquaresInversion,
     LinearMinimumNormInversion,
+    ConstrainedLinearLeastSquaresInversion,
+    ConstrainedLinearMinimumNormInversion,
 )
 
-from .linear_bayesian import LinearBayesianInversion, LinearBayesianInference
+from .linear_bayesian import (
+    LinearBayesianInversion,
+    LinearBayesianInference,
+    ConstrainedLinearBayesianInversion,
+)
 
 from .backus_gilbert import HyperEllipsoid
 
@@ -86,6 +92,8 @@ from .nonlinear_optimisation import (
     ScipyUnconstrainedOptimiser,
 )
 
+
+from .subspaces import OrthogonalProjector, AffineSubspace, LinearSubspace
 
 __all__ = [
     # random_matrix
@@ -151,4 +159,10 @@ __all__ = [
     "HyperEllipsoid",
     # nonlinear_optimisation
     "ScipyUnconstrainedOptimiser",
+    "ConstrainedLinearLeastSquaresInversion",
+    "ConstrainedLinearMinimumNormInversion",
+    "ConstrainedLinearBayesianInversion",
+    "OrthogonalProjector",
+    "AffineSubspace",
+    "LinearSubspace",
 ]

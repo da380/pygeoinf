@@ -205,46 +205,15 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
                 constraint space (B @ C_prior @ B*).
             preconditioner: Optional preconditioner for the constraint solver.
         """
-        B = self._constraint.constraint_operator
-        w = self._constraint.constraint_value
-        prior_mean = self._unconstrained_prior.expectation
-        prior_cov = self._unconstrained_prior.covariance
 
-        # 1. Form the "Normal Operator" for the constraint update
-        # S = B @ C @ B* (Acts on Property Space)
-        S = B @ prior_cov @ B.adjoint
+        constraint_problem = LinearForwardProblem(self._constraint.constraint_operator)
+        constraint_inversion = LinearBayesianInversion(
+            constraint_problem, self._unconstrained_prior
+        )
 
-        # 2. Invert S
-        if isinstance(solver, IterativeLinearSolver):
-            S_inv = solver(S, preconditioner=preconditioner)
-        else:
-            S_inv = solver(S)
-
-        # 3. Define Gain Operator K = C @ B* @ S^-1
-        K_op = prior_cov @ B.adjoint @ S_inv
-
-        # 4. Update Mean: m_new = m + K (w - B m)
-        innovation = B.codomain.subtract(w, B(prior_mean))
-        mean_update = K_op(innovation)
-        new_mean = self.model_space.add(prior_mean, mean_update)
-
-        # 5. Update Covariance: C_new = C - K B C
-        correction_op = K_op @ B @ prior_cov
-        new_cov = prior_cov - correction_op
-
-        # 6. Define Sampling
-        if self._unconstrained_prior.sample_set:
-
-            def sample() -> Vector:
-                u_prior = self._unconstrained_prior.sample()
-                mismatch = B.codomain.subtract(B(u_prior), w)
-                correction = K_op(mismatch)
-                return self.model_space.subtract(u_prior, correction)
-
-        else:
-            sample = None
-
-        return GaussianMeasure(covariance=new_cov, expectation=new_mean, sample=sample)
+        return constraint_inversion.model_posterior_measure(
+            self._constraint.constraint_value, solver, preconditioner=preconditioner
+        )
 
     def model_posterior_measure(
         self,
