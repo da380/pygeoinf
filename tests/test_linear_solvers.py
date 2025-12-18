@@ -15,7 +15,11 @@ from pygeoinf.linear_solvers import (
     BICGStabMatrixSolver,
     GMRESMatrixSolver,
     CGSolver,
+    MinResSolver,
+    BICGStabSolver,
+    FCGSolver,
 )
+from pygeoinf.preconditioners import IterativePreconditioningMethod
 
 # =============================================================================
 # Fixtures for the Test Problem
@@ -74,6 +78,23 @@ def action_defined_operator(space: EuclideanSpace, spd_operator) -> LinearOperat
     return LinearOperator(
         space, space, spd_operator, adjoint_mapping=spd_operator.adjoint
     )
+
+
+@pytest.fixture
+def indefinite_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
+    """
+    Provides a symmetric INDEFINITE operator.
+    Constructed by having both positive and negative eigenvalues.
+    """
+    # Create a diagonal matrix with half positive and half negative entries
+    diag_values = np.ones(space.dim)
+    diag_values[space.dim // 2 :] = -1.0
+
+    # Conjugate by a random orthogonal matrix to make it non-diagonal but symmetric
+    Q, _ = np.linalg.qr(np.random.randn(space.dim, space.dim))
+    indefinite_matrix = Q @ np.diag(diag_values) @ Q.T
+
+    return LinearOperator.from_matrix(space, space, indefinite_matrix, galerkin=True)
 
 
 @pytest.fixture
@@ -225,3 +246,143 @@ def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarra
     inverse_op_adj = inverse_op.adjoint
     result_adjoint = (inverse_op_adj @ spd_operator.adjoint)(x)
     assert np.allclose(result_adjoint, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
+
+
+# =============================================================================
+# MinRes Specific Tests
+# =============================================================================
+
+
+def test_minres_indefinite_solve(indefinite_symmetric_operator, x):
+    """
+    Tests MinRes on a symmetric indefinite system.
+    CG would typically fail or diverge here.
+    """
+    solver = MinResSolver(rtol=ITERATIVE_SOLVER_TOLERANCE)
+    inverse_op = solver(indefinite_symmetric_operator)
+
+    result = (inverse_op @ indefinite_symmetric_operator)(x)
+    assert np.allclose(result, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
+
+
+def test_minres_singular_robustness(semi_definite_operator, x):
+    """
+    Tests that MinRes can handle singular symmetric systems.
+    It should find the minimum residual solution.
+    """
+    solver = MinResSolver(rtol=ITERATIVE_SOLVER_TOLERANCE)
+    pseudo_inverse_op = solver(semi_definite_operator)
+
+    # Project x into the range of the operator to ensure a solution exists
+    b_in_range = semi_definite_operator(x)
+    x_sol = pseudo_inverse_op(b_in_range)
+
+    # The residual Ax - b should be minimized
+    b_reconstructed = semi_definite_operator(x_sol)
+    assert np.allclose(
+        b_in_range, b_reconstructed, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE
+    )
+
+
+def test_minres_vs_cg_on_spd(spd_operator, x):
+    """Tests MinRes on an SPD system to ensure it matches CG performance."""
+    solver = MinResSolver(rtol=ITERATIVE_SOLVER_TOLERANCE)
+    inverse_op = solver(spd_operator)
+
+    result = (inverse_op @ spd_operator)(x)
+    assert np.allclose(result, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
+
+
+# =============================================================================
+# BiCGStab Specific Tests
+# =============================================================================
+
+
+def test_bicgstab_non_symmetric_solve(non_symmetric_operator, x):
+    """
+    Tests BiCGStab on a non-symmetric system.
+    This is the primary use case where CG and MinRes would typically fail.
+    """
+    solver = BICGStabSolver(rtol=ITERATIVE_SOLVER_TOLERANCE)
+    inverse_op = solver(non_symmetric_operator)
+
+    # (A^-1 @ A) x = x
+    result = (inverse_op @ non_symmetric_operator)(x)
+    assert np.allclose(result, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
+
+
+def test_bicgstab_vs_cg_on_spd(spd_operator, x):
+    """
+    Tests BiCGStab on an SPD system.
+    While less efficient than CG, it should still converge to the correct solution.
+    """
+    solver = BICGStabSolver(rtol=ITERATIVE_SOLVER_TOLERANCE)
+    inverse_op = solver(spd_operator)
+
+    result = (inverse_op @ spd_operator)(x)
+    assert np.allclose(result, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
+
+
+def test_bicgstab_preconditioned(spd_operator, x):
+    """
+    Tests BiCGStab with a preconditioner to ensure the internal
+    preconditioning logic (ph and sh updates) is correct.
+    """
+    space = spd_operator.domain
+    diag_A = spd_operator.matrix(dense=True, galerkin=True).diagonal()
+    preconditioner = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+        space, space, 1.0 / diag_A
+    )
+
+    solver = BICGStabSolver(rtol=ITERATIVE_SOLVER_TOLERANCE)
+    inverse_op = solver(spd_operator, preconditioner=preconditioner)
+
+    result = (inverse_op @ spd_operator)(x)
+    assert np.allclose(result, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
+
+
+def test_fcg_with_iterative_preconditioner(spd_operator, x):
+    """
+    Tests FCGSolver using a few iterations of CG as a preconditioner.
+    This verifies that the 'Flexible' part of the algorithm handles
+    the varying inner-solver results correctly.
+    """
+    # 1. Define the inner solver (cheap, low precision)
+    inner_cg = CGSolver(rtol=1e-1, maxiter=5)
+
+    # 2. Define the preconditioning method
+    iterative_precond_method = IterativePreconditioningMethod(
+        inner_cg, max_inner_iter=3, rtol=1e-1
+    )
+
+    # 3. Define the outer FCG solver
+    outer_solver = FCGSolver(
+        rtol=1e-10, preconditioning_method=iterative_precond_method
+    )
+
+    # Setup data
+    b = spd_operator(x)
+
+    # 4. Solve the system
+    # We pass None for preconditioner because the solver will
+    # generate it using the preconditioning_method internally.
+    x_sol = outer_solver.solve_linear_system(spd_operator, None, b, None)
+
+    # Verify the solution matches the true x
+    assert np.allclose(x_sol, x, rtol=1e-7, atol=1e-7)
+
+
+def test_fcg_vs_standard_cg_on_spd(spd_operator, x):
+    """
+    Standard test to ensure FCG behaves like standard CG
+    when the preconditioner is static (Identity).
+    """
+    b = spd_operator(x)
+
+    fcg_solver = FCGSolver(rtol=1e-10)
+    cg_solver = CGSolver(rtol=1e-10)
+
+    x_fcg = fcg_solver.solve_linear_system(spd_operator, None, b, None)
+    x_cg = cg_solver.solve_linear_system(spd_operator, None, b, None)
+
+    assert np.allclose(x_fcg, x_cg, rtol=1e-8, atol=1e-8)

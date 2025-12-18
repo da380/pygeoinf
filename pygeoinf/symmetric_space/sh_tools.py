@@ -8,7 +8,7 @@ import numpy as np
 
 
 class SHVectorConverter:
-    """
+    r"""
     Handles conversion between pyshtools 3D coefficient arrays and 1D vectors.
 
     This class bridges the gap between the `pyshtools` 3D array format
