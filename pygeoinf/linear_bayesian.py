@@ -233,26 +233,14 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
             preconditioner: Optional preconditioner for the constraint solver.
         """
 
-        constraint_op = self._constraint.constraint_operator
-        constraint_val = self._constraint.constraint_value
-
         if self._geometric:
             # --- Geometric Approach (Affine Mapping) ---
             # Map: u -> P u + v
             # P = I - B* (B B*)^-1 B
             # v = B* (B B*)^-1 w
 
-            gram_operator = constraint_op @ constraint_op.adjoint
-
-            if isinstance(solver, IterativeLinearSolver):
-                inv_gram_operator = solver(gram_operator, preconditioner=preconditioner)
-            else:
-                inv_gram_operator = solver(gram_operator)
-
-            pseudo_inverse = constraint_op.adjoint @ inv_gram_operator
-            identity = self._unconstrained_prior.domain.identity_operator()
-            projector = identity - pseudo_inverse @ constraint_op
-            translation = pseudo_inverse(constraint_val)
+            projector = self._constraint.projector
+            translation = self._constraint.translation
 
             return self._unconstrained_prior.affine_mapping(
                 operator=projector, translation=translation
@@ -261,6 +249,9 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
         else:
             # --- Bayesian Approach (Statistical Conditioning) ---
             # Treat the constraint as a noiseless observation: w = B(u)
+
+            constraint_op = self._constraint.constraint_operator
+            constraint_val = self._constraint.constraint_value
 
             constraint_problem = LinearForwardProblem(constraint_op)
             constraint_inversion = LinearBayesianInversion(
