@@ -7,10 +7,19 @@ Subpackages
 .. toctree::
    :maxdepth: 4
 
+   pygeoinf.checks
    pygeoinf.symmetric_space
 
 Submodules
 ----------
+
+pygeoinf.auxiliary module
+-------------------------
+
+.. automodule:: pygeoinf.auxiliary
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 pygeoinf.backus\_gilbert module
 -------------------------------
@@ -132,6 +141,14 @@ pygeoinf.parallel module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.plot module
+--------------------
+
+.. automodule:: pygeoinf.plot
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.random\_matrix module
 ------------------------------
 
@@ -140,11 +157,10 @@ pygeoinf.random\_matrix module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.subspaces module
+-------------------------
 
-pygeoinf.auxiliary module
-------------------------------
-
-.. automodule:: pygeoinf.auxiliary
+.. automodule:: pygeoinf.subspaces
    :members:
    :undoc-members:
    :show-inheritance:

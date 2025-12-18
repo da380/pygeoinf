@@ -497,8 +497,6 @@ class CGSolver(IterativeLinearSolver):
 
         for _ in range(maxiter):
             # Check for convergence
-            err = domain.squared_norm(r) / tol_sq
-            print(err)
             if domain.squared_norm(r) <= tol_sq:
                 break
 

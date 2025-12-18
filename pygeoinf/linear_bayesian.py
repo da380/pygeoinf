@@ -243,10 +243,15 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
             # v = B* (B B*)^-1 w
 
             gram_operator = constraint_op @ constraint_op.adjoint
-            inv_gram_operator = solver(gram_operator, preconditioner=preconditioner)
+
+            if isinstance(solver, IterativeLinearSolver):
+                inv_gram_operator = solver(gram_operator, preconditioner=preconditioner)
+            else:
+                inv_gram_operator = solver(gram_operator)
+
             pseudo_inverse = constraint_op.adjoint @ inv_gram_operator
             identity = self._unconstrained_prior.domain.identity_operator()
-            projector = identity - (pseudo_inverse @ constraint_op)
+            projector = identity - pseudo_inverse @ constraint_op
             translation = pseudo_inverse(constraint_val)
 
             return self._unconstrained_prior.affine_mapping(

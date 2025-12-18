@@ -12,6 +12,14 @@ pygeoinf.symmetric\_space.circle module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.symmetric\_space.sh\_tools module
+------------------------------------------
+
+.. automodule:: pygeoinf.symmetric_space.sh_tools
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.symmetric\_space.sphere module
 ---------------------------------------
 
