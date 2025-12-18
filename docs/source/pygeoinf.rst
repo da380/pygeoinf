@@ -149,6 +149,14 @@ pygeoinf.plot module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.preconditioners module
+-------------------------------
+
+.. automodule:: pygeoinf.preconditioners
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.random\_matrix module
 ------------------------------
 
