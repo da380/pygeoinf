@@ -1,5 +1,4 @@
 import pygeoinf as inf
-from numpy import pi
 import matplotlib.pyplot as plt
 
 from pygeoinf.symmetric_space.circle import Lebesgue, Sobolev

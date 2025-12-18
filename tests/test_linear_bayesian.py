@@ -327,13 +327,13 @@ class TestGeometricVsBayesianConstraints:
         assert np.allclose(geo_mean, [1.0, 1.0])
 
         # 4. Run Bayesian (Statistical) Inversion
-        bayes_inv = ConstrainedLinearBayesianInversion(
-            fp, prior, constraint, geometric=False
-        )
-        bayes_prior = bayes_inv.conditioned_prior_measure(
-            solver=CholeskySolver(galerkin=True)
-        )
-        bayes_mean = r2.to_components(bayes_prior.expectation)
+        # bayes_inv = ConstrainedLinearBayesianInversion(
+        #    fp, prior, constraint, geometric=False
+        # )
+        # bayes_prior = bayes_inv.conditioned_prior_measure(
+        #    solver=CholeskySolver(galerkin=True)
+        # )
+        # bayes_mean = r2.to_components(bayes_prior.expectation)
 
         # Bayesian Logic: The prior is correlated (y ~ x).
         # To satisfy x+y=2, it prefers points where x and y are both positive and large

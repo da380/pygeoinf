@@ -51,3 +51,4 @@ build-backend = "poetry.core.masonry.api"
 # For the sphere.py file, where 'l' is a common variable name for spherical
 # harmonic degree, ignore the ambiguous variable name warning (E741).
 "pygeoinf/symmetric_space/sphere.py" = ["E741"]
+"pygeoinf/symmetric_space/sh_tools.py" = ["E741"]

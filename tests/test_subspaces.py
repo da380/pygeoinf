@@ -10,7 +10,6 @@ from pygeoinf.subspaces import AffineSubspace, LinearSubspace, OrthogonalProject
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.symmetric_space.circle import Lebesgue
 from pygeoinf.linear_operators import LinearOperator
-from pygeoinf.linear_solvers import CGSolver
 
 # =============================================================================
 # Fixtures

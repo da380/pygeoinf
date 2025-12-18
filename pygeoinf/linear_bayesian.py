@@ -23,7 +23,7 @@ from .gaussian_measure import GaussianMeasure
 from .forward_problem import LinearForwardProblem
 from .linear_operators import LinearOperator, NormalSumOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
-from .hilbert_space import HilbertSpace, Vector
+from .hilbert_space import Vector
 from .subspaces import AffineSubspace
 
 
