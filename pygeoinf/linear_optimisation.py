@@ -16,6 +16,8 @@ Key Classes
 - `LinearMinimumNormInversion`: Finds the model with the smallest norm that
   fits the data to a statistically acceptable degree using the discrepancy
   principle.
+- `ConstrainedLinearLeastSquaresInversion`: Solves a linear inverse problem
+  subject to an affine subspace constraint.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from .forward_problem import LinearForwardProblem
 from .linear_operators import LinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector
+from .subspaces import AffineSubspace
 
 
 class LinearLeastSquaresInversion(LinearInversion):
@@ -158,6 +161,113 @@ class LinearLeastSquaresInversion(LinearInversion):
 
         else:
             return inverse_normal_operator @ forward_operator.adjoint
+
+
+class ConstrainedLinearLeastSquaresInversion(LinearInversion):
+    """
+    Solves a linear inverse problem subject to an affine subspace constraint.
+
+    Problem:
+        Minimize J(u) = || A(u) - d ||_D^2 + alpha * || u ||_M^2
+        Subject to u in A (Affine Subspace)
+
+    Method:
+        The problem is reduced to an unconstrained minimization in the subspace.
+        We decompose the model as u = u_base + w, where u_base is the element
+        of the affine subspace closest to the origin (orthogonal to the tangent space),
+        and w is a perturbation in the tangent space.
+
+        The cost function separates (due to orthogonality) into:
+        J(w) = || A(w) - (d - A(u_base)) ||^2 + alpha * || w ||^2 + (alpha * ||u_base||^2)
+
+        This is solved using the standard LinearLeastSquaresInversion on a
+        reduced forward problem.
+    """
+
+    def __init__(
+        self, forward_problem: LinearForwardProblem, constraint: AffineSubspace
+    ) -> None:
+        """
+        Args:
+            forward_problem: The original unconstrained forward problem.
+            constraint: The affine subspace A where the solution must lie.
+        """
+        super().__init__(forward_problem)
+        self._constraint = constraint
+
+        # 1. Compute the Orthogonal Base Vector (u_base)
+        # u_base = (I - P) * translation
+        # This is the unique vector in the affine space that is orthogonal to the tangent space.
+        # It ensures ||u||^2 = ||u_base||^2 + ||w||^2, decoupling the regularization.
+        self._u_base = constraint.domain.subtract(
+            constraint.translation, constraint.projector(constraint.translation)
+        )
+
+        # 2. Construct Reduced Forward Problem
+        # Operator: A_tilde = A @ P
+        reduced_operator = forward_problem.forward_operator @ constraint.projector
+
+        # The error measure on the data remains valid for the reduced problem
+        # because the noise model is additive and independent of the model parameters.
+        self._reduced_forward_problem = LinearForwardProblem(
+            reduced_operator,
+            data_error_measure=(
+                forward_problem.data_error_measure
+                if forward_problem.data_error_measure_set
+                else None
+            ),
+        )
+
+        # 3. Initialize the internal unconstrained solver
+        self._unconstrained_inversion = LinearLeastSquaresInversion(
+            self._reduced_forward_problem
+        )
+
+    def least_squares_operator(
+        self,
+        damping: float,
+        solver: LinearSolver,
+        /,
+        **kwargs,
+    ) -> NonLinearOperator:
+        """
+        Returns an operator that maps data to the constrained least-squares solution.
+
+        Args:
+            damping: The Tikhonov damping parameter.
+            solver: The linear solver for the reduced normal equations.
+            **kwargs: Additional arguments passed to the solver (e.g., preconditioner).
+
+        Returns:
+            A NonLinearOperator mapping d -> u_constrained.
+        """
+
+        # Get the operator L_tilde such that w = L_tilde(d_tilde)
+        reduced_op = self._unconstrained_inversion.least_squares_operator(
+            damping, solver, **kwargs
+        )
+
+        # Precompute A(u_base) to shift the data efficiently
+        # This represents the data predicted by the "base" model.
+        data_offset = self.forward_problem.forward_operator(self._u_base)
+
+        domain = self.data_space
+        codomain = self.model_space
+
+        def mapping(d: Vector) -> Vector:
+            # 1. Shift Data: d_tilde = d - A(u_base)
+            d_tilde = domain.subtract(d, data_offset)
+
+            # 2. Solve for perturbation w in the tangent space
+            # w = (P A* A P + alpha I)^-1 P A* d_tilde
+            w = reduced_op(d_tilde)
+
+            # 3. Reconstruct full model: u = u_base + w
+            # Note: w is guaranteed to be in the tangent space (Range of P)
+            # because of the structure of the reduced normal equations.
+            return codomain.add(self._u_base, w)
+
+        return NonLinearOperator(domain, codomain, mapping)
 
 
 class LinearMinimumNormInversion(LinearInversion):
@@ -309,3 +419,111 @@ class LinearMinimumNormInversion(LinearInversion):
             normal_operator = forward_operator @ forward_operator.adjoint
             inverse_normal_operator = solver(normal_operator)
             return forward_operator.adjoint @ inverse_normal_operator
+
+
+class ConstrainedLinearMinimumNormInversion(LinearInversion):
+    """
+    Finds the minimum-norm solution subject to an affine subspace constraint
+    using the discrepancy principle.
+
+    Problem:
+        Minimize ||u||
+        Subject to u in A (Affine Subspace)
+        And chi_squared(u, d) <= critical_value
+
+    Method:
+        We decompose the model as u = u_base + w, where u_base is the element
+        of the affine subspace with the smallest norm (orthogonal to the tangent
+        space), and w is a perturbation in the tangent space.
+
+        Because u_base and w are orthogonal, ||u||^2 = ||u_base||^2 + ||w||^2.
+        Minimizing ||u|| is therefore equivalent to minimizing ||w||.
+
+        The problem reduces to finding the minimum norm w such that:
+        || A(w) - (d - A(u_base)) ||_D^2 <= critical_value
+
+        This is solved using the standard LinearMinimumNormInversion on a
+        reduced forward problem.
+    """
+
+    def __init__(
+        self,
+        forward_problem: LinearForwardProblem,
+        constraint: AffineSubspace,
+    ) -> None:
+        """
+        Args:
+            forward_problem: The original unconstrained forward problem.
+            constraint: The affine subspace A where the solution must lie.
+        """
+        super().__init__(forward_problem)
+        if self.forward_problem.data_error_measure_set:
+            self.assert_inverse_data_covariance()
+
+        self._constraint = constraint
+
+        # 1. Compute the Orthogonal Base Vector (u_base)
+        # u_base = (I - P) * translation
+        # This is the vector in the affine space closest to the origin.
+        self._u_base = constraint.domain.subtract(
+            constraint.translation, constraint.projector(constraint.translation)
+        )
+
+        # 2. Construct Reduced Forward Problem
+        # Operator: A_tilde = A @ P
+        reduced_operator = forward_problem.forward_operator @ constraint.projector
+
+        self._reduced_forward_problem = LinearForwardProblem(
+            reduced_operator,
+            data_error_measure=(
+                forward_problem.data_error_measure
+                if forward_problem.data_error_measure_set
+                else None
+            ),
+        )
+
+        # 3. Initialize the internal unconstrained solver
+        self._unconstrained_inversion = LinearMinimumNormInversion(
+            self._reduced_forward_problem
+        )
+
+    def minimum_norm_operator(
+        self,
+        solver: LinearSolver,
+        /,
+        **kwargs,
+    ) -> NonLinearOperator:
+        """
+        Returns an operator that maps data to the constrained minimum-norm solution.
+
+        Args:
+            solver: The linear solver for the reduced normal equations.
+            **kwargs: Arguments passed to LinearMinimumNormInversion (e.g.,
+                      significance_level, rtol, maxiter).
+
+        Returns:
+            A NonLinearOperator mapping d -> u_constrained.
+        """
+
+        # Get the operator L_tilde such that w = L_tilde(d_tilde)
+        reduced_op = self._unconstrained_inversion.minimum_norm_operator(
+            solver, **kwargs
+        )
+
+        # Precompute A(u_base) to shift the data
+        data_offset = self.forward_problem.forward_operator(self._u_base)
+
+        domain = self.data_space
+        codomain = self.model_space
+
+        def mapping(d: Vector) -> Vector:
+            # 1. Shift Data: d_tilde = d - A(u_base)
+            d_tilde = domain.subtract(d, data_offset)
+
+            # 2. Solve for perturbation w in the tangent space
+            w = reduced_op(d_tilde)
+
+            # 3. Reconstruct full model: u = u_base + w
+            return codomain.add(self._u_base, w)
+
+        return NonLinearOperator(domain, codomain, mapping)

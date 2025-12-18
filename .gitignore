@@ -4,6 +4,7 @@ __pycache__
 dist/*
 poetry.lock
 
+
 # Python bytecode
 __pycache__/
 *.pyc
@@ -17,5 +18,6 @@ htmlcov/
 
 # Sphinx documentation build output
 docs/build/
+
 
 

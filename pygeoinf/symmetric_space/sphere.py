@@ -41,6 +41,7 @@ except ImportError:
     )
 
 from pygeoinf.hilbert_space import (
+    EuclideanSpace,
     HilbertModule,
     MassWeightedHilbertModule,
 )
@@ -50,12 +51,14 @@ from .symmetric_space import (
     AbstractInvariantLebesgueSpace,
     AbstractInvariantSobolevSpace,
 )
+from .sh_tools import SHVectorConverter
 
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from cartopy.mpl.geoaxes import GeoAxes
     from cartopy.crs import Projection
+    from pyshtools import SHGrid
 
 
 class SphereHelper:
@@ -528,6 +531,93 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
             f"extend={self.extend}"
         )
 
+    def to_coefficient_operator(self, lmax: int, lmin: int = 0):
+        """
+        Returns a LinearOperator that maps an element of the space to
+        a vector of its spherical harmonic coefficients within the
+        specified range of degrees.
+
+        The output coefficients are ordered in the following manner:
+
+        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+
+        in this case assuming lmin = 0.
+
+        If lmax is larger than the field's lmax, the output will be padded by zeros.
+
+        Args:
+            lmax: The maximum spherical harmonic degree to include in the output.
+            lmin: The minimum spherical harmonic degree to include in the output.
+                Defaults to 0.
+
+        Returns:
+            A LinearOperator that maps an SHGrid to a NumPy vector of coefficients.
+
+        Notes:
+            This is a left inverse of the from_coefficient_operator so long a the
+            values for lmin and lmax are equal.
+        """
+
+        converter = SHVectorConverter(lmax, lmin)
+        codomain = EuclideanSpace(converter.vector_size)
+
+        def mapping(u: SHGrid) -> np.ndarray:
+            ulm = self.to_coefficients(u)
+            return converter.to_vector(ulm.coeffs)
+
+        def adjoint_mapping(data: np.ndarray) -> SHGrid:
+            coeffs = converter.from_vector(data, output_lmax=self.lmax)
+            ulm = sh.SHCoeffs.from_array(
+                coeffs,
+                normalization=self.normalization,
+                csphase=self.csphase,
+            )
+            return self.from_coefficients(ulm) / self.radius**2
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def from_coefficient_operator(self, lmax: int, lmin: int = 0):
+        """
+        Returns a LinearOperator that maps a vector of spherical harmonic coefficients
+        to an element of the space.
+
+        The input coefficients are ordered in the following manner:
+
+        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+
+        in this case assuming lmin = 0.
+
+        Args:
+            lmax: The maximum spherical harmonic degree to include in the output.
+            lmin: The minimum spherical harmonic degree to include in the output.
+                Defaults to 0.
+
+        Returns:
+            A LinearOperator that maps a NumPy vector of coefficients to an SHGrid.
+
+        Notes:
+            This is a right inverse of the to_coefficient_operator so long a the
+            values for lmin and lmax are equal.
+        """
+
+        converter = SHVectorConverter(lmax, lmin)
+        domain = EuclideanSpace(converter.vector_size)
+
+        def mapping(data: np.ndarray) -> SHGrid:
+            coeffs = converter.from_vector(data, output_lmax=self.lmax)
+            ulm = sh.SHCoeffs.from_array(
+                coeffs,
+                normalization=self.normalization,
+                csphase=self.csphase,
+            )
+            return self.from_coefficients(ulm)
+
+        def adjoint_mapping(u: SHGrid) -> np.ndarray:
+            ulm = self.to_coefficients(u)
+            return converter.to_vector(ulm.coeffs) * self.radius**2
+
+        return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
+
 
 class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevSpace):
     """
@@ -691,3 +781,64 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             f"grid={self.grid}\n"
             f"extend={self.extend}"
         )
+
+    def to_coefficient_operator(self, lmax: int, lmin: int = 0):
+        """
+        Returns a LinearOperator that maps an element of the space to
+        a vector of its spherical harmonic coefficients within the
+        specified range of degrees.
+
+        The output coefficients are ordered in the following manner:
+
+        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+
+        in this case assuming lmin = 0.
+
+        If lmax is larger than the field's lmax, the output will be padded by zeros.
+
+        Args:
+            lmax: The maximum spherical harmonic degree to include in the output.
+            lmin: The minimum spherical harmonic degree to include in the output.
+                Defaults to 0.
+
+        Returns:
+            A LinearOperator that maps an SHGrid to a NumPy vector of coefficients.
+
+        Notes:
+            This is a left inverse of the from_coefficient_operator so long a the
+            values for lmin and lmax are equal.
+        """
+
+        l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin)
+
+        return LinearOperator.from_formal_adjoint(
+            self, l2_operator.codomain, l2_operator
+        )
+
+    def from_coefficient_operator(self, lmax: int, lmin: int = 0):
+        """
+        Returns a LinearOperator that maps a vector of spherical harmonic coefficients
+        to an element of the space.
+
+        The input coefficients are ordered in the following manner:
+
+        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+
+        in this case assuming lmin = 0.
+
+        Args:
+            lmax: The maximum spherical harmonic degree to include in the output.
+            lmin: The minimum spherical harmonic degree to include in the output.
+                Defaults to 0.
+
+        Returns:
+            A LinearOperator that maps a NumPy vector of coefficients to an SHGrid.
+
+        Notes:
+            This is a right inverse of the to_coefficient_operator so long a the
+            values for lmin and lmax are equal.
+        """
+
+        l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin)
+
+        return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
