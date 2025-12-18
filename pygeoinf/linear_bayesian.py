@@ -197,16 +197,22 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
         forward_problem: LinearForwardProblem,
         model_prior_measure: GaussianMeasure,
         constraint: AffineSubspace,
+        /,
+        *,
+        geometric: bool = False,
     ) -> None:
         """
         Args:
             forward_problem: The forward problem.
             model_prior_measure: The unconstrained prior Gaussian measure.
             constraint: The affine subspace A = {u | Bu = w}.
+            geometric: If True, uses orthogonal projection to enforce the constraint.
+                       If False (default), uses Bayesian conditioning.
         """
         super().__init__(forward_problem)
         self._unconstrained_prior = model_prior_measure
         self._constraint = constraint
+        self._geometric = geometric
 
         if not constraint.has_constraint_equation:
             raise ValueError(
@@ -227,14 +233,38 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
             preconditioner: Optional preconditioner for the constraint solver.
         """
 
-        constraint_problem = LinearForwardProblem(self._constraint.constraint_operator)
-        constraint_inversion = LinearBayesianInversion(
-            constraint_problem, self._unconstrained_prior
-        )
+        constraint_op = self._constraint.constraint_operator
+        constraint_val = self._constraint.constraint_value
 
-        return constraint_inversion.model_posterior_measure(
-            self._constraint.constraint_value, solver, preconditioner=preconditioner
-        )
+        if self._geometric:
+            # --- Geometric Approach (Affine Mapping) ---
+            # Map: u -> P u + v
+            # P = I - B* (B B*)^-1 B
+            # v = B* (B B*)^-1 w
+
+            gram_operator = constraint_op @ constraint_op.adjoint
+            inv_gram_operator = solver(gram_operator, preconditioner=preconditioner)
+            pseudo_inverse = constraint_op.adjoint @ inv_gram_operator
+            identity = self._unconstrained_prior.domain.identity_operator()
+            projector = identity - (pseudo_inverse @ constraint_op)
+            translation = pseudo_inverse(constraint_val)
+
+            return self._unconstrained_prior.affine_mapping(
+                operator=projector, translation=translation
+            )
+
+        else:
+            # --- Bayesian Approach (Statistical Conditioning) ---
+            # Treat the constraint as a noiseless observation: w = B(u)
+
+            constraint_problem = LinearForwardProblem(constraint_op)
+            constraint_inversion = LinearBayesianInversion(
+                constraint_problem, self._unconstrained_prior
+            )
+
+            return constraint_inversion.model_posterior_measure(
+                constraint_val, solver, preconditioner=preconditioner
+            )
 
     def model_posterior_measure(
         self,

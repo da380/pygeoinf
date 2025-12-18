@@ -151,15 +151,16 @@ __all__ = [
     # linear_optimisation
     "LinearLeastSquaresInversion",
     "LinearMinimumNormInversion",
+    "ConstrainedLinearLeastSquaresInversion",
+    "ConstrainedLinearMinimumNormInversion",
     # linear_bayesian
     "LinearBayesianInversion",
+    "ConstrainedLinearBayesianInversion",
     # backus_gilbert
     "HyperEllipsoid",
     # nonlinear_optimisation
     "ScipyUnconstrainedOptimiser",
-    "ConstrainedLinearLeastSquaresInversion",
-    "ConstrainedLinearMinimumNormInversion",
-    "ConstrainedLinearBayesianInversion",
+    # Subspaces
     "OrthogonalProjector",
     "AffineSubspace",
     "LinearSubspace",
