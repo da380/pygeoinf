@@ -532,30 +532,26 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         )
 
     def to_coefficient_operator(self, lmax: int, lmin: int = 0):
-        """
-        Returns a LinearOperator that maps an element of the space to
-        a vector of its spherical harmonic coefficients within the
-        specified range of degrees.
+        r"""
+        Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
 
-        The output coefficients are ordered in the following manner:
+        The operator maps an element of the Hilbert space to a vector in $\mathbb{R}^k$.
+        The coefficients in the output vector are ordered by degree $l$ (major)
+        and order $m$ (minor), from $-l$ to $+l$.
 
-        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+        **Ordering:**
 
-        in this case assuming lmin = 0.
+        .. math::
+            u = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
 
-        If lmax is larger than the field's lmax, the output will be padded by zeros.
+        (assuming `lmin=0`).
 
         Args:
             lmax: The maximum spherical harmonic degree to include in the output.
-            lmin: The minimum spherical harmonic degree to include in the output.
-                Defaults to 0.
+            lmin: The minimum spherical harmonic degree to include. Defaults to 0.
 
         Returns:
-            A LinearOperator that maps an SHGrid to a NumPy vector of coefficients.
-
-        Notes:
-            This is a left inverse of the from_coefficient_operator so long a the
-            values for lmin and lmax are equal.
+            A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
         """
 
         converter = SHVectorConverter(lmax, lmin)
@@ -577,27 +573,25 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
     def from_coefficient_operator(self, lmax: int, lmin: int = 0):
-        """
-        Returns a LinearOperator that maps a vector of spherical harmonic coefficients
-        to an element of the space.
+        r"""
+        Returns a LinearOperator mapping a vector of coefficients to a function.
 
-        The input coefficients are ordered in the following manner:
+        The operator maps a vector in $\mathbb{R}^k$ to an element of the Hilbert space.
+        The input vector must follow the standard $l$-major, $m$-minor ordering.
 
-        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+        **Ordering:**
 
-        in this case assuming lmin = 0.
+        .. math::
+            v = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
+
+        (assuming `lmin=0`).
 
         Args:
-            lmax: The maximum spherical harmonic degree to include in the output.
-            lmin: The minimum spherical harmonic degree to include in the output.
-                Defaults to 0.
+            lmax: The maximum spherical harmonic degree expected in the input.
+            lmin: The minimum spherical harmonic degree expected. Defaults to 0.
 
         Returns:
-            A LinearOperator that maps a NumPy vector of coefficients to an SHGrid.
-
-        Notes:
-            This is a right inverse of the to_coefficient_operator so long a the
-            values for lmin and lmax are equal.
+            A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
         """
 
         converter = SHVectorConverter(lmax, lmin)
@@ -783,30 +777,26 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
         )
 
     def to_coefficient_operator(self, lmax: int, lmin: int = 0):
-        """
-        Returns a LinearOperator that maps an element of the space to
-        a vector of its spherical harmonic coefficients within the
-        specified range of degrees.
+        r"""
+        Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
 
-        The output coefficients are ordered in the following manner:
+        The operator maps an element of the Hilbert space to a vector in $\mathbb{R}^k$.
+        The coefficients in the output vector are ordered by degree $l$ (major)
+        and order $m$ (minor), from $-l$ to $+l$.
 
-        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+        **Ordering:**
 
-        in this case assuming lmin = 0.
+        .. math::
+            u = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
 
-        If lmax is larger than the field's lmax, the output will be padded by zeros.
+        (assuming `lmin=0`).
 
         Args:
             lmax: The maximum spherical harmonic degree to include in the output.
-            lmin: The minimum spherical harmonic degree to include in the output.
-                Defaults to 0.
+            lmin: The minimum spherical harmonic degree to include. Defaults to 0.
 
         Returns:
-            A LinearOperator that maps an SHGrid to a NumPy vector of coefficients.
-
-        Notes:
-            This is a left inverse of the from_coefficient_operator so long a the
-            values for lmin and lmax are equal.
+            A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
         """
 
         l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin)
@@ -816,27 +806,25 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
         )
 
     def from_coefficient_operator(self, lmax: int, lmin: int = 0):
-        """
-        Returns a LinearOperator that maps a vector of spherical harmonic coefficients
-        to an element of the space.
+        r"""
+        Returns a LinearOperator mapping a vector of coefficients to a function.
 
-        The input coefficients are ordered in the following manner:
+        The operator maps a vector in $\mathbb{R}^k$ to an element of the Hilbert space.
+        The input vector must follow the standard $l$-major, $m$-minor ordering.
 
-        u_{00}, u_{1-1}, u_{10}, u_{11}, u_{2-2}, u_{2-1}, u_{20}, u_{21}, u_{22}, ...
+        **Ordering:**
 
-        in this case assuming lmin = 0.
+        .. math::
+            v = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
+
+        (assuming `lmin=0`).
 
         Args:
-            lmax: The maximum spherical harmonic degree to include in the output.
-            lmin: The minimum spherical harmonic degree to include in the output.
-                Defaults to 0.
+            lmax: The maximum spherical harmonic degree expected in the input.
+            lmin: The minimum spherical harmonic degree expected. Defaults to 0.
 
         Returns:
-            A LinearOperator that maps a NumPy vector of coefficients to an SHGrid.
-
-        Notes:
-            This is a right inverse of the to_coefficient_operator so long a the
-            values for lmin and lmax are equal.
+            A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
         """
 
         l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin)

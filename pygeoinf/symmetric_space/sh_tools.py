@@ -11,16 +11,28 @@ class SHVectorConverter:
     """
     Handles conversion between pyshtools 3D coefficient arrays and 1D vectors.
 
-    This class provides a bridge between the pyshtools data structure for
-    spherical harmonic coefficients, a 3D array of shape (2, lmax+1, lmax+1),
-    and the 1D vector format often used in linear algebra and inverse problems.
+    This class bridges the gap between the `pyshtools` 3D array format
+    (shape `[2, lmax+1, lmax+1]`) and the flat 1D vector format used in
+    linear algebra.
 
-    The vector is ordered by degree l, and within each degree, by order m,
-    from -l to +l.
+    **Vector Layout:**
+    The output vector is ordered first by degree $l$ (ascending from `lmin` to `lmax`),
+    and then by order $m$ (ascending from $-l$ to $+l$).
+
+    The sequence of coefficients is:
+
+    .. math::
+        [u_{l_{min}, -l_{min}}, \dots, u_{l_{min}, l_{min}}, \quad
+         u_{l_{min}+1, -(l_{min}+1)}, \dots, u_{l_{min}+1, l_{min}+1}, \quad \dots]
+
+    **Example (lmin=0):**
+
+    .. math::
+        [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, u_{2,-1}, u_{2,0}, u_{2,1}, u_{2,2}, \dots]
 
     Args:
         lmax (int): The maximum spherical harmonic degree to include.
-        lmin (int): The minimum spherical harmonic degree to include. Defaults to 2.
+        lmin (int): The minimum spherical harmonic degree to include. Defaults to 0.
     """
 
     def __init__(self, lmax: int, lmin: int = 0):

@@ -9,10 +9,8 @@ Key Classes
 -----------
 - `LinearBayesianInversion`: Computes the posterior Gaussian measure `p(u|d)`
   for the model `u` given observed data `d`.
-- `LinearBayesianInference`: Extends the framework to compute the posterior
-  distribution for a derived property of the model.
 - `ConstrainedLinearBayesianInversion`: Solves the inverse problem subject to
-  a hard affine constraint `u in A`, interpreting it as conditioning the prior.
+  an affine constraint `u in A`.
 """
 
 from __future__ import annotations
@@ -41,6 +39,11 @@ class LinearBayesianInversion(LinearInversion):
         model_prior_measure: GaussianMeasure,
         /,
     ) -> None:
+        """
+        Args:
+            forward_problem: The forward problem linking the model to the data.
+            model_prior_measure: The prior Gaussian measure on the model space.
+        """
         super().__init__(forward_problem)
         self._model_prior_measure: GaussianMeasure = model_prior_measure
 
@@ -52,16 +55,7 @@ class LinearBayesianInversion(LinearInversion):
     @property
     def normal_operator(self) -> LinearOperator:
         """
-        Returns the Bayesian Norm operator:
-
-        N = A Q A* + R
-
-        with A the forward operator (with A* its adjoint), Q the model
-        prior covariance, and R the data error covariance. For error-free
-        problems this operator is reduced to:
-
-        N = A Q A*
-
+        Returns the Bayesian Normal operator: N = A Q A* + R.
         """
         forward_operator = self.forward_problem.forward_operator
         model_prior_covariance = self.model_prior_measure.covariance
@@ -80,23 +74,10 @@ class LinearBayesianInversion(LinearInversion):
         /,
         *,
         preconditioner: Optional[LinearOperator] = None,
-    ):
+    ) -> LinearOperator:
         """
-        Returns the Kalman gain operator for the problem:
-
-        K = Q A* Ni
-
-        where Q is the model prior covariance, A the forward operator
-        (with adjoint A*), and Ni is the inverse of the normal operator.
-
-        Args:
-            solver: A linear solver for inverting the normal operator.
-            preconditioner: An optional preconditioner for.
-
-        Returns:
-            A LinearOperator for the Kalman gain.
+        Returns the Kalman gain operator K = Q A* N^-1.
         """
-
         forward_operator = self.forward_problem.forward_operator
         model_prior_covariance = self.model_prior_measure.covariance
         normal_operator = self.normal_operator
@@ -121,37 +102,45 @@ class LinearBayesianInversion(LinearInversion):
         preconditioner: Optional[LinearOperator] = None,
     ) -> GaussianMeasure:
         """
-        Returns the posterior Gaussian measure for the model conditions on the data.
+        Returns the posterior Gaussian measure p(u|d).
 
         Args:
             data: The observed data vector.
-            solver: A linear solver for inverting the normal operator C_d.
-            preconditioner: An optional preconditioner for C_d.
+            solver: A linear solver for inverting the normal operator.
+            preconditioner: An optional preconditioner.
         """
         data_space = self.data_space
         model_space = self.model_space
         forward_operator = self.forward_problem.forward_operator
         model_prior_covariance = self.model_prior_measure.covariance
 
+        # 1. Compute Kalman Gain
         kalman_gain = self.kalman_operator(solver, preconditioner=preconditioner)
 
-        # u_bar_post = u_bar + K (v - A u_bar - v_bar)
+        # 2. Compute Posterior Mean
+        # Shift data: d - A(mu_u)
         shifted_data = data_space.subtract(
             data, forward_operator(self.model_prior_measure.expectation)
         )
+
+        # Shift for noise mean: d - A(mu_u) - mu_e
         if self.forward_problem.data_error_measure_set:
-            shifted_data = data_space.subtract(
-                shifted_data, self.forward_problem.data_error_measure.expectation
-            )
+            error_expectation = self.forward_problem.data_error_measure.expectation
+            shifted_data = data_space.subtract(shifted_data, error_expectation)
+        else:
+            error_expectation = data_space.zero
+
         mean_update = kalman_gain(shifted_data)
         expectation = model_space.add(self.model_prior_measure.expectation, mean_update)
 
-        # Q_post = Q - K A Q
+        # 3. Compute Posterior Covariance (Implicitly)
+        # C_post = C_u - K A C_u
         covariance = model_prior_covariance - (
             kalman_gain @ forward_operator @ model_prior_covariance
         )
 
-        # Add in a sampling method if that is possible.
+        # 4. Set up Posterior Sampling
+        # Logic: Can sample if prior is samplable AND (noise is absent OR samplable)
         can_sample_prior = self.model_prior_measure.sample_set
         can_sample_noise = (
             not self.forward_problem.data_error_measure_set
@@ -160,19 +149,21 @@ class LinearBayesianInversion(LinearInversion):
 
         if can_sample_prior and can_sample_noise:
 
-            if self.forward_problem.data_error_measure_set:
-                error_expectation = self.forward_problem.data_error_measure.expectation
-
             def sample():
+                # a. Sample Prior
                 model_sample = self.model_prior_measure.sample()
+
+                # b. Calculate Residual
                 prediction = forward_operator(model_sample)
                 data_residual = data_space.subtract(data, prediction)
 
+                # c. Perturb Residual
                 if self.forward_problem.data_error_measure_set:
                     noise_raw = self.forward_problem.data_error_measure.sample()
                     epsilon = data_space.subtract(noise_raw, error_expectation)
                     data_space.axpy(1.0, epsilon, data_residual)
 
+                # d. Update
                 correction = kalman_gain(data_residual)
                 return model_space.add(model_sample, correction)
 
@@ -185,11 +176,13 @@ class LinearBayesianInversion(LinearInversion):
 
 class ConstrainedLinearBayesianInversion(LinearInversion):
     """
-    Solves a linear inverse problem using Bayesian methods subject to an
-    affine subspace constraint `u in A`.
+    Solves a linear inverse problem subject to an affine subspace constraint.
 
-    This interprets the constraint as conditioning the prior on the subspace.
-    The subspace must be defined by a linear equation B(u) = w.
+    This class enforces the constraint `u in A` using either:
+    1. Bayesian Conditioning (Default): p(u | d, u in A).
+       If A is defined geometrically (no explicit equation), an implicit
+       operator (I-P) is used, which requires a robust solver in the subspace.
+    2. Geometric Projection: Projects the unconstrained posterior onto A.
     """
 
     def __init__(
@@ -205,8 +198,8 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
         Args:
             forward_problem: The forward problem.
             model_prior_measure: The unconstrained prior Gaussian measure.
-            constraint: The affine subspace A = {u | Bu = w}.
-            geometric: If True, uses orthogonal projection to enforce the constraint.
+            constraint: The affine subspace A.
+            geometric: If True, uses orthogonal projection (Euclidean metric).
                        If False (default), uses Bayesian conditioning.
         """
         super().__init__(forward_problem)
@@ -214,88 +207,37 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
         self._constraint = constraint
         self._geometric = geometric
 
-        if not constraint.has_constraint_equation:
-            raise ValueError(
-                "For Bayesian inversion, the subspace must be defined by a linear "
-                "equation (constraint operator). Use AffineSubspace.from_linear_equation."
-            )
-
-    def conditioned_prior_measure(
-        self,
-        solver: LinearSolver,
-        preconditioner: Optional[LinearOperator] = None,
-    ) -> GaussianMeasure:
+    def conditioned_prior_measure(self) -> GaussianMeasure:
         """
-        Computes the prior measure conditioned on the constraint B(u) = w.
-
-        Args:
-            solver: Linear solver used to invert the normal operator, BQB*.
-            preconditioner: Optional preconditioner for the constraint solver.
+        Computes the prior measure conditioned on the constraint.
         """
-
-        constraint_op = self._constraint.constraint_operator
-        constraint_val = self._constraint.constraint_value
-
-        if self._geometric:
-            # --- Geometric Approach (Affine Mapping) ---
-            # Map: u -> P u + v
-            # P = I - B* (B B*)^-1 B
-            # v = B* (B B*)^-1 w
-
-            gram_operator = constraint_op @ constraint_op.adjoint
-
-            if isinstance(solver, IterativeLinearSolver):
-                inv_gram_operator = solver(gram_operator, preconditioner=preconditioner)
-            else:
-                inv_gram_operator = solver(gram_operator)
-
-            pseudo_inverse = constraint_op.adjoint @ inv_gram_operator
-            identity = self._unconstrained_prior.domain.identity_operator()
-            projector = identity - pseudo_inverse @ constraint_op
-            translation = pseudo_inverse(constraint_val)
-
-            return self._unconstrained_prior.affine_mapping(
-                operator=projector, translation=translation
-            )
-
-        else:
-            # --- Bayesian Approach (Statistical Conditioning) ---
-            # Treat the constraint as a noiseless observation: w = B(u)
-
-            constraint_problem = LinearForwardProblem(constraint_op)
-            constraint_inversion = LinearBayesianInversion(
-                constraint_problem, self._unconstrained_prior
-            )
-
-            return constraint_inversion.model_posterior_measure(
-                constraint_val, solver, preconditioner=preconditioner
-            )
+        return self._constraint.condition_gaussian_measure(
+            self._unconstrained_prior, geometric=self._geometric
+        )
 
     def model_posterior_measure(
         self,
         data: Vector,
         solver: LinearSolver,
-        constraint_solver: LinearSolver,
+        /,
         *,
         preconditioner: Optional[LinearOperator] = None,
-        constraint_preconditioner: Optional[LinearOperator] = None,
     ) -> GaussianMeasure:
         """
-        Returns the posterior Gaussian measure for the model given the constraint and the data.
+        Returns the posterior Gaussian measure p(u | d, u in A).
 
         Args:
             data: Observed data vector.
             solver: Solver for the data update (inverts A C_cond A* + Ce).
-            constraint_solver: Solver for the prior conditioning (inverts B C_prior B*).
-            preconditioner: Preconditioner for the data update (acts on Data Space).
-            constraint_preconditioner: Preconditioner for the constraint update (acts on Property Space).
-        """
-        # 1. Condition Prior (Uses constraint_solver and constraint_preconditioner)
-        cond_prior = self.conditioned_prior_measure(
-            constraint_solver, preconditioner=constraint_preconditioner
-        )
+            preconditioner: Preconditioner for the data update.
 
-        # 2. Solve Bayesian Inverse Problem (Uses solver and preconditioner)
+        Note: The solver for the constraint update is managed internally by
+        the AffineSubspace object passed at initialization.
+        """
+        # 1. Condition Prior
+        cond_prior = self.conditioned_prior_measure()
+
+        # 2. Solve Bayesian Inverse Problem with the new prior
         bayes_inv = LinearBayesianInversion(self.forward_problem, cond_prior)
 
         return bayes_inv.model_posterior_measure(
