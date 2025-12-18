@@ -82,7 +82,6 @@ from .linear_optimisation import (
 
 from .linear_bayesian import (
     LinearBayesianInversion,
-    LinearBayesianInference,
     ConstrainedLinearBayesianInversion,
 )
 
@@ -154,7 +153,6 @@ __all__ = [
     "LinearMinimumNormInversion",
     # linear_bayesian
     "LinearBayesianInversion",
-    "LinearBayesianInference",
     # backus_gilbert
     "HyperEllipsoid",
     # nonlinear_optimisation

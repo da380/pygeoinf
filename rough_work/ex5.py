@@ -12,7 +12,7 @@ radius = 2
 prior_order = 1.5
 prior_scale = 0.1
 
-npoints = 10
+npoints = 100
 std = 0.01
 
 
