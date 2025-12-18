@@ -69,6 +69,16 @@ from .linear_solvers import (
     BICGStabMatrixSolver,
     GMRESMatrixSolver,
     CGSolver,
+    MinResSolver,
+    BICGStabSolver,
+    FCGSolver,
+)
+
+from .preconditioners import (
+    JacobiPreconditioningMethod,
+    SpectralPreconditioningMethod,
+    IdentityPreconditioningMethod,
+    IterativePreconditioningMethod,
 )
 
 from .forward_problem import ForwardProblem, LinearForwardProblem
@@ -145,6 +155,14 @@ __all__ = [
     "BICGStabMatrixSolver",
     "GMRESMatrixSolver",
     "CGSolver",
+    "MinResSolver",
+    "BICGStabSolver",
+    "FCGSolver",
+    # preconditioners
+    "IdentityPreconditioningMethod",
+    "JacobiPreconditioningMethod",
+    "SpectralPreconditioningMethod",
+    "IterativePreconditioningMethod",
     # forward_problem
     "ForwardProblem",
     "LinearForwardProblem",
