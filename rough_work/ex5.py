@@ -40,6 +40,8 @@ forward_problem = inf.LinearForwardProblem(
 constraint_operator = model_space.to_coefficient_operator(2, lmin=2)
 constraint_value = np.array([0.0, 0.0, 2.0, 1.0, 0.0])
 
+
+# FIX: Pass the solver here. This solver handles the constraint enforcement.
 constraint = inf.AffineSubspace.from_linear_equation(
     constraint_operator, constraint_value, solver=inf.CholeskySolver()
 )
