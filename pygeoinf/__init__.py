@@ -104,6 +104,8 @@ from .nonlinear_optimisation import (
 
 from .subspaces import OrthogonalProjector, AffineSubspace, LinearSubspace
 
+from .plot import plot_1d_distributions, plot_corner_distributions
+
 __all__ = [
     # random_matrix
     "fixed_rank_random_range",
@@ -182,4 +184,7 @@ __all__ = [
     "OrthogonalProjector",
     "AffineSubspace",
     "LinearSubspace",
+    # plot
+    "plot_1d_distributions",
+    "plot_corner_distributions",
 ]
