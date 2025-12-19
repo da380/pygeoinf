@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import pygeoinf as inf
 from pygeoinf.symmetric_space.sphere import Sobolev
 import cartopy.crs as ccrs
+import pyshtools as sh
 
 # Parameters
 lmax = 128
@@ -15,6 +16,7 @@ prior_scale = 0.1
 
 npoints = 10
 std = 0.01
+
 
 # 1. Setup Model Space and Forward Problem
 model_space = Sobolev(lmax, order, scale, radius=radius)
@@ -62,7 +64,7 @@ ax1.set_title("True Model")
 
 # 5. Solve Inverse Problem
 # This solver handles the data update (checking against observations)
-model_posterior_measure = inversion.model_posterior_measure(data, inf.CholeskySolver())
+model_posterior_measure = inversion.model_posterior_measure(data, inf.CGSolver())
 
 model_posterior_expectation = model_posterior_measure.expectation
 
@@ -72,4 +74,9 @@ fig2.colorbar(im2, orientation="horizontal", shrink=0.7)
 ax2.plot(lons, lats, "k^", markersize=5, transform=ccrs.PlateCarree())
 ax2.set_title("Posterior Mean (Constrained)")
 
-plt.show()
+print("forming samples")
+pointwise_variance = model_posterior_measure.sample_pointwise_variance(
+    100, parallel=True, n_jobs=4
+)
+
+# plt.show()

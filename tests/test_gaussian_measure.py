@@ -167,3 +167,40 @@ class TestGaussianMeasure:
 
         assert isinstance(mvn, multivariate_normal_frozen)
         assert np.all(np.linalg.eigvalsh(mvn.cov) >= -1e-9)
+
+    def test_samples_parallel_consistency(self, measure: GaussianMeasure):
+        """
+        Verifies that parallel sampling returns the same number of samples
+        and consistent vector types as serial sampling.
+        """
+        n_samples = 10
+        # Draw samples using the new parallel parameters
+        samples_parallel = measure.samples(n_samples, parallel=True, n_jobs=2)
+
+        assert len(samples_parallel) == n_samples
+        for s in samples_parallel:
+            assert measure.domain.is_element(s)
+
+    def test_parallel_sampling_statistics(self, measure: GaussianMeasure):
+        """
+        Statistical test to ensure parallel sampling correctly represents
+        the measure's mean and covariance.
+        """
+        if not measure.sample_set:
+            pytest.skip("Sampling is not implemented for this measure.")
+
+        n_samples = 5000
+        # Use parallel execution for the statistical check
+        samples = measure.samples(n_samples, parallel=True, n_jobs=-1)
+
+        sample_components = np.array([measure.domain.to_components(s) for s in samples])
+
+        # Verify Mean
+        sample_mean = np.mean(sample_components, axis=0)
+        expected_mean_components = measure.domain.to_components(measure.expectation)
+        assert np.allclose(sample_mean, expected_mean_components, atol=0.1)
+
+        # Verify Covariance
+        sample_covariance = np.cov(sample_components.T)
+        expected_covariance = measure.covariance.matrix(dense=True, galerkin=True)
+        assert np.allclose(sample_covariance, expected_covariance, atol=0.1)
