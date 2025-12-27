@@ -1,5 +1,6 @@
 """
-Defines classes for representing affine and linear subspaces.
+Defines classes for representing affine and linear subspaces, including
+hyperplanes and half-spaces.
 
 The primary abstraction is the `AffineSubspace`, which represents a subset of
 a Hilbert space defined by a translation and a closed linear tangent space.
@@ -15,7 +16,7 @@ import numpy as np
 from .linear_operators import LinearOperator
 from .hilbert_space import HilbertSpace, Vector, EuclideanSpace
 from .linear_solvers import LinearSolver, CholeskySolver, IterativeLinearSolver
-from .subset import Subset, EmptySet
+from .subsets import Subset, EmptySet
 
 if TYPE_CHECKING:
     from .gaussian_measure import GaussianMeasure
@@ -470,7 +471,7 @@ class LinearSubspace(AffineSubspace):
         if isinstance(op_perp, OrthogonalProjector):
             return LinearSubspace(op_perp)
         # Wrap if the complement isn't strictly an OrthogonalProjector instance
-        p_perp = OrthogonalProjector(self.domain, op_perp)
+        p_perp = OrthogonalProjector(self.domain, op_perp._mapping)
         return LinearSubspace(p_perp)
 
     @classmethod

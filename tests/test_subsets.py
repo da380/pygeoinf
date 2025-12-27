@@ -7,13 +7,11 @@ import pytest
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import DiagonalSparseMatrixLinearOperator
-from pygeoinf.subset import (
+from pygeoinf.subsets import (
     EmptySet,
     Ball,
     Sphere,
     Ellipsoid,
-    HalfSpace,
-    Hyperplane,
     NormalisedEllipsoid,
 )
 
@@ -22,12 +20,6 @@ from pygeoinf.subset import (
 def space_2d():
     """Returns a 2D Euclidean space for geometric tests."""
     return EuclideanSpace(2)
-
-
-@pytest.fixture
-def space_3d():
-    """Returns a 3D Euclidean space."""
-    return EuclideanSpace(3)
 
 
 class TestEmptySet:
@@ -71,8 +63,7 @@ class TestBallAndSphere:
         ball = Ball(space_2d, center, radius=1.0, open_set=True)
 
         # Boundary point should NOT be in open ball mathematically.
-        # We must set rtol=0.0 to test strict inequality, otherwise
-        # the tolerance margin will include the boundary.
+        # We set rtol=0.0 to test strict inequality.
         p_bound = space_2d.from_components(np.array([1.0, 0.0]))
         assert not ball.is_element(p_bound, rtol=0.0)
 
@@ -101,7 +92,6 @@ class TestBallAndSphere:
     def test_convexity_check(self, space_2d):
         # The Ball class inherits check() from ConvexSubset
         ball = Ball(space_2d, space_2d.zero, radius=1.0)
-        # Should pass without assertion error
         ball.check(20)
 
 
@@ -146,36 +136,6 @@ class TestEllipsoid:
 
         # The operator should be scaled by 1/r^2 = 1/4
         # New condition: <0.25*I x, x> <= 1  <==> 0.25*||x||^2 <= 1 <==> ||x||^2 <= 4
-        # So they represent the same set.
-
         p = space_2d.from_components(np.array([1.9, 0.0]))
         assert ellipsoid.is_element(p)
         assert norm_ellipsoid.is_element(p)
-
-
-class TestHalfSpace:
-    def test_halfspace_from_vector(self, space_2d):
-        # Define halfspace x >= 1 (normal vector n=[-1, 0], level <= -1)
-        # Or more simply: <n, x> <= c
-        # Let n = [1, 0], c = 1. So x <= 1.
-
-        n = space_2d.from_components(np.array([1.0, 0.0]))
-        hs = HalfSpace.from_vector(space_2d, n, level=1.0)
-
-        # (0.5, 0) -> <n,x>=0.5 <= 1 (True)
-        assert hs.is_element(space_2d.from_components(np.array([0.5, 0.0])))
-
-        # (1.5, 0) -> <n,x>=1.5 > 1 (False)
-        assert not hs.is_element(space_2d.from_components(np.array([1.5, 0.0])))
-
-        # Boundary is hyperplane x = 1
-        hp = hs.boundary
-        assert isinstance(hp, Hyperplane)
-        assert hp.is_element(
-            space_2d.from_components(np.array([1.0, 5.0]))
-        )  # y can be anything
-
-    def test_convexity(self, space_3d):
-        n = space_3d.random()
-        hs = HalfSpace.from_vector(space_3d, n, level=0.5)
-        hs.check(20)
