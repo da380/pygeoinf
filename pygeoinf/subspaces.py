@@ -3,16 +3,19 @@ Defines classes for representing affine and linear subspaces.
 
 The primary abstraction is the `AffineSubspace`, which represents a subset of
 a Hilbert space defined by a translation and a closed linear tangent space.
+This module integrates with the `subset` module, allowing subspaces to be
+treated as standard geometric sets.
 """
 
 from __future__ import annotations
 from typing import List, Optional, Any, Callable, TYPE_CHECKING
-import numpy as np
 import warnings
+import numpy as np
 
 from .linear_operators import LinearOperator
 from .hilbert_space import HilbertSpace, Vector, EuclideanSpace
 from .linear_solvers import LinearSolver, CholeskySolver, IterativeLinearSolver
+from .subset import Subset, EmptySet
 
 if TYPE_CHECKING:
     from .gaussian_measure import GaussianMeasure
@@ -30,12 +33,26 @@ class OrthogonalProjector(LinearOperator):
         mapping: Callable[[Any], Any],
         complement_projector: Optional[LinearOperator] = None,
     ) -> None:
+        """
+        Initializes the orthogonal projector.
+
+        Args:
+            domain: The Hilbert space on which the projector acts.
+            mapping: The function implementing the projection P(x).
+            complement_projector: An optional LinearOperator representing (I - P).
+                If provided, it avoids re-computing the complement when requested.
+        """
         super().__init__(domain, domain, mapping, adjoint_mapping=mapping)
         self._complement_projector = complement_projector
 
     @property
     def complement(self) -> LinearOperator:
-        """Returns the projector onto the orthogonal complement (I - P)."""
+        """
+        Returns the projector onto the orthogonal complement (I - P).
+
+        If a complement projector was not provided at initialization, one is
+        constructed automatically as the difference between the identity and self.
+        """
         if self._complement_projector is None:
             identity = self.domain.identity_operator()
             self._complement_projector = identity - self
@@ -48,7 +65,19 @@ class OrthogonalProjector(LinearOperator):
         basis_vectors: List[Vector],
         orthonormalize: bool = True,
     ) -> OrthogonalProjector:
-        """Constructs a projector P onto the span of the provided basis vectors."""
+        """
+        Constructs a projector P onto the span of the provided basis vectors.
+
+        Args:
+            domain: The Hilbert space.
+            basis_vectors: A list of vectors spanning the subspace.
+            orthonormalize: If True, performs Gram-Schmidt orthonormalization
+                on the basis vectors before constructing the projector.
+                If False, assumes the basis is already orthonormal.
+
+        Returns:
+            An OrthogonalProjector instance.
+        """
         if not basis_vectors:
             return domain.zero_operator(domain)
 
@@ -62,9 +91,14 @@ class OrthogonalProjector(LinearOperator):
         return cls(domain, tensor_op)
 
 
-class AffineSubspace:
+class AffineSubspace(Subset):
     """
     Represents an affine subspace A = x0 + V.
+
+    This class serves two primary roles:
+    1. A geometric subset that can project points and check membership.
+    2. A constraint definition for Bayesian inversion (conditioning a Gaussian
+       measure on the subspace).
     """
 
     def __init__(
@@ -78,7 +112,19 @@ class AffineSubspace:
     ) -> None:
         """
         Initializes the AffineSubspace.
+
+        Args:
+            projector: The orthogonal projector P onto the tangent space V.
+            translation: A vector x0 in the subspace. Defaults to the origin.
+            constraint_operator: The operator B defining the subspace implicitly
+                as {u | B(u) = w}. Used for Bayesian conditioning.
+            constraint_value: The RHS vector w for the implicit definition.
+            solver: A LinearSolver used to invert the constraint operator during
+                conditioning. If None, defaults to a CholeskySolver if an
+                explicit constraint operator is provided.
+            preconditioner: An optional preconditioner for iterative solvers.
         """
+        super().__init__(projector.domain)
         self._projector = projector
 
         if translation is None:
@@ -101,19 +147,23 @@ class AffineSubspace:
         self._preconditioner = preconditioner
 
     @property
-    def domain(self) -> HilbertSpace:
-        return self._projector.domain
-
-    @property
     def translation(self) -> Vector:
+        """Returns the translation vector x0."""
         return self._translation
 
     @property
     def projector(self) -> OrthogonalProjector:
+        """Returns the orthogonal projector P onto the tangent space."""
         return self._projector
 
     @property
+    def solver(self) -> Optional[LinearSolver]:
+        """Returns the linear solver associated with this subspace."""
+        return self._solver
+
+    @property
     def tangent_space(self) -> LinearSubspace:
+        """Returns the LinearSubspace V parallel to this affine subspace."""
         return LinearSubspace(self._projector)
 
     @property
@@ -124,8 +174,10 @@ class AffineSubspace:
     @property
     def constraint_operator(self) -> LinearOperator:
         """
-        Returns B for {u | B(u)=w}.
-        Falls back to (I - P) if no explicit operator exists.
+        Returns the operator B defining the subspace as {u | B(u)=w}.
+
+        If no explicit operator was provided (geometric construction), this
+        falls back to the complement projector (I - P).
         """
         if self._constraint_operator is None:
             return self._projector.complement
@@ -134,8 +186,9 @@ class AffineSubspace:
     @property
     def constraint_value(self) -> Vector:
         """
-        Returns w for {u | B(u)=w}.
-        Falls back to (I - P)x0 if no explicit operator exists.
+        Returns the value w defining the subspace as {u | B(u)=w}.
+
+        If no explicit operator was provided, this falls back to (I - P)x0.
         """
         if self._constraint_value is None:
             complement = self._projector.complement
@@ -143,25 +196,66 @@ class AffineSubspace:
         return self._constraint_value
 
     def project(self, x: Vector) -> Vector:
-        """Orthogonally projects x onto the affine subspace."""
+        """
+        Orthogonally projects a vector x onto the affine subspace.
+
+        Formula: P_A(x) = P(x - x0) + x0
+        """
         diff = self.domain.subtract(x, self.translation)
         proj_diff = self.projector(diff)
         return self.domain.add(self.translation, proj_diff)
 
-    def is_element(self, x: Vector, rtol: float = 1e-6) -> bool:
-        """Returns True if x lies in the subspace."""
+    def is_element(self, x: Vector, /, *, rtol: float = 1e-6) -> bool:
+        """
+        Returns True if the vector x lies within the subspace.
+
+        Checks if the projection residual ||x - P_A(x)|| is small relative
+        to the norm of x (or 1.0).
+
+        Args:
+            x: The vector to check.
+            rtol: Relative tolerance for the residual check.
+        """
         proj = self.project(x)
         diff = self.domain.subtract(x, proj)
         norm_diff = self.domain.norm(diff)
+
+        # Scale tolerance by norm of x to handle units/scaling, consistent with Sphere/Ball
         norm_x = self.domain.norm(x)
-        scale = norm_x if norm_x > 1e-12 else 1.0
+        scale = max(1.0, norm_x)
         return norm_diff <= rtol * scale
+
+    @property
+    def boundary(self) -> Subset:
+        """
+        Returns the boundary of the affine subspace.
+
+        Geometrically, an affine subspace (like a line or plane) is a closed
+        manifold without a boundary. Returns EmptySet.
+        """
+        return EmptySet(self.domain)
 
     def condition_gaussian_measure(
         self, prior: GaussianMeasure, geometric: bool = False
     ) -> GaussianMeasure:
         """
         Conditions a Gaussian measure on this subspace.
+
+        Args:
+            prior: The prior Gaussian measure.
+            geometric: If True, performs a geometric projection of the measure
+                (equivalent to conditioning on "measurement = truth" with infinite
+                precision, effectively squashing the distribution onto the
+                subspace).
+                If False (default), performs standard Bayesian conditioning
+                using the constraint equation B(u) = w.
+
+        Returns:
+            The posterior (conditioned) GaussianMeasure.
+
+        Raises:
+            ValueError: If geometric=False and the subspace was constructed
+                without a solver capable of handling the constraint operator.
         """
         if geometric:
             # Geometric Projection: u -> P(u - x0) + x0
@@ -183,7 +277,7 @@ class AffineSubspace:
                     "AffineSubspace constructor."
                 )
 
-            # Local imports
+            # Local imports to avoid circular dependency
             from .forward_problem import LinearForwardProblem
             from .linear_bayesian import LinearBayesianInversion
 
@@ -205,7 +299,16 @@ class AffineSubspace:
         solver: Optional[LinearSolver] = None,
         preconditioner: Optional[LinearOperator] = None,
     ) -> AffineSubspace:
-        """Constructs subspace from B(u)=w."""
+        """
+        Constructs a subspace defined by the linear equation B(u) = w.
+
+        Args:
+            operator: The linear operator B.
+            value: The RHS vector w.
+            solver: Solver used to invert the Gram matrix (B B*) during
+                construction and later conditioning. Defaults to CholeskySolver.
+            preconditioner: Optional preconditioner for iterative solvers.
+        """
         domain = operator.domain
         G = operator @ operator.adjoint
 
@@ -284,8 +387,16 @@ class AffineSubspace:
         orthonormalize: bool = True,
     ) -> AffineSubspace:
         """
-        Constructs subspace from complement basis.
-        Constraint is explicit: <u, e_i> = <x0, e_i>.
+        Constructs a subspace defined by orthogonality to a set of complement basis vectors.
+
+        The subspace is defined as {u | <u - x0, v_i> = 0} for all v_i in basis.
+        This provides an explicit constraint operator B where B(u)_i = <u, v_i>.
+
+        Args:
+            domain: The Hilbert space.
+            basis_vectors: Basis vectors for the orthogonal complement.
+            translation: A point x0 in the subspace.
+            orthonormalize: If True, orthonormalizes the complement basis.
         """
         if orthonormalize:
             e_vectors = domain.gram_schmidt(basis_vectors)
@@ -342,14 +453,24 @@ class LinearSubspace(AffineSubspace):
     """
 
     def __init__(self, projector: OrthogonalProjector) -> None:
+        """
+        Initializes the LinearSubspace.
+
+        Args:
+            projector: The orthogonal projector P onto the subspace.
+        """
         super().__init__(projector, translation=None)
 
     @property
     def complement(self) -> LinearSubspace:
+        """
+        Returns the orthogonal complement of this subspace as a new LinearSubspace.
+        """
         op_perp = self.projector.complement
         if isinstance(op_perp, OrthogonalProjector):
             return LinearSubspace(op_perp)
-        p_perp = OrthogonalProjector(self.domain, op_perp._mapping)
+        # Wrap if the complement isn't strictly an OrthogonalProjector instance
+        p_perp = OrthogonalProjector(self.domain, op_perp)
         return LinearSubspace(p_perp)
 
     @classmethod
@@ -359,13 +480,22 @@ class LinearSubspace(AffineSubspace):
         solver: Optional[LinearSolver] = None,
         preconditioner: Optional[LinearOperator] = None,
     ) -> LinearSubspace:
+        """
+        Constructs the subspace corresponding to the kernel (null space) of an operator.
+        K = {u | A(u) = 0}.
+
+        Args:
+            operator: The operator A.
+            solver: Solver used for the Gram matrix (A A*).
+            preconditioner: Optional preconditioner.
+        """
         affine = AffineSubspace.from_linear_equation(
             operator, operator.codomain.zero, solver, preconditioner
         )
         instance = cls(affine.projector)
         instance._constraint_operator = operator
         instance._constraint_value = operator.codomain.zero
-        instance._solver = affine._solver
+        instance._solver = affine.solver
         instance._preconditioner = preconditioner
         return instance
 
@@ -378,6 +508,16 @@ class LinearSubspace(AffineSubspace):
         solver: Optional[LinearSolver] = None,
         preconditioner: Optional[LinearOperator] = None,
     ) -> LinearSubspace:
+        """
+        Constructs a linear subspace from a set of basis vectors.
+
+        Args:
+            domain: The Hilbert space.
+            basis_vectors: List of vectors spanning the subspace.
+            orthonormalize: Whether to orthonormalize the basis.
+            solver: Optional solver for implicit constraints (see AffineSubspace.from_tangent_basis).
+            preconditioner: Optional preconditioner.
+        """
         projector = OrthogonalProjector.from_basis(
             domain, basis_vectors, orthonormalize=orthonormalize
         )
@@ -393,11 +533,20 @@ class LinearSubspace(AffineSubspace):
         basis_vectors: List[Vector],
         orthonormalize: bool = True,
     ) -> LinearSubspace:
+        """
+        Constructs a linear subspace defined by orthogonality to a complement basis.
+        S = {u | <u, v_i> = 0}.
+
+        Args:
+            domain: The Hilbert space.
+            basis_vectors: Basis vectors for the complement.
+            orthonormalize: Whether to orthonormalize the complement basis.
+        """
         affine = AffineSubspace.from_complement_basis(
             domain, basis_vectors, translation=None, orthonormalize=orthonormalize
         )
         instance = cls(affine.projector)
         instance._constraint_operator = affine.constraint_operator
         instance._constraint_value = affine.constraint_value
-        instance._solver = affine._solver
+        instance._solver = affine.solver
         return instance

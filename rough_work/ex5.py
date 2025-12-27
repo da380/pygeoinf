@@ -1,9 +1,7 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import pygeoinf as inf
 from pygeoinf.symmetric_space.sphere import Sobolev
 import cartopy.crs as ccrs
-import pyshtools as sh
 
 # Parameters
 lmax = 128
