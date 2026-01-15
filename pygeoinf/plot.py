@@ -220,6 +220,8 @@ def plot_corner_distributions(
     show_plot: bool = True,
     include_sigma_contours: bool = True,
     colormap: str = "Blues",
+    parallel: bool = False,
+    n_jobs: int = -1,
 ):
     """
     Create a corner plot for multi-dimensional posterior distributions.
@@ -233,6 +235,8 @@ def plot_corner_distributions(
         show_plot: Whether to display the plot
         include_sigma_contours: Whether to include 1-sigma contour lines
         colormap: Colormap for 2D plots
+        parallel: Compute dense covariance matrix in parallel, default False.
+        n_jobs: Number of cores to use in parallel calculations, default -1.
 
     Returns:
         fig, axes: Figure and axes array
@@ -243,7 +247,9 @@ def plot_corner_distributions(
         posterior_measure, "covariance"
     ):
         mean_posterior = posterior_measure.expectation
-        cov_posterior = posterior_measure.covariance.matrix(dense=True, parallel=True)
+        cov_posterior = posterior_measure.covariance.matrix(
+            dense=True, parallel=parallel, n_jobs=n_jobs
+        )
     else:
         raise ValueError(
             "posterior_measure must have 'expectation' and 'covariance' attributes"

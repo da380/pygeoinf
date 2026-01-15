@@ -17,6 +17,7 @@ joblib = "^1.5.2"
 # Define optional dependencies WITH versions
 pyshtools = { version = ">=4.0.0", optional = true }
 Cartopy = { version = "^0.23.0", optional = true }
+threadpoolctl = "^3.6.0"
 
 [tool.poetry.extras]
 sphere = ["pyshtools", "Cartopy"]

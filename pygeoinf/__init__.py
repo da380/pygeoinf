@@ -104,7 +104,26 @@ from .nonlinear_optimisation import (
 
 from .subspaces import OrthogonalProjector, AffineSubspace, LinearSubspace
 
+from .subsets import (
+    Subset,
+    EmptySet,
+    UniversalSet,
+    Complement,
+    Intersection,
+    Union,
+    SublevelSet,
+    LevelSet,
+    ConvexSubset,
+    Ellipsoid,
+    NormalisedEllipsoid,
+    EllipsoidSurface,
+    Ball,
+    Sphere,
+)
+
 from .plot import plot_1d_distributions, plot_corner_distributions
+
+from .utils import configure_threading
 
 __all__ = [
     # random_matrix
@@ -184,7 +203,24 @@ __all__ = [
     "OrthogonalProjector",
     "AffineSubspace",
     "LinearSubspace",
+    # Subsets
+    "Subset",
+    "EmptySet",
+    "UniversalSet",
+    "Complement",
+    "Intersection",
+    "Union",
+    "SublevelSet",
+    "LevelSet",
+    "ConvexSubset",
+    "Ellipsoid",
+    "NormalisedEllipsoid",
+    "EllipsoidSurface",
+    "Ball",
+    "Sphere",
     # plot
     "plot_1d_distributions",
     "plot_corner_distributions",
+    # utils
+    "configure_threading",
 ]

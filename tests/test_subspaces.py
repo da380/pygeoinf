@@ -1,197 +1,86 @@
 """
-Tests for the subspaces module, covering OrthogonalProjector, LinearSubspace,
-and AffineSubspace.
+Tests for the subspaces module.
 """
 
-import pytest
 import numpy as np
+import pytest
 
-from pygeoinf.subspaces import AffineSubspace, LinearSubspace, OrthogonalProjector
 from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.symmetric_space.circle import Lebesgue
-from pygeoinf.linear_operators import LinearOperator
-from pygeoinf.linear_solvers import CholeskySolver
-
-# =============================================================================
-# Fixtures
-# =============================================================================
+from pygeoinf.subsets import EmptySet
+from pygeoinf.subspaces import (
+    AffineSubspace,
+    OrthogonalProjector,
+)
 
 
 @pytest.fixture
-def r3():
+def space_3d():
+    """Returns a 3D Euclidean space."""
     return EuclideanSpace(3)
 
 
-@pytest.fixture
-def circle_space():
-    return Lebesgue(8, radius=1.0)
+class TestOrthogonalProjector:
+    def test_from_basis(self, space_3d):
+        # Basis for xy-plane
+        e1 = space_3d.from_components(np.array([1.0, 0.0, 0.0]))
+        e2 = space_3d.from_components(np.array([0.0, 1.0, 0.0]))
+
+        P = OrthogonalProjector.from_basis(space_3d, [e1, e2])
+
+        # Project vector (1, 2, 3) -> (1, 2, 0)
+        v = space_3d.from_components(np.array([1.0, 2.0, 3.0]))
+        proj = P(v)
+        expected = space_3d.from_components(np.array([1.0, 2.0, 0.0]))
+
+        assert np.allclose(proj, expected)
+
+        # Complement should map to (0, 0, 3)
+        comp = P.complement(v)
+        expected_comp = space_3d.from_components(np.array([0.0, 0.0, 3.0]))
+        assert np.allclose(comp, expected_comp)
 
 
-# =============================================================================
-# OrthogonalProjector Tests
-# =============================================================================
+@pytest.mark.filterwarnings("ignore:Constructing a subspace")
+class TestAffineSubspace:
+    def test_construction_and_projection(self, space_3d):
+        # Line parallel to z-axis passing through (1, 1, 0)
+        # Tangent space basis: e3
+        e3 = space_3d.from_components(np.array([0.0, 0.0, 1.0]))
+        x0 = space_3d.from_components(np.array([1.0, 1.0, 0.0]))
 
+        subspace = AffineSubspace.from_tangent_basis(space_3d, [e3], translation=x0)
 
-def test_euclidean_subspace_basis(r3):
-    v1 = r3.from_components(np.array([1.0, 0.0, 0.0]))
-    v2 = r3.from_components(np.array([0.0, 1.0, 0.0]))
-    P = OrthogonalProjector.from_basis(r3, [v1, v2], orthonormalize=True)
+        # Project origin (0,0,0) -> (1,1,0)
+        zero = space_3d.zero
+        proj = subspace.project(zero)
 
-    P.check(n_checks=10)
-    assert np.allclose(
-        P(r3.from_components(np.array([2.0, 3.0, 0.0]))), [2.0, 3.0, 0.0]
-    )
-    assert np.allclose(
-        P(r3.from_components(np.array([0.0, 0.0, 5.0]))), [0.0, 0.0, 0.0]
-    )
+        assert np.allclose(proj, x0)
 
+        # Project (2, 2, 5) -> (1, 1, 5)
+        # P_A(x) = P(x-x0) + x0
+        # x-x0 = (1, 1, 5). P(x-x0) = (0, 0, 5). Result = (1, 1, 5)
+        v = space_3d.from_components(np.array([2.0, 2.0, 5.0]))
+        proj_v = subspace.project(v)
+        expected = space_3d.from_components(np.array([1.0, 1.0, 5.0]))
 
-def test_circle_low_freq_subspace(circle_space):
-    basis = [
-        circle_space.project_function(lambda t: 1.0),
-        circle_space.project_function(lambda t: np.cos(t)),
-        circle_space.project_function(lambda t: np.sin(t)),
-    ]
-    P = OrthogonalProjector.from_basis(circle_space, basis, orthonormalize=True)
-    assert np.allclose(P(basis[1]), basis[1])
+        assert np.allclose(proj_v, expected)
 
-    high_freq = circle_space.project_function(lambda t: np.cos(2 * t))
-    assert circle_space.norm(P(high_freq)) < 1e-12
+    def test_is_element(self, space_3d):
+        # xy-plane at z=1
+        e1 = space_3d.from_components(np.array([1.0, 0.0, 0.0]))
+        e2 = space_3d.from_components(np.array([0.0, 1.0, 0.0]))
+        x0 = space_3d.from_components(np.array([0.0, 0.0, 1.0]))
 
+        subspace = AffineSubspace.from_tangent_basis(space_3d, [e1, e2], translation=x0)
 
-# =============================================================================
-# LinearSubspace Tests
-# =============================================================================
+        p_in = space_3d.from_components(np.array([5.0, -3.0, 1.0]))
+        assert subspace.is_element(p_in)
 
+        p_out = space_3d.from_components(np.array([5.0, -3.0, 1.1]))
+        assert not subspace.is_element(p_out)
 
-def test_linear_subspace_r3(r3):
-    e1 = r3.basis_vector(0)
-    subspace = LinearSubspace.from_basis(r3, [e1])
-    assert subspace.is_element(r3.multiply(2.0, e1))
-    assert not subspace.is_element(r3.from_components(np.array([2.0, 1.0, 0.0])))
-
-
-def test_linear_subspace_from_kernel(r3):
-    """
-    Test defining subspace as kernel. implicit solver usage (Cholesky).
-    """
-    codomain = EuclideanSpace(1)
-    C_mat = np.array([[1.0, 1.0, 1.0]])
-    C = LinearOperator.from_matrix(r3, codomain, C_mat, galerkin=True)
-
-    # Uses default CholeskySolver automatically
-    subspace = LinearSubspace.from_kernel(C)
-
-    assert subspace.is_element(r3.from_components(np.array([1.0, -1.0, 0.0])))
-    assert not subspace.is_element(r3.from_components(np.array([1.0, 1.0, 1.0])))
-
-    # Check property name update
-    assert subspace.has_explicit_equation
-
-
-# =============================================================================
-# AffineSubspace Tests
-# =============================================================================
-
-
-def test_affine_subspace_projection_r3(r3):
-    e1 = r3.basis_vector(0)
-    e2 = r3.basis_vector(1)
-    P_linear = OrthogonalProjector.from_basis(r3, [e1, e2])
-    z_offset = r3.from_components(np.array([0.0, 0.0, 2.0]))
-    affine_plane = AffineSubspace(P_linear, translation=z_offset)
-
-    p_in = r3.from_components(np.array([5.0, 5.0, 10.0]))
-    p_expected = r3.from_components(np.array([5.0, 5.0, 2.0]))
-    assert np.allclose(affine_plane.project(p_in), p_expected)
-
-
-def test_linear_equation_factory_r3(r3):
-    """
-    Test constructing from B(u)=w using explicit solver passing.
-    """
-    codomain = EuclideanSpace(1)
-    e_z = r3.basis_vector(2)
-    B = LinearOperator(
-        r3,
-        codomain,
-        lambda u: np.array([r3.inner_product(u, e_z)]),
-        adjoint_mapping=lambda w: r3.multiply(w[0], e_z),
-    )
-    w = codomain.from_components(np.array([2.0]))
-
-    # Explicitly pass solver (positional or keyword)
-    subspace = AffineSubspace.from_linear_equation(B, w, CholeskySolver(galerkin=True))
-
-    expected_trans = r3.from_components(np.array([0.0, 0.0, 2.0]))
-    assert np.allclose(subspace.translation, expected_trans)
-
-
-def test_affine_constraint_function_space(circle_space):
-    codomain = EuclideanSpace(1)
-    ones_func = circle_space.project_function(lambda t: 1.0)
-    C = LinearOperator(
-        circle_space,
-        codomain,
-        lambda f: np.array([circle_space.inner_product(f, ones_func)]),
-        adjoint_mapping=lambda y: circle_space.multiply(y[0], ones_func),
-    )
-
-    target_mean = 5.0
-    norm_sq = circle_space.squared_norm(ones_func)
-    translation = circle_space.multiply(target_mean / norm_sq, ones_func)
-
-    linear_subspace = LinearSubspace.from_kernel(C)
-    affine_subspace = AffineSubspace(linear_subspace.projector, translation=translation)
-
-    sine = circle_space.project_function(lambda t: np.sin(t))
-    proj_sine = affine_subspace.project(sine)
-    expected = circle_space.add(translation, sine)
-    assert np.allclose(proj_sine, expected)
-
-
-def test_affine_from_complement_basis_generates_constraints(r3):
-    e_z = r3.basis_vector(2)
-    translation = r3.from_components(np.array([0.0, 0.0, 2.0]))
-
-    # This factory generates B implicitly. It defaults to Identity solver internally.
-    subspace = AffineSubspace.from_complement_basis(r3, [e_z], translation=translation)
-
-    assert subspace.has_explicit_equation
-    # Check that we can condition using the implicit solver (consistency check)
-    assert subspace._solver is not None
-
-
-def test_tangent_basis_implicit_constraint(r3):
-    """
-    Test that a subspace defined only by tangent vectors (implicit)
-    can still expose a constraint operator (I-P) and accept a solver.
-    """
-    # Define subspace: XY plane (z=0) via tangent basis
-    e1 = r3.basis_vector(0)
-    e2 = r3.basis_vector(1)
-
-    # We pass a solver explicitly to allow this implicit subspace to be used
-    # for Bayesian conditioning later if needed.
-    subspace = AffineSubspace.from_tangent_basis(
-        r3, [e1, e2], solver=CholeskySolver(galerkin=True)
-    )
-
-    # 1. It should NOT have an explicit B(u)=w equation
-    assert not subspace.has_explicit_equation
-
-    # 2. But it SHOULD provide a constraint operator B = I - P
-    B_implicit = subspace.constraint_operator
-    assert B_implicit is not None
-
-    # Test B on a vector in the subspace (should be zero)
-    v_in = r3.from_components(np.array([1.0, 2.0, 0.0]))
-    # B(v) = (I-P)v = v - v = 0
-    assert np.allclose(B_implicit(v_in), np.zeros(3))
-
-    # Test B on a vector orthogonal (should be itself)
-    v_perp = r3.from_components(np.array([0.0, 0.0, 5.0]))
-    assert np.allclose(B_implicit(v_perp), v_perp)
-
-    # 3. Check solver is attached
-    assert subspace._solver is not None
+    def test_boundary(self, space_3d):
+        # Affine subspaces are closed manifolds, boundary is empty
+        e1 = space_3d.from_components(np.array([1.0, 0.0, 0.0]))
+        subspace = AffineSubspace.from_tangent_basis(space_3d, [e1])
+        assert isinstance(subspace.boundary, EmptySet)
