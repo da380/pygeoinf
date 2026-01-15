@@ -691,7 +691,7 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
         err = 1.0
 
         def sobolev_func(deg):
-            return (1.0 + scale**2 * deg * (deg + 1)) ** order
+            return (1.0 + (scale / radius) ** 2 * deg * (deg + 1)) ** order
 
         while err > rtol:
             l += 1
