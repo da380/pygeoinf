@@ -123,6 +123,8 @@ from .subsets import (
 
 from .plot import plot_1d_distributions, plot_corner_distributions
 
+from .utils import configure_threading
+
 __all__ = [
     # random_matrix
     "fixed_rank_random_range",
@@ -219,4 +221,6 @@ __all__ = [
     # plot
     "plot_1d_distributions",
     "plot_corner_distributions",
+    # utils
+    "configure_threading",
 ]

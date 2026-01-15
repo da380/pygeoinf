@@ -420,11 +420,22 @@ class GaussianMeasure:
 
         return Parallel(n_jobs=n_jobs)(delayed(self.sample)() for _ in range(n))
 
-    def sample_expectation(self, n: int) -> Vector:
-        """Estimates the expectation by drawing n samples."""
+    def sample_expectation(
+        self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> Vector:
+        """
+        Estimates the expectation by drawing n samples.
+
+        Args:
+            n: Number of samples to draw.
+            parallel: If True, draws samples in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+        """
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
-        return self.domain.sample_expectation(self.samples(n))
+        return self.domain.sample_expectation(
+            self.samples(n, parallel=parallel, n_jobs=n_jobs)
+        )
 
     def sample_pointwise_variance(
         self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
