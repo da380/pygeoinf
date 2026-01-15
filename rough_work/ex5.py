@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import pygeoinf as inf
 from pygeoinf.symmetric_space.sphere import Sobolev
 import cartopy.crs as ccrs
@@ -36,15 +37,20 @@ forward_problem = inf.LinearForwardProblem(
 )
 
 # 2. Setup Constraint
+
 # We constrain the degree 2 coefficients (5 coefficients total)
 constraint_operator = model_space.to_coefficient_operator(2, lmin=2)
 constraint_value = np.array([0.0, 0.0, 2.0, 1.0, 0.0])
 
 
-# FIX: Pass the solver here. This solver handles the constraint enforcement.
-constraint = inf.AffineSubspace.from_linear_equation(
-    constraint_operator, constraint_value, solver=inf.CholeskySolver()
+# Pass the solver here. This solver handles the constraint enforcement.
+# constraint = inf.AffineSubspace.from_linear_equation(
+#    constraint_operator, constraint_value, solver=inf.CholeskySolver()
+# )
+constraint = inf.LinearSubspace.from_kernel(
+    constraint_operator, solver=inf.CholeskySolver()
 )
+
 
 # 3. Setup Inversion
 inversion = inf.ConstrainedLinearBayesianInversion(
@@ -72,9 +78,7 @@ fig2.colorbar(im2, orientation="horizontal", shrink=0.7)
 ax2.plot(lons, lats, "k^", markersize=5, transform=ccrs.PlateCarree())
 ax2.set_title("Posterior Mean (Constrained)")
 
-print("forming samples")
-pointwise_variance = model_posterior_measure.sample_pointwise_variance(
-    100, parallel=True, n_jobs=4
-)
+# print("forming samples")
+# pointwise_variance = model_posterior_measure.sample_pointwise_variance(100)
 
-# plt.show()
+plt.show()
