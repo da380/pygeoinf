@@ -36,7 +36,7 @@ class JacobiPreconditioningMethod(LinearSolver):
         method: str = "variable",
         rtol: float = 1e-2,
         block_size: int = 10,
-        parallel: bool = True,
+        parallel: bool = False,
         n_jobs: int = -1,
     ) -> None:
         # Damping is removed: the operator passed to __call__ is already damped

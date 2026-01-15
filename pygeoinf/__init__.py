@@ -106,6 +106,8 @@ from .subspaces import OrthogonalProjector, AffineSubspace, LinearSubspace
 
 from .plot import plot_1d_distributions, plot_corner_distributions
 
+from .utils import set_serial_backend
+
 __all__ = [
     # random_matrix
     "fixed_rank_random_range",
@@ -187,4 +189,6 @@ __all__ = [
     # plot
     "plot_1d_distributions",
     "plot_corner_distributions",
+    # utils
+    "set_serial_backend",
 ]
