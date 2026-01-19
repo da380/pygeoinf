@@ -102,10 +102,13 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         self.__adjoint_mapping: Callable[[Any], Any]
         self.__dual_mapping: Callable[[Any], Any]
 
+        self.__using_default_dual_and_adjoint = False
+
         if dual_mapping is None:
             if adjoint_mapping is None:
                 self.__dual_mapping = self._dual_mapping_default
                 self.__adjoint_mapping = self._adjoint_mapping_from_dual
+                self.__using_default_dual_and_adjoint = True
             else:
                 self.__adjoint_mapping = adjoint_mapping
                 self.__dual_mapping = self._dual_mapping_from_adjoint
@@ -918,6 +921,35 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     def _compute_dense_matrix(
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
+
+        # Optimization: If the codomain is smaller than the domain, it is cheaper
+        # to compute the matrix of the adjoint/dual (which has fewer columns)
+        # and transpose the result.
+
+        # Note: This recursion naturally terminates because the adjoint/dual
+        # swaps the domain and codomain. In the recursive call,
+        # (codomain.dim < domain.dim) will be False, forcing the standard path.
+
+        # If the operator has its dual and adjoint actions done using the
+        # default implementation, this optimisation is skipped.
+        if (
+            self.codomain.dim < self.domain.dim
+            and not self.__using_default_dual_and_adjoint
+        ):
+            if galerkin:
+                # For Galerkin representations: Matrix(L) = Matrix(L*).T
+                return self.adjoint.matrix(
+                    dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
+                ).T
+            else:
+                # For Standard representations: Matrix(L) = Matrix(L').T
+                return self.dual.matrix(
+                    dense=True, galerkin=False, parallel=parallel, n_jobs=n_jobs
+                ).T
+
+        # --- Standard Column-wise Construction ---
+        # This block executes if optimization is not applicable (or in the
+        # recursive base case).
 
         scipy_op_wrapper = self.matrix(galerkin=galerkin)
 

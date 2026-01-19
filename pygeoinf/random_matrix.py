@@ -182,11 +182,14 @@ def variable_rank_random_range(
         basis_vectors = np.hstack([basis_vectors, new_basis[:, :cols_to_add]])
 
     if not converged and basis_vectors.shape[1] >= max_rank:
-        warnings.warn(
-            f"Tolerance {rtol} not met before reaching max_rank={max_rank}. "
-            "Result may be inaccurate. Consider increasing `max_rank` or `power`.",
-            UserWarning,
-        )
+        # If we reached the full dimension of the matrix,
+        # the result is exact, so no warning is needed.
+        if max_rank < min(m, n):
+            warnings.warn(
+                f"Tolerance {rtol} not met before reaching max_rank={max_rank}. "
+                "Result may be inaccurate. Consider increasing `max_rank` or `power`.",
+                UserWarning,
+            )
 
     return basis_vectors
 

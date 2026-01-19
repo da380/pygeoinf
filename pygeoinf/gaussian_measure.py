@@ -27,7 +27,7 @@ import numpy as np
 from scipy.linalg import eigh
 from scipy.sparse import diags
 from scipy.stats import multivariate_normal
-
+from joblib import Parallel, delayed
 
 from .hilbert_space import EuclideanSpace, HilbertModule, Vector
 
@@ -44,7 +44,6 @@ from .direct_sum import (
 # This block is only processed by type checkers, not at runtime.
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace
-    from .typing import Vector
 
 
 class GaussianMeasure:
@@ -402,24 +401,52 @@ class GaussianMeasure:
             raise NotImplementedError("A sample method is not set for this measure.")
         return self._sample()
 
-    def samples(self, n: int) -> List[Vector]:
-        """Returns a list of n random samples from the measure."""
+    def samples(
+        self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> List[Vector]:
+        """
+        Returns a list of n random samples from the measure.
+
+        Args:
+            n: Number of samples to draw.
+            parallel: If True, draws samples in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+        """
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
-        return [self.sample() for _ in range(n)]
 
-    def sample_expectation(self, n: int) -> Vector:
-        """Estimates the expectation by drawing n samples."""
+        if not parallel:
+            return [self.sample() for _ in range(n)]
+
+        return Parallel(n_jobs=n_jobs)(delayed(self.sample)() for _ in range(n))
+
+    def sample_expectation(
+        self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> Vector:
+        """
+        Estimates the expectation by drawing n samples.
+
+        Args:
+            n: Number of samples to draw.
+            parallel: If True, draws samples in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+        """
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
-        return self.domain.sample_expectation(self.samples(n))
+        return self.domain.sample_expectation(
+            self.samples(n, parallel=parallel, n_jobs=n_jobs)
+        )
 
-    def sample_pointwise_variance(self, n: int) -> Vector:
+    def sample_pointwise_variance(
+        self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> Vector:
         """
         Estimates the pointwise variance by drawing n samples.
 
-        This method is only available if the domain supports vector
-        multiplication.
+        Args:
+            n: Number of samples to draw.
+            parallel: If True, draws samples in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
         """
         if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
@@ -428,7 +455,10 @@ class GaussianMeasure:
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
 
-        samples = self.samples(n)
+        # Step 1: Draw samples (Parallelized)
+        samples = self.samples(n, parallel=parallel, n_jobs=n_jobs)
+
+        # Step 2: Compute variance using vector arithmetic
         expectation = self.expectation
         variance = self.domain.zero
 

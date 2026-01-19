@@ -69,6 +69,16 @@ from .linear_solvers import (
     BICGStabMatrixSolver,
     GMRESMatrixSolver,
     CGSolver,
+    MinResSolver,
+    BICGStabSolver,
+    FCGSolver,
+)
+
+from .preconditioners import (
+    JacobiPreconditioningMethod,
+    SpectralPreconditioningMethod,
+    IdentityPreconditioningMethod,
+    IterativePreconditioningMethod,
 )
 
 from .forward_problem import ForwardProblem, LinearForwardProblem
@@ -76,9 +86,14 @@ from .forward_problem import ForwardProblem, LinearForwardProblem
 from .linear_optimisation import (
     LinearLeastSquaresInversion,
     LinearMinimumNormInversion,
+    ConstrainedLinearLeastSquaresInversion,
+    ConstrainedLinearMinimumNormInversion,
 )
 
-from .linear_bayesian import LinearBayesianInversion, LinearBayesianInference
+from .linear_bayesian import (
+    LinearBayesianInversion,
+    ConstrainedLinearBayesianInversion,
+)
 
 from .backus_gilbert import HyperEllipsoid
 
@@ -86,6 +101,29 @@ from .nonlinear_optimisation import (
     ScipyUnconstrainedOptimiser,
 )
 
+
+from .subspaces import OrthogonalProjector, AffineSubspace, LinearSubspace
+
+from .subsets import (
+    Subset,
+    EmptySet,
+    UniversalSet,
+    Complement,
+    Intersection,
+    Union,
+    SublevelSet,
+    LevelSet,
+    ConvexSubset,
+    Ellipsoid,
+    NormalisedEllipsoid,
+    EllipsoidSurface,
+    Ball,
+    Sphere,
+)
+
+from .plot import plot_1d_distributions, plot_corner_distributions
+
+from .utils import configure_threading
 
 __all__ = [
     # random_matrix
@@ -138,17 +176,51 @@ __all__ = [
     "BICGStabMatrixSolver",
     "GMRESMatrixSolver",
     "CGSolver",
+    "MinResSolver",
+    "BICGStabSolver",
+    "FCGSolver",
+    # preconditioners
+    "IdentityPreconditioningMethod",
+    "JacobiPreconditioningMethod",
+    "SpectralPreconditioningMethod",
+    "IterativePreconditioningMethod",
     # forward_problem
     "ForwardProblem",
     "LinearForwardProblem",
     # linear_optimisation
     "LinearLeastSquaresInversion",
     "LinearMinimumNormInversion",
+    "ConstrainedLinearLeastSquaresInversion",
+    "ConstrainedLinearMinimumNormInversion",
     # linear_bayesian
     "LinearBayesianInversion",
-    "LinearBayesianInference",
+    "ConstrainedLinearBayesianInversion",
     # backus_gilbert
     "HyperEllipsoid",
     # nonlinear_optimisation
     "ScipyUnconstrainedOptimiser",
+    # Subspaces
+    "OrthogonalProjector",
+    "AffineSubspace",
+    "LinearSubspace",
+    # Subsets
+    "Subset",
+    "EmptySet",
+    "UniversalSet",
+    "Complement",
+    "Intersection",
+    "Union",
+    "SublevelSet",
+    "LevelSet",
+    "ConvexSubset",
+    "Ellipsoid",
+    "NormalisedEllipsoid",
+    "EllipsoidSurface",
+    "Ball",
+    "Sphere",
+    # plot
+    "plot_1d_distributions",
+    "plot_corner_distributions",
+    # utils
+    "configure_threading",
 ]
