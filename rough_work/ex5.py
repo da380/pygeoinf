@@ -81,7 +81,7 @@ ax2.set_title("Posterior Mean (Constrained)")
 # Estimate the pointwise std from sampling
 print("Sampling from posterior")
 pointwise_variance = model_posterior_measure.sample_pointwise_variance(
-    100, parallel=True, n_jobs=5
+    500, parallel=True, n_jobs=10
 )
 pointwise_std = pointwise_variance.copy()
 pointwise_std.data = np.sqrt(pointwise_std.data)
