@@ -173,7 +173,9 @@ class DualMasterCostFunction(NonLinearForm):
 
         self._Tstar_q = self._T.adjoint(q_direction)
 
-        super().__init__(data_space, self._mapping, gradient=self._gradient)
+        super().__init__(
+            data_space, self._mapping, subgradient=self._subgradient
+        )
 
     @property
     def observed_data(self) -> Vector:
@@ -207,8 +209,20 @@ class DualMasterCostFunction(NonLinearForm):
 
         return term1 + term2 + term3
 
-    def _gradient(self, lam: Vector) -> Vector:
-        term1_grad = self._observed_data
+    def _subgradient(self, lam: Vector) -> Vector:
+        """
+        Compute a subgradient of φ(λ; q).
+
+        For the dual master cost function:
+            φ(λ) = ⟨λ, d̃⟩ + σ_B(T*q - G*λ) + σ_V(-λ)
+
+        A subgradient is:
+            g ∈ d̃ - G*∂σ_B(T*q - G*λ) - ∂σ_V(-λ)
+
+        where ∂σ_B and ∂σ_V are subdifferentials of the support functions.
+        The support_point() method returns an element of the subdifferential.
+        """
+        term1_subgrad = self._observed_data
 
         Gstar_lam = self._G.adjoint(lam)
         hilbert_residual = self._model_space.subtract(self._Tstar_q, Gstar_lam)
@@ -219,13 +233,24 @@ class DualMasterCostFunction(NonLinearForm):
         if v is None or w is None:
             return self._finite_difference_gradient(lam)
 
-        term2_grad = self.domain.negative(self._G(v))
-        term3_grad = self.domain.negative(w)
+        term2_subgrad = self.domain.negative(self._G(v))
+        term3_subgrad = self.domain.negative(w)
 
         return self.domain.add(
-            term1_grad,
-            self.domain.add(term2_grad, term3_grad),
+            term1_subgrad,
+            self.domain.add(term2_subgrad, term3_subgrad),
         )
+
+    def _gradient(self, lam: Vector) -> Vector:
+        """
+        Alias for _subgradient for backward compatibility.
+
+        Note: This function is technically a subgradient, not a gradient,
+        since the dual master cost function is non-smooth due to the
+        support functions. The gradient() method will call this, but
+        users should prefer using subgradient() for clarity.
+        """
+        return self._subgradient(lam)
 
     def _finite_difference_gradient(
         self, lam: Vector, eps: float = 1e-6

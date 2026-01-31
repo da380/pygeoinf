@@ -27,7 +27,9 @@ class SupportFunction(NonLinearForm, ABC):
             primal_domain: The Hilbert space H where the convex set lives.
         """
         self._primal = primal_domain
-        super().__init__(primal_domain, self._mapping)
+        super().__init__(
+            primal_domain, self._mapping, subgradient=self._subgradient_impl
+        )
 
     @property
     def primal_domain(self) -> "HilbertSpace":
@@ -49,6 +51,27 @@ class SupportFunction(NonLinearForm, ABC):
         q.
         """
         return None
+
+    def _subgradient_impl(self, q: "Vector") -> "Vector":
+        """
+        Return a subgradient of the support function at q.
+
+        For support functions, any maximizer x*(q) ∈ argmax_{x∈S} ⟨q, x⟩
+        is a subgradient. This method delegates to support_point(q).
+
+        Raises:
+            NotImplementedError: If a support point is not available.
+        """
+        point = self.support_point(q)
+        if point is None:
+            raise NotImplementedError(
+                "Support point not available; subgradient cannot be computed."
+            )
+        return point
+
+    def subgradient(self, q: "Vector") -> "Vector":
+        """Return a subgradient of the support function at q."""
+        return self._subgradient_impl(q)
 
 
 class BallSupportFunction(SupportFunction):
