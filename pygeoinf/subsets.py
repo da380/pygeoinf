@@ -29,6 +29,7 @@ from .nonlinear_forms import NonLinearForm
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
     from .linear_operators import LinearOperator
+    from .convex_analysis import SupportFunction
 
 
 class Subset(ABC):
@@ -476,10 +477,14 @@ class LevelSet(Subset):
 
 class ConvexSubset(SublevelSet):
     """
-    Represents a convex set defined as a sublevel set: S = {x | f(x) <= c}.
+    Represents a closed convex set via dual representations.
 
-    This class assumes the defining form 'f' is convex. It includes tools
-    to verify this property locally.
+    A closed convex set can be equivalently defined by:
+    1. A sublevel set: S = {x | f(x) <= c} where f is convex
+    2. Its support function: h(q) = sup{⟨q, x⟩ : x ∈ S}
+
+    This class supports both representations. The support function is abstract
+    and must be implemented by all concrete subclasses (Ball, Ellipsoid, etc.).
     """
 
     def __init__(
@@ -487,14 +492,113 @@ class ConvexSubset(SublevelSet):
         form: NonLinearForm,
         level: float,
         open_set: bool = False,
+        support_fn: Optional["SupportFunction"] = None,
     ) -> None:
         """
         Args:
             form: The defining functional f(x). Must be convex.
             level: The scalar upper bound c.
-            open_set: If True, uses strict inequality (<).
+            open_set: If True, uses strict inequality (<). If False (default), (<=).
+                Note: Support functions only apply to closed sets.
+            support_fn: Optional SupportFunction object. If provided, can be used
+                to define the set via its support function instead of a functional.
         """
         super().__init__(form, level, open_set=open_set)
+        self._support_fn = support_fn
+
+    @property
+    def support_fn(self) -> Optional["SupportFunction"]:
+        """Access the stored support function object, if any."""
+        return self._support_fn
+
+    @property
+    def is_closed(self) -> bool:
+        """
+        Returns True if the set is closed (defined by <=), False if open (<).
+        """
+        return not self.is_open
+
+    def closure(self) -> "ConvexSubset":
+        """
+        Returns the closure of this convex set.
+
+        For a convex set S:
+        - If S is already closed ({f <= c}), returns self (no copy needed).
+        - If S is open ({f < c}), returns a new closed version.
+
+        The closure is the smallest closed set containing S.
+        Note: The returned object uses the same functional and level as self,
+        with open_set flag set to False.
+
+        Returns:
+            ConvexSubset: A ConvexSubset instance (subclass) representing cl(S).
+        """
+        if self.is_closed:
+            # Already closed; return self
+            return self
+        else:
+            # Open set: create a closed version via the subclass's constructor
+            # We use type(self) to call the appropriate subclass constructor
+            # This works for Ball, Ellipsoid, etc. which override __init__
+            return type(self)(
+                self.form, self.level, open_set=False, support_fn=self._support_fn
+            )
+
+    def _warn_if_open(self, operation: str) -> "ConvexSubset":
+        """
+        Helper: warns if the set is open and returns the closure.
+
+        Args:
+            operation: Description of the operation requiring closedness.
+
+        Returns:
+            ConvexSubset: The closure if open; self if already closed.
+        """
+        if self.is_open:
+            import warnings
+            warnings.warn(
+                f"Operation '{operation}' requires a closed convex set. "
+                f"Using the closure cl(S) = {{x | f(x) <= {self.level}}} instead. "
+                f"Original set was {{x | f(x) < {self.level}}}.",
+                UserWarning,
+                stacklevel=3,
+            )
+            return self.closure()
+        return self
+
+    @property
+    @abstractmethod
+    def support_function(self) -> Optional["SupportFunction"]:
+        """
+        Returns the SupportFunction instance for this set, or None if unavailable.
+
+        This property should not raise errors if the support function cannot be
+        created (e.g., missing inverse operators for ellipsoids). The SupportFunction
+        itself is responsible for raising errors when required inputs are missing
+        during evaluation.
+        """
+
+    @abstractmethod
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Returns extreme point and support value in a given direction.
+
+        For a convex set S and direction q, computes:
+            x_max = argmax{⟨q, x⟩ : x ∈ S}
+            h(q) = sup{⟨q, x⟩ : x ∈ S}
+
+        This method must be implemented by all concrete ConvexSubset subclasses.
+
+        Args:
+            direction: A vector q specifying the direction.
+
+        Returns:
+            tuple[Vector, float]: (x_max, h(q)) where x_max achieves the supremum
+                and h(q) is the support function value.
+
+        Raises:
+            NotImplementedError: If not implemented for this set type.
+        """
 
     def check(
         self, n_samples: int = 10, /, *, rtol: float = 1e-5, atol: float = 1e-8
@@ -601,6 +705,69 @@ class ConvexIntersection(ConvexSubset):
         """Direct access to the individual convex constraints."""
         return self._subsets
 
+    @property
+    def support_function(self) -> Optional["SupportFunction"]:
+        """
+        Support function for the intersection, if all component supports exist.
+
+        Returns None if any component subset lacks a support function.
+        """
+        if self._support_fn is not None:
+            return self._support_fn
+
+        if not self._subsets:
+            return None
+
+        supports: List["SupportFunction"] = []
+        for subset in self._subsets:
+            h = subset.support_function
+            if h is None:
+                return None
+            supports.append(h)
+
+        from .convex_analysis import SupportFunction
+
+        class _IntersectionSupportFunction(SupportFunction):
+            def __init__(
+                self,
+                primal_domain: "HilbertSpace",
+                subsets: List[ConvexSubset],
+                supports: List["SupportFunction"],
+            ) -> None:
+                super().__init__(primal_domain)
+                self._subsets = subsets
+                self._supports = supports
+
+            def _mapping(self, q: "Vector") -> float:
+                values = [h(q) for h in self._supports]
+                return float(np.min(values))
+
+            def support_point(self, q: "Vector") -> Optional["Vector"]:
+                bounds = [s.directional_bound(q) for s in self._subsets]
+                h_values = [h_q for _, h_q in bounds]
+                idx_min = int(np.argmin(h_values))
+                return bounds[idx_min][0]
+
+        self._support_fn = _IntersectionSupportFunction(
+            self.domain, self._subsets, supports
+        )
+        return self._support_fn
+
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Returns the extreme point respecting all constraints.
+
+        For intersection, finds the point in S₁ ∩ S₂ ∩ ... that maximizes
+        the directional functional. Uses the active (tightest) constraint.
+        """
+        # Evaluate all constraints
+        bounds = [s.directional_bound(direction) for s in self._subsets]
+
+        # Return the one with minimum support (most restrictive)
+        h_values = [h_q for _, h_q in bounds]
+        idx_min = int(np.argmin(h_values))
+        return bounds[idx_min]
+
 
 # --- Geometric Implementations ---
 
@@ -683,6 +850,9 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         radius: float,
         operator: LinearOperator,
         open_set: bool = False,
+        *,
+        inverse_operator: Optional[LinearOperator] = None,
+        inverse_sqrt_operator: Optional[LinearOperator] = None,
     ) -> None:
         """
         Args:
@@ -696,6 +866,8 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         ConvexSubset.__init__(
             self, self._generated_form, self._generated_level, open_set=open_set
         )
+        self._inverse_operator = inverse_operator
+        self._inverse_sqrt_operator = inverse_sqrt_operator
 
     @property
     def boundary(self) -> Subset:
@@ -703,7 +875,7 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         return EllipsoidSurface(self.domain, self.center, self.radius, self.operator)
 
     @property
-    def normalized(self) -> NormalisedEllipsoid:
+    def normalized(self) -> "NormalisedEllipsoid":
         """
         Returns a normalized version of this ellipsoid with radius 1.
         The operator is scaled by 1/r^2 to represent the same set.
@@ -715,6 +887,56 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         return NormalisedEllipsoid(
             self.domain, self.center, scaled_operator, open_set=self.is_open
         )
+
+    @property
+    def support_function(self) -> Optional["SupportFunction"]:
+        """
+        Returns the support function object for this ellipsoid.
+
+        This property does not require inverse operators at construction time.
+        The returned SupportFunction will raise errors if missing operators are
+        required for evaluation.
+        """
+        if self._support_fn is None:
+            from .convex_analysis import EllipsoidSupportFunction
+
+            self._support_fn = EllipsoidSupportFunction(
+                self.domain,
+                self.center,
+                self.radius,
+                self.operator,
+                inverse_operator=self._inverse_operator,
+                inverse_sqrt_operator=self._inverse_sqrt_operator,
+            )
+        return self._support_fn
+
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Returns extreme point in given direction.
+
+        For an ellipsoid E(c, r, A) and direction q:
+            x_max = c + r * (A^{-1} q) / ||A^{-1/2} q||
+            h(q) = support_function(q)
+
+        Args:
+            direction: The direction vector q.
+
+        Returns:
+            tuple[Vector, float]: (x_max, h(q))
+        """
+        self._warn_if_open("directional_bound")
+        h = self.support_function
+        if h is None:
+            raise ValueError("Support function is not available for this ellipsoid.")
+
+        x_max = h.support_point(direction)
+        if x_max is None:
+            raise NotImplementedError(
+                "directional_bound requires inverse_operator for ellipsoid support point. "
+                "Provide inverse_operator when constructing the ellipsoid."
+            )
+
+        return (x_max, h(direction))
 
 
 class NormalisedEllipsoid(Ellipsoid):
@@ -818,6 +1040,50 @@ class Ball(Ellipsoid):
     def boundary(self) -> Subset:
         """Returns the Sphere bounding this Ball."""
         return Sphere(self.domain, self.center, self.radius)
+
+    @property
+    def support_function(self) -> Optional["SupportFunction"]:
+        """
+        Returns the support function object for this ball.
+
+        Always available for valid Ball instances.
+        """
+        if self._support_fn is None:
+            from .convex_analysis import BallSupportFunction
+
+            self._support_fn = BallSupportFunction(
+                self.domain, self.center, self.radius
+            )
+        return self._support_fn
+
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Returns extreme point in direction of 'direction'.
+
+        For a ball B(c, r) and direction q:
+            x_max = c + r * (q / ||q||)
+            h(q) = ⟨q, c⟩ + r||q||
+
+        Args:
+            direction: The direction vector q.
+
+        Returns:
+            tuple[Vector, float]: (x_max, h(q))
+        """
+        self._warn_if_open("directional_bound")
+        h = self.support_function
+        if h is None:
+            raise ValueError("Support function is not available for this ball.")
+        x_max = h.support_point(direction)
+        if x_max is None:
+            # Fallback: shouldn't happen for Ball
+            q_norm = self.domain.norm(direction)
+            if q_norm < 1e-14:
+                return (self.center, 0.0)
+            q_normalized = self.domain.multiply(1.0 / q_norm, direction)
+            radial_displacement = self.domain.multiply(self.radius, q_normalized)
+            x_max = self.domain.add(self.center, radial_displacement)
+        return (x_max, h(direction))
 
 
 class Sphere(EllipsoidSurface):
