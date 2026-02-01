@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional, Any
 
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.nonlinear_forms import NonLinearForm
+
+import numpy as np
 
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
@@ -185,3 +189,159 @@ class EllipsoidSupportFunction(SupportFunction):
         # x* = c + r * (A^{-1} q) / ||A^{-1/2} q||
         scaled = H.multiply(self._radius / norm_term, A_inv_q)
         return H.add(self._center, scaled)
+
+
+class HalfSpaceSupportFunction(NonLinearForm):
+    r"""
+    Support function of a (closed) half-space in a Hilbert space H.
+
+    We support two conventions:
+
+      (<=)  H = { x ∈ H : ⟨a, x⟩ ≤ b }
+      (>=)  H = { x ∈ H : ⟨a, x⟩ ≥ b }  which is equivalent to { x : ⟨-a, x⟩ ≤ -b }.
+
+    Mathematical facts (extended-real-valued):
+      For H = {x : ⟨a, x⟩ ≤ b} with a ≠ 0,
+
+        σ_H(q) = sup_{x∈H} ⟨q, x⟩
+              = { α b,  if q = α a with α ≥ 0,
+                  +∞,   otherwise. }
+
+      For H = {x : ⟨a, x⟩ ≥ b},
+
+        σ_H(q) = { α b,  if q = α a with α ≤ 0,
+                  +∞,   otherwise. }
+
+    Notes:
+      - Half-spaces are unbounded, so σ_H is typically +∞.
+      - This implementation returns float('inf') for unbounded directions.
+      - A support point is not unique when σ_H(q) is finite; the maximizers form
+        the boundary hyperplane ⟨a, x⟩ = b. We optionally return the minimum-norm
+        boundary point as a canonical representative.
+    """
+
+    def __init__(
+        self,
+        primal_domain: "HilbertSpace",
+        normal_vector: "Vector",
+        offset: float,
+        inequality_type: str = "<=",
+        *,
+        parallel_rtol: float = 1e-12,
+        parallel_atol: float = 1e-14,
+        return_min_norm_support_point: bool = True,
+    ) -> None:
+        self._H = primal_domain
+        self._a = normal_vector
+        self._b = float(offset)
+
+        if inequality_type not in ("<=", ">="):
+            raise ValueError("inequality_type must be '<=' or '>='.")
+        self._ineq = inequality_type
+
+        self._rtol = float(parallel_rtol)
+        self._atol = float(parallel_atol)
+        self._return_min_norm = bool(return_min_norm_support_point)
+
+        # Basic validation
+        a_norm_sq = self._H.inner_product(self._a, self._a)
+        if a_norm_sq <= 0:
+            raise ValueError("normal_vector must be nonzero (a ≠ 0).")
+
+        super().__init__(primal_domain, self._mapping, subgradient=self._subgradient_impl)
+
+    @property
+    def normal_vector(self) -> "Vector":
+        return self._a
+
+    @property
+    def offset(self) -> float:
+        return self._b
+
+    @property
+    def inequality_type(self) -> str:
+        return self._ineq
+
+    def _decompose_parallel(self, q: "Vector") -> tuple[float, float]:
+        """
+        Return (alpha, resid_norm), where alpha is the best scalar such that
+        q_parallel = alpha * a (least-squares in Hilbert sense) and
+        resid_norm = || q - alpha a ||.
+
+        In a Hilbert space:
+          alpha = <q,a>/<a,a>.
+        """
+        H = self._H
+        aa = H.inner_product(self._a, self._a)
+        qa = H.inner_product(q, self._a)
+        alpha = qa / aa
+        q_parallel = H.multiply(alpha, self._a)
+        resid = H.subtract(q, q_parallel)
+        resid_norm = H.norm(resid)
+        return float(alpha), float(resid_norm)
+
+    def _is_parallel(self, q: "Vector", alpha: float, resid_norm: float) -> bool:
+        """
+        Decide if q is (numerically) parallel to a by checking ||q - alpha a|| small.
+        """
+        H = self._H
+        q_norm = H.norm(q)
+        # relative-to-scale tolerance
+        return resid_norm <= max(self._atol, self._rtol * max(1.0, q_norm))
+
+    def _alpha_sign_ok(self, alpha: float) -> bool:
+        """
+        Check the half-space-specific sign restriction on alpha.
+        For ⟨a,x⟩ ≤ b: require alpha ≥ 0.
+        For ⟨a,x⟩ ≥ b: require alpha ≤ 0.
+        """
+        if self._ineq == "<=":
+            return alpha >= -self._atol
+        else:
+            return alpha <= self._atol
+
+    def _mapping(self, q: "Vector") -> float:
+        """
+        Extended-real support function value: returns +∞ when unbounded.
+        """
+        alpha, resid_norm = self._decompose_parallel(q)
+
+        # Finite iff q is parallel to a AND alpha has the correct sign
+        if self._is_parallel(q, alpha, resid_norm) and self._alpha_sign_ok(alpha):
+            return alpha * self._b
+
+        return float("inf")
+
+    def support_point(self, q: "Vector") -> Optional["Vector"]:
+        """
+        Return a canonical maximizer when σ_H(q) is finite.
+
+        When finite, the maximizers are all x with ⟨a,x⟩ = b (boundary hyperplane).
+        If return_min_norm_support_point=True, we return the minimum-norm boundary point:
+            x_min = (b / ||a||^2) a.
+        Otherwise return None (non-unique support set).
+        """
+        if not self._return_min_norm:
+            return None
+
+        val = self._mapping(q)
+        if not np.isfinite(val):
+            return None
+
+        H = self._H
+        aa = H.inner_product(self._a, self._a)
+        coeff = self._b / aa
+        return H.multiply(coeff, self._a)
+
+    def _subgradient_impl(self, q: "Vector") -> "Vector":
+        """
+        For support functions, any maximizer is a subgradient, when the value is finite.
+        We return a canonical maximizer if enabled; otherwise raise.
+        """
+        x_star = self.support_point(q)
+        if x_star is None:
+            raise NotImplementedError(
+                "Subgradient not available: either σ_H(q)=+∞ or support point is non-unique "
+                "and return_min_norm_support_point=False."
+            )
+        return x_star

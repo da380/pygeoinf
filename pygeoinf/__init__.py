@@ -121,7 +121,7 @@ from .subsets import (
     Sphere,
 )
 
-from .plot import plot_1d_distributions, plot_corner_distributions
+from .plot import plot_1d_distributions, plot_corner_distributions, plot_subset_oracle
 
 from .utils import configure_threading
 
@@ -221,6 +221,7 @@ __all__ = [
     # plot
     "plot_1d_distributions",
     "plot_corner_distributions",
+    "plot_subset_oracle",
     # utils
     "configure_threading",
 ]

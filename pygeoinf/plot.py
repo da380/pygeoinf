@@ -2,7 +2,13 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import numpy as np
 import scipy.stats as stats
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Tuple, Iterable, TYPE_CHECKING
+
+from .hilbert_space import EuclideanSpace
+from .subsets import Subset
+
+if TYPE_CHECKING:
+    from .subspaces import AffineSubspace
 
 
 def plot_1d_distributions(
@@ -205,8 +211,106 @@ def plot_1d_distributions(
 
     if prior_measures is not None:
         return fig, (ax1, ax2)
-    else:
-        return fig, ax1
+    return fig, ax1
+    return None
+
+
+def plot_subset_oracle(
+    subset: Subset,
+    /,
+    *,
+    on_subspace: "AffineSubspace",
+    bounds: Optional[Union[Tuple[float, float, float, float], Tuple[Tuple[float, float], Tuple[float, float]]]] = None,
+    grid_size: int = 200,
+    rtol: float = 1e-6,
+    cmap: str = "Blues",
+    alpha: float = 0.5,
+    show_plot: bool = True,
+    ax: Optional[plt.Axes] = None,
+):
+        """
+        Oracle-based 2D plotter for Subset objects on an affine subspace.
+
+        Evaluates membership on a 2D grid in the parameter space of the affine subspace.
+        The subset is pulled back onto the affine subspace and visualized using
+        the subspace's local coordinates (orthonormal tangent basis).
+
+        Args:
+            subset: The Subset to plot (must be in a EuclideanSpace).
+            on_subspace: The 2D AffineSubspace on which to visualize the subset.
+                The tangent basis of this subspace defines the local coordinates.
+            bounds: Plot bounds in parameter space. Either:
+                - (ymin, ymax, zmin, zmax) tuple, or
+                - ((ymin, ymax), (zmin, zmax)) tuple pair.
+                If omitted, defaults to [-1, 1] × [-1, 1] in parameter space.
+            grid_size: Number of grid points per dimension (grid_size² total points).
+            rtol: Relative tolerance passed to `subset.is_element`.
+            cmap: Matplotlib colormap for filled region.
+            alpha: Transparency for filled region.
+            show_plot: Whether to display the plot.
+            ax: Optional matplotlib Axes. If not provided, a new figure is created.
+
+        Returns:
+            fig, ax, mask: Matplotlib Figure/Axes and a (grid_size × grid_size) boolean mask.
+        """
+        domain = subset.domain
+        if not isinstance(domain, EuclideanSpace):
+            raise TypeError("plot_subset_oracle currently supports EuclideanSpace only.")
+
+        # Extract tangent basis (must have exactly 2 vectors for 2D)
+        tangent_basis = on_subspace.get_tangent_basis()
+        if len(tangent_basis) != 2:
+            raise ValueError(f"Affine subspace must be 2D (got {len(tangent_basis)}D).")
+
+        u1, u2 = tangent_basis
+        x0 = on_subspace.translation
+
+        def embed(u: float, v: float) -> object:
+            """Map (u, v) in parameter space to ambient point x = x0 + u·u1 + v·u2."""
+            result = x0
+            result = domain.add(result, domain.multiply(u, u1))
+            result = domain.add(result, domain.multiply(v, u2))
+            return result
+
+        # Parse bounds
+        if bounds is None:
+            u_min, u_max, v_min, v_max = -1.0, 1.0, -1.0, 1.0
+        else:
+            bounds_tuple = tuple(bounds)
+            if len(bounds_tuple) == 4:
+                u_min, u_max, v_min, v_max = bounds_tuple  # type: ignore
+            elif len(bounds_tuple) == 2:
+                (u_min, u_max), (v_min, v_max) = bounds_tuple  # type: ignore
+            else:
+                raise ValueError("bounds must be (umin, umax, vmin, vmax) or ((umin, umax), (vmin, vmax))")
+
+        # 2D grid sampling in parameter space
+        u = np.linspace(u_min, u_max, grid_size)
+        v = np.linspace(v_min, v_max, grid_size)
+        U, V = np.meshgrid(u, v, indexing="xy")
+
+        mask = np.zeros_like(U, dtype=bool)
+        for i in range(grid_size):
+            for j in range(grid_size):
+                point = embed(float(U[i, j]), float(V[i, j]))
+                mask[i, j] = subset.is_element(point, rtol=rtol)
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(6, 6))
+        else:
+            fig = ax.figure
+
+        ax.contourf(U, V, mask.astype(float), levels=[0.5, 1.5], cmap=cmap, alpha=alpha)
+        ax.contour(U, V, mask.astype(float), levels=[0.5], colors="k", linewidths=1.0)
+        ax.set_xlabel("Local param 1")
+        ax.set_ylabel("Local param 2")
+        ax.set_title(f"Slice: {subset.__class__.__name__}")
+        ax.set_aspect("equal", adjustable="box")
+
+        if show_plot:
+            plt.show()
+
+        return fig, ax, mask
 
 
 def plot_corner_distributions(
