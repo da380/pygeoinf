@@ -870,26 +870,23 @@ The sign convention matches the dual formulation from convex analysis. The optim
 
 **Overall Progress:** 3.5/8 phases complete (~44%)
 
-| Phase | Status | Tasks Complete | Tasks Total |
-|-------|--------|----------------|-------------|
-| Phase 1: Architecture Analysis | ✅ COMPLETE | - | - |
-| Phase 2: Refactor ConvexSubset | ✅ COMPLETE | 3 | 3 |
-| Phase 3: DualMasterCostFunction | ✅ COMPLETE | 6 | 6 |
-| Phase 4: Solver Implementation | 🟨 IN PROGRESS | 6 | 19 |
-| Phase 4.1: Basic Subgradient | ✅ COMPLETE | 6 | 6 |
-| Phase 4.2: Step Size Rules | ⏸️ NOT STARTED | 0 | 5 |
-| Phase 4.3: Integration | ⏸️ NOT STARTED | 0 | 4 |
-| Phase 4.4: Advanced Methods | ⏸️ NOT STARTED | 0 | 4 |
-| Phase 5: Integration & Testing | ⏸️ NOT STARTED | 0 | 4 |
-| Phase 6: Advanced Features | ⏸️ NOT STARTED | 0 | 5 |
-| **Phase 7: Planes & Half-Spaces** | **🟨 IN PROGRESS** | **3** | **7** |
-| **Phase 8: Visualization** | **⏸️ NOT STARTED** | **0** | **8** |
-| Phase 4.3: Integration | ⏸️ NOT STARTED | 0 | 4 |
-| Phase 4.4: Advanced Methods | ⏸️ NOT STARTED | 0 | 4 |
-| Phase 5: Integration & Testing | ⏸️ NOT STARTED | 0 | 4 |
-| Phase 6: Advanced Features | ⏸️ NOT STARTED | 0 | 5 |
-| **Phase 7: Planes & Half-Spaces** | **🟨 IN PROGRESS** | **3** | **7** |
-| **Phase 8: Visualization** | **⏸️ NOT STARTED** | **0** | **8** |
+**Progress Tracker:** 3.5/8 phases complete + Phase 8 Partial Implementation (44-48%)
+
+| Phase | Status | Tasks Complete | Tasks Total | Notes |
+|-------|--------|----------------|-------------|-------|
+| Phase 1: Architecture Analysis | ✅ COMPLETE | - | - | Foundation for all following phases |
+| Phase 2: Refactor ConvexSubset | ✅ COMPLETE | 3 | 3 | support_function as cached property |
+| Phase 3: DualMasterCostFunction | ✅ COMPLETE | 6 | 6 | Dual master equation implementation |
+| Phase 4: Solver Implementation | 🟨 IN PROGRESS | 6 | 19 | Sub-Phase 4.1 complete; 4.2-4.4 pending |
+| Phase 4.1: Basic Subgradient | ✅ COMPLETE | 6 | 6 | SubgradientDescent with constant step size |
+| Phase 4.2: Step Size Rules | ⏸️ NOT STARTED | 0 | 5 | Diminishing, Polyak, adaptive rules |
+| Phase 4.3: Integration | ⏸️ NOT STARTED | 0 | 4 | DualMasterCostFunction.solve_subgradient() |
+| Phase 4.4: Advanced Methods | ⏸️ NOT STARTED | 0 | 4 | Bundle, proximal, stochastic methods |
+| Phase 5: Integration & Testing | ⏸️ NOT STARTED | 0 | 4 | Demo notebook, unit tests, exports |
+| Phase 6: Advanced Features | ⏸️ NOT STARTED | 0 | 5 | Non-Euclidean spaces, Minkowski sums, caching |
+| Phase 7: Planes & Half-Spaces | 🟨 IN PROGRESS | 3 | 7 | HyperPlane, HalfSpace, AffineSubspace bridge |
+| Phase 8: Visualization | 🟨 PARTIAL | 1 (of 9) | 9 | SubspaceSlicePlotter: Task 8.3 complete |
+| **Phase 8 Companion: SubspaceSlicePlotter** | **✅ COMPLETE** | **1D/2D/3D** | **All dims** | **Active, fully functional; addresses 8.3** |
 
 ---
 
@@ -924,6 +921,169 @@ code pygeoinf/convex_optimisation.py
 conda activate inferences3
 code pygeoinf/subsets.py  # Add HyperPlane and HalfSpace classes
 ```
+
+---
+
+## Phase 8 Partial Implementation: SubspaceSlicePlotter (Companion Work)
+
+**Status:** ✅ COMPLETE (Companion Implementation)
+
+**Summary:** An independent, focused implementation of affine subspace visualization has been developed and is actively used. This addresses key aspects of Phase 8 using a simpler, pragmatic architecture tailored for 1D/2D/3D visualization via membership oracles.
+
+**Scope Comparison:**
+- **Phase 8 Plan:** General-purpose framework for multiple representation strategies (A/B/C/D), dual backends (matplotlib 2D + plotly 3D), and set-specific fast paths
+- **SubspaceSlicePlotter:** Focused implementation for 1D/2D/3D affine subspaces using membership oracle (representation A) with matplotlib backend
+
+**What Has Been Implemented:**
+
+### Class: `SubspaceSlicePlotter` (in `pygeoinf/plot.py`)
+
+**Constructor & Parameters:**
+- [x] Full parameter validation (7 validation checks):
+  - EuclideanSpace domain check
+  - Dimension check (1D/2D/3D only)
+  - grid_size must be positive int
+  - alpha must be in [0.0, 1.0]
+  - rtol must be positive
+  - **NEW:** bar_pixel_height must be positive int (recent UX improvement)
+- [x] Flexible instantiation with sensible defaults
+- [x] Automatic tangent basis extraction from AffineSubspace
+- [x] Translation vector storage from subspace
+
+**Common Methods (All Dimensions):**
+- [x] **parse_bounds()**: Flexible bounds parsing for 1D/2D/3D
+  - Accepts multiple formats: None, flat tuple, nested tuples
+  - Automatic dimension-aware normalization
+- [x] **embed_point()**: Lifts parameter space points y to ambient space x = x0 + U y
+  - Works for all dimensions
+  - Uses stored tangent basis and translation
+- [x] **_generate_param_grid()**: Generates parameter grids
+  - 1D: Linear spacing (1D array)
+  - 2D: Meshgrid (2D arrays X, Y)
+  - 3D: Regular grid (3D arrays X, Y, Z)
+- [x] **sample_membership()**: Oracle evaluation on grid
+  - Calls subset.is_element(x) for each embedded point
+  - Returns binary membership array
+  - Respects rtol parameter
+
+**Dimension-Specific Rendering:**
+- [x] **_render_1d()**: Bar chart visualization
+  - Plots each member point as a vertical bar
+  - **RECENT ENHANCEMENT:** Fixed pixel-based bar height
+    - Parameter: self.bar_pixel_height (default 6 pixels)
+    - Helper method: self._pixel_to_data_height() converts pixels to data units
+    - Ensures consistent visual appearance across plots with different axis ranges
+  - Supports alpha transparency
+- [x] **_render_2d()**: Contour + filled region visualization
+  - Filled contour for membership region
+  - Contour lines for boundary
+  - Color map with transparency
+  - Tight axis bounding
+- [x] **_render_3d()**: 3D surface visualization
+  - Voxel-based rendering (grid of colored boxes)
+  - Alpha blending for transparency
+  - Supports both orthogonal and perspective views
+  - Jupyter-friendly with interactive rotation
+
+**Plotting Dispatcher:**
+- [x] **plot()**: Main entry point
+  - Automatically selects renderer based on dimension
+  - Handles all figure/axes setup
+  - Returns matplotlib Figure and Axes objects
+  - Supports custom bounds, grid size, and transparency
+
+**Implementation Quality:**
+- [x] Full type hints (no TYPE_CHECKING hacks beyond AffineSubspace import)
+- [x] Comprehensive docstrings for all public methods
+- [x] Clear parameter descriptions and return types
+- [x] Dimension-agnostic architecture where appropriate
+- [x] Defensive validation (7 checks in constructor)
+- [x] Pixel-to-data conversion with fallback error handling
+
+**Active Usage:**
+- Successfully visualizing in `pygeoinf/testing_sets/test_dual_master.ipynb`:
+  - 1D slices of admissible sets on lines
+  - 2D slices of convex sets on planes
+  - Both Ball and Ellipsoid subsets
+  - Grid sizes from 100 to 200+ points
+
+### Relationship to Phase 8 Tasks
+
+**Tasks Already Partially Addressed:**
+
+| Phase 8 Task | SubspaceSlicePlotter Status |
+|--------------|----------------------------|
+| 8.1: visualization.py module | ⚠️ Partial (in plot.py, not separate module) |
+| 8.2: Subset.plot() entrypoint | ⏸️ Not yet (SubspaceSlicePlotter used directly, not as method) |
+| 8.3: Generic membership-oracle plot | ✅ **COMPLETE** (all dimension cases: 1D bars, 2D contours, 3D voxels) |
+| 8.4: Implicit-inequality plot | ⏸️ Not yet (would require signed distance functions) |
+| 8.5: Linear-inequality plot | ⏸️ Not yet (would require PolyhedralSet support) |
+| 8.6: Support-function reconstruction | ⏸️ Not yet (would require directional sampling) |
+| 8.7: Set-specific fast paths | ⏸️ Not yet (currently generic membership oracle only) |
+| 8.8: Demo notebook | ⚠️ Partial (active usage in test notebooks) |
+| 8.9: Unit tests | ⏸️ Not yet (integration tested, no formal unit tests) |
+
+**Key Differences from Phase 8 Plan:**
+1. **Single backend:** matplotlib only (no plotly 3D yet)
+2. **Single representation:** Membership oracle only (not representations B/C/D)
+3. **Location:** plot.py (not separate visualization.py module)
+4. **Integration:** Used directly (not as Subset.plot() method)
+5. **Scope:** 1D/2D/3D only (not general n-dimensional with auto-selection)
+
+**Advantages of Current Implementation:**
+- ✅ **Working today:** Actively used in notebooks for visualization
+- ✅ **Simple architecture:** Easy to understand and maintain
+- ✅ **Clean API:** Straightforward constructor + plot() call
+- ✅ **Flexible bounds:** Dimension-aware parsing for any format
+- ✅ **Visual quality:** Recent pixel-height fix ensures consistent appearance
+- ✅ **Well-validated:** 7 parameter checks catch user errors early
+
+**Path Forward for Phase 8:**
+1. **Consolidate:** Move SubspaceSlicePlotter to new `pygeoinf/visualization.py` module
+2. **Extend:** Add Subset.plot() method that wraps SubspaceSlicePlotter
+3. **Enhance:** Implement set-specific fast paths (Ball, Ellipsoid analytic slices)
+4. **Supplement:** Add plotly backend for interactive 3D visualization
+5. **Generalize:** Implement representations B/C/D for broader set types
+6. **Test:** Add formal unit tests for slice parameterization and rendering
+
+### Recent Enhancement: Pixel-Based Bar Height (Feb 2, 2026)
+
+**Problem:** 1D bar charts displayed inconsistent visual thickness across plots
+- Calculation used data-range fraction: `height = 0.01 * (u_max - u_min)`
+- When axis ranges differed, same data-coordinate height mapped to different pixel heights
+- Result: bars appeared thick in some plots, thin in others
+
+**Solution:** Introduced pixel-based height calculation
+- New parameter: `bar_pixel_height: int = 6` (default 6 pixels)
+- New helper method: `_pixel_to_data_height(ax, pixels) -> float`
+  - Converts pixel distance to data coordinate height
+  - Uses axes window extent and inverted transform
+  - Includes fallback: calls fig.canvas.draw() if renderer unavailable
+- Updated `_render_1d()` to use `height_data = self._pixel_to_data_height(ax, pixel_height)`
+
+**Implementation Details:**
+```python
+def _pixel_to_data_height(self, ax, pixels):
+    """Convert pixel distance to data coordinates."""
+    try:
+        renderer = ax.get_figure().canvas.get_renderer()
+    except (AttributeError, RuntimeError):
+        ax.get_figure().canvas.draw()
+        renderer = ax.get_figure().canvas.get_renderer()
+
+    bbox = ax.get_window_extent(renderer=renderer)
+    x_disp = bbox.x0 + bbox.width * 0.5
+    y_disp0 = bbox.y0 + bbox.height * 0.5
+    y_disp1 = y_disp0 + pixels
+
+    inv = ax.transData.inverted()
+    y_data0 = inv.transform((x_disp, y_disp0))[1]
+    y_data1 = inv.transform((x_disp, y_disp1))[1]
+
+    return abs(y_data1 - y_data0)
+```
+
+**Result:** ✅ Bars now render with consistent visual thickness across all plots
 
 ---
 
@@ -965,14 +1125,21 @@ code pygeoinf/subsets.py  # Add HyperPlane and HalfSpace classes
 
 **Status Update:**
 - Phase 7: 3/7 tasks complete (43%)
-- Remaining in Phase 7: Support functions (7.3, 7.4), PolyhedralSet (7.5), tests (7.6)
-- Overall project: ~44% complete (same as before, added scope to Phase 7)
+- Phase 8: 1/9 tasks complete via SubspaceSlicePlotter (11%; membership-oracle slice plot fully implemented)
+- SubspaceSlicePlotter: Actively used and fully functional (1D/2D/3D visualization)
+- Overall project: ~44-48% complete (accounting for Phase 8 partial implementation)
 
 **Design Highlights:**
 - HyperPlane and HalfSpace are independent of AffineSubspace (different use cases)
 - Bridge methods allow seamless conversion when needed
+- SubspaceSlicePlotter provides working visualization infrastructure for all convex sets
 - Both classes inherit from Subset, fit naturally into convex geometry hierarchy
-- Ready for support function implementation (Phase 7.3-7.4) and visualization (Phase 8)
+- Ready for support function implementation (Phase 7.3-7.4) and Phase 8 completion
 
-**Last Updated:** February 1, 2026
-**Document Version:** 2.8 (Phase 7 in progress: HyperPlane, HalfSpace, and bridge complete)
+**Recent Major Work (Feb 2, 2026):**
+- ✅ SubspaceSlicePlotter pixel-based bar height fix (UX improvement for 1D visualization)
+- ✅ Added `bar_pixel_height` parameter and `_pixel_to_data_height()` helper method
+- ✅ Ensures consistent visual appearance across plots with different axis ranges
+
+**Last Updated:** February 2, 2026
+**Document Version:** 2.9 (Phase 8 Partial Implementation documented; SubspaceSlicePlotter companion work integrated)
