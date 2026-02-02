@@ -1,8 +1,10 @@
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
+import matplotlib.figure
+import matplotlib.axes
 import numpy as np
 import scipy.stats as stats
-from typing import Union, List, Optional, Tuple, Iterable, TYPE_CHECKING
+from typing import Union, List, Optional, Tuple, TYPE_CHECKING
 
 from .hilbert_space import EuclideanSpace
 from .subsets import Subset
@@ -215,102 +217,516 @@ def plot_1d_distributions(
     return None
 
 
-def plot_subset_oracle(
-    subset: Subset,
-    /,
-    *,
-    on_subspace: "AffineSubspace",
-    bounds: Optional[Union[Tuple[float, float, float, float], Tuple[Tuple[float, float], Tuple[float, float]]]] = None,
-    grid_size: int = 200,
-    rtol: float = 1e-6,
-    cmap: str = "Blues",
-    alpha: float = 0.5,
-    show_plot: bool = True,
-    ax: Optional[plt.Axes] = None,
-):
-        """
-        Oracle-based 2D plotter for Subset objects on an affine subspace.
+class SubspaceSlicePlotter:
+    """
+    Unified plotter for visualizing subsets on 1D, 2D, and 3D affine subspaces.
 
-        Evaluates membership on a 2D grid in the parameter space of the affine subspace.
-        The subset is pulled back onto the affine subspace and visualized using
-        the subspace's local coordinates (orthonormal tangent basis).
+    This class encapsulates the logic for:
+    - Extracting and validating subspace geometry (tangent basis, translation)
+    - Parsing flexible bounds formats for any dimension
+    - Generating parameter grids (1D/2D/3D)
+    - Embedding parameter space points into ambient space
+    - Sampling subset membership via oracle evaluation
+    - Dimension-specific visualization
+
+    Architecture:
+    - Common methods (parse_bounds, embed_point, sample_membership) work for all dimensions
+    - Dimension-specific _render_*() methods handle visualization
+    - This class becomes the primary implementation (replaces old plot_subset_oracle function)
+    """
+
+    # ===========================
+    # Constructor & Initialization
+    # ===========================
+
+    def __init__(
+        self,
+        subset: Subset,
+        on_subspace: "AffineSubspace",
+        grid_size: int = 200,
+        rtol: float = 1e-6,
+        alpha: float = 0.5,
+        bar_pixel_height: int = 6,
+    ) -> None:
+        """
+        Initialize the plotter with geometry and subset.
 
         Args:
-            subset: The Subset to plot (must be in a EuclideanSpace).
-            on_subspace: The 2D AffineSubspace on which to visualize the subset.
-                The tangent basis of this subspace defines the local coordinates.
-            bounds: Plot bounds in parameter space. Either:
-                - (ymin, ymax, zmin, zmax) tuple, or
-                - ((ymin, ymax), (zmin, zmax)) tuple pair.
-                If omitted, defaults to [-1, 1] × [-1, 1] in parameter space.
-            grid_size: Number of grid points per dimension (grid_size² total points).
-            rtol: Relative tolerance passed to `subset.is_element`.
-            cmap: Matplotlib colormap for filled region.
-            alpha: Transparency for filled region.
-            show_plot: Whether to display the plot.
-            ax: Optional matplotlib Axes. If not provided, a new figure is created.
+            subset: The Subset to visualize (domain must be EuclideanSpace)
+            on_subspace: The AffineSubspace to slice along (1D, 2D, or 3D)
+            grid_size: Number of samples per dimension
+                - 1D: Total sample count
+                - 2D: grid_size per axis (grid_size² total points)
+                - 3D: grid_size per axis (grid_size³ total points)
+            rtol: Relative tolerance for subset.is_element() oracle
+            alpha: Transparency for visualization (0.0–1.0)
+            bar_pixel_height: Visual thickness of 1D bars in pixels (positive int)
+
+        Raises:
+            TypeError: If subset.domain is not EuclideanSpace
+            ValueError: If subspace dimension is not 1, 2, or 3
+        """
+        self.subset = subset
+        self.subspace = on_subspace
+        self.domain = subset.domain
+        self.grid_size = grid_size
+        self.rtol = rtol
+        self.alpha = alpha
+
+        # Extract tangent basis and translation from subspace
+        self.tangent_basis = on_subspace.get_tangent_basis()
+        self.translation = on_subspace.translation
+        self.dimension = len(self.tangent_basis)
+
+        # Validation
+        if not isinstance(self.domain, EuclideanSpace):
+            raise TypeError(
+                f"SubspaceSlicePlotter requires EuclideanSpace domain, "
+                f"got {type(self.domain).__name__}."
+            )
+
+        if self.dimension not in (1, 2, 3):
+            raise ValueError(
+                f"Subspace dimension must be 1, 2, or 3, got {self.dimension}D."
+            )
+
+        # Additional parameter validation
+        if not isinstance(grid_size, int) or grid_size <= 0:
+            raise ValueError(f"grid_size must be positive int, got {grid_size}.")
+
+        if not (0.0 <= alpha <= 1.0):
+            raise ValueError(f"alpha must be in [0.0, 1.0], got {alpha}.")
+
+        if rtol <= 0:
+            raise ValueError(f"rtol must be positive, got {rtol}.")
+
+        # Validate and store pixel-based bar height for 1D rendering
+        if not isinstance(bar_pixel_height, int) or bar_pixel_height <= 0:
+            raise ValueError(f"bar_pixel_height must be a positive int, got {bar_pixel_height}.")
+        self.bar_pixel_height = bar_pixel_height
+
+    # ===========================
+    # Common Methods (All Dims)
+    # ===========================
+
+    def parse_bounds(
+        self,
+        bounds: Optional[Union[tuple, List]]
+    ) -> tuple:
+        """
+        Parse and validate bounds for current dimension.
+
+        Flexible input format handling:
+        - None: Use default [-1, 1] per dimension
+        - 1D: (u_min, u_max)
+        - 2D: (u_min, u_max, v_min, v_max) OR ((u_min, u_max), (v_min, v_max))
+        - 3D: (u_min, u_max, v_min, v_max, w_min, w_max) OR
+              ((u_min, u_max), (v_min, v_max), (w_min, w_max))
+
+        Args:
+            bounds: User-provided bounds or None
 
         Returns:
-            fig, ax, mask: Matplotlib Figure/Axes and a (grid_size × grid_size) boolean mask.
+            Normalized tuple:
+            - 1D: (u_min, u_max)
+            - 2D: (u_min, u_max, v_min, v_max)
+            - 3D: (u_min, u_max, v_min, v_max, w_min, w_max)
+
+        Raises:
+            ValueError: If bounds format doesn't match dimension
         """
-        domain = subset.domain
-        if not isinstance(domain, EuclideanSpace):
-            raise TypeError("plot_subset_oracle currently supports EuclideanSpace only.")
-
-        # Extract tangent basis (must have exactly 2 vectors for 2D)
-        tangent_basis = on_subspace.get_tangent_basis()
-        if len(tangent_basis) != 2:
-            raise ValueError(f"Affine subspace must be 2D (got {len(tangent_basis)}D).")
-
-        u1, u2 = tangent_basis
-        x0 = on_subspace.translation
-
-        def embed(u: float, v: float) -> object:
-            """Map (u, v) in parameter space to ambient point x = x0 + u·u1 + v·u2."""
-            result = x0
-            result = domain.add(result, domain.multiply(u, u1))
-            result = domain.add(result, domain.multiply(v, u2))
-            return result
-
-        # Parse bounds
         if bounds is None:
-            u_min, u_max, v_min, v_max = -1.0, 1.0, -1.0, 1.0
-        else:
-            bounds_tuple = tuple(bounds)
-            if len(bounds_tuple) == 4:
-                u_min, u_max, v_min, v_max = bounds_tuple  # type: ignore
-            elif len(bounds_tuple) == 2:
-                (u_min, u_max), (v_min, v_max) = bounds_tuple  # type: ignore
+            # Default: [-1, 1] per dimension
+            return tuple([-1.0, 1.0] * self.dimension)
+
+        bounds_tuple = tuple(bounds) if not isinstance(bounds, tuple) else bounds
+
+        if self.dimension == 1:
+            if len(bounds_tuple) == 2 and isinstance(bounds_tuple[0], (int, float)):
+                return tuple(float(b) for b in bounds_tuple)  # type: ignore
             else:
-                raise ValueError("bounds must be (umin, umax, vmin, vmax) or ((umin, umax), (vmin, vmax))")
+                raise ValueError(
+                    f"1D bounds must be (u_min, u_max), got {bounds}."
+                )
 
-        # 2D grid sampling in parameter space
-        u = np.linspace(u_min, u_max, grid_size)
-        v = np.linspace(v_min, v_max, grid_size)
-        U, V = np.meshgrid(u, v, indexing="xy")
+        elif self.dimension == 2:
+            if len(bounds_tuple) == 4:
+                # (u_min, u_max, v_min, v_max)
+                return tuple(float(b) for b in bounds_tuple)  # type: ignore
+            elif len(bounds_tuple) == 2 and all(isinstance(b, (tuple, list)) for b in bounds_tuple):
+                # ((u_min, u_max), (v_min, v_max))
+                (u_min, u_max), (v_min, v_max) = bounds_tuple  # type: ignore
+                return (float(u_min), float(u_max), float(v_min), float(v_max))
+            else:
+                raise ValueError(
+                    f"2D bounds must be (u_min, u_max, v_min, v_max) or "
+                    f"((u_min, u_max), (v_min, v_max)), got {bounds}."
+                )
 
-        mask = np.zeros_like(U, dtype=bool)
-        for i in range(grid_size):
-            for j in range(grid_size):
-                point = embed(float(U[i, j]), float(V[i, j]))
-                mask[i, j] = subset.is_element(point, rtol=rtol)
+        # This handles dimension == 3 (ensures all code paths return)
+        if len(bounds_tuple) == 6:
+            # (u_min, u_max, v_min, v_max, w_min, w_max)
+            return tuple(float(b) for b in bounds_tuple)  # type: ignore
+        elif len(bounds_tuple) == 3 and all(isinstance(b, (tuple, list)) for b in bounds_tuple):
+            # ((u_min, u_max), (v_min, v_max), (w_min, w_max))
+            (u_min, u_max), (v_min, v_max), (w_min, w_max) = bounds_tuple  # type: ignore
+            return (float(u_min), float(u_max), float(v_min), float(v_max), float(w_min), float(w_max))
+        else:
+            raise ValueError(
+                f"3D bounds format error: {bounds}."
+            )
+
+    def embed_point(
+        self,
+        params: Union[float, Tuple[float, ...], List[float]]
+    ) -> object:
+        """
+        Map parameter(s) to ambient point using tangent basis.
+
+        Universal formula (works for any dimension):
+        x = translation + sum(params[i] * tangent_basis[i])
+
+        Args:
+            params:
+            - 1D: Single float
+            - 2D: 2-tuple (u, v)
+            - 3D: 3-tuple (u, v, w)
+
+        Returns:
+            Ambient point as Vector
+        """
+        # Handle single float for 1D
+        if isinstance(params, (int, float)):
+            params = [params]
+        else:
+            params = list(params)
+
+        if len(params) != self.dimension:
+            raise ValueError(
+                f"Expected {self.dimension} parameter(s), got {len(params)}."
+            )
+
+        # Start with translation
+        result = self.translation
+
+        # Add weighted tangent vectors
+        for param, basis_vec in zip(params, self.tangent_basis):
+            result = self.domain.add(result, self.domain.multiply(param, basis_vec))
+
+        return result
+
+    def _generate_param_grid(
+        self,
+        bounds: tuple
+    ) -> Union[np.ndarray, Tuple[np.ndarray, ...]]:
+        """
+        Generate parameter grid for sampling.
+
+        Args:
+            bounds: Normalized bounds tuple
+                - 1D: (u_min, u_max)
+                - 2D: (u_min, u_max, v_min, v_max)
+                - 3D: (u_min, u_max, v_min, v_max, w_min, w_max)
+
+        Returns:
+            Parameter grid:
+            - 1D: 1D numpy array of shape (grid_size,)
+            - 2D: Tuple of two 2D arrays from meshgrid, shapes (grid_size, grid_size)
+            - 3D: Tuple of three 3D arrays from meshgrid, shapes (grid_size³)
+        """
+        if self.dimension == 1:
+            u_min, u_max = bounds
+            return np.linspace(u_min, u_max, self.grid_size)
+
+        elif self.dimension == 2:
+            u_min, u_max, v_min, v_max = bounds
+            u = np.linspace(u_min, u_max, self.grid_size)
+            v = np.linspace(v_min, v_max, self.grid_size)
+            U, V = np.meshgrid(u, v, indexing='xy')
+            return (U, V)
+
+        elif self.dimension == 3:
+            u_min, u_max, v_min, v_max, w_min, w_max = bounds
+            u = np.linspace(u_min, u_max, self.grid_size)
+            v = np.linspace(v_min, v_max, self.grid_size)
+            w = np.linspace(w_min, w_max, self.grid_size)
+            U, V, W = np.meshgrid(u, v, w, indexing='xy')
+            return (U, V, W)
+
+    def _pixel_to_data_height(self, ax: matplotlib.axes.Axes, pixels: int) -> float:
+        """Convert a vertical pixel distance to data units for the given Axes.
+
+        Uses the axes window extent and inverted data transform to compute how
+        many data units correspond to a vertical distance of `pixels`. This
+        produces consistent visual thickness across different figure sizes
+        and axis limits.
+        """
+        fig = ax.figure
+        # Ensure renderer is available; draw if necessary
+        try:
+            renderer = fig.canvas.get_renderer()
+        except Exception:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+
+        bbox = ax.get_window_extent(renderer=renderer)
+        # Use center of axes to avoid edge artifacts
+        x_disp = bbox.x0 + bbox.width * 0.5
+        y_disp0 = bbox.y0 + bbox.height * 0.5
+        y_disp1 = y_disp0 + pixels
+
+        inv = ax.transData.inverted()
+        y_data0 = inv.transform((x_disp, y_disp0))[1]
+        y_data1 = inv.transform((x_disp, y_disp1))[1]
+        return abs(y_data1 - y_data0)
+
+    def sample_membership(
+        self,
+        param_grid: Union[np.ndarray, Tuple[np.ndarray, ...]]
+    ) -> np.ndarray:
+        """
+        Evaluate subset membership on parameter grid.
+
+        For each grid point, converts parameter coordinates to ambient space
+        via embed_point(), then tests membership using subset.is_element().
+
+        Args:
+            param_grid: Parameter grid from _generate_param_grid()
+
+        Returns:
+            Boolean mask array:
+            - 1D: shape (grid_size,)
+            - 2D: shape (grid_size, grid_size)
+            - 3D: shape (grid_size, grid_size, grid_size)
+        """
+        if self.dimension == 1:
+            u = param_grid
+            mask = np.zeros(len(u), dtype=bool)
+            for i in range(len(u)):
+                point = self.embed_point(float(u[i]))
+                mask[i] = self.subset.is_element(point, rtol=self.rtol)
+            return mask
+
+        elif self.dimension == 2:
+            U, V = param_grid
+            shape = U.shape
+            mask = np.zeros(shape, dtype=bool)
+            for i in range(shape[0]):
+                for j in range(shape[1]):
+                    point = self.embed_point((float(U[i, j]), float(V[i, j])))
+                    mask[i, j] = self.subset.is_element(point, rtol=self.rtol)
+            return mask
+
+        elif self.dimension == 3:
+            U, V, W = param_grid
+            shape = U.shape
+            mask = np.zeros(shape, dtype=bool)
+            for i in range(shape[0]):
+                for j in range(shape[1]):
+                    for k in range(shape[2]):
+                        point = self.embed_point((float(U[i, j, k]),
+                                                  float(V[i, j, k]),
+                                                  float(W[i, j, k])))
+                        mask[i, j, k] = self.subset.is_element(point, rtol=self.rtol)
+            return mask
+
+    # ===========================
+    # Rendering Methods
+    # ===========================
+
+    def _render_1d(
+        self,
+        param_grid: np.ndarray,
+        mask: np.ndarray,
+        bounds: tuple,
+        color: str,
+        show_plot: bool,
+        ax: Optional[matplotlib.axes.Axes],
+    ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+        """
+        Render 1D slice as horizontal colored segment bars.
+
+        Visualizes contiguous membership regions as horizontal bars.
+
+        Args:
+            param_grid: 1D parameter array from _generate_param_grid()
+            mask: 1D boolean mask from sample_membership()
+            bounds: (u_min, u_max) from parse_bounds()
+            color: Color for membership bars (e.g., 'steelblue')
+            show_plot: Whether to call plt.show()
+            ax: Optional existing Axes
+
+        Returns:
+            (fig, ax, mask) tuple
+        """
+        u_min, u_max = bounds
+        u = param_grid
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 2))
+        else:
+            fig = ax.figure
+
+        # Convert pixel height to data coordinates (consistent visual thickness)
+        pixel_height = self.bar_pixel_height
+        try:
+            height_data = self._pixel_to_data_height(ax, pixel_height)
+        except Exception:
+            # If something unexpected happens, fall back to a small fraction of axis range
+            fig.canvas.draw()
+            height_data = self._pixel_to_data_height(ax, pixel_height)
+
+        # Find contiguous membership regions
+        changes = np.diff(mask.astype(int), prepend=0, append=0)
+        starts = np.where(changes == 1)[0]
+        ends = np.where(changes == -1)[0]
+
+        # Draw horizontal bars for each membership region
+        for start, end in zip(starts, ends):
+            u_start = u[min(start, len(u) - 1)]
+            u_end = u[min(end - 1, len(u) - 1)]
+            width = u_end - u_start
+            ax.barh(0, width, left=u_start, height=height_data, color=color,
+                    alpha=self.alpha, edgecolor='black', linewidth=1.5)
+
+        # Formatting
+        ax.set_xlim(u_min, u_max)
+        ax.set_ylim(-0.5, 0.5)
+        ax.set_xlabel("Line Parameter (Local Coord 1)")
+        ax.set_title(f"1D Slice: {self.subset.__class__.__name__}")
+        ax.set_yticks([])
+        ax.grid(True, alpha=0.3, axis='x')
+
+        if show_plot:
+            plt.show()
+
+        return fig, ax, mask
+
+    def _render_2d(
+        self,
+        param_grid: Tuple[np.ndarray, np.ndarray],
+        mask: np.ndarray,
+        bounds: tuple,
+        cmap: str,
+        show_plot: bool,
+        ax: Optional[matplotlib.axes.Axes],
+    ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+        """
+        Render 2D slice using contourf and contour lines.
+
+        Preserves existing 2D visualization logic.
+
+        Args:
+            param_grid: (U, V) meshgrids from _generate_param_grid()
+            mask: 2D boolean mask from sample_membership()
+            bounds: (u_min, u_max, v_min, v_max) from parse_bounds()
+            cmap: Colormap name (e.g., 'Blues', 'Reds')
+            show_plot: Whether to call plt.show()
+            ax: Optional existing Axes
+
+        Returns:
+            (fig, ax, mask) tuple
+        """
+        u_min, u_max, v_min, v_max = bounds
+        U, V = param_grid
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(6, 6))
         else:
             fig = ax.figure
 
-        ax.contourf(U, V, mask.astype(float), levels=[0.5, 1.5], cmap=cmap, alpha=alpha)
-        ax.contour(U, V, mask.astype(float), levels=[0.5], colors="k", linewidths=1.0)
-        ax.set_xlabel("Local param 1")
-        ax.set_ylabel("Local param 2")
-        ax.set_title(f"Slice: {subset.__class__.__name__}")
-        ax.set_aspect("equal", adjustable="box")
+        # Contourf for filled regions, contour for boundary
+        ax.contourf(U, V, mask.astype(float), levels=[0.5, 1.5],
+                    cmap=cmap, alpha=self.alpha)
+        ax.contour(U, V, mask.astype(float), levels=[0.5],
+                   colors='k', linewidths=1.0)
+
+        # Labels and formatting
+        ax.set_xlabel("Local Param 1")
+        ax.set_ylabel("Local Param 2")
+        ax.set_title(f"2D Slice: {self.subset.__class__.__name__}")
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(u_min, u_max)
+        ax.set_ylim(v_min, v_max)
 
         if show_plot:
             plt.show()
 
         return fig, ax, mask
+
+    def _render_3d(
+        self,
+        param_grid: Tuple[np.ndarray, np.ndarray, np.ndarray],
+        mask: np.ndarray,
+        bounds: tuple,
+        cmap: str,
+        show_plot: bool,
+        ax: Optional[matplotlib.axes.Axes],
+    ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+        """
+        Render 3D slice using isosurfaces (stub, future implementation).
+
+        Args:
+            param_grid: (U, V, W) meshgrids from _generate_param_grid()
+            mask: 3D boolean mask from sample_membership()
+            bounds: (u_min, u_max, v_min, v_max, w_min, w_max)
+            cmap: Colormap name
+            show_plot: Whether to display
+            ax: Optional 3D axes
+
+        Returns:
+            (fig, ax, mask) tuple
+        """
+        raise NotImplementedError(
+            "3D rendering not yet implemented. "
+            "Options: ax.voxels(), isosurface via mayavi/vispy, or sliced 2D views."
+        )
+
+    # ===========================
+    # Main Dispatcher
+    # ===========================
+
+    def plot(
+        self,
+        bounds: Optional[Union[tuple, List]] = None,
+        cmap: str = "Blues",
+        color: str = "steelblue",
+        show_plot: bool = True,
+        ax: Optional[matplotlib.axes.Axes] = None,
+    ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+        """
+        Main plotting method. Orchestrates bounds parsing, grid generation,
+        membership sampling, and dimension-specific rendering.
+
+        Args:
+            bounds: Plot bounds (format depends on dimension)
+            cmap: Colormap for 2D/3D (ignored for 1D)
+            color: Color for 1D (ignored for 2D/3D)
+            show_plot: Whether to display the plot
+            ax: Optional existing Axes
+
+        Returns:
+            (fig, ax, mask) tuple
+        """
+        # Parse bounds for this dimension
+        parsed_bounds = self.parse_bounds(bounds)
+
+        # Generate parameter grid
+        param_grid = self._generate_param_grid(parsed_bounds)
+
+        # Sample membership on grid
+        mask = self.sample_membership(param_grid)
+
+        # Dispatch to dimension-specific renderer
+        if self.dimension == 1:
+            return self._render_1d(param_grid, mask, parsed_bounds, color,
+                                   show_plot, ax)
+        elif self.dimension == 2:
+            return self._render_2d(param_grid, mask, parsed_bounds, cmap,
+                                   show_plot, ax)
+        elif self.dimension == 3:
+            return self._render_3d(param_grid, mask, parsed_bounds, cmap,
+                                   show_plot, ax)
 
 
 def plot_corner_distributions(

@@ -121,7 +121,9 @@ from .subsets import (
     Sphere,
 )
 
-from .plot import plot_1d_distributions, plot_corner_distributions, plot_subset_oracle
+from .plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter
+
+from .convex_optimisation import SubgradientDescent
 
 from .utils import configure_threading
 
@@ -221,7 +223,9 @@ __all__ = [
     # plot
     "plot_1d_distributions",
     "plot_corner_distributions",
-    "plot_subset_oracle",
+    "SubspaceSlicePlotter",
+    # convex_optimisation
+    "SubgradientDescent",
     # utils
     "configure_threading",
 ]
