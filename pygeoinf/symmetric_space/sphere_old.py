@@ -101,6 +101,11 @@ class SphereHelper:
         self._normalization: str = "ortho"
         self._csphase: int = 1
 
+        # Set up sparse matrix that maps SHCoeff data arrrays into reduced form
+        self._sparse_coeffs_to_component: coo_array = (
+            self._coefficient_to_component_mapping()
+        )
+
     def orthonormalised(self) -> bool:
         """The space is orthonormalised."""
         return True
@@ -336,35 +341,6 @@ class SphereHelper:
 
         return fig, ax, im
 
-    def sample_power_measure(
-        self,
-        measure,
-        n_samples,
-        /,
-        *,
-        lmin=None,
-        lmax=None,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ):
-        """
-        Takes in a Gaussian measure on the space, draws n_samples from
-        and returns samples for the spherical harmonic power at degrees in
-        the indicated range.
-        """
-
-        lmin = 0 if lmin is None else lmin
-        lmax = self.lmax if lmax is None else min(self.lmax, lmax)
-
-        samples = measure.samples(n_samples, parallel=parallel, n_jobs=n_jobs)
-
-        powers = []
-        for u in samples:
-            ulm = self.to_coefficients(u)
-            powers.append(ulm.spectrum(lmax=lmax, convention="power")[lmin:])
-
-        return powers
-
     # --------------------------------------------------------------- #
     #                         private methods                         #
     # ----------------------------------------------------------------#
@@ -402,19 +378,28 @@ class SphereHelper:
 
     def _degree_dependent_scaling_values(self, f: Callable[[int], float]) -> diags:
         """Creates a diagonal sparse matrix from a function of degree `l`."""
-        ls = np.arange(self.lmax + 1)
-        f_vectorized = np.vectorize(f)
-        values = f_vectorized(ls)
-        counts = 2 * ls + 1
-        return np.repeat(values, counts)
+        dim = (self.lmax + 1) ** 2
+        values = np.zeros(dim)
+        i = 0
+        for l in range(self.lmax + 1):
+            j = i + l + 1
+            values[i:j] = f(l)
+            i = j
+        for l in range(1, self.lmax + 1):
+            j = i + l
+            values[i:j] = f(l)
+            i = j
+        return values
 
     def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
         """Maps spherical harmonic coefficients to a component vector."""
-        return sh.shio.SHCilmToVector(ulm.coeffs)
+        flat_coeffs = ulm.coeffs.flatten(order="C")
+        return self._sparse_coeffs_to_component @ flat_coeffs
 
     def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
         """Maps a component vector to spherical harmonic coefficients."""
-        coeffs = sh.shio.SHVectorToCilm(c)
+        flat_coeffs = self._sparse_coeffs_to_component.T @ c
+        coeffs = flat_coeffs.reshape((2, self.lmax + 1, self.lmax + 1))
         return sh.SHCoeffs.from_array(
             coeffs, normalization=self.normalization, csphase=self.csphase
         )

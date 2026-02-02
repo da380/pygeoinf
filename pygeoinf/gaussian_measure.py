@@ -469,6 +469,28 @@ class GaussianMeasure:
 
         return variance
 
+    def with_dense_covariance(self, parallel: bool = False, n_jobs: int = -1):
+        """
+        Forms a new Gaussian measure equivalent to the existing one, but
+        with its covariance matrix stored in dense form. The dense matrix
+        calculation can optionally be parallelised.
+
+        Args:
+            parallel: If True, computes the covariance in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Returns:
+            The new Gaussian measure.
+        """
+
+        covariance_matrix = self.covariance.matrix(
+            dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )
+
+        return GaussianMeasure.from_covariance_matrix(
+            self.domain, covariance_matrix, expectation=self.expectation
+        )
+
     def affine_mapping(
         self, /, *, operator: LinearOperator = None, translation: Vector = None
     ) -> GaussianMeasure:
@@ -546,7 +568,7 @@ class GaussianMeasure:
 
         # Pass the parallelization arguments directly to the matrix creation method
         cov_matrix = self.covariance.matrix(
-            dense=True, parallel=parallel, n_jobs=n_jobs
+            dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
         )
 
         try:
