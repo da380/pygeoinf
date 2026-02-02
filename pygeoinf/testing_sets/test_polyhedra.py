@@ -24,5 +24,5 @@ subspace = pgf.subspaces.AffineSubspace.from_tangent_basis(
 
 pgf.plot.plot_subset_oracle(polyhedra,
                             on_subspace=subspace,
-                            bounds=((-2, 2), (-2, 2)),
+                            bounds=((-4, 4), (-4, 4)),
                             show_plot=True)
