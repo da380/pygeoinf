@@ -1140,6 +1140,7 @@ class Sphere(EllipsoidSurface):
         dist = self.domain.norm(diff)
         return abs(dist - self.radius) <= rtol * max(1.0, self.radius)
 
+
 class HyperPlane(Subset):
     """
     Represents a hyperplane in a Hilbert space: H = {x | ⟨a, x⟩ = b}.
@@ -1268,12 +1269,7 @@ class HyperPlane(Subset):
         Returns:
             int: The dimension of this hyperplane subspace.
         """
-        # Note: We don't store domain dimension explicitly; assume it's available
-        # This is a placeholder; actual domain dimension may vary
-        # For a proper implementation, HilbertSpace should provide dim() method
-        raise NotImplementedError(
-            "Dimension requires domain.dimension() method to be available."
-        )
+        return self.domain.dim
 
 
 class HalfSpace(Subset):
