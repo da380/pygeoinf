@@ -455,10 +455,10 @@ class GaussianMeasure:
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
 
-        # Step 1: Draw samples (Parallelized)
+        # Draw samples
         samples = self.samples(n, parallel=parallel, n_jobs=n_jobs)
 
-        # Step 2: Compute variance using vector arithmetic
+        # Compute variance using vector arithmetic
         expectation = self.expectation
         variance = self.domain.zero
 
@@ -468,6 +468,20 @@ class GaussianMeasure:
             self.domain.axpy(1 / n, prod, variance)
 
         return variance
+
+    def sample_pointwise_std(
+        self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> Vector:
+        """
+        Estimates the pointwise standard deviation by drawing n samples.
+
+        Args:
+            n: Number of samples to draw.
+            parallel: If True, draws samples in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+        """
+        variance = self.sample_pointwise_variance(n, parallel=parallel, n_jobs=n_jobs)
+        return self.domain.vector_sqrt(variance)
 
     def with_dense_covariance(self, parallel: bool = False, n_jobs: int = -1):
         """

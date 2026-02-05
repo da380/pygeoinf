@@ -547,6 +547,12 @@ class HilbertModule(HilbertSpace, ABC):
             The product of the two vectors.
         """
 
+    @abstractmethod
+    def vector_sqrt(self, x: Vector) -> Vector:
+        """
+        Returns the square root of a vector.
+        """
+
 
 class EuclideanSpace(HilbertSpace):
     """
@@ -829,3 +835,12 @@ class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):
         is itself an instance of `HilbertModule`.
         """
         return self.underlying_space.vector_multiply(x1, x2)
+
+    def vector_sqrt(self, x: Vector) -> Vector:
+        """
+        Computes vector multiplication by delegating to the underlying space.
+
+        Note: This assumes the underlying space provided during initialization
+        is itself an instance of `HilbertModule`.
+        """
+        return self.underlying_space.vector_sqrt(x)
