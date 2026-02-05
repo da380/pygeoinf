@@ -24,7 +24,7 @@ Key Classes
 
 from __future__ import annotations
 
-from typing import Callable, Tuple, Optional, Any
+from typing import Callable, Tuple, Optional, Any, List
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.fft import rfft, irfft
@@ -226,6 +226,40 @@ class CircleHelper:
         ax.fill_between(self.angles(), u - u_bound, u + u_bound, **kwargs)
         return fig, ax
 
+    def geodesic_quadrature(
+        self, p1: float, p2: float, n_points: int
+    ) -> Tuple[List[float], np.ndarray]:
+        """
+        Returns quadrature points and weights for the shortest arc between p1 and p2.
+
+        Args:
+            p1: Starting angle in radians.
+            p2: Ending angle in radians.
+            n_points: Number of quadrature points.
+
+        Returns:
+            points: A list of angles (floats) along the shortest arc.
+            weights: Integration weights scaled by the arc length.
+        """
+        # Calculate the shortest signed angular distance on the circle
+        # This ensures we take the "inner" arc rather than the long way around.
+        diff = (p2 - p1 + np.pi) % (2 * np.pi) - np.pi
+        arc_length = np.abs(diff) * self.radius
+
+        # Get standard Gauss-Legendre nodes (x) and weights (w) on [-1, 1]
+        x, w = np.polynomial.legendre.leggauss(n_points)
+
+        # Map nodes to the angular interval [p1, p1 + diff]
+        # t moves from 0 to 1 as x moves from -1 to 1
+        t = (x + 1) / 2.0
+        angles = p1 + t * diff
+
+        # Scale weights: (w * 0.5) maps [-1, 1] to [0, 1]
+        # Multiplying by total arc_length gives the proper integration weights.
+        scaled_weights = w * (arc_length / 2.0)
+
+        return angles.tolist(), scaled_weights
+
     def _coefficient_to_component(self, coeff: np.ndarray) -> np.ndarray:
         """Packs complex Fourier coefficients into a real component vector."""
         # For a real-valued input, the output of rfft (real FFT) has
@@ -345,6 +379,12 @@ class Lebesgue(CircleHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         if not u.shape == (self.dim,):
             return False
         return True
+
+    def vector_sqrt(self, u: np.ndarray) -> np.ndarray:
+        """
+        Returns the pointwise square root of a function.
+        """
+        return np.sqrt(u)
 
     def invariant_automorphism_from_index_function(self, g: Callable[[int], float]):
         """
