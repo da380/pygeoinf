@@ -523,24 +523,16 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
                 f"{self.spatial_dimension}D manifold."
             )
 
-        # Heuristic quadrature density determination
         if n_points is None:
-            # Perform a minimal call to determine the total arc length via weights
             _, temp_weights = self.geodesic_quadrature(p1, p2, n_points=2)
             arc_length = np.sum(temp_weights)
-
-            # Scale-based heuristic (Nyquist-like sampling)
             n_points = int(np.ceil((arc_length / self.scale) * 2.0))
             n_points = max(2, n_points)
 
-        #  Retrieve final manifold-specific points and weights
         points, weights = self.geodesic_quadrature(p1, p2, n_points)
 
-        #  Aggregate weighted components into the dual space representation
-        # The components of a LinearForm represent the functional in the dual basis
         total_components = np.zeros(self.dim)
         for pt, weight in zip(points, weights):
-            # Accumulate the weighted Riesz representation of each Dirac delta
             total_components += weight * self.dirac(pt).components
 
         return LinearForm(self, components=total_components)
@@ -559,7 +551,6 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
             p1, p2: Start and end points of the geodesic.
             n_points: Number of quadrature points.
         """
-        # Create the functional and map it to a vector in the space
         integral_form = self.geodesic_integral(p1, p2, n_points)
         return self.from_dual(integral_form)
 
@@ -585,13 +576,9 @@ class AbstractInvariantSobolevSpace(AbstractInvariantLebesgueSpace):
                 The adjoint of this operator performs the 'back-projection'
                 mapping data residuals into the function space.
         """
-        # Generate the set of linear functionals representing each path integral
-        # The integral logic is handled by the Abstract Geodesic Integral method
         path_forms = [
             self.geodesic_integral(p1, p2, n_points=n_points) for p1, p2 in paths
         ]
-
-        # Convert the list of forms into a single LinearOperator mapping
         return LinearOperator.from_linear_forms(path_forms)
 
     def random_source_receiver_paths(

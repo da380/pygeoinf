@@ -29,6 +29,8 @@ import matplotlib.ticker as mticker
 import numpy as np
 from scipy.sparse import diags, coo_array
 
+from joblib import Parallel, delayed
+
 try:
     import pyshtools as sh
     import cartopy.crs as ccrs
@@ -347,11 +349,9 @@ class SphereHelper:
         """
         Plots a geodesic curve onto a Cartopy map.
         """
-        # Generate points via our quadrature logic (returns lats, lons)
         points, _ = self.geodesic_quadrature(p1, p2, n_points=n_points)
         lats, lons = zip(*points)
 
-        # 2. Get/Create Axes
         if ax is None:
             fig, ax = plt.subplots(
                 figsize=kwargs.pop("figsize", (10, 8)),
@@ -360,12 +360,9 @@ class SphereHelper:
         else:
             fig = ax.get_figure()
 
-        # 3. Plot with the Geodetic transform
-        # This 'transform' handles the conversion to whatever projection 'ax' uses.
         kwargs.setdefault("color", "black")
         kwargs.setdefault("linewidth", 2)
 
-        # We use Geodetic() here because our points were generated along a great circle
         ax.plot(lons, lats, transform=ccrs.Geodetic(), **kwargs)
 
         return fig, ax
@@ -396,7 +393,6 @@ class SphereHelper:
             A tuple (figure, axes) containing the plot objects.
         """
 
-        # Setup/Verify Axes
         if ax is None:
             figsize = kwargs.pop("figsize", (12, 10))
             fig, ax = plt.subplots(
@@ -407,35 +403,28 @@ class SphereHelper:
         else:
             fig = ax.get_figure()
 
-        # Set default styling for a "network" look
-        # Using a lower alpha and thinner lines helps prevent clutter
-        # when many paths overlap.
         kwargs.setdefault("color", "black")
         kwargs.setdefault("linewidth", 0.8)
         kwargs.setdefault("alpha", 0.5)
 
-        # Batch plot all geodesics
         for p1, p2 in paths:
             self.plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
 
-        # Extract unique sources and receivers for marking
         sources = list(set([tuple(p[0]) for p in paths]))
         receivers = list(set([tuple(p[1]) for p in paths]))
 
         src_lats, src_lons = zip(*sources)
         rec_lats, rec_lons = zip(*receivers)
 
-        # Plot Sources (Stars)
         src_style = kwargs.pop("source_kwargs", {})
         src_style.setdefault("marker", "*")
         src_style.setdefault("color", "gold")
         src_style.setdefault("s", 150)
         src_style.setdefault("edgecolor", "black")
-        src_style.setdefault("zorder", 5)  # Ensure markers are on top
+        src_style.setdefault("zorder", 5)
 
         ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
 
-        # Plot Receivers (Dots)
         rec_style = kwargs.pop("receiver_kwargs", {})
         rec_style.setdefault("marker", "o")
         rec_style.setdefault("color", "red")
@@ -496,7 +485,6 @@ class SphereHelper:
             weights: Integration weights scaled by the total arc length (R * omega).
         """
 
-        # Coordinate Transforms (Degrees -> Radians -> Unit Vectors)
         def to_vector(lat, lon):
             lat_rad, lon_rad = np.radians(lat), np.radians(lon)
             return np.array(
@@ -508,7 +496,6 @@ class SphereHelper:
             )
 
         def to_latlon(vec):
-            # Normalize for numerical stability before converting back
             vec = vec / np.linalg.norm(vec)
             lat_rad = np.arcsin(vec[2])
             lon_rad = np.arctan2(vec[1], vec[0])
@@ -516,30 +503,22 @@ class SphereHelper:
 
         v1, v2 = to_vector(*p1), to_vector(*p2)
 
-        # Calculate Central Angle (omega)
         dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
         omega = np.arccos(dot_product)
 
-        # Handle identical points edge case
         if omega < 1e-10:
             return [p1] * n_points, np.zeros(n_points)
 
-        # Handle antipodal points (non-unique path)
         if np.abs(omega - np.pi) < 1e-10:
             raise ValueError(
                 "Points are antipodal; the great circle path is not unique."
             )
 
-        # Generate Gauss-Legendre Nodes and Weights
         x, w = np.polynomial.legendre.leggauss(n_points)
 
-        # Map Nodes to Path Parameter t in [0, 1] and scale weights
-        # t = (x + 1) / 2 maps [-1, 1] to [0, 1]
-        # Weights are scaled by (total_arc_length / 2)
         t_vals = (x + 1) / 2.0
         scaled_weights = w * (self.radius * omega / 2.0)
 
-        # Spherical Linear Interpolation (SLERP) for each node
         sin_omega = np.sin(omega)
         points = []
 
@@ -984,6 +963,81 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             f"grid={self.grid}\n"
             f"extend={self.extend}"
         )
+
+    def point_evaluation_operator(
+        self,
+        points: List[Tuple[float, float]],
+        /,
+        *,
+        matrix_free: bool = False,
+        parallel=False,
+        n_jobs=-1,
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Args:
+            points: A list of (latitude, longitude) tuples in degrees.
+            matrix_free: If True, uses an optimized, matrix-free implementation to
+                save memory. If False (default), constructs a dense matrix.
+            parallel: In the matrix-free case compute adjoint mapping in parallel
+                default is False
+            n_jobs: Number of processors to use within parallel calculations
+        """
+        if self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError(
+                f"Sobolev order {self.order} is too low for point evaluation on S²."
+            )
+
+        if matrix_free:
+            lats, lons = zip(*points)
+            lats_array = np.array(lats)
+            lons_array = np.array(lons)
+
+            def mapping(u: sh.SHGrid) -> np.ndarray:
+                ulm = self.to_coefficients(u)
+                return ulm.expand(
+                    lat=lats_array,
+                    lon=lons_array,
+                )
+
+            def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
+                if parallel:
+
+                    def compute_chunk(indices_chunk):
+                        local_v = self.zero
+                        for idx in indices_chunk:
+                            v_i = self.dirac_representation(points[idx])
+                            self.axpy(data[idx], v_i, local_v)
+                        return local_v
+
+                    chunks = np.array_split(
+                        range(len(data)), n_jobs if n_jobs > 0 else 8
+                    )
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_chunk)(c) for c in chunks
+                    )
+
+                    total_v = self.zero
+                    for res in results:
+                        self.axpy(1.0, res, total_v)
+                    return total_v
+                else:
+                    total_v = self.zero
+                    for i, val in enumerate(data):
+                        v_i = self.dirac_representation(points[i])
+                        self.axpy(val, v_i, total_v)
+                    return total_v
+
+            return LinearOperator(
+                self,
+                EuclideanSpace(len(points)),
+                mapping,
+                adjoint_mapping=adjoint_mapping,
+            )
+
+        # Standard path: delegate to the ABC for dense matrix construction
+        return super().point_evaluation_operator(points)
 
     def to_coefficient_operator(self, lmax: int, lmin: int = 0):
         r"""
