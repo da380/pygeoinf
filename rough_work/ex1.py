@@ -1,12 +1,9 @@
-import numpy as np
-import pygeoinf as inf
+from pygeoinf.symmetric_space.sphere import Sobolev
+
+X = Sobolev(128, 2, 0.1)
+
+points = X.random_points(1000)
 
 
-X = inf.EuclideanSpace(3)
-
-mat = np.random.randn(X.dim, X.dim)
-
-A = inf.MatrixLinearOperator(X, X, mat, galerkin=False)
-
-print(mat)
-print(A.extract_diagonals([0, 1, -1]))
+A = X.point_evaluation_operator(points, matrix_free=True, parallel=True, n_jobs=10)
+A.check()
