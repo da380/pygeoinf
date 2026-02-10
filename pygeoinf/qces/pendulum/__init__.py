@@ -11,12 +11,11 @@ Modules:
     double - The 4D Double Pendulum (Chaotic dynamics, Particle-based DA).
 """
 
-# 1. Expose Submodules
 from . import core
 from . import single
 from . import double
 
-# 2. Expose Common Core Utilities (Shortcuts)
+
 from .core import (
     # Solvers
     solve_trajectory,
@@ -38,3 +37,25 @@ from .core import (
     # Visualisation Helpers
     display_animation_html,
 )
+
+
+__all__ = [
+    "solve_trajectory",
+    "solve_ensemble",
+    "wrap_angle",
+    "get_pdf_from_grid",
+    "evaluate_pdf_on_grid",
+    "compute_normalization",
+    "marginalise_grid",
+    "get_independent_gaussian_func",
+    "get_gaussian_pdf_func",
+    "bayesian_update",
+    "gaussian_likelihood",
+    "GaussianLikelihood",
+    "LinearGaussianLikelihood",
+    "sample_from_grid",
+    "display_animation_html",
+    "core",
+    "single",
+    "double",
+]

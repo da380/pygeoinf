@@ -93,7 +93,7 @@ def evaluate_pdf_on_grid(pdf_func, grid_limits, resolution):
             raise ValueError("Resolution list length must match dimension of limits.")
 
     # Create axes for each dimension
-    axes = [np.linspace(l[0], l[1], res) for l, res in zip(grid_limits, res_list)]
+    axes = [np.linspace(k[0], k[1], res) for k, res in zip(grid_limits, res_list)]
 
     # Create the N-dimensional mesh
     # indexing='ij' ensures matrix indexing (Row, Col, Depth...) rather than Cartesian

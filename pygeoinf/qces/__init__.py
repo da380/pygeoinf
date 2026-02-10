@@ -6,4 +6,4 @@ concepts applied to dynamical systems (e.g., Pendulums).
 """
 
 # Expose the pendulum sub-package
-from . import pendulum
+from . import pendulum as pendulum

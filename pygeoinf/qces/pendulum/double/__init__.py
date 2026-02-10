@@ -25,3 +25,19 @@ from .visualisation import (
     plot_marginal_pdf,
     plot_both_phase_marginals,
 )
+
+__all__ = [
+    "eom",
+    "get_coords",
+    "eom_tangent_linear",
+    "get_jacobian",
+    "get_static_matrix",
+    "get_static_propagator",
+    "eom_linear_static",
+    "propagate_ensemble",
+    "advect_pdf",
+    "animate_pendulum",
+    "plot_phase_projections",
+    "plot_marginal_pdf",
+    "plot_both_phase_marginals",
+]

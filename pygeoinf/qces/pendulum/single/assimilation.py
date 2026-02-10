@@ -274,7 +274,7 @@ def get_smooth_filter_trajectory(results, physics_params, dt_render=0.05):
         t_eval = np.arange(t_start, t_end, dt_render)
 
         # 3. Call the USUAL INTEGRATOR for just this segment
-        sol = core.solve_trajectory(physics.eom, y_start, t_eval, args=args)
+        sol = core.solve_trajectory(phys.eom, y_start, t_eval, args=args)
 
         t_chunks.append(t_eval)
         state_chunks.append(sol)
