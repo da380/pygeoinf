@@ -6,14 +6,14 @@ from pygeoinf.symmetric_space.sphere import Sobolev
 
 # Set the model space
 lmax = 128
-order = 2.0
+order = 1.5
 scale = 0.05
 
 model_space = Sobolev(lmax, order, scale)
 
 # Set up the forward problem
 print("Setting up the forward problem")
-sources = 10
+sources = 20
 receivers = 50
 
 paths = model_space.random_source_receiver_paths(sources, receivers)
