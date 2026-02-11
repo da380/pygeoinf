@@ -2,145 +2,114 @@
 visualisation.py
 
 Visualisation tools for the Double Pendulum.
-Handles 4D->2D projections, physical animations, and marginal PDF plots.
+Focuses on Chaotic Sensitivity (Divergence) and Ensemble particle clouds.
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from typing import Optional, Tuple, Any
 
-from .. import core
+from ... import core
 from . import physics as phys
 
 
-# --- 1. Marginal PDF Plots (Grid Based) ---
+# --- 1. Chaos & Sensitivity ---
 
 
-def plot_marginal_pdf(
-    axes, grid_4d, dims=(0, 1), ax=None, title=None, labels=None, cmap="viridis"
-):
+def plot_sensitivity_divergence(
+    t_points: np.ndarray,
+    traj_ref: np.ndarray,
+    traj_pert: np.ndarray,
+    title: str = "Sensitivity to Initial Conditions",
+) -> None:
     """
-    Marginalizes a 4D grid down to 2 dimensions and plots on a specific axis.
+    Plots the divergence between two trajectories to demonstrate chaos.
+    Top panel: Time series comparison of Theta 1 & 2.
+    Bottom panel: Log-scale Euclidean distance between states.
 
     Args:
-        axes: List of 4 1D arrays [th1, th2, p1, p2].
-        grid_4d: The 4D probability density array.
-        dims: Tuple of indices to KEEP (x_dim, y_dim).
-        ax: Matplotlib Axes object. If None, a new figure is created.
-        title: Plot title.
-        labels: Tuple of (xlabel, ylabel). Auto-generated if None.
-        cmap: Colormap name.
-
-    Returns:
-        ax: The axis object.
-        contour: The contour plot object (useful for adding colorbars externally).
+        t_points: Time array.
+        traj_ref: Reference trajectory (4, N_time).
+        traj_pert: Perturbed trajectory (4, N_time).
     """
-    # 1. Marginalise using Core
-    kept_axes, marginal_Z = core.marginalise_grid(grid_4d, axes, keep_indices=dims)
+    # Calculate Euclidean distance in state space
+    diff = traj_ref - traj_pert
+    dist = np.linalg.norm(diff, axis=0)
 
-    # 2. Prepare Plot
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(7, 6))
+    fig, (ax_ts, ax_err) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
-    X, Y = np.meshgrid(kept_axes[0], kept_axes[1], indexing="ij")
-
-    # 3. Plot Contour
-    contour = ax.contourf(X, Y, marginal_Z, levels=30, cmap=cmap)
-
-    # 4. Labels & Decoration
-    default_labels = [r"$\theta_1$", r"$\theta_2$", r"$p_1$", r"$p_2$"]
-    xlabel = labels[0] if labels else default_labels[dims[0]]
-    ylabel = labels[1] if labels else default_labels[dims[1]]
-
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    if title:
-        ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-
-    return ax, contour
-
-
-def plot_both_phase_marginals(axes, grid_4d, t=None):
-    """
-    High-level helper: Plots the Phase Space (Theta vs P) for BOTH bobs side-by-side.
-    Reuses plot_marginal_pdf internally.
-
-    Left Panel: Bob 1 (Theta1 vs P1)
-    Right Panel: Bob 2 (Theta2 vs P2)
-    """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-
-    # --- Left: Bob 1 (Theta1 vs P1) ---
-    # Indices: 0=Theta1, 2=P1
-    _, c1 = plot_marginal_pdf(
-        axes,
-        grid_4d,
-        dims=(0, 2),
-        ax=ax1,
-        title=r"Bob 1 Phase Space ($\theta_1, p_1$)",
-        cmap="viridis",
+    # Top: Time Series (Theta 1 only for clarity)
+    ax_ts.plot(t_points, core.wrap_angle(traj_ref[0]), "k-", label="Reference")
+    ax_ts.plot(
+        t_points, core.wrap_angle(traj_pert[0]), "r--", alpha=0.8, label="Perturbed"
     )
-    fig.colorbar(c1, ax=ax1, label="Probability Density")
+    ax_ts.set_ylabel(r"$\theta_1$ [rad]")
+    ax_ts.set_title(title)
+    ax_ts.legend(loc="upper right")
+    ax_ts.grid(True, alpha=0.3)
 
-    # --- Right: Bob 2 (Theta2 vs P2) ---
-    # Indices: 1=Theta2, 3=P2
-    _, c2 = plot_marginal_pdf(
-        axes,
-        grid_4d,
-        dims=(1, 3),
-        ax=ax2,
-        title=r"Bob 2 Phase Space ($\theta_2, p_2$)",
-        cmap="plasma",
-    )
-    fig.colorbar(c2, ax=ax2, label="Probability Density")
-
-    # Overall Title
-    super_title = "Double Pendulum Phase Marginals"
-    if t is not None:
-        super_title += f" (t={t:.2f}s)"
-    plt.suptitle(super_title, fontsize=16)
+    # Bottom: Error Growth (Lyapunov hint)
+    ax_err.semilogy(t_points, dist, "b-", lw=1.5)
+    ax_err.set_ylabel("State Euclidean Distance (Log Scale)")
+    ax_err.set_xlabel("Time [s]")
+    ax_err.grid(True, which="both", alpha=0.3)
+    ax_err.set_title("Divergence of Trajectories")
 
     plt.tight_layout()
     plt.show()
 
 
-# --- 2. Phase Projections (Particle Based) ---
+# --- 2. Ensemble Projections (Particle Clouds) ---
 
 
-def plot_phase_projections(ensemble_trajectories, t_points, time_idx=-1):
+def plot_ensemble_phase_space(
+    ensemble_trajectories: np.ndarray, t_points: np.ndarray, time_idx: int = -1
+) -> None:
     """
     Plots the ensemble particles projected onto (th1, p1) and (th2, p2) planes.
+    Uses generic core scatter tools but configured for the 4D Double Pendulum.
+
+    Args:
+        ensemble_trajectories: Shape (N_samples, 4, N_time).
+        t_points: Time array.
+        time_idx: Index of time to plot.
     """
-    # Extract snapshot
-    snap = ensemble_trajectories[:, :, time_idx]
-
-    th1 = core.wrap_angle(snap[:, 0])
-    th2 = core.wrap_angle(snap[:, 1])
-    p1 = snap[:, 2]
-    p2 = snap[:, 3]
-
     time = t_points[time_idx]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-    # Plot Bob 1
-    ax1.scatter(th1, p1, alpha=0.5, s=10, c="royalblue", label="Particles")
+    # --- Bob 1: Theta1 (idx 0) vs P1 (idx 2) ---
+    core.plot_ensemble_scatter(
+        ensemble_trajectories,
+        dim_indices=(0, 2),  # th1, p1
+        time_idx=time_idx,
+        ax=ax1,
+        c="royalblue",
+        s=10,
+        alpha=0.6,
+    )
     ax1.set_title(f"Bob 1 Phase Space (t={time:.1f}s)")
-    ax1.set_xlabel(r"$\theta_1$")
+    ax1.set_xlabel(r"$\theta_1$ [rad]")
     ax1.set_ylabel(r"$p_1$")
     ax1.set_xlim([-np.pi, np.pi])
-    ax1.grid(True)
 
-    # Plot Bob 2
-    ax2.scatter(th2, p2, alpha=0.5, s=10, c="firebrick", label="Particles")
+    # --- Bob 2: Theta2 (idx 1) vs P2 (idx 3) ---
+    core.plot_ensemble_scatter(
+        ensemble_trajectories,
+        dim_indices=(1, 3),  # th2, p2
+        time_idx=time_idx,
+        ax=ax2,
+        c="firebrick",
+        s=10,
+        alpha=0.6,
+    )
     ax2.set_title(f"Bob 2 Phase Space (t={time:.1f}s)")
-    ax2.set_xlabel(r"$\theta_2$")
+    ax2.set_xlabel(r"$\theta_2$ [rad]")
     ax2.set_ylabel(r"$p_2$")
     ax2.set_xlim([-np.pi, np.pi])
-    ax2.grid(True)
 
-    plt.suptitle("Double Pendulum Ensemble Projections", fontsize=16)
+    plt.suptitle("Double Pendulum Ensemble Distribution", fontsize=16)
     plt.tight_layout()
     plt.show()
 
@@ -148,10 +117,18 @@ def plot_phase_projections(ensemble_trajectories, t_points, time_idx=-1):
 # --- 3. Animations ---
 
 
-def animate_pendulum(t_points, solution, L1=1.0, L2=1.0):
+def animate_pendulum(
+    t_points: np.ndarray,
+    solution: np.ndarray,
+    L1: float = 1.0,
+    L2: float = 1.0,
+    trail_len: int = 50,
+) -> FuncAnimation:
     """
     Physical space animation for the Double Pendulum.
+    Includes a fading trail for the second bob to visualize chaotic paths.
     """
+    # solution shape: (4, N_time) -> [th1, th2, p1, p2]
     x1, y1, x2, y2 = phys.get_coords(solution[0], solution[1], L1, L2)
 
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -159,26 +136,86 @@ def animate_pendulum(t_points, solution, L1=1.0, L2=1.0):
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     ax.set_aspect("equal")
-    ax.grid(True)
-    ax.set_title("Double Pendulum")
+    ax.grid(True, alpha=0.3)
+    ax.set_title("Double Pendulum Motion")
 
     (rods,) = ax.plot([], [], "k-", lw=2)
-    (bob1,) = ax.plot([], [], "o", markersize=8, c="royalblue")
-    (bob2,) = ax.plot([], [], "o", markersize=8, c="firebrick")
-    (trail,) = ax.plot([], [], "-", lw=1, c="gray", alpha=0.5)
+    (bob1,) = ax.plot([], [], "o", markersize=8, c="royalblue", zorder=3)
+    (bob2,) = ax.plot([], [], "o", markersize=8, c="firebrick", zorder=3)
+    (trail1,) = ax.plot([], [], "-", lw=1, c="royalblue", alpha=0.4)
+    (trail2,) = ax.plot([], [], "-", lw=1, c="firebrick", alpha=0.4)
 
     time_text = ax.text(0.05, 0.9, "", transform=ax.transAxes)
-    trail_len = 100
 
     def update(i):
+        # Update Rods
         rods.set_data([0, x1[i], x2[i]], [0, y1[i], y2[i]])
         bob1.set_data([x1[i]], [y1[i]])
         bob2.set_data([x2[i]], [y2[i]])
 
+        # Update Trail
         start = max(0, i - trail_len)
-        trail.set_data(x2[start:i], y2[start:i])
+        trail1.set_data(x1[start:i], y1[start:i])
+        trail2.set_data(x2[start:i], y2[start:i])
 
         time_text.set_text(f"t = {t_points[i]:.1f}s")
-        return rods, bob1, bob2, trail, time_text
+        return rods, bob1, bob2, trail1, trail2, time_text
 
+    plt.close(fig)
     return FuncAnimation(fig, update, frames=len(t_points), interval=40, blit=True)
+
+
+def animate_ensemble_phase_space(
+    t_points: np.ndarray,
+    ensemble_trajectories: np.ndarray,
+) -> FuncAnimation:
+    """
+    Animates the ensemble of particles moving in the two phase planes:
+    (Theta1 vs P1) and (Theta2 vs P2).
+
+    Args:
+        t_points: Time array.
+        ensemble_trajectories: Array of shape (N_samples, 4, N_time).
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Pre-calculate limits to keep axes fixed
+    p1_max = np.max(np.abs(ensemble_trajectories[:, 2, :])) * 1.1
+    p2_max = np.max(np.abs(ensemble_trajectories[:, 3, :])) * 1.1
+
+    # Setup Bob 1 Axis
+    ax1.set_xlim([-np.pi, np.pi])
+    ax1.set_ylim([-p1_max, p1_max])
+    ax1.set_xlabel(r"$\theta_1$ [rad]")
+    ax1.set_ylabel(r"$p_1$")
+    ax1.set_title("Bob 1 Phase Space")
+    ax1.grid(True, alpha=0.3)
+    scatter1 = ax1.scatter([], [], alpha=0.6, s=10, c="royalblue")
+
+    # Setup Bob 2 Axis
+    ax2.set_xlim([-np.pi, np.pi])
+    ax2.set_ylim([-p2_max, p2_max])
+    ax2.set_xlabel(r"$\theta_2$ [rad]")
+    ax2.set_ylabel(r"$p_2$")
+    ax2.set_title("Bob 2 Phase Space")
+    ax2.grid(True, alpha=0.3)
+    scatter2 = ax2.scatter([], [], alpha=0.6, s=10, c="firebrick")
+
+    time_text = ax1.text(0.05, 0.9, "", transform=ax1.transAxes)
+
+    def update(i):
+        # Bob 1 Data: (Theta1, P1)
+        th1 = core.wrap_angle(ensemble_trajectories[:, 0, i])
+        p1 = ensemble_trajectories[:, 2, i]
+        scatter1.set_offsets(np.column_stack([th1, p1]))
+
+        # Bob 2 Data: (Theta2, P2)
+        th2 = core.wrap_angle(ensemble_trajectories[:, 1, i])
+        p2 = ensemble_trajectories[:, 3, i]
+        scatter2.set_offsets(np.column_stack([th2, p2]))
+
+        time_text.set_text(f"t = {t_points[i]:.2f}s")
+        return scatter1, scatter2, time_text
+
+    plt.close(fig)
+    return FuncAnimation(fig, update, frames=len(t_points), interval=50, blit=True)

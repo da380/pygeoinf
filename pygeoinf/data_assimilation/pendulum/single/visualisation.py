@@ -43,12 +43,12 @@ def plot_bayesian_analysis(
     plot_args = {"dims": (0, 1), "filled": True, "levels": 30}
 
     # 1. Prior
-    core.plot_grid_marginal(prior, ax=axes[0], cmap="viridis", **plot_args)
+    core.plot_grid_marginal(prior, ax=axes[0], cmap="Blues", **plot_args)
     axes[0].set_title(f"Prior PDF (t={obs_time:.1f}s)")
     axes[0].set_ylabel(r"$p_\theta$")
 
     # 2. Likelihood
-    core.plot_grid_marginal(likelihood, ax=axes[1], cmap="plasma", **plot_args)
+    core.plot_grid_marginal(likelihood, ax=axes[1], cmap="Blues", **plot_args)
     axes[1].set_title("Likelihood")
 
     # Add domain-specific decoration (Observation Line)
@@ -58,7 +58,7 @@ def plot_bayesian_analysis(
     axes[1].legend(loc="upper right")
 
     # 3. Posterior
-    core.plot_grid_marginal(posterior, ax=axes[2], cmap="viridis", **plot_args)
+    core.plot_grid_marginal(posterior, ax=axes[2], cmap="Blues", **plot_args)
     axes[2].set_title("Posterior PDF")
 
     # Apply common domain labels
@@ -358,7 +358,7 @@ def animate_advection(
 
     # Initial Plot (t=0)
     Z_0 = pdf_func(X, Y)
-    mesh = ax.pcolormesh(X, Y, Z_0, cmap="viridis", shading="gouraud")
+    mesh = ax.pcolormesh(X, Y, Z_0, cmap="Blues", shading="gouraud")
 
     fig.colorbar(mesh, ax=ax, label="Probability Density")
     title_text = ax.set_title(f"{title} (t={t_points[0]:.2f})")

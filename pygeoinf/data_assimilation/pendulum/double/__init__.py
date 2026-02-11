@@ -1,43 +1,41 @@
 """
 Double Pendulum Submodule.
 
-Exposes physics, visualization, and assimilation tools for the 4D chaotic pendulum.
+Focuses on chaotic dynamics, phase space visualisation, and
+Ensemble (particle) experiments.
 """
 
-# --- Physics (Hamiltonian & Linearized) ---
+# --- Physics (Hamiltonian & Linearised) ---
 from .physics import (
     eom,
     get_coords,
-    eom_tangent_linear,
     get_jacobian,
-    get_static_matrix,
-    get_static_propagator,
-    eom_linear_static,
+    eom_tangent_linear,
+    get_linear_matrix,
+    get_linear_propagator,
+    eom_linear,
 )
 
-# --- Data Assimilation (Ensemble & Grid) ---
-from .assimilation import propagate_ensemble, advect_pdf
-
-# --- Visualization (4D Projections & Marginals) ---
+# --- Visualisation (Chaos & Ensembles) ---
 from .visualisation import (
+    plot_sensitivity_divergence,
+    plot_ensemble_phase_space,
     animate_pendulum,
-    plot_phase_projections,
-    plot_marginal_pdf,
-    plot_both_phase_marginals,
+    animate_ensemble_phase_space,
 )
 
 __all__ = [
+    # Physics
     "eom",
     "get_coords",
-    "eom_tangent_linear",
     "get_jacobian",
-    "get_static_matrix",
-    "get_static_propagator",
-    "eom_linear_static",
-    "propagate_ensemble",
-    "advect_pdf",
+    "eom_tangent_linear",
+    "get_linear_matrix",
+    "get_linear_propagator",
+    "eom_linear",
+    # Visualisation
+    "plot_sensitivity_divergence",
+    "plot_ensemble_phase_space",
     "animate_pendulum",
-    "plot_phase_projections",
-    "plot_marginal_pdf",
-    "plot_both_phase_marginals",
+    "animate_ensemble_phase_space",
 ]
