@@ -455,10 +455,10 @@ class GaussianMeasure:
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
 
-        # Step 1: Draw samples (Parallelized)
+        # Draw samples
         samples = self.samples(n, parallel=parallel, n_jobs=n_jobs)
 
-        # Step 2: Compute variance using vector arithmetic
+        # Compute variance using vector arithmetic
         expectation = self.expectation
         variance = self.domain.zero
 
@@ -468,6 +468,42 @@ class GaussianMeasure:
             self.domain.axpy(1 / n, prod, variance)
 
         return variance
+
+    def sample_pointwise_std(
+        self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> Vector:
+        """
+        Estimates the pointwise standard deviation by drawing n samples.
+
+        Args:
+            n: Number of samples to draw.
+            parallel: If True, draws samples in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+        """
+        variance = self.sample_pointwise_variance(n, parallel=parallel, n_jobs=n_jobs)
+        return self.domain.vector_sqrt(variance)
+
+    def with_dense_covariance(self, parallel: bool = False, n_jobs: int = -1):
+        """
+        Forms a new Gaussian measure equivalent to the existing one, but
+        with its covariance matrix stored in dense form. The dense matrix
+        calculation can optionally be parallelised.
+
+        Args:
+            parallel: If True, computes the covariance in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Returns:
+            The new Gaussian measure.
+        """
+
+        covariance_matrix = self.covariance.matrix(
+            dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )
+
+        return GaussianMeasure.from_covariance_matrix(
+            self.domain, covariance_matrix, expectation=self.expectation
+        )
 
     def affine_mapping(
         self, /, *, operator: LinearOperator = None, translation: Vector = None
@@ -546,7 +582,7 @@ class GaussianMeasure:
 
         # Pass the parallelization arguments directly to the matrix creation method
         cov_matrix = self.covariance.matrix(
-            dense=True, parallel=parallel, n_jobs=n_jobs
+            dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
         )
 
         try:

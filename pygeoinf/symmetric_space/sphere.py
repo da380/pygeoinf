@@ -29,6 +29,8 @@ import matplotlib.ticker as mticker
 import numpy as np
 from scipy.sparse import diags, coo_array
 
+from joblib import Parallel, delayed
+
 try:
     import pyshtools as sh
     import cartopy.crs as ccrs
@@ -100,11 +102,6 @@ class SphereHelper:
         # SH coefficient options fixed internally
         self._normalization: str = "ortho"
         self._csphase: int = 1
-
-        # Set up sparse matrix that maps SHCoeff data arrrays into reduced form
-        self._sparse_coeffs_to_component: coo_array = (
-            self._coefficient_to_component_mapping()
-        )
 
     def orthonormalised(self) -> bool:
         """The space is orthonormalised."""
@@ -341,6 +338,198 @@ class SphereHelper:
 
         return fig, ax, im
 
+    def plot_geodesic(
+        self,
+        p1: Tuple[float, float],
+        p2: Tuple[float, float],
+        ax: Optional["GeoAxes"] = None,
+        n_points: int = 100,
+        **kwargs,
+    ) -> Tuple["Figure", "GeoAxes"]:
+        """
+        Plots a geodesic curve onto a Cartopy map.
+        """
+        points, _ = self.geodesic_quadrature(p1, p2, n_points=n_points)
+        lats, lons = zip(*points)
+
+        if ax is None:
+            fig, ax = plt.subplots(
+                figsize=kwargs.pop("figsize", (10, 8)),
+                subplot_kw={"projection": ccrs.PlateCarree()},
+            )
+        else:
+            fig = ax.get_figure()
+
+        kwargs.setdefault("color", "black")
+        kwargs.setdefault("linewidth", 2)
+
+        ax.plot(lons, lats, transform=ccrs.Geodetic(), **kwargs)
+
+        return fig, ax
+
+    def plot_geodesic_network(
+        self,
+        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+        ax: Optional["GeoAxes"] = None,
+        n_points: int = 50,
+        **kwargs,
+    ) -> Tuple["Figure", "GeoAxes"]:
+        """
+        Plots a network of geodesic paths onto a Cartopy map.
+
+        This method iterates through a list of source-receiver pairs and renders
+        each as a great-circle arc. It is useful for visualizing the spatial
+        coverage of a tomographic survey.
+
+        Args:
+            paths: A list of ((lat1, lon1), (lat2, lon2)) tuples.
+            ax: An existing cartopy GeoAxes object. If None, a new figure is created.
+            n_points: Number of points used to render each curve. A lower value
+                (e.g., 50) is often sufficient for batch plotting many lines.
+            **kwargs: Keyword arguments passed to the underlying plot calls
+                (e.g., color, alpha, linewidth).
+
+        Returns:
+            A tuple (figure, axes) containing the plot objects.
+        """
+
+        if ax is None:
+            figsize = kwargs.pop("figsize", (12, 10))
+            fig, ax = plt.subplots(
+                figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()}
+            )
+            ax.set_global()
+            ax.coastlines()
+        else:
+            fig = ax.get_figure()
+
+        kwargs.setdefault("color", "black")
+        kwargs.setdefault("linewidth", 0.8)
+        kwargs.setdefault("alpha", 0.5)
+
+        for p1, p2 in paths:
+            self.plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
+
+        sources = list(set([tuple(p[0]) for p in paths]))
+        receivers = list(set([tuple(p[1]) for p in paths]))
+
+        src_lats, src_lons = zip(*sources)
+        rec_lats, rec_lons = zip(*receivers)
+
+        src_style = kwargs.pop("source_kwargs", {})
+        src_style.setdefault("marker", "*")
+        src_style.setdefault("color", "gold")
+        src_style.setdefault("s", 150)
+        src_style.setdefault("edgecolor", "black")
+        src_style.setdefault("zorder", 5)
+
+        ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
+
+        rec_style = kwargs.pop("receiver_kwargs", {})
+        rec_style.setdefault("marker", "o")
+        rec_style.setdefault("color", "red")
+        rec_style.setdefault("s", 50)
+        rec_style.setdefault("edgecolor", "white")
+        rec_style.setdefault("zorder", 5)
+
+        ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
+
+        return fig, ax
+
+    def sample_power_measure(
+        self,
+        measure,
+        n_samples,
+        /,
+        *,
+        lmin=None,
+        lmax=None,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ):
+        """
+        Takes in a Gaussian measure on the space, draws n_samples from
+        and returns samples for the spherical harmonic power at degrees in
+        the indicated range.
+        """
+
+        lmin = 0 if lmin is None else lmin
+        lmax = self.lmax if lmax is None else min(self.lmax, lmax)
+
+        samples = measure.samples(n_samples, parallel=parallel, n_jobs=n_jobs)
+
+        powers = []
+        for u in samples:
+            ulm = self.to_coefficients(u)
+            powers.append(ulm.spectrum(lmax=lmax, convention="power")[lmin:])
+
+        return powers
+
+    def geodesic_quadrature(
+        self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
+    ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
+        """
+        Generates Gauss-Legendre quadrature points and weights along a great-circle arc.
+
+        This implementation converts the start and end latitudes and longitudes into
+        unit vectors, calculates the central angle (omega), and interpolates the
+        geodesic path using SLERP.
+
+        Args:
+            p1: Start point as (latitude, longitude) in degrees.
+            p2: End point as (latitude, longitude) in degrees.
+            n_points: Number of quadrature points to generate.
+
+        Returns:
+            points: A list of (lat, lon) tuples in degrees along the geodesic.
+            weights: Integration weights scaled by the total arc length (R * omega).
+        """
+
+        def to_vector(lat, lon):
+            lat_rad, lon_rad = np.radians(lat), np.radians(lon)
+            return np.array(
+                [
+                    np.cos(lat_rad) * np.cos(lon_rad),
+                    np.cos(lat_rad) * np.sin(lon_rad),
+                    np.sin(lat_rad),
+                ]
+            )
+
+        def to_latlon(vec):
+            vec = vec / np.linalg.norm(vec)
+            lat_rad = np.arcsin(vec[2])
+            lon_rad = np.arctan2(vec[1], vec[0])
+            return (np.degrees(lat_rad), np.degrees(lon_rad))
+
+        v1, v2 = to_vector(*p1), to_vector(*p2)
+
+        dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
+        omega = np.arccos(dot_product)
+
+        if omega < 1e-10:
+            return [p1] * n_points, np.zeros(n_points)
+
+        if np.abs(omega - np.pi) < 1e-10:
+            raise ValueError(
+                "Points are antipodal; the great circle path is not unique."
+            )
+
+        x, w = np.polynomial.legendre.leggauss(n_points)
+
+        t_vals = (x + 1) / 2.0
+        scaled_weights = w * (self.radius * omega / 2.0)
+
+        sin_omega = np.sin(omega)
+        points = []
+
+        for t in t_vals:
+            coeff1 = np.sin((1 - t) * omega) / sin_omega
+            coeff2 = np.sin(t * omega) / sin_omega
+            v_interp = coeff1 * v1 + coeff2 * v2
+            points.append(to_latlon(v_interp))
+
+        return points, scaled_weights
+
     # --------------------------------------------------------------- #
     #                         private methods                         #
     # ----------------------------------------------------------------#
@@ -378,28 +567,19 @@ class SphereHelper:
 
     def _degree_dependent_scaling_values(self, f: Callable[[int], float]) -> diags:
         """Creates a diagonal sparse matrix from a function of degree `l`."""
-        dim = (self.lmax + 1) ** 2
-        values = np.zeros(dim)
-        i = 0
-        for l in range(self.lmax + 1):
-            j = i + l + 1
-            values[i:j] = f(l)
-            i = j
-        for l in range(1, self.lmax + 1):
-            j = i + l
-            values[i:j] = f(l)
-            i = j
-        return values
+        ls = np.arange(self.lmax + 1)
+        f_vectorized = np.vectorize(f)
+        values = f_vectorized(ls)
+        counts = 2 * ls + 1
+        return np.repeat(values, counts)
 
     def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
         """Maps spherical harmonic coefficients to a component vector."""
-        flat_coeffs = ulm.coeffs.flatten(order="C")
-        return self._sparse_coeffs_to_component @ flat_coeffs
+        return sh.shio.SHCilmToVector(ulm.coeffs)
 
     def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
         """Maps a component vector to spherical harmonic coefficients."""
-        flat_coeffs = self._sparse_coeffs_to_component.T @ c
-        coeffs = flat_coeffs.reshape((2, self.lmax + 1, self.lmax + 1))
+        coeffs = sh.shio.SHVectorToCilm(c)
         return sh.SHCoeffs.from_array(
             coeffs, normalization=self.normalization, csphase=self.csphase
         )
@@ -474,6 +654,14 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         Computes the pointwise product of two functions.
         """
         return x1 * x2
+
+    def vector_sqrt(self, x: sh.SHGrid) -> sh.SHGrid:
+        """
+        Returns the pointwise square root of a function.
+        """
+        y = x.copy()
+        y.data = np.sqrt(x.data)
+        return y
 
     def __eq__(self, other: object) -> bool:
         """
@@ -775,6 +963,81 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             f"grid={self.grid}\n"
             f"extend={self.extend}"
         )
+
+    def point_evaluation_operator(
+        self,
+        points: List[Tuple[float, float]],
+        /,
+        *,
+        matrix_free: bool = False,
+        parallel=False,
+        n_jobs=-1,
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Args:
+            points: A list of (latitude, longitude) tuples in degrees.
+            matrix_free: If True, uses an optimized, matrix-free implementation to
+                save memory. If False (default), constructs a dense matrix.
+            parallel: In the matrix-free case compute adjoint mapping in parallel
+                default is False
+            n_jobs: Number of processors to use within parallel calculations
+        """
+        if self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError(
+                f"Sobolev order {self.order} is too low for point evaluation on S²."
+            )
+
+        if matrix_free:
+            lats, lons = zip(*points)
+            lats_array = np.array(lats)
+            lons_array = np.array(lons)
+
+            def mapping(u: sh.SHGrid) -> np.ndarray:
+                ulm = self.to_coefficients(u)
+                return ulm.expand(
+                    lat=lats_array,
+                    lon=lons_array,
+                )
+
+            def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
+                if parallel:
+
+                    def compute_chunk(indices_chunk):
+                        local_v = self.zero
+                        for idx in indices_chunk:
+                            v_i = self.dirac_representation(points[idx])
+                            self.axpy(data[idx], v_i, local_v)
+                        return local_v
+
+                    chunks = np.array_split(
+                        range(len(data)), n_jobs if n_jobs > 0 else 8
+                    )
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_chunk)(c) for c in chunks
+                    )
+
+                    total_v = self.zero
+                    for res in results:
+                        self.axpy(1.0, res, total_v)
+                    return total_v
+                else:
+                    total_v = self.zero
+                    for i, val in enumerate(data):
+                        v_i = self.dirac_representation(points[i])
+                        self.axpy(val, v_i, total_v)
+                    return total_v
+
+            return LinearOperator(
+                self,
+                EuclideanSpace(len(points)),
+                mapping,
+                adjoint_mapping=adjoint_mapping,
+            )
+
+        # Standard path: delegate to the ABC for dense matrix construction
+        return super().point_evaluation_operator(points)
 
     def to_coefficient_operator(self, lmax: int, lmin: int = 0):
         r"""
