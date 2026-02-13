@@ -901,8 +901,8 @@ class LinearKalmanFilter(AssimilationEngine):
         mean_new = mean + K @ y_residual
 
         # 5. Covariance Update
-        I = np.eye(len(mean))
-        cov_new = (I - K @ H) @ cov
+        Id = np.eye(len(mean))
+        cov_new = (Id - K @ H) @ cov
 
         return mean_new, cov_new
 

@@ -8,7 +8,7 @@ State vector: y = [theta1, theta2, p1, p2]
 Convention: 0 is vertically DOWN. Rotation is Counter-Clockwise.
 """
 
-from typing import List, Tuple, Union, Optional
+from typing import List, Tuple, Union
 
 import numpy as np
 from scipy.linalg import expm
@@ -230,7 +230,7 @@ def get_linear_propagator(
     """
     Returns the discrete-time propagator P = exp(A * dt).
     """
-    A = get_static_matrix(L1, L2, m1, m2, g)
+    A = get_linear_matrix(L1, L2, m1, m2, g)
     return expm(A * dt)
 
 

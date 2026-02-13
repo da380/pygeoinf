@@ -13,7 +13,6 @@ We will:
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 # Import the core engine and the double pendulum module
 try:

@@ -8,7 +8,6 @@ Focuses on Chaotic Sensitivity (Divergence) and Ensemble particle clouds.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from typing import Optional, Tuple, Any
 
 from ... import core
 from . import physics as phys
