@@ -1,21 +1,21 @@
 """
 physics.py
 
-Hamiltonian dynamics, coordinate transformations, and linearized models
+Hamiltonian dynamics, coordinate transformations, and linearised models
 specifically for the Single Pendulum (2D state space).
-
-Includes:
-1. Full Non-Linear Hamiltonian Dynamics (eom)
-2. Tangent Linear Model for EKF (eom_tangent_linear)
-3. Static Linearized Model about Equilibrium (eom_linear)
 """
 
+from typing import Tuple, List, Union
+
 import numpy as np
+
 
 # --- 1. Hamiltonian Dynamics (Non-linear) ---
 
 
-def eom(t, y, L=1.0, m=1.0, g=1.0):
+def eom(
+    t: float, y: np.ndarray, L: float = 1.0, m: float = 1.0, g: float = 1.0
+) -> List[float]:
     """
     Hamilton's Equations of Motion for a single pendulum.
 
@@ -40,30 +40,26 @@ def eom(t, y, L=1.0, m=1.0, g=1.0):
     return [d_theta, d_p_theta]
 
 
-def get_coords(theta, L=1.0):
+def get_coords(
+    theta: Union[float, np.ndarray], L: float = 1.0
+) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
     """
-    Converts angular state to Cartesian coordinates for visualization.
+    Converts angular state to Cartesian coordinates for visualisation.
+    Standard pendulum convention: 0 is down.
     """
-    # Standard pendulum convention: 0 is down.
     x = L * np.sin(theta)
     y = -L * np.cos(theta)
     return x, y
 
 
-# --- 2. Tangent Linear Model (Dynamic Linearization) ---
+# --- 2. Tangent Linear Model (Dynamic Linearisation) ---
 
 
-def get_jacobian(theta, L=1.0, m=1.0, g=1.0):
+def get_jacobian(
+    theta: float, L: float = 1.0, m: float = 1.0, g: float = 1.0
+) -> np.ndarray:
     """
     Computes the Jacobian matrix J(theta) of the system at a specific state.
-
-    System f(y):
-      f1 = p / (m L^2)
-      f2 = -m g L sin(theta)
-
-    Jacobian J = df/dy:
-      [[ df1/dth, df1/dp ],
-       [ df2/dth, df2/dp ]]
 
     Returns:
        2x2 Matrix J
@@ -77,15 +73,14 @@ def get_jacobian(theta, L=1.0, m=1.0, g=1.0):
     return np.array([[0, a], [b, 0]])
 
 
-def eom_tangent_linear(t, state_aug, L=1.0, m=1.0, g=1.0):
+def eom_tangent_linear(
+    t: float, state_aug: np.ndarray, L: float = 1.0, m: float = 1.0, g: float = 1.0
+) -> np.ndarray:
     """
     Coupled ODE for the reference trajectory AND the tangent linear perturbation.
     Crucial for Extended Kalman Filters (EKF).
 
     State vector (4D): [theta, p, delta_theta, delta_p]
-
-    1. Evolves [theta, p] using full non-linear physics.
-    2. Evolves [delta_theta, delta_p] using the Jacobian at the CURRENT [theta, p].
     """
     # 1. Unpack Reference (Non-linear) and Perturbation (Linear)
     ref = state_aug[0:2]  # [theta, p]
@@ -105,10 +100,11 @@ def eom_tangent_linear(t, state_aug, L=1.0, m=1.0, g=1.0):
 # --- 3. Static Linear Models (Equilibrium Approximation) ---
 
 
-def eom_linear(t, y, L=1.0, m=1.0, g=1.0):
+def eom_linear(
+    t: float, y: np.ndarray, L: float = 1.0, m: float = 1.0, g: float = 1.0
+) -> np.ndarray:
     """
-    Linearized EOM around the stable equilibrium (theta=0, p=0).
-    Here the Jacobian is constant because cos(0) = 1.
+    Linearised EOM around the stable equilibrium (theta=0, p=0).
     """
     a = 1.0 / (m * L**2)
     b = -m * g * L
@@ -117,12 +113,12 @@ def eom_linear(t, y, L=1.0, m=1.0, g=1.0):
     return A @ y
 
 
-def get_linear_propagator(t, L=1.0, m=1.0, g=1.0):
+def get_linear_propagator(
+    t: float, L: float = 1.0, m: float = 1.0, g: float = 1.0
+) -> np.ndarray:
     """
     Returns the analytical propagator matrix P(t) for the linear system.
     y(t) = P(t) @ y(0)
-
-    Useful for validating numerical solvers or standard Kalman Filters.
     """
     omega = np.sqrt(g / L)
     cos_t = np.cos(omega * t)
@@ -133,7 +129,3 @@ def get_linear_propagator(t, L=1.0, m=1.0, g=1.0):
     m10 = -m * g * L * sin_t / omega
 
     return np.array([[cos_t, m01], [m10, cos_t]])
-
-
-# Alias for explicit clarity if requested by init files
-eom_linear_static = eom_linear

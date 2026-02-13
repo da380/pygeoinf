@@ -1,28 +1,34 @@
 """
 physics.py
 
-Hamiltonian dynamics, coordinate transformations, and linearized models
+Hamiltonian dynamics, coordinate transformations, and linearised models
 specifically for the Double Pendulum (4D state space).
 
---- Coordinate Convention ---
-* Angles (theta) are measured in radians.
-* theta = 0 corresponds to the rod hanging vertically DOWN.
-* Rotation is COUNTER-CLOCKWISE positive.
-* Both angles (theta1, theta2) are ABSOLUTE with respect to the vertical axis.
-  (theta2 is NOT relative to theta1).
-
 State vector: y = [theta1, theta2, p1, p2]
+Convention: 0 is vertically DOWN. Rotation is Counter-Clockwise.
 """
+
+from typing import List, Tuple, Union
 
 import numpy as np
 from scipy.linalg import expm
 
+
 # --- 1. Hamiltonian Dynamics (Non-linear) ---
 
 
-def eom(t, y, L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
+def eom(
+    t: float,
+    y: np.ndarray,
+    L1: float = 1.0,
+    L2: float = 1.0,
+    m1: float = 1.0,
+    m2: float = 1.0,
+    g: float = 1.0,
+) -> List[float]:
     """
     Hamilton's Equations of Motion for the Double Pendulum.
+    Compatible with core.solve_trajectory.
     """
     th1, th2, p1, p2 = y
 
@@ -46,7 +52,12 @@ def eom(t, y, L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
     return [dth1, dth2, dp1, dp2]
 
 
-def get_coords(th1, th2, L1=1.0, L2=1.0):
+def get_coords(
+    th1: Union[float, np.ndarray],
+    th2: Union[float, np.ndarray],
+    L1: float = 1.0,
+    L2: float = 1.0,
+) -> Tuple[Union[float, np.ndarray], ...]:
     """
     Converts angles to Cartesian coordinates for both bobs.
     Convention: (0,0) is the pivot, +y is Up, +x is Right.
@@ -58,123 +69,116 @@ def get_coords(th1, th2, L1=1.0, L2=1.0):
     return x1, y1, x2, y2
 
 
-# --- 2. Tangent Linear Model (Explicit Analytic Jacobian) ---
+# --- 2. Tangent Linear Model (Analytic Jacobian) ---
 
 
-def get_jacobian(y, L1, L2, m1, m2, g):
+def get_jacobian(
+    y: np.ndarray,
+    L1: float = 1.0,
+    L2: float = 1.0,
+    m1: float = 1.0,
+    m2: float = 1.0,
+    g: float = 1.0,
+) -> np.ndarray:
     """
-    Computes the Exact Analytic Jacobian Matrix J(y) = df/dy.
-    Calculated via explicit chain rule application (no sympy, no finite diff).
+    Computes the Exact Analytic Jacobian Matrix J(y) = df/dy (4x4).
+    Crucial for Extended Kalman Filters (EKF).
     """
     th1, th2, p1, p2 = y
 
     # --- Shared Terms ---
     delta = th1 - th2
-    c = np.cos(delta)
-    s = np.sin(delta)
+    c, s = np.cos(delta), np.sin(delta)
     den = m1 + m2 * s**2
     den2 = den * den
 
-    # Derivative of denominator wrt th1 (and -th2)
-    # d(den)/dth1 = 2 * m2 * sin(delta) * cos(delta) = m2 * sin(2*delta)
+    # d(den)/dth1 = m2 * sin(2*delta)
     d_den_dth = m2 * np.sin(2 * delta)
 
-    # Constants for denominators
+    # Constants
     K1 = 1.0 / (L1**2 * L2)
     K2 = 1.0 / (L1 * L2**2 * m2)
 
-    # --- Rows 0 & 1: Derivatives of dth1/dt and dth2/dt ---
-    # We define Numerators (Num1, Num2) to apply quotient rule: (u/v)' = (u'v - uv')/v^2
-
-    # dth1 = (L2*p1 - L1*p2*c) / (L1^2 * L2 * den)
+    # --- Rows 0 & 1: d(dth)/dy ---
+    # Num1 for dth1
     Num1 = L2 * p1 - L1 * p2 * c
-    dth1_val = Num1 * K1 / den  # Recompute value for chain rule usage later
+    dth1_val = Num1 * K1 / den
 
-    # Partial derivatives of Num1
-    dNum1_dth1 = -L1 * p2 * (-s)  # = L1 p2 s
-    dNum1_dth2 = -L1 * p2 * (s)  # = -L1 p2 s
+    dNum1_dth1 = L1 * p2 * s
+    dNum1_dth2 = -L1 * p2 * s
     dNum1_dp1 = L2
     dNum1_dp2 = -L1 * c
 
-    # Jacobian Elements for Row 0 (dth1)
+    # Jacobian Elements Row 0
     J00 = K1 * (dNum1_dth1 * den - Num1 * d_den_dth) / den2
     J01 = K1 * (dNum1_dth2 * den - Num1 * (-d_den_dth)) / den2
-    J02 = K1 * (dNum1_dp1 * den) / den2  # d_den_dp is 0
+    J02 = K1 * (dNum1_dp1 * den) / den2
     J03 = K1 * (dNum1_dp2 * den) / den2
 
-    # dth2 = (L1*(m1+m2)*p2 - L2*m2*p1*c) / (L1 * L2^2 * m2 * den)
+    # Num2 for dth2
     Num2 = L1 * (m1 + m2) * p2 - L2 * m2 * p1 * c
-    dth2_val = Num2 * K2 / den  # Recompute value
+    dth2_val = Num2 * K2 / den
 
-    # Partial derivatives of Num2
-    dNum2_dth1 = -L2 * m2 * p1 * (-s)  # = L2 m2 p1 s
-    dNum2_dth2 = -L2 * m2 * p1 * (s)  # = -L2 m2 p1 s
+    dNum2_dth1 = L2 * m2 * p1 * s
+    dNum2_dth2 = -L2 * m2 * p1 * s
     dNum2_dp1 = -L2 * m2 * c
     dNum2_dp2 = L1 * (m1 + m2)
 
-    # Jacobian Elements for Row 1 (dth2)
+    # Jacobian Elements Row 1
     J10 = K2 * (dNum2_dth1 * den - Num2 * d_den_dth) / den2
     J11 = K2 * (dNum2_dth2 * den - Num2 * (-d_den_dth)) / den2
     J12 = K2 * (dNum2_dp1 * den) / den2
     J13 = K2 * (dNum2_dp2 * den) / den2
 
-    # --- Rows 2 & 3: Derivatives of dp1/dt and dp2/dt ---
-    # dp1 = -term1 - term2
-    # dp2 =  term1 - term3
-    # term1 = C_force * dth1 * dth2 * s
-    # term2 = G1 * sin(th1)
-    # term3 = G2 * sin(th2)
-
+    # --- Rows 2 & 3: d(dp)/dy ---
     C_force = m2 * L1 * L2
     G1 = (m1 + m2) * g * L1
     G2 = m2 * g * L2
 
-    # Precompute term1 parts
-    # term1 = C_force * (dth1 * dth2 * s)
-    # We use Product Rule: d(uvw) = u'vw + uv'w + uvw'
-
-    # Wrt State variable q (th1, th2, p1, p2):
-    # d(term1)/dq = C_force * [ J0q * dth2 * s  +  dth1 * J1q * s  +  dth1 * dth2 * d(s)/dq ]
-
-    # Calculate d(term1)/dq for each component
-    # Note: d(s)/dth1 = c, d(s)/dth2 = -c, d(s)/dp = 0
+    # Helper for product rule on term1 = C * dth1 * dth2 * s
+    J = np.zeros((4, 4))
+    J[0, :] = [J00, J01, J02, J03]
+    J[1, :] = [J10, J11, J12, J13]
 
     def d_term1(idx, ds_dq):
+        # d(uvw) = u'vw + uv'w + uvw'
         return C_force * (
             J[0, idx] * dth2_val * s
             + dth1_val * J[1, idx] * s
             + dth1_val * dth2_val * ds_dq
         )
 
-    # Initialize J
-    J = np.zeros((4, 4))
-    J[0, :] = [J00, J01, J02, J03]
-    J[1, :] = [J10, J11, J12, J13]
-
-    # Calculate d(term1) vector components
     d_term1_dth1 = d_term1(0, c)
     d_term1_dth2 = d_term1(1, -c)
     d_term1_dp1 = d_term1(2, 0)
     d_term1_dp2 = d_term1(3, 0)
 
-    # Fill Row 2 (dp1) -> -d(term1) - d(term2)
-    J[2, 0] = -d_term1_dth1 - G1 * np.cos(th1)  # term2 depends only on th1
+    # Row 2 (dp1)
+    J[2, 0] = -d_term1_dth1 - G1 * np.cos(th1)
     J[2, 1] = -d_term1_dth2
     J[2, 2] = -d_term1_dp1
     J[2, 3] = -d_term1_dp2
 
-    # Fill Row 3 (dp2) -> d(term1) - d(term3)
+    # Row 3 (dp2)
     J[3, 0] = d_term1_dth1
-    J[3, 1] = d_term1_dth2 - G2 * np.cos(th2)  # term3 depends only on th2
+    J[3, 1] = d_term1_dth2 - G2 * np.cos(th2)
     J[3, 2] = d_term1_dp1
     J[3, 3] = d_term1_dp2
 
     return J
 
 
-def eom_tangent_linear(t, state_aug, L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
+def eom_tangent_linear(
+    t: float,
+    state_aug: np.ndarray,
+    L1: float = 1.0,
+    L2: float = 1.0,
+    m1: float = 1.0,
+    m2: float = 1.0,
+    g: float = 1.0,
+) -> np.ndarray:
     """
-    Coupled ODE for Reference + Perturbation using Exact Jacobian.
+    Coupled ODE for Reference (Non-linear) + Perturbation (Linear).
     State vector (8D): [y (4D), delta_y (4D)]
     """
     ref = state_aug[0:4]
@@ -193,9 +197,12 @@ def eom_tangent_linear(t, state_aug, L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
 # --- 3. Static Linear Models (Equilibrium) ---
 
 
-def get_static_matrix(L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
+def get_linear_matrix(
+    L1: float = 1.0, L2: float = 1.0, m1: float = 1.0, m2: float = 1.0, g: float = 1.0
+) -> np.ndarray:
     """
-    Returns the linearized system matrix A for the equilibrium state (0,0,0,0).
+    Returns the linearised system matrix A for the equilibrium state (0,0,0,0).
+    d/dt(y) = A * y
     """
     # Mass Matrix M at equilibrium
     M = np.array([[(m1 + m2) * L1**2, m2 * L1 * L2], [m2 * L1 * L2, m2 * L2**2]])
@@ -212,12 +219,21 @@ def get_static_matrix(L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
     return A
 
 
-def get_static_propagator(t, L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
-    """Returns P(t) = exp(A*t)."""
-    A = get_static_matrix(L1, L2, m1, m2, g)
-    return expm(A * t)
+def get_linear_propagator(
+    dt: float,
+    L1: float = 1.0,
+    L2: float = 1.0,
+    m1: float = 1.0,
+    m2: float = 1.0,
+    g: float = 1.0,
+) -> np.ndarray:
+    """
+    Returns the discrete-time propagator P = exp(A * dt).
+    """
+    A = get_linear_matrix(L1, L2, m1, m2, g)
+    return expm(A * dt)
 
 
-def eom_linear_static(t, y, A):
-    """Linearized EOM given pre-computed A."""
+def eom_linear(t: float, y: np.ndarray, A: np.ndarray) -> np.ndarray:
+    """Linearised EOM given pre-computed A matrix."""
     return A @ y
