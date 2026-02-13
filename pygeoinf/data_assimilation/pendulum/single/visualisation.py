@@ -313,7 +313,6 @@ def animate_combined(
     frames = range(0, len(t_points), stride)
     anim = FuncAnimation(fig, update, frames=frames, interval=30, blit=True)
 
-    plt.close(fig)
     return anim
 
 
@@ -384,7 +383,7 @@ def animate_advection(
         return mesh, title_text
 
     anim = FuncAnimation(fig, update, frames=len(t_points), interval=50, blit=False)
-    plt.close(fig)
+
     return anim
 
 
@@ -433,5 +432,5 @@ def animate_linear_comparison(
     plt.suptitle(title_str, fontsize=14)
 
     anim = FuncAnimation(fig, update, frames=len(t_points), interval=50, blit=True)
-    plt.close(fig)
+
     return anim

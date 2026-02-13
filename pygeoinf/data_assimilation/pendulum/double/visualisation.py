@@ -44,7 +44,7 @@ def plot_sensitivity_divergence(
     ax_ts.plot(
         t_points, core.wrap_angle(traj_pert[0]), "r--", alpha=0.8, label="Perturbed"
     )
-    ax_ts.set_ylabel(r"$\theta_1$ [rad]")
+    ax_ts.set_ylabel(r"$\theta_1$")
     ax_ts.set_title(title)
     ax_ts.legend(loc="upper right")
     ax_ts.grid(True, alpha=0.3)
@@ -90,7 +90,7 @@ def plot_ensemble_phase_space(
         alpha=0.6,
     )
     ax1.set_title(f"Bob 1 Phase Space (t={time:.1f}s)")
-    ax1.set_xlabel(r"$\theta_1$ [rad]")
+    ax1.set_xlabel(r"$\theta_1$")
     ax1.set_ylabel(r"$p_1$")
     ax1.set_xlim([-np.pi, np.pi])
 
@@ -105,7 +105,7 @@ def plot_ensemble_phase_space(
         alpha=0.6,
     )
     ax2.set_title(f"Bob 2 Phase Space (t={time:.1f}s)")
-    ax2.set_xlabel(r"$\theta_2$ [rad]")
+    ax2.set_xlabel(r"$\theta_2$")
     ax2.set_ylabel(r"$p_2$")
     ax2.set_xlim([-np.pi, np.pi])
 
@@ -161,7 +161,6 @@ def animate_pendulum(
         time_text.set_text(f"t = {t_points[i]:.1f}s")
         return rods, bob1, bob2, trail1, trail2, time_text
 
-    plt.close(fig)
     return FuncAnimation(fig, update, frames=len(t_points), interval=40, blit=True)
 
 
@@ -186,7 +185,7 @@ def animate_ensemble_phase_space(
     # Setup Bob 1 Axis
     ax1.set_xlim([-np.pi, np.pi])
     ax1.set_ylim([-p1_max, p1_max])
-    ax1.set_xlabel(r"$\theta_1$ [rad]")
+    ax1.set_xlabel(r"$\theta_1$")
     ax1.set_ylabel(r"$p_1$")
     ax1.set_title("Bob 1 Phase Space")
     ax1.grid(True, alpha=0.3)
@@ -195,7 +194,7 @@ def animate_ensemble_phase_space(
     # Setup Bob 2 Axis
     ax2.set_xlim([-np.pi, np.pi])
     ax2.set_ylim([-p2_max, p2_max])
-    ax2.set_xlabel(r"$\theta_2$ [rad]")
+    ax2.set_xlabel(r"$\theta_2$")
     ax2.set_ylabel(r"$p_2$")
     ax2.set_title("Bob 2 Phase Space")
     ax2.grid(True, alpha=0.3)
@@ -217,5 +216,4 @@ def animate_ensemble_phase_space(
         time_text.set_text(f"t = {t_points[i]:.2f}s")
         return scatter1, scatter2, time_text
 
-    plt.close(fig)
     return FuncAnimation(fig, update, frames=len(t_points), interval=50, blit=True)
