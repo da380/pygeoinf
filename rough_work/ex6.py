@@ -5,8 +5,8 @@ from pygeoinf.symmetric_space.sphere import Sobolev
 
 
 # Set the model space
-lmax = 128
-order = 2.0
+lmax = 256
+order = 1.5
 scale = 0.05
 
 model_space = Sobolev(lmax, order, scale)
