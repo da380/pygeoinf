@@ -6,6 +6,7 @@ Bayesian inference, and generic visualisation.
 """
 
 from typing import Callable, List, Tuple, Union, Optional, Any, Dict
+from abc import ABC, abstractmethod
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -619,14 +620,63 @@ class LinearGaussianLikelihood(GaussianLikelihood):
         return ProbabilityGrid(prob_grid.axes, likelihood_values)
 
 
+# --- Abstract Base Class for Assimilation ---
+
+
+class AssimilationEngine(ABC):
+    """
+    Abstract Base Class defining the interface for all assimilation methods
+    (Grid, KF, EnKF). Enforces a consistent 'setup -> observe -> run' workflow.
+    """
+
+    def __init__(self):
+        self.observations: List[Tuple[float, Any]] = []
+
+    def add_observation(
+        self,
+        time: float,
+        covariance: np.ndarray,
+        value: Optional[np.ndarray] = None,
+        operator: Optional[Union[np.ndarray, Callable]] = None,
+    ):
+        """
+        Registers an observation to be assimilated during the run.
+        """
+        # Default implementation for Gaussian/Linear obs (can be overridden)
+        if operator is None or callable(operator):
+            model = GaussianLikelihood(value, covariance, operator)
+        else:
+            model = LinearGaussianLikelihood(value, covariance, operator)
+
+        self.observations.append((time, model))
+        self.observations.sort(key=lambda x: x[0])
+
+    @abstractmethod
+    def run(
+        self, initial_state: Any, t_final: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Executes the assimilation cycle.
+        Must return a history list of dicts containing 'time', 'forecast', 'analysis'.
+        """
+        pass
+
+    @abstractmethod
+    def reanalyse_initial_condition(self, history: List[Dict[str, Any]]) -> Any:
+        """
+        Performs Reanalysis (Smoothing) to estimate the state at t=0
+        given all observations up to t_final.
+        """
+        pass
+
+
 # --- Bayesian Assimilation Manager ---
 
 
-class BayesianAssimilationProblem:
+class BayesianAssimilationProblem(AssimilationEngine):
     """
-    Manages the definition and execution of a Bayesian assimilation cycle.
-    Stores the system dynamics and a sequence of observations, managing the
-    Forecast-Analysis loop automatically.
+    Manages the definition and execution of a Grid-based Bayesian assimilation cycle.
+    Inherits observation management from AssimilationEngine.
     """
 
     def __init__(
@@ -639,39 +689,9 @@ class BayesianAssimilationProblem:
             eom_func: The system dynamics ODE function.
             eom_args: Arguments (constants/parameters) for the ODE function.
         """
+        super().__init__()  # Initialises self.observations = []
         self.eom_func = eom_func
         self.eom_args = eom_args
-        self.observations: List[Tuple[float, Any]] = (
-            []
-        )  # Stores (time, likelihood_model)
-
-    def add_observation(
-        self,
-        time: float,
-        covariance: np.ndarray,
-        value: Optional[np.ndarray] = None,
-        operator: Optional[Union[np.ndarray, Callable]] = None,
-    ):
-        """
-        Adds a Gaussian observation to the problem.
-
-        Args:
-            time: The time at which the observation is made.
-            covariance: The observation error covariance matrix 'R'.
-            value: The observed data vector 'y_obs'. If None, placeholder for synthetic data.
-            operator: The observation operator H. Can be a Matrix (for linear)
-                      or a Callable (for non-linear). If None, assumes Identity.
-        """
-        # Auto-detect Linear vs Non-linear to choose optimised class
-        if operator is None or callable(operator):
-            model = GaussianLikelihood(value, covariance, operator)
-        else:
-            # Assume it's a matrix
-            model = LinearGaussianLikelihood(value, covariance, operator)
-
-        self.observations.append((time, model))
-        # Ensure sequential order
-        self.observations.sort(key=lambda x: x[0])
 
     def generate_synthetic_data(
         self,
@@ -682,34 +702,22 @@ class BayesianAssimilationProblem:
         """
         Runs the physics from t=0, samples noisy observations at registered times,
         updates the internal Likelihood models with these values, and returns ground truth.
-
-        Args:
-            true_initial_condition: The starting state (x0).
-            dt_render: Time step for the returned ground truth trajectory.
-            seed: Random seed for reproducibility.
-
-        Returns:
-            Dict containing 't_ground_truth', 'state_ground_truth', 'initial_truth'.
         """
         if seed is not None:
             np.random.seed(seed)
 
         # 1. Identify observation times
-        # Note: self.observations is a list of tuples (time, model)
         obs_times = np.array([t for t, _ in self.observations])
 
         if len(obs_times) == 0:
             raise ValueError("No observations registered to generate data for.")
 
         # 2. Run High-Res Simulation (Ground Truth)
-        # We ensure we cover the full range from 0 to last obs
         t_max = obs_times[-1]
         t_render = np.arange(0, t_max + dt_render, dt_render)
         if t_render[-1] < t_max:
             t_render = np.append(t_render, t_max)
 
-        # We must also ensure we hit exactly the observation times to sample accurately
-        # Strategy: Solve for unique sorted times of (t_render U t_obs)
         all_times = np.unique(np.concatenate([t_render, obs_times]))
 
         sol_all = solve_trajectory(
@@ -717,10 +725,8 @@ class BayesianAssimilationProblem:
         )
 
         # 3. Iterate through registered observations and update them
-
         for i, (t_obs, model) in enumerate(self.observations):
             # Find the state at this exact time
-            # np.isclose is safer than equality for floats
             idx = np.where(np.isclose(all_times, t_obs))[0][0]
             true_state_at_t = sol_all[:, idx]
 
@@ -737,21 +743,20 @@ class BayesianAssimilationProblem:
         }
 
     def run(
-        self, initial_prior: ProbabilityGrid, t_final: Optional[float] = None
+        self, initial_state: ProbabilityGrid, t_final: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Executes the assimilation cycle starting from t=0.
 
         Args:
-            initial_prior: The ProbabilityGrid at t=0.
-            t_final: Optional end time. If > last observation, forecasts to this time.
+            initial_state: The ProbabilityGrid at t=0 (Prior).
+            t_final: Optional end time.
 
         Returns:
-            A list of dictionaries, one per step, containing:
-            {'time', 'forecast', 'analysis', 'evidence'}
+            A list of dictionaries containing {'time', 'forecast', 'analysis', 'evidence'}.
         """
         history = []
-        current_grid = initial_prior
+        current_grid = initial_state
         t_current = 0.0
 
         for t_obs, lik_model in self.observations:
@@ -764,21 +769,16 @@ class BayesianAssimilationProblem:
 
             # 1. Forecast Step (Advection)
             if dt > 0:
-                # Evolve from t_current to t_obs
                 forecast_grid = current_grid.push_forward(
                     self.eom_func, dt, self.eom_args
                 )
             else:
-                # Observation is immediate (e.g. at t=0)
                 forecast_grid = current_grid
 
             # 2. Analysis Step (Bayesian Update)
-            # Evaluate likelihood on the forecasted grid
             lik_grid = lik_model.evaluate(forecast_grid)
-            # Update
             analysis_grid, evidence = forecast_grid.bayes_update(lik_grid)
 
-            # Store Result
             history.append(
                 {
                     "time": t_obs,
@@ -788,11 +788,10 @@ class BayesianAssimilationProblem:
                 }
             )
 
-            # Advance
             current_grid = analysis_grid
             t_current = t_obs
 
-        # Optional: Final forecast to t_final
+        # Optional: Final forecast
         if t_final is not None and t_final > t_current:
             dt = t_final - t_current
             final_grid = current_grid.push_forward(self.eom_func, dt, self.eom_args)
@@ -800,41 +799,399 @@ class BayesianAssimilationProblem:
                 {
                     "time": t_final,
                     "forecast": final_grid,
-                    "analysis": final_grid,  # No observation
-                    "evidence": 1.0,  # No update
+                    "analysis": final_grid,
+                    "evidence": 1.0,
                 }
             )
 
         return history
 
+    def reanalyse_initial_condition(
+        self, history: List[Dict[str, Any]]
+    ) -> ProbabilityGrid:
+        """
+        Pulls the final posterior back to t=0 using inverse advection.
+        Returns the smoothed ProbabilityGrid at t=0.
+        """
+        final_posterior = history[-1]["analysis"]
+        t_final = history[-1]["time"]
 
-# --- Post-Processing / Reanalysis Tools ---
+        # Inverse advection (negative time)
+        smoothed_grid = final_posterior.push_forward(
+            self.eom_func, -t_final, self.eom_args
+        )
+        return smoothed_grid
 
 
-def reanalyse_initial_condition(
-    final_posterior: ProbabilityGrid,
-    t_final: float,
-    eom_func: Callable,
-    eom_args: Tuple,
-) -> Tuple[ProbabilityGrid, np.ndarray]:
+# ---- Linear KF class ----
+
+
+class LinearKalmanFilter(AssimilationEngine):
     """
-    Performs Reanalysis (Smoothing) by pulling the final posterior back to t=0.
+    Deterministic Linear Kalman Filter.
+    Assumes perfect physics (Process Noise Q = 0).
 
-    Args:
-        final_posterior: The ProbabilityGrid at t=t_final.
-        t_final: The time of the posterior.
-        eom_func: Physics ODE.
-        eom_args: Physics constants.
+    System Model:
+      x_k = F_k * x_{k-1}  (Deterministic)
+      y_k = H * x_k + v_k,  v_k ~ N(0, R)
 
-    Returns:
-        smoothed_initial_grid: ProbabilityGrid at t=0.
-        smoothed_initial_mean: The mean vector of the smoothed distribution.
+    Because the physics are deterministic, we can exactly reconstruct the
+    smoothed initial condition by inverting the final state.
     """
-    # Use reverse advection (negative time)
-    # This maps density f(x, T) back to f(x, 0) via Liouville
-    smoothed_grid = final_posterior.push_forward(eom_func, -t_final, eom_args)
 
-    return smoothed_grid, smoothed_grid.mean
+    def __init__(
+        self,
+        transition_matrix_func: Callable[[float], np.ndarray],
+    ):
+        """
+        Args:
+            transition_matrix_func: Function f(dt) -> F matrix (StateDim, StateDim).
+                                    Returns the propagator for a time step of dt.
+        """
+        super().__init__()
+        self.get_F = transition_matrix_func
+
+    def _predict(
+        self, mean: np.ndarray, cov: np.ndarray, dt: float
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Prediction Step: x = Fx, P = FPF'
+        (No process noise Q added)
+        """
+        F = self.get_F(dt)
+
+        # 1. Predict Mean
+        mean_pred = F @ mean
+
+        # 2. Predict Covariance
+        cov_pred = F @ cov @ F.T
+
+        return mean_pred, cov_pred
+
+    def _update(
+        self, mean: np.ndarray, cov: np.ndarray, likelihood: LinearGaussianLikelihood
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Analysis Step: Standard Kalman Update.
+        """
+        H = likelihood.H_mat
+        y_obs = likelihood.y_obs
+        R = likelihood.R
+
+        if y_obs is None:
+            raise ValueError("Observation value cannot be None during KF update.")
+
+        # 1. Innovation
+        y_pred = H @ mean
+        y_residual = y_obs - y_pred
+
+        # 2. Innovation Covariance
+        S = H @ cov @ H.T + R
+
+        # 3. Kalman Gain
+        try:
+            # K = P H' S^-1
+            K_transposed = np.linalg.solve(S, H @ cov)
+            K = K_transposed.T
+        except np.linalg.LinAlgError:
+            print("Warning: Singular innovation covariance. Using pseudo-inverse.")
+            K = cov @ H.T @ np.linalg.pinv(S)
+
+        # 4. Update
+        mean_new = mean + K @ y_residual
+
+        # 5. Covariance Update
+        I = np.eye(len(mean))
+        cov_new = (I - K @ H) @ cov
+
+        return mean_new, cov_new
+
+    def run(
+        self,
+        initial_state: Tuple[np.ndarray, np.ndarray],
+        t_final: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Executes the Deterministic KF.
+        Args:
+            initial_state: Tuple (mean_0, cov_0)
+        """
+        history = []
+        current_mean, current_cov = initial_state
+        t_current = 0.0
+
+        for t_obs, lik_model in self.observations:
+            if not isinstance(lik_model, LinearGaussianLikelihood):
+                raise TypeError(
+                    "LinearKalmanFilter only supports LinearGaussianLikelihood."
+                )
+
+            dt = t_obs - t_current
+
+            # 1. Forecast
+            if dt > 0:
+                f_mean, f_cov = self._predict(current_mean, current_cov, dt)
+            else:
+                f_mean, f_cov = current_mean, current_cov
+
+            # 2. Analysis
+            a_mean, a_cov = self._update(f_mean, f_cov, lik_model)
+
+            history.append(
+                {
+                    "time": t_obs,
+                    "forecast": (f_mean, f_cov),
+                    "analysis": (a_mean, a_cov),
+                }
+            )
+
+            current_mean, current_cov = a_mean, a_cov
+            t_current = t_obs
+
+        # Final Forecast
+        if t_final is not None and t_final > t_current:
+            dt = t_final - t_current
+            f_mean, f_cov = self._predict(current_mean, current_cov, dt)
+            history.append(
+                {
+                    "time": t_final,
+                    "forecast": (f_mean, f_cov),
+                    "analysis": (f_mean, f_cov),
+                }
+            )
+
+        return history
+
+    def reanalyse_initial_condition(
+        self, history: List[Dict[str, Any]]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Back-propagates the final estimate to t=0 by inverting the physics.
+        Exact for deterministic systems.
+        """
+        final_mean, final_cov = history[-1]["analysis"]
+        t_final = history[-1]["time"]
+
+        # Compute propagator for the full duration: x_T = F(T) * x_0
+        F_total = self.get_F(t_final)
+
+        # Invert State: x_0 = F(T)^-1 * x_T
+        smoothed_mean = np.linalg.solve(F_total, final_mean)
+
+        # Invert Covariance: P_0 = F^-1 * P_T * F^-T
+        F_inv = np.linalg.inv(F_total)
+        smoothed_cov = F_inv @ final_cov @ F_inv.T
+
+        return smoothed_mean, smoothed_cov
+
+
+# ---- Ensemble Kalman filter class ----
+
+
+class EnsembleKalmanFilter(AssimilationEngine):
+    """
+    Stochastic Ensemble Kalman Filter (EnKF).
+    Suitable for non-linear dynamics. Uses the "Perturbed Observation" method.
+
+    System Model:
+      x_k = f(x_{k-1})  (Deterministic or Stochastic)
+      y_k = H(x_k) + v_k
+    """
+
+    def __init__(
+        self,
+        eom_func: Callable[[float, np.ndarray, Any], np.ndarray],
+        eom_args: Tuple = (),
+        n_ensemble: int = 50,
+    ):
+        """
+        Args:
+            eom_func: The non-linear physics ODE function.
+            eom_args: Arguments for the physics.
+            n_ensemble: Number of particles to simulate.
+        """
+        super().__init__()
+        self.eom_func = eom_func
+        self.eom_args = eom_args
+        self.n_ensemble = n_ensemble
+
+    def _predict(self, ensemble: np.ndarray, dt: float) -> np.ndarray:
+        """
+        Propagates the full ensemble forward by dt using the non-linear physics.
+        """
+        # solve_ensemble returns shape (N_samples, N_dim, N_time)
+        # We simulate from 0 to dt
+        traj = solve_ensemble(
+            self.eom_func, ensemble, np.array([0, dt]), args=self.eom_args
+        )
+        # Return the state at the end time (index -1)
+        return traj[:, :, -1]
+
+    def _update(
+        self, ensemble: np.ndarray, likelihood: GaussianLikelihood
+    ) -> np.ndarray:
+        """
+        Analysis Step: EnKF Update with perturbed observations.
+        """
+        n_ens, n_dim = ensemble.shape
+        y_obs = likelihood.y_obs
+        R = likelihood.R
+
+        if y_obs is None:
+            raise ValueError("Observation value cannot be None during EnKF update.")
+
+        # 1. Perturb Observations
+        # We generate a cloud of noisy observations centered on the actual data
+        # v ~ N(0, R)
+        noise = np.random.multivariate_normal(np.zeros(len(y_obs)), R, size=n_ens)
+        Y_perturbed = y_obs + noise  # Shape (N_ens, ObsDim)
+
+        # 2. Forecast Observations (H(x))
+        # Map every particle to observation space (handles non-linear H)
+        H_x = likelihood.H(ensemble)  # Shape (N_ens, ObsDim)
+
+        # 3. Calculate Sample Covariances (via Anomalies)
+        # Mean centering
+        x_mean = np.mean(ensemble, axis=0)
+        Hx_mean = np.mean(H_x, axis=0)
+
+        # Anomaly matrices (StateDim x N_ens) and (ObsDim x N_ens)
+        A = (ensemble - x_mean).T
+        Y = (H_x - Hx_mean).T
+
+        # 4. Kalman Gain Construction
+        # P_xy = 1/(N-1) * A @ Y.T
+        # P_yy = 1/(N-1) * Y @ Y.T
+        # K = P_xy * (P_yy + R)^-1
+
+        # Note: The denominator in EnKF is typically (P_yy + R).
+        # Since we use perturbed observations, R is implicitly handled if we just use
+        # the covariance of the innovations, but the standard robust form adds R explicitly.
+
+        factor = 1.0 / (n_ens - 1)
+        P_yy = factor * (Y @ Y.T)
+        S = P_yy + R
+
+        P_xy = factor * (A @ Y.T)
+
+        # Solve K = P_xy @ S^-1
+        try:
+            K_transposed = np.linalg.solve(S, P_xy.T)
+            K = K_transposed.T
+        except np.linalg.LinAlgError:
+            K = P_xy @ np.linalg.pinv(S)
+
+        # 5. Update State
+        # Innovation for each particle: y_perturbed_i - H(x_i)
+        innovations = (Y_perturbed - H_x).T  # (ObsDim, N_ens)
+
+        # Update: x_new = x_old + K * innovation
+        update = K @ innovations  # (StateDim, N_ens)
+
+        return ensemble + update.T
+
+    def run(
+        self,
+        initial_state: Union[Tuple[np.ndarray, np.ndarray], np.ndarray],
+        t_final: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Executes the EnKF.
+
+        Args:
+            initial_state: Either a tuple (mean, cov) to sample from,
+                           OR an explicit ensemble array (N_ens, N_dim).
+        """
+        # 1. Initialize Ensemble
+        if isinstance(initial_state, tuple):
+            mean, cov = initial_state
+            current_ensemble = np.random.multivariate_normal(
+                mean, cov, size=self.n_ensemble
+            )
+        else:
+            current_ensemble = initial_state
+
+        history = []
+        t_current = 0.0
+
+        for t_obs, lik_model in self.observations:
+            dt = t_obs - t_current
+
+            # 1. Forecast
+            if dt > 0:
+                f_ens = self._predict(current_ensemble, dt)
+            else:
+                f_ens = current_ensemble
+
+            # 2. Analysis
+            a_ens = self._update(f_ens, lik_model)
+
+            # Store Statistics (Mean, Cov) for history, rather than full ensemble
+            # (Saves memory and keeps interface consistent with KF)
+            f_stats = (np.mean(f_ens, axis=0), np.cov(f_ens, rowvar=False))
+            a_stats = (np.mean(a_ens, axis=0), np.cov(a_ens, rowvar=False))
+
+            history.append(
+                {
+                    "time": t_obs,
+                    "forecast": f_stats,
+                    "analysis": a_stats,
+                    "ensemble_analysis": a_ens,  # Keep full final ensemble if needed
+                }
+            )
+
+            current_ensemble = a_ens
+            t_current = t_obs
+
+        # Final Forecast
+        if t_final is not None and t_final > t_current:
+            dt = t_final - t_current
+            f_ens = self._predict(current_ensemble, dt)
+            f_stats = (np.mean(f_ens, axis=0), np.cov(f_ens, rowvar=False))
+
+            history.append(
+                {
+                    "time": t_final,
+                    "forecast": f_stats,
+                    "analysis": f_stats,
+                    "ensemble_analysis": f_ens,
+                }
+            )
+
+        return history
+
+    def reanalyse_initial_condition(
+        self, history: List[Dict[str, Any]]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Reanalysis for deterministic physics.
+        Takes the MEAN of the final analysis ensemble and integrates it BACKWARDS.
+        """
+        # Get final ensemble mean
+        final_mean, final_cov = history[-1]["analysis"]
+        t_final = history[-1]["time"]
+
+        # Define Reverse Physics
+        def reverse_eom(t, y, *args):
+            return -1.0 * np.array(self.eom_func(t, y, *args))
+
+        # Integrate backwards: x_T -> x_0
+        sol = solve_trajectory(
+            self.eom_func,  # We use normal physics but negative time in solve_trajectory logic
+            final_mean,
+            np.array([t_final, 0.0]),  # Backwards time span
+            args=self.eom_args,
+        )
+
+        smoothed_mean = sol[:, -1]
+
+        # Note: Back-propagating covariance for EnKF is complex.
+        # For this simple course, we simply return the propagated mean
+        # and a placeholder covariance (or the initial covariance if available).
+        # We return Zeros for covariance to indicate it wasn't computed.
+        smoothed_cov = np.zeros_like(final_cov)
+
+        return smoothed_mean, smoothed_cov
 
 
 # --- Generic Visualisation Tools ---
@@ -975,3 +1332,164 @@ def display_animation_html(anim: Any) -> HTML:
     """
     print("Rendering animation...")
     return HTML(anim.to_jshtml())
+
+
+# --- Visualisation (Kalman Filters) ---
+
+
+def plot_gaussian_ellipsoid(
+    mean: np.ndarray,
+    cov: np.ndarray,
+    ax: plt.Axes,
+    n_std: float = 2.0,
+    dims: Tuple[int, int] = (0, 1),
+    **kwargs,
+):
+    """
+    Plots a 2D covariance ellipse representing the Gaussian distribution.
+
+    Args:
+        mean: Mean vector (N,).
+        cov: Covariance matrix (N, N).
+        ax: Matplotlib axes.
+        n_std: Number of standard deviations for the ellipse radius.
+        dims: Tuple of (x_dim, y_dim) indices.
+        **kwargs: Passed to ax.plot (color, linestyle, etc).
+    """
+    # Extract 2D slice
+    idx = list(dims)
+    mean_2d = mean[idx]
+    cov_2d = cov[np.ix_(idx, idx)]
+
+    # Calculate Eigenvalues and Eigenvectors
+    vals, vecs = np.linalg.eigh(cov_2d)
+
+    # Order them by magnitude (largest first)
+    order = vals.argsort()[::-1]
+    vals, vecs = vals[order], vecs[:, order]
+
+    # Calculate Angle of Rotation
+    theta = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
+
+    # Width and Height (eigenvalues are variance, so sqrt for std)
+    width, height = 2 * n_std * np.sqrt(vals)
+
+    # Create Ellipse Patch
+    from matplotlib.patches import Ellipse
+
+    ell = Ellipse(
+        xy=mean_2d, width=width, height=height, angle=theta, fill=False, **kwargs
+    )
+
+    ax.add_patch(ell)
+    # Plot center mean
+    ax.plot(mean_2d[0], mean_2d[1], marker="+", markersize=10, **kwargs)
+
+
+def plot_kf_step(
+    forecast_stats: Tuple[np.ndarray, np.ndarray],
+    analysis_stats: Tuple[np.ndarray, np.ndarray],
+    dims: Tuple[int, int] = (0, 1),
+    ax: Optional[plt.Axes] = None,
+    title: Optional[str] = None,
+):
+    """
+    Visualises a single Kalman Filter step (Forecast vs Analysis).
+    Plots both Gaussian ellipsoids (2-sigma).
+
+    Args:
+        forecast_stats: (mean, cov) tuple for the prior.
+        analysis_stats: (mean, cov) tuple for the posterior.
+        dims: Dimensions to plot.
+    """
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    # Unpack
+    f_mean, f_cov = forecast_stats
+    a_mean, a_cov = analysis_stats
+
+    # Plot Forecast (Blue, Dashed)
+    plot_gaussian_ellipsoid(
+        f_mean,
+        f_cov,
+        ax,
+        n_std=2.0,
+        dims=dims,
+        color="blue",
+        linestyle="--",
+        label="Forecast (Prior)",
+    )
+
+    # Plot Analysis (Red, Solid)
+    plot_gaussian_ellipsoid(
+        a_mean,
+        a_cov,
+        ax,
+        n_std=2.0,
+        dims=dims,
+        color="red",
+        linestyle="-",
+        label="Analysis (Posterior)",
+    )
+
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_xlabel(f"State Dimension {dims[0]}")
+    ax.set_ylabel(f"State Dimension {dims[1]}")
+    if title:
+        ax.set_title(title)
+
+    return ax
+
+
+def plot_tracker_1d(
+    history: List[Dict[str, Any]],
+    dim: int = 0,
+    ground_truth: Optional[Dict[str, Any]] = None,
+    ax: Optional[plt.Axes] = None,
+):
+    """
+    Plots the time-evolution of a single state variable with uncertainty bounds.
+
+    Args:
+        history: The output list from kf.run().
+        dim: Index of the state dimension to plot.
+        ground_truth: Optional dict from generate_synthetic_data to compare against.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 5))
+
+    # Extract Time Series
+    times = np.array([step["time"] for step in history])
+
+    # Extract Analysis Means and StdDevs
+    means = np.array([step["analysis"][0][dim] for step in history])
+    covs = [step["analysis"][1] for step in history]
+    stds = np.array([np.sqrt(c[dim, dim]) for c in covs])
+
+    # Plot Estimate
+    ax.plot(times, means, "k-", label="KF Estimate")
+
+    # Plot Uncertainty (2-sigma shaded region)
+    ax.fill_between(
+        times,
+        means - 2 * stds,
+        means + 2 * stds,
+        color="gray",
+        alpha=0.3,
+        label=r"$\pm 2\sigma$ Uncertainty",
+    )
+
+    # Plot Ground Truth if available
+    if ground_truth:
+        t_true = ground_truth["t_ground_truth"]
+        x_true = ground_truth["state_ground_truth"][dim]
+        ax.plot(t_true, x_true, "g--", lw=1, label="Ground Truth")
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel(f"State Dimension {dim}")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    return ax
