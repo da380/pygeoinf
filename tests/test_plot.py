@@ -10,7 +10,7 @@ import scipy.stats as stats
 from unittest.mock import Mock, patch
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions
+from pygeoinf.visualization import plot_1d_distributions, plot_corner_distributions
 
 # Use a non-interactive backend for testing
 matplotlib.use("Agg")

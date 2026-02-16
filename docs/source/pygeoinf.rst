@@ -141,10 +141,10 @@ pygeoinf.parallel module
    :undoc-members:
    :show-inheritance:
 
-pygeoinf.plot module
---------------------
+pygeoinf.visualization module
+-------------------------------
 
-.. automodule:: pygeoinf.plot
+.. automodule:: pygeoinf.visualization
    :members:
    :undoc-members:
    :show-inheritance:
