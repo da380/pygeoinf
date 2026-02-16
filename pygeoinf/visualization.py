@@ -4,10 +4,12 @@ import matplotlib.figure
 import matplotlib.axes
 import numpy as np
 import scipy.stats as stats
+import scipy.optimize
+import scipy.spatial
 from typing import Union, List, Optional, Tuple, TYPE_CHECKING
 
 from .hilbert_space import EuclideanSpace
-from .subsets import Subset
+from .subsets import Subset, PolyhedralSet
 
 if TYPE_CHECKING:
     from .subspaces import AffineSubspace
@@ -707,10 +709,30 @@ class SubspaceSlicePlotter:
             ax: Optional existing Axes
 
         Returns:
-            (fig, ax, mask) tuple
+            (fig, ax, payload) tuple
+
+            By default, payload is the boolean membership mask evaluated on the
+            parameter grid.
+
+            For `PolyhedralSet`, a fast exact method is used (no grid sampling)
+            and the payload is instead geometric:
+            - 1D: array([u_lo, u_hi]) interval endpoints
+            - 2D: array of polygon vertices with shape (n_vertices, 2)
+            - 3D: array of polytope vertices with shape (n_vertices, 3)
         """
         # Parse bounds for this dimension
         parsed_bounds = self.parse_bounds(bounds)
+
+        # Fast path: exact affine slice of polyhedral sets.
+        # This is dramatically faster and avoids rasterization artifacts.
+        if isinstance(self.subset, PolyhedralSet):
+            return self._plot_polyhedral_exact(
+                parsed_bounds,
+                cmap=cmap,
+                color=color,
+                show_plot=show_plot,
+                ax=ax,
+            )
 
         # Generate parameter grid
         param_grid = self._generate_param_grid(parsed_bounds)
@@ -728,6 +750,259 @@ class SubspaceSlicePlotter:
         elif self.dimension == 3:
             return self._render_3d(param_grid, mask, parsed_bounds, cmap,
                                    show_plot, ax)
+
+    # ===========================
+    # Polyhedral Fast Path
+    # ===========================
+
+    def _polyhedral_inequalities_in_params(self, bounds: tuple) -> tuple[np.ndarray, np.ndarray]:
+        """Build linear inequalities A u <= b for the polyhedral slice within plot bounds.
+
+        For each ambient halfspace <a, x> <= off (or >=), with x = x0 + sum_j u_j v_j,
+        we get a^T V u <= off - <a, x0>. Bound constraints are added to ensure a bounded
+        intersection (required by halfspace-intersection routines).
+        """
+        assert isinstance(self.subset, PolyhedralSet)
+
+        k = self.dimension
+        A_rows: list[np.ndarray] = []
+        b_rows: list[float] = []
+
+        x0 = self.translation
+        V = self.tangent_basis
+
+        for hs in self.subset.half_spaces:
+            a = hs.normal_vector
+            off = hs.offset
+
+            # Reduce to parameter space: a_param[j] = <a, v_j>
+            a_param = np.array([self.domain.inner_product(a, vj) for vj in V], dtype=float)
+            b_param = float(off - self.domain.inner_product(a, x0))
+
+            # Convert >= to <= by multiplying by -1
+            if hs.inequality_type == ">=":
+                a_param = -a_param
+                b_param = -b_param
+
+            A_rows.append(a_param)
+            b_rows.append(b_param)
+
+        # Add bounding box in parameter coordinates so the slice is bounded.
+        if k == 1:
+            (u_min, u_max) = bounds
+            A_rows.extend([np.array([1.0]), np.array([-1.0])])
+            b_rows.extend([float(u_max), float(-u_min)])
+        elif k == 2:
+            (u_min, u_max, v_min, v_max) = bounds
+            A_rows.extend(
+                [
+                    np.array([1.0, 0.0]),
+                    np.array([-1.0, 0.0]),
+                    np.array([0.0, 1.0]),
+                    np.array([0.0, -1.0]),
+                ]
+            )
+            b_rows.extend([float(u_max), float(-u_min), float(v_max), float(-v_min)])
+        else:
+            (u_min, u_max, v_min, v_max, w_min, w_max) = bounds
+            A_rows.extend(
+                [
+                    np.array([1.0, 0.0, 0.0]),
+                    np.array([-1.0, 0.0, 0.0]),
+                    np.array([0.0, 1.0, 0.0]),
+                    np.array([0.0, -1.0, 0.0]),
+                    np.array([0.0, 0.0, 1.0]),
+                    np.array([0.0, 0.0, -1.0]),
+                ]
+            )
+            b_rows.extend(
+                [
+                    float(u_max),
+                    float(-u_min),
+                    float(v_max),
+                    float(-v_min),
+                    float(w_max),
+                    float(-w_min),
+                ]
+            )
+
+        A = np.vstack(A_rows).astype(float)
+        b = np.array(b_rows, dtype=float)
+        return A, b
+
+    def _chebyshev_center(self, A: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, float]:
+        """Compute a strictly interior point via Chebyshev center LP.
+
+        Maximizes radius r such that a_i^T x + r ||a_i|| <= b_i.
+        Returns (x, r). If r <= 0, the feasible region may be empty or lower-dimensional.
+        """
+        k = A.shape[1]
+        norms = np.linalg.norm(A, axis=1)
+        c = np.zeros(k + 1)
+        c[-1] = -1.0  # maximize r -> minimize -r
+        A_ub = np.hstack([A, norms[:, None]])
+        b_ub = b
+        lp_bounds = [(None, None)] * k + [(0.0, None)]
+        res = scipy.optimize.linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=lp_bounds, method="highs")
+        if not res.success:
+            raise ValueError(f"Failed to find an interior point for polyhedral slice: {res.message}")
+        x = np.array(res.x[:k], dtype=float)
+        r = float(res.x[-1])
+        return x, r
+
+    def _plot_polyhedral_exact(
+        self,
+        bounds: tuple,
+        *,
+        cmap: str,
+        color: str,
+        show_plot: bool,
+        ax: Optional[matplotlib.axes.Axes],
+    ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+        """Exact plotting for PolyhedralSet slices in 1D/2D/3D (within bounds)."""
+        A, b = self._polyhedral_inequalities_in_params(bounds)
+        k = self.dimension
+
+        if k == 1:
+            (u_min, u_max) = bounds
+            lo = float(u_min)
+            hi = float(u_max)
+            eps = 1e-14
+            for ai, bi in zip(A, b):
+                a0 = float(ai[0])
+                if abs(a0) < eps:
+                    if bi < 0.0:
+                        raise ValueError("Polyhedral slice is empty within bounds.")
+                    continue
+                val = float(bi / a0)
+                if a0 > 0:
+                    hi = min(hi, val)
+                else:
+                    lo = max(lo, val)
+            if lo > hi:
+                raise ValueError("Polyhedral slice is empty within bounds.")
+
+            if ax is None:
+                fig, ax = plt.subplots(figsize=(10, 2))
+            else:
+                fig = ax.figure
+
+            # Draw as a single interval bar (convex intersection with a line).
+            try:
+                height_data = self._pixel_to_data_height(ax, self.bar_pixel_height)
+            except Exception:
+                fig.canvas.draw()
+                height_data = self._pixel_to_data_height(ax, self.bar_pixel_height)
+
+            ax.barh(
+                0,
+                hi - lo,
+                left=lo,
+                height=height_data,
+                color=color,
+                alpha=self.alpha,
+                edgecolor="black",
+                linewidth=1.5,
+            )
+            ax.set_xlim(u_min, u_max)
+            ax.set_ylim(-0.5, 0.5)
+            ax.set_xlabel("Line Parameter (Local Coord 1)")
+            ax.set_title(f"1D Slice (Exact): {self.subset.__class__.__name__}")
+            ax.set_yticks([])
+            ax.grid(True, alpha=0.3, axis="x")
+
+            if show_plot:
+                plt.show()
+
+            return fig, ax, np.array([lo, hi], dtype=float)
+
+        # 2D / 3D use halfspace intersection (bounded by the added box constraints)
+        interior, radius = self._chebyshev_center(A, b)
+        if radius <= 1e-10:
+            # Lower-dimensional intersection or numerical degeneracy; fall back to oracle.
+            # (This keeps behavior usable even for thin/degenerate slices.)
+            param_grid = self._generate_param_grid(bounds)
+            mask = self.sample_membership(param_grid)
+            if k == 2:
+                return self._render_2d(param_grid, mask, bounds, cmap, show_plot, ax)
+            raise NotImplementedError(
+                "3D polyhedral slice appears lower-dimensional; exact rendering is ambiguous. "
+                "Try widening bounds or use 2D slicing, or implement a dedicated degeneracy handler."
+            )
+
+        halfspaces = np.hstack([A, -b[:, None]])  # a^T x - b <= 0
+        hs = scipy.spatial.HalfspaceIntersection(halfspaces, interior)
+        pts = np.asarray(hs.intersections, dtype=float)
+        if pts.size == 0:
+            raise ValueError("Polyhedral slice has no vertices within bounds.")
+
+        facecolor = plt.get_cmap(cmap)(0.6)
+
+        if k == 2:
+            if ax is None:
+                fig, ax = plt.subplots(figsize=(6, 6))
+            else:
+                fig = ax.figure
+
+            hull = scipy.spatial.ConvexHull(pts)
+            verts = pts[hull.vertices]
+            centroid = verts.mean(axis=0)
+            angles = np.arctan2(verts[:, 1] - centroid[1], verts[:, 0] - centroid[0])
+            verts = verts[np.argsort(angles)]
+
+            from matplotlib.patches import Polygon
+
+            poly = Polygon(
+                verts,
+                closed=True,
+                facecolor=facecolor,
+                edgecolor="k",
+                linewidth=1.0,
+                alpha=self.alpha,
+            )
+            ax.add_patch(poly)
+
+            (u_min, u_max, v_min, v_max) = bounds
+            ax.set_xlim(u_min, u_max)
+            ax.set_ylim(v_min, v_max)
+            ax.set_aspect("equal", adjustable="box")
+            ax.set_xlabel("Local Param 1")
+            ax.set_ylabel("Local Param 2")
+            ax.set_title(f"2D Slice (Exact): {self.subset.__class__.__name__}")
+
+            if show_plot:
+                plt.show()
+
+            return fig, ax, verts
+
+        # k == 3
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+        if ax is None:
+            fig = plt.figure(figsize=(7, 6))
+            ax3 = fig.add_subplot(111, projection="3d")
+        else:
+            fig = ax.figure
+            ax3 = ax
+
+        hull = scipy.spatial.ConvexHull(pts)
+        triangles = pts[hull.simplices]
+        poly3d = Poly3DCollection(triangles, alpha=self.alpha, facecolor=facecolor, edgecolor="k", linewidths=0.5)
+        ax3.add_collection3d(poly3d)
+
+        (u_min, u_max, v_min, v_max, w_min, w_max) = bounds
+        ax3.set_xlim(u_min, u_max)
+        ax3.set_ylim(v_min, v_max)
+        ax3.set_zlim(w_min, w_max)
+        ax3.set_xlabel("Local Param 1")
+        ax3.set_ylabel("Local Param 2")
+        ax3.set_zlabel("Local Param 3")
+        ax3.set_title(f"3D Slice (Exact): {self.subset.__class__.__name__}")
+
+        if show_plot:
+            plt.show()
+
+        return fig, ax3, pts
 
 
 def plot_corner_distributions(

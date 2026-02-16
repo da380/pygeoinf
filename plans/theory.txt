@@ -1,0 +1,2671 @@
+\documentclass[11pt]{article}
+
+% --- Typography & encoding ---
+\usepackage[final]{microtype}
+\usepackage[T1]{fontenc}
+
+% --- Math packages ---
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{bm}
+
+% --- References & layout ---
+\usepackage{geometry}
+\usepackage{natbib}
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink,capitalise]{cleveref}
+
+% --- Diagrams (optional) ---
+\usepackage{tikz-cd}
+\usepackage{caption}
+
+\geometry{margin=1in}
+
+% --- Theorem-like environments ---
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{lemma}{Lemma}
+
+
+\theoremstyle{remark}
+\newtheorem*{remark}{\textbf{Remark}}
+
+% --- Notation: spaces & maps ---
+\newcommand{\modelspace}{\mathcal{M}}     % model space (Banach)
+\newcommand{\dataspace}{\mathcal{D}}      % data space (finite-dim)
+\newcommand{\propertyspace}{\mathcal{P}}  % property space (finite-dim)
+
+\newcommand{\Tau}{\mathcal{T}}            % property map
+\newcommand{\im}{\mathrm{im}}             % image
+
+% --- Measures / sets ---
+\newcommand{\Vdata}{\mathcal{V}_{\dataspace}} % data-confidence set
+\newcommand{\Bset}{\mathcal{B}}               % prior model set
+\newcommand{\Fset}{\mathcal{F}}
+\newcommand{\Uset}{\mathcal{U}}
+
+% --- Other ---
+\newcommand{\dt}{\tilde{\bm d}}
+
+% --- Discretization (optional) ---
+\newcommand{\Vspace}{\mathbb{V}_N}
+\newcommand{\mass}{\mathbf{M}}
+
+% --- Inner products & pairings ---
+\newcommand{\ipM}[2]{\left( #1, #2 \right)_{\modelspace}}
+\newcommand{\ipV}[2]{\left( #1, #2 \right)_{\Vspace}}
+\newcommand{\ipD}[2]{\left( #1, #2 \right)_{\dataspace}}
+\newcommand{\ipP}[2]{\left( #1, #2 \right)_{\propertyspace}}
+\newcommand{\pair}[2]{\langle #1, #2\rangle} % dual pairing
+
+% --- Operators ---
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\title{DLI as Convex Analysis problems}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{AI statement}
+
+AI has been used in the creation of this document. A ChatGPT project was created with Rockafellar’s Convex Analysis \citep{rockafellar2015convex} book uploaded into the general context of the project. A mix of ChatGPT 5.2 and ChatGPT 5.2 Thinking was used.
+
+AI was used in several ways. It was used as a companion/helper for learning from \citet{rockafellar2015convex} and for generating ideas, crystallizing ideas, curating ideas, and testing ideas.
+
+AI was also used for drafting and editing the text. The general workflow in this case included the generation of a rough text by the human, followed by analysis with AI (using AI to challenge the initial human ideas), and a back-and-forth refactoring process between the human and the AI.
+
+The human author has checked, to the best of their knowledge, the truth value of the content of this document. As such, any mistakes in this document should be attributed entirely to the human.
+
+This document should not be used for training AI models.
+\section{Introduction}
+
+\paragraph{Spaces and maps.}
+Let \(\modelspace\) be a (separable) Banach space of models.
+Let \(\dataspace=\mathbb{R}^{N_d}\) be the data space with \(N_d\in\mathbb{N}\), and let \(\propertyspace=\mathbb{R}^{N_p}\) be the property space with \(N_p\in\mathbb{N}\).
+We consider bounded linear maps
+\begin{equation}\label{eq:intro-maps}
+ G :\modelspace\to\dataspace,
+\qquad
+\Tau:\modelspace\to\propertyspace.
+\end{equation}
+We do not assume injectivity in general; typically \(\ker G \neq\{0\}\) and \(\ker\Tau\neq\{0\}\).
+(When convenient, one may assume \(\im G =\dataspace\) so that \( G \) is surjective.)
+
+\paragraph{Noisy observation model.}
+We observe a data vector
+\begin{equation}\label{eq:intro-observation}
+\dt \;=\;  G \,\bar m \;+\; \bm{\eta},
+\end{equation}
+where \(\bar m\in\modelspace\) is the (unknown) true model and \(\bm{\eta}\in\dataspace\) is an unknown noise realization.
+
+\paragraph{Prior and data-confidence sets.}
+Let \(\Bset\subset\modelspace\) be a convex set encoding prior information on the model
+(e.g.\ a Banach ball \(\{m:\|m-m_0\|_{\modelspace}\le M\}\)).
+Let \(\Vdata\subset\dataspace\) be a convex set (e.g.\ a likelihood level set) such that,
+under the noise law,
+\begin{equation}\label{eq:intro-noise-confidence}
+\mathbb P(\bm{\eta}\in\Vdata)\approx 1-\alpha.
+\end{equation}
+
+\paragraph{Goal.}
+We seek the set of \emph{admissible properties}
+\begin{equation}\label{eq:intro-U-F}
+\Uset
+\;:=\;
+\Tau(\Fset),
+\qquad
+\Fset
+\;:=\;
+\Big\{\, m\in\Bset \;\big|\; \exists\,\bm{\eta}\in\Vdata
+\text{ with }  G  m=\dt-\bm{\eta} \,\Big\},
+\end{equation}
+i.e.\ the image under \(\Tau\) of all models that satisfy the prior and fit the data within the confidence set.
+
+\paragraph{Fibers.}
+For each \(\bm d\in\dataspace\), define the \emph{data fiber}
+\begin{equation}\label{eq:intro-data-fiber}
+\Fset_{\bm d}
+\;:=\;
+\{\, m\in\modelspace \;|\;  G  m= \bm d \,\}.
+\end{equation}
+Then the feasible model set can be written as
+\begin{equation}\label{eq:intro-F-union}
+\Fset
+\;=\;
+\bigcup_{\bm d^\star\in \dt-\Vdata}
+\big( \Fset_{\bm d^\star}\cap \Bset \big),
+\end{equation}
+or equivalently as
+\begin{equation}\label{eq:intro-F-preimage}
+\Fset
+\;=\;
+\Bset \;\cap\;  G ^{-1}(\dt-\Vdata).
+\end{equation}
+The admissible property set is therefore
+\begin{equation}\label{eq:intro-U-final}
+\boxed{
+\Uset
+\;=\;
+\Tau\big(\Bset \cap  G ^{-1}(\dt-\Vdata)\big).
+}
+\end{equation}
+
+\begin{remark}[Convexity and closedness]
+If \(\Bset\) and \(\Vdata\) are closed and convex, then \(\Fset\) defined in
+\eqref{eq:intro-F-preimage} is closed and convex in \(\modelspace\).
+It is known that \(\Uset=\Tau(\Fset)\) is convex in \(\propertyspace\),
+but closedness does not come for free.
+If the Banach space is reflexive (Hilbert case, for example), then closedness follows automatically;
+otherwise additional structure is required.
+In what follows, we assume that such structure is encoded in the choice of Banach space.
+\end{remark}
+
+\paragraph{Property fibers (optional).}
+For \(\bm p\in\propertyspace\), the \emph{property fiber} is
+\begin{equation}\label{eq:intro-property-fiber}
+\Tau^{-1}(\bm p)
+\;=\;
+\{\,m\in\modelspace:\Tau m= \bm p\,\}.
+\end{equation}
+Then \(\bm p\in\Uset\) if and only if
+\begin{equation}\label{eq:intro-property-membership}
+\Tau^{-1}(\bm p)
+\ \cap\ \Bset
+\ \cap\  G ^{-1}(\dt-\Vdata)
+\ \neq\ \varnothing.
+\end{equation}
+
+
+\section{Dual support characterization of the admissible property set}
+\label{sec:dual-support}
+
+Recall the admissible property set
+\begin{equation}
+\mathcal{U}
+\;=\;
+\Tau\big(\Bset \cap  G ^{-1}(\dt-\Vdata)\big)
+\;\subset\;\propertyspace,
+\end{equation}
+For \(\bm q\in\propertyspace'\) (the topological dual), the \emph{support function} of \(\Uset\) is
+\[
+h_{\Uset}(\bm q)\;:=\;\sup_{\bm p\in \Uset }\pair{\bm q}{\bm p}.
+\]
+
+\paragraph{Statement.}
+Let \(\sigma_{\Vdata}(\bm{\lambda}):=\sup_{\bm{\eta}\in\Vdata}\pair{\bm{\lambda}}{\bm{\eta}}\) be the support function of the data set and \(\sigma_{\Bset}(\xi) = \sup_{m \in \Bset}\pair{\xi}{m}\) be the model constrain support function, then we can show that (see appendix \ref{appendix:master_formula_derivation})
+\begin{equation}\label{eq:dual-support-master}
+\boxed{
+    h_{\Uset}(\bm q) = \inf_{\bm{\lambda} \in \dataspace'} \{ \pair{\bm{\lambda}}{\dt} + \sigma_{\Bset}(\Tau' \bm{q} - G' \bm{\lambda}) + \sigma_{\Vdata}(- \bm{\lambda})\}
+    }
+\end{equation}
+
+The \emph{lower} support obeys
+\begin{equation}
+\inf_{\bm p\in\Uset}\pair{\bm q}{\bm p}\;=\;-\,h_{\Uset}(-\bm q).
+\end{equation}
+
+We will refer to this as the \emph{master dual equation} because, as we shall see, many other well known formulas corresponding to various linear inference methods can be derived from this equation. See appendix \ref{appendix:master_formula_derivation} for a derivation.
+
+\subsection{Consequences}
+
+\paragraph{Membership test (separating hyperplanes).}
+A property \(\bm p_s \in \propertyspace\) lies in the closure of the admissible set
+\(\overline{\Uset}\) if and only if
+\begin{equation}\label{eq:membership-test}
+\pair{\bm q}{\bm p_s}
+\;\le\;
+h_{\Uset}(\bm q)
+\qquad
+\text{for all } \bm q \in \propertyspace'.
+\end{equation}
+If \(\Uset\) is closed and convex, then \eqref{eq:membership-test} is equivalent to
+\(\bm p_s \in \Uset\).
+
+Any minimizer \(\bm{\lambda}^\star(\bm q)\) of the inner problem in
+\eqref{eq:dual-support-master} is called an \emph{optimal certificate}
+for the directional bound along \(\bm q\).
+Any other choice of \(\bm{\lambda}\in\dataspace'\) yields a more conservative
+inequality in \eqref{eq:membership-test} and is referred to simply as a
+\emph{certificate}.
+In practice, non-optimal certificates may be sufficient when they admit
+closed-form expressions or when solving for \(\bm{\lambda}^\star(\bm q)\)
+is computationally expensive.
+
+\paragraph{Directional extrema.}
+The maximal and minimal attainable values of the linear functional
+\(\pair{\bm q}{\cdot}\) on \(\Uset\) are given by
+\begin{equation}\label{eq:directional-extrema}
+\sup_{\bm p\in\Uset}\pair{\bm q}{\bm p}
+\;=\;
+h_{\Uset}(\bm q),
+\qquad
+\inf_{\bm p\in\Uset}\pair{\bm q}{\bm p}
+\;=\;
+-\,h_{\Uset}(-\bm q).
+\end{equation}
+
+Thus, the master dual equation allows one to obtain one--sided or two--sided
+bounds in individual directions of the property space.
+In favorable cases, these directional bounds can be combined to construct
+a well-defined geometric enclosure of \(\Uset\).
+
+\paragraph{Monotonicity and translations.}
+If either the data--confidence set \(\Vdata\) or the model constraint set
+\(\Bset\) is enlarged (in the sense of set inclusion), then the support function
+\(h_{\Uset}\) increases pointwise:
+\begin{equation}\label{eq:monotonicity}
+\Bset_1 \subset \Bset_2 \;\;\text{or}\;\; \Vdata^1 \subset \Vdata^2
+\quad\Longrightarrow\quad
+h_{\Uset_1}(\bm q) \le h_{\Uset_2}(\bm q)
+\quad \text{for all } \bm q \in \propertyspace'.
+\end{equation}
+
+If the model constraint set is translated by a vector \(\Delta m \in \modelspace\),
+i.e.\ \(\Bset \mapsto \Bset + \Delta m\), then the admissible property set
+\(\Uset\) is translated by \(\Tau(\Delta m)\), and the support function satisfies
+\begin{equation}\label{eq:model-translation}
+h_{\Uset}(\bm q)
+\;\mapsto\;
+h_{\Uset}(\bm q) + \pair{\Tau' \bm q}{\Delta m}.
+\end{equation}
+
+Similarly, consider a \emph{joint translation} of the observed data and the
+data--confidence set by a vector \(\Delta \bm d \in \dataspace\), namely
+\begin{equation}\label{eq:data-joint-translation}
+\tilde{\bm d} \;\mapsto\; \tilde{\bm d} + \Delta \bm d,
+\qquad
+\Vdata \;\mapsto\; \Vdata + \Delta \bm d.
+\end{equation}
+Such a transformation leaves the feasibility condition
+\(G m + \bm{\eta} = \tilde{\bm d}\) invariant, since
+\(\bm{\eta} \in \Vdata\) if and only if
+\(\bm{\eta} + \Delta \bm d \in \Vdata + \Delta \bm d\).
+
+On the dual side, the master functional becomes
+\begin{align}\label{eq:data-translation-dual}
+&\pair{\bm{\lambda}}{\tilde{\bm d} + \Delta \bm d}
++
+\sigma_{\Vdata + \Delta \bm d}(-\bm{\lambda})
+\\
+&\qquad=
+\pair{\bm{\lambda}}{\tilde{\bm d}}
++
+\pair{\bm{\lambda}}{\Delta \bm d}
++
+\sigma_{\Vdata}(-\bm{\lambda})
+-
+\pair{\bm{\lambda}}{\Delta \bm d},
+\nonumber
+\end{align}
+where we used the translation property of the support function
+\(\sigma_{\Vdata + \Delta \bm d}(\bm{\lambda})
+=
+\sigma_{\Vdata}(\bm{\lambda})
++
+\pair{\bm{\lambda}}{\Delta \bm d}\).
+
+The additional linear terms cancel exactly, so the dual objective — and hence
+the support function \(h_{\Uset}\) — is unchanged:
+\begin{equation}\label{eq:data-translation-invariance}
+h_{\Uset}(\bm q)
+\;\mapsto\;
+h_{\Uset}(\bm q).
+\end{equation}
+Therefore, \(h_{\Uset}\) is invariant under joint translations of the observed
+data and the data--confidence set.
+
+
+\subsection*{Numerical recipe}
+
+Given a collection of directions
+\(\bm q_1,\dots,\bm q_K \in \propertyspace'\), proceed as follows:
+\begin{enumerate}
+\item
+For each \(k=1,\dots,K\), minimize over \(\bm{\lambda}\in\dataspace'\)
+the convex function
+\begin{equation}\label{eq:numerical-phi}
+\phi_{\bm q_k}(\bm{\lambda})
+\;:=\;
+\pair{\bm{\lambda}}{\tilde{\bm d}}
++
+\sigma_{\Bset}\!\bigl(\Tau' \bm q_k - G' \bm{\lambda}\bigr)
++
+\sigma_{\Vdata}(-\bm{\lambda}).
+\end{equation}
+
+\item
+Record the support value
+\begin{equation}\label{eq:numerical-support}
+h_{\Uset}(\bm q_k)
+=
+\inf_{\bm{\lambda}\in\dataspace'}
+\phi_{\bm q_k}(\bm{\lambda}).
+\end{equation}
+
+\item
+Use the collection \(\{(\bm q_k,h_{\Uset}(\bm q_k))\}_{k=1}^K\) to form
+directional bounds, to test membership via
+\(\pair{\bm q_k}{\bm p_s}\le h_{\Uset}(\bm q_k)\),
+or to fit a polyhedral or ellipsoidal outer approximation of \(\Uset\).
+\end{enumerate}
+
+
+\section{Model--space constraints and their effect on the master dual equation}
+\label{sec:model_constraints}
+
+A key advantage of the support--function formulation is that it cleanly
+separates \emph{modeling choices} from \emph{computational machinery}.
+All information about the model prior enters the master dual equation
+\eqref{eq:dual-support-master} exclusively through the support function
+\(\sigma_{\Bset}\).
+Consequently, different convex constraints on the model space \(\modelspace\)
+lead to different but structurally similar dual formulations.
+
+In this section we survey common classes of convex model--space constraints
+and describe how each modifies the master dual equation, while remaining
+within the Banach--space framework.
+
+\subsection{General form of the master equation}
+
+Recall the general Banach--space master dual equation
+\begin{equation}\label{eq:master-general}
+h_{\Uset}(\bm q)
+=
+\inf_{\bm{\lambda}\in\dataspace'}
+\Big\{
+\pair{\bm{\lambda}}{\tilde{\bm d}}
++
+\sigma_{\Bset}\!\big(\Tau' \bm q - G' \bm{\lambda}\big)
++
+\sigma_{\Vdata}(-\bm{\lambda})
+\Big\},
+\end{equation}
+where \(\Bset\subset\modelspace\) and \(\Vdata\subset\dataspace\) are convex sets.
+The role of the model constraint is therefore entirely encoded in the map
+\(\xi \mapsto \sigma_{\Bset}(\xi)\).
+
+\subsection{Affine subspaces and linear constraints}
+
+Suppose the model constraint is an affine subspace
+\begin{equation}\label{eq:affine-constraint}
+\Bset = \{\, m\in\modelspace : A m = b \,\},
+\end{equation}
+where \(A:\modelspace\to Y\) is linear and \(b\in Y\).
+
+The support function of \(\Bset\) is
+\begin{equation}\label{eq:affine-support}
+\sigma_{\Bset}(\xi)
+=
+\begin{cases}
+\pair{\xi}{m_0}, & \xi \in (\ker A)^\perp, \\
++\infty, & \text{otherwise},
+\end{cases}
+\end{equation}
+where \(m_0\) is any fixed element of \(\Bset\).
+
+In the master equation \eqref{eq:master-general}, this enforces the dual
+compatibility condition
+\begin{equation}\label{eq:affine-dual-condition}
+\Tau' \bm q - G' \bm{\lambda} \in (\ker A)^\perp,
+\end{equation}
+and reduces the dual optimization to a constrained problem over
+\(\bm{\lambda}\) satisfying \eqref{eq:affine-dual-condition}.
+Affine constraints therefore manifest as \emph{hard feasibility conditions}
+in the dual space.
+
+\subsection{Norm balls and gauge constraints}
+
+A common choice is a constraint of the form
+\begin{equation}\label{eq:norm-ball}
+\Bset = \{\, m\in\modelspace : \|m\|_{\mathcal{X}} \le M \,\},
+\end{equation}
+where \(\|\cdot\|_{\mathcal{X}}\) is a Banach norm or, more generally, a gauge.
+
+The support function is then
+\begin{equation}\label{eq:norm-ball-support}
+\sigma_{\Bset}(\xi) = M\,\|\xi\|_{\mathcal{X}'},
+\end{equation}
+where \(\|\cdot\|_{\mathcal{X}'}\) is the dual norm.
+Substituting \eqref{eq:norm-ball-support} into \eqref{eq:master-general}
+yields a dual problem involving explicit dual norms.
+
+\subsection{Pointwise inequality constraints in function spaces}
+
+In function--space settings, model constraints are often imposed pointwise.
+For example,
+\begin{equation}\label{eq:pointwise-constraint}
+\Bset = \{\, m\in L^p(\Omega) : a(x) \le m(x) \le b(x)\ \text{a.e.} \,\}.
+\end{equation}
+
+Such sets are convex and separable across the domain.
+Their support function takes the integral form
+\begin{equation}\label{eq:pointwise-support}
+\sigma_{\Bset}(\xi)
+=
+\int_\Omega \sigma_{[a(x),\,b(x)]}\bigl(\xi(x)\bigr)\,dx,
+\end{equation}
+where \(\sigma_{[a,b]}\) denotes the support function of the interval
+\([a,b]\subset\mathbb{R}\).
+
+In the master equation, pointwise constraints therefore induce
+pointwise dual penalties or feasibility conditions on
+\(\Tau' \bm q - G' \bm{\lambda}\).
+This structure is particularly advantageous for large--scale problems,
+as it leads to separable dual objectives.
+
+
+\subsection{Intersections of convex constraints}
+
+In practice, model priors often combine several types of information, leading to
+constraints of the form
+\begin{equation}\label{eq:intersection-constraint}
+\Bset = \bigcap_{j=1}^J \Bset_j,
+\end{equation}
+with each \(\Bset_j\) convex.
+
+The support function satisfies the infimal--convolution identity
+\begin{equation}\label{eq:infimal-convolution}
+\sigma_{\Bset}(\xi)
+=
+\inf_{\substack{\xi_1+\cdots+\xi_J=\xi}}
+\sum_{j=1}^J \sigma_{\Bset_j}(\xi_j).
+\end{equation}
+Consequently, intersections introduce additional dual variables and naturally
+lead to saddle--point formulations.
+This mechanism underlies many primal--dual splitting algorithms used in practice.
+
+\subsection{Implications for computation}
+
+From the perspective of \eqref{eq:master-general}, the computational complexity
+of evaluating \(h_{\Uset}(\bm q)\) depends almost entirely on the tractability
+of the support functions \(\sigma_{\Bset}\) and \(\sigma_{\Vdata}\).
+Convex constraints with explicit or efficiently computable support functions
+lead to practical dual algorithms, while poorly structured constraints may
+render the dual problem intractable.
+
+This observation highlights the central modeling principle of the framework:
+\emph{choose convex constraints whose support functions reflect prior knowledge
+and admit efficient evaluation in the dual}.
+
+
+\section{Hilbert--space specialization of the master equation}
+\label{sec:hilbert-specialization}
+
+We now assume that the model space \(\modelspace\) is a real Hilbert space.
+The data and property spaces are finite--dimensional,
+\(\dataspace=\mathbb{R}^{N_d}\) and \(\propertyspace=\mathbb{R}^{N_p}\),
+endowed with their standard Euclidean inner products.
+No specific structure is assumed for the convex constraint sets
+\(\Bset\subset\modelspace\) and \(\Vdata\subset\dataspace\).
+
+\paragraph{Identification of duals.}
+By the Riesz representation theorem, the Banach dual \(\modelspace'\) is
+canonically identified with \(\modelspace\), and the dual maps \(\Tau'\) and
+\(G'\) coincide with the Hilbert adjoints \(\Tau^\ast\) and \(G^\ast\).
+Similarly, \(\dataspace'\cong\dataspace\) and \(\propertyspace'\cong\propertyspace\),
+so the duality pairings appearing in the Banach formulation reduce to inner
+products in the corresponding spaces.
+In particular, directions \(\bm q\) and certificates \(\bm\lambda\) may be
+identified with elements of \(\propertyspace\) and \(\dataspace\), respectively.
+
+\paragraph{Master equation (Hilbert form).}
+With these identifications, the master dual equation
+\eqref{eq:dual-support-master} takes the form
+\begin{equation}\label{eq:hilbert-master-short}
+\boxed{
+h_{\Uset}(\bm q)
+=
+\inf_{\bm{\lambda}\in\dataspace}
+\Big\{
+(\bm{\lambda},\tilde{\bm d})_{\dataspace}
++
+\sigma_{\Bset}\!\bigl(\Tau^\ast \bm q - G^\ast \bm{\lambda}\bigr)
++
+\sigma_{\Vdata}(-\bm{\lambda})
+\Big\}.
+}
+\end{equation}
+All geometric information about the admissible property set \(\Uset\) is thus
+encoded by the support functions of the convex sets \(\Bset\) and \(\Vdata\),
+evaluated at the Hilbert--space residual
+\(\Tau^\ast \bm q - G^\ast \bm{\lambda}\).
+
+\paragraph{Interpretation.}
+In this setting, \(\bm q\) is the normal vector of a supporting hyperplane in
+property space, and \(\bm\lambda\) is a vector in data space acting as a
+certificate for data consistency.
+Any choice of \(\bm\lambda\) yields a valid supporting halfspace, while minimizers
+of \eqref{eq:hilbert-master-short}, when they exist, correspond to optimal
+certificates and produce the tightest directional bounds.
+
+\section{Model--space constraints in the Hilbert setting}
+\label{sec:model_constraints_hilbert}
+
+We now revisit the effect of model--space constraints on the master dual
+equation under the additional assumption that the model space
+\(\modelspace\) is a real Hilbert space.
+As before, the data and property spaces are finite--dimensional Euclidean
+spaces, and \(\Bset\subset\modelspace\), \(\Vdata\subset\dataspace\) are
+arbitrary convex sets.
+No specific norm or ball structure is assumed unless stated explicitly.
+
+The purpose of this section is not to introduce new modeling assumptions,
+but to highlight the simplifications in interpretation and computation that
+arise from the Hilbert structure.
+
+\subsection{Hilbert form of the master equation}
+
+In the Hilbert setting, the master dual equation
+\eqref{eq:dual-support-master} takes the form
+\begin{equation}\label{eq:hilbert-master-constraints}
+h_{\Uset}(\bm q)
+=
+\inf_{\bm{\lambda}\in\dataspace}
+\Big\{
+(\bm{\lambda},\tilde{\bm d})_{\dataspace}
++
+\sigma_{\Bset}\!\bigl(\Tau^\ast \bm q - G^\ast \bm{\lambda}\bigr)
++
+\sigma_{\Vdata}(-\bm{\lambda})
+\Big\}.
+\end{equation}
+The only role of the Hilbert assumption is to identify dual elements with
+primal vectors and to replace duality pairings by inner products.
+All dependence on the model prior continues to enter exclusively through
+the support function \(\sigma_{\Bset}\).
+
+\subsection{Affine subspaces}
+
+If the model constraint is an affine subspace
+\[
+\Bset = \{\, m\in\modelspace : A m = b \,\},
+\]
+then the support function remains
+\[
+\sigma_{\Bset}(\xi)
+=
+\begin{cases}
+(\xi,m_0)_{\modelspace}, & \xi \in (\ker A)^\perp,\\
++\infty, & \text{otherwise}.
+\end{cases}
+\]
+In the Hilbert setting, the annihilator \((\ker A)^\perp\) coincides with the
+orthogonal complement of \(\ker A\).
+As a result, the dual compatibility condition
+\[
+\Tau^\ast \bm q - G^\ast \bm{\lambda} \in (\ker A)^\perp
+\]
+admits a direct geometric interpretation: the Hilbert--space residual
+\(\Tau^\ast \bm q - G^\ast \bm{\lambda}\) must be orthogonal to the nullspace
+of the constraint operator \(A\).
+Affine constraints therefore appear as hard orthogonality conditions in the
+dual problem.
+
+\subsection{Norm balls and gauges}
+
+When \(\Bset\) is specified as a norm ball or, more generally, a gauge ball,
+\[
+\Bset = \{\, m\in\modelspace : \gamma(m)\le M \,\},
+\]
+the support function simplifies to the polar gauge
+\[
+\sigma_{\Bset}(\xi) = M\,\gamma^\circ(\xi).
+\]
+In contrast to the Banach setting, where \(\gamma^\circ\) lives on the abstract
+dual space, the Hilbert structure allows \(\gamma^\circ\) to be interpreted
+directly as a function on \(\modelspace\).
+This leads to particularly transparent dual penalties involving Hilbert norms
+or anisotropic inner--product weights.
+
+\subsection{Pointwise inequality constraints}
+
+For pointwise constraints in function spaces, such as
+\[
+\Bset = \{\, m\in L^2(\Omega) : a(x)\le m(x)\le b(x)\ \text{a.e.}\,\},
+\]
+the support function retains the separable integral form
+\[
+\sigma_{\Bset}(\xi)
+=
+\int_\Omega \sigma_{[a(x),\,b(x)]}\bigl(\xi(x)\bigr)\,dx.
+\]
+In the Hilbert case, the residual
+\(\Tau^\ast \bm q - G^\ast \bm{\lambda}\) belongs to the same function space
+as \(m\), and the dual penalty can be interpreted pointwise without reference
+to abstract dual spaces.
+This substantially simplifies both analysis and implementation for
+large--scale problems.
+
+\subsection{Intersections of constraints}
+
+If the model prior is given by an intersection
+\[
+\Bset = \bigcap_{j=1}^J \Bset_j,
+\]
+the infimal--convolution identity
+\[
+\sigma_{\Bset}(\xi)
+=
+\inf_{\xi_1+\cdots+\xi_J=\xi}
+\sum_{j=1}^J \sigma_{\Bset_j}(\xi_j)
+\]
+continues to hold.
+In the Hilbert setting, all \(\xi_j\) and \(\xi\) may be identified with elements
+of \(\modelspace\), and the constraint \(\sum_j \xi_j=\xi\) is an ordinary vector
+equality.
+This leads naturally to saddle--point formulations in which the additional dual
+variables correspond to orthogonal or weighted decompositions of the Hilbert
+residual.
+
+
+\section{Hilbert specialisation: $L^2$ model norm and Mahalanobis data set}
+\label{sec:hilbert-mahalanobis}
+
+\paragraph{Setting.}
+Assume $\modelspace$ is a Hilbert space with inner product $\ipM{\cdot}{\cdot}$ and norm
+$\|m\|_{\modelspace}^2=\ipM{m}{m}$.
+Identify $\dataspace\simeq\mathbb{R}^{N_d}$ and $\propertyspace\simeq\mathbb{R}^{N_p}$ with their Euclidean inner products
+$\ipD{\cdot}{\cdot}$ and $\ipP{\cdot}{\cdot}$.
+Let the prior be the Hilbert ball
+\[
+\Bset=\{\,m\in\modelspace:\ \|m-m_0\|_{\modelspace}\le M\,\}.
+\]
+For the data confidence set, fix a symmetric positive–definite $C_{\dataspace}:\dataspace\to\dataspace$ and define the Mahalanobis ellipsoid
+\[
+\Vdata \;=\; \Big\{\,\bm{\eta}\in\dataspace:\ \tfrac12\,\ipD{C^{-1}_{\dataspace}\bm{\eta}}{\bm{\eta}}\ \le\ s^2\,\Big\}.
+\]
+(Other normalisations are possible; see the remark below.)
+
+\paragraph{Support function (Hilbert form).}
+Because $\modelspace$ and $\dataspace$ are Hilbert, we identify duals with themselves via Riesz,
+and adjoints are the Hilbert adjoints $ G ^*:\dataspace\to\modelspace$ and $\Tau^*:\propertyspace\to\modelspace$.
+Specialising the Banach dual formula \eqref{eq:dual-support-master} gives, for any $q\in\propertyspace$,
+\begin{equation}
+\boxed{
+\;
+h_{\Uset}(q)
+\;=\;
+\ipM{\Tau^* q}{m_0}
+\;+\;
+\inf_{\bm{\lambda}\in\dataspace}
+\Big\{
+\ \ipD{\bm{\lambda}}{\dt- G  m_0}
+\;+\;
+\sqrt{2}\,s\,\big\|\,C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}\,\big\|_{\dataspace}
+\;+\;
+M\,\big\|\,\Tau^* q -  G ^* \bm{\lambda}\,\big\|_{\modelspace}
+\Big\}.
+\;
+}
+\label{eq:hilbert-support}
+\end{equation}
+Here we used the support of the Mahalanobis ellipsoid
+$\sigma_{\Vdata}(\bm{\lambda})=\sqrt{2}\,s\,\|C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}\|_{\dataspace}$ under the $\tfrac12$ convention. For a derivation of the Mahalanobis ellipsoid support see \ref{appendix:mahalanobis_support}.
+
+
+\paragraph{Lower support and membership.}
+The lower directional bound is $\inf_{p\in\Uset}\langle q,p\rangle=-h_{\Uset}(-q)$.
+A property $p_s\in\propertyspace$ belongs to $\Uset$ iff
+$\langle q,p_s\rangle\le h_{\Uset}(q)$ for all $q\in\propertyspace$.
+
+
+\paragraph{Outer bounds.}
+Although the exact noisy set $\Uset$ is generally not an ellipsoid (it is a union over noisy fibers),
+one can obtain an inexpensive outer ellipsoid in $\propertyspace$ by sampling $h_{\Uset}$ on a finite set of directions
+and fitting a minimum-volume ellipsoid, or by Minkowski-adding
+(i) the noiseless DLI ellipsoid induced by $\Bset$ and (ii) the image $X C^{\frac{1}{2}}_{\dataspace}$ of the data ellipsoid under a reference
+estimator $X$ (conservative if $X$ ignores the fiber).
+
+\section{Quadratic surrogate and its connection to BG estimators}
+\label{sec:quad-surrogate-sola}
+
+In the Hilbert specialisation of \cref{sec:hilbert-mahalanobis}, the exact inner problem for the directional
+support (with the $\tfrac12$ convention in the Mahalanobis set) is
+\begin{equation}
+\phi(\bm{\lambda};q)\;=\;\ipD{\bm{\lambda}}{\dt- G  m_0}
+\;+\;\sqrt{2}\,s\,\big\|C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}\big\|_{\dataspace}
+\;+\;M\,\big\|\,\Tau^* q -  G ^*\bm{\lambda}\,\big\|_{\modelspace},
+\qquad \bm{\lambda}\in\dataspace,
+\label{eq:exact-inner}
+\end{equation}
+and
+\(
+h_{\Uset}(q)=\ipM{\Tau^* q}{m_0}+\inf_{\bm{\lambda}}\phi(\bm{\lambda};q)
+\).
+The norms in \eqref{eq:exact-inner} are nonsmooth; to obtain a closed form we replace them by \emph{squared} norms.
+
+\subsection{The surrogate problem and its conservatism}
+Fix weights \(\alpha,\beta>0\) and consider
+\begin{equation}
+\phi_{\mathrm{sq}}(\bm{\lambda};q)\;=\;\ipD{\bm{\lambda}}{\dt- G  m_0}
+\;+\;\frac{\alpha}{2}\,\big\|C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}\big\|_{\dataspace}^2
+\;+\;\frac{\beta}{2}\,\big\|\,\Tau^* q -  G ^*\bm{\lambda}\,\big\|_{\modelspace}^2.
+\label{eq:surrogate-inner}
+\end{equation}
+
+\begin{lemma}[Young’s inequality $\Rightarrow$ outer bound]
+\label{lem:young}
+For all \(\bm{\lambda}\) and all \(q\),
+\[
+\phi(\bm{\lambda};q)\ \le\ \phi_{\mathrm{sq}}(\bm{\lambda};q)\ +\ \frac{s^2}{\alpha}\ +\ \frac{M^2}{2\beta}.
+\]
+Consequently,
+\[
+\inf_{\bm{\lambda}}\phi(\bm{\lambda};q)\ \le\ \inf_{\bm{\lambda}}\phi_{\mathrm{sq}}(\bm{\lambda};q)\ +\ \frac{s^2}{\alpha}\ +\ \frac{M^2}{2\beta},
+\]
+and the quadratic surrogate yields a \emph{conservative} (outer) directional support
+\(
+h_{\Uset}(q)\ \le\ \ipM{\Tau^* q}{m_0}+\inf_{\bm{\lambda}}\phi_{\mathrm{sq}}(\bm{\lambda};q)+\frac{s^2}{\alpha}+\frac{M^2}{2\beta}.
+\)
+\end{lemma}
+
+\begin{proof}
+Apply Young’s inequality \(a\|x\|\le \tfrac{\gamma}{2}\|x\|^2+\tfrac{a^2}{2\gamma}\) to the two norm terms in \eqref{eq:exact-inner}
+with \(\gamma=\alpha\) and \(\gamma=\beta\), respectively.
+\end{proof}
+
+\subsection{Closed form for the surrogate certificates}
+The surrogate \eqref{eq:surrogate-inner} is strictly convex in \(\bm{\lambda}\). Its unique minimiser solves the normal equations
+\begin{equation}
+(\alpha C_{\dataspace}+\beta\, G  G ^*)\,\bm{\lambda}^\star(q)
+= \beta\, G \,\Tau^* q - r,
+\qquad
+\bm{\lambda}^\star(q)
+= (\alpha C_{\dataspace}+\beta\, G  G ^*)^{-1}\big(\beta\, G \,\Tau^* q - r\big).
+\end{equation}
+
+where \(r:=\dt- G  m_0\).
+The corresponding surrogate support is
+\[
+h_{\Uset}^{\mathrm{sq}}(q)\;:=\;\ipM{\Tau^* q}{m_0}\;+\;\phi_{\mathrm{sq}}(\bm{\lambda}^\star(q);q) + \ \frac{s^2}{\alpha}\ + \ \frac{M^2}{2\beta},
+\]
+By \cref{lem:young} this is an explicit, computable \emph{upper} bound on the exact \(h_{\Uset}(q)\).
+
+
+\subsection{Plug certificates, the additive slack, and geometric interpretation}
+\label{subsec:affine-slack}
+
+In the quadratic–surrogate design of \S\ref{sec:quad-surrogate-sola}, the directional certificate is
+\begin{equation}
+\label{eq:affine-certificate}
+(\alpha C_{\dataspace}+\beta\,G G^{*})\,\bm{\lambda}^\star(q)
+= \beta\,G\,\Tau^{*}q - r,
+\qquad
+\bm{\lambda}^\star(q)
+= \underbrace{\big(\alpha C_{\dataspace}+\beta\,G G^{*}\big)^{-1}\beta\,G\,\Tau^{*}}_{=:L}\,q
+\;+\;\underbrace{\big(\alpha C_{\dataspace}+\beta\,G G^{*}\big)^{-1}(-r)}_{=:\bm{\lambda}_0},
+\end{equation}
+with the residual \(r:=\dt-G m_0\).
+Thus \(\bm{\lambda}^\star(\cdot)\) is \emph{affine} in \(q\): linear part \(Lq\) plus an offset \(\bm{\lambda}_0\).
+
+\paragraph{Plug–in bound and separation.}
+Plugging \(\bm{\lambda}^\star(q)=Lq+\bm{\lambda}_0\) into the exact (nonsmooth) dual bound yields
+\begin{align}
+\label{eq:plugin-affine-master}
+h_{\Uset}(q)
+\ \le\ &
+\ipM{\Tau^{*}q}{m_0}
++\ipD{Lq+\bm{\lambda}_0}{\,\dt-G m_0}
++\sqrt{2}\,s\,\big\|C_{\dataspace}^{1/2}(Lq+\bm{\lambda}_0)\big\|_{\dataspace}
++M\,\big\|\,\Tau^{*}q-G^{*}(Lq+\bm{\lambda}_0)\,\big\|_{\modelspace}.
+\end{align}
+Regrouping the terms that are linear in \(q\) versus constants gives
+\begin{equation}
+\label{eq:affine-split}
+h_{\Uset}(q)
+\ \le\
+\underbrace{\pair{q}{c_{\mathrm{aff}}}}_{\text{linear in }q}
+\;+\;
+\underbrace{\sqrt{2}\,s\,\big\|C_{\dataspace}^{1/2}(Lq+\bm{\lambda}_0)\big\|_{\dataspace}}_{\text{noise}}
+\;+\;
+\underbrace{M\,\big\|\,\big(\Tau^{*}-G^{*}L\big)q - G^{*}\bm{\lambda}_0\,\big\|_{\modelspace}}_{\text{bias/resolution}}
+\;+\;
+\underbrace{\ipD{\bm{\lambda}_0}{r}}_{\text{constant}},
+\end{equation}
+where
+\[
+c_{\mathrm{aff}}:=\Tau m_0 + L^{*}r \ \in\ \propertyspace.
+\]
+
+\paragraph{The additive slack \(\kappa_{\mathrm{aff}}\).}
+By the triangle inequality,
+\[
+\big\|C_{\dataspace}^{1/2}(Lq+\bm{\lambda}_0)\big\|
+\le \big\|C_{\dataspace}^{1/2}Lq\big\| + \big\|C_{\dataspace}^{1/2}\bm{\lambda}_0\big\|,\qquad
+\big\|\,(\Tau^{*}-G^{*}L)q - G^{*}\bm{\lambda}_0\,\big\|
+\le \big\|\,(\Tau^{*}-G^{*}L)q\,\big\| + \big\|G^{*}\bm{\lambda}_0\big\|.
+\]
+Hence
+\begin{equation}
+\label{eq:affine-upper-with-kappa}
+h_{\Uset}(q)
+\ \le\
+\pair{q}{c_{\mathrm{aff}}}
+\;+\;\big\|A_{\mathrm{noise}}^{*}q\big\|_{\dataspace}
+\;+\;\big\|A_{\mathrm{bias}}^{*}q\big\|_{\modelspace}
+\;+\;\underbrace{\Big(
+\sqrt{2}\,s\,\|C_{\dataspace}^{1/2}\bm{\lambda}_0\|
++M\,\|G^{*}\bm{\lambda}_0\|
++\ipD{\bm{\lambda}_0}{r}\Big)}_{=:\ \kappa_{\mathrm{aff}}},
+\end{equation}
+with
+\[
+A_{\mathrm{noise}}:=\sqrt{2}\,s\,L\,C_{\dataspace}^{1/2}:\ \dataspace\!\to\!\propertyspace,
+\qquad
+A_{\mathrm{bias}}:=M\,\big(\Tau- L^{*}G\big):\ \modelspace\!\to\!\propertyspace.
+\]
+
+\begin{remark}[Origin and meaning of \(\kappa_{\mathrm{aff}}\)]
+The constant \(\kappa_{\mathrm{aff}}\ge 0\) is the \emph{price of affinity}: it vanishes iff the affine offset
+\(\bm{\lambda}_0=0\), i.e.\ when the design is centred at a data–consistent prior \(G m_0=\dt\) (so \(r=0\)).
+If \(\kappa_{\mathrm{aff}}>0\), the right-hand side of \eqref{eq:affine-upper-with-kappa} is no longer a support
+function (support functions are sublinear and satisfy \(h(0)=0\)).
+\end{remark}
+
+\paragraph{Geometric interpretation (Minkowski sum plus slack).}
+Using \(\|A^{*}q\|=\sigma_{A(\mathbb B)}(q)\) (support of the image of the unit ball), \eqref{eq:affine-upper-with-kappa}
+reads
+\[
+h_{\Uset}(q)
+\ \le\
+\pair{q}{c_{\mathrm{aff}}}
++\sigma_{S_{\mathrm{noise}}}(q)
++\sigma_{S_{\mathrm{bias}}}(q)
++\kappa_{\mathrm{aff}},
+\qquad
+S_{\mathrm{noise}}:=A_{\mathrm{noise}}(\mathbb B_{\dataspace}),\quad
+S_{\mathrm{bias}}:=A_{\mathrm{bias}}(\mathbb B_{\modelspace}).
+\]
+Thus, up to the additive constant, the attainable set is outer–bounded by the translated Minkowski sum
+\(c_{\mathrm{aff}}+S_{\mathrm{noise}}\oplus S_{\mathrm{bias}}\).
+
+\paragraph{Restoring a set shape: ball inflation.}
+To recover a bona fide convex set (a true support function), replace the constant by an isotropic ball term:
+\[
+\kappa_{\mathrm{aff}}\ \leadsto\ \kappa_{\mathrm{aff}}\|q\|
+\quad\Rightarrow\quad
+h_{\Uset}(q)\ \le\ \pair{q}{c_{\mathrm{aff}}}
++\sigma_{S_{\mathrm{noise}}}(q)
++\sigma_{S_{\mathrm{bias}}}(q)
++\sigma_{\kappa_{\mathrm{aff}}\mathbb B_{\propertyspace}}(q),
+\]
+which corresponds to the set inclusion
+\[
+\boxed{\quad
+\Uset\ \subseteq\ c_{\mathrm{aff}}\ +\ S_{\mathrm{noise}}\ \oplus\ S_{\mathrm{bias}}\ \oplus\ \kappa_{\mathrm{aff}}\,\mathbb B_{\propertyspace}.
+\quad}
+\]
+This modification is conservative (outer) and exact on unit directions \(\|q\|=1\) typically used for reporting intervals.
+
+\paragraph{Ellipsoidal specialisation.}
+
+In Euclidean norms, the support of a centred ellipsoid with \emph{shape matrix} $\Sigma\succeq 0$ is
+$h_{\mathcal E(\Sigma)}(q)=\sqrt{\langle \Sigma q,q\rangle}$. Using the inequalities
+$\|u\|+\|v\|\le\sqrt{2}\,\sqrt{\|u\|^2+\|v\|^2}$ and $x+y\le\sqrt{2}\sqrt{x^2+y^2}$, we obtain the single–ellipsoid
+outer bound
+\begin{equation}
+\label{eq:ellip-slack-shape}
+h_{\Uset}(q)
+\ \le\ \pair{q}{c_{\mathrm{aff}}}\ +\ \sqrt{\big\langle \,\Sigma_{\mathrm{ellip}}\,q,\ q\big\rangle},
+\qquad
+\boxed{\ \ \Sigma_{\mathrm{ellip}}
+\;=\;4\big(A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}+A_{\mathrm{bias}}A_{\mathrm{bias}}^{*}\big)
+\;+\;2\,\kappa_{\mathrm{aff}}^2\,I_{\propertyspace}. \ \ }
+\end{equation}
+Thus the property set is contained in the \emph{translated ellipsoid}
+\[
+\boxed{\quad
+\Uset\ \subseteq\ c_{\mathrm{aff}}\ +\ \mathcal E\!\big(\Sigma_{\mathrm{ellip}}\big),
+\qquad
+\mathcal E(\Sigma):=\{\,p\in\propertyspace:\ \langle \Sigma_{\mathrm{ellip}}(p-c_{\mathrm{aff}}),\,p-c_{\mathrm{aff}}\rangle\le 1\,\}.
+\quad}
+\]
+
+\begin{remark}[Alternative aggregation and when it is tighter]
+If one aggregates the three norms in a single step,
+\(
+\|A_{\mathrm{noise}}^{*}q\|+\|A_{\mathrm{bias}}^{*}q\|+\kappa_{\mathrm{aff}}\|q\|
+\le
+\sqrt{3}\,\sqrt{\langle (A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}+A_{\mathrm{bias}}A_{\mathrm{bias}}^{*}+\kappa_{\mathrm{aff}}^2 I)q,q\rangle}
+\),
+giving the alternative ellipsoid
+\[
+\Sigma'_{\mathrm{ellip}} \;=\; 3\big(A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}+A_{\mathrm{bias}}A_{\mathrm{bias}}^{*}+\kappa_{\mathrm{aff}}^2 I\big).
+\]
+Comparing $\Sigma_{\mathrm{ellip}}$ and $\Sigma'_{\mathrm{ellip}}$ in the L\"owner order shows
+$\Sigma_{\mathrm{ellip}}\preceq \Sigma'_{\mathrm{ellip}}$ when
+$A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}+A_{\mathrm{bias}}A_{\mathrm{bias}}^{*}\preceq \kappa_{\mathrm{aff}}^2 I$, and the reverse
+otherwise. In practice, one may pick the smaller of the two (per application) for a tighter outer ellipsoid.
+\end{remark}
+
+\begin{remark}[Centred design]
+If $r=\dt-Gm_0=0$ (data–consistent prior), then $\bm{\lambda}_0=0$, so $\kappa_{\mathrm{aff}}=0$ and
+$c_{\mathrm{aff}}=\Tau m_0$. In that case,
+\[
+\Sigma_{\mathrm{ellip}}\;=\;4\big(A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}+A_{\mathrm{bias}}A_{\mathrm{bias}}^{*}\big),
+\]
+and in the noiseless limit ($s=0$) this reduces further to
+\(
+\Sigma_{\mathrm{ellip}}=4\,A_{\mathrm{bias}}A_{\mathrm{bias}}^{*}.
+\)
+\end{remark}
+
+
+\paragraph{What if one ignores \(\kappa_{\mathrm{aff}}\)?}
+Dropping \(\kappa_{\mathrm{aff}}\) yields bounds that can be optimistic by up to \(\kappa_{\mathrm{aff}}\) in every direction.
+For unit directions \(q\) (e.g.\ componentwise bounds with \(q=\pm e_j\)), each endpoint can be understated by
+\(\kappa_{\mathrm{aff}}\). Prefer either (i) centring so \(r=0\Rightarrow \kappa_{\mathrm{aff}}=0\), or
+(ii) keeping \(\kappa_{\mathrm{aff}}\) explicitly (intervals), or (iii) absorbing it as the ball
+\(\kappa_{\mathrm{aff}}\mathbb B_{\propertyspace}\) in the set picture.
+
+\subsection{Link to Backus Gilbert Estimators and Unconstrained SOLA estimator}
+
+Notice that \(L^*:\dataspace \mapsto \propertyspace\) is \(C\) from equation 3.35 in \citet{al2021linear}:
+\begin{equation}
+    L^* = \Tau G^* \left(GG^* + \frac{\alpha}{\beta} C_{\dataspace}\right)^{-1}
+\end{equation}
+Specifically, if \(\alpha = 2 \sqrt{2} s\) and \(\beta = 2M\) then we have
+
+\begin{equation}
+    L^* = \Tau G^* \left(GG^* + \frac{\sqrt{2}s}{M} C_{\dataspace}\right)^{-1}
+\end{equation}
+
+This is also the SOLA estimator in the presence of data noise and absence of unimodularity condition. More specifically, it is the solution of equation 12 in \citet{zaroli2019seismic} in the absence of the constraint if we replace \(\frac{\sqrt{2}s}{M}\) by \(\bm{\eta}^2\) (using his notation).
+
+
+\section{Recovering the DLI ellipsoid from the dual support formula (noiseless)}
+
+Start from \eqref{eq:dual-support-master} and set $\Vdata=\{0\}$, so $\sigma_{\Vdata}\equiv 0$:
+\[
+h_{\Uset}(q)
+=\pair{\Tau^\ast q}{m_0}
++\inf_{\bm{\lambda}\in\dataspace}\Big\{
+\ \pair{\bm{\lambda}}{\dt- G  m_0}
++ M\,\big\|\,\Tau^\ast q -  G ^\ast \bm{\lambda}\,\big\|_{\modelspace}\Big\}.
+\]
+Assume Hilbert geometry (Riesz identification); let $\dt= G \tilde m$ be the minimum–norm solution
+($\mathbb P_{\ker G }\tilde m=0$), and write $a:=\tilde m-m_0$.
+
+\paragraph{Step 1: pass to $y= G ^\ast\bm{\lambda}$ (range restriction).}
+By adjointness, $\pair{\bm{\lambda}}{ G  a}=\ipM{ G ^\ast\bm{\lambda}}{a}$, so with $y:= G ^\ast\bm{\lambda}\in\overline{\im G ^\ast}=(\ker G )^\perp$,
+\[
+h_{\Uset}(q)
+=\pair{\Tau^\ast q}{m_0}
++\inf_{y\in(\ker G )^\perp}\Big\{\, \ipM{y}{a} + M\,\|\,\Tau^\ast q - y\,\|\,\Big\}.
+\]
+
+\paragraph{Step 2: orthogonal splitting.}
+Decompose $a=a_\parallel+a_\perp$ with $a_\parallel:=\mathbb P_{\ker G }a\in\ker G $ and
+$a_\perp:=\mathbb P_{(\ker G )^\perp}a\in(\ker G )^\perp$;
+likewise $u:=\Tau^\ast q=u_\parallel+u_\perp$ with $u_\parallel:=\mathbb P_{\ker G }u$.
+Because $y\in(\ker G )^\perp$,
+\[
+\ipM{y}{a}=\ipM{y}{a_\perp},\qquad
+\|u-y\|^2=\|u_\parallel\|^2+\|\,u_\perp-y\,\|^2.
+\]
+
+\paragraph{Step 3: reduce to a 1D minimisation.}
+Write $y=u_\perp+t\,w$ with $w\in(\ker G )^\perp$, $\|w\|=1$, $t\in\mathbb R$.
+Then
+\[
+\ipM{y}{a_\perp}=\ipM{u_\perp}{a_\perp}+t\,\ipM{w}{a_\perp},\qquad
+\|u-y\|=\sqrt{\|u_\parallel\|^2+t^2}.
+\]
+For fixed $t$, the linear term is minimised by choosing $w=-a_\perp/\|a_\perp\|$ (if $a_\perp\neq0$), so
+\[
+\inf_{y\in(\ker G )^\perp}\{\ipM{y}{a}+M\|u-y\|\}
+=\ipM{u_\perp}{a_\perp}+\inf_{t\in\mathbb R}\big\{ -t\|a_\perp\| + M\sqrt{\|u_\parallel\|^2+t^2}\big\}.
+\]
+
+\paragraph{Step 4: solve the scalar problem.}
+The function $f(t)=-t\|a_\perp\|+M\sqrt{\|u_\parallel\|^2+t^2}$ is convex.
+Setting $f'(t)=0$ gives
+\[
+\frac{M\,t}{\sqrt{\|u_\parallel\|^2+t^2}}=\|a_\perp\|
+\ \Longrightarrow\
+t^\star=\frac{\|a_\perp\|}{\rho}\,\|u_\parallel\|,
+\qquad
+\rho:=\sqrt{M^2-\|a_\perp\|^2}.
+\]
+Substituting:
+\[
+f(t^\star)=\rho\,\|u_\parallel\|.
+\]
+Therefore
+\[
+\inf_{y\in(\ker G )^\perp}\{\ipM{y}{a}+M\|u-y\|\}
+=\ipM{u_\perp}{a_\perp}+\rho\,\|u_\parallel\|.
+\]
+
+\paragraph{Step 5: assemble the support and identify the ellipsoid.}
+Since $a_\perp=\tilde m-(I-\mathbb P_{\ker G })m_0$ and $u_\perp=\mathbb P_{(\ker G )^\perp}u$,
+\[
+\pair{\Tau^\ast q}{m_0}+\ipM{u_\perp}{a_\perp}
+=\ipM{u}{\tilde m}+\ipM{u_\parallel}{m_0}
+=\pair{q}{\tilde{\mathbf p}}+\pair{q}{\Tau\,\mathbb P_{\ker G }m_0}.
+\]
+Also $\|u_\parallel\|=\|\mathbb P_{\ker G }\Tau^\ast q\|$ and
+\(
+\|\mathbb P_{\ker G }\Tau^\ast q\|^2
+=\langle \Tau\,\mathbb P_{\ker G }\Tau^\ast q,\,q\rangle
+=:\langle \mathcal H q,q\rangle
+\)
+with $\mathcal H:=\Tau\,\mathbb P_{\ker G }\,\Tau^\ast$.
+Hence
+\[
+\boxed{\quad
+h_{\Uset}(q)
+=\big\langle q,\ \tilde{\mathbf p}+\Tau\,\mathbb P_{\ker G }m_0\big\rangle
++\rho\,\sqrt{\langle \mathcal H q,q\rangle},
+\qquad
+\rho^2=M^2-\big\|\tilde m-(I-\mathbb P_{\ker G })m_0\big\|^2.
+\quad}
+\]
+
+Since $h_{\Uset}(q)=\langle q,c\rangle+\rho\,\sqrt{\langle \mathcal H q,q\rangle}$ with
+$c:=\tilde{\mathbf p}+\Tau\,\mathbb P_{\ker G }m_0$, the admissible property set is exactly the ellipsoid
+\[
+\boxed{\quad
+\Uset_{\mathrm{DLI}}(\dt;M,m_0)
+=\Big\{\,p\in c+\im\mathcal H:\ \big\langle \mathcal H^\dagger(p-c),\,p-c\big\rangle\le \rho^2\Big\}.
+\quad}
+\]
+Feasibility requires $\rho\ge 0$, i.e.\ $\|\tilde m-(I-\mathbb P_{\ker G })m_0\|\le M$.
+
+
+\section{Recovering the DLI ellipsoid (noiseless) with zero prior centre $m_0=0$}
+
+Start from the dual support formula with $\Vdata=\{0\}$ (noiseless data) and \emph{zero} prior centre $m_0=0$:
+\[
+h_{\Uset}(q)
+=\inf_{\bm{\lambda}\in\dataspace}\Big\{
+\ \pair{\bm{\lambda}}{\dt}
+\;+\;
+M\,\big\|\,\Tau^\ast q -  G ^\ast \bm{\lambda}\,\big\|_{\modelspace}\Big\}.
+\]
+Assume Hilbert geometry (Riesz identification). Let $\dt= G \tilde m$ be the minimum–norm model solving the data ($\mathbb P_{\ker G }\tilde m=0$).
+
+\paragraph{Step 1: pass to $y= G ^\ast\bm{\lambda}$.}
+By adjointness, $\pair{\bm{\lambda}}{ G  \tilde m}=\ipM{ G ^\ast\bm{\lambda}}{\tilde m}$, so with $y:= G ^\ast\bm{\lambda}\in\overline{\im G ^\ast}=(\ker G )^\perp$,
+\[
+h_{\Uset}(q)
+=\inf_{y\in(\ker G )^\perp}\Big\{\, \ipM{y}{\tilde m} + M\,\|\,\Tau^\ast q - y\,\|\,\Big\}.
+\]
+
+\paragraph{Step 2: orthogonal splitting.}
+Set $u:=\Tau^\ast q=u_\parallel+u_\perp$ with $u_\parallel:=\mathbb P_{\ker G }u$ and $u_\perp:=\mathbb P_{(\ker G )^\perp}u$.
+Because $y\in(\ker G )^\perp$ and $\tilde m\in(\ker G )^\perp$,
+\[
+\ipM{y}{\tilde m}=\ipM{y}{\tilde m},\qquad
+\|u-y\|^2=\|u_\parallel\|^2+\|\,u_\perp-y\,\|^2.
+\]
+
+\paragraph{Step 3: scalar reduction.}
+Parametrise $y=u_\perp+t\,w$ with $w\in(\ker G )^\perp$, $\|w\|=1$, $t\in\mathbb R$. Then
+\[
+\ipM{y}{\tilde m}=\ipM{u_\perp}{\tilde m}+t\,\ipM{w}{\tilde m},
+\qquad
+\|u-y\|=\sqrt{\|u_\parallel\|^2+t^2}.
+\]
+For fixed $t$, the linear term is minimised by $w=-\tilde m/\|\tilde m\|$ (if $\tilde m\neq0$), hence
+\[
+\inf_{y\in(\ker G )^\perp}\{\ipM{y}{\tilde m}+M\|u-y\|\}
+=\ipM{u_\perp}{\tilde m}+\inf_{t\in\mathbb R}\big\{ -t\|\tilde m\| + M\sqrt{\|u_\parallel\|^2+t^2}\big\}.
+\]
+
+\paragraph{Step 4: solve the scalar problem.}
+Let $f(t):=-t\|\tilde m\|+M\sqrt{\|u_\parallel\|^2+t^2}$ (convex). Setting $f'(t)=0$ gives
+\[
+\frac{M\,t}{\sqrt{\|u_\parallel\|^2+t^2}}=\|\tilde m\|
+\ \Longrightarrow\
+t^\star=\frac{\|\tilde m\|}{\rho}\,\|u_\parallel\|,
+\qquad
+\rho:=\sqrt{M^2-\|\tilde m\|^2}.
+\]
+Then $f(t^\star)=\rho\,\|u_\parallel\|$, provided $\rho\ge0$ (feasibility).
+
+\paragraph{Step 5: assemble the support and the ellipsoid.}
+Since $\ipM{u_\perp}{\tilde m}=\ipM{u}{\tilde m}=\pair{q}{\Tau\tilde m}=: \pair{q}{\tilde{\mathbf p}}$,
+\[
+\boxed{\quad
+h_{\Uset}(q)
+=\big\langle q,\ \tilde{\mathbf p}\big\rangle
++\rho\,\sqrt{\langle \mathcal H q,q\rangle},
+\qquad
+\mathcal H:=\Tau\,\mathbb P_{\ker G }\,\Tau^\ast,
+\quad
+\rho^2=M^2-\|\tilde m\|^2.
+\quad}
+\]
+Thus $h_{\Uset}(q)=\langle q,c\rangle+\rho\sqrt{\langle\mathcal H q,q\rangle}$ with \emph{centre} $c:=\tilde{\mathbf p}$.
+By the standard support–set correspondence, the admissible property set is the ellipsoid
+\[
+\boxed{\quad
+\Uset_{\mathrm{DLI}}(\dt;M)
+=\Big\{\,p\in \tilde{\mathbf p}+\im\mathcal H:\ \big\langle \mathcal H^\dagger(p-\tilde{\mathbf p}),\,p-\tilde{\mathbf p}\big\rangle\le \rho^2\Big\},
+\quad}
+\]
+with feasibility condition $\rho\ge0$, i.e.\ $\|\tilde m\|\le M$.
+\begin{remark}
+Compared to the general $m_0\neq0$ case, the centre simplifies from $\tilde{\mathbf p}+\Tau\,\mathbb P_{\ker G }m_0$ to $\tilde{\mathbf p}$, and the radius from $M^2-\|\tilde m-(I-\mathbb P_{\ker G })m_0\|^2$ to $M^2-\|\tilde m\|^2$.
+\end{remark}
+
+
+\section{Recovering the noiseless SOLA map from the dual support}
+\label{sec:sola-from-dual}
+
+This section shows how the standard SOLA mapping (no noise, no unimodularity, no correction)
+\[
+X_1 \;=\; \Tau\, G ^{*}\,( G \, G ^{*})^{-1}
+\]
+arises directly from the dual--support master equation by a simple specialisation and an isotropic aggregation over directions.
+
+\subsection*{Step 1: specialise the master support to the noiseless, centred case}
+Start from the dual support formula
+\[
+h_{\Uset}(q)
+=\pair{\Tau^\ast q}{m_0}
++\inf_{\bm{\lambda}\in\dataspace}
+\Big\{
+\ \pair{\bm{\lambda}}{\dt- G  m_0}
+\;+\;
+\sigma_{\mathcal V_{\dataspace}}(\bm{\lambda})
+\;+\;
+M\,\big\|\,\Tau^\ast q -  G ^\ast \bm{\lambda}\,\big\|_{\modelspace}
+\Big\}.
+\]
+Set the noise set to $\mathcal V_{\dataspace}=\{0\}$ (noiseless) and choose a data--consistent centre $m_0$ so that
+$r:=\dt- G  m_0=0$. Then, for each direction $q\in\propertyspace$,
+\begin{equation}
+\label{eq:noiseless-directional-distance}
+h_{\Uset}(q)
+=\pair{\Tau^\ast q}{m_0}
++ M\;\inf_{\bm{\lambda}\in\dataspace}\ \big\|\,\Tau^\ast q -  G ^\ast \bm{\lambda}\,\big\|
+\;=\;\pair{\Tau^\ast q}{m_0}
++ M\;\mathrm{dist}\!\big(\Tau^\ast q,\ \im  G ^\ast\big).
+\end{equation}
+Thus, direction by direction, we are measuring how close $\Tau^\ast q$ lies to the range of $ G ^\ast$.
+
+\subsection*{Step 2: from directional distances to an operator objective}
+Define the (direction--wise) choice of dual variable by an operator
+\[
+\bm{\lambda}:\propertyspace\to\dataspace,
+\qquad
+\bm{\lambda} q \in \argmin_{\bm{\lambda}\in\dataspace}\ \big\|\,\Tau^\ast q- G ^\ast\bm{\lambda}\,\big\|.
+\]
+Aggregate \emph{isotropically} across directions by summing squared residuals over any orthonormal basis
+$\{e_k\}_{k=1}^{N_p}$ of $\propertyspace$:
+\[
+\sum_{k=1}^{N_p}\ \big\|\,\Tau^\ast e_k -  G ^\ast(\bm{\lambda} e_k)\,\big\|^2
+\;=\;
+\big\|\,\Tau^\ast -  G ^\ast \bm{\lambda}\,\big\|_{\mathrm{HS}}^2.
+\]
+Introduce the estimator as the adjoint \(X:=\bm{\lambda}^\ast:\dataspace\to\propertyspace\).
+Using $\|A\|_{\mathrm{HS}}=\|A^\ast\|_{\mathrm{HS}}$,
+\[
+\big\|\,\Tau^\ast -  G ^\ast \bm{\lambda}\,\big\|_{\mathrm{HS}}^2
+\;=\;
+\big\|\,\Tau - (\bm{\lambda}^\ast) G \,\big\|_{\mathrm{HS}}^2
+\;=\;
+\big\|\,\Tau - X\, G \,\big\|_{\mathrm{HS}}^2.
+\]
+Hence the isotropic aggregation leads to the \emph{operator--level} problem
+\begin{equation}
+\label{eq:HS-design}
+X_1 \;\in\; \arg\min_{X:\,\dataspace\to\propertyspace}\ \big\|\,\Tau - X\, G \,\big\|_{\mathrm{HS}}^2.
+\end{equation}
+
+\subsection*{Step 3: solve the normal equation}
+The Fr\'echet derivative of $\tfrac12\|\,\Tau - X G \,\|_{\mathrm{HS}}^2$ with respect to $X$ is
+$X\, G \, G ^\ast - \Tau\, G ^\ast$. Setting it to zero yields the normal equation
+\[
+X\,( G \, G ^\ast)\;=\;\Tau\, G ^\ast.
+\]
+If $ G $ is surjective, then $ G \, G ^\ast:\dataspace\to\dataspace$ is invertible, and the unique minimiser is
+\begin{equation}
+\boxed{\qquad
+X_1 \;=\; \Tau\, G ^\ast\,( G \, G ^\ast)^{-1}.
+\qquad}
+\label{eq:sola-noiseless-map}
+\end{equation}
+
+\begin{remark}[What we used—and what we did not]
+Equation~\eqref{eq:noiseless-directional-distance} comes from the master support after setting noise to zero
+and centring at a data--consistent $m_0$ (so the linear term vanishes). Passing from directional distances
+to the operator objective \eqref{eq:HS-design} requires one extra modelling choice: \emph{isotropic} aggregation
+via the squared (Hilbert--Schmidt) loss. This recovers the classical SOLA map \eqref{eq:sola-noiseless-map}
+used in Section~2 (no noise, no unimodularity, no correction).
+\end{remark}
+
+
+\section{SOLA with unimodularity (equality constraints)}
+
+\paragraph{Setup.}
+Fix a property direction $q\in\propertyspace$ and design a linear estimator
+$x(q)\in\dataspace$ so that $\hat p(q)=\ipD{x(q)}{\dt}$ approximates $\pair{q}{\Tau m}$.
+Use the standard SOLA tradeoff (Hilbert case)
+\[
+J(x;q)\;=\;\frac{\beta}{2}\,\big\|\, G ^\ast x-\Tau^\ast q\,\big\|_{\modelspace}^2
+\;+\;\frac{\alpha}{2}\,\ipD{C_{\dataspace}x}{x},
+\qquad \alpha,\beta>0,
+\]
+where $C_{\dataspace}\succ 0$ is the data–noise covariance.
+
+\paragraph{Unimodularity as a linear equality.}
+Let $c\in\modelspace$ be the calibration function (e.g.\ the constant $1$ on the averaging support),
+so that unimodularity means the averaging kernel reproduces its integral:
+\[
+\ipM{\Tau^\ast q}{c} \;=\; \ipD{x}{ G  c}.
+\]
+More generally, with calibration vectors $C:=[c_1,\dots,c_J]$ (e.g.\ unit, first moments, cross–talk nulls),
+stack the $J$ linear constraints
+\[
+U^\top x \;=\; b(q),
+\qquad
+U:= G  C\in\mathbb R^{N_d\times J},
+\quad
+b(q):=C^\ast\Tau^\ast q\in\mathbb R^{J}.
+\]
+
+\paragraph{KKT system and closed form.}
+Let $K:=\beta\, G  G ^\ast+\alpha\,C_{\dataspace}\succ0$. The constrained quadratic minimisation
+\[
+\min_{x}\ J(x;q)\quad \text{s.t.}\quad U^\top x=b(q)
+\]
+has the Karush–Kuhn–Tucker system
+\[
+\begin{bmatrix}
+K & U\\[2pt]
+U^\top & 0
+\end{bmatrix}
+\begin{bmatrix}
+x\\ \mu
+\end{bmatrix}
+=
+\begin{bmatrix}
+\beta\, G \,\Tau^\ast q\\[2pt] b(q)
+\end{bmatrix},
+\]
+with Lagrange multipliers $\mu\in\mathbb R^{J}$. Eliminating $\mu$ gives the explicit solution
+\begin{align}
+x_0(q) &:= K^{-1}\,\beta\, G \,\Tau^\ast q
+&&\text{(unconstrained SOLA row)},\\
+\mu(q) &:= \big(U^\top K^{-1}U\big)^{-1}\,\big(U^\top x_0(q)-b(q)\big),\\
+\boxed{\;x(q)\;} &= \boxed{\;x_0(q)\ -\ K^{-1}U\,\mu(q)\;}
+&&\text{(minimal correction enforcing $U^\top x=b(q)$)}.
+\end{align}
+For a \emph{single} unimodularity constraint ($J=1$ with $c$),
+\[
+\mu(q)=\frac{\ipD{ G  c}{x_0(q)}-\ipM{\Tau^\ast q}{c}}{\ipD{ G  c}{K^{-1} G  c}},
+\qquad
+x(q)=x_0(q)-K^{-1} G  c\;\mu(q).
+\]
+
+\paragraph{Operator form (all rows at once).}
+Let $X:\dataspace\to\propertyspace$ be the estimator and impose reproduction on the calibration
+subspace $\mathrm{span}\{c_j\}$:
+\[
+X\, G \,C \;=\; \Tau\,C \quad (\text{matrix equality in }\propertyspace\times\mathbb R^{J}).
+\]
+Minimising
+\(
+\frac{\beta}{2}\|\Tau-X G \|_{\mathrm{HS}}^2+\frac{\alpha}{2}\mathrm{tr}(X C_{\dataspace} X^\ast)
+\)
+subject to $X G  C=\Tau C$ yields the block KKT system
+\[
+\begin{bmatrix}
+\beta\, G  G ^\ast+\alpha\,C_{\dataspace} &  G  C\\[2pt]
+( G  C)^\top & 0
+\end{bmatrix}
+\begin{bmatrix}
+X^\ast\\ \bm{\lambda}
+\end{bmatrix}
+=
+\begin{bmatrix}
+\beta\, G \,\Tau^\ast\\[2pt] (\Tau C)^\top
+\end{bmatrix},
+\]
+where the columns of $X^\ast$ are the constrained rows $x(q_k)$ (for a chosen orthonormal basis $\{q_k\}$) and
+$\bm{\lambda}$ collects the associated multipliers. Equivalently,
+\[
+X^\ast \;=\; K^{-1}\Big(\beta\, G \,\Tau^\ast\ -\  G  C\,\big(( G  C)^\top K^{-1} G  C\big)^{-1}\big(( G  C)^\top K^{-1}\beta\, G \,\Tau^\ast-(\Tau C)^\top\big)\Big).
+\]
+
+\paragraph{Interpretation.}
+- $x_0$ is the usual (unconstrained) SOLA row; the correction $-K^{-1}U\,\mu$ is the \emph{metric projection} that enforces unimodularity (and any other linear reproducing constraints) with minimal increase in the objective.
+- Choosing $C=\{1\}$ (constant in the averaging domain) enforces classical \emph{unimodularity} ($\sum a_i=1$ in discrete form).
+- Adding more $c_j$ implements moment constraints or cross–talk nulling (e.g.\ velocities), all within the same KKT template.
+
+\paragraph{Noiseless / special cases.}
+- If $C_{\dataspace}=0$ (no noise) then $K=\beta\, G  G ^\ast$ and the formulas simplify with $K^{-1}=( G  G ^\ast)^{-1}$.
+- If $J=0$ (no constraints) we recover $X^\ast=\beta\,K^{-1} G \,\Tau^\ast$, i.e.\ $X=\Tau\, G ^\ast( G  G ^\ast+\gamma C_{\dataspace})^{-1}$ with $\gamma=\alpha/\beta$.
+
+
+\section{Polytope approximations of \(\Uset\)}
+
+We now discuss how to construct \emph{polytope outer approximations} of the
+property set \(\Uset\) when \(\Uset\subset\propertyspace\) is known to be
+bounded.  Throughout this section we work in the general Banach--space
+setting, and only assume that the dual master equation can be evaluated (at
+least approximately) for chosen directions in the property space.
+
+\subsection{Reminder: the dual master equation}
+
+Recall the general Banach--space form of the master dual equation:
+\begin{equation}
+\label{eq:dual-master-banach}
+h_{\Uset}(\bm q)
+=
+\inf_{\bm{\lambda} \in \dataspace'}
+\Big\{
+\pair{\bm{\lambda}}{\dt}
++
+\sigma_{\Bset}\!\bigl(\Tau' \bm{q} - G' \bm{\lambda}\bigr)
++
+\sigma_{\Vdata}(- \bm{\lambda})
+\Big\},
+\qquad
+\bm q \in \propertyspace'.
+\end{equation}
+For any fixed direction \(\bm q\), any feasible \(\bm\lambda\in\dataspace'\)
+produces an \emph{upper bound}
+\[
+\pair{\bm q}{\bm p} \;\le\;
+\pair{\bm{\lambda}}{\dt}
++
+\sigma_{\Bset}\!\bigl(\Tau' \bm{q} - G' \bm{\lambda}\bigr)
++
+\sigma_{\Vdata}(- \bm{\lambda})
+\qquad
+\forall \bm p\in\Uset,
+\]
+and if the infimum in \eqref{eq:dual-master-banach} is attained at
+\(\bm\lambda^\ast\), this bound is tight in the sense that the right--hand side
+equals \(h_{\Uset}(\bm q)\).
+
+\subsection{From certificates to half--spaces}
+
+Let \(\bm q\in\propertyspace'\) be a chosen direction, and let
+\(\bm\lambda^\ast(\bm q)\) denote an optimal (or approximately optimal)
+certificate obtained by solving \eqref{eq:dual-master-banach}.
+Define the scalar
+\[
+\beta(\bm q)
+:=
+\pair{\bm{\lambda}^\ast(\bm q)}{\dt}
++
+\sigma_{\Bset}\!\bigl(\Tau' \bm{q} - G' \bm{\lambda}^\ast(\bm q)\bigr)
++
+\sigma_{\Vdata}(- \bm{\lambda}^\ast(\bm q))
+=
+h_{\Uset}(\bm q).
+\]
+
+By the defining property of the support function, this yields the
+\emph{bounding half--space}
+\begin{equation}
+\label{eq:halfspace-q}
+H^-_{\bm q}
+:=
+\bigl\{
+\bm p\in\propertyspace \;:\;
+\pair{\bm q}{\bm p} \le \beta(\bm q)
+\bigr\},
+\end{equation}
+which satisfies
+\[
+\Uset \subseteq H^-_{\bm q}.
+\]
+If \(\bm\lambda^\ast(\bm q)\) is only an approximate minimiser, then
+\(\beta(\bm q)\) is an upper bound on \(h_{\Uset}(\bm q)\), and
+\eqref{eq:halfspace-q} remains a valid (possibly conservative) enclosing
+half--space.
+
+\subsection{Polyhedra and polytopes}
+
+A \emph{polyhedron} in \(\propertyspace\) is the intersection of finitely many
+affine half--spaces:
+\[
+P = \bigcap_{i=1}^{N_a}
+\bigl\{
+\bm p\in\propertyspace : \pair{\bm q_i}{\bm p} \le \beta_i
+\bigr\}.
+\]
+If this intersection is bounded, then \(P\) is called a \emph{polytope}.  In
+finite--dimensional spaces, boundedness is equivalent to the absence of
+nontrivial recession directions, and a polytope can equivalently be described
+as the convex hull of finitely many points.  In the present work we always use
+the half--space (or \(H\)--representation), since it arises naturally from the
+dual certificates.
+
+\subsection{Polytope outer approximation of \(\Uset\)}
+
+Let \(\{\bm q_i\}_{i=1}^{N_a} \subset \propertyspace'\) be a finite collection
+of query directions, and let \(\bm\lambda_i^\ast\) be corresponding optimal
+certificates obtained from \eqref{eq:dual-master-banach}.  Define
+\[
+\beta_i := \beta(\bm q_i) = h_{\Uset}(\bm q_i).
+\]
+The associated polyhedral outer approximation is
+\begin{equation}
+\label{eq:polytope-outer}
+\widehat{\Uset}_{N_a}
+:=
+\bigcap_{i=1}^{N_a}
+\bigl\{
+\bm p\in\propertyspace : \pair{\bm q_i}{\bm p} \le \beta_i
+\bigr\}.
+\end{equation}
+By construction,
+\[
+\Uset \subseteq \widehat{\Uset}_{N_a},
+\]
+and if \(\Uset\) is bounded, then \(\widehat{\Uset}_{N_a}\) is a polytope once a
+sufficiently rich set of directions \(\{\bm q_i\}\) has been chosen.
+
+The quality of the approximation improves monotonically as new directions are
+added: each additional certificate refines the enclosure by intersecting with
+one more half--space.
+
+\subsection{Choosing directions when certificates are expensive}
+
+When solving the dual master equation is computationally expensive, it is
+crucial to minimise the number of oracle calls.  Several strategies are
+possible.
+
+\paragraph{Uniform directional sampling.}
+A simple non--adaptive strategy is to choose directions \(\bm q_i\) that are
+approximately uniformly distributed on the unit sphere of
+\(\propertyspace'\).  This is straightforward in low dimensions and provides a
+baseline approximation, but may waste oracle calls in directions where the
+current polytope is already tight.
+
+\paragraph{Adaptive cutting--plane refinement.}
+An adaptive strategy exploits the current polytope
+\(\widehat{\Uset}_{N_a}\):
+\begin{enumerate}
+\item Given \(\widehat{\Uset}_{N_a}\), identify a ``poorly resolved''
+direction, for example a normal of a facet with large extent or a direction
+corresponding to a large diameter of the current polytope.
+\item Query the oracle in that direction \(\bm q\) to obtain a new certificate
+\(\bm\lambda^\ast(\bm q)\).
+\item Add the corresponding half--space to refine the polytope.
+\end{enumerate}
+This is a geometric analogue of classical cutting--plane methods and tends to
+focus oracle calls where they are most informative.
+
+\paragraph{Upper bounds and approximate certificates.}
+Even if the dual problem is not solved to full optimality, any feasible
+\(\bm\lambda\) produces a valid half--space.  In early stages of the
+approximation it is often sufficient to use coarse or early--terminated dual
+solves to obtain inexpensive but safe cuts, reserving accurate solves for
+later refinement.
+
+\subsection{Regime I: properties fixed \emph{a priori} (simplex--oriented construction)}
+
+In the first regime, the analyst specifies \emph{in advance} a complete list of
+properties of interest, so that the property space \(\propertyspace\) and the
+mapping \(\Tau : \modelspace \to \propertyspace\) are fixed from the outset.
+The objective is then to approximate \(\Uset \subset \propertyspace\) as
+efficiently as possible with a minimal number of dual master evaluations.
+
+Since \(\Uset\) is assumed bounded, a necessary and sufficient geometric
+condition for boundedness of a polyhedral enclosure
+\(\widehat{\Uset}_{N_a}\) is that
+\[
+0 \in \operatorname{int}\,\operatorname{conv}\{\bm q_1,\dots,\bm q_{N_a}\},
+\]
+that is, the queried directions surround the origin in
+\(\propertyspace'\).
+In \(N_p := \dim(\propertyspace)\) dimensions, this can already be achieved
+with \(N_p+1\) directions in general position, corresponding to a simplex.
+This yields the smallest possible number of faces for a bounded polytope.
+
+A natural strategy in this regime is therefore:
+\begin{itemize}
+\item select \(N_p+1\) directions \(\bm q_i\) forming a simplex in
+\(\propertyspace'\) (for instance, vertices of a regular simplex or random
+directions in general position);
+\item evaluate the dual master equation in these directions;
+\item construct the initial simplex--shaped outer approximation
+\(\widehat{\Uset}_{N_p+1}\).
+\end{itemize}
+Subsequent refinement proceeds adaptively by adding directions that target the
+largest remaining geometric gaps of the current polytope.  This regime is
+well--suited to algorithmic settings in which the set of relevant properties is
+known ahead of time and efficiency in oracle usage is paramount.
+
+\subsection{Regime II: incremental discovery of properties}
+
+In the second regime, properties are introduced progressively.
+An analyst may initially be interested in a single scalar property
+\(\Tau_1 m\), later add a second independent property \(\Tau_2 m\), and only
+subsequently investigate their joint behaviour.
+
+Mathematically, this corresponds to a sequence of property spaces
+\[
+\propertyspace^{(1)} \subset \propertyspace^{(2)} \subset \cdots,
+\qquad
+\Tau^{(k)} = (\Tau_1,\dots,\Tau_k),
+\]
+with each \(\propertyspace^{(k)} \simeq \mathbb{R}^k\).
+At each stage, previously obtained certificates remain valid: a half--space
+constraint derived in \(\propertyspace^{(k)}\) embeds naturally into
+\(\propertyspace^{(k+1)}\) by extending it trivially in the new coordinates.
+
+In this regime:
+\begin{itemize}
+\item marginal bounds for newly introduced properties are obtained by probing
+basis directions in the enlarged property space;
+\item joint directions are queried only when correlations between existing
+properties become of interest;
+\item the polytope \(\widehat{\Uset}\) grows in dimension, while retaining all
+previously accumulated information.
+\end{itemize}
+This incremental mode mirrors exploratory human reasoning and allows oracle
+calls to be focused strictly on questions that have actually arisen.
+
+\subsection{Regime III: grouped properties and inter--group correlations}
+
+In the third regime, properties are organised into groups
+\[
+\Tau = (\Tau^{(1)},\Tau^{(2)},\dots,\Tau^{(G)}),
+\qquad
+\Tau^{(g)} : \modelspace \to \mathbb{R}^{k_g},
+\]
+with
+\(\propertyspace = \mathbb{R}^{k_1} \oplus \cdots \oplus \mathbb{R}^{k_G}\).
+Each group may represent a coherent family of quantities (e.g.\ thermal,
+mechanical, or chemical properties) that are first analysed internally.
+
+The workflow naturally separates into two stages:
+\begin{itemize}
+\item \emph{Intra--group analysis}, where directions \(\bm q\) are supported on
+a single block \(\propertyspace^{(g)}\), yielding bounds and correlations
+within each group;
+\item \emph{Inter--group analysis}, where directions with support on multiple
+blocks are queried in order to reveal trade--offs and correlations between
+groups.
+\end{itemize}
+
+Efficient inter--group probing is achieved by combining directions that are
+already known to be extreme or weakly constrained within each group.  Typical
+choices include concatenations of facet normals or width--maximising directions
+from the individual group polytopes.  This avoids uninformative ``average''
+directions and concentrates oracle calls on combinations that are most likely
+to cut off infeasible corners of the Cartesian product of groupwise
+approximations.
+
+This grouped regime enables hierarchical exploration of \(\Uset\): users may
+study groups independently, then progressively uncover interdependencies, all
+while maintaining a single coherent polytope outer approximation that
+monotonically tightens as new certificates are added.
+
+
+\subsection{Use of the polytope approximation}
+
+Once a polytope \(\widehat{\Uset}_{N_a}\) has been constructed, it can be
+manipulated cheaply without further oracle calls.  In particular:
+\begin{itemize}
+\item coordinate--wise bounds and trade--offs can be obtained via linear
+programmes;
+\item low--dimensional slices and projections can be plotted directly;
+\item correlations and variability between properties can be explored by
+sampling or optimisation over \(\widehat{\Uset}_{N_a}\).
+\end{itemize}
+All such analyses are guaranteed to be conservative with respect to the true
+set \(\Uset\), since \(\widehat{\Uset}_{N_a}\) is an outer approximation.
+
+In this way, the expensive dual master equation is used only to generate a
+limited number of certificates, while most exploratory and interpretive tasks
+are carried out on the resulting polytope.
+
+\section{Plotting affine slices of \texorpdfstring{$\Uset$}{U}}
+
+We describe two complementary approaches for visualising low--dimensional
+affine slices of the property set \(\Uset \subset \propertyspace\).
+Throughout, we assume that \(\propertyspace\) is a (finite--dimensional)
+Banach space, and that slices are defined geometrically via a translation
+vector and a collection of tangent directions, rather than via an explicit
+matrix representation.
+
+\subsection{Affine slice defined by tangent vectors}
+
+Let \(A \subset \propertyspace\) be a \(k\)-dimensional affine subspace,
+with \(k \in \{1,2,3\}\).
+Assume we are given
+
+\begin{itemize}
+\item a translation vector \(\bm p_0 \in \propertyspace\),
+\item linearly independent tangent vectors
+      \(\bm v_1, \dots, \bm v_k \in \propertyspace\).
+\end{itemize}
+
+The affine slice is then
+\[
+A
+=
+\Bigl\{
+\bm p_0 + \sum_{i=1}^k y_i \bm v_i
+\;:\;
+\bm y = (y_1,\dots,y_k) \in \mathbb{R}^k
+\Bigr\}.
+\]
+
+We introduce the parameterisation
+\[
+\bm p(\bm y)
+=
+\bm p_0 + \sum_{i=1}^k y_i \bm v_i,
+\qquad
+\bm y \in \mathbb{R}^k,
+\]
+and define the slice
+\[
+\Uset_A := \Uset \cap A.
+\]
+
+Plotting \(\Uset_A\) therefore reduces to characterising
+\[
+\widetilde{\Uset}
+:=
+\Bigl\{
+\bm y \in \mathbb{R}^k
+\;:\;
+\bm p_0 + \sum_{i=1}^k y_i \bm v_i \in \Uset
+\Bigr\}.
+\]
+
+\subsection{Method I: Slice rasterisation via a membership oracle}
+
+In \texttt{pygeoinf} we treat \(\Uset\) (or an approximation of it) as a geometric
+subset of the ambient property space \(\propertyspace\), and we visualise
+\(\Uset_A\) by sampling \emph{membership} on a low--dimensional affine slice.
+This is the simplest approach and applies even when \(\Uset\) is not available
+as a support function.
+
+\paragraph{Membership oracle.}
+Assume we have access to an oracle that evaluates the indicator
+\(\mathbf{1}_{\Uset}(\bm p)\), i.e.\ \(\mathbf{1}_{\Uset}(\bm p)=1\) if \(\bm p\in\Uset\) and
+\(\mathbf{1}_{\Uset}(\bm p)=0\) otherwise.
+In numerical code this is realised as a method
+\(\bm p\mapsto \texttt{is\_element}(\bm p)\) with a small relative tolerance.
+
+\paragraph{Bounded parameter window and grid.}
+Choose a bounded parameter window in \(\mathbb{R}^k\), for example
+\(
+\bm y \in [y_1^{-},y_1^{+}]\times\cdots\times [y_k^{-},y_k^{+}]
+\).
+Let \(N\in\mathbb{N}\) be a grid resolution.
+We sample a tensor grid in parameter space and evaluate
+\(
+\mathbf{1}_{\Uset}\bigl(\bm p(\bm y)\bigr)
+\)
+at each grid point.
+
+\paragraph{Rendering.}
+\begin{itemize}
+\item For \(k=1\), the mask on the line grid is rendered as contiguous interval
+      bars on the \(y\)-axis (a one--dimensional ``barcode'' plot).
+\item For \(k=2\), the mask on the \((y_1,y_2)\) grid is rendered as a filled
+      region with a contour line indicating the approximate boundary.
+\item For \(k=3\), the same sampling idea applies but three--dimensional
+      rendering requires additional surface/volume visualisation support
+      (in the current implementation this is treated as future work).
+\end{itemize}
+
+This method produces an immediate visualisation of \(\Uset_A\), at the cost of
+\(\mathcal{O}(N^k)\) oracle calls.
+
+\subsection{Method II: Slicing an explicit polyhedral approximation}
+
+Suppose that an outer polyhedral approximation
+\[
+\widehat{\Uset}
+=
+\bigcap_{j=1}^{N_a}
+\bigl\{
+\bm p \in \propertyspace :
+\pair{\bm q_j}{\bm p} \le \beta_j
+\bigr\}
+\]
+has been constructed from dual certificates.
+
+\paragraph{Reduced inequalities.}
+Substituting
+\(\bm p = \bm p_0 + \sum_{i=1}^k y_i \bm v_i\)
+into each half--space constraint yields
+\[
+\ipP{\bm q_j}{\bm p_0}
++
+\sum_{i=1}^k y_i \ipP{\bm q_j}{\bm v_i}
+\;\le\;
+\beta_j.
+\]
+
+Define
+\[
+\alpha_{j,i} := \ipP{\bm q_j}{\bm v_i},
+\qquad
+\widetilde{\beta}_j := \beta_j - \ipP{\bm q_j}{\bm p_0}.
+\]
+
+Then the slice in parameter space is
+\[
+\widetilde{\Uset}
+=
+\Bigl\{
+\bm y \in \mathbb{R}^k :
+\sum_{i=1}^k \alpha_{j,i} y_i \le \widetilde{\beta}_j,
+\quad j=1,\dots,N_a
+\Bigr\},
+\]
+which is a \(k\)-dimensional polyhedron.
+
+\paragraph{Implementation detail: add a bounding box.}
+In plotting we always restrict to a user--specified bounded window in parameter
+space, e.g.
+\(
+\bm y \in [y_1^{-},y_1^{+}]\times\cdots\times [y_k^{-},y_k^{+}].
+\)
+This is encoded by adding the box inequalities
+\(
+y_i \le y_i^{+}
+\)
+and
+\(
+-y_i \le -y_i^{-}
+\)
+for \(i=1,\dots,k\).
+The resulting intersection is a bounded polytope in \(\mathbb{R}^k\), which is
+essential for robust vertex enumeration.
+
+\paragraph{Implementation detail: find an interior point (Chebyshev center).}
+Let the bounded polytope be described in the form
+\(
+A\bm y \le \bm b
+\)
+in \(\mathbb{R}^k\).
+To compute its vertices efficiently, we first find a strictly interior point
+\(\bm y_c\) by solving the Chebyshev--center linear programme
+\[
+\begin{aligned}
+\max_{\bm y\in\mathbb{R}^k,\,r\ge 0}\quad & r \\
+{\text{subject to}}\quad & (A\bm y)_\ell + r\,\|A_{\ell,\cdot}\|_2 \le b_\ell,
+\qquad \ell=1,\dots,m.
+\end{aligned}
+\]
+If the optimal radius \(r\) is essentially zero, then the intersection is empty
+or lower--dimensional within the plotting window; in this case the
+implementation falls back to the membership--oracle rasterisation.
+
+\paragraph{Implementation detail: halfspace intersection and convex hull.}
+Given an interior point \(\bm y_c\), we compute the vertex set
+\(\{\bm y^{(\nu)}\}\subset\mathbb{R}^k\) of the polytope
+\(
+\widetilde{\Uset}\cap\text{(box)}
+\)
+using a halfspace--intersection routine.
+For \(k=2\), we then compute the convex hull of these vertices, order the hull
+vertices cyclically, and render the resulting polygon.
+For \(k=3\), we compute the convex hull facets (triangles) and render the
+resulting polyhedral surface.
+
+\paragraph{Low--dimensional plotting (summary).}
+\begin{itemize}
+\item For \(k=1\), the slice reduces to an interval, obtained by tightening
+      \(y\)-bounds using the one--dimensional inequalities.
+\item For \(k=2\), the slice is an exact polygon obtained by halfspace
+      intersection and convex hulling in \(\mathbb{R}^2\).
+\item For \(k=3\), the slice is an exact polyhedron obtained by halfspace
+      intersection and convex hulling in \(\mathbb{R}^3\).
+\end{itemize}
+
+This method requires no additional oracle calls once
+\(\widehat{\Uset}\) is known, and is particularly suitable for
+interactive visualisation and correlation analysis.
+
+\subsection{Comparison}
+
+\begin{itemize}
+\item The membership--oracle method visualises slices of \(\Uset\) (or any
+      geometric subset) but costs \(\mathcal{O}(N^k)\) membership evaluations
+      on a \(k\)-dimensional tensor grid.
+\item The polyhedral method operates entirely on the existing outer
+      approximation \(\widehat{\Uset}\) and is typically much faster, since it
+      reduces plotting to low--dimensional polytope geometry.
+\end{itemize}
+
+Both approaches rely only on the translation vector \(\bm p_0\)
+and the chosen tangent directions \(\{\bm v_i\}_{i=1}^k\),
+and therefore integrate naturally with geometric slice
+definitions in general Banach spaces.
+
+
+\appendix
+\section{Geometric Interpretation of Support Functions and Certificates}
+\label{app:sliding-halfspaces}
+
+This appendix provides a geometric interpretation of the support function
+and of the ``certificate--direction'' machinery used throughout the paper.
+The goal is to explain how the master dual equation should be understood
+as a practical tool for probing a complicated admissible property set
+through supporting halfspaces, without ever constructing the set explicitly.
+
+\subsection{Supporting hyperplanes via sliding halfspaces}
+
+Let \(\Uset \subset \propertyspace = \mathbb{R}^{N_p}\) be a nonempty convex set.
+Fix a nonzero direction \(\bm q \in \propertyspace\).
+Consider the family of hyperplanes orthogonal to \(\bm q\),
+\begin{equation}\label{eq:slide-hyperplanes}
+H_t
+\;:=\;
+\bigl\{\, \bm p \in \mathbb{R}^{N_p} \;\big|\; \langle \bm q,\bm p\rangle = t \,\bigr\},
+\qquad t \in \mathbb{R},
+\end{equation}
+and the associated halfspaces
+\begin{equation}\label{eq:slide-halfspaces}
+H_t^-
+\;:=\;
+\bigl\{\, \bm p \;\big|\; \langle \bm q,\bm p\rangle \le t \,\bigr\},
+\qquad
+H_t^+
+\;:=\;
+\bigl\{\, \bm p \;\big|\; \langle \bm q,\bm p\rangle \ge t \,\bigr\}.
+\end{equation}
+
+Geometrically, one may imagine sliding the hyperplane \(H_t\)
+in the direction of \(\bm q\), i.e.\ increasing \(t\), while requiring
+that the entire set \(\Uset\) remain on one side of the hyperplane.
+
+The smallest value of \(t\) such that \(\Uset \subset H_t^-\) is
+\begin{equation}\label{eq:tmax}
+t_{\max}(\bm q)
+\;:=\;
+\sup_{\bm p\in\Uset} \langle \bm q,\bm p\rangle.
+\end{equation}
+This corresponds to the \emph{farthest supporting hyperplane}
+with outward normal \(\bm q\).
+The hyperplane \(H_{t_{\max}(\bm q)}\) supports \(\Uset\) in direction \(\bm q\),
+and \(\Uset\) lies entirely in the halfspace \(H_{t_{\max}(\bm q)}^-\).
+
+Similarly, sliding the hyperplane from the opposite side,
+the largest value of \(t\) such that \(\Uset \subset H_t^+\) is
+\begin{equation}\label{eq:tmin}
+t_{\min}(\bm q)
+\;:=\;
+\inf_{\bm p\in\Uset} \langle \bm q,\bm p\rangle,
+\end{equation}
+corresponding to the \emph{closest supporting hyperplane}
+with normal \(\bm q\).
+Together, \(t_{\min}(\bm q)\) and \(t_{\max}(\bm q)\) describe the full extent
+of \(\Uset\) in the geometric direction \(\bm q\).
+
+\subsection{The support function}
+
+The quantity
+\begin{equation}\label{eq:support-def}
+h_{\Uset}(\bm q)
+\;:=\;
+\sup_{\bm p\in\Uset} \langle \bm q,\bm p\rangle
+\end{equation}
+is called the \emph{support function} of \(\Uset\).
+Geometrically, \(h_{\Uset}(\bm q)\) is exactly the offset of the farthest
+supporting hyperplane orthogonal to \(\bm q\).
+No further abstraction is required: the support function is simply
+the answer to the question
+\begin{quote}
+``How far does the set extend in direction \(\bm q\)?''
+\end{quote}
+
+The closest supporting hyperplane in the same geometric direction is obtained from
+the opposite oriented normal:
+\begin{equation}\label{eq:lower-support}
+\inf_{\bm p\in\Uset} \langle \bm q,\bm p\rangle
+\;=\;
+-\,h_{\Uset}(-\bm q).
+\end{equation}
+Thus, no additional object beyond the support function is needed
+to recover two--sided bounds.
+
+A basic result of convex analysis is that the intersection of all supporting
+halfspaces generated by the support function recovers the convex hull of \(\Uset\),
+and hence \(\overline{\Uset}\):
+\begin{equation}\label{eq:Uset-reconstruction}
+\overline{\Uset}
+\;=\;
+\bigcap_{\bm q\in\mathbb{R}^{N_p}}
+\bigl\{\, \bm p \;\big|\; \langle \bm q,\bm p\rangle \le h_{\Uset}(\bm q) \,\bigr\}.
+\end{equation}
+In particular, if \(\Uset\) is closed and convex, it is completely characterized
+by its support function.
+
+\subsection{Why this matters for complicated admissible sets}
+
+In the present work, the admissible property set
+\begin{equation}\label{eq:Uset-definition}
+\Uset
+\;=\;
+\Tau\bigl( \Bset \cap G^{-1}(\tilde{\bm d}-\Vdata) \bigr)
+\end{equation}
+is obtained by intersecting and projecting sets in an infinite--dimensional
+model space.
+Such a set is generally impossible to describe explicitly,
+parametrize, or visualize.
+
+Nevertheless, the directional quantity
+\begin{equation}\label{eq:directional-sup}
+\sup_{\bm p\in\Uset} \langle \bm q,\bm p\rangle
+\end{equation}
+remains meaningful and tractable.
+Rather than attempting to describe \(\Uset\) directly,
+we probe it one direction at a time by computing (or bounding)
+its supporting hyperplanes.
+
+\subsection{Certificates as conservative supporting hyperplanes}
+
+The master dual equation expresses the support function as
+\begin{equation}\label{eq:certificate-inf}
+h_{\Uset}(\bm q)
+\;=\;
+\inf_{\bm{\lambda}\in\dataspace'}
+\widehat h_{\Uset}(\bm q;\bm{\lambda}),
+\end{equation}
+where \(\widehat h_{\Uset}(\bm q;\bm{\lambda})\) is an explicit scalar function
+depending on a dual variable \(\bm{\lambda}\).
+
+For any fixed \(\bm{\lambda}\), the value \(\widehat h_{\Uset}(\bm q;\bm{\lambda})\) satisfies
+\begin{equation}\label{eq:certificate-bound}
+h_{\Uset}(\bm q)
+\;\le\;
+\widehat h_{\Uset}(\bm q;\bm{\lambda}),
+\end{equation}
+and therefore defines a valid outer halfspace
+\begin{equation}\label{eq:certificate-halfspace}
+\Uset
+\;\subset\;
+\bigl\{\, \bm p \;\big|\; \langle \bm q,\bm p\rangle
+\le \widehat h_{\Uset}(\bm q;\bm{\lambda}) \,\bigr\}.
+\end{equation}
+
+Geometrically, each \(\bm{\lambda}\) produces a hyperplane orthogonal to \(\bm q\)
+that lies outside (or possibly tangent to) the true supporting hyperplane.
+Such a \(\bm{\lambda}\) is called a \emph{certificate}:
+it certifies that the admissible set lies entirely on one side
+of a given hyperplane.
+The optimal certificate \(\bm{\lambda}^\star(\bm q)\) produces the closest
+supporting hyperplane, while nonoptimal certificates yield
+more conservative bounds.
+
+This interpretation explains why intermediate or approximate values
+of \(\bm{\lambda}\) already provide meaningful information:
+every certificate corresponds to a valid outer bound on \(\Uset\).
+
+
+
+\section{Derivation of the support formula for \texorpdfstring{$\Uset$}{U}}
+\label{appendix:master_formula_derivation}
+
+Let \(\Vdata \subset \dataspace\) be a convex data--confidence set and
+\(\Bset \subset \modelspace\) a convex model--constraint set.
+No closedness or specific structural assumptions are imposed in this derivation.
+All dual operators are understood in the Banach sense.
+
+\paragraph{Step 1: start from the definition.}
+By definition of the support function of \(\Uset\),
+\begin{equation}\label{eq:app-step1a}
+h_{\Uset}(\bm q)
+=
+\sup_{\substack{m\in\Bset,\ \bm{\eta}\in\Vdata\\ G m+\bm{\eta}=\tilde{\bm d}}}
+\pair{\bm q}{\Tau m}.
+\end{equation}
+Using the Banach dual map \(\Tau' : \propertyspace' \to \modelspace'\),
+this can be written equivalently as
+\begin{equation}\label{eq:app-step1b}
+h_{\Uset}(\bm q)
+=
+\sup_{m,\bm{\eta}}
+\Big\{
+\pair{\Tau' \bm q}{m}
+:\;
+m\in\Bset,\;
+\bm{\eta}\in\Vdata,\;
+G m+\bm{\eta}=\tilde{\bm d}
+\Big\}.
+\end{equation}
+Introducing indicator functions,
+\begin{equation}\label{eq:app-step1c}
+h_{\Uset}(\bm q)
+=
+\sup_{m,\bm{\eta}}
+\Big\{
+\pair{\Tau' \bm q}{m}
+-
+\delta_{\Bset}(m)
+-
+\delta_{\Vdata}(\bm{\eta})
+-
+\delta_{\{0\}}\!\big(G m+\bm{\eta}-\tilde{\bm d}\big)
+\Big\}.
+\end{equation}
+
+\paragraph{Step 2: enforce the equality constraint via a Lagrange multiplier.}
+Using the identity
+\begin{equation}\label{eq:app-indicator-zero}
+-\delta_{\{0\}}(\bm z)
+=
+\inf_{\bm{\lambda}\in\dataspace'}
+\pair{\bm{\lambda}}{-\bm z},
+\end{equation}
+with \(\bm z = G m+\bm{\eta}-\tilde{\bm d}\),
+we obtain
+\begin{equation}\label{eq:app-step2}
+h_{\Uset}(\bm q)
+=
+\sup_{m,\bm{\eta}}\;
+\inf_{\bm{\lambda}\in\dataspace'}
+\Big\{
+\pair{\Tau' \bm q}{m}
++
+\pair{\bm{\lambda}}{\tilde{\bm d}-G m-\bm{\eta}}
+-
+\delta_{\Bset}(m)
+-
+\delta_{\Vdata}(\bm{\eta})
+\Big\}.
+\end{equation}
+
+\paragraph{Step 3: exchange \texorpdfstring{$\sup$}{sup} and \texorpdfstring{$\inf$}{inf}.}
+For arbitrary convex \(\Bset\) and \(\Vdata\), weak duality yields
+\begin{equation}\label{eq:app-step3a}
+h_{\Uset}(\bm q)
+\le
+\inf_{\bm{\lambda}\in\dataspace'}
+\;
+\sup_{m,\bm{\eta}}
+\Big\{
+\pair{\Tau' \bm q}{m}
++
+\pair{\bm{\lambda}}{\tilde{\bm d}-G m-\bm{\eta}}
+-
+\delta_{\Bset}(m)
+-
+\delta_{\Vdata}(\bm{\eta})
+\Big\}.
+\end{equation}
+Regrouping terms,
+\begin{equation}\label{eq:app-step3b}
+h_{\Uset}(\bm q)
+\le
+\inf_{\bm{\lambda}\in\dataspace'}
+\;
+\sup_{m,\bm{\eta}}
+\Big\{
+\pair{\Tau' \bm q - G' \bm{\lambda}}{m}
+-
+\delta_{\Bset}(m)
++
+\pair{\bm{\lambda}}{\tilde{\bm d}}
+-
+\pair{\bm{\lambda}}{\bm{\eta}}
+-
+\delta_{\Vdata}(\bm{\eta})
+\Big\}.
+\end{equation}
+The \(m\) and \(\bm{\eta}\) variables are now decoupled.
+
+\paragraph{Step 4a: the \texorpdfstring{$m$}{m}--supremum.}
+By definition of the support function of \(\Bset\),
+\begin{equation}\label{eq:app-step4a}
+\sup_{m}
+\big(
+\pair{\Tau' \bm q - G' \bm{\lambda}}{m}
+-
+\delta_{\Bset}(m)
+\big)
+=
+\sigma_{\Bset}\!\big(\Tau' \bm q - G' \bm{\lambda}\big).
+\end{equation}
+
+\paragraph{Step 4b: the \texorpdfstring{$\bm{\eta}$}{eta}--supremum.}
+Similarly,
+\begin{equation}\label{eq:app-step4b}
+\sup_{\bm{\eta}}
+\big(
+-\pair{\bm{\lambda}}{\bm{\eta}}
+-
+\delta_{\Vdata}(\bm{\eta})
+\big)
+=
+\sigma_{\Vdata}(-\bm{\lambda}).
+\end{equation}
+
+\paragraph{Step 5: collect terms.}
+Substituting \eqref{eq:app-step4a}--\eqref{eq:app-step4b} into
+\eqref{eq:app-step3b} gives the dual upper bound
+\begin{equation}\label{eq:app-step5}
+h_{\Uset}(\bm q)
+\le
+\inf_{\bm{\lambda}\in\dataspace'}
+\Big\{
+\pair{\bm{\lambda}}{\tilde{\bm d}}
++
+\sigma_{\Bset}\!\big(\Tau' \bm q - G' \bm{\lambda}\big)
++
+\sigma_{\Vdata}(-\bm{\lambda})
+\Big\}.
+\end{equation}
+
+Under standard regularity conditions (e.g.\ a suitable interior-point condition),
+the inequality in \eqref{eq:app-step5} is known to be an equality,
+yielding the master dual equation
+\begin{equation}\label{eq:app-master}
+\boxed{
+h_{\Uset}(\bm q)
+=
+\inf_{\bm{\lambda}\in\dataspace'}
+\Big\{
+\pair{\bm{\lambda}}{\tilde{\bm d}}
++
+\sigma_{\Bset}\!\big(\Tau' \bm q - G' \bm{\lambda}\big)
++
+\sigma_{\Vdata}(-\bm{\lambda})
+\Big\}.
+}
+\end{equation}
+If \(\Vdata\) is symmetric, then
+\(\sigma_{\Vdata}(-\bm{\lambda})=\sigma_{\Vdata}(\bm{\lambda})\).
+
+\paragraph{Step 6: lower support.}
+By definition of the support function,
+\begin{equation}\label{eq:app-lower-support}
+\inf_{\bm p\in\Uset}\pair{\bm q}{\bm p}
+=
+-
+\sup_{\bm p\in\Uset}\pair{-\bm q}{\bm p}
+=
+-
+h_{\Uset}(-\bm q).
+\end{equation}
+
+
+
+\section{Support of a Mahalanobis ellipsoid.}\label{appendix:mahalanobis_support}
+Let $C_{\dataspace}:\dataspace\to\dataspace$ be symmetric positive–definite and
+\[
+\Vdata \;=\; \Big\{\,\bm{\eta}\in\dataspace:\ \tfrac12\,\ipD{C^{-1}_{\dataspace}\bm{\eta}}{\bm{\eta}}\ \le\ s^2\,\Big\}.
+\]
+The support function is
+\[
+\sigma_{\Vdata}(\bm{\lambda})\;=\;\sup_{\bm{\eta}\in\Vdata}\ \pair{\bm{\lambda}}{\bm{\eta}}
+\;=\;\sup_{\bm{\eta}}\ \Big\{\ \pair{\bm{\lambda}}{\bm{\eta}}\ :\ \tfrac12\,\ipD{C^{-1}_{\dataspace}\bm{\eta}}{\bm{\eta}}\le s^2\ \Big\}.
+\]
+
+\emph{Change of variables.} Set $v:=C^{-\frac{1}{2}}_{\dataspace}\bm{\eta}$ so that $\bm{\eta}=C^{\frac{1}{2}}_{\dataspace}v$ and
+\(
+\tfrac12\,\ipD{C^{-1}_{\dataspace}\bm{\eta}}{\bm{\eta}}=\tfrac12\,\ipD{v}{v}.
+\)
+Then
+\[
+\sigma_{\Vdata}(\bm{\lambda})
+=\sup_{\|v\|_{\dataspace}\le \sqrt{2}\,s}\ \pair{C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}}{v}.
+\]
+By Cauchy–Schwarz, the supremum over the Euclidean ball is attained at
+$v=\sqrt{2}\,s\,\frac{C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}}{\|C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}\|_{\dataspace}}$, hence
+\[
+\boxed{\ \sigma_{\Vdata}(\bm{\lambda})\;=\;\sqrt{2}\,s\ \big\|\,C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}\,\big\|_{\dataspace}\ }.
+\]
+\begin{remark}[Normalisation of the data ellipsoid]
+If instead one defines $\Vdata=\{\bm{\eta}:\ \ipD{C^{-1}_{\dataspace}\bm{\eta}}{\bm{\eta}}\le s^2\}$ (no $\tfrac12$),
+then $\sigma_{\Vdata}(\bm{\lambda})=s\,\|C^{\frac{1}{2}}_{\dataspace}\bm{\lambda}\|_{\dataspace}$ and the factor $\sqrt{2}$ in \eqref{eq:hilbert-support} is dropped.
+All subsequent statements hold verbatim after this rescaling of $s$.
+\end{remark}
+
+\section{Support functions, Minkowski sums, ellipsoids, and matrix order}
+\label{app:support-minkowski-ellipsoids}
+
+This appendix gives a concise, self–contained primer on the geometric tools used in the paper:
+support functions, Minkowski sums and translations, “ball inflation,” ellipsoids as images of balls,
+and the Löwner (PSD) order. We work mostly in a real Hilbert space $(\mathcal H,\langle\cdot,\cdot\rangle)$;
+finite–dimensional Euclidean spaces are the main special case. Banach–space remarks are included where needed.
+
+\subsection{Support function: definition, basic properties, and intuition}
+For a (nonempty) convex set $K\subset\mathcal H$, its \emph{support function} is
+\[
+\sigma_K(q)\ :=\ \sup_{x\in K}\ \langle q,\,x\rangle,\qquad q\in\mathcal H.
+\]
+Key facts:
+\begin{enumerate}
+\item \textbf{Sublinearity.} $\sigma_K$ is sublinear: $\sigma_K(\bm{\lambda} q)=\bm{\lambda}\,\sigma_K(q)$ for $\bm{\lambda}\ge0$, and
+$\sigma_K(q_1+q_2)\le\sigma_K(q_1)+\sigma_K(q_2)$.
+\item \textbf{Translation.} For any $c\in\mathcal H$, $\sigma_{\,c+K}(q)=\langle q,c\rangle+\sigma_K(q)$.
+\item \textbf{Minkowski sum.} For sets $K,L$, $\sigma_{K\oplus L}(q)=\sigma_K(q)+\sigma_L(q)$, where
+$K\oplus L:=\{x+y:\ x\in K,\ y\in L\}$ is the Minkowski sum.
+\end{enumerate}
+\emph{Intuition.} $\sigma_K(q)$ is the signed distance (in the dual norm) of the supporting hyperplane orthogonal to $q$
+that just touches $K$. It is a complete “shape descriptor” for convex bodies: $K\mapsto\sigma_K$ is injective
+(up to closure).
+
+\subsection{Images of balls and the identity \texorpdfstring{$\|A^{*}q\|=\sigma_{A(\mathbb B)}(q)$}{|A* q| = sigma\_{A(B)}(q)}}
+Let $A:\mathcal H_1\to\mathcal H_2$ be bounded linear, and let $\mathbb B:=\{x\in\mathcal H_1:\ \|x\|\le1\}$ be
+the unit ball. Then
+\begin{equation}
+\label{eq:support-image-ball}
+\sigma_{A(\mathbb B)}(q)
+=\sup_{\|x\|\le1}\ \langle q,\,A x\rangle
+=\sup_{\|x\|\le1}\ \langle A^{*}q,\,x\rangle
+=\ \|A^{*}q\|.
+\end{equation}
+The first equality is the definition; the second is adjointness; the last is the characterisation of the norm by
+duality in Hilbert spaces: $\sup_{\|x\|\le1}\langle u,x\rangle=\|u\|$.
+
+\paragraph{Banach–space remark.}
+If $\mathcal X$ is Banach, the same calculation gives
+$\sigma_{A(\mathbb B_{\mathcal X})}(q)=\|A^{*}q\|_{\mathcal X^{*}}$, i.e.\ the \emph{dual} norm.
+
+\subsection{Minkowski sums and “ball inflation”}
+Given convex sets $K,L\subset\mathcal H$, the Minkowski sum $K\oplus L$ satisfies
+\[
+\sigma_{K\oplus L}(q)=\sigma_K(q)+\sigma_L(q).
+\]
+For $\rho\ge0$, the (closed) ball of radius $\rho$ is $\rho\,\mathbb B=\{x:\|x\|\le\rho\}$ and
+$\sigma_{\rho\,\mathbb B}(q)=\rho\,\|q\|$. Thus \emph{adding a ball} corresponds to adding $\rho\|q\|$ to the support:
+\[
+K\ \subseteq\ c+S\quad\Longrightarrow\quad
+K\ \subseteq\ c + S\ \oplus\ \rho\,\mathbb B
+\quad\Longleftrightarrow\quad
+\sigma_{K}(q)\ \le\ \langle q,c\rangle+\sigma_{S}(q)+\rho\,\|q\|.
+\]
+We refer to this operation as \emph{ball inflation}: an isotropic, direction–independent safety margin.
+
+\subsection{Ellipsoids as images of balls; supports and shapes}
+In Euclidean/Hilbert geometry, any centred ellipsoid can be written as $E:=A(\mathbb B)$ for some linear map $A$.
+By \eqref{eq:support-image-ball}, its support is
+\[
+\sigma_{E}(q)=\|A^{*}q\|=\sqrt{\langle A A^{*}q,\ q\rangle}.
+\]
+We call $\Sigma:=A A^{*}\succeq0$ the \emph{shape matrix} of the (centred) ellipsoid. A translated ellipsoid is
+$c+E$ with support $\langle q,c\rangle+\sqrt{\langle \Sigma q,q\rangle}$.
+
+\subsection{Aggregating two norms into one ellipsoidal bound}
+For any vectors $u,v$ in a Hilbert space,
+\[
+\|u\|+\|v\|\ \le\ \sqrt{2}\,\sqrt{\|u\|^2+\|v\|^2}
+\qquad\text{since}\qquad
+(a+b)^2\le 2(a^2+b^2).
+\]
+Applying this with $u=A_{\mathrm{noise}}^{*}q$, $v=A_{\mathrm{bias}}^{*}q$ yields
+\begin{equation}
+\label{eq:two-norms-ellipsoid}
+\|A_{\mathrm{noise}}^{*}q\|+\|A_{\mathrm{bias}}^{*}q\|
+\ \le\ \sqrt{2}\,\sqrt{\langle (A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}
++ A_{\mathrm{bias}}A_{\mathrm{bias}}^{*})\,q,\ q\rangle}.
+\end{equation}
+\emph{Interpretation.} The left side is the support of the Minkowski sum
+$A_{\mathrm{noise}}(\mathbb B)\oplus A_{\mathrm{bias}}(\mathbb B)$; the right side is the support of the
+\emph{single} ellipsoid with shape $\ 2\,(A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}+A_{\mathrm{bias}}A_{\mathrm{bias}}^{*})$,
+which outer–bounds that sum (conservative but convenient).
+
+\subsection{Combining three terms: two ellipsoids $+$ ball inflation}
+Similarly,
+\[
+\|A_{\mathrm{noise}}^{*}q\|+\|A_{\mathrm{bias}}^{*}q\|+\kappa\,\|q\|
+\ \le\ \sqrt{3}\,
+\sqrt{\langle (A_{\mathrm{noise}}A_{\mathrm{noise}}^{*}+A_{\mathrm{bias}}A_{\mathrm{bias}}^{*}+\kappa^2 I)\,q,\ q\rangle}.
+\]
+This gives a single ellipsoid outer–bounding the Minkowski sum
+$A_{\mathrm{noise}}(\mathbb B)\oplus A_{\mathrm{bias}}(\mathbb B)\oplus \kappa\,\mathbb B$.
+
+\subsection{Löwner (PSD) order and inclusion of ellipsoids}
+For symmetric positive semidefinite (PSD) operators (matrices) on a Hilbert space we write
+$\Sigma_1\preceq \Sigma_2$ if $\Sigma_2-\Sigma_1$ is PSD. Then for all $q$,
+\[
+\langle \Sigma_1 q,q\rangle\ \le\ \langle \Sigma_2 q,q\rangle
+\quad\Longrightarrow\quad
+\sqrt{\langle \Sigma_1 q,q\rangle}\ \le\ \sqrt{\langle \Sigma_2 q,q\rangle}.
+\]
+Thus if two centred ellipsoids have shape matrices $\Sigma_1,\Sigma_2$ with $\Sigma_1\preceq\Sigma_2$,
+the first is contained in the second. This is the \emph{Löwner order} viewpoint on ellipsoidal inclusion.
+
+\subsection{Quick reference (cheat sheet)}
+Let $K,L\subset\mathcal H$ be convex, $c\in\mathcal H$, $A$ bounded linear, $\mathbb B$ the unit ball.
+\begin{align*}
+&\textbf{Support:} && \sigma_K(q):=\sup_{x\in K}\langle q,x\rangle,\quad \sigma_{c+K}(q)=\langle q,c\rangle+\sigma_K(q).\\
+&\textbf{Minkowski sum:} && \sigma_{K\oplus L}=\sigma_K+\sigma_L.\\
+&\textbf{Image of ball:} && \sigma_{A(\mathbb B)}(q)=\|A^{*}q\|\quad(\text{Hilbert});\ \ =\|A^{*}q\|_{\mathcal X^{*}}\ \text{(Banach)}.\\
+&\textbf{Ball inflation:} && \sigma_{\rho\,\mathbb B}(q)=\rho\,\|q\|,\ \ K\subseteq c+S\ \Rightarrow\ K\subseteq c+S\oplus\rho\,\mathbb B.\\
+&\textbf{Ellipsoid:} && E=A(\mathbb B)\ \Rightarrow\ \sigma_E(q)=\sqrt{\langle (AA^{*})\,q,q\rangle}.\\
+&\textbf{Two blobs to one:} && \|A^{*}q\|+\|B^{*}q\|\ \le\ \sqrt{2}\,\sqrt{\langle (AA^{*}+BB^{*})q,q\rangle}.\\
+&\textbf{PSD order:} && \Sigma_1\preceq\Sigma_2\ \Rightarrow\ \sqrt{\langle \Sigma_1 q,q\rangle}\le \sqrt{\langle \Sigma_2 q,q\rangle}\ \Rightarrow\ E(\Sigma_1)\subseteq E(\Sigma_2).
+\end{align*}
+
+\paragraph{Minimal proofs at a glance.}
+\begin{itemize}
+\item \emph{Image of ball:} $\sigma_{A(\mathbb B)}(q)=\sup_{\|x\|\le1}\langle A^{*}q,x\rangle=\|A^{*}q\|$.
+\item \emph{Minkowski sum:} $\sup_{x\in K,\,y\in L}\langle q,x+y\rangle=\sup_{x\in K}\langle q,x\rangle+\sup_{y\in L}\langle q,y\rangle$.
+\item \emph{Ball inflation:} $\sigma_{\rho\mathbb B}(q)=\sup_{\|u\|\le\rho}\langle q,u\rangle=\rho\|q\|$.
+\item \emph{Two $\to$ one ellipsoid:} $(a+b)^2\le 2(a^2+b^2)$ with $a=\|A^{*}q\|$, $b=\|B^{*}q\|$.
+\item \emph{PSD order:} $\Sigma_2-\Sigma_1\succeq0\Rightarrow \langle(\Sigma_2-\Sigma_1)q,q\rangle\ge0$.
+\end{itemize}
+
+
+\section{Support function of a norm ball and its subdifferential}
+\label{app:norm-ball-support}
+
+Let $\modelspace$ be a Hilbert space with inner product $\ipM{\cdot}{\cdot}$ and
+induced norm $\|m\| := \sqrt{\ipM{m}{m}}$.
+Via the Riesz isomorphism, we identify $\modelspace$ with its dual
+$\modelspace'$ so that the dual pairing coincides with the inner product:
+\[
+\pair{q}{m} = \ipM{q}{m}.
+\]
+
+Let $r>0$ and consider the closed norm ball
+\[
+\Bset_r := \{ m\in\modelspace : \|m\| \le r \}.
+\]
+
+\subsection*{Support function}
+
+The support function of $\Bset_r$ is given explicitly by
+\begin{equation}
+\sigma_{\Bset_r}(q)
+:= \sup_{m\in\Bset_r} \pair{q}{m}
+= r\,\|q\|,
+\qquad q\in\modelspace .
+\label{eq:support-norm-ball}
+\end{equation}
+
+\begin{proof}
+By the Cauchy--Schwarz inequality,
+\[
+\pair{q}{m} \le \|q\|\,\|m\| \le r\,\|q\| \qquad \forall m\in\Bset_r.
+\]
+If $q\neq 0$, equality is attained at $m = r\,q/\|q\|$; if $q=0$, the supremum
+is trivially zero. This proves \eqref{eq:support-norm-ball}.
+\end{proof}
+
+\subsection*{Subdifferential}
+
+Since $\sigma_{\Bset_r}(q)=r\|q\|$, its subdifferential coincides with the
+subdifferential of the norm, scaled by $r$:
+\begin{equation}
+\partial \sigma_{\Bset_r}(q)
+=
+\begin{cases}
+\displaystyle
+\left\{\, r\,\dfrac{q}{\|q\|} \right\}, & q \neq 0, \\[1.2ex]
+\displaystyle
+\{\, m\in\modelspace : \|m\|\le r \,\}, & q = 0 .
+\end{cases}
+\label{eq:subgradient-norm-ball}
+\end{equation}
+
+Equivalently, the subdifferential admits the variational characterization
+\[
+\partial \sigma_{\Bset_r}(q)
+=
+\argmax_{m\in\Bset_r} \pair{q}{m}.
+\]
+Thus, for $q\neq 0$, the maximizer is unique and corresponds to the boundary
+point of $\Bset_r$ with outward normal direction $q$, while for $q=0$ every
+point in $\Bset_r$ is a maximizer.
+
+\subsection*{Subdifferential: derivation from first principles}
+
+Recall that the support function of the norm ball $\Bset_r$ is
+\[
+\sigma_{\Bset_r}(q) = r\|q\| .
+\]
+
+We now derive the subdifferential of $\sigma_{\Bset_r}$ in two equivalent
+ways and explain why they coincide.
+
+\paragraph{Definition of the subdifferential.}
+For a proper convex function $f:\modelspace\to\mathbb{R}$, the
+subdifferential at $q$ is defined as
+\[
+\partial f(q)
+=
+\Big\{
+g\in\modelspace :
+f(z)\ge f(q)+\ipM{g}{z-q}\ \ \forall z\in\modelspace
+\Big\}.
+\]
+
+\paragraph{First derivation: subdifferential of the norm.}
+
+Since $\sigma_{\Bset_r}(q)=r\|q\|$, we may compute the subdifferential
+directly from the subdifferential of the norm.
+
+\begin{itemize}
+\item If $q\neq 0$, the norm is Fr\'echet differentiable at $q$, with
+gradient
+\[
+\nabla \|q\| = \frac{q}{\|q\|}.
+\]
+By standard convex analysis (uniqueness of the subgradient at points of
+differentiability),
+\[
+\partial \|q\| = \left\{ \frac{q}{\|q\|} \right\}.
+\]
+Using the positive homogeneity of the subdifferential,
+\[
+\partial \sigma_{\Bset_r}(q)
+=
+r\,\partial\|q\|
+=
+\left\{ r\,\frac{q}{\|q\|} \right\}.
+\]
+
+\item If $q=0$, we apply the definition directly.
+We seek all $g\in\modelspace$ such that
+\[
+r\|z\| \ge \ipM{g}{z}
+\qquad \forall z\in\modelspace.
+\]
+By the Cauchy--Schwarz inequality,
+$\ipM{g}{z}\le\|g\|\,\|z\|$, so the inequality holds for all $z$ if and only
+if $\|g\|\le r$.
+Hence
+\[
+\partial \sigma_{\Bset_r}(0)
+=
+\{\, g\in\modelspace : \|g\|\le r \,\}
+=
+\Bset_r .
+\]
+\end{itemize}
+
+Combining both cases,
+\[
+\partial \sigma_{\Bset_r}(q)
+=
+\begin{cases}
+\displaystyle
+\left\{ r\,\dfrac{q}{\|q\|} \right\},
+& q\neq 0,\\[1.2ex]
+\displaystyle
+\Bset_r,
+& q=0.
+\end{cases}
+\]
+
+\paragraph{Second derivation: maximizers of the defining supremum.}
+
+Alternatively, we may derive the subdifferential directly from the
+definition of the support function
+\[
+\sigma_{\Bset_r}(q)=\sup_{m\in\Bset_r}\ipM{q}{m}.
+\]
+
+For each $m\in\Bset_r$, the map $q\mapsto\ipM{q}{m}$ is linear.
+General convex analysis results imply that the subdifferential of a
+pointwise supremum of affine functions is the convex hull of the active
+affine terms at that point. In the present setting this yields
+\[
+\partial \sigma_{\Bset_r}(q)
+=
+\operatorname{conv}
+\Big(
+\argmax_{m\in\Bset_r}\ipM{q}{m}
+\Big).
+\]
+
+We now characterize the maximizers explicitly.
+
+\begin{itemize}
+\item If $q\neq 0$, the Cauchy--Schwarz inequality gives
+\[
+\ipM{q}{m}\le \|q\|\,\|m\|\le r\|q\|,
+\]
+with equality if and only if $m=r\,q/\|q\|$.
+Hence the maximizer is unique:
+\[
+\argmax_{m\in\Bset_r}\ipM{q}{m}
+=
+\left\{ r\,\frac{q}{\|q\|} \right\}.
+\]
+Taking the convex hull leaves this set unchanged.
+
+\item If $q=0$, the objective $\ipM{0}{m}$ vanishes identically, so every
+$m\in\Bset_r$ is a maximizer:
+\[
+\argmax_{m\in\Bset_r}\ipM{0}{m}
+=
+\Bset_r.
+\]
+Since $\Bset_r$ is convex, its convex hull is itself.
+\end{itemize}
+
+Thus,
+\[
+\partial \sigma_{\Bset_r}(q)
+=
+\begin{cases}
+\displaystyle
+\left\{ r\,\dfrac{q}{\|q\|} \right\},
+& q\neq 0,\\[1.2ex]
+\displaystyle
+\Bset_r,
+& q=0,
+\end{cases}
+\]
+in agreement with the first derivation.
+
+
+\subsection*{Subdifferential of a weighted Hilbert norm}
+\label{app:weighted-norm-subgradient}
+
+Let $\modelspace$ be a real Hilbert space with inner product $\ipM{\cdot}{\cdot}$.
+Let $\mathbf W:\modelspace\to\modelspace$ be a bounded, self--adjoint,
+strictly positive operator.
+The associated weighted norm is defined by
+\[
+\|m\|_{\mathbf W}
+:=
+\sqrt{\ipM{\mathbf W m}{m}} .
+\]
+
+\paragraph{Definition of the subdifferential.}
+For a convex function $f:\modelspace\to\mathbb{R}$, the subdifferential at
+$q\in\modelspace$ is
+\[
+\partial f(q)
+=
+\Big\{
+g\in\modelspace :
+f(z)\ge f(q)+\ipM{g}{z-q}
+\ \ \forall z\in\modelspace
+\Big\}.
+\]
+
+We compute $\partial \|\cdot\|_{\mathbf W}(q)$.
+
+\paragraph{Case $q\neq 0$.}
+The mapping $q\mapsto\|q\|_{\mathbf W}$ is Fr\'echet differentiable away from
+the origin. For any direction $h\in\modelspace$,
+\[
+\frac{d}{d\varepsilon}\Big|_{\varepsilon=0}
+\|q+\varepsilon h\|_{\mathbf W}
+=
+\frac{1}{2}
+\frac{2\,\ipM{\mathbf W q}{h}}{\|q\|_{\mathbf W}}
+=
+\ipM{\frac{\mathbf W q}{\|q\|_{\mathbf W}}}{h}.
+\]
+Hence the gradient exists and is given by
+\[
+\nabla \|q\|_{\mathbf W}
+=
+\frac{\mathbf W q}{\|q\|_{\mathbf W}}.
+\]
+Since the norm is differentiable at $q\neq 0$, the subdifferential is a
+singleton:
+\[
+\partial \|q\|_{\mathbf W}
+=
+\left\{
+\frac{\mathbf W q}{\|q\|_{\mathbf W}}
+\right\},
+\qquad q\neq 0.
+\]
+
+\paragraph{Case $q=0$.}
+We seek all $g\in\modelspace$ such that
+\[
+\|z\|_{\mathbf W} \ge \ipM{g}{z}
+\qquad \forall z\in\modelspace.
+\]
+The dual norm associated with $\|\cdot\|_{\mathbf W}$ is
+\[
+\|g\|_{\mathbf W^{-1}}
+=
+\sqrt{\ipM{\mathbf W^{-1} g}{g}}.
+\]
+By the Cauchy--Schwarz inequality in the weighted inner product,
+\[
+\ipM{g}{z}
+\le
+\|g\|_{\mathbf W^{-1}}\,\|z\|_{\mathbf W}.
+\]
+Therefore the defining inequality holds for all $z$ if and only if
+$\|g\|_{\mathbf W^{-1}}\le 1$. Consequently,
+\[
+\partial \|\cdot\|_{\mathbf W}(0)
+=
+\{\, g\in\modelspace : \|g\|_{\mathbf W^{-1}}\le 1 \,\}.
+\]
+
+\paragraph{Summary.}
+The subdifferential of the weighted norm is
+\[
+\partial \|q\|_{\mathbf W}
+=
+\begin{cases}
+\displaystyle
+\left\{ \dfrac{\mathbf W q}{\|q\|_{\mathbf W}} \right\},
+& q\neq 0, \\[1.2ex]
+\displaystyle
+\{\, g : \|g\|_{\mathbf W^{-1}}\le 1 \,\},
+& q=0.
+\end{cases}
+\]
+
+\paragraph{Interpretation.}
+For $q\neq 0$, the subgradient is the outward normal to the ellipsoidal
+level set $\{m:\ipM{\mathbf W m}{m}=\text{const}\}$.
+At the origin, the subdifferential coincides with the unit ball of the
+dual weighted norm, reflecting the polarity between $\mathbf W$ and
+$\mathbf W^{-1}$.
+
+
+
+
+\bibliographystyle{plainnat}
+\bibliography{bibliography}
+
+\end{document}
