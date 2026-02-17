@@ -35,7 +35,7 @@ where:
 
 ## Progress Summary
 
-**Overall Progress:** 3.5/8 phases complete (~44%)
+**Overall Progress:** 4/8 phases complete (~50%)
 
 | Phase | Status | Progress | Notes |
 |-------|--------|----------|-------|
@@ -45,7 +45,7 @@ where:
 | Phase 4 | 🟨 IN PROGRESS | 6/19 | Solver (Sub-Phase 4.1 complete) |
 | Phase 5 | ⏸️ NOT STARTED | 0/4 | Integration & Testing |
 | Phase 6 | ⏸️ NOT STARTED | 0/5 | Advanced Features (optional) |
-| Phase 7 | 🟨 IN PROGRESS | 6/7 | Planes & Half-Spaces |
+| Phase 7 | ✅ COMPLETE | 7/7 | Planes & Half-Spaces (35 tests passing) |
 | Phase 8 | 🟨 PARTIAL | 1/9 | Visualization (SubspaceSlicePlotter done) |
 
 ---
@@ -297,13 +297,13 @@ Demo notebook runs end-to-end on toy problem; integration tests added and passin
 
 ---
 
-## Phase 7: Planes & Half-Spaces 🟨
+## Phase 7: Planes & Half-Spaces ✅
 
-**Status:** IN PROGRESS (6/7 tasks complete)
+**Status:** COMPLETE (7/7 tasks complete)
 **Owner:** Sisyphus
-**Progress:** 6/7 tasks
+**Progress:** 7/7 tasks
 **Files:** `pygeoinf/subsets.py`, `pygeoinf/convex_analysis.py`
-**Tests:** `tests/test_halfspaces.py`
+**Tests:** `tests/test_halfspaces.py` (35 tests, all passing)
 
 ### Goal
 Implement linear hyperplane and half-space convex sets with support functions.
@@ -320,8 +320,8 @@ Planes and half-spaces are fundamental geometric objects enabling:
 - **Half-space:** H₊ = {x : ⟨a, x⟩ ≤ b} (unbounded, convex)
 - **Polyhedral set:** P = ∩ᵢ Hᵢ (intersection of half-spaces)
 - **Support function:**
-  - For {x | ⟨a,x⟩ ≤ b}: σ(q) = b if ⟨q,a⟩ > 0, else +∞
-  - For {x | ⟨a,x⟩ ≥ b}: σ(q) = b if ⟨q,a⟩ < 0, else +∞
+  - For {x | ⟨a,x⟩ ≤ b}: σ(q) = αb if q = αa with α ≥ 0, else +∞
+  - For {x | ⟨a,x⟩ ≥ b}: σ(q) = αb if q = αa with α ≤ 0, else +∞
 
 ### Tasks
 - [x] Create `HyperPlane` class in `pygeoinf/subsets.py`
@@ -340,16 +340,20 @@ Planes and half-spaces are fundamental geometric objects enabling:
 - [x] Implement `PolyhedralSet` class (intersection of half-spaces)
   - Parameters: list of HalfSpace objects
   - Methods: contains(x), support_function (intersection logic)
-- [ ] **Unit tests for planes and half-spaces** (REMAINING TASK)
-  - Test HyperPlane containment and projection
-  - Test HalfSpace support function (bounded/unbounded cases)
-  - Test PolyhedralSet intersection semantics
+- [x] **Unit tests for planes and half-spaces** ✅
+  - 35 comprehensive tests in `tests/test_halfspaces.py`
+  - Test suite breakdown:
+    - `TestHyperPlane`: 12 tests (initialization, membership, projection, distance, properties)
+    - `TestHalfSpace`: 13 tests (initialization, membership, support functions, boundaries)
+    - `TestPolyhedralSet`: 7 tests (initialization, intersection semantics, simplex constraints)
+    - `TestNumericalRobustness`: 3 tests (parallel directions, large offsets, small normals)
+  - All 35 tests passing ✅
 - [x] Bridge between `AffineSubspace` and `HyperPlane` (BONUS)
   - `AffineSubspace.from_hyperplanes(hyperplanes)`: construct from intersection
   - Unifies geometric ↔ algebraic representations
 
 ### Acceptance
-`HalfSpace` and `PolyhedralSet` support functions implemented; basic unit tests pass.
+✅ `HalfSpace` and `PolyhedralSet` support functions implemented; comprehensive unit tests pass (35/35).
 
 ---
 
