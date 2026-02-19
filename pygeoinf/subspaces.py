@@ -219,7 +219,7 @@ class AffineSubspace(Subset):
         for v in candidates:
             w = domain.copy(v)
             for b in basis:
-                domain.axpy(-domain.inner_product(w, b), b, w)
+                w = domain.axpy(-domain.inner_product(w, b), b, w)
             norm_w = domain.norm(w)
             if norm_w > tolerance:
                 domain.ax(1.0 / norm_w, w)
@@ -483,7 +483,7 @@ class AffineSubspace(Subset):
         def constraint_adjoint(c: np.ndarray) -> Vector:
             res = domain.zero
             for i, e in enumerate(e_vectors):
-                domain.axpy(c[i], e, res)
+                res = domain.axpy(c[i], e, res)
             return res
 
         B = LinearOperator(
@@ -578,7 +578,7 @@ class AffineSubspace(Subset):
             # B*(c) = sum_i c_i * a_i
             result = domain.zero
             for i, a_i in enumerate(normal_vectors):
-                domain.axpy(c[i], a_i, result)
+                result = domain.axpy(c[i], a_i, result)
             return result
 
         B = LinearOperator(

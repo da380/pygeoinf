@@ -504,8 +504,8 @@ class CGSolver(IterativeLinearSolver):
             den = domain.inner_product(p, q)
             alpha = num / den
 
-            domain.axpy(alpha, p, x)
-            domain.axpy(-alpha, q, r)
+            x = domain.axpy(alpha, p, x)
+            r = domain.axpy(-alpha, q, r)
 
             if preconditioner is None:
                 z = domain.copy(r)
@@ -518,7 +518,7 @@ class CGSolver(IterativeLinearSolver):
 
             # p = z + beta * p
             domain.ax(beta, p)
-            domain.axpy(1.0, z, p)
+            p = domain.axpy(1.0, z, p)
 
             if self._callback is not None:
                 self._callback(x)
@@ -596,9 +596,9 @@ class MinResSolver(IterativeLinearSolver):
             # v_next = M^-1 * (A*v_j) - alpha*v_j - gamma_j*v_{j-1}
             # We apply M^-1 to the operator result to stay in the Krylov space of M^-1 A
             v_next = domain.copy(Av) if preconditioner is None else preconditioner(Av)
-            domain.axpy(-alpha, v_curr, v_next)
+            v_next = domain.axpy(-alpha, v_curr, v_next)
             if k > 0:
-                domain.axpy(-gamma_curr, v_prev, v_next)
+                v_next = domain.axpy(-gamma_curr, v_prev, v_next)
 
             # Compute beta_{j+1}
             # Note: v_next here is effectively M^-1 * r_j
@@ -651,13 +651,13 @@ class MinResSolver(IterativeLinearSolver):
             # Update search directions: w_j = (v_j - rho_1*w_{j-1} - rho_2*w_{j-2}) / rho_3
             w_next = domain.copy(v_curr)
             if k > 0:
-                domain.axpy(-rho_1, w_curr, w_next)
+                w_next = domain.axpy(-rho_1, w_curr, w_next)
             if k > 1:
-                domain.axpy(-rho_2, w_prev, w_next)
+                w_next = domain.axpy(-rho_2, w_prev, w_next)
             domain.ax(1.0 / rho_3, w_next)
 
             # x = x + phi * w_j
-            domain.axpy(phi, w_next, x)
+            x = domain.axpy(phi, w_next, x)
 
             # Convergence check (abs for sign-flipping phi_bar)
             if abs(phi_bar) < self._rtol * gamma_1 or abs(phi_bar) < self._atol:
@@ -750,7 +750,7 @@ class BICGStabSolver(IterativeLinearSolver):
 
             # Check norm of s for early convergence
             if domain.norm(s) < self._atol:
-                domain.axpy(alpha, ph, x)
+                x = domain.axpy(alpha, ph, x)
                 break
 
             # Preconditioning step: sh = M^-1 s
@@ -762,8 +762,8 @@ class BICGStabSolver(IterativeLinearSolver):
             omega = domain.inner_product(t, s) / domain.inner_product(t, t)
 
             # x = x + alpha * ph + omega * sh
-            domain.axpy(alpha, ph, x)
-            domain.axpy(omega, sh, x)
+            x = domain.axpy(alpha, ph, x)
+            x = domain.axpy(omega, sh, x)
 
             # r = s - omega * t
             r = domain.subtract(s, domain.multiply(omega, t))
@@ -864,7 +864,7 @@ class LSQRSolver(IterativeLinearSolver):
             phi = c * psi  # Use psi from the damping rotation
 
             # Update solution and search direction
-            domain.axpy(phi / rho, w, x)
+            x = domain.axpy(phi / rho, w, x)
             w = domain.subtract(v, domain.multiply(theta / rho, w))
 
             # Convergence check
@@ -932,10 +932,10 @@ class FCGSolver(IterativeLinearSolver):
             alpha = rz / pap
 
             # Update solution: x = x + alpha * p
-            space.axpy(alpha, p, x)
+            x = space.axpy(alpha, p, x)
 
             # Update residual: r = r - alpha * ap
-            space.axpy(-alpha, ap, r)
+            r = space.axpy(-alpha, ap, r)
 
             # Convergence check
             if space.norm(r) < self._atol + self._rtol * norm_y:

@@ -219,9 +219,10 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         """Performs in-place scaling `x := a*x`. Defaults to `x *= a`."""
         x *= a
 
-    def axpy(self, a: float, x: Vector, y: Vector) -> None:
-        """Performs in-place operation `y := y + a*x`. Defaults to `y += a*x`."""
+    def axpy(self, a: float, x: Vector, y: Vector) -> Vector:
+        """Performs `y := y + a*x` and returns the result. Mutates y in-place when possible."""
         y += a * x
+        return y
 
     def copy(self, x: Vector) -> Vector:
         """Returns a deep copy of a vector. Defaults to `x.copy()`."""
@@ -788,9 +789,9 @@ class MassWeightedHilbertSpace(HilbertSpace):
         """Performs in-place scaling `x := a*x`. Defaults to `x *= a`."""
         self.underlying_space.ax(a, x)
 
-    def axpy(self, a: float, x: Vector, y: Vector) -> None:
-        """Performs in-place operation `y := y + a*x`. Defaults to `y += a*x`."""
-        self.underlying_space.axpy(a, x, y)
+    def axpy(self, a: float, x: Vector, y: Vector) -> Vector:
+        """Performs `y := y + a*x` and returns the result. Mutates y in-place when possible."""
+        return self.underlying_space.axpy(a, x, y)
 
     def copy(self, x: Vector) -> Vector:
         """Returns a deep copy of a vector. Defaults to `x.copy()`."""

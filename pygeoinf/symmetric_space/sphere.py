@@ -642,12 +642,13 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         """
         x.data *= a
 
-    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
+    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> sh.SHGrid:
         """
-        Custom in-place axpy implementation for pyshtools objects.
-        y := a*x + y
+        Custom axpy for pyshtools objects: y := a*x + y.
+        Mutates y in-place and returns it.
         """
         y.data += a * x.data
+        return y
 
     def vector_multiply(self, x1: sh.SHGrid, x2: sh.SHGrid) -> sh.SHGrid:
         """
@@ -1008,7 +1009,7 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
                         local_v = self.zero
                         for idx in indices_chunk:
                             v_i = self.dirac_representation(points[idx])
-                            self.axpy(data[idx], v_i, local_v)
+                            local_v = self.axpy(data[idx], v_i, local_v)
                         return local_v
 
                     chunks = np.array_split(
@@ -1020,13 +1021,13 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
 
                     total_v = self.zero
                     for res in results:
-                        self.axpy(1.0, res, total_v)
+                        total_v = self.axpy(1.0, res, total_v)
                     return total_v
                 else:
                     total_v = self.zero
                     for i, val in enumerate(data):
                         v_i = self.dirac_representation(points[i])
-                        self.axpy(val, v_i, total_v)
+                        total_v = self.axpy(val, v_i, total_v)
                     return total_v
 
             return LinearOperator(

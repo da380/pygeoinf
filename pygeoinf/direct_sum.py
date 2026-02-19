@@ -392,7 +392,7 @@ class ColumnLinearOperator(LinearOperator, BlockStructure):
             """
             x = domain.zero
             for op, y in zip(self._operators, ys):
-                domain.axpy(1.0, op.adjoint(y), x)
+                x = domain.axpy(1.0, op.adjoint(y), x)
             return x
 
         LinearOperator.__init__(
@@ -452,7 +452,7 @@ class RowLinearOperator(LinearOperator, BlockStructure):
             """
             y = codomain.zero
             for op, x in zip(self._operators, xs):
-                codomain.axpy(1.0, op(x), y)
+                y = codomain.axpy(1.0, op(x), y)
             return y
 
         def adjoint_mapping(y: Any) -> List[Any]:
