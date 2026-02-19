@@ -496,6 +496,58 @@ print(result.converged)     # Convergence flag
 
 ---
 
+### Bundle Methods
+
+**Theory:** Level bundle methods for non-smooth convex optimization
+Build cutting-plane model: ˇf_k(x) = max_{j ∈ J_k} {f(x_j) + ⟨g_j, x - x_j⟩}
+Solve QP: x_{k+1} = argmin_{x : ˇf_k(x) ≤ f_lev_k} ||x - ˆx_k||²
+
+**Code:** `BundleMethod(oracle, alpha, max_iterations, bundle_size)`
+**File:** `pygeoinf/convex_optimisation.py`
+
+**Usage:**
+```python
+solver = BundleMethod(nonlinear_form, alpha=0.1, max_iterations=500)
+result = solver.solve(x_init)
+
+print(result.gap)        # Δ_k = f_up - f_low (optimality certificate)
+print(result.converged)  # True if Δ_k ≤ tolerance
+print(result.num_serious_steps)  # Stability center updates
+```
+
+**Requirements:**
+- `nonlinear_form` must implement `._mapping(x)` and `.subgradient(x)`
+- Quadratic programming solver (scipy.optimize.minimize or cvxpy)
+- Feasible set X (default: no constraints)
+
+**Key Concepts:**
+- **Bundle:** Collection of cuts (x_j, f(x_j), g_j) from past oracle calls
+- **Cutting-plane model:** Piecewise-linear underestimator ˇf_k(x) ≤ f(x)
+- **Stability center:** ˆx_k = best point found (argmin f(x_j) over bundle)
+- **Level set:** L_k = {x : ˇf_k(x) ≤ f_lev_k} where f_lev_k = α·f_low + (1-α)·f_up
+- **Serious step:** f(x_{k+1}) < f(ˆx_k) - α·Δ_k → update ˆx_{k+1} = x_{k+1}
+- **Null step:** Add cut to bundle, keep ˆx_{k+1} = ˆx_k
+
+**Convergence:**
+- Monotonic descent of upper bound: f_up_k ↓ f*
+- Gap-based stopping: Δ_k ≤ tol guarantees |f(ˆx_k) - f*| ≤ tol
+- Automatic step sizing (implicit in QP, no manual tuning)
+- Stability center prevents oscillation
+
+**Advantages over Subgradient:**
+- No step size tuning required
+- Better descent through model-based search direction
+- Reliable termination criterion (gap Δ_k)
+- Accumulates information (bundle not discarded)
+- Natural handling of constraints via QP
+
+**Status:**
+- 🔲 Future: Bundle methods implementation (see plan: bundle-methods-optimizer-plan.md)
+- 📊 Theory: theory/bundle_methods.pdf (asynchronous level methods)
+- 🎯 Target: Replace SubgradientDescent for dual master problems (higher accuracy)
+
+---
+
 ## Forward Problems
 
 **Theory Reference:** theory.txt §1 eq:intro-observation

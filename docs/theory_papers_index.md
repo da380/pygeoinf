@@ -244,6 +244,81 @@ h_U_q = result.best_value  # sup_{p ∈ U} ⟨q, p⟩
 
 ---
 
+### Bundle Methods for Non-Smooth Optimization (2020s)
+
+**File:** `theory/bundle_methods.pdf` (21 pages)
+
+**Key Contributions:**
+1. **Level Bundle Algorithm:**
+   - Cutting-plane model approximates non-smooth function
+   - Quadratic master problem determines next iterate
+   - Stability center provides robustness
+
+2. **Asynchronous Extensions:**
+   - Distributed computation with delayed oracle responses
+   - Upper-bound estimation without full evaluations
+   - Coordination strategies for convergence
+
+3. **Inexact Oracles:**
+   - Handle noisy function/subgradient evaluations
+   - On-demand accuracy control
+   - Convergence to ε-optimal solutions
+
+**Mathematical Framework:**
+```latex
+Master QP: min  (1/2)||x - ˆx||²
+           s.t. f(x_j) + ⟨g_j, x - x_j⟩ ≤ r_j  ∀j ∈ J_k
+                sum_j r_j ≤ f_lev_k
+                x ∈ X
+
+Descent test: Δ_k = f_up_k - f_low_k ≤ tolerance
+```
+
+**Code Status:**
+- 🔲 Future: `BundleMethod` class in convex_optimisation.py
+- 🔲 Future: Quadratic master problem solver
+- 🔲 Future: Bundle compression/aggregation
+- 📋 Planned: See pygeoinf/plans/bundle-methods-optimizer-plan.md
+
+**Comparison with Pygeoinf:**
+- ✅ Compatible: Uses `NonLinearForm` oracle interface
+- ✅ Compatible: Works with `SupportFunction` for dual problems
+- ➕ New: Requires QP solver (scipy.optimize or cvxpy)
+- 🆕 Advanced: Asynchronous/parallel computation (future extension)
+
+**Advantages over Current SubgradientDescent:**
+- Automatic step sizing (no manual tuning)
+- Model-based search directions (better descent)
+- Reliable gap-based termination (certificate of optimality)
+- Stability center prevents oscillation
+- Bundle accumulates information (not discarded)
+
+**Application to Dual Master:**
+Level bundle methods solve the dual master cost minimization:
+```python
+# Minimize: φ(λ) = ⟨λ, d̃⟩ + σ_B(T*q - G*λ) + σ_V(-λ)
+cost = DualMasterCostFunction(G, T, d_obs, sigma_B, sigma_V)
+cost.set_direction(q)
+
+# Bundle method (automatic step sizing, gap-based stopping)
+solver = BundleMethod(cost, alpha=0.1, tolerance=1e-6)
+result = solver.solve(lambda_init)
+h_U_q = result.best_value  # Certified: |h_U_q - h_U*(q)| ≤ 1e-6
+```
+
+**Citation in Code:**
+```python
+# Level bundle method (Lemaréchal et al., 1995; Kiwiel, 1995)
+# Asynchronous extensions: theory/bundle_methods.pdf
+```
+
+**References:**
+- Kiwiel (1995): Proximal level bundle methods
+- Lemaréchal (1975): Extension of Davidon methods to non-differentiable problems
+- van Ackooij & de Oliveira (2014): Level bundle methods with various oracles
+
+---
+
 ### Bui-Thanh et al. (2013) - Infinite-Dimensional Bayesian Computation
 
 **File:** `Bui-Thanh et al. - 2013 - A Computational Framework for Infinite-Dimensional.pdf`

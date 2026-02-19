@@ -125,6 +125,12 @@ from .visualization import plot_1d_distributions, plot_corner_distributions, Sub
 
 from .convex_optimisation import SubgradientDescent
 
+from .convex_analysis import (
+    SupportFunction,
+    BallSupportFunction,
+    EllipsoidSupportFunction
+)
+
 from .utils import configure_threading
 
 __all__ = [
@@ -226,6 +232,10 @@ __all__ = [
     "SubspaceSlicePlotter",
     # convex_optimisation
     "SubgradientDescent",
+    # convex_analysis
+    "SupportFunction",
+    "BallSupportFunction",
+    "EllipsoidSupportFunction",
     # utils
     "configure_threading",
 ]

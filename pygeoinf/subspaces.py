@@ -168,32 +168,62 @@ class AffineSubspace(Subset):
         return LinearSubspace(self._projector)
 
     def get_tangent_basis(self) -> List[Vector]:
-        """
+        r"""
         Returns an orthonormal basis for the tangent space of this affine subspace.
 
-        Extracts orthonormal basis vectors that span the tangent space V by
-        applying the projector to standard basis vectors and keeping linearly
-        independent results.
+        Extracts orthonormal basis vectors that span the tangent space $V$ by
+        applying the projector $P$ to each standard basis vector $e_i$, then
+        performing a tolerant Gram-Schmidt orthogonalisation to discard linearly
+        dependent projections.
+
+        **Algorithm (two-phase tolerant Gram-Schmidt):**
+
+        *Phase 1 – candidate collection:*
+        For each standard basis vector $e_i$, compute $v_i = P(e_i)$.  Keep $v_i$
+        as a candidate whenever $\|v_i\| > \epsilon$.
+
+        *Phase 2 – tolerant Gram-Schmidt:*
+        For each candidate $v$, subtract its components along the already-accepted
+        basis vectors:
+
+        $$w \leftarrow v - \sum_{b \in \text{basis}} \langle w, b \rangle \, b$$
+
+        If $\|w\| > \epsilon$ after the subtraction, normalise and accept; otherwise
+        $v$ is linearly dependent on the current basis and is silently skipped.
+
+        This handles non-axis-aligned subspaces correctly: for example a 1-D
+        diagonal subspace spanned by $(1, 1, 1)/\\sqrt{3}$ would cause all three
+        standard-basis projections to be parallel under the naive norm-only check,
+        wrongly yielding dimension 3; the Gram-Schmidt step collapses them to one.
+
+        Args:
+            tolerance: Threshold $\\epsilon$ below which a norm is treated as zero.
+                Defaults to 1e-10.
 
         Returns:
             List[Vector]: Orthonormal basis vectors for the tangent space.
         """
+        tolerance = 1e-10
         domain = self.domain
-        basis = []
+
+        # Phase 1: collect all non-zero projections of standard basis vectors.
+        candidates = []
         for i in range(domain.dim):
-            # Create standard basis vector e_i
-            e_i_comp = np.zeros(domain.dim)
-            e_i_comp[i] = 1.0
-            e_i = domain.from_components(e_i_comp)
-
-            # Project onto tangent space
+            e_i = domain.basis_vector(i)
             v_i = self._projector(e_i)
-            norm_vi = domain.norm(v_i)
+            if domain.norm(v_i) > tolerance:
+                candidates.append(v_i)
 
-            # Keep only linearly independent (non-zero) projections
-            if norm_vi > 1e-10:
-                normalized = domain.multiply(1.0 / norm_vi, v_i)
-                basis.append(normalized)
+        # Phase 2: tolerant Gram-Schmidt — skip linearly dependent candidates.
+        basis = []
+        for v in candidates:
+            w = domain.copy(v)
+            for b in basis:
+                domain.axpy(-domain.inner_product(w, b), b, w)
+            norm_w = domain.norm(w)
+            if norm_w > tolerance:
+                domain.ax(1.0 / norm_w, w)
+                basis.append(w)
 
         return basis
 
