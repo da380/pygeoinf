@@ -1052,14 +1052,14 @@ biorthogonal dual basis vectors are the Riesz representations of the dual basis
 functionals: each $\phi^i \in H'$ maps (via Riesz) to the corresponding
 $\psi_i \in H$ that satisfies $(\phi_j, \psi_i)_H = \delta_{ji}$.
 
-For completeness, the analysis and synthesis operators on the dual space are defined
-as:
+For completeness, the dual basis induces analysis and synthesis operators on the dual space:
 \begin{align}
-  \Pi' : H' \to \ell^2, \quad [\Pi'(\ell)]_j &= \langle \ell, \phi_j\rangle, \\
-  \pi' : \ell^2 \to H', \quad \pi'(\mathbf{c}) &= \sum_j c_j \phi^j,
+  \Pi' : H' \to (\ell^2)', \quad [\Pi'(\ell)]_j &:= \langle \ell, \phi_j\rangle, \\
+  \pi' : (\ell^2)' \to H', \quad \pi'(\ell') &:= \sum_j [\ell']_j \phi^j,
 \end{align}
-and they form a pair of bounded inverses on the dual space, analogous to
-$\Pi$ and $\pi$ on the primal space.
+where $[\ell']_j$ denotes the evaluation of the linear functional $\ell' \in (\ell^2)'$ on the
+$j$-th standard basis vector of $\ell^2$. These form a pair of bounded inverses on the dual space,
+analogous to $\Pi$ and $\pi$ on the primal space.
 
 \section{The Gram matrix}
 \label{sec:gram-matrix}
