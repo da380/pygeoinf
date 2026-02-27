@@ -33,22 +33,22 @@
 \contentsline {paragraph}{Riesz map and its inverse.}{12}{paragraph*.20}%
 \contentsline {section}{\numberline {2.6}Bases and representations}{12}{section.2.6}%
 \contentsline {subsection}{\numberline {2.6.1}Riesz bases and biorthogonal duals}{12}{subsection.2.6.1}%
-\contentsline {paragraph}{Connection to the dual basis.}{12}{paragraph*.21}%
+\contentsline {paragraph}{Connection to the dual basis.}{13}{paragraph*.21}%
 \contentsline {subsection}{\numberline {2.6.2}The analysis operator}{13}{subsection.2.6.2}%
 \contentsline {subsection}{\numberline {2.6.3}The synthesis operator}{13}{subsection.2.6.3}%
-\contentsline {subsection}{\numberline {2.6.4}The dual basis}{13}{subsection.2.6.4}%
-\contentsline {section}{\numberline {2.7}The Gram matrix}{13}{section.2.7}%
+\contentsline {subsection}{\numberline {2.6.4}The dual basis}{14}{subsection.2.6.4}%
+\contentsline {section}{\numberline {2.7}The Gram matrix}{14}{section.2.7}%
 \contentsline {paragraph}{Gram matrix and the biorthogonal dual.}{14}{paragraph*.22}%
-\contentsline {paragraph}{Analysis via $\phi _j$ alone.}{14}{paragraph*.23}%
-\contentsline {paragraph}{Riesz isomorphism on the coefficient space.}{14}{paragraph*.24}%
-\contentsline {section}{\numberline {2.8}Finite-dimensional approximation}{14}{section.2.8}%
-\contentsline {section}{\numberline {2.9}Concrete spaces in pygeoinf}{15}{section.2.9}%
-\contentsline {subsection}{\numberline {2.9.1}\texttt {EuclideanSpace}}{15}{subsection.2.9.1}%
-\contentsline {subsection}{\numberline {2.9.2}\texttt {MassWeightedHilbertSpace}}{15}{subsection.2.9.2}%
-\contentsline {paragraph}{Motivating use case: discretized $L^2$.}{15}{paragraph*.25}%
-\contentsline {subsection}{\numberline {2.9.3}\texttt {HilbertSpaceDirectSum}}{15}{subsection.2.9.3}%
+\contentsline {paragraph}{Analysis via $\phi _j$ alone.}{15}{paragraph*.23}%
+\contentsline {paragraph}{Riesz isomorphism on the coefficient space.}{15}{paragraph*.24}%
+\contentsline {section}{\numberline {2.8}Finite-dimensional approximation}{15}{section.2.8}%
+\contentsline {section}{\numberline {2.9}Concrete spaces in pygeoinf}{16}{section.2.9}%
+\contentsline {subsection}{\numberline {2.9.1}\texttt {EuclideanSpace}}{16}{subsection.2.9.1}%
+\contentsline {subsection}{\numberline {2.9.2}\texttt {MassWeightedHilbertSpace}}{16}{subsection.2.9.2}%
+\contentsline {paragraph}{Motivating use case: discretized $L^2$.}{16}{paragraph*.25}%
+\contentsline {subsection}{\numberline {2.9.3}\texttt {HilbertSpaceDirectSum}}{16}{subsection.2.9.3}%
 \contentsline {subsection}{\numberline {2.9.4}Implementing your own \texttt {HilbertSpace}}{16}{subsection.2.9.4}%
-\contentsline {section}{\numberline {2.10}Summary and commutative diagram}{17}{section.2.10}%
+\contentsline {section}{\numberline {2.10}Summary and commutative diagram}{18}{section.2.10}%
 \contentsline {chapter}{\numberline {3}Linear Forms}{19}{chapter.3}%
 \contentsline {section}{\numberline {3.1}Motivation: measurements as linear functionals}{19}{section.3.1}%
 \contentsline {section}{\numberline {3.2}Definition}{19}{section.3.2}%

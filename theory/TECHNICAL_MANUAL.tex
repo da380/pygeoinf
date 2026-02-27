@@ -306,7 +306,9 @@ Throughout this manual we use the following typographic conventions.
 \begin{itemize}
   \item \textbf{Boldface roman} ($\mathbf{m}$, $\mathbf{G}$, $\boldsymbol{\lambda}$)
     denotes finite-dimensional vectors and matrices, i.e.\ elements of
-    $\mathbb{R}^n$ or linear maps $\mathbb{R}^n \to \mathbb{R}^m$.
+    $\mathbb{R}^n$ or linear maps $\mathbb{R}^n \to \mathbb{R}^m$. We also use
+    boldface for coefficient vectors/sequences and concrete operators acting on
+    coefficient spaces (e.g.\ $\mathbf{m} \in \ell^2$ and $\mathbf{M}_\phi$).
   \item \textbf{Calligraphic} ($\mathcal{M}$, $\mathcal{D}$, $\mathcal{P}$)
     denotes abstract (possibly infinite-dimensional) Hilbert or Banach
     spaces.
@@ -335,6 +337,31 @@ $\modelspace_N$ & $N$-dimensional subspace of $\modelspace$ & \texttt{dim = N} \
 $H_1 \oplus H_2$ & Hilbert direct sum & \texttt{HilbertSpaceDirectSum} \\
 \bottomrule
 \end{longtable}
+
+\section*{Coefficient spaces and standard bases}
+
+We use two closely related coefficient spaces:
+\begin{itemize}
+  \item the infinite-dimensional space $\ell^2$ of square-summable sequences, and
+  \item its finite-dimensional truncation $\mathbb{R}^N$.
+\end{itemize}
+For $\ell^2$ we denote the standard basis vectors by $\{e_j\}_{j=1}^\infty$, where
+$(e_j)_k = \delta_{jk}$. For $\mathbb{R}^N$ we denote the standard basis vectors by
+$\{\mathbf{e}_j\}_{j=1}^N$.
+
+On the dual coefficient spaces we use the corresponding \emph{coordinate functionals}
+$\{e^j\}_{j=1}^\infty \subset (\ell^2)'$ and (optionally) $\{\mathbf{e}^j\}_{j=1}^N \subset (\mathbb{R}^N)'$, defined by
+\[
+  e^j(\mathbf{c}) = c_j, \qquad \mathbf{e}^j(\mathbf{a}) = a_j.
+\]
+They satisfy the canonical pairing relations
+\[
+  \langle e^i, e_j\rangle = \delta^i_j, \qquad \langle \mathbf{e}^i, \mathbf{e}_j\rangle = \delta^i_j.
+\]
+
+\begin{remark}
+For the standard $\ell^2$ inner product $(\mathbf{c},\mathbf{d})_{\ell^2} := \sum_j c_j d_j$, the continuous dual satisfies $(\ell^2)' \cong \ell^2$ via the Riesz map; in particular, the coordinate functional $e^j$ corresponds to the vector $e_j$. We will nevertheless keep primes (e.g. $(\ell^2)'$) in the manual to make dual/primal roles explicit.
+\end{remark}
 
 \section*{Operators and maps}
 
@@ -941,8 +968,8 @@ the \texttt{LinearForm} object directly: \texttt{l(v)}.
 \subsection{Riesz bases and biorthogonal duals}
 \label{ssec:riesz-bases}
 
-An \emph{orthonormal basis} (ONB) $\{e_j\}_{j=1}^{\infty}$ is a maximal
-orthonormal set; every $m \in H$ expands as $m = \sum_j (m, e_j)_H e_j$.
+An \emph{orthonormal basis} (ONB) $\{u_j\}_{j=1}^{\infty}$ is a maximal
+orthonormal set; every $m \in H$ expands as $m = \sum_j (m, u_j)_H u_j$.
 But ONBs are rarely computable. A physical or numerical basis
 $\{\phi_j\}$ is typically not orthonormal, and we must work with
 general Riesz bases.
@@ -960,6 +987,23 @@ coefficient sequence $\mathbf{c} \in \mathbb{R}^N$,
   \;\leq\; B\, \|\mathbf{c}\|_{\ell^2}^2.
 \end{equation}
 \end{definition}
+
+\begin{remark}
+The quantity $\|\mathbf{c}\|_{\ell^2}$ in \eqref{eq:riesz-bounds} is the standard Euclidean/$\ell^2$ norm on the \emph{coefficient space}. For a general (non-orthonormal) basis, this is \emph{not} the same as the norm of the reconstructed element:
+\[
+  \|\mathbf{c}\|_{\ell^2} \not= \|\pi(\mathbf{c})\|_H \quad\text{in general.}
+\]
+If we want coefficient space to carry the \emph{metric induced from $H$ by the synthesis map}, we equip it with the inner product
+\[
+  (\mathbf{c},\mathbf{d})_\pi := (\pi\,\mathbf{c},\, \pi\,\mathbf{d})_H,
+  \qquad \|\mathbf{c}\|_\pi := \sqrt{(\mathbf{c},\mathbf{c})_\pi} = \|\pi\,\mathbf{c}\|_H.
+\]
+Then \eqref{eq:riesz-bounds} says precisely that $\|\cdot\|_{\ell^2}$ and $\|\cdot\|_\pi$ are equivalent norms. In finite dimensions, the induced inner product becomes
+\[
+  (\mathbf{a},\mathbf{b})_{\pi_N} := (\pi_N\,\mathbf{a},\,\pi_N\,\mathbf{b})_H = \mathbf{a}^\top\, \mathbf{M}_{\phi,N}\, \mathbf{b},
+\]
+where $\mathbf{M}_{\phi,N}$ is the Gram matrix from \cref{sec:gram-matrix}.
+\end{remark}
 
 Every Riesz basis $\{\phi_j\}$ has a unique \emph{biorthogonal dual}
 $\{\psi_j\} \subset H$ satisfying
@@ -1052,14 +1096,19 @@ biorthogonal dual basis vectors are the Riesz representations of the dual basis
 functionals: each $\phi^i \in H'$ maps (via Riesz) to the corresponding
 $\psi_i \in H$ that satisfies $(\phi_j, \psi_i)_H = \delta_{ji}$.
 
-For completeness, the dual basis induces analysis and synthesis operators on the dual space:
+To make coefficient representations explicit, let $\{e_j\}$ be the standard basis of $\ell^2$ and $\{e^j\} \subset (\ell^2)'$ the corresponding coordinate functionals, so that
+$e^j(\mathbf{c}) = c_j$ and $\langle e^i, e_j\rangle = \delta^i_j$.
+For any $\ell' \in (\ell^2)'$ we write
+\[
+  [\ell']_j := \langle \ell', e_j\rangle = \ell'(e_j).
+\]
+With this convention, the dual basis induces analysis and synthesis operators on the dual space:
 \begin{align}
-  \Pi' : H' \to (\ell^2)', \quad [\Pi'(\ell)]_j &:= \langle \ell, \phi_j\rangle, \\
-  \pi' : (\ell^2)' \to H', \quad \pi'(\ell') &:= \sum_j [\ell']_j \phi^j,
+  \Pi' : H' \to (\ell^2)', \qquad [\Pi'(\ell)]_j &:= \langle \ell, \phi_j\rangle, \\
+  \pi' : (\ell^2)' \to H', \qquad \pi'(\ell') &:= \sum_j [\ell']_j \, \phi^j.
 \end{align}
-where $[\ell']_j$ denotes the evaluation of the linear functional $\ell' \in (\ell^2)'$ on the
-$j$-th standard basis vector of $\ell^2$. These form a pair of bounded inverses on the dual space,
-analogous to $\Pi$ and $\pi$ on the primal space.
+These form a pair of bounded inverses on the dual space, analogous to $\Pi$ and $\pi$ on the primal space.
+Although $(\ell^2)' \cong \ell^2$ via Riesz for the standard $\ell^2$ inner product, we keep the prime here to avoid silently identifying coefficient vectors and coefficient functionals.
 
 \section{The Gram matrix}
 \label{sec:gram-matrix}
@@ -1095,10 +1144,13 @@ The biorthogonal dual basis is related to the original basis by
   \label{eq:biorthogonal-from-gram}
   \psi_j = \sum_i [\mathbf{M}_{\phi}^{-1}]_{ji}\, \phi_i.
 \end{equation}
-This gives a purely computational recipe: to find $\psi_j$, solve the
-linear system $\mathbf{M}_{\phi} \mathbf{c} = \mathbf{e}_j$ (where
-$\mathbf{e}_j$ is the $j$-th standard basis vector) and form
-$\sum_i c_i \phi_i$.
+This gives a purely computational recipe: in coefficient space $\ell^2$, the coefficient sequence
+$\mathbf{c}$ of $\psi_j$ is $\mathbf{c} = \mathbf{M}_{\phi}^{-1} e_j$, i.e. it solves
+\[
+  \mathbf{M}_{\phi} \, \mathbf{c} = e_j,
+\]
+where $e_j$ is the $j$-th standard basis vector of $\ell^2$. In practice one works with an $N$-truncation and solves
+$\mathbf{M}_{\phi,N}\,\mathbf{c} = \mathbf{e}_j$ in $\mathbb{R}^N$, then forms $\sum_i c_i \phi_i$.
 
 \paragraph{Analysis via $\phi_j$ alone.}
 Substituting \eqref{eq:biorthogonal-from-gram} into the definition of
@@ -1110,7 +1162,7 @@ $\Pi$ gives
 This means the analysis operator can be computed purely from
 $\{\phi_j\}$ --- the biorthogonal dual need not be constructed
 explicitly. One forms the matrix $\mathbf{M}_{\phi,N}$, inverts it, and
-multiplies the vector of inner products $[\langle\phi_j, m\rangle]_j$.
+multiplies the vector of inner products $[(\phi_j, m)_H]_j$.
 
 \begin{codebox}
 In pygeoinf, \texttt{HilbertSpace.coordinate\_projection} implements
@@ -1120,15 +1172,24 @@ $\mathbf{M}_{\phi,N}^{-1}$.
 \end{codebox}
 
 \paragraph{Riesz isomorphism on the coefficient space.}
-On the finite coefficient space $\mathbb{R}^N$ (equipped with the norm
-inherited from $H$ via $\pi_N$), the Riesz maps are given by the Gram
-matrix:
+On the finite coefficient space $\mathbb{R}^N$, there are (at least) two natural metrics:
+the standard Euclidean inner product $\mathbf{a}^\top\mathbf{b}$, and the inner product induced from $H$ by the synthesis map
+\[
+  (\mathbf{a},\mathbf{b})_{\pi_N} := (\pi_N\,\mathbf{a},\,\pi_N\,\mathbf{b})_H.
+\]
+With respect to the standard basis $\{\mathbf{e}_j\}$ of $\mathbb{R}^N$, the induced inner product has matrix representation
+\begin{equation}
+  \label{eq:induced-inner-product-gram}
+  (\mathbf{a},\mathbf{b})_{\pi_N} = \mathbf{a}^\top\, \mathbf{M}_{\phi,N}\, \mathbf{b}.
+\end{equation}
+Equipping $\mathbb{R}^N$ with this induced metric, the Riesz maps are given by the Gram matrix:
 \begin{equation}
   \label{eq:riesz-RN}
   \Riesz_{\mathbb{R}^N}(\mathbf{a}) = \mathbf{M}_{\phi,N}^{-1}\mathbf{a},
   \qquad
   \Riesz_{\mathbb{R}^N}^{-1}(\mathbf{u}) = \mathbf{M}_{\phi,N}\, \mathbf{u}.
 \end{equation}
+Here we write elements of $(\mathbb{R}^N)'$ in coordinates using the dual basis $\{\mathbf{e}^j\}$; equivalently, we identify a functional $\ell'\in(\mathbb{R}^N)'$ with its coordinate vector $\mathbf{a}\in\mathbb{R}^N$ defined by $a_j := \ell'(\mathbf{e}_j)$.
 This explains the ubiquity of the Gram matrix in inversion formulas: it
 converts coefficient vectors between the primal and dual representations.
 
@@ -1179,7 +1240,7 @@ explains how to create your own.
 
 $\mathbb{R}^n$ with the standard inner product $(u, v) = \sum_i u_i v_i =
 \mathbf{u}^\top \mathbf{v}$. The Riesz map is the identity: $\Riesz = \mathrm{Id}$.
-The basis $\{\phi_j\} = \{e_j\}$ is the standard ONB, so $\mathbf{M}_\phi
+The basis $\{\phi_j\} = \{\mathbf{e}_j\}$ is the standard ONB, so $\mathbf{M}_\phi
 = \mathbf{I}$ and $\Pi = \pi^* = \mathrm{Id}$.
 
 When you use \texttt{EuclideanSpace(n)}, adjacent operator transposes
@@ -1305,11 +1366,11 @@ H
   \arrow[l, bend right=20, blue, "\pi_N"']
 \\
 H'
-  \arrow[r, blue, "\pi_N^*"]
+  \arrow[r, blue, "\pi_N'"]
   \arrow[u, "\Riesz"]
 &
 (\mathbb{R}^N)'
-  \arrow[l, bend right=20, blue, "(\Pi_N)^*"']
+  \arrow[l, bend right=20, blue, "\Pi_N'"']
   \arrow[u, "\mathbf{M}_{\phi,N}^{-1}"]
 \end{tikzcd}
 \end{center}
@@ -1318,7 +1379,7 @@ H'
 Reading the diagram:
 \begin{itemize}
   \item The \textcolor{blue}{blue horizontal arrows} are the analysis
-    ($\Pi_N$) and synthesis ($\pi_N$) operators and their duals.
+    ($\Pi_N$) and synthesis ($\pi_N$) operators and their dual maps.
   \item The vertical arrows on the left are the Riesz maps for $H$.
   \item The vertical arrows on the right are the Gram matrix and its
     inverse, corresponding to the Riesz maps for $\mathbb{R}^N$ equipped
@@ -1327,7 +1388,7 @@ Reading the diagram:
     commutes.
 \end{itemize}
 
-The outer square expresses $\Riesz^{-1} = \pi_N^* \circ \mathbf{M}_{\phi,N}
+The outer square expresses $\Riesz^{-1} = \Pi_N' \circ \mathbf{M}_{\phi,N}
 \circ \Pi_N$, which is the coordinate representation of the Riesz map.
 In \cref{ch:linear-operators} this diagram will be extended to include
 a forward operator $G : \modelspace \to \dataspace$ and its adjoint
