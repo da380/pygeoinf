@@ -1039,21 +1039,27 @@ H_N$. The operators \texttt{coordinate\_projection} and
 \subsection{The dual basis}
 \label{ssec:dual-basis}
 
-On the dual space $H'$ the \emph{dual basis} $\{\phi^i\}_{i=1}^\infty$
+On the dual space $H'$ the \emph{dual basis} $\{\phi^i\}_{i=1}^\infty \subset H'$
 is defined by $\langle\phi^i, \phi_j\rangle = \delta^i_j$. It forms a
-Riesz basis for $H'$. The analysis operator on $H'$ is $\Pi' : H' \to
-\ell^2$, $[\Pi'\ell]_j = \langle\ell, \phi_j\rangle$, and the synthesis
-operator on $H'$ is $\pi' : \ell^2 \to H'$,
-$\pi'(\mathbf{c}) = \sum_j c_j \phi^j$.
-
-The key identity connecting dual and primal bases is:
+Riesz basis for $H'$. The key relationship between the dual basis and the
+biorthogonal dual basis is:
 \begin{equation}
-  \label{eq:synthesis-dual-adjoint}
-  (\pi')^* = \Pi, \qquad (\Pi')^* = \pi,
+  \label{eq:dual-basis-riesz-rep}
+  \psi_i = \Riesz(\phi^i),
 \end{equation}
-where $(\pi')^* : H \to \ell^2$ and $(\Pi')^* : \ell^2 \to H$ denote the
-Hilbert adjoints of $\pi'$ and $\Pi'$ with respect to the inner products
-on $H$ and $\ell^2$.
+where $\Riesz : H' \to H$ is the Riesz isomorphism. This equation states that the
+biorthogonal dual basis vectors are the Riesz representations of the dual basis
+functionals: each $\phi^i \in H'$ maps (via Riesz) to the corresponding
+$\psi_i \in H$ that satisfies $(\phi_j, \psi_i)_H = \delta_{ji}$.
+
+For completeness, the analysis and synthesis operators on the dual space are defined
+as:
+\begin{align}
+  \Pi' : H' \to \ell^2, \quad [\Pi'(\ell)]_j &= \langle \ell, \phi_j\rangle, \\
+  \pi' : \ell^2 \to H', \quad \pi'(\mathbf{c}) &= \sum_j c_j \phi^j,
+\end{align}
+and they form a pair of bounded inverses on the dual space, analogous to
+$\Pi$ and $\pi$ on the primal space.
 
 \section{The Gram matrix}
 \label{sec:gram-matrix}

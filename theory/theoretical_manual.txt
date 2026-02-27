@@ -1,0 +1,440 @@
+\documentclass[11pt]{article}
+
+% *Better typography*
+\usepackage[final]{microtype}
+\usepackage[T1]{fontenc}
+
+% *Math & AMS*
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{physics}
+\usepackage{bm}
+
+% *References & citations*
+\usepackage{geometry}
+\usepackage{natbib}
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink,capitalise]{cleveref}
+
+% *Drawing commutative diagrams*
+\usepackage{tikz-cd}
+\usepackage{caption}
+
+% *Boxed callouts for code links*
+\usepackage[framemethod=tikz]{mdframed}
+\newmdenv[
+  linewidth=0.6pt,
+  roundcorner=4pt,
+  backgroundcolor=gray!5,
+  linecolor=gray!40,
+  skipabove=\medskipamount,
+  skipbelow=\medskipamount
+]{codebox}
+
+\geometry{margin=1in}
+
+\theoremstyle{remark}
+\newtheorem*{remark}{\textbf{Remark}}
+
+% Spaces & maps
+\newcommand{\modelspace}{\mathcal{M}}
+\newcommand{\dataspace}{\mathcal{D}}
+\newcommand{\propertyspace}{\mathcal{P}}
+\newcommand{\Gd}{\mathbf{G}}   % discrete forward (matrix/operator on coefficients)
+\newcommand{\Tau}{\mathcal{T}}
+
+% Measures
+\newcommand{\prior}{\mu_{\modelspace}^0}
+\newcommand{\post}{\mu_{\modelspace}^{\mathbf{\tilde{d}}}}
+\newcommand{\discprior}{\mu_{\modelspace}^{0,N}}
+\newcommand{\discpost}{\mu_{\modelspace}^{\mathbf{\tilde{d}}, N}}
+
+% Discretization
+\newcommand{\Vspace}{\mathbb{V}_N}
+\newcommand{\mass}{\mathbf{M}} % generic Gram/mass matrix symbol
+
+% Inner products (parentheses) & dual pairings (angle brackets)
+\newcommand{\ipM}[2]{(#1,#2)_{\modelspace}}
+\newcommand{\ipV}[2]{(#1,#2)_{\Vspace}}
+\newcommand{\ipD}[2]{(#1,#2)_{\dataspace}}
+\newcommand{\pair}[2]{\langle #1, #2\rangle} % element of dual, element of space
+
+% Riesz maps and adjoint
+\newcommand{\RieszM}{\mathcal{R}_{\modelspace}}   % \modelspace' -> \modelspace
+\newcommand{\RieszD}{\mathcal{R}_{\dataspace}}    % \dataspace' -> \dataspace
+\newcommand{\Riesz}{\mathcal{R}}
+\newcommand{\Gadj}{G^*}
+
+% Math operators
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\title{Relations Between Spaces}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+Let \(\modelspace\) (model space) and \(\dataspace\) (data space) be Hilbert spaces, and let \(G:\modelspace \to \dataspace\) be a bounded linear (forward) operator. Denote the dual spaces by \(\modelspace'\) and \(\dataspace'\), the dual (Banach) adjoint by \(G':\dataspace' \to \modelspace'\), and the Riesz maps by \(\RieszM:\modelspace' \to \modelspace\) and \(\RieszD:\dataspace' \to \dataspace\).
+We also write \(\Gadj:\dataspace \to \modelspace\) for the Hilbert adjoint, characterized by
+\begin{equation}
+  \ipD{Gm}{d} = \ipM{m}{\Gadj d}\qquad \forall\, m\in\modelspace,\ \forall\, d\in\dataspace .
+  \label{eq:adjoint-def}
+\end{equation}
+With the convention that \(\RieszM\) and \(\RieszD\) are isometric isomorphisms from the dual spaces into the primal spaces, the adjoint and dual satisfy the commuting relation
+\begin{equation}
+  \Gadj \;=\; \RieszM \circ G' \circ \RieszD^{-1}.
+  \label{eq:riesz-commute}
+\end{equation}
+
+Throughout these notes we denote Euclidean vectors, sequences, and matrices in \textbf{boldface}. Entries of such objects are extracted using square brackets with indices; for example, for \(\mathbf{a}\in \ell^2\) the components are \([\mathbf{a}]_i\), and the entire sequence may be written as \([\mathbf{a}]_{i=1}^{\infty}\).
+
+\begin{codebox}
+\textbf{pygeoinf API (Hilbert spaces).}
+The abstract class \texttt{HilbertSpace} represents a Hilbert space (e.g.\ \(\modelspace\) or \(\dataspace\)).
+Users define concrete spaces by subclassing \texttt{HilbertSpace} and providing:
+\(\texttt{to\_dual}:\modelspace\!\to\!\modelspace'\),
+\(\texttt{from\_dual}:\modelspace'\!\to\!\modelspace\),
+\(\texttt{to\_components}\), \(\texttt{from\_components}\), and \(\texttt{dim}\).
+\end{codebox}
+
+\begin{codebox}
+\textbf{pygeoinf API (linear operators at a glance).}
+\texttt{LinearOperator(domain, codomain, mapping)} represents \(L:X\to Y\).
+\texttt{L.adjoint} implements the Hilbert adjoint \(L^*:Y\to X\);
+\texttt{L.dual} implements the Banach adjoint \(L':Y'\to X'\).
+\texttt{L.matrix(galerkin=false/true)} returns the standard / Galerkin matrix;
+with \texttt{galerkin=true}, the \texttt{rmatvec} action corresponds to \(L^*\).
+\end{codebox}
+
+\begin{codebox}
+\textbf{pygeoinf API (linear forms).}
+A \texttt{LinearForm} is a continuous linear functional on a space \(X\), i.e.\ an element of \(X'\).
+It can be constructed from a component vector (coefficients in the chosen basis) or from a mapping \(f(x)\).
+Its gradient is the Riesz representative: \(\nabla f = \Riesz_X(\ell)\), and its Hessian is the zero operator.
+The method \texttt{as\_linear\_operator} views \(\ell\) as \(X\to\mathbb{R}\) (Euclidean dimension \(1\)).
+\end{codebox}
+
+\begin{codebox}
+\textbf{pygeoinf API (adjoint vs dual).}
+For \(G:\modelspace\to\dataspace\),
+\[
+\Gadj=\RieszM\circ G'\circ \RieszD^{-1}.
+\]
+In \texttt{LinearOperator}, \texttt{adjoint} implements \(\Gadj:\dataspace\to\modelspace\) (Hilbert adjoint),
+while \texttt{dual} implements \(G':\dataspace'\to\modelspace'\) (Banach adjoint).
+The internals enforce the commuting relation, so providing either mapping lets the library derive the other consistently.
+\end{codebox}
+
+\section{Model space as Hilbert space and finite approximation}
+\label{sec:representations}
+
+\paragraph{Riesz bases and coefficient representations.}
+A general element of the model space is denoted \(m\in\modelspace\) and of the data space \(d\in\dataspace\).
+Assume \(\{\phi_j\}_{j=1}^{\infty}\subset\modelspace\) is a (complete) \emph{Riesz basis} for \(\modelspace\); it need not be orthonormal. Then there is a unique \emph{biorthogonal dual} \(\{\psi_j\}_{j=1}^{\infty}\subset\modelspace\) such that
+\begin{align}
+  \ipM{\phi_j}{\psi_k} &= \delta_{jk},
+  \label{eq:biorthogonality}\\
+  m &= \sum_{j=1}^{\infty} [\mathbf{m}]_j\,\phi_j,
+  \qquad [\mathbf{m}]_j = \ipM{m}{\psi_j}.
+  \label{eq:riesz-expansion}
+\end{align}
+The coefficient sequence \(\mathbf{m} := [\mathbf{m}]_{j=1}^{\infty}\) lies in \(\ell^2\), and the norms are equivalent:
+there exist \(A,B>0\) with
+\begin{equation}
+  A\,\|\mathbf{m}\|_{\ell^2}^2 \ \le\ \|m\|_{\modelspace}^2 \ \le\ B\,\|\mathbf{m}\|_{\ell^2}^2 .
+  \label{eq:riesz-bounds}
+\end{equation}
+(If \(\{\phi_j\}\) is orthonormal, then \(\psi_j=\phi_j\) and equality holds with \(A=B=1\).)
+
+On the dual space \(\modelspace'\) we have the following dual base \(\{\phi^i\}\) which is related to the biorthogonal base via
+\begin{equation}
+    \psi_i = \RieszM(\phi^i),
+\end{equation}
+so the biorthogonal basis is the Riesz representation of the dual basis.
+
+
+Although the foregoing is infinite-dimensional, practical computations use a finite trial space. For example, by taking only the first \(N\) basis functions and forming the incomplete basis \(\{\phi_j\}_{j=1}^N\) which forms the finite subspace:
+\begin{equation}
+    \modelspace_N := \mathrm{span}\{\phi_1,\dots,\phi_N\}\subset\modelspace,
+  \label{eq:MN-def}
+\end{equation}
+
+
+\paragraph{Inner products vs.\ dual pairings.}
+We write \(\ipM{\cdot}{\cdot}\) and \(\ipD{\cdot}{\cdot}\) for inner products on \(\modelspace\) and \(\dataspace\) (parentheses), and \(\pair{\cdot}{\cdot}\) for dual pairings (angle brackets). In particular, for \(m'\in\modelspace'\), \(m\in\modelspace\), and \(d'\in\dataspace'\), \(d\in\dataspace\),
+\begin{align}
+  \pair{m'}{m} \;&=\; \ipM{m}{\RieszM m'} ,
+  \label{eq:model-pairing}\\
+  \pair{d'}{d} \;&=\; \ipD{d}{\RieszD d'} .
+  \label{eq:data-pairing}
+\end{align}
+
+\begin{codebox}
+\textbf{pygeoinf API (Riesz maps).}
+For a space \(X\), the Riesz isomorphism \(\mathcal R_X:X'\!\to\!X\) and its inverse \(\mathcal R_X^{-1}:X\!\to\!X'\) are implemented as:
+\[
+\texttt{from\_dual} \equiv \mathcal R_X,\qquad
+\texttt{to\_dual} \equiv \mathcal R_X^{-1}.
+\]
+Thus \(\pair{x'}{x}=(x,\mathcal R_X x')_{X}\) is evaluated in code by \texttt{xp(x)} via these maps. These methods are provided as callables, although obviously \(\Riesz_X\) is a linear operator. If we want to get these mappings as \texttt{LinearOperator} instances then we can use the built in properties \texttt{riesz} and \texttt{inverse\_riesz}.
+\end{codebox}
+
+\paragraph{Analysis and synthesis.}
+Define the \emph{analysis} operator \(\Pi:\modelspace\to \ell^2\) and the \emph{synthesis} operator \(\pi:\ell^2\to\modelspace\) by
+\begin{align}
+  \Pi(m) \;&:=\; \big[\,\ipM{m}{\psi_j}\,\big]_{j=1}^{\infty},
+  \label{eq:analysis-def}\\
+  \pi(\mathbf{m}) \;&:=\; \sum_{j=1}^{\infty} [\mathbf m]_j\,\phi_j .
+  \label{eq:synthesis-def}
+\end{align}
+For a Riesz basis, \(\Pi\) and \(\pi\) are bounded inverses of each other:
+\begin{align}
+  \pi\circ \Pi \;&=\; \mathrm{Id}_{\modelspace},
+  \label{eq:inverse-on-M}\\
+  \Pi\circ \pi \;&=\; \mathrm{Id}_{\ell^2}.
+  \label{eq:inverse-on-l2}
+\end{align}
+
+If we work with finite representations then we have
+
+\begin{equation}
+    \Pi_N(m) = \big[\,\ipM{m}{\psi_j}\,\big]_{j=1}^{N}\in\mathbb{R}^N,
+  \qquad
+  \pi_N(\mathbf{m}) = \sum_{j=1}^N [\mathbf{m}]_j\,\phi_j \in \modelspace_N,
+  \label{eq:PiN-piN}
+\end{equation}
+
+\begin{codebox}\label{to_from_components}
+\textbf{pygeoinf API (coefficients = analysis/synthesis).}
+The coefficient maps correspond to
+\[
+\texttt{to\_components}\equiv \Pi:\modelspace\to\ell^2,
+\qquad
+\texttt{from\_components}\equiv \pi:\ell^2\to\modelspace.
+\]
+In computational practice we \emph{select a finite number \(N\) of basis functions}, giving truncated maps
+\(\Pi_N:\modelspace\to\mathbb{R}^N\) and \(\pi_N:\mathbb{R}^N\to\modelspace_N\), where \(\modelspace_N=\mathrm{span}\{\phi_1,\dots,\phi_N\}\).
+Concrete \texttt{pygeoinf} spaces expose a finite \texttt{dim} and implement these maps accordingly; some analytic examples may conceptually ignore the truncation when discussing limits.
+\emph{Implementation note:} the convenience operators \texttt{coordinate\_projection} and \texttt{coordinate\_inclusion}
+realize \(\Pi_N\) and \(\pi_N\) as \texttt{LinearOperator} instances and expose their adjoints.
+\end{codebox}
+
+\paragraph{Inner products and norms}
+Inner products can be written as:
+\begin{equation}
+    \ipM{m_1}{m_2} = \expval{\RieszM^{-1} m_1, m_2}
+\end{equation}
+
+\begin{codebox}
+\textbf{pygeoinf API (inner products).}
+\texttt{HilbertSpace.inner\_product(x1,x2)} computes \(\ipM{x_1}{x_2}\) via \(\pair{\Riesz^{-1}x_1}{x_2}\),
+using \texttt{to\_dual} and \texttt{duality\_product}. Norms use \texttt{squared\_norm} and \texttt{norm}.
+\end{codebox}
+
+Using the inner product we can form the norm as:
+\begin{equation}
+    \norm{m}_{\modelspace} = \sqrt{\ipM{m}{m}}
+\end{equation}
+
+\paragraph{Gram operator and analysis via \(\phi_j\) only.}
+The (Riesz) Gram operator associated with \(\{\phi_j\}\) is
+\begin{equation}
+  \mass_{\phi} \;:=\; \pi^*\pi:\ \ell^2\to\ell^2,
+  \qquad
+  [\mass_{\phi}]_{jk} \;=\; \ipM{\phi_k}{\phi_j}.
+  \label{eq:gram-def}
+\end{equation}
+For a Riesz basis, \(\mass_{\phi}\) is bounded, self-adjoint, positive and boundedly invertible on \(\ell^2\).
+Moreover, the analysis operator can be expressed using only \(\{\phi_j\}\):
+\begin{equation}
+  \Pi \;=\; \mass_{\phi}^{-1}\,\pi^* \;:\ \modelspace \to \ell^2 .
+  \label{eq:analysis-via-phi}
+\end{equation}
+This is because the gram matrix connects the basis to it's biorthogonal:
+\begin{equation}
+    \psi_j = \sum_i [\mass^{-1}_{\phi}]_{ji} \phi_i
+\end{equation}
+In finite dimensions we have a similar equality
+
+\begin{equation}
+  \mass_{\phi, N} \;:=\; \pi_N^*\pi_N:\ \mathbb{R}^N \to \mathbb{R}^N,
+  \qquad
+  [\mass_{\phi, N}]_{jk} \;=\; \ipM{\phi_k}{\phi_j}.
+  \label{eq:gram-def}
+\end{equation}
+
+\section{More on Linear Operators}
+
+\paragraph{Banach dual vs.\ Hilbert adjoint.}
+Given \(G:\modelspace\to\dataspace\), the \emph{Banach dual} (a.k.a.\ dual/transpose) \(G':\dataspace'\to\modelspace'\) is defined by
+\begin{equation}\label{eq:dual_operator_def}
+  \pair{G' d'}{m} \;=\; \pair{d'}{Gm}
+  \qquad \forall\, d'\in\dataspace',\ \forall\, m\in\modelspace .
+\end{equation}
+When \(\modelspace,\dataspace\) are Hilbert, the \emph{Hilbert adjoint} \(\Gadj:\dataspace\to\modelspace\) is the unique bounded operator satisfying
+\begin{equation}\label{eq:adjoint-def-again}
+  \ipD{Gm}{d} \;=\; \ipM{m}{\Gadj d}
+  \qquad \forall\, m\in\modelspace,\ \forall\, d\in\dataspace .
+\end{equation}
+Using the Riesz isomorphisms \(\RieszM:\modelspace'\!\to\!\modelspace\) and \(\RieszD:\dataspace'\!\to\!\dataspace\), one obtains the commuting relation
+\begin{equation}\label{eq:riesz-commute-again}
+  \Gadj \;=\; \RieszM \circ G' \circ \RieszD^{-1}.
+\end{equation}
+
+\paragraph{Derivation of \eqref{eq:riesz-commute-again}.}
+For any \(m\in\modelspace\), \(d\in\dataspace\),
+\begin{align*}
+  \ipD{Gm}{d}
+  \;=\; \pair{\RieszD^{-1} d}{Gm}
+  \;=\; \pair{G'(\RieszD^{-1} d)}{m}
+  \;=\; \ipM{m}{\RieszM \big(G' \RieszD^{-1} d\big)} .
+\end{align*}
+Comparing with \eqref{eq:adjoint-def-again} yields \(\Gadj = \RieszM G' \RieszD^{-1}\).
+
+\begin{codebox}
+\textbf{pygeoinf: specifying duals and adjoints.}
+\begin{itemize}\itemsep4pt
+  \item Construct with \texttt{LinearOperator(domain, codomain, mapping)}. You may optionally provide \texttt{dual\_mapping} (\(G':\dataspace'\!\to\!\modelspace'\)) and \texttt{adjoint\_mapping} (\(\Gadj:\dataspace\!\to\!\modelspace\)). The library derives the other using the spaces’ Riesz maps, implementing \(\Gadj=\RieszM\circ G'\circ \RieszD^{-1}\).
+  \item If neither is provided, a safe default computes the dual via the defining identity \(\pair{G' d'}{m}=\pair{d'}{Gm}\) and then obtains \(\Gadj\) from it. This is convenient but less efficient for large problems.
+\end{itemize}
+\end{codebox}
+
+
+\paragraph{Finite-dimensional (Standard) formula.}
+Let \(\{\phi_j\}_{j=1}^N\subset\modelspace\) and \(\{b_i\}_{i=1}^{N_d}\subset\dataspace\) be trial bases with dual families \(\{\psi_j\}\), \(\{\beta_i\}\), and Gram matrices
+\(\mathbf{M}_{\phi,N}=[\ipM{\phi_\ell}{\phi_k}]_{\ell,k}\),
+\(\mathbf{M}_{b,N_d}=[\ipD{b_\ell}{b_k}]_{\ell,k}\).
+The standard discrete matrix of \(G\) is
+\begin{equation}
+    \Gd = \Pi_{\dataspace} G i_{\modelspace} \pi_{N}, \quad \mathbf{G}=[\,\ipD{G\phi_j}{\beta_i}\,]_{i,j}
+\end{equation}
+
+Then the Galerkin matrix of \(\Gadj\) is
+\begin{equation}\label{eq:galerkin-adjoint}
+  \Gd^* =  \;=\; \mathbf{M}_{\phi,N}^{-1}\, \mathbf{A}^\top\, \mathbf{M}_{b,M},
+\end{equation}
+which is the finite-dimensional counterpart of \(\Gadj = \RieszM G' \RieszD^{-1}\).
+
+
+\begin{codebox}
+\textbf{pygeoinf API (Gram/mass and Galerkin form).}
+With a (non-orthonormal) basis \(\{\phi_j\}_{j=1}^N\), the Gram/mass matrix
+\(\mass_{\phi,N}=[\ipM{\phi_\ell}{\phi_k}]_{\ell,k}\) satisfies \(\Pi_N=\mass_{\phi,N}^{-1}\pi_N^*\).
+In \texttt{pygeoinf}:
+\begin{itemize}\itemsep4pt
+\item The matrix with \texttt{galerkin = false} represents \(\Pi_{D,M}\circ G\circ \pi_N\) (standard components);
+its transpose acts like the dual \(G'\).
+\item With \texttt{galerkin = true} the matrix is the inner-product (Galerkin) form, and its \texttt{rmatvec}
+corresponds to the Hilbert adjoint \(\Gadj\).
+\item Mass-weighted spaces use \texttt{MassWeightedHilbertSpace} with \(M=\mass\), so
+\(\Riesz_{\text{new}}=\Riesz\circ M\) and \(\Riesz_{\text{new}}^{-1}=M^{-1}\circ \Riesz^{-1}\).
+\end{itemize}
+\end{codebox}
+
+\paragraph{Operators as stacks of linear forms (``sensitivity kernels'').}
+A common situation is that \(G\) returns a vector of linear measurements:
+\begin{equation}
+  G m \;=\; \big[\,\pair{\ell_i}{m}\,\big]_{i=1}^{M}
+  \quad\text{with}\quad \ell_i\in\modelspace' .
+  \label{eq:G-as-forms}
+\end{equation}
+In a basis \(\{\phi_j\}\), this reads \(A_{ij}=\pair{\ell_i}{\phi_j}\), so \(\mathbf A\,\mathbf c\) produces the data.
+\begin{codebox}
+\textbf{pygeoinf API (build \(G\) from linear forms).}
+Given \(\ell_i\in\modelspace'\) as \texttt{LinearForm}s, use \texttt{LinearOperator.from\_linear\_forms([}\(\ell_i\)\texttt{])}
+to construct \(G:\modelspace\to\mathbb{R}^M\) with rows \(\ell_i\).
+This matches \eqref{eq:G-as-forms}.
+\end{codebox}
+
+\paragraph{Computational surrogate: finite \(N\) in one place.}
+Although the foregoing is infinite-dimensional, practical computations use a finite trial space. For completeness we collect the basic finite-\(N\) objects here:
+\begin{align}
+  \modelspace_N &:= \mathrm{span}\{\phi_1,\dots,\phi_N\}\subset\modelspace,
+  \label{eq:MN-def}\\
+  \Pi_N(m) &= \big[\,\ipM{m}{\psi_j}\,\big]_{j=1}^{N}\in\mathbb{R}^N,
+  \qquad
+  \pi_N(\mathbf{m}) = \sum_{j=1}^N [\mathbf{m}]_j\,\phi_j \in \modelspace_N,
+  \label{eq:PiN-piN}\\
+  P_N &:= \pi_N\Pi_N:\ \modelspace\to\modelspace_N\quad\text{with } \ipM{m-P_N m}{\psi_j}=0\ \ \forall j\le N,
+  \label{eq:PG-proj}\\
+  \mass_{\phi,N} &:= \pi_N^*\pi_N \in \mathbb{R}^{N\times N},\qquad
+  [\mass_{\phi,N}]_{lk}=\ipM{\phi_l}{\phi_k},
+  \label{eq:gramN}\\
+  \Riesz_{\mathbb{R}^N}(\mathbf a) &= \mass_{\phi,N}^{-1}\mathbf a,\qquad
+  \Riesz_{\mathbb{R}^N}^{-1}(\mathbf u)=\mass_{\phi,N}\mathbf u .
+  \label{eq:Riesz-RN}
+\end{align}
+Restricting \(G\) to \(\modelspace_N\) and composing with coefficients gives the discrete forward operator
+\begin{equation}
+  \Gd := G \circ \pi_N : \mathbb{R}^N \to \dataspace .
+  \label{eq:G-discrete}
+\end{equation}
+If \(\dataspace\) is also represented in a finite basis \(\{b_i\}_{i=1}^{M}\subset\dataspace\) with dual \(\{\beta_i\}\), the discrete matrix of \(G\) reads
+\begin{equation}
+  \mathbf{A} := \big[\,\ipD{G\phi_j}{\beta_i}\,\big]_{i=1,\dots,M}^{\ \ j=1,\dots,N},
+  \qquad
+  \Pi_{D,M}\, G \,\pi_N = \mathbf{A} \in \mathbb{R}^{M\times N},
+  \label{eq:discrete-matrix}
+\end{equation}
+where \(\Pi_{D,M}:\dataspace\to\mathbb{R}^M\) is the data-side truncated analysis.
+
+\begin{codebox}
+\textbf{Least-norm solution in coefficients (data unweighted).}
+The continuum formula \(m^\dagger=\Gadj (G\Gadj)^{-1}\mathbf d\) discretizes to
+\[
+\mathbf c^\dagger
+= \mass_{\phi,N}^{-1}\mathbf A^\top\big(\mathbf A\,\mass_{\phi,N}^{-1}\mathbf A^\top\big)^{-1}\mathbf d,
+\qquad m^\dagger=\pi_N(\mathbf c^\dagger),
+\]
+where \(\mathbf A = \Pi_{D,M}\,G\,\pi_N\).
+In \texttt{pygeoinf}, obtain \(\mathbf A\) via \texttt{G.matrix(galerkin=false, dense=true)} and \(\mass_{\phi,N}\) from the basis’ Gram; solve on the data side, then back-substitute for \(\mathbf c^\dagger\).
+\end{codebox}
+
+\begin{figure}[h]
+\centering
+\begin{tikzcd}[row sep=huge, column sep=huge]
+\modelspace \arrow[rrrr, blue, "G"]
+   \arrow[drr, blue, "\Pi_N" description]
+   \arrow[ddd, bend right=25, blue, "\mathcal{R}_{\modelspace}^{-1}"']
+& & & & \dataspace \arrow[dl, blue, "\Pi_{\dataspace}"]
+   \arrow[llll, bend right=25, "G^*"']
+   \arrow[ddd, bend left=25, blue, "\mathcal{R}_{\dataspace}^{-1}"]\\
+& \modelspace_N \arrow[lu, "i_{\modelspace}"]
+& \mathbb{R}^N \arrow[d, bend left=25, "\mathcal{R}_{\mathbb{R}^N}^{-1}"]
+   \arrow[l, blue, "\pi_N"']
+   \arrow[r, "\Gd"]& \mathbb{R}^{N_d} \arrow[d, bend left=25, "\mathcal{R}_{\mathbb{R}^{N_d}}^{-1}"] \arrow[l, bend right=25, "\Gd^*"'] \arrow[ru, blue, bend left=25, "\pi_{\dataspace}"]& \\
+& \modelspace_N' \arrow[u, bend left=25, "\mathcal{R}_{\modelspace_N}^{-1}"]
+   \arrow[u, "\mathcal{R}_{\modelspace_N}"']
+   \arrow[r, "\pi_N'"]
+& (\mathbb{R}^N)' \arrow[u, "\mathcal{R}_{\mathbb{R}^N}"]
+   \arrow[dll, "\Pi_N'"]
+   \arrow[l, bend right=25, "(\pi_N')^*"']& (\mathbb{R}^{N_d})' \arrow[u, "\mathcal{R}_{\mathbb{R}^{N_d}}"] \arrow[l, "\Gd'"] \arrow[dr, bend right=25, "\Pi_{\dataspace}'"']& \\
+\modelspace'  \arrow[uuu, blue, "\mathcal{R}_{\modelspace}"']
+   \arrow[ru, "i'_{\modelspace}"]
+& & & & \dataspace'
+   \arrow[llll, "G'"]
+   \arrow[uuu, blue, "\mathcal{R}_{\dataspace}"]
+   \arrow[lu, "\pi_{\dataspace}'"']
+\end{tikzcd}
+\caption{Summary diagram linking the infinite-dimensional spaces and their finite \(N\) surrogates: analysis/synthesis maps, primal/dual Riesz maps, and the (Hilbert vs.\ Banach) adjoints commute as in \(\Gadj=\RieszM\circ G'\circ \RieszD^{-1}\).}
+\label{fig:finite-basis-diagram}
+\end{figure}
+
+\begin{align}
+    P_N &:= \pi_N\Pi_N:\ \modelspace\to\modelspace_N\quad\text{with } \ipM{m-P_N m}{\psi_j}=0\ \ \forall j\le N,
+  \label{eq:PG-proj}\\
+  \mass_{\phi,N} &:= \pi_N^*\pi_N \in \mathbb{R}^{N\times N},\qquad
+  [\mass_{\phi,N}]_{lk}=\ipM{\phi_l}{\phi_k},
+  \label{eq:gramN}\\
+  \Riesz_{\mathbb{R}^N}(\mathbf a) &= \mass_{\phi,N}^{-1}\mathbf a,\qquad
+  \Riesz_{\mathbb{R}^N}^{-1}(\mathbf u)=\mass_{\phi,N}\mathbf u .
+  \label{eq:Riesz-RN}
+\end{align}
+
+\bibliographystyle{plainnat}  % or abbrvnat, unsrtnat, etc.
+\bibliography{bibliography}   % replace 'bibliography' with your .bib filename
+
+\end{document}
