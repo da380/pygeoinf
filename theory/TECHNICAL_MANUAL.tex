@@ -1,0 +1,1942 @@
+% ============================================================================
+% pygeoinf Technical Manual
+% Theory, Algorithms, and API Reference
+% ============================================================================
+\documentclass[11pt,twoside,openright]{book}
+
+% ---------------------------------------------------------------------------
+% Typography and layout
+% ---------------------------------------------------------------------------
+\usepackage[final]{microtype}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in,headheight=14pt]{geometry}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{parskip}          % paragraph spacing instead of indent
+
+% ---------------------------------------------------------------------------
+% Mathematics
+% ---------------------------------------------------------------------------
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+% \usepackage{physics}  % install texlive-science if needed
+\usepackage{bm}
+
+% ---------------------------------------------------------------------------
+% References, links, cross-references
+% ---------------------------------------------------------------------------
+\usepackage[hidelinks,bookmarksnumbered]{hyperref}
+\usepackage[nameinlink,capitalise]{cleveref}
+\usepackage[numbers,sort&compress]{natbib}
+
+% ---------------------------------------------------------------------------
+% Figures, diagrams, tables
+% ---------------------------------------------------------------------------
+\usepackage{graphicx}
+\usepackage{tikz-cd}
+\usepackage{tikz}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+
+% ---------------------------------------------------------------------------
+% Code and algorithm environments
+% ---------------------------------------------------------------------------
+\usepackage{listings}
+\usepackage[ruled,vlined]{algorithm2e}
+
+% ---------------------------------------------------------------------------
+% Boxed callouts for code links
+% ---------------------------------------------------------------------------
+\usepackage[framemethod=tikz]{mdframed}
+
+\newmdenv[
+  linewidth=0.6pt,
+  roundcorner=4pt,
+  backgroundcolor=blue!3,
+  linecolor=blue!30,
+  skipabove=\medskipamount,
+  skipbelow=\medskipamount,
+  frametitle={\small\sffamily pygeoinf API},
+  frametitlebackgroundcolor=blue!10,
+  frametitlerule=true,
+  frametitlerulewidth=0.4pt,
+]{codebox}
+
+\newmdenv[
+  linewidth=0.6pt,
+  roundcorner=4pt,
+  backgroundcolor=yellow!5,
+  linecolor=yellow!50!orange,
+  skipabove=\medskipamount,
+  skipbelow=\medskipamount,
+  frametitle={\small\sffamily Why this matters},
+  frametitlebackgroundcolor=yellow!15,
+  frametitlerule=true,
+  frametitlerulewidth=0.4pt,
+]{whybox}
+
+\newmdenv[
+  linewidth=0.6pt,
+  roundcorner=4pt,
+  backgroundcolor=green!3,
+  linecolor=green!40,
+  skipabove=\medskipamount,
+  skipbelow=\medskipamount,
+  frametitle={\small\sffamily Worked Example},
+  frametitlebackgroundcolor=green!10,
+  frametitlerule=true,
+  frametitlerulewidth=0.4pt,
+]{examplebox}
+
+\newmdenv[
+  linewidth=0.6pt,
+  roundcorner=4pt,
+  backgroundcolor=red!3,
+  linecolor=red!30,
+  skipabove=\medskipamount,
+  skipbelow=\medskipamount,
+  frametitle={\small\sffamily Common Pitfall},
+  frametitlebackgroundcolor=red!8,
+  frametitlerule=true,
+  frametitlerulewidth=0.4pt,
+]{pitfallbox}
+
+% ---------------------------------------------------------------------------
+% Theorem environments
+% ---------------------------------------------------------------------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+% ---------------------------------------------------------------------------
+% Custom commands: Spaces and maps
+% ---------------------------------------------------------------------------
+\newcommand{\modelspace}{\mathcal{M}}
+\newcommand{\dataspace}{\mathcal{D}}
+\newcommand{\propertyspace}{\mathcal{P}}
+\newcommand{\Gd}{\mathbf{G}}              % standard discrete forward matrix
+\newcommand{\GdGal}{\tilde{\mathbf{G}}}   % Galerkin discrete matrix
+\newcommand{\Tau}{\mathcal{T}}             % property operator
+
+% ---------------------------------------------------------------------------
+% Custom commands: Measures
+% ---------------------------------------------------------------------------
+\newcommand{\prior}{\mu_{\modelspace}^0}
+\newcommand{\post}{\mu_{\modelspace}^{\mathbf{\tilde{d}}}}
+\newcommand{\discprior}{\mu_{\modelspace}^{0,N}}
+\newcommand{\discpost}{\mu_{\modelspace}^{\mathbf{\tilde{d}}, N}}
+
+% ---------------------------------------------------------------------------
+% Custom commands: Discretization
+% ---------------------------------------------------------------------------
+\newcommand{\Vspace}{\mathbb{V}_N}
+\newcommand{\mass}{\mathbf{M}}             % Gram/mass matrix
+
+% ---------------------------------------------------------------------------
+% Custom commands: Inner products and pairings
+% ---------------------------------------------------------------------------
+\newcommand{\ipM}[2]{(#1,#2)_{\modelspace}}
+\newcommand{\ipV}[2]{(#1,#2)_{\Vspace}}
+\newcommand{\ipD}[2]{(#1,#2)_{\dataspace}}
+\newcommand{\ipH}[2]{(#1,#2)_{H}}
+\newcommand{\ip}[3]{(#1,#2)_{#3}}         % generic inner product
+\newcommand{\pair}[2]{\langle #1, #2\rangle}
+
+% ---------------------------------------------------------------------------
+% Custom commands: Riesz maps and adjoint
+% ---------------------------------------------------------------------------
+\newcommand{\RieszM}{\mathcal{R}_{\modelspace}}
+\newcommand{\RieszD}{\mathcal{R}_{\dataspace}}
+\newcommand{\Riesz}{\mathcal{R}}
+\newcommand{\Gadj}{G^*}
+
+% ---------------------------------------------------------------------------
+% Custom commands: Math operators
+% ---------------------------------------------------------------------------
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\spn}{span}
+\DeclareMathOperator{\supp}{supp}
+\DeclareMathOperator{\dom}{dom}
+\DeclareMathOperator{\epi}{epi}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\tr}{tr}
+\DeclareMathOperator{\rank}{rank}
+\DeclareMathOperator{\range}{range}
+\DeclareMathOperator{\kernel}{ker}
+
+% ---------------------------------------------------------------------------
+% Listings style for Python
+% ---------------------------------------------------------------------------
+\lstdefinestyle{pygeoinf}{
+  language=Python,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\color{blue!70!black}\bfseries,
+  commentstyle=\color{green!50!black}\itshape,
+  stringstyle=\color{red!60!black},
+  showstringspaces=false,
+  breaklines=true,
+  frame=none,
+  xleftmargin=0.5em,
+  aboveskip=0.5em,
+  belowskip=0.5em,
+}
+\lstset{style=pygeoinf}
+
+% ---------------------------------------------------------------------------
+% Page headers and footers
+% ---------------------------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\small\slshape\nouppercase{\leftmark}}
+\fancyhead[RO]{\small\slshape\nouppercase{\rightmark}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---------------------------------------------------------------------------
+% Title information
+% ---------------------------------------------------------------------------
+\title{%
+  \vspace{-2cm}
+  {\Huge\bfseries pygeoinf}\\[0.8em]
+  {\LARGE Technical Manual}\\[0.4em]
+  {\Large Theory, Algorithms, and API Reference}\\[2em]
+  \rule{\textwidth}{0.8pt}
+}
+\author{%
+  Adrian\\[0.5em]
+  {\normalsize Department of Earth Sciences}
+}
+\date{\today}
+
+% ============================================================================
+\begin{document}
+% ============================================================================
+
+\frontmatter
+
+% ---------------------------------------------------------------------------
+% Title page
+% ---------------------------------------------------------------------------
+\maketitle
+
+% ---------------------------------------------------------------------------
+% Preface
+% ---------------------------------------------------------------------------
+\chapter{Preface}
+
+\section*{Who this manual is for}
+
+This manual is written for geophysicists who have a forward operator and
+a dataset and want to perform rigorous linear inversion or inference. The
+word \emph{rigorous} carries weight here: pygeoinf does not cut corners.
+It insists on correct Hilbert space structure, proper adjoints, and
+treatment of uncertainty that is mathematically honest. If you are used
+to inverting $( \mathbf{G}^\top \mathbf{G})^{-1}\mathbf{G}^\top$
+and calling it done, this manual will explain why that is sometimes
+wrong, and what to do instead.
+
+No prior knowledge of functional analysis is assumed, but you will need
+to engage with the mathematics. The package deliberately surfaces
+conceptual machinery --- Riesz maps, dual pairings, Hilbert adjoints ---
+that many inversion codes hide. The reward is a library whose results are
+correct by construction for \emph{any} choice of model space, inner
+product, and forward operator, not just the Euclidean special case.
+
+\section*{How to read this manual}
+
+Each chapter follows a consistent four-part structure:
+\begin{enumerate}
+  \item \emph{Why this matters} --- a motivating argument, usually with a
+    geophysical example, that explains why the concept is worth the
+    effort. Highlighted in yellow callout boxes.
+  \item \emph{Definitions and theorems} --- the full, rigorous mathematical
+    treatment.
+  \item \emph{Implementation in pygeoinf} --- how each mathematical concept
+    maps to the API. Highlighted in blue callout boxes labelled
+    ``pygeoinf API''.
+  \item \emph{Worked example} --- a complete mini-example, in both
+    mathematics and code. Highlighted in green callout boxes.
+\end{enumerate}
+
+If you are primarily a practitioner, you can read the yellow and blue
+boxes and skip the proofs on a first pass without losing the ability to
+use the package.
+If you are mathematically inclined, read everything; proofs that would
+interrupt the flow are deferred to \cref{app:proofs}.
+
+Red callout boxes labelled ``Common Pitfall'' flag mistakes that are
+easy to make and important to avoid.
+
+\section*{Acknowledgements}
+
+This manual documents work carried out at the Department of Earth
+Sciences. The theoretical framework draws heavily on
+\citet{al2021linear}, \citet{stuart2010inverse}, and the trilogy
+\citet{backus1970inference,backus1970uniqueness,backus1970inferenceIII}.
+
+% ---------------------------------------------------------------------------
+% Table of contents
+% ---------------------------------------------------------------------------
+\tableofcontents
+
+% ---------------------------------------------------------------------------
+% List of notation
+% ---------------------------------------------------------------------------
+\chapter{Notation and Conventions}
+\label{notation}
+
+\section*{General conventions}
+
+Throughout this manual we use the following typographic conventions.
+
+\begin{itemize}
+  \item \textbf{Boldface roman} ($\mathbf{m}$, $\mathbf{G}$, $\boldsymbol{\lambda}$)
+    denotes finite-dimensional vectors and matrices, i.e.\ elements of
+    $\mathbb{R}^n$ or linear maps $\mathbb{R}^n \to \mathbb{R}^m$.
+  \item \textbf{Calligraphic} ($\mathcal{M}$, $\mathcal{D}$, $\mathcal{P}$)
+    denotes abstract (possibly infinite-dimensional) Hilbert or Banach
+    spaces.
+  \item \textbf{Script/Roman capitals} ($G$, $T$, $\Pi$, $\pi$, $\mathcal{R}$)
+    denote abstract linear operators between such spaces.
+  \item Indices: $j,k,\ell$ typically index a basis of the model space;
+    $i$ typically indexes a datum.
+  \item We work exclusively over $\mathbb{R}$; all spaces are real.
+\end{itemize}
+
+\section*{Spaces}
+
+\begin{longtable}{lll}
+\toprule
+Symbol & Meaning & Code \\
+\midrule
+$\modelspace$ & Model space (Hilbert) & \texttt{model\_space} \\
+$\dataspace$ & Data space (usually $\mathbb{R}^{N_d}$) & \texttt{data\_space} \\
+$\mathcal{P}$ & Property space (usually $\mathbb{R}^{N_p}$) & \texttt{property\_space} \\
+$\modelspace'$ & Continuous dual of $\modelspace$ & implicit via Riesz \\
+$\dataspace'$ & Continuous dual of $\dataspace$ & implicit via Riesz \\
+$H$ & Generic Hilbert space & \texttt{HilbertSpace} \\
+$\ell^2$ & Square-summable sequences & infinite-dim.~limit \\
+$\mathbb{R}^N$ & Finite coefficient space & \texttt{EuclideanSpace(N)} \\
+$\modelspace_N$ & $N$-dimensional subspace of $\modelspace$ & \texttt{dim = N} \\
+$H_1 \oplus H_2$ & Hilbert direct sum & \texttt{HilbertSpaceDirectSum} \\
+\bottomrule
+\end{longtable}
+
+\section*{Operators and maps}
+
+\begin{longtable}{lll}
+\toprule
+Symbol & Meaning & Code \\
+\midrule
+$G : \modelspace \to \dataspace$ & Forward operator & \texttt{forward\_operator} \\
+$G' : \dataspace' \to \modelspace'$ & Banach dual (transpose) & \texttt{.dual} \\
+$G^* : \dataspace \to \modelspace$ & Hilbert adjoint & \texttt{.adjoint} \\
+$\mathcal{T} : \modelspace \to \mathcal{P}$ & Property operator & \texttt{property\_operator} \\
+$\mathcal{R}_X : X' \to X$ & Riesz isomorphism & \texttt{from\_dual} \\
+$\mathcal{R}_X^{-1} : X \to X'$ & Inverse Riesz & \texttt{to\_dual} \\
+$\Pi : \modelspace \to \ell^2$ & Analysis (expansion coefficients) & \texttt{to\_components} \\
+$\pi : \ell^2 \to \modelspace$ & Synthesis (reconstruct from coeffs) & \texttt{from\_components} \\
+$\Pi_N : \modelspace \to \mathbb{R}^N$ & Truncated analysis & \texttt{to\_components} (finite) \\
+$\pi_N : \mathbb{R}^N \to \modelspace_N$ & Truncated synthesis & \texttt{from\_components} (finite) \\
+$P_N : \modelspace \to \modelspace_N$ & Orthogonal projection onto $\modelspace_N$ & implicit \\
+$\phi_j \in \modelspace$ & Basis vector & \texttt{basis\_vector(j)} \\
+$\psi_j \in \modelspace$ & Biorthogonal dual basis vector & derived from Gram \\
+\bottomrule
+\end{longtable}
+
+\section*{Inner products and pairings}
+
+\begin{longtable}{lll}
+\toprule
+Symbol & Meaning & Code \\
+\midrule
+$(m_1, m_2)_{\modelspace}$ & Inner product on $\modelspace$ & \texttt{inner\_product(x1,x2)} \\
+$(d_1, d_2)_{\dataspace}$ & Inner product on $\dataspace$ & \texttt{inner\_product(d1,d2)} \\
+$\langle \ell, m \rangle$ & Dual pairing: $\ell \in \modelspace',\, m \in \modelspace$ & \texttt{l(m)} \\
+$\|m\|_{\modelspace}$ & Hilbert norm $\sqrt{(m,m)_{\modelspace}}$ & \texttt{norm(m)} \\
+\bottomrule
+\end{longtable}
+
+We use \emph{parentheses} $(\cdot,\cdot)$ for inner products and
+\emph{angle brackets} $\langle\cdot,\cdot\rangle$ for dual pairings.
+On a Hilbert space the two are related by
+$\langle \ell, m \rangle = (m,\, \mathcal{R}_X \ell)_X$.
+
+\section*{Matrices (finite-dimensional objects)}
+
+\begin{longtable}{lll}
+\toprule
+Symbol & Meaning & Notes \\
+\midrule
+$\mathbf{M}_{\phi,N}$ & Gram/mass matrix $[\,(\phi_k,\phi_j)_{\modelspace}\,]_{j,k}$ & SPD, $N\times N$ \\
+$\mathbf{G}$ & Standard discrete matrix of $G$: $[\,(G\phi_j,\beta_i)_{\dataspace}\,]$ & $N_d \times N$ \\
+$\tilde{\mathbf{G}}$ & Galerkin matrix (with inner products) & \texttt{.matrix(galerkin=True)} \\
+$\mathbf{m}, \mathbf{d}$ & Coefficient vectors in $\mathbb{R}^N$, $\mathbb{R}^{N_d}$ & \texttt{to\_components(m)} \\
+\bottomrule
+\end{longtable}
+
+\section*{Measures and probability}
+
+\begin{longtable}{lll}
+\toprule
+Symbol & Meaning & Code \\
+\midrule
+$\mu$ & A probability measure on $\modelspace$ & \\
+$\mathcal{N}(\mu_0, C)$ & Gaussian measure, mean $\mu_0$, covariance $C$ & \texttt{GaussianMeasure} \\
+$\mu^0$ & Prior measure & \texttt{prior} \\
+$\mu^{\tilde{d}}$ & Posterior measure given data $\tilde{d}$ & \texttt{.invert(data)} \\
+$C : \modelspace \to \modelspace$ & Covariance operator & \texttt{.covariance\_operator} \\
+$\mathbf{C}_{\dataspace} : \dataspace \to \dataspace$ & Data noise covariance & \texttt{data\_error\_measure} \\
+$\varepsilon \in \dataspace$ & Data noise, $\varepsilon \sim \mathcal{N}(0,\mathbf{C}_{\dataspace})$ & \\
+\bottomrule
+\end{longtable}
+
+\section*{Convex analysis}
+
+\begin{longtable}{lll}
+\toprule
+Symbol & Meaning & Code \\
+\midrule
+$C \subset \modelspace$ & A convex subset & \texttt{Subset} subclass \\
+$h_C(q) = \sigma_C(q)$ & Support function of $C$ & \texttt{SupportFunction} \\
+$\partial h_C(q)$ & Subdifferential of $h_C$ at $q$ & \texttt{.subgradient(q)} \\
+$\mathcal{U} \subset \mathcal{P}$ & Admissible property set & computed by DLI \\
+\bottomrule
+\end{longtable}
+
+% ============================================================================
+\mainmatter
+% ============================================================================
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{Foundations}
+\label{part:foundations}
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% ============================================================================
+\chapter{Introduction and Motivation}
+\label{ch:introduction}
+% ============================================================================
+
+\section{What is pygeoinf?}
+\label{sec:what-is-pygeoinf}
+
+pygeoinf is a Python library for rigorous linear geophysical inversion and
+Bayesian inference. It is built around a single design philosophy:
+\emph{the mathematical structure of the problem should be encoded explicitly
+in the code}, not reduced to bare matrices and vectors.
+
+Most inversion codes operate on the discrete level from the start: the
+user assembles a matrix $\mathbf{G}\in\mathbb{R}^{M\times N}$, a data
+vector $\mathbf{d}\in\mathbb{R}^M$, and calls some solver. This approach
+works, but it forces the user to manually track which inner products
+are implicit, which transposes are adjoints, and how uncertainty
+propagates through the discretization. When anything non-standard
+happens --- a non-Euclidean norm, a non-uniform grid, a Sobolev
+prior --- the bookkeeping becomes error-prone.
+
+Instead, pygeoinf exposes the following conceptual objects as first-class
+Python types:
+
+\begin{itemize}
+  \item \textbf{Hilbert spaces} (\texttt{HilbertSpace}) --- carrying their
+    inner product, Riesz maps, and basis structure.
+  \item \textbf{Linear operators} (\texttt{LinearOperator}) --- aware of
+    their domain and codomain, automatically computing the correct Hilbert
+    adjoint from the spaces' Riesz maps.
+  \item \textbf{Linear forms} (\texttt{LinearForm}) --- elements of the dual
+    space, representing individual measurements.
+  \item \textbf{Gaussian measures} (\texttt{GaussianMeasure}) --- priors and
+    posteriors as probability measures on Hilbert spaces.
+  \item \textbf{Convex sets and support functions} --- geometry of the
+    admissible model set.
+\end{itemize}
+
+Once these objects are defined, a full suite of inversion algorithms ---
+Bayesian, least-squares, minimum-norm, Backus-Gilbert, and
+deterministic linear inference --- work automatically and correctly
+for any choice of spaces and operators.
+
+\section{The geophysical inversion problem}
+\label{sec:geophysical-inversion}
+
+The starting point is a physical system described by a \emph{model}
+$m$ --- perhaps the seismic wave-speed field $v_P(x)$, the electrical
+conductivity $\sigma(x)$, or the subsurface density $\rho(x)$. Some
+aspects of this system are measurable: we collect \emph{data}
+$\tilde{d} = (\tilde{d}_1,\ldots,\tilde{d}_M)$ via instruments
+(travel-time picks, gravity readings, magnetic measurements, \ldots).
+A \emph{forward model} $G$ maps a model to its predicted data:
+\begin{equation}
+  \label{eq:forward-model}
+  d = Gm + \varepsilon,
+\end{equation}
+where $\varepsilon$ is measurement noise. The \emph{inverse problem} is
+to determine what equation~\eqref{eq:forward-model} implies about
+$m$ given the observed data $\tilde{d}$.
+
+All realistic geophysical inverse problems share three features:
+
+\begin{enumerate}
+  \item \textbf{Underdetermination.} The data $\tilde{d}$ is a
+    finite-dimensional vector, whereas $m$ is a function (infinite-dimensional
+    in principle). Infinitely many models are consistent with the data
+    exactly; the problem has a non-trivial null space.
+  \item \textbf{Ill-conditioning.} Even the components of $m$ that \emph{are}
+    constrained by the data may be constrained very weakly, amplifying
+    noise in the solution.
+  \item \textbf{Incomplete prior knowledge.} We have partial information
+    about $m$ --- physical bounds, smoothness expectations, perhaps a
+    statistical prior --- that should inform the inversion.
+\end{enumerate}
+
+Any honest inversion framework must confront all three. pygeoinf does so
+by working at the level of \emph{abstract spaces and operators}, which
+makes the structure of the problem explicit and prevents silent,
+basis-dependent errors.
+
+\section{Why abstract spaces matter}
+\label{sec:why-spaces-matter}
+
+\begin{whybox}
+If you are used to working with matrices and vectors in NumPy, you may
+wonder why pygeoinf insists on Hilbert spaces, dual pairings, and Riesz
+maps. This section shows you exactly what goes wrong when you ignore
+these structures --- and how pygeoinf gets it right automatically.
+\end{whybox}
+
+To make the argument concrete, consider a simple 1D problem. You want to
+recover a function $m : [0,1] \to \mathbb{R}$ from $M$ integral
+measurements
+\begin{equation}
+  \label{eq:motivating-forward}
+  d_i = \int_0^1 g_i(x)\, m(x)\, \mathrm{d}x, \qquad i = 1,\ldots,M.
+\end{equation}
+You discretize $[0,1]$ into $N$ cells with centres $x_j^*$ and widths
+$\Delta x_j > 0$ (possibly non-uniform). Approximate $m$ as piecewise
+constant: $m(x) \approx m_j$ on cell $j$, so $\mathbf{m} =
+(m_1,\ldots,m_N)^\top \in \mathbb{R}^N$. The discrete forward matrix
+becomes
+\begin{equation}
+  \label{eq:motivating-matrix}
+  G_{ij} = g_i(x_j^*) \Delta x_j,
+  \qquad \mathbf{d} = \mathbf{G}\mathbf{m} \in \mathbb{R}^M.
+\end{equation}
+You want the minimum-norm solution: among all $\mathbf{m}$ with
+$\mathbf{G}\mathbf{m} = \mathbf{d}$, find the one of smallest
+norm.
+
+\paragraph{The naive approach: use the Euclidean norm on $\mathbb{R}^N$.}
+Minimizing $\|\mathbf{m}\|_2^2 = \sum_j m_j^2$ gives
+\begin{equation}
+  \label{eq:naive-min-norm}
+  \mathbf{m}^\dagger_{\text{naive}}
+  = \mathbf{G}^\top (\mathbf{G}\mathbf{G}^\top)^{-1} \mathbf{d}.
+\end{equation}
+
+\paragraph{The correct approach: use the $L^2([0,1])$ norm.}
+The natural inner product approximating $\|m\|_{L^2}^2 = \int_0^1 m(x)^2
+\,\mathrm{d}x$ is
+\begin{equation}
+  \label{eq:L2-inner-product}
+  (\mathbf{m},\mathbf{n})_{L^2} \approx \sum_j m_j n_j \Delta x_j
+  = \mathbf{m}^\top \mathbf{M} \mathbf{n},
+  \qquad \mathbf{M} = \mathrm{diag}(\Delta x_1,\ldots,\Delta x_N).
+\end{equation}
+Minimizing this gives the qualitatively different solution
+\begin{equation}
+  \label{eq:correct-min-norm}
+  \mathbf{m}^\dagger
+  = \mathbf{M}^{-1}\mathbf{G}^\top
+    (\mathbf{G}\mathbf{M}^{-1}\mathbf{G}^\top)^{-1} \mathbf{d}.
+\end{equation}
+
+\paragraph{Why they differ.}
+If the grid is uniform ($\Delta x_j = 1/N$ for all $j$), then
+$\mathbf{M} = \tfrac{1}{N}\mathbf{I}$ and the two solutions agree up to
+a constant. But on a non-uniform grid, the naive solution
+\eqref{eq:naive-min-norm} \emph{implicitly weights finely-sampled
+regions more heavily}: minimizing $\sum_j m_j^2$ without the $\Delta x_j$
+weights is not minimizing a physically meaningful norm of $m$.
+
+The matrix $\mathbf{M}$ is the \emph{Gram matrix} (or mass matrix) of the
+basis $\{\phi_j\}$ where $\phi_j = \mathbf{1}_{\text{cell }j} / \Delta x_j^{1/2}$.
+The formula $G^* = \mathbf{M}^{-1}\mathbf{G}^\top$ is the finite-dimensional
+instance of the abstract relation
+\begin{equation}
+  \label{eq:hilbert-adjoint-abstract}
+  G^* = \mathcal{R}_{\modelspace} \circ G' \circ \mathcal{R}_{\dataspace}^{-1},
+\end{equation}
+which pygeoinf enforces automatically once you provide the spaces with
+their correct inner products.
+
+\begin{pitfallbox}
+The matrix transpose $\mathbf{G}^\top$ is the adjoint only in Euclidean
+space with the standard dot product. In any other Hilbert space it is
+not. Using $\mathbf{G}^\top$ instead of
+$\mathbf{M}_{\mathcal{M}}^{-1}\mathbf{G}^\top\mathbf{M}_{\mathcal{D}}$
+produces a solution that is biased toward densely-gridded regions (or,
+in a Bayesian setting, posterior covariances that are not
+basis-independent).
+\end{pitfallbox}
+
+This example is the simplest case. As problems become more complex ---
+Sobolev regularity norms, non-trivial data weighting, operators between
+function spaces --- the gap between ``naive'' and ``correct'' widens.
+pygeoinf closes that gap structurally, not by asking the user to remember
+the right formula each time.
+
+\section{Package architecture overview}
+\label{sec:architecture}
+
+pygeoinf is organized in four ascending layers.
+
+\medskip
+\begin{center}
+\begin{tikzpicture}[
+  layer/.style={draw, rounded corners=4pt, fill=#1, minimum width=8cm,
+                minimum height=0.75cm, font=\small\sffamily},
+  arr/.style={->, thick, gray!60}
+]
+  \node[layer=blue!10]   (L1) at (0,0)    {Foundation: spaces, operators, linear forms};
+  \node[layer=green!10]  (L2) at (0,1.0)  {Geometry: subsets, subspaces, support functions, measures};
+  \node[layer=yellow!15] (L3) at (0,2.0)  {Algorithms: forward problems, inversions, optimisation};
+  \node[layer=red!8]     (L4) at (0,3.0)  {Output: visualisation, diagnostics};
+  \draw[arr] (L1) -- (L2);
+  \draw[arr] (L2) -- (L3);
+  \draw[arr] (L3) -- (L4);
+\end{tikzpicture}
+\end{center}
+\medskip
+
+\paragraph{Foundation layer}
+(\cref{part:foundations}) The abstract base classes
+\texttt{HilbertSpace}, \texttt{LinearOperator}, and \texttt{LinearForm}
+define the mathematical objects.  Everything else is built on top of
+them.  No inversion algorithm is aware of the concrete space type; it
+only calls the abstract interface.
+
+\paragraph{Geometry layer}
+(\cref{part:geometry}) Convex subsets (\texttt{Ball},
+\texttt{PolyhedralSet}, \ldots), subspaces (\texttt{AffineSubspace}),
+support functions (\texttt{SupportFunction}), and Gaussian measures
+(\texttt{GaussianMeasure}) all live here.  They each accept any
+\texttt{HilbertSpace} and work correctly regardless of its concrete type.
+
+\paragraph{Algorithm layer}
+(\cref{part:algorithms}) \texttt{ForwardProblem},
+\texttt{LinearBayesianInversion}, \texttt{LinearMinimumNormInversion},
+\texttt{BackusGilbertInversion}, and the convex optimisation algorithms
+belong here.  They compose the foundation and geometry objects into
+complete solution procedures.
+
+\paragraph{Output layer}
+(\cref{part:computation}) \texttt{SubspaceSlicePlotter} and related
+tools for visualising results and checking algorithmic correctness.
+
+\section{How to read this manual}
+\label{sec:how-to-read}
+
+The manual is divided into four parts mirroring the package architecture:
+
+\begin{description}
+  \item[\cref{part:foundations} (Foundations)]
+    Chapters~\ref{ch:hilbert-spaces}--\ref{ch:nonlinear}.
+    The mathematical vocabulary: spaces, operators, forms.
+    \emph{All users should read at least the motivation sections of these
+    chapters.}
+  \item[\cref{part:geometry} (Geometry)]
+    Chapters~\ref{ch:subsets}--\ref{ch:gaussian-measures}.
+    Convex geometry, subspaces, and probabilistic models.
+  \item[\cref{part:algorithms} (Problems and Algorithms)]
+    Chapters~\ref{ch:forward-problems}--\ref{ch:convex-optimisation}.
+    How to set up and solve inverse problems.
+  \item[\cref{part:computation} (Computational Methods)]
+    Chapters~\ref{ch:computational}--\ref{ch:visualisation}.
+    Numerical backends and visualisation.
+\end{description}
+
+Each chapter is self-contained. Forward references are kept to a minimum.
+The appendices collect a convex analysis primer
+(\cref{app:convex-primer}), functional analysis prerequisites
+(\cref{app:functional-analysis}), deferred proofs
+(\cref{app:proofs}), and a complete API quick-reference
+(\cref{app:api-reference}).
+
+\paragraph{Callout boxes.}
+\begin{description}
+  \item[\textcolor{yellow!60!gray}{Yellow} --- Why this matters]
+    Motivational content and geophysical perspective.
+  \item[\textcolor{blue!60}{Blue} --- pygeoinf API]
+    The mapping from mathematical concept to Python code.
+  \item[\textcolor{green!60!gray}{Green} --- Worked Example]
+    Complete mini-examples with both equations and code.
+  \item[\textcolor{red!60}{Red} --- Common Pitfall]
+    Frequent mistakes and how to avoid them.
+\end{description}
+
+\section{Notation and conventions summary}
+\label{sec:notation-summary}
+
+A complete notation table is given in the \hyperref[notation]{Notation
+and Conventions} chapter of the front matter. The most important rules:
+
+\begin{itemize}
+  \item Parentheses $(m_1, m_2)_{\modelspace}$ always denote inner products;
+    angle brackets $\langle \ell, m \rangle$ always denote dual pairings.
+  \item Boldface ($\mathbf{m}$, $\mathbf{G}$) is reserved for
+    finite-dimensional vectors and matrices.
+  \item Calligraphic letters ($\modelspace$, $\dataspace$) denote abstract
+    spaces; Roman capitals ($G$, $T$, $\Pi$) denote abstract operators.
+  \item $G^*$ always means the \emph{Hilbert} adjoint
+    ($G^*: \dataspace \to \modelspace$); $G'$ means the \emph{Banach} dual
+    ($G': \dataspace' \to \modelspace'$). They are related by
+    \eqref{eq:hilbert-adjoint-abstract} but are not the same map.
+\end{itemize}
+
+
+% ============================================================================
+\chapter{Hilbert Spaces}
+\label{ch:hilbert-spaces}
+% ============================================================================
+
+\section{Why Hilbert spaces?}
+\label{sec:why-hilbert}
+
+\begin{whybox}
+The inner product on your model space is not a minor technical detail ---
+it determines what ``similar models'' means, and therefore what your
+inversion algorithm considers a good solution. Two inversions that differ
+only in their choice of inner product will in general produce qualitatively
+different results. pygeoinf makes the inner product an explicit,
+first-class object so that this choice is always visible and always
+consistent.
+\end{whybox}
+
+Why not work with plain vectors and matrices? A vector space gives you
+addition and scalar multiplication, but it has no notion of length or
+angle. You cannot define a ``smallest'' element, orthogonality, or
+projection without more structure. The extra structure needed is an
+\emph{inner product}.
+
+For geophysical inversion, the inner product on the model space $\modelspace$
+is the mathematical encoding of your regularity expectations about the
+model. A Euclidean inner product treats all degrees of freedom equally,
+regardless of grid spacing or physical units. An $L^2([0,1])$ inner
+product weights by area element $dx$. A Sobolev $H^1$ inner product
+additionally penalises gradients. Each choice leads to a different
+minimum-norm solution; only the ``right'' one is physically meaningful.
+
+In short: \emph{the inner product is part of the problem specification},
+not an implementation detail.
+
+\section{Definition and axioms}
+\label{sec:hilbert-definition}
+
+\begin{definition}[Inner product space]
+\label{def:inner-product-space}
+A \emph{real inner product space} is a real vector space $H$ together with
+a map $(\cdot,\cdot)_H : H \times H \to \mathbb{R}$ satisfying, for all
+$u, v, w \in H$ and $\alpha \in \mathbb{R}$:
+\begin{enumerate}
+  \item \textbf{Symmetry:} $(u, v)_H = (v, u)_H$.
+  \item \textbf{Linearity in the first argument:}
+    $(\alpha u + v, w)_H = \alpha(u, w)_H + (v, w)_H$.
+  \item \textbf{Positive definiteness:} $(u, u)_H \geq 0$, with equality only
+    if $u = 0$.
+\end{enumerate}
+\end{definition}
+
+The inner product induces a norm $\|u\|_H := \sqrt{(u, u)_H}$ and hence a
+metric $d(u, v) = \|u - v\|_H$.
+
+\begin{definition}[Hilbert space]
+\label{def:hilbert-space}
+A real \emph{Hilbert space} is a real inner product space $(H, (\cdot,\cdot)_H)$
+that is \emph{complete} with respect to the induced norm: every Cauchy
+sequence converges to an element of $H$.
+\end{definition}
+
+\begin{remark}
+pygeoinf works exclusively over $\mathbb{R}$. Complex Hilbert spaces are not
+supported. All spaces are assumed to be \emph{separable}, meaning they
+admit a countable dense subset; this ensures the existence of countable
+orthonormal bases.
+\end{remark}
+
+\paragraph{Orthogonality.}
+Two elements $u, v \in H$ are \emph{orthogonal}, written $u \perp v$, if
+$(u, v)_H = 0$. A set $S \subset H$ is orthogonal if any two distinct
+elements of $S$ are orthogonal. If additionally $\|s\|_H = 1$ for all
+$s \in S$, the set is \emph{orthonormal}.
+
+\paragraph{The parallelogram law.}
+A norm comes from an inner product if and only if it satisfies the
+\emph{parallelogram law}:
+\begin{equation}
+  \label{eq:parallelogram}
+  \|u + v\|^2_H + \|u - v\|^2_H = 2\|u\|^2_H + 2\|v\|^2_H
+  \qquad \forall\, u, v \in H.
+\end{equation}
+The $\ell^p$ and $L^p$ spaces for $p \neq 2$ are Banach but not Hilbert;
+they do not satisfy \eqref{eq:parallelogram}.
+
+\section{Inner products, norms, and distances}
+\label{sec:inner-products-norms}
+
+\begin{proposition}[Cauchy--Schwarz inequality]
+\label{prop:cauchy-schwarz}
+For any $u, v \in H$,
+\begin{equation}
+  \label{eq:cauchy-schwarz}
+  |(u, v)_H| \leq \|u\|_H \, \|v\|_H,
+\end{equation}
+with equality if and only if $u$ and $v$ are linearly dependent.
+\end{proposition}
+
+The Cauchy--Schwarz inequality guarantees that the cosine of the
+``angle'' between two vectors, $\cos\theta_{u,v} := (u,v)_H / (\|u\|_H
+\|v\|_H)$, is well-defined and in $[-1,1]$, even in infinite dimensions.
+
+\paragraph{Polarisation identity.}
+The inner product can be recovered from the norm via
+\begin{equation}
+  \label{eq:polarisation}
+  (u, v)_H = \tfrac{1}{4}\left(\|u + v\|^2_H - \|u - v\|^2_H\right).
+\end{equation}
+This means all metric information about a Hilbert space is encoded in
+its inner product.
+
+\begin{codebox}
+\texttt{HilbertSpace} exposes:
+\begin{itemize}
+  \item \texttt{inner\_product(x1, x2)}: computes $(x_1, x_2)_H$;
+  \item \texttt{norm(x)}: computes $\|x\|_H$;
+  \item \texttt{squared\_norm(x)}: computes $\|x\|^2_H$ (often cheaper);
+  \item \texttt{distance(x1, x2)}: computes $\|x_1 - x_2\|_H$.
+\end{itemize}
+Internally, \texttt{inner\_product} is computed via the dual pairing
+(see \cref{sec:dual-space}) as $(x_1, x_2)_H = \langle \mathcal{R}^{-1} x_1,\, x_2\rangle$,
+using \texttt{to\_dual} and the duality product.
+\end{codebox}
+
+\section{The dual space and dual pairing}
+\label{sec:dual-space}
+
+\begin{whybox}
+In geophysical terms, a dual vector is exactly what an instrument
+measures: a number that depends linearly on the model. Understanding the
+distinction between vectors (models) and dual vectors (measurements) is
+fundamental to understanding why inversion requires Riesz maps.
+\end{whybox}
+
+\begin{definition}[Continuous dual space]
+\label{def:dual-space}
+Let $H$ be a Hilbert space. A \emph{continuous linear functional} on $H$
+is a map $\ell : H \to \mathbb{R}$ that is linear ($\ell(\alpha u + v) =
+\alpha \ell(u) + \ell(v)$) and bounded ($|\ell(u)| \leq C\|u\|_H$ for
+some $C < \infty$). The collection of all continuous linear functionals
+on $H$ forms the \emph{(continuous) dual space} $H'$, which is itself a
+Banach space under the operator norm $\|\ell\|_{H'} := \sup_{\|u\|=1}
+|\ell(u)|$.
+\end{definition}
+
+\paragraph{Dual pairing.}
+We denote the evaluation of $\ell \in H'$ at $u \in H$ by the \emph{dual
+pairing}:
+\begin{equation}
+  \label{eq:dual-pairing}
+  \langle \ell, u \rangle := \ell(u).
+\end{equation}
+We use angle brackets $\langle\cdot,\cdot\rangle$ for dual pairings and
+parentheses $(\cdot,\cdot)_H$ for inner products throughout this manual;
+the two are related by the Riesz theorem (\cref{sec:riesz-theorem}).
+
+\paragraph{Two distinct spaces.}
+Elements of $H$ are ``primal'' vectors (models); elements of $H'$ are
+``dual'' vectors (measurements, functionals, gradients of scalar
+functions). On a finite-dimensional Euclidean space, $H \cong H'$ via
+the standard dot product, which is why the distinction is often ignored
+in numerical practice. On a general Hilbert space --- or more acutely, on
+a Banach space where no inner product exists --- the two are different
+objects and must be handled separately.
+
+\paragraph{Concrete example.}
+Let $H = L^2([0,1])$ and let $g \in L^2([0,1])$. Then the map $\ell:
+m \mapsto \int_0^1 g(x) m(x)\,\mathrm{d}x$ is a continuous linear
+functional on $H$, i.e.\ $\ell \in H'$. This is precisely the structure
+of a geophysical measurement: every seismogram, gravity reading, or
+magnetic datum is a dual vector.
+
+\section{The Riesz representation theorem}
+\label{sec:riesz-theorem}
+
+\begin{theorem}[Riesz representation]
+\label{thm:riesz}
+Let $H$ be a real Hilbert space. For every continuous linear functional
+$\ell \in H'$ there exists a unique $u_\ell \in H$ such that
+\begin{equation}
+  \label{eq:riesz-rep}
+  \ell(v) = (u_\ell,\, v)_H \qquad \forall\, v \in H.
+\end{equation}
+Moreover, $\|u_\ell\|_H = \|\ell\|_{H'}$. The map $\Riesz: H' \to H$
+defined by $\Riesz(\ell) := u_\ell$ is an isometric isomorphism.
+\end{theorem}
+
+\paragraph{Proof sketch.}
+If $\ell = 0$ take $u_\ell = 0$. Otherwise, $\ker\ell$ is a closed
+proper subspace of $H$ of codimension one. By the projection theorem
+there exists a unit vector $e \perp \ker\ell$. Set $u_\ell :=
+\ell(e)\,e$. For any $v \in H$, the element $v - \langle\ell,v\rangle e /
+\ell(e)$ lies in $\ker\ell$, hence is orthogonal to $e$. A brief
+calculation shows $(u_\ell, v)_H = \ell(v)$. Uniqueness follows from
+positive definiteness.
+
+\paragraph{Geometric interpretation.}
+The Riesz representative $u_\ell = \Riesz(\ell)$ is the element of $H$
+that ``points in the direction'' the functional $\ell$ is measuring. In
+optimisation this is the \emph{gradient}: if $f(u) = \ell(u)$ then
+$\nabla f = u_\ell$.
+
+\paragraph{Riesz map and its inverse.}
+We call $\Riesz : H' \to H$ the \emph{Riesz isomorphism} or Riesz map.
+Its inverse $\Riesz^{-1} : H \to H'$ is defined by $(\Riesz^{-1} u)(v) =
+(u, v)_H$. Together they establish the identification
+\begin{equation}
+  \label{eq:riesz-iden}
+  \langle \ell, v \rangle = (v,\; \Riesz\,\ell)_H
+  \qquad \forall\; \ell \in H',\; v \in H.
+\end{equation}
+
+\begin{codebox}
+The Riesz isomorphism and its inverse are implemented as:
+\[
+  \texttt{from\_dual} \equiv \Riesz : H' \to H, \qquad
+  \texttt{to\_dual}   \equiv \Riesz^{-1} : H \to H'.
+\]
+If you need them as \texttt{LinearOperator} instances, use the properties
+\texttt{HilbertSpace.riesz} ($\Riesz$) and
+\texttt{HilbertSpace.inverse\_riesz} ($\Riesz^{-1}$). The dual pairing
+evaluates as $\langle \ell, v\rangle = \ell(v)$, implemented by calling
+the \texttt{LinearForm} object directly: \texttt{l(v)}.
+\end{codebox}
+
+\section{Bases and representations}
+\label{sec:bases-representations}
+
+\subsection{Riesz bases and biorthogonal duals}
+\label{ssec:riesz-bases}
+
+An \emph{orthonormal basis} (ONB) $\{e_j\}_{j=1}^{\infty}$ is a maximal
+orthonormal set; every $m \in H$ expands as $m = \sum_j (m, e_j)_H e_j$.
+But ONBs are rarely computable. A physical or numerical basis
+$\{\phi_j\}$ is typically not orthonormal, and we must work with
+general Riesz bases.
+
+\begin{definition}[Riesz basis]
+\label{def:riesz-basis}
+A sequence $\{\phi_j\}_{j=1}^{\infty} \subset H$ is a \emph{Riesz basis}
+if it is the image of an ONB under a bounded invertible operator. Equivalently,
+there exist constants $0 < A \leq B < \infty$ such that for every finite
+coefficient sequence $\mathbf{c} \in \mathbb{R}^N$,
+\begin{equation}
+  \label{eq:riesz-bounds}
+  A\, \|\mathbf{c}\|_{\ell^2}^2
+  \;\leq\; \Bigl\|\sum_j c_j \phi_j\Bigr\|_H^2
+  \;\leq\; B\, \|\mathbf{c}\|_{\ell^2}^2.
+\end{equation}
+\end{definition}
+
+Every Riesz basis $\{\phi_j\}$ has a unique \emph{biorthogonal dual}
+$\{\psi_j\} \subset H$ satisfying
+\begin{equation}
+  \label{eq:biorthogonality}
+  (\phi_j, \psi_k)_H = \delta_{jk}.
+\end{equation}
+Any element $m \in H$ then has the unique expansion
+\begin{equation}
+  \label{eq:riesz-expansion}
+  m = \sum_{j=1}^{\infty} [\mathbf{m}]_j\, \phi_j,
+  \qquad [\mathbf{m}]_j = (m, \psi_j)_H.
+\end{equation}
+The coefficient sequence $\mathbf{m} = ([\mathbf{m}]_j)_{j=1}^\infty$
+lies in $\ell^2$, and the norms are equivalent (eq.~\eqref{eq:riesz-bounds}).
+When $\{\phi_j\}$ is an ONB, $\psi_j = \phi_j$ and $A = B = 1$.
+
+\paragraph{Connection to the dual basis.}
+The dual basis $\{\phi^i\} \subset H'$ is defined by $\langle \phi^i, \phi_j\rangle
+= \delta^i_j$. The biorthogonal dual vectors are the Riesz representatives
+of the dual basis:
+\begin{equation}
+  \label{eq:dual-basis-riesz}
+  \psi_i = \Riesz(\phi^i).
+\end{equation}
+
+\subsection{The analysis operator}
+\label{ssec:analysis-operator}
+
+\begin{definition}[Analysis operator]
+\label{def:analysis-operator}
+The \emph{analysis operator} associated with Riesz basis $\{\phi_j\}$ is
+\begin{equation}
+  \label{eq:analysis-def}
+  \Pi : H \to \ell^2, \qquad
+  \Pi(m) := \bigl[ (m, \psi_j)_H \bigr]_{j=1}^{\infty}.
+\end{equation}
+\end{definition}
+
+The analysis operator extracts the coefficient sequence: $\Pi(m) =
+\mathbf{m}$. For any Riesz basis it is bounded from $H$ to $\ell^2$.
+
+\subsection{The synthesis operator}
+\label{ssec:synthesis-operator}
+
+\begin{definition}[Synthesis operator]
+\label{def:synthesis-operator}
+The \emph{synthesis operator} is
+\begin{equation}
+  \label{eq:synthesis-def}
+  \pi : \ell^2 \to H, \qquad
+  \pi(\mathbf{c}) := \sum_{j=1}^{\infty} c_j\, \phi_j.
+\end{equation}
+\end{definition}
+
+The synthesis operator reconstructs $m$ from its coefficients. For a
+Riesz basis, $\Pi$ and $\pi$ are bounded inverses of each other:
+\begin{align}
+  \label{eq:pi-Pi-inverses}
+  \pi \circ \Pi &= \mathrm{Id}_H, &
+  \Pi \circ \pi &= \mathrm{Id}_{\ell^2}.
+\end{align}
+
+\begin{codebox}
+The coefficient maps correspond to
+\[
+  \texttt{to\_components}   \equiv \Pi : H \to \ell^2, \qquad
+  \texttt{from\_components} \equiv \pi : \ell^2 \to H.
+\]
+In practice a concrete space has finite \texttt{dim}~$= N$, giving
+truncated maps $\Pi_N : H \to \mathbb{R}^N$ and $\pi_N : \mathbb{R}^N \to
+H_N$. The operators \texttt{coordinate\_projection} and
+\texttt{coordinate\_inclusion} expose $\Pi_N$ and $\pi_N$ as
+\texttt{LinearOperator} instances (including their adjoints).
+\end{codebox}
+
+\subsection{The dual basis}
+\label{ssec:dual-basis}
+
+On the dual space $H'$ the \emph{dual basis} $\{\phi^i\}_{i=1}^\infty$
+is defined by $\langle\phi^i, \phi_j\rangle = \delta^i_j$. It forms a
+Riesz basis for $H'$. The analysis operator on $H'$ is $\Pi' : H' \to
+\ell^2$, $[\Pi'\ell]_j = \langle\ell, \phi_j\rangle$, and the synthesis
+operator on $H'$ is $\pi' : \ell^2 \to H'$,
+$\pi'(\mathbf{c}) = \sum_j c_j \phi^j$.
+
+The key identity connecting dual and primal bases is:
+\begin{equation}
+  \label{eq:synthesis-dual-adjoint}
+  (\pi')^* = \Pi, \qquad (\Pi')^* = \pi,
+\end{equation}
+where $(\pi')^* : H \to \ell^2$ and $(\Pi')^* : \ell^2 \to H$ denote the
+Hilbert adjoints of $\pi'$ and $\Pi'$ with respect to the inner products
+on $H$ and $\ell^2$.
+
+\section{The Gram matrix}
+\label{sec:gram-matrix}
+
+\begin{definition}[Gram operator / mass matrix]
+\label{def:gram-operator}
+Let $\{\phi_j\}$ be a Riesz basis for $H$. The \emph{Gram operator}
+(or \emph{mass operator}) is
+\begin{equation}
+  \label{eq:gram-def}
+  \mathbf{M}_\phi := \pi^* \pi : \ell^2 \to \ell^2,
+  \qquad
+  [\mathbf{M}_\phi]_{jk} = (\phi_k, \phi_j)_H.
+\end{equation}
+In finite dimensions ($N$-truncation) it becomes the $N \times N$ matrix
+\begin{equation}
+  \label{eq:gram-finite}
+  [\mathbf{M}_{\phi,N}]_{jk} = (\phi_k, \phi_j)_H, \qquad j, k = 1,\ldots,N.
+\end{equation}
+\end{definition}
+
+\begin{proposition}
+\label{prop:gram-spd}
+For any Riesz basis, $\mathbf{M}_\phi$ is bounded, self-adjoint, and
+strictly positive on $\ell^2$. In particular it is invertible, and its
+finite-dimensional truncation $\mathbf{M}_{\phi,N}$ is symmetric positive
+definite (SPD) for every $N \geq 1$.
+\end{proposition}
+
+\paragraph{Gram matrix and the biorthogonal dual.}
+The biorthogonal dual basis is related to the original basis by
+\begin{equation}
+  \label{eq:biorthogonal-from-gram}
+  \psi_j = \sum_i [\mathbf{M}_{\phi}^{-1}]_{ji}\, \phi_i.
+\end{equation}
+This gives a purely computational recipe: to find $\psi_j$, solve the
+linear system $\mathbf{M}_{\phi} \mathbf{c} = \mathbf{e}_j$ (where
+$\mathbf{e}_j$ is the $j$-th standard basis vector) and form
+$\sum_i c_i \phi_i$.
+
+\paragraph{Analysis via $\phi_j$ alone.}
+Substituting \eqref{eq:biorthogonal-from-gram} into the definition of
+$\Pi$ gives
+\begin{equation}
+  \label{eq:analysis-via-phi}
+  \Pi = \mathbf{M}_\phi^{-1}\, \pi^* : H \to \ell^2.
+\end{equation}
+This means the analysis operator can be computed purely from
+$\{\phi_j\}$ --- the biorthogonal dual need not be constructed
+explicitly. One forms the matrix $\mathbf{M}_{\phi,N}$, inverts it, and
+multiplies the vector of inner products $[\langle\phi_j, m\rangle]_j$.
+
+\begin{codebox}
+In pygeoinf, \texttt{HilbertSpace.coordinate\_projection} implements
+$\Pi_N : H \to \mathbb{R}^N$ via \eqref{eq:analysis-via-phi}:
+it evaluates $[\pi_N^*(m)]_j = (\phi_j, m)_H$ and then multiplies by
+$\mathbf{M}_{\phi,N}^{-1}$. The Gram matrix itself is available via
+\texttt{HilbertSpace.gram\_matrix(N)}.
+\end{codebox}
+
+\paragraph{Riesz isomorphism on the coefficient space.}
+On the finite coefficient space $\mathbb{R}^N$ (equipped with the norm
+inherited from $H$ via $\pi_N$), the Riesz maps are given by the Gram
+matrix:
+\begin{equation}
+  \label{eq:riesz-RN}
+  \Riesz_{\mathbb{R}^N}(\mathbf{a}) = \mathbf{M}_{\phi,N}^{-1}\mathbf{a},
+  \qquad
+  \Riesz_{\mathbb{R}^N}^{-1}(\mathbf{u}) = \mathbf{M}_{\phi,N}\, \mathbf{u}.
+\end{equation}
+This explains the ubiquity of the Gram matrix in inversion formulas: it
+converts coefficient vectors between the primal and dual representations.
+
+\section{Finite-dimensional approximation}
+\label{sec:finite-approximation}
+
+All computation in pygeoinf is finite-dimensional. For a Riesz basis
+$\{\phi_j\}_{j=1}^\infty$ we fix a truncation parameter $N$ and define:
+
+\begin{equation}
+  \label{eq:MN-def}
+  H_N := \mathrm{span}\{\phi_1, \ldots, \phi_N\} \subset H.
+\end{equation}
+
+The \emph{truncated analysis and synthesis operators} are
+\begin{align}
+  \label{eq:PiN-piN}
+  \Pi_N : H \to \mathbb{R}^N,
+  &\quad \Pi_N(m) = \bigl[(m, \psi_j)_H\bigr]_{j=1}^N, \\
+  \pi_N : \mathbb{R}^N \to H_N,
+  &\quad \pi_N(\mathbf{c}) = \sum_{j=1}^N c_j\, \phi_j.
+\end{align}
+
+The \emph{orthogonal projection} onto $H_N$ is
+\begin{equation}
+  \label{eq:PN-proj}
+  P_N := \pi_N \Pi_N : H \to H_N,
+\end{equation}
+which satisfies $(m - P_N m, \psi_j)_H = 0$ for all $j \leq N$. As $N
+\to \infty$, $\|m - P_N m\|_H \to 0$ for every $m \in H$.
+
+\begin{whybox}
+The projection $P_N$ is the fundamental link between infinite-dimensional
+theory and finite computation. Every algorithm in pygeoinf ultimately
+operates on $\mathbb{R}^N$ via the maps $\Pi_N$ and $\pi_N$; the theory
+guarantees that as $N$ grows the computed results converge to the
+infinite-dimensional truth.
+\end{whybox}
+
+\section{Concrete spaces in pygeoinf}
+\label{sec:concrete-spaces}
+
+This section introduces the built-in Hilbert space implementations and
+explains how to create your own.
+
+\subsection{\texttt{EuclideanSpace}}
+\label{ssec:euclidean-space}
+
+$\mathbb{R}^n$ with the standard inner product $(u, v) = \sum_i u_i v_i =
+\mathbf{u}^\top \mathbf{v}$. The Riesz map is the identity: $\Riesz = \mathrm{Id}$.
+The basis $\{\phi_j\} = \{e_j\}$ is the standard ONB, so $\mathbf{M}_\phi
+= \mathbf{I}$ and $\Pi = \pi^* = \mathrm{Id}$.
+
+When you use \texttt{EuclideanSpace(n)}, adjacent operator transposes
+\emph{are} adjoints, and you recover the classical formulas of linear
+algebra. This is the appropriate choice when variables represent
+coefficients in a pre-orthonormalised basis (e.g.\ after a change of
+variables $\tilde{m} = \mathbf{L} m$ where $\mathbf{L}$ is a Cholesky
+factor of $\mathbf{M}_\phi$).
+
+\subsection{\texttt{MassWeightedHilbertSpace}}
+\label{ssec:mass-weighted}
+
+Given a Hilbert space $H$ and a bounded symmetric positive operator
+$\mathbf{W} : H \to H'$ (the ``weight operator''), the
+\emph{mass-weighted space} $H_{\mathbf{W}}$ is the same underlying vector
+space but with inner product
+\begin{equation}
+  \label{eq:mass-weighted-ip}
+  (u, v)_{H_{\mathbf{W}}} = \langle \mathbf{W} u,\, v \rangle.
+\end{equation}
+The Riesz maps become $\Riesz_{\mathbf{W}} = \Riesz \circ \mathbf{W}$ and
+$\Riesz_{\mathbf{W}}^{-1} = \mathbf{W}^{-1} \circ \Riesz^{-1}$.
+
+\paragraph{Motivating use case: discretized $L^2$.}
+Using the non-uniform grid inner product from
+\cref{sec:why-spaces-matter}, we set $H = \mathbb{R}^N$,
+$H_{\mathbf{W}} = \mathbb{R}^N$ with weight $\mathbf{W} = \mathbf{M} =
+\mathrm{diag}(\Delta x_j)$. Then $(u, v)_{H_{\mathbf{W}}} = \sum_j
+u_j v_j \Delta x_j \approx \int_0^1 u(x) v(x)\,\mathrm{d}x$.
+
+\subsection{\texttt{HilbertSpaceDirectSum}}
+\label{ssec:direct-sum-space}
+
+Given Hilbert spaces $H_1$ and $H_2$, their \emph{Hilbert direct sum}
+$H_1 \oplus H_2$ consists of pairs $(u_1, u_2)$ with
+\begin{equation}
+  \label{eq:direct-sum-ip}
+  \bigl((u_1, u_2),\, (v_1, v_2)\bigr)_{H_1 \oplus H_2}
+  = (u_1, v_1)_{H_1} + (u_2, v_2)_{H_2}.
+\end{equation}
+The Riesz maps and analysis/synthesis operators decompose blockwise.
+This is the natural structure for models that are concatenations of
+separately-structured fields (e.g.\ $P$-wave and $S$-wave velocity
+perturbations).
+
+\subsection{Implementing your own \texttt{HilbertSpace}}
+\label{ssec:custom-space}
+
+To encode a non-standard model space, subclass \texttt{HilbertSpace}.
+The abstract interface requires exactly eight methods:
+
+\begin{codebox}
+Subclass \texttt{HilbertSpace} and implement:
+\begin{itemize}
+  \item \texttt{dim} --- integer dimension $N$ of the space.
+  \item \texttt{zero()} --- return the zero element.
+  \item \texttt{basis\_vector(j)} --- return $\phi_j$ for $j = 0, \ldots, N-1$.
+  \item \texttt{inner\_product(x1, x2)} --- compute $(x_1, x_2)_H$.
+  \item \texttt{to\_dual(x)} --- compute $\Riesz^{-1}(x) \in H'$.
+  \item \texttt{from\_dual(xp)} --- compute $\Riesz(\ell) \in H$ for $\ell \in H'$.
+  \item \texttt{to\_components(x)} --- compute $\Pi(x) \in \mathbb{R}^N$.
+  \item \texttt{from\_components(c)} --- compute $\pi(\mathbf{c}) \in H$.
+\end{itemize}
+All other methods (\texttt{norm}, \texttt{distance}, \texttt{project},
+\texttt{riesz}, \texttt{gram\_matrix}, \texttt{coordinate\_projection},
+\texttt{coordinate\_inclusion}, \ldots) are derived automatically from
+the above.
+\end{codebox}
+
+\begin{examplebox}
+\textbf{Trapezoidal $L^2$ approximation.}
+Suppose your model lives in $L^2([0,1])$ and you discretize using a
+non-uniform grid $0 = x_0 < x_1 < \cdots < x_N = 1$ with midpoints
+$x_j^* = (x_{j-1} + x_j)/2$ and widths $\Delta x_j = x_j - x_{j-1}$.
+Implement:
+\begin{lstlisting}
+class NonUniformL2(HilbertSpace):
+    def __init__(self, x):
+        self._x = np.asarray(x)        # grid points
+        self._dx = np.diff(x)          # cell widths Delta x_j
+    @property
+    def dim(self):
+        return len(self._dx)
+    def inner_product(self, u, v):
+        return np.dot(u * self._dx, v)  # sum u_j v_j Delta x_j
+    def to_dual(self, u):
+        return u * self._dx             # (R^-1 u)_j = u_j Delta x_j
+    def from_dual(self, up):
+        return up / self._dx            # (R ell)_j = ell_j / Delta x_j
+    def to_components(self, u):
+        return u.copy()                 # basis = piecewise constant
+    def from_components(self, c):
+        return c.copy()
+    def zero(self):
+        return np.zeros(self.dim)
+    def basis_vector(self, j):
+        e = np.zeros(self.dim); e[j] = 1.0; return e
+\end{lstlisting}
+With this space, \texttt{to\_dual} implements the mass-weighting that
+equation~\eqref{eq:correct-min-norm} requires: the adjoint formula
+becomes $\mathbf{G}^* = \mathbf{M}^{-1}\mathbf{G}^\top\mathbf{M}_\mathcal{D}$
+automatically.
+\end{examplebox}
+
+\section{Summary and commutative diagram}
+\label{sec:hilbert-summary}
+
+All the maps introduced in this chapter fit together in a single
+commutative diagram. Let $H$ be a Hilbert space with Riesz basis
+$\{\phi_j\}_{j=1}^N$ (finite-dimensional for conciseness). The spaces,
+dual spaces, coefficient space $\mathbb{R}^N$, its dual, and all the maps
+between them commute as follows:
+
+\medskip
+\begin{center}
+\begin{tikzcd}[row sep=3em, column sep=4em]
+H
+  \arrow[r, blue, "\Pi_N"]
+  \arrow[d, "\Riesz^{-1}"']
+&
+\mathbb{R}^N
+  \arrow[d, "\mathbf{M}_{\phi,N}"]
+  \arrow[l, bend right=20, blue, "\pi_N"']
+\\
+H'
+  \arrow[r, blue, "\pi_N^*"]
+  \arrow[u, "\Riesz"]
+&
+(\mathbb{R}^N)'
+  \arrow[l, bend right=20, blue, "(\Pi_N)^*"']
+  \arrow[u, "\mathbf{M}_{\phi,N}^{-1}"]
+\end{tikzcd}
+\end{center}
+\medskip
+
+Reading the diagram:
+\begin{itemize}
+  \item The \textcolor{blue}{blue horizontal arrows} are the analysis
+    ($\Pi_N$) and synthesis ($\pi_N$) operators and their duals.
+  \item The vertical arrows on the left are the Riesz maps for $H$.
+  \item The vertical arrows on the right are the Gram matrix and its
+    inverse, corresponding to the Riesz maps for $\mathbb{R}^N$ equipped
+    with the basis inner product.
+  \item Every path between two nodes gives the same result: the diagram
+    commutes.
+\end{itemize}
+
+The outer square expresses $\Riesz^{-1} = \pi_N^* \circ \mathbf{M}_{\phi,N}
+\circ \Pi_N$, which is the coordinate representation of the Riesz map.
+In \cref{ch:linear-operators} this diagram will be extended to include
+a forward operator $G : \modelspace \to \dataspace$ and its adjoint
+$G^*$, each appearing as arrows connecting two copies of the above
+diagram (one for $\modelspace$, one for $\dataspace$).
+
+
+% ============================================================================
+\chapter{Linear Forms}
+\label{ch:linear-forms}
+% ============================================================================
+
+\section{Motivation: measurements as linear functionals}
+\label{sec:forms-motivation}
+% A seismometer, a gravity meter, a magnetometer: each produces a number
+% that depends linearly on the model. That's a linear form.
+
+\begin{whybox}
+Every single datum in your data vector is the result of applying a
+linear functional to the model. Understanding linear forms is
+understanding what your data actually \emph{are} mathematically.
+\end{whybox}
+
+\section{Definition}
+\label{sec:form-definition}
+% ℓ: M → ℝ, continuous, linear. Element of M'.
+
+\section{Representation in coordinates}
+\label{sec:form-coordinates}
+% Components [ℓ(φ₁), ..., ℓ(φ_N)].
+% ℓ(m) = ⟨ℓ, m⟩ = cᵀ M⁻¹ m_coeffs.
+
+\section{The Riesz representative (gradient)}
+\label{sec:form-riesz-rep}
+% gradient = R(ℓ), Hessian = 0. Links to optimisation.
+
+\section{Linear forms as rank-1 operators}
+\label{sec:form-as-operator}
+% as_linear_operator(): ℓ viewed as M → ℝ.
+
+\begin{codebox}
+\texttt{LinearForm} and \texttt{DualVector} represent elements of $\modelspace'$.
+Key methods: \texttt{\_\_call\_\_(x)}, \texttt{components}, \texttt{as\_linear\_operator()}.
+\end{codebox}
+
+
+% ============================================================================
+\chapter{Linear Operators}
+\label{ch:linear-operators}
+% ============================================================================
+
+\section{Motivation: the forward operator}
+\label{sec:operator-motivation}
+% G: M → D maps models to data. This is the mathematical description of
+% your forward physics.
+
+\begin{whybox}
+The forward operator $G$ is the mathematical encoding of your physics.
+Getting its adjoint right is critical for every inversion algorithm ---
+and the adjoint depends on the inner products of both spaces, not just
+the matrix transpose.
+\end{whybox}
+
+\section{Definition and properties}
+\label{sec:operator-definition}
+% Bounded linear maps. Domain, codomain. Operator algebra: +, scalar ×, @.
+
+\section{The Banach dual (transpose) $G'$}
+\label{sec:banach-dual}
+% Definition: ⟨G'd', m⟩ = ⟨d', Gm⟩.
+% Why this is NOT the adjoint in general.
+
+\section{The Hilbert adjoint $G^*$}
+\label{sec:hilbert-adjoint}
+% Definition: (Gm, d)_D = (m, G*d)_M.
+% The commuting relation: G* = R_M ∘ G' ∘ R_D⁻¹.
+% Full derivation.
+
+\begin{pitfallbox}
+If you are used to thinking of the matrix transpose as the adjoint, beware:
+that is only true in Euclidean space with the standard inner product.
+For general Hilbert spaces, $G^* \neq G^\top$. The correct relationship is
+$G^* = \Riesz_{\modelspace} \circ G' \circ \Riesz_{\dataspace}^{-1}$.
+\end{pitfallbox}
+
+\section{Matrix representations}
+\label{sec:matrix-representations}
+% Standard matrix: A = Π_D G π_N.
+% Galerkin matrix.
+% Discrete adjoint: A* = M_φ⁻¹ Aᵀ M_b.
+
+\subsection{The standard (component) matrix}
+\label{ssec:standard-matrix}
+
+\subsection{The Galerkin matrix}
+\label{ssec:galerkin-matrix}
+
+\subsection{The discrete adjoint formula}
+\label{ssec:discrete-adjoint}
+
+\section{Operators as stacks of linear forms}
+\label{sec:operator-from-forms}
+% G = [ℓ₁, ..., ℓ_M]ᵀ with ℓᵢ ∈ M'.
+
+\begin{codebox}
+Given linear forms $\ell_i \in \modelspace'$, construct the forward operator via
+\texttt{LinearOperator.from\_linear\_forms([$\ell_1, \ldots, \ell_M$])}.
+\end{codebox}
+
+\section{Kernel and range}
+\label{sec:kernel-range}
+% Null space ker(G), range im(G), fundamental decomposition m = m_null + m_data.
+
+\section{Constructing operators in pygeoinf}
+\label{sec:constructing-operators}
+% From callables, from matrices, from linear forms.
+% Providing vs deriving adjoint/dual mappings.
+
+\begin{codebox}
+\texttt{LinearOperator(domain, codomain, mapping)} is the primary constructor.
+Optionally provide \texttt{dual\_mapping} ($G'$) or \texttt{adjoint\_mapping} ($G^*$);
+the library derives the other via the Riesz maps.
+\end{codebox}
+
+\section{The full commutative diagram}
+\label{sec:operator-diagram}
+% Complete tikz-cd diagram: M, D, M', D', ℝⁿ, ℝ^{N_d}, all maps.
+
+
+% ============================================================================
+\chapter{Nonlinear Operators and Forms}
+\label{ch:nonlinear}
+% ============================================================================
+
+\section{NonLinearOperator}
+\label{sec:nonlinear-operator}
+% Interface: __call__, jacobian, adjoint_jacobian.
+
+\section{NonLinearForm}
+\label{sec:nonlinear-form}
+% Scalar-valued nonlinear functions on Hilbert spaces.
+
+\section{Gradients and Hessians}
+\label{sec:frechet-derivatives}
+% Fréchet derivatives, connection to optimisation.
+
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{Geometry and Structure}
+\label{part:geometry}
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% ============================================================================
+\chapter{Subsets and Convex Sets}
+\label{ch:subsets}
+% ============================================================================
+
+\section{Why convex sets?}
+\label{sec:why-convex}
+% Prior information is geometric: the model lies in some set.
+% Convexity = computational tractability.
+
+\begin{whybox}
+Every piece of prior information you have about your model ---
+bounds on parameters, energy constraints, smoothness requirements ---
+defines a set of admissible models. Convexity is the mathematical
+property that makes these constraints computationally tractable.
+\end{whybox}
+
+\section{The Subset interface}
+\label{sec:subset-interface}
+% is_element(), project(), boundary.
+
+\section{Balls and ellipsoids}
+\label{sec:balls-ellipsoids}
+% Definition, projection formulas, norm constraints.
+
+\section{Half-spaces and polyhedral sets}
+\label{sec:halfspaces-polyhedra}
+% Linear inequality constraints. Intersections.
+
+\section{Degenerate sets: EmptySet and FullSpace}
+\label{sec:degenerate-sets}
+
+\section{Set operations}
+\label{sec:set-operations}
+% Intersection, Minkowski sums (via support functions).
+
+
+% ============================================================================
+\chapter{Subspaces}
+\label{ch:subspaces}
+% ============================================================================
+
+\section{Motivation: equality constraints}
+\label{sec:subspace-motivation}
+% Linear constraints from conservation laws, boundary conditions.
+
+\section{Orthogonal projectors}
+\label{sec:projectors}
+% Definition, construction from basis, properties P² = P = P*.
+
+\begin{codebox}
+\texttt{OrthogonalProjector.from\_basis(space, [v1, v2, ...])} constructs
+the projection $P = \sum_i \hat{v}_i \hat{v}_i^\top$ from spanning vectors.
+\end{codebox}
+
+\section{Linear subspaces}
+\label{sec:linear-subspaces}
+
+\section{Affine subspaces}
+\label{sec:affine-subspaces}
+% Translation of linear subspace. Solution set of Bu = w.
+
+\subsection{Construction from tangent bases}
+\label{ssec:tangent-basis}
+
+\subsection{Construction from linear equations}
+\label{ssec:from-linear-equation}
+
+\section{Tangent spaces and dimension}
+\label{sec:tangent-spaces}
+% get_tangent_basis(), tolerant Gram--Schmidt.
+
+
+% ============================================================================
+\chapter{Convex Analysis and Support Functions}
+\label{ch:convex-analysis}
+% ============================================================================
+
+\section{Why convex analysis?}
+\label{sec:why-convex-analysis}
+% DLI framework: what can we learn without probability?
+% Support functions are the key tool.
+
+\begin{whybox}
+Convex analysis provides a complete, probability-free framework for
+answering the question: given my data and prior constraints, what can I
+confidently say about the model? The support function is the central
+object that makes this possible.
+\end{whybox}
+
+\section{Support functions: intuition}
+\label{sec:support-intuition}
+% Geometric picture: σ_C(q) = how far C extends in direction q.
+
+\section{Formal definition and properties}
+\label{sec:support-definition}
+% Convexity, positive homogeneity, subadditivity. Conjugacy.
+
+\section{Subgradients and support points}
+\label{sec:subgradients}
+% ∂σ_C(q) = argmax, geometric interpretation.
+
+\section{Concrete support functions}
+\label{sec:concrete-support}
+
+\subsection{BallSupportFunction}
+\label{ssec:ball-support}
+
+\subsection{EllipsoidSupportFunction}
+\label{ssec:ellipsoid-support}
+
+\subsection{PolyhedralSupportFunction}
+\label{ssec:polyhedral-support}
+
+\subsection{SobolevBallSupportFunction}
+\label{ssec:sobolev-support}
+
+\section{Combinators: building complex sets from simple ones}
+\label{sec:support-combinators}
+% Infimal convolution, sum, scaled sum.
+
+\subsection{Infimal convolution (Minkowski sum)}
+\label{ssec:infimal-convolution}
+
+\subsection{Support function sum (intersection)}
+\label{ssec:support-sum}
+
+\subsection{Scaled sums}
+\label{ssec:scaled-sum}
+
+\section{The dual master equation}
+\label{sec:dual-master}
+% h_U(q) = inf_λ { ⟨λ, d̃⟩ + σ_B(T'q − G'λ) + σ_V(−λ) }
+% Full derivation, geometric interpretation.
+% Connection to Al-Attar \& Crawford (2021).
+
+
+% ============================================================================
+\chapter{Gaussian Measures}
+\label{ch:gaussian-measures}
+% ============================================================================
+
+\section{Why Gaussian measures?}
+\label{sec:why-gaussian}
+% The natural probabilistic building block for linear-Gaussian problems.
+
+\begin{whybox}
+If your prior knowledge about the model is naturally described by a mean
+and covariance, and your forward operator is linear, and your measurement
+noise is Gaussian, then the full posterior distribution is Gaussian and
+can be computed in closed form. This is what \texttt{GaussianMeasure}
+provides.
+\end{whybox}
+
+\section{Gaussian measures on Hilbert spaces}
+\label{sec:gaussian-definition}
+% Mean, covariance operator. Cameron--Martin space.
+% Difference from finite-dimensional: covariance is an operator.
+
+\section{Sampling}
+\label{sec:gaussian-sampling}
+% Cholesky-based and randomised approaches.
+
+\section{Push-forward and marginals}
+\label{sec:push-forward}
+% Am ~ N(Aμ, ACA*).
+
+\section{Conditioning (Bayesian update)}
+\label{sec:gaussian-conditioning}
+% Posterior formula. Full derivation.
+
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{Problems and Algorithms}
+\label{part:algorithms}
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% ============================================================================
+\chapter{Forward Problems}
+\label{ch:forward-problems}
+% ============================================================================
+
+\section{The forward modelling framework}
+\label{sec:forward-framework}
+% d = Gm + ε. The forward problem as a data structure.
+
+\section{ForwardProblem and LinearForwardProblem}
+\label{sec:forward-classes}
+% Constructor, properties, validation.
+
+\begin{codebox}
+\texttt{LinearForwardProblem(model\_space, data\_space, forward\_operator,
+data\_error\_measure)} bundles the complete forward problem specification.
+\end{codebox}
+
+
+% ============================================================================
+\chapter{Deterministic Inversion}
+\label{ch:deterministic-inversion}
+% ============================================================================
+
+\section{Least-squares inversion}
+\label{sec:least-squares}
+% min ‖Gm − d‖². Normal equations. Uniqueness.
+
+\section{Minimum-norm inversion}
+\label{sec:minimum-norm}
+% min ‖m‖ s.t. Gm = d. Pseudo-inverse. Why the norm matters.
+
+\begin{whybox}
+The minimum-norm solution depends on the inner product: change the norm,
+change the answer. This is why the careful treatment of Hilbert spaces
+in \cref{ch:hilbert-spaces} pays off here.
+\end{whybox}
+
+\section{Constrained inversions}
+\label{sec:constrained-inversions}
+% Adding affine constraints Bu = w.
+
+\section{Connection to the dual master equation}
+\label{sec:det-inv-dli}
+% How deterministic inversions are special cases of DLI.
+
+
+% ============================================================================
+\chapter{Bayesian Inversion}
+\label{ch:bayesian-inversion}
+% ============================================================================
+
+\section{The Bayesian framework for inverse problems}
+\label{sec:bayesian-framework}
+% Prior → forward model → likelihood → posterior.
+% Stuart (2010) well-posedness.
+
+\section{Linear Bayesian inversion}
+\label{sec:linear-bayesian}
+% Closed-form posterior. Kalman gain formula.
+
+\begin{codebox}
+\texttt{LinearBayesianInversion(forward\_problem, prior)} computes the
+posterior Gaussian measure. Access via \texttt{.invert(data)}.
+\end{codebox}
+
+\section{Constrained Bayesian inversion}
+\label{sec:constrained-bayesian}
+% Hard constraints on affine subspaces. Conditional Gaussian.
+
+\section{Posterior uncertainty}
+\label{sec:posterior-uncertainty}
+% Posterior covariance, marginal variances, confidence ellipsoids.
+
+
+% ============================================================================
+\chapter{Backus--Gilbert and DLI Inference}
+\label{ch:backus-gilbert}
+% ============================================================================
+
+\section{The inference problem}
+\label{sec:inference-problem}
+% We want properties p = Tm, not the full model m.
+
+\section{Backus--Gilbert estimators}
+\label{sec:bg-estimators}
+% Averaging kernels. Resolution--variance trade-off.
+
+\section{The admissible property set $\mathcal{U}$}
+\label{sec:admissible-set}
+% All property values consistent with data and constraints.
+% Characterised by h_U(q).
+
+\section{Computing $\mathcal{U}$ via the dual master equation}
+\label{sec:computing-U}
+% Numerical evaluation of h_U. Gradient-based optimisation.
+% Support points as extreme models.
+
+\section{Polytope outer approximation}
+\label{sec:polytope-approximation}
+% Three operational regimes: underdetermined, critical, overdetermined.
+
+
+% ============================================================================
+\chapter{Convex Optimisation}
+\label{ch:convex-optimisation}
+% ============================================================================
+
+\section{Overview of optimisation in pygeoinf}
+\label{sec:optim-overview}
+% What problems arise, which solvers handle them.
+
+\section{Linear solvers}
+\label{sec:linear-solvers}
+% CG, MINRES, direct methods.
+
+\section{Convex optimisation algorithms}
+\label{sec:convex-algorithms}
+% Bundle methods, proximal methods.
+
+\section{Preconditioners}
+\label{sec:preconditioners}
+% Why preconditioning matters. Available preconditioners.
+
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part{Computational Methods and Visualisation}
+\label{part:computation}
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% ============================================================================
+\chapter{Computational Utilities}
+\label{ch:computational}
+% ============================================================================
+
+\section{Randomised matrix decompositions}
+\label{sec:randomised}
+% Randomised SVD, range finder, Cholesky.
+
+\section{Direct sum operators}
+\label{sec:direct-sum-operators}
+% Block-diagonal structures.
+
+\section{Parallel computation}
+\label{sec:parallel}
+
+\section{Auxiliary functions}
+\label{sec:auxiliary}
+
+
+% ============================================================================
+\chapter{Visualisation}
+\label{ch:visualisation}
+% ============================================================================
+
+\section{The SubspaceSlicePlotter}
+\label{sec:slice-plotter}
+% Visualising convex sets by slicing.
+
+\section{1D slices}
+\label{sec:1d-slices}
+
+\section{2D slices}
+\label{sec:2d-slices}
+
+\section{3D slices}
+\label{sec:3d-slices}
+
+\section{Worked example: visualising the admissible property set}
+\label{sec:vis-example}
+
+
+% ============================================================================
+\appendix
+% ============================================================================
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\part*{Appendices}
+\addcontentsline{toc}{part}{Appendices}
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% ============================================================================
+\chapter{Convex Analysis Primer}
+\label{app:convex-primer}
+% ============================================================================
+
+\section{Convex sets and functions}
+\label{sec:convex-sets-functions}
+
+\section{Separation theorems}
+\label{sec:separation}
+
+\section{Conjugate (Fenchel--Legendre) duality}
+\label{sec:fenchel-duality}
+
+\section{Subdifferentials}
+\label{sec:subdifferentials}
+
+\section{Infimal convolution}
+\label{sec:infimal-conv-appendix}
+
+
+% ============================================================================
+\chapter{Functional Analysis Prerequisites}
+\label{app:functional-analysis}
+% ============================================================================
+
+\section{Banach spaces}
+\label{sec:banach-spaces}
+
+\section{Weak and weak-* topologies}
+\label{sec:weak-topologies}
+
+\section{Compact operators}
+\label{sec:compact-operators}
+
+\section{Spectral theory for self-adjoint operators}
+\label{sec:spectral-theory}
+
+
+% ============================================================================
+\chapter{Deferred Proofs}
+\label{app:proofs}
+% ============================================================================
+% Long proofs that would interrupt the main narrative.
+
+
+% ============================================================================
+\chapter{Complete API Quick Reference}
+\label{app:api-reference}
+% ============================================================================
+
+\section{hilbert\_space module}
+\label{sec:api-hilbert}
+
+\section{linear\_forms module}
+\label{sec:api-forms}
+
+\section{linear\_operators module}
+\label{sec:api-operators}
+
+\section{subsets module}
+\label{sec:api-subsets}
+
+\section{subspaces module}
+\label{sec:api-subspaces}
+
+\section{convex\_analysis module}
+\label{sec:api-convex}
+
+\section{gaussian\_measure module}
+\label{sec:api-gaussian}
+
+\section{forward\_problem module}
+\label{sec:api-forward}
+
+\section{inversion module}
+\label{sec:api-inversion}
+
+\section{linear\_bayesian module}
+\label{sec:api-bayesian}
+
+\section{linear\_optimisation module}
+\label{sec:api-optimisation}
+
+\section{backus\_gilbert module}
+\label{sec:api-bg}
+
+\section{visualisation module}
+\label{sec:api-vis}
+
+
+% ============================================================================
+\backmatter
+% ============================================================================
+
+% ---------------------------------------------------------------------------
+% Bibliography
+% ---------------------------------------------------------------------------
+\bibliographystyle{plainnat}
+\bibliography{bibliography}
+
+% ---------------------------------------------------------------------------
+% Index
+% ---------------------------------------------------------------------------
+% \printindex  % uncomment when index entries are added
+
+\end{document}

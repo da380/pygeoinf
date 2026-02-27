@@ -338,6 +338,20 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         return np.sqrt(self.squared_norm(x))
 
     @final
+    def distance(self, x1: Vector, x2: Vector) -> float:
+        """
+        Computes the distance between two vectors, `||x1 - x2||`.
+
+        Args:
+            x1: The first vector.
+            x2: The second vector.
+
+        Returns:
+            The Hilbert-space distance between `x1` and `x2`.
+        """
+        return self.norm(self.subtract(x1, x2))
+
+    @final
     def gram_schmidt(self, vectors: List[Vector]) -> List[Vector]:
         """
         Orthonormalizes a list of vectors using the Gram-Schmidt process.
