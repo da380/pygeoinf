@@ -16,6 +16,19 @@
 
 The core design goal is that all inversion algorithms are written against abstract interfaces (`HilbertSpace`, `LinearOperator`, `GaussianMeasure`) and work automatically with any concrete space — including `intervalinf`'s `Lebesgue` and `Sobolev` spaces.
 
+## Documentation
+
+- **Technical manual (LaTeX):** `pygeoinf/theory/TECHNICAL_MANUAL.tex`.
+    Chapter 2 (Hilbert spaces) includes the coefficient-space induced inner product
+    $(\cdot,\cdot)_\pi$ and discusses the adjoint $\pi^{*_{\ell^2}}$ of the synthesis
+    map with respect to the standard $\ell^2$ inner product, alongside the distinction
+    between Hilbert adjoints and Banach duals in the API. The Gram/mass operator is
+    $\mathbf{M}_\phi = \pi^{*_{\ell^2}}\pi$.
+    The manual also includes “notation ↔ code” boxes mapping $\Pi,\pi,\pi^{*_{\ell^2}}$
+    to `HilbertSpace.coordinate_projection`, `HilbertSpace.coordinate_inclusion`, and
+    `LinearOperator.adjoint` / `LinearOperator.dual`.
+    The discussion is structured so the infinite-dimensional coefficient-space viewpoint comes first (bases/representations and Gram operator), with truncation and finite-dimensional computation deferred to the later “Finite-dimensional approximation” section.
+
 ---
 
 ## Architecture
@@ -77,12 +90,11 @@ visualization + backus_gilbert  (output layer)
 
 The abstract base class for ALL spaces in pygeoinf and its extensions (including `intervalinf`).
 
-**Abstract methods** — subclasses must implement all 8:
+**Abstract methods** — subclasses must implement the core interface:
 
 | Method | Signature | Description |
 |---|---|---|
 | `dim` | `@property → int` | Finite approximation dimension |
-| `inner_product` | `(x, y) → float` | $\langle x, y \rangle$ |
 | `to_dual` | `(x) → LinearForm` | Riesz map: $x \mapsto \langle x, \cdot\rangle$ |
 | `from_dual` | `(xp) → Vector` | Inverse Riesz map |
 | `to_components` | `(x) → ndarray` | Project onto basis → coefficient array |
@@ -94,6 +106,7 @@ The abstract base class for ALL spaces in pygeoinf and its extensions (including
 
 | Method | Description |
 |---|---|
+| `inner_product(x, y)` | Default: $\langle x, y \rangle = \langle \texttt{to_dual}(x), y\rangle$ (duality pairing) |
 | `norm(x)` | $\|x\| = \sqrt{\langle x, x\rangle}$ |
 | `distance(x, y)` | $\|x - y\|$ |
 | `axpy(a, x, y)` | In-place $y \leftarrow ax + y$ |

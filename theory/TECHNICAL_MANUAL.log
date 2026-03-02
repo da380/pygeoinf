@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.20 (TeX Live 2019/Debian) (preloaded format=pdflatex 2026.2.27)  27 FEB 2026 16:00
+This is pdfTeX, Version 3.14159265-2.6-1.40.20 (TeX Live 2019/Debian) (preloaded format=pdflatex 2026.2.27)  2 MAR 2026 19:12
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1209,21 +1209,23 @@ LaTeX Font Info:    External font `lmex10' loaded for size
  [3] [4
 
 ] (./TECHNICAL_MANUAL.toc
-LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 4
+[5]
+LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 5
 6.
-
-(/usr/share/texmf/tex/latex/lm/t1lmtt.fd
+ (/usr/share/texmf/tex/latex/lm/t1lmtt.fd
 File: t1lmtt.fd 2009/10/30 v1.6 Font defs for Latin Modern
 )
 Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `lmtt' (encoding: T1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
- [5] [6] [7])
+ [6] [7] [8])
 \tf@toc=\write5
 \openout5 = `TECHNICAL_MANUAL.toc'.
 
- [8]
+ [9] [10
+
+]
 LaTeX Font Info:    Trying to load font information for TS1+lmr on input line 3
 07.
 
@@ -1233,9 +1235,7 @@ File: ts1lmr.fd 2009/10/30 v1.6 Font defs for Latin Modern
 Underfull \vbox (badness 10000) detected at line 339
  []
 
-[9
-
-]
+[11]
 Underfull \vbox (badness 10000) detected at line 386
  []
 
@@ -1243,7 +1243,7 @@ Underfull \vbox (badness 10000) detected at line 386
 Underfull \vbox (badness 10000) detected at line 399
  []
 
-[10]
+[12]
 Underfull \vbox (badness 10000) detected at line 417
  []
 
@@ -1255,7 +1255,7 @@ Underfull \vbox (badness 10000) detected at line 433
 Underfull \vbox (badness 10000) detected at line 446
  []
 
-[11] [12
+[13] [14
 
 ] [1
 
@@ -1341,72 +1341,96 @@ Package mdframed Info: mdframed detected package amsthm
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
 (mdframed)              on input line 963.
- [12]
-Package mdframed Info: mdframed works in twoside mode on input line 1071.
+Package mdframed Info: mdframed works in twoside mode on input line 1009.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1071.
+(mdframed)              on input line 1009.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1081.
- [13] [14]
-Package mdframed Info: mdframed works in twoside mode on input line 1168.
+(mdframed)              on input line 1026.
+Package mdframed Info: Box was splittet wrong
+ starting loop to iterate the splitting point
+(mdframed)              on input line 1026.
+ [12] [13]
+Package mdframed Info: mdframed works in twoside mode on input line 1122.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1168.
+(mdframed)              on input line 1122.
+
+Overfull \hbox (107.14087pt too wide) in paragraph at lines 1130--1132
+[]\T1/lmr/m/n/10.95 (-20) The ``inner-product vec-tor'' route uses the ad-joint
+ $\OML/lmm/m/it/10.95 ^^Y[] \OT1/lmr/m/n/10.95 (-20) : \OML/lmm/m/it/10.95 H \O
+MS/lmsy/m/n/10.95 ! \OML/lmm/m/it/10.95 `[]$\T1/lmr/m/n/10.95 (-20) , avail-abl
+e as \T1/lmtt/m/n/10.95 H.coordinate_inclusion.adjoint\T1/lmr/m/n/10.95 (-20) .
+ 
+ []
+
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1172.
-Package mdframed Info: mdframed works in twoside mode on input line 1225.
+(mdframed)              on input line 1135.
+[14]
+Package mdframed Info: mdframed works in twoside mode on input line 1228.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1225.
+(mdframed)              on input line 1228.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1230.
-Package mdframed Info: Not enough space on this page on input line 1230.
+(mdframed)              on input line 1246.
+Package mdframed Info: Not enough space on this page on input line 1246.
  [15]
-Package mdframed Info: Not enough space on this page on input line 1230.
+Package mdframed Info: Not enough space on this page on input line 1246.
+ [16] [17] [18] [19]
+Package mdframed Info: mdframed works in twoside mode on input line 1566.
+Package mdframed Info: mdframed detected package amsthm 
+ changed the theorem header of amsthm
+(mdframed)              on input line 1566.
+Package mdframed Info: mdframed detected package amsthm 
+ changed the theorem header of amsthm
+(mdframed)              on input line 1572.
 LaTeX Font Info:    Font shape `T1/lmtt/bx/n' in size <12> not available
-(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 1238.
-Package mdframed Info: mdframed works in twoside mode on input line 1296.
+(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 1579.
+ [20]
+Package mdframed Info: mdframed works in twoside mode on input line 1637.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1296.
-Package mdframed Info: mdframed detected package amsthm 
- changed the theorem header of amsthm
-(mdframed)              on input line 1311.
-Package mdframed Info: Not enough space on this page on input line 1311.
- [16]
-Package mdframed Info: Not enough space on this page on input line 1311.
-Package mdframed Info: mdframed works in twoside mode on input line 1314.
-Package mdframed Info: mdframed detected package amsthm 
- changed the theorem header of amsthm
-(mdframed)              on input line 1314.
-LaTeX Font Info:    Font shape `T1/lmtt/bx/n' in size <10> not available
-(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 1320.
-Package mdframed Info: mdframed detected package amsthm 
- changed the theorem header of amsthm
-(mdframed)              on input line 1346.
+(mdframed)              on input line 1637.
 
-Underfull \vbox (badness 10000) has occurred while \output is active []
+Overfull \hbox (32.62251pt too wide) in paragraph at lines 1648--1651
+\T1/lmr/m/n/10.95 (-20) All other meth-ods (\T1/lmtt/m/n/10.95 norm\T1/lmr/m/n/
+10.95 (-20) , \T1/lmtt/m/n/10.95 squared_norm\T1/lmr/m/n/10.95 (-20) , \T1/lmtt
+/m/n/10.95 distance\T1/lmr/m/n/10.95 (-20) , \T1/lmtt/m/n/10.95 riesz\T1/lmr/m/
+n/10.95 (-20) , \T1/lmtt/m/n/10.95 inverse_riesz\T1/lmr/m/n/10.95 (-20) , \T1/l
+mtt/m/n/10.95 coordinate_projection\T1/lmr/m/n/10.95 (-20) ,
+ []
 
- [17]
-[18]
+Package mdframed Info: mdframed detected package amsthm 
+ changed the theorem header of amsthm
+(mdframed)              on input line 1651.
+[21]
+Package mdframed Info: mdframed works in twoside mode on input line 1654.
+Package mdframed Info: mdframed detected package amsthm 
+ changed the theorem header of amsthm
+(mdframed)              on input line 1654.
+LaTeX Font Info:    Font shape `T1/lmtt/bx/n' in size <10.95> not available
+(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 1654.
+Package mdframed Info: mdframed detected package amsthm 
+ changed the theorem header of amsthm
+(mdframed)              on input line 1678.
+ [22]
 Chapter 3.
-Package mdframed Info: mdframed works in twoside mode on input line 1410.
+Package mdframed Info: mdframed works in twoside mode on input line 1693.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1410.
+(mdframed)              on input line 1693.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1413.
-Package mdframed Info: mdframed works in twoside mode on input line 1433.
+(mdframed)              on input line 1696.
+Package mdframed Info: mdframed works in twoside mode on input line 1716.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1433.
+(mdframed)              on input line 1716.
 
-Overfull \hbox (9.38623pt too wide) in paragraph at lines 1433--1435
+Overfull \hbox (9.38623pt too wide) in paragraph at lines 1716--1718
 []\T1/lmtt/m/n/10.95 LinearForm \T1/lmr/m/n/10.95 (-20) and \T1/lmtt/m/n/10.95 
 DualVector \T1/lmr/m/n/10.95 (-20) rep-re-sent el-e-ments of $\OMS/lmsy/m/n/10.
 95 M[]$\T1/lmr/m/n/10.95 (-20) . Key meth-ods: \T1/lmtt/m/n/10.95 __call__(x)\T
@@ -1415,59 +1439,59 @@ DualVector \T1/lmr/m/n/10.95 (-20) rep-re-sent el-e-ments of $\OMS/lmsy/m/n/10.
 
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1435.
-[19
+(mdframed)              on input line 1718.
+[23
 
-] [20
+] [24
 
 ]
 Chapter 4.
-Package mdframed Info: mdframed works in twoside mode on input line 1449.
+Package mdframed Info: mdframed works in twoside mode on input line 1732.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1449.
+(mdframed)              on input line 1732.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1453.
+(mdframed)              on input line 1736.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <14.4> on input line 1459.
+(Font)              <14.4> on input line 1742.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 1459.
+(Font)              <10> on input line 1742.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 1459.
+(Font)              <7> on input line 1742.
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1459.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1459.
+(hyperref)                removing `math shift' on input line 1742.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1464.
+(hyperref)                removing `math shift' on input line 1742.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `superscript' on input line 1464.
+(hyperref)                removing `math shift' on input line 1747.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1464.
+(hyperref)                removing `superscript' on input line 1747.
 
-Package mdframed Info: mdframed works in twoside mode on input line 1471.
+
+Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
+(hyperref)                removing `math shift' on input line 1747.
+
+Package mdframed Info: mdframed works in twoside mode on input line 1754.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1471.
+(mdframed)              on input line 1754.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1475.
-Package mdframed Info: mdframed works in twoside mode on input line 1497.
+(mdframed)              on input line 1758.
+Package mdframed Info: mdframed works in twoside mode on input line 1780.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1497.
+(mdframed)              on input line 1780.
 
-Overfull \hbox (97.35039pt too wide) in paragraph at lines 1497--1499
+Overfull \hbox (97.35039pt too wide) in paragraph at lines 1780--1782
 []\T1/lmr/m/n/10.95 (-20) Given lin-ear forms $\OML/lmm/m/it/10.95 `[] \OMS/lms
 y/m/n/10.95 2 M[]$\T1/lmr/m/n/10.95 (-20) , con-struct the for-ward op-er-a-tor
  via \T1/lmtt/m/n/10.95 LinearOperator.from_linear_forms([$\OML/lmm/m/it/10.95 
@@ -1476,190 +1500,190 @@ y/m/n/10.95 2 M[]$\T1/lmr/m/n/10.95 (-20) , con-struct the for-ward op-er-a-tor
 
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1499.
-[21]
-Package mdframed Info: mdframed works in twoside mode on input line 1511.
+(mdframed)              on input line 1782.
+[25]
+Package mdframed Info: mdframed works in twoside mode on input line 1794.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1511.
+(mdframed)              on input line 1794.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1514.
- [22]
+(mdframed)              on input line 1797.
+ [26]
 Chapter 5.
-[23
-
-] [24
-
-] [25] [26]
-Chapter 6.
-Package mdframed Info: mdframed works in twoside mode on input line 1555.
-Package mdframed Info: mdframed detected package amsthm 
- changed the theorem header of amsthm
-(mdframed)              on input line 1555.
-Package mdframed Info: mdframed detected package amsthm 
- changed the theorem header of amsthm
-(mdframed)              on input line 1559.
 [27
 
 ] [28
 
+] [29] [30]
+Chapter 6.
+Package mdframed Info: mdframed works in twoside mode on input line 1838.
+Package mdframed Info: mdframed detected package amsthm 
+ changed the theorem header of amsthm
+(mdframed)              on input line 1838.
+Package mdframed Info: mdframed detected package amsthm 
+ changed the theorem header of amsthm
+(mdframed)              on input line 1842.
+[31
+
+] [32
+
 ]
 Chapter 7.
-Package mdframed Info: mdframed works in twoside mode on input line 1595.
+Package mdframed Info: mdframed works in twoside mode on input line 1878.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1595.
+(mdframed)              on input line 1878.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1597.
-[29] [30
+(mdframed)              on input line 1880.
+[33] [34
 
 ]
 Chapter 8.
-Package mdframed Info: mdframed works in twoside mode on input line 1628.
+Package mdframed Info: mdframed works in twoside mode on input line 1911.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1628.
+(mdframed)              on input line 1911.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1632.
+(mdframed)              on input line 1915.
 
 Underfull \vbox (badness 10000) has occurred while \output is active []
 
- [31]
-[32]
+ [35]
+[36]
 Chapter 9.
-Package mdframed Info: mdframed works in twoside mode on input line 1691.
+Package mdframed Info: mdframed works in twoside mode on input line 1974.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1691.
+(mdframed)              on input line 1974.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1696.
-[33
+(mdframed)              on input line 1979.
+[37
 
-] [34
+] [38
 
-] [35] [36]
+] [39] [40]
 Chapter 10.
-Package mdframed Info: mdframed works in twoside mode on input line 1735.
+Package mdframed Info: mdframed works in twoside mode on input line 2018.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1735.
+(mdframed)              on input line 2018.
 
-Overfull \hbox (27.44012pt too wide) in paragraph at lines 1736--1737
+Overfull \hbox (27.44012pt too wide) in paragraph at lines 2019--2020
 []\T1/lmtt/m/n/10.95 LinearForwardProblem(model_space, data_space, forward_oper
 ator, data_error_measure)
  []
 
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1737.
-[37
+(mdframed)              on input line 2020.
+[41
 
-] [38
+] [42
 
 ]
 Chapter 11.
-Package mdframed Info: mdframed works in twoside mode on input line 1754.
+Package mdframed Info: mdframed works in twoside mode on input line 2037.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1754.
+(mdframed)              on input line 2037.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1757.
-[39] [40
+(mdframed)              on input line 2040.
+[43] [44
 
 ]
 Chapter 12.
-Package mdframed Info: mdframed works in twoside mode on input line 1783.
+Package mdframed Info: mdframed works in twoside mode on input line 2066.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1783.
+(mdframed)              on input line 2066.
 Package mdframed Info: mdframed detected package amsthm 
  changed the theorem header of amsthm
-(mdframed)              on input line 1785.
-[41] [42
+(mdframed)              on input line 2068.
+[45] [46
 
 ]
 Chapter 13.
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1809.
+(hyperref)                removing `math shift' on input line 2092.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1809.
+(hyperref)                removing `math shift' on input line 2092.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1814.
+(hyperref)                removing `math shift' on input line 2097.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (PDFDocEncoding):
-(hyperref)                removing `math shift' on input line 1814.
+(hyperref)                removing `math shift' on input line 2097.
 
-[43] [44
+[47] [48
 
 ]
 Chapter 14.
-[45] [46
+[49] [50
 
-] [47] [48]
+] [51] [52]
 Chapter 15.
-[49
+[53
 
-] [50
+] [54
 
 ]
 Chapter 16.
-[51] [52
+[55] [56
 
-] [53] [54]
+] [57] [58]
 Appendix A.
-[55
+[59
 
-] [56
+] [60
 
 ]
 Appendix B.
-[57] [58
+[61] [62
 
 ]
 Appendix C.
-[59] [60
+[63] [64
 
 ]
 Appendix D.
-[61] [62
+[65] [66
 
-] (./TECHNICAL_MANUAL.bbl) [63
+] (./TECHNICAL_MANUAL.bbl) [67
 
 ]
-Package atveryend Info: Empty hook `BeforeClearDocument' on input line 2008.
-Package atveryend Info: Empty hook `AfterLastShipout' on input line 2008.
+Package atveryend Info: Empty hook `BeforeClearDocument' on input line 2291.
+Package atveryend Info: Empty hook `AfterLastShipout' on input line 2291.
  (./TECHNICAL_MANUAL.aux)
-Package atveryend Info: Executing hook `AtVeryEndDocument' on input line 2008.
-Package atveryend Info: Executing hook `AtEndAfterFileList' on input line 2008.
+Package atveryend Info: Executing hook `AtVeryEndDocument' on input line 2291.
+Package atveryend Info: Executing hook `AtEndAfterFileList' on input line 2291.
 
 Package rerunfilecheck Info: File `TECHNICAL_MANUAL.out' has not changed.
-(rerunfilecheck)             Checksum: 72CEC9307916773A8504F0C8BCCED125;11714.
+(rerunfilecheck)             Checksum: 87905EB77687152BC004FE5438E8B68B;12663.
 
 
 LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
 
  ) 
 Here is how much of TeX's memory you used:
- 30087 strings out of 483107
- 561213 string characters out of 5964630
- 1080004 words of memory out of 5000000
- 44061 multiletter control sequences out of 15000+600000
- 654617 words of font info for 188 fonts, out of 8000000 for 9000
+ 29753 strings out of 483107
+ 559394 string characters out of 5964630
+ 1019004 words of memory out of 5000000
+ 43718 multiletter control sequences out of 15000+600000
+ 661564 words of font info for 194 fonts, out of 8000000 for 9000
  59 hyphenation exceptions out of 8191
- 67i,14n,84p,1205b,1541s stack positions out of 5000i,500n,10000p,200000b,80000s
+ 67i,16n,84p,1205b,1215s stack positions out of 5000i,500n,10000p,200000b,80000s
 {/usr/share/texmf/fonts/enc/dvips/lm/lm-mathit.enc}{/usr/share/texmf/fonts/en
-c/dvips/lm/lm-ec.enc}{/usr/share/texmf/fonts/enc/dvips/lm/lm-rm.enc}{/usr/share
+c/dvips/lm/lm-rm.enc}{/usr/share/texmf/fonts/enc/dvips/lm/lm-ec.enc}{/usr/share
 /texmf/fonts/enc/dvips/lm/lm-mathsy.enc}{/usr/share/texmf/fonts/enc/dvips/lm/lm
 -mathex.enc}{/usr/share/texmf/fonts/enc/dvips/lm/lm-ts1.enc}</usr/share/texmf/f
 onts/type1/public/lm/lmbx10.pfb></usr/share/texmf/fonts/type1/public/lm/lmbx12.
@@ -1677,12 +1701,12 @@ ublic/lm/lmss10.pfb></usr/share/texmf/fonts/type1/public/lm/lmssbx10.pfb></usr/
 share/texmf/fonts/type1/public/lm/lmsy10.pfb></usr/share/texmf/fonts/type1/publ
 ic/lm/lmsy6.pfb></usr/share/texmf/fonts/type1/public/lm/lmsy8.pfb></usr/share/t
 exmf/fonts/type1/public/lm/lmtk10.pfb></usr/share/texmf/fonts/type1/public/lm/l
-mtt10.pfb></usr/share/texmf/fonts/type1/public/lm/lmtti10.pfb></usr/share/texli
-ve/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on TECHNICAL_MANUAL.pdf (75 pages, 577988 bytes).
+mtt10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/ms
+bm10.pfb>
+Output written on TECHNICAL_MANUAL.pdf (81 pages, 575340 bytes).
 PDF statistics:
- 1450 PDF objects out of 1728 (max. 8388607)
- 1333 compressed objects within 14 object streams
- 341 named destinations out of 1000 (max. 500000)
- 36053 words of extra memory for PDF output out of 42996 (max. 10000000)
+ 1520 PDF objects out of 1728 (max. 8388607)
+ 1384 compressed objects within 14 object streams
+ 343 named destinations out of 1000 (max. 500000)
+ 36125 words of extra memory for PDF output out of 42996 (max. 10000000)
 

@@ -14,140 +14,149 @@
 \BOOKMARK [1][-]{section.2.3}{2.3 Inner products, norms, and distances}{chapter.2}% 14
 \BOOKMARK [1][-]{section.2.4}{2.4 The dual space and dual pairing}{chapter.2}% 15
 \BOOKMARK [1][-]{section.2.5}{2.5 The Riesz representation theorem}{chapter.2}% 16
-\BOOKMARK [1][-]{section.2.6}{2.6 Bases and representations}{chapter.2}% 17
-\BOOKMARK [2][-]{subsection.2.6.1}{2.6.1 Riesz bases and biorthogonal duals}{section.2.6}% 18
-\BOOKMARK [2][-]{subsection.2.6.2}{2.6.2 The analysis operator}{section.2.6}% 19
-\BOOKMARK [2][-]{subsection.2.6.3}{2.6.3 The synthesis operator}{section.2.6}% 20
-\BOOKMARK [2][-]{subsection.2.6.4}{2.6.4 The dual basis}{section.2.6}% 21
-\BOOKMARK [1][-]{section.2.7}{2.7 The Gram matrix}{chapter.2}% 22
-\BOOKMARK [1][-]{section.2.8}{2.8 Finite-dimensional approximation}{chapter.2}% 23
-\BOOKMARK [1][-]{section.2.9}{2.9 Concrete spaces in pygeoinf}{chapter.2}% 24
-\BOOKMARK [2][-]{subsection.2.9.1}{2.9.1 EuclideanSpace}{section.2.9}% 25
-\BOOKMARK [2][-]{subsection.2.9.2}{2.9.2 MassWeightedHilbertSpace}{section.2.9}% 26
-\BOOKMARK [2][-]{subsection.2.9.3}{2.9.3 HilbertSpaceDirectSum}{section.2.9}% 27
-\BOOKMARK [2][-]{subsection.2.9.4}{2.9.4 Implementing your own HilbertSpace}{section.2.9}% 28
-\BOOKMARK [1][-]{section.2.10}{2.10 Summary and commutative diagram}{chapter.2}% 29
-\BOOKMARK [0][-]{chapter.3}{3 Linear Forms}{part.1}% 30
-\BOOKMARK [1][-]{section.3.1}{3.1 Motivation: measurements as linear functionals}{chapter.3}% 31
-\BOOKMARK [1][-]{section.3.2}{3.2 Definition}{chapter.3}% 32
-\BOOKMARK [1][-]{section.3.3}{3.3 Representation in coordinates}{chapter.3}% 33
-\BOOKMARK [1][-]{section.3.4}{3.4 The Riesz representative \(gradient\)}{chapter.3}% 34
-\BOOKMARK [1][-]{section.3.5}{3.5 Linear forms as rank-1 operators}{chapter.3}% 35
-\BOOKMARK [0][-]{chapter.4}{4 Linear Operators}{part.1}% 36
-\BOOKMARK [1][-]{section.4.1}{4.1 Motivation: the forward operator}{chapter.4}% 37
-\BOOKMARK [1][-]{section.4.2}{4.2 Definition and properties}{chapter.4}% 38
-\BOOKMARK [1][-]{section.4.3}{4.3 The Banach dual \(transpose\) G'}{chapter.4}% 39
-\BOOKMARK [1][-]{section.4.4}{4.4 The Hilbert adjoint G*}{chapter.4}% 40
-\BOOKMARK [1][-]{section.4.5}{4.5 Matrix representations}{chapter.4}% 41
-\BOOKMARK [2][-]{subsection.4.5.1}{4.5.1 The standard \(component\) matrix}{section.4.5}% 42
-\BOOKMARK [2][-]{subsection.4.5.2}{4.5.2 The Galerkin matrix}{section.4.5}% 43
-\BOOKMARK [2][-]{subsection.4.5.3}{4.5.3 The discrete adjoint formula}{section.4.5}% 44
-\BOOKMARK [1][-]{section.4.6}{4.6 Operators as stacks of linear forms}{chapter.4}% 45
-\BOOKMARK [1][-]{section.4.7}{4.7 Kernel and range}{chapter.4}% 46
-\BOOKMARK [1][-]{section.4.8}{4.8 Constructing operators in pygeoinf}{chapter.4}% 47
-\BOOKMARK [1][-]{section.4.9}{4.9 The full commutative diagram}{chapter.4}% 48
-\BOOKMARK [0][-]{chapter.5}{5 Nonlinear Operators and Forms}{part.1}% 49
-\BOOKMARK [1][-]{section.5.1}{5.1 NonLinearOperator}{chapter.5}% 50
-\BOOKMARK [1][-]{section.5.2}{5.2 NonLinearForm}{chapter.5}% 51
-\BOOKMARK [1][-]{section.5.3}{5.3 Gradients and Hessians}{chapter.5}% 52
-\BOOKMARK [-1][-]{part.2}{II Geometry and Structure}{}% 53
-\BOOKMARK [0][-]{chapter.6}{6 Subsets and Convex Sets}{part.2}% 54
-\BOOKMARK [1][-]{section.6.1}{6.1 Why convex sets?}{chapter.6}% 55
-\BOOKMARK [1][-]{section.6.2}{6.2 The Subset interface}{chapter.6}% 56
-\BOOKMARK [1][-]{section.6.3}{6.3 Balls and ellipsoids}{chapter.6}% 57
-\BOOKMARK [1][-]{section.6.4}{6.4 Half-spaces and polyhedral sets}{chapter.6}% 58
-\BOOKMARK [1][-]{section.6.5}{6.5 Degenerate sets: EmptySet and FullSpace}{chapter.6}% 59
-\BOOKMARK [1][-]{section.6.6}{6.6 Set operations}{chapter.6}% 60
-\BOOKMARK [0][-]{chapter.7}{7 Subspaces}{part.2}% 61
-\BOOKMARK [1][-]{section.7.1}{7.1 Motivation: equality constraints}{chapter.7}% 62
-\BOOKMARK [1][-]{section.7.2}{7.2 Orthogonal projectors}{chapter.7}% 63
-\BOOKMARK [1][-]{section.7.3}{7.3 Linear subspaces}{chapter.7}% 64
-\BOOKMARK [1][-]{section.7.4}{7.4 Affine subspaces}{chapter.7}% 65
-\BOOKMARK [2][-]{subsection.7.4.1}{7.4.1 Construction from tangent bases}{section.7.4}% 66
-\BOOKMARK [2][-]{subsection.7.4.2}{7.4.2 Construction from linear equations}{section.7.4}% 67
-\BOOKMARK [1][-]{section.7.5}{7.5 Tangent spaces and dimension}{chapter.7}% 68
-\BOOKMARK [0][-]{chapter.8}{8 Convex Analysis and Support Functions}{part.2}% 69
-\BOOKMARK [1][-]{section.8.1}{8.1 Why convex analysis?}{chapter.8}% 70
-\BOOKMARK [1][-]{section.8.2}{8.2 Support functions: intuition}{chapter.8}% 71
-\BOOKMARK [1][-]{section.8.3}{8.3 Formal definition and properties}{chapter.8}% 72
-\BOOKMARK [1][-]{section.8.4}{8.4 Subgradients and support points}{chapter.8}% 73
-\BOOKMARK [1][-]{section.8.5}{8.5 Concrete support functions}{chapter.8}% 74
-\BOOKMARK [2][-]{subsection.8.5.1}{8.5.1 BallSupportFunction}{section.8.5}% 75
-\BOOKMARK [2][-]{subsection.8.5.2}{8.5.2 EllipsoidSupportFunction}{section.8.5}% 76
-\BOOKMARK [2][-]{subsection.8.5.3}{8.5.3 PolyhedralSupportFunction}{section.8.5}% 77
-\BOOKMARK [2][-]{subsection.8.5.4}{8.5.4 SobolevBallSupportFunction}{section.8.5}% 78
-\BOOKMARK [1][-]{section.8.6}{8.6 Combinators: building complex sets from simple ones}{chapter.8}% 79
-\BOOKMARK [2][-]{subsection.8.6.1}{8.6.1 Infimal convolution \(Minkowski sum\)}{section.8.6}% 80
-\BOOKMARK [2][-]{subsection.8.6.2}{8.6.2 Support function sum \(intersection\)}{section.8.6}% 81
-\BOOKMARK [2][-]{subsection.8.6.3}{8.6.3 Scaled sums}{section.8.6}% 82
-\BOOKMARK [1][-]{section.8.7}{8.7 The dual master equation}{chapter.8}% 83
-\BOOKMARK [0][-]{chapter.9}{9 Gaussian Measures}{part.2}% 84
-\BOOKMARK [1][-]{section.9.1}{9.1 Why Gaussian measures?}{chapter.9}% 85
-\BOOKMARK [1][-]{section.9.2}{9.2 Gaussian measures on Hilbert spaces}{chapter.9}% 86
-\BOOKMARK [1][-]{section.9.3}{9.3 Sampling}{chapter.9}% 87
-\BOOKMARK [1][-]{section.9.4}{9.4 Push-forward and marginals}{chapter.9}% 88
-\BOOKMARK [1][-]{section.9.5}{9.5 Conditioning \(Bayesian update\)}{chapter.9}% 89
-\BOOKMARK [-1][-]{part.3}{III Problems and Algorithms}{}% 90
-\BOOKMARK [0][-]{chapter.10}{10 Forward Problems}{part.3}% 91
-\BOOKMARK [1][-]{section.10.1}{10.1 The forward modelling framework}{chapter.10}% 92
-\BOOKMARK [1][-]{section.10.2}{10.2 ForwardProblem and LinearForwardProblem}{chapter.10}% 93
-\BOOKMARK [0][-]{chapter.11}{11 Deterministic Inversion}{part.3}% 94
-\BOOKMARK [1][-]{section.11.1}{11.1 Least-squares inversion}{chapter.11}% 95
-\BOOKMARK [1][-]{section.11.2}{11.2 Minimum-norm inversion}{chapter.11}% 96
-\BOOKMARK [1][-]{section.11.3}{11.3 Constrained inversions}{chapter.11}% 97
-\BOOKMARK [1][-]{section.11.4}{11.4 Connection to the dual master equation}{chapter.11}% 98
-\BOOKMARK [0][-]{chapter.12}{12 Bayesian Inversion}{part.3}% 99
-\BOOKMARK [1][-]{section.12.1}{12.1 The Bayesian framework for inverse problems}{chapter.12}% 100
-\BOOKMARK [1][-]{section.12.2}{12.2 Linear Bayesian inversion}{chapter.12}% 101
-\BOOKMARK [1][-]{section.12.3}{12.3 Constrained Bayesian inversion}{chapter.12}% 102
-\BOOKMARK [1][-]{section.12.4}{12.4 Posterior uncertainty}{chapter.12}% 103
-\BOOKMARK [0][-]{chapter.13}{13 Backus\205Gilbert and DLI Inference}{part.3}% 104
-\BOOKMARK [1][-]{section.13.1}{13.1 The inference problem}{chapter.13}% 105
-\BOOKMARK [1][-]{section.13.2}{13.2 Backus\205Gilbert estimators}{chapter.13}% 106
-\BOOKMARK [1][-]{section.13.3}{13.3 The admissible property set U}{chapter.13}% 107
-\BOOKMARK [1][-]{section.13.4}{13.4 Computing U via the dual master equation}{chapter.13}% 108
-\BOOKMARK [1][-]{section.13.5}{13.5 Polytope outer approximation}{chapter.13}% 109
-\BOOKMARK [0][-]{chapter.14}{14 Convex Optimisation}{part.3}% 110
-\BOOKMARK [1][-]{section.14.1}{14.1 Overview of optimisation in pygeoinf}{chapter.14}% 111
-\BOOKMARK [1][-]{section.14.2}{14.2 Linear solvers}{chapter.14}% 112
-\BOOKMARK [1][-]{section.14.3}{14.3 Convex optimisation algorithms}{chapter.14}% 113
-\BOOKMARK [1][-]{section.14.4}{14.4 Preconditioners}{chapter.14}% 114
-\BOOKMARK [-1][-]{part.4}{IV Computational Methods and Visualisation}{}% 115
-\BOOKMARK [0][-]{chapter.15}{15 Computational Utilities}{part.4}% 116
-\BOOKMARK [1][-]{section.15.1}{15.1 Randomised matrix decompositions}{chapter.15}% 117
-\BOOKMARK [1][-]{section.15.2}{15.2 Direct sum operators}{chapter.15}% 118
-\BOOKMARK [1][-]{section.15.3}{15.3 Parallel computation}{chapter.15}% 119
-\BOOKMARK [1][-]{section.15.4}{15.4 Auxiliary functions}{chapter.15}% 120
-\BOOKMARK [0][-]{chapter.16}{16 Visualisation}{part.4}% 121
-\BOOKMARK [1][-]{section.16.1}{16.1 The SubspaceSlicePlotter}{chapter.16}% 122
-\BOOKMARK [1][-]{section.16.2}{16.2 1D slices}{chapter.16}% 123
-\BOOKMARK [1][-]{section.16.3}{16.3 2D slices}{chapter.16}% 124
-\BOOKMARK [1][-]{section.16.4}{16.4 3D slices}{chapter.16}% 125
-\BOOKMARK [1][-]{section.16.5}{16.5 Worked example: visualising the admissible property set}{chapter.16}% 126
-\BOOKMARK [-1][-]{part*.26}{Appendices}{}% 127
-\BOOKMARK [0][-]{appendix.A}{A Convex Analysis Primer}{part*.26}% 128
-\BOOKMARK [1][-]{section.A.1}{A.1 Convex sets and functions}{appendix.A}% 129
-\BOOKMARK [1][-]{section.A.2}{A.2 Separation theorems}{appendix.A}% 130
-\BOOKMARK [1][-]{section.A.3}{A.3 Conjugate \(Fenchel\205Legendre\) duality}{appendix.A}% 131
-\BOOKMARK [1][-]{section.A.4}{A.4 Subdifferentials}{appendix.A}% 132
-\BOOKMARK [1][-]{section.A.5}{A.5 Infimal convolution}{appendix.A}% 133
-\BOOKMARK [0][-]{appendix.B}{B Functional Analysis Prerequisites}{part*.26}% 134
-\BOOKMARK [1][-]{section.B.1}{B.1 Banach spaces}{appendix.B}% 135
-\BOOKMARK [1][-]{section.B.2}{B.2 Weak and weak-* topologies}{appendix.B}% 136
-\BOOKMARK [1][-]{section.B.3}{B.3 Compact operators}{appendix.B}% 137
-\BOOKMARK [1][-]{section.B.4}{B.4 Spectral theory for self-adjoint operators}{appendix.B}% 138
-\BOOKMARK [0][-]{appendix.C}{C Deferred Proofs}{part*.26}% 139
-\BOOKMARK [0][-]{appendix.D}{D Complete API Quick Reference}{part*.26}% 140
-\BOOKMARK [1][-]{section.D.1}{D.1 hilbert\137space module}{appendix.D}% 141
-\BOOKMARK [1][-]{section.D.2}{D.2 linear\137forms module}{appendix.D}% 142
-\BOOKMARK [1][-]{section.D.3}{D.3 linear\137operators module}{appendix.D}% 143
-\BOOKMARK [1][-]{section.D.4}{D.4 subsets module}{appendix.D}% 144
-\BOOKMARK [1][-]{section.D.5}{D.5 subspaces module}{appendix.D}% 145
-\BOOKMARK [1][-]{section.D.6}{D.6 convex\137analysis module}{appendix.D}% 146
-\BOOKMARK [1][-]{section.D.7}{D.7 gaussian\137measure module}{appendix.D}% 147
-\BOOKMARK [1][-]{section.D.8}{D.8 forward\137problem module}{appendix.D}% 148
-\BOOKMARK [1][-]{section.D.9}{D.9 inversion module}{appendix.D}% 149
-\BOOKMARK [1][-]{section.D.10}{D.10 linear\137bayesian module}{appendix.D}% 150
-\BOOKMARK [1][-]{section.D.11}{D.11 linear\137optimisation module}{appendix.D}% 151
-\BOOKMARK [1][-]{section.D.12}{D.12 backus\137gilbert module}{appendix.D}% 152
-\BOOKMARK [1][-]{section.D.13}{D.13 visualisation module}{appendix.D}% 153
+\BOOKMARK [1][-]{section.2.6}{2.6 Riesz-first design in pygeoinf}{chapter.2}% 17
+\BOOKMARK [1][-]{section.2.7}{2.7 Bases and Representations: The Primal Side}{chapter.2}% 18
+\BOOKMARK [2][-]{subsection.2.7.1}{2.7.1 Synthesis: From Coefficients to Vectors}{section.2.7}% 19
+\BOOKMARK [2][-]{subsection.2.7.2}{2.7.2 Analysis: From Vectors to Coefficients}{section.2.7}% 20
+\BOOKMARK [1][-]{section.2.8}{2.8 The Gram Matrix: The Metric Hidden in the Basis}{chapter.2}% 21
+\BOOKMARK [2][-]{subsection.2.8.1}{2.8.1 The Induced Coefficient Inner Product}{section.2.8}% 22
+\BOOKMARK [2][-]{subsection.2.8.2}{2.8.2 The Gram Operator}{section.2.8}% 23
+\BOOKMARK [2][-]{subsection.2.8.3}{2.8.3 Why the Gram Matrix Matters}{section.2.8}% 24
+\BOOKMARK [1][-]{section.2.9}{2.9 Duality and the Riesz Map in Coordinates}{chapter.2}% 25
+\BOOKMARK [2][-]{subsection.2.9.1}{2.9.1 What Happens in Coordinates}{section.2.9}% 26
+\BOOKMARK [1][-]{section.2.10}{2.10 Finite-Dimensional Approximation}{chapter.2}% 27
+\BOOKMARK [2][-]{subsection.2.10.1}{2.10.1 Finite Synthesis and Analysis}{section.2.10}% 28
+\BOOKMARK [2][-]{subsection.2.10.2}{2.10.2 The Finite Gram Matrix}{section.2.10}% 29
+\BOOKMARK [2][-]{subsection.2.10.3}{2.10.3 Properties of the Finite Gram Matrix}{section.2.10}% 30
+\BOOKMARK [2][-]{subsection.2.10.4}{2.10.4 Finite Analysis via the Gram Matrix}{section.2.10}% 31
+\BOOKMARK [2][-]{subsection.2.10.5}{2.10.5 Finite Riesz Map in Coordinates}{section.2.10}% 32
+\BOOKMARK [2][-]{subsection.2.10.6}{2.10.6 Summary: What Changes in Finite Dimensions}{section.2.10}% 33
+\BOOKMARK [1][-]{section.2.11}{2.11 Concrete spaces in pygeoinf}{chapter.2}% 34
+\BOOKMARK [2][-]{subsection.2.11.1}{2.11.1 EuclideanSpace}{section.2.11}% 35
+\BOOKMARK [2][-]{subsection.2.11.2}{2.11.2 MassWeightedHilbertSpace}{section.2.11}% 36
+\BOOKMARK [2][-]{subsection.2.11.3}{2.11.3 HilbertSpaceDirectSum}{section.2.11}% 37
+\BOOKMARK [2][-]{subsection.2.11.4}{2.11.4 Implementing your own HilbertSpace}{section.2.11}% 38
+\BOOKMARK [0][-]{chapter.3}{3 Linear Forms}{part.1}% 39
+\BOOKMARK [1][-]{section.3.1}{3.1 Motivation: measurements as linear functionals}{chapter.3}% 40
+\BOOKMARK [1][-]{section.3.2}{3.2 Definition}{chapter.3}% 41
+\BOOKMARK [1][-]{section.3.3}{3.3 Representation in coordinates}{chapter.3}% 42
+\BOOKMARK [1][-]{section.3.4}{3.4 The Riesz representative \(gradient\)}{chapter.3}% 43
+\BOOKMARK [1][-]{section.3.5}{3.5 Linear forms as rank-1 operators}{chapter.3}% 44
+\BOOKMARK [0][-]{chapter.4}{4 Linear Operators}{part.1}% 45
+\BOOKMARK [1][-]{section.4.1}{4.1 Motivation: the forward operator}{chapter.4}% 46
+\BOOKMARK [1][-]{section.4.2}{4.2 Definition and properties}{chapter.4}% 47
+\BOOKMARK [1][-]{section.4.3}{4.3 The Banach dual \(transpose\) G'}{chapter.4}% 48
+\BOOKMARK [1][-]{section.4.4}{4.4 The Hilbert adjoint G*}{chapter.4}% 49
+\BOOKMARK [1][-]{section.4.5}{4.5 Matrix representations}{chapter.4}% 50
+\BOOKMARK [2][-]{subsection.4.5.1}{4.5.1 The standard \(component\) matrix}{section.4.5}% 51
+\BOOKMARK [2][-]{subsection.4.5.2}{4.5.2 The Galerkin matrix}{section.4.5}% 52
+\BOOKMARK [2][-]{subsection.4.5.3}{4.5.3 The discrete adjoint formula}{section.4.5}% 53
+\BOOKMARK [1][-]{section.4.6}{4.6 Operators as stacks of linear forms}{chapter.4}% 54
+\BOOKMARK [1][-]{section.4.7}{4.7 Kernel and range}{chapter.4}% 55
+\BOOKMARK [1][-]{section.4.8}{4.8 Constructing operators in pygeoinf}{chapter.4}% 56
+\BOOKMARK [1][-]{section.4.9}{4.9 The full commutative diagram}{chapter.4}% 57
+\BOOKMARK [0][-]{chapter.5}{5 Nonlinear Operators and Forms}{part.1}% 58
+\BOOKMARK [1][-]{section.5.1}{5.1 NonLinearOperator}{chapter.5}% 59
+\BOOKMARK [1][-]{section.5.2}{5.2 NonLinearForm}{chapter.5}% 60
+\BOOKMARK [1][-]{section.5.3}{5.3 Gradients and Hessians}{chapter.5}% 61
+\BOOKMARK [-1][-]{part.2}{II Geometry and Structure}{}% 62
+\BOOKMARK [0][-]{chapter.6}{6 Subsets and Convex Sets}{part.2}% 63
+\BOOKMARK [1][-]{section.6.1}{6.1 Why convex sets?}{chapter.6}% 64
+\BOOKMARK [1][-]{section.6.2}{6.2 The Subset interface}{chapter.6}% 65
+\BOOKMARK [1][-]{section.6.3}{6.3 Balls and ellipsoids}{chapter.6}% 66
+\BOOKMARK [1][-]{section.6.4}{6.4 Half-spaces and polyhedral sets}{chapter.6}% 67
+\BOOKMARK [1][-]{section.6.5}{6.5 Degenerate sets: EmptySet and FullSpace}{chapter.6}% 68
+\BOOKMARK [1][-]{section.6.6}{6.6 Set operations}{chapter.6}% 69
+\BOOKMARK [0][-]{chapter.7}{7 Subspaces}{part.2}% 70
+\BOOKMARK [1][-]{section.7.1}{7.1 Motivation: equality constraints}{chapter.7}% 71
+\BOOKMARK [1][-]{section.7.2}{7.2 Orthogonal projectors}{chapter.7}% 72
+\BOOKMARK [1][-]{section.7.3}{7.3 Linear subspaces}{chapter.7}% 73
+\BOOKMARK [1][-]{section.7.4}{7.4 Affine subspaces}{chapter.7}% 74
+\BOOKMARK [2][-]{subsection.7.4.1}{7.4.1 Construction from tangent bases}{section.7.4}% 75
+\BOOKMARK [2][-]{subsection.7.4.2}{7.4.2 Construction from linear equations}{section.7.4}% 76
+\BOOKMARK [1][-]{section.7.5}{7.5 Tangent spaces and dimension}{chapter.7}% 77
+\BOOKMARK [0][-]{chapter.8}{8 Convex Analysis and Support Functions}{part.2}% 78
+\BOOKMARK [1][-]{section.8.1}{8.1 Why convex analysis?}{chapter.8}% 79
+\BOOKMARK [1][-]{section.8.2}{8.2 Support functions: intuition}{chapter.8}% 80
+\BOOKMARK [1][-]{section.8.3}{8.3 Formal definition and properties}{chapter.8}% 81
+\BOOKMARK [1][-]{section.8.4}{8.4 Subgradients and support points}{chapter.8}% 82
+\BOOKMARK [1][-]{section.8.5}{8.5 Concrete support functions}{chapter.8}% 83
+\BOOKMARK [2][-]{subsection.8.5.1}{8.5.1 BallSupportFunction}{section.8.5}% 84
+\BOOKMARK [2][-]{subsection.8.5.2}{8.5.2 EllipsoidSupportFunction}{section.8.5}% 85
+\BOOKMARK [2][-]{subsection.8.5.3}{8.5.3 PolyhedralSupportFunction}{section.8.5}% 86
+\BOOKMARK [2][-]{subsection.8.5.4}{8.5.4 SobolevBallSupportFunction}{section.8.5}% 87
+\BOOKMARK [1][-]{section.8.6}{8.6 Combinators: building complex sets from simple ones}{chapter.8}% 88
+\BOOKMARK [2][-]{subsection.8.6.1}{8.6.1 Infimal convolution \(Minkowski sum\)}{section.8.6}% 89
+\BOOKMARK [2][-]{subsection.8.6.2}{8.6.2 Support function sum \(intersection\)}{section.8.6}% 90
+\BOOKMARK [2][-]{subsection.8.6.3}{8.6.3 Scaled sums}{section.8.6}% 91
+\BOOKMARK [1][-]{section.8.7}{8.7 The dual master equation}{chapter.8}% 92
+\BOOKMARK [0][-]{chapter.9}{9 Gaussian Measures}{part.2}% 93
+\BOOKMARK [1][-]{section.9.1}{9.1 Why Gaussian measures?}{chapter.9}% 94
+\BOOKMARK [1][-]{section.9.2}{9.2 Gaussian measures on Hilbert spaces}{chapter.9}% 95
+\BOOKMARK [1][-]{section.9.3}{9.3 Sampling}{chapter.9}% 96
+\BOOKMARK [1][-]{section.9.4}{9.4 Push-forward and marginals}{chapter.9}% 97
+\BOOKMARK [1][-]{section.9.5}{9.5 Conditioning \(Bayesian update\)}{chapter.9}% 98
+\BOOKMARK [-1][-]{part.3}{III Problems and Algorithms}{}% 99
+\BOOKMARK [0][-]{chapter.10}{10 Forward Problems}{part.3}% 100
+\BOOKMARK [1][-]{section.10.1}{10.1 The forward modelling framework}{chapter.10}% 101
+\BOOKMARK [1][-]{section.10.2}{10.2 ForwardProblem and LinearForwardProblem}{chapter.10}% 102
+\BOOKMARK [0][-]{chapter.11}{11 Deterministic Inversion}{part.3}% 103
+\BOOKMARK [1][-]{section.11.1}{11.1 Least-squares inversion}{chapter.11}% 104
+\BOOKMARK [1][-]{section.11.2}{11.2 Minimum-norm inversion}{chapter.11}% 105
+\BOOKMARK [1][-]{section.11.3}{11.3 Constrained inversions}{chapter.11}% 106
+\BOOKMARK [1][-]{section.11.4}{11.4 Connection to the dual master equation}{chapter.11}% 107
+\BOOKMARK [0][-]{chapter.12}{12 Bayesian Inversion}{part.3}% 108
+\BOOKMARK [1][-]{section.12.1}{12.1 The Bayesian framework for inverse problems}{chapter.12}% 109
+\BOOKMARK [1][-]{section.12.2}{12.2 Linear Bayesian inversion}{chapter.12}% 110
+\BOOKMARK [1][-]{section.12.3}{12.3 Constrained Bayesian inversion}{chapter.12}% 111
+\BOOKMARK [1][-]{section.12.4}{12.4 Posterior uncertainty}{chapter.12}% 112
+\BOOKMARK [0][-]{chapter.13}{13 Backus\205Gilbert and DLI Inference}{part.3}% 113
+\BOOKMARK [1][-]{section.13.1}{13.1 The inference problem}{chapter.13}% 114
+\BOOKMARK [1][-]{section.13.2}{13.2 Backus\205Gilbert estimators}{chapter.13}% 115
+\BOOKMARK [1][-]{section.13.3}{13.3 The admissible property set U}{chapter.13}% 116
+\BOOKMARK [1][-]{section.13.4}{13.4 Computing U via the dual master equation}{chapter.13}% 117
+\BOOKMARK [1][-]{section.13.5}{13.5 Polytope outer approximation}{chapter.13}% 118
+\BOOKMARK [0][-]{chapter.14}{14 Convex Optimisation}{part.3}% 119
+\BOOKMARK [1][-]{section.14.1}{14.1 Overview of optimisation in pygeoinf}{chapter.14}% 120
+\BOOKMARK [1][-]{section.14.2}{14.2 Linear solvers}{chapter.14}% 121
+\BOOKMARK [1][-]{section.14.3}{14.3 Convex optimisation algorithms}{chapter.14}% 122
+\BOOKMARK [1][-]{section.14.4}{14.4 Preconditioners}{chapter.14}% 123
+\BOOKMARK [-1][-]{part.4}{IV Computational Methods and Visualisation}{}% 124
+\BOOKMARK [0][-]{chapter.15}{15 Computational Utilities}{part.4}% 125
+\BOOKMARK [1][-]{section.15.1}{15.1 Randomised matrix decompositions}{chapter.15}% 126
+\BOOKMARK [1][-]{section.15.2}{15.2 Direct sum operators}{chapter.15}% 127
+\BOOKMARK [1][-]{section.15.3}{15.3 Parallel computation}{chapter.15}% 128
+\BOOKMARK [1][-]{section.15.4}{15.4 Auxiliary functions}{chapter.15}% 129
+\BOOKMARK [0][-]{chapter.16}{16 Visualisation}{part.4}% 130
+\BOOKMARK [1][-]{section.16.1}{16.1 The SubspaceSlicePlotter}{chapter.16}% 131
+\BOOKMARK [1][-]{section.16.2}{16.2 1D slices}{chapter.16}% 132
+\BOOKMARK [1][-]{section.16.3}{16.3 2D slices}{chapter.16}% 133
+\BOOKMARK [1][-]{section.16.4}{16.4 3D slices}{chapter.16}% 134
+\BOOKMARK [1][-]{section.16.5}{16.5 Worked example: visualising the admissible property set}{chapter.16}% 135
+\BOOKMARK [-1][-]{part*.27}{Appendices}{}% 136
+\BOOKMARK [0][-]{appendix.A}{A Convex Analysis Primer}{part*.27}% 137
+\BOOKMARK [1][-]{section.A.1}{A.1 Convex sets and functions}{appendix.A}% 138
+\BOOKMARK [1][-]{section.A.2}{A.2 Separation theorems}{appendix.A}% 139
+\BOOKMARK [1][-]{section.A.3}{A.3 Conjugate \(Fenchel\205Legendre\) duality}{appendix.A}% 140
+\BOOKMARK [1][-]{section.A.4}{A.4 Subdifferentials}{appendix.A}% 141
+\BOOKMARK [1][-]{section.A.5}{A.5 Infimal convolution}{appendix.A}% 142
+\BOOKMARK [0][-]{appendix.B}{B Functional Analysis Prerequisites}{part*.27}% 143
+\BOOKMARK [1][-]{section.B.1}{B.1 Banach spaces}{appendix.B}% 144
+\BOOKMARK [1][-]{section.B.2}{B.2 Weak and weak-* topologies}{appendix.B}% 145
+\BOOKMARK [1][-]{section.B.3}{B.3 Compact operators}{appendix.B}% 146
+\BOOKMARK [1][-]{section.B.4}{B.4 Spectral theory for self-adjoint operators}{appendix.B}% 147
+\BOOKMARK [0][-]{appendix.C}{C Deferred Proofs}{part*.27}% 148
+\BOOKMARK [0][-]{appendix.D}{D Complete API Quick Reference}{part*.27}% 149
+\BOOKMARK [1][-]{section.D.1}{D.1 hilbert\137space module}{appendix.D}% 150
+\BOOKMARK [1][-]{section.D.2}{D.2 linear\137forms module}{appendix.D}% 151
+\BOOKMARK [1][-]{section.D.3}{D.3 linear\137operators module}{appendix.D}% 152
+\BOOKMARK [1][-]{section.D.4}{D.4 subsets module}{appendix.D}% 153
+\BOOKMARK [1][-]{section.D.5}{D.5 subspaces module}{appendix.D}% 154
+\BOOKMARK [1][-]{section.D.6}{D.6 convex\137analysis module}{appendix.D}% 155
+\BOOKMARK [1][-]{section.D.7}{D.7 gaussian\137measure module}{appendix.D}% 156
+\BOOKMARK [1][-]{section.D.8}{D.8 forward\137problem module}{appendix.D}% 157
+\BOOKMARK [1][-]{section.D.9}{D.9 inversion module}{appendix.D}% 158
+\BOOKMARK [1][-]{section.D.10}{D.10 linear\137bayesian module}{appendix.D}% 159
+\BOOKMARK [1][-]{section.D.11}{D.11 linear\137optimisation module}{appendix.D}% 160
+\BOOKMARK [1][-]{section.D.12}{D.12 backus\137gilbert module}{appendix.D}% 161
+\BOOKMARK [1][-]{section.D.13}{D.13 visualisation module}{appendix.D}% 162

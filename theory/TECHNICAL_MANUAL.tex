@@ -962,273 +962,614 @@ evaluates as $\langle \ell, v\rangle = \ell(v)$, implemented by calling
 the \texttt{LinearForm} object directly: \texttt{l(v)}.
 \end{codebox}
 
-\section{Bases and representations}
-\label{sec:bases-representations}
+\section{Riesz-first design in pygeoinf}
+\label{sec:riesz-first-design}
 
-\subsection{Riesz bases and biorthogonal duals}
-\label{ssec:riesz-bases}
+The key design choice in \texttt{pygeoinf} is that the \emph{primitive} piece of
+Hilbert-space structure is not an inner-product formula, but the pair of maps
+implementing the Riesz identification:
+\(\Riesz : H' \to H\) and \(\Riesz^{-1} : H \to H'\), exposed in the API as
+\texttt{from\_dual} and \texttt{to\_dual}.
+Once these are defined, the inner product is \emph{derived} via the duality
+pairing.
 
-An \emph{orthonormal basis} (ONB) $\{u_j\}_{j=1}^{\infty}$ is a maximal
-orthonormal set; every $m \in H$ expands as $m = \sum_j (m, u_j)_H u_j$.
-But ONBs are rarely computable. A physical or numerical basis
-$\{\phi_j\}$ is typically not orthonormal, and we must work with
-general Riesz bases.
-
-\begin{definition}[Riesz basis]
-\label{def:riesz-basis}
-A sequence $\{\phi_j\}_{j=1}^{\infty} \subset H$ is a \emph{Riesz basis}
-if it is the image of an ONB under a bounded invertible operator. Equivalently,
-there exist constants $0 < A \leq B < \infty$ such that for every finite
-coefficient sequence $\mathbf{c} \in \mathbb{R}^N$,
+\paragraph{Inner products from duality.}
+Given $u,v \in H$, we define
 \begin{equation}
-  \label{eq:riesz-bounds}
-  A\, \|\mathbf{c}\|_{\ell^2}^2
-  \;\leq\; \Bigl\|\sum_j c_j \phi_j\Bigr\|_H^2
-  \;\leq\; B\, \|\mathbf{c}\|_{\ell^2}^2.
+  \label{eq:ip-from-to-dual}
+  (u,v)_H \,=\, \pair{\Riesz^{-1}u}{v}
+  \,=\, \pair{\texttt{to\_dual}(u)}{v}.
 \end{equation}
-\end{definition}
+In code this is the default implementation
+\begin{equation*}
+  \texttt{inner\_product(u,v)} \,=\, \texttt{duality\_product(to\_dual(u), v)}.
+\end{equation*}
+Consequently, norms and distances are also derived:
+\(\|u\|_H = \sqrt{(u,u)_H}\) and \(\|u-v\|_H\) uses the same geometry.
 
-\begin{remark}
-The quantity $\|\mathbf{c}\|_{\ell^2}$ in \eqref{eq:riesz-bounds} is the standard Euclidean/$\ell^2$ norm on the \emph{coefficient space}. For a general (non-orthonormal) basis, this is \emph{not} the same as the norm of the reconstructed element:
-\[
-  \|\mathbf{c}\|_{\ell^2} \not= \|\pi(\mathbf{c})\|_H \quad\text{in general.}
-\]
-If we want coefficient space to carry the \emph{metric induced from $H$ by the synthesis map}, we equip it with the inner product
-\[
-  (\mathbf{c},\mathbf{d})_\pi := (\pi\,\mathbf{c},\, \pi\,\mathbf{d})_H,
-  \qquad \|\mathbf{c}\|_\pi := \sqrt{(\mathbf{c},\mathbf{c})_\pi} = \|\pi\,\mathbf{c}\|_H.
-\]
-Then \eqref{eq:riesz-bounds} says precisely that $\|\cdot\|_{\ell^2}$ and $\|\cdot\|_\pi$ are equivalent norms. In finite dimensions, the induced inner product becomes
-\[
-  (\mathbf{a},\mathbf{b})_{\pi_N} := (\pi_N\,\mathbf{a},\,\pi_N\,\mathbf{b})_H = \mathbf{a}^\top\, \mathbf{M}_{\phi,N}\, \mathbf{b},
-\]
-where $\mathbf{M}_{\phi,N}$ is the Gram matrix from \cref{sec:gram-matrix}.
-\end{remark}
-
-Every Riesz basis $\{\phi_j\}$ has a unique \emph{biorthogonal dual}
-$\{\psi_j\} \subset H$ satisfying
+\paragraph{Adjoints depend on the geometry.}
+For a bounded linear operator $A : H_1 \to H_2$, the Hilbert adjoint
+$A^* : H_2 \to H_1$ is characterised by
 \begin{equation}
-  \label{eq:biorthogonality}
-  (\phi_j, \psi_k)_H = \delta_{jk}.
+  \label{eq:adjoint-characterisation}
+  (A u,\, v)_{H_2} = (u,\, A^* v)_{H_1}
+  \qquad \forall\; u \in H_1,\; v \in H_2.
 \end{equation}
-Any element $m \in H$ then has the unique expansion
-\begin{equation}
-  \label{eq:riesz-expansion}
-  m = \sum_{j=1}^{\infty} [\mathbf{m}]_j\, \phi_j,
-  \qquad [\mathbf{m}]_j = (m, \psi_j)_H.
-\end{equation}
-The coefficient sequence $\mathbf{m} = ([\mathbf{m}]_j)_{j=1}^\infty$
-lies in $\ell^2$, and the norms are equivalent (eq.~\eqref{eq:riesz-bounds}).
-When $\{\phi_j\}$ is an ONB, $\psi_j = \phi_j$ and $A = B = 1$.
-
-\paragraph{Connection to the dual basis.}
-The dual basis $\{\phi^i\} \subset H'$ is defined by $\langle \phi^i, \phi_j\rangle
-= \delta^i_j$. The biorthogonal dual vectors are the Riesz representatives
-of the dual basis:
-\begin{equation}
-  \label{eq:dual-basis-riesz}
-  \psi_i = \Riesz(\phi^i).
-\end{equation}
-
-\subsection{The analysis operator}
-\label{ssec:analysis-operator}
-
-\begin{definition}[Analysis operator]
-\label{def:analysis-operator}
-The \emph{analysis operator} associated with Riesz basis $\{\phi_j\}$ is
-\begin{equation}
-  \label{eq:analysis-def}
-  \Pi : H \to \ell^2, \qquad
-  \Pi(m) := \bigl[ (m, \psi_j)_H \bigr]_{j=1}^{\infty}.
-\end{equation}
-\end{definition}
-
-The analysis operator extracts the coefficient sequence: $\Pi(m) =
-\mathbf{m}$. For any Riesz basis it is bounded from $H$ to $\ell^2$.
-
-\subsection{The synthesis operator}
-\label{ssec:synthesis-operator}
-
-\begin{definition}[Synthesis operator]
-\label{def:synthesis-operator}
-The \emph{synthesis operator} is
-\begin{equation}
-  \label{eq:synthesis-def}
-  \pi : \ell^2 \to H, \qquad
-  \pi(\mathbf{c}) := \sum_{j=1}^{\infty} c_j\, \phi_j.
-\end{equation}
-\end{definition}
-
-The synthesis operator reconstructs $m$ from its coefficients. For a
-Riesz basis, $\Pi$ and $\pi$ are bounded inverses of each other:
-\begin{align}
-  \label{eq:pi-Pi-inverses}
-  \pi \circ \Pi &= \mathrm{Id}_H, &
-  \Pi \circ \pi &= \mathrm{Id}_{\ell^2}.
-\end{align}
+Because the inner products on $H_1$ and $H_2$ are defined through their Riesz
+maps, the adjoint is inherently geometry-dependent. In \textit{pygeoinf}, when an
+operator's adjoint is \emph{derived by the default machinery} (from the dual map
+and the Riesz identifications), the property \texttt{LinearOperator.adjoint}
+depends on \texttt{to\_dual}/\texttt{from\_dual} of the operator's domain and
+codomain. Changing those maps therefore changes the induced geometry (norms,
+gradients, and these default adjoints) in a consistent way across the API.
+If an operator provides an explicit \texttt{adjoint\_mapping}, that
+implementation takes precedence and can override the Riesz-derived default.
 
 \begin{codebox}
-The coefficient maps correspond to
+Notation \(\leftrightarrow\) \texttt{pygeoinf} API (Riesz-first viewpoint):
 \[
-  \texttt{to\_components}   \equiv \Pi : H \to \ell^2, \qquad
-  \texttt{from\_components} \equiv \pi : \ell^2 \to H.
+  \Riesz \equiv \texttt{HilbertSpace.from\_dual}, \qquad
+  \Riesz^{-1} \equiv \texttt{HilbertSpace.to\_dual}.
 \]
-In practice a concrete space has finite \texttt{dim}~$= N$, giving
-truncated maps $\Pi_N : H \to \mathbb{R}^N$ and $\pi_N : \mathbb{R}^N \to
-H_N$. The operators \texttt{coordinate\_projection} and
-\texttt{coordinate\_inclusion} expose $\Pi_N$ and $\pi_N$ as
-\texttt{LinearOperator} instances (including their adjoints).
+\[
+  (u,v)_H \equiv \texttt{HilbertSpace.inner\_product(u,v)}
+  \;=\; \pair{\texttt{to\_dual}(u)}{v}.
+\]
+\[
+  \texttt{HilbertSpace.riesz} \equiv \Riesz, \qquad
+  \texttt{HilbertSpace.inverse\_riesz} \equiv \Riesz^{-1}.
+\]
+Adjoints are geometry-aware by default: when \texttt{LinearOperator.adjoint} is
+derived (rather than explicitly provided), it uses the domain/codomain Riesz
+maps to satisfy \eqref{eq:adjoint-characterisation}. An explicitly-provided
+\texttt{adjoint\_mapping} overrides this derivation.
 \end{codebox}
 
-\subsection{The dual basis}
-\label{ssec:dual-basis}
 
-On the dual space $H'$ the \emph{dual basis} $\{\phi^i\}_{i=1}^\infty \subset H'$
-is defined by $\langle\phi^i, \phi_j\rangle = \delta^i_j$. It forms a
-Riesz basis for $H'$. The key relationship between the dual basis and the
-biorthogonal dual basis is:
+\section{Bases and Representations: The Primal Side}
+
+In numerical work we may not always want to manipulate an abstract element
+$m \in H$ directly.
+Instead, we might want to work with a sequence of numbers --- its \emph{coefficients}.
+To make this precise, we must choose a basis.
+
+Let $H$ be a Hilbert space with inner product $(\cdot,\cdot)_H$,
+and let $\{\phi_j\}_{j=1}^\infty \subset H$ be a Riesz basis.
+
+By definition, there exist constants $0 < A \le B < \infty$ such that
+for every finitely supported coefficient sequence $\mathbf{c} \in \ell^2$,
 \begin{equation}
-  \label{eq:dual-basis-riesz-rep}
-  \psi_i = \Riesz(\phi^i),
+A \|\mathbf{c}\|_{\ell^2}^2
+\le
+\left\|\sum_{j} [\mathbf{c}]_j \phi_j\right\|_H^2
+\le
+B \|\mathbf{c}\|_{\ell^2}^2 .
+\label{eq:riesz-bounds-ped}
 \end{equation}
-where $\Riesz : H' \to H$ is the Riesz isomorphism. This equation states that the
-biorthogonal dual basis vectors are the Riesz representations of the dual basis
-functionals: each $\phi^i \in H'$ maps (via Riesz) to the corresponding
-$\psi_i \in H$ that satisfies $(\phi_j, \psi_i)_H = \delta_{ji}$.
 
-To make coefficient representations explicit, let $\{e_j\}$ be the standard basis of $\ell^2$ and $\{e^j\} \subset (\ell^2)'$ the corresponding coordinate functionals, so that
-$e^j(\mathbf{c}) = c_j$ and $\langle e^i, e_j\rangle = \delta^i_j$.
-For any $\ell' \in (\ell^2)'$ we write
+This inequality has an important interpretation:
+
+\begin{itemize}
+\item The vector $\sum_j [\mathbf{c}]_j \phi_j$ depends continuously on the coefficients.
+\item No information is lost or artificially amplified.
+\item Coefficient vectors and physical vectors measure size in comparable ways.
+\end{itemize}
+
+In other words, the basis is \emph{stable}.
+
+\subsection{Synthesis: From Coefficients to Vectors}
+
+Given a sequence of coefficients $\mathbf{c} = ([\mathbf{c}]_j)$, we construct a vector in $H$ by
+\begin{equation}
+\pi(\mathbf{c}) := \sum_{j=1}^\infty [\mathbf{c}]_j \phi_j .
+\end{equation}
+
+This defines the \emph{synthesis operator}
 \[
-  [\ell']_j := \langle \ell', e_j\rangle = \ell'(e_j).
+\pi : \ell^2 \to H.
 \]
-With this convention, the dual basis induces analysis and synthesis operators on the dual space:
-\begin{align}
-  \Pi' : H' \to (\ell^2)', \qquad [\Pi'(\ell)]_j &:= \langle \ell, \phi_j\rangle, \\
-  \pi' : (\ell^2)' \to H', \qquad \pi'(\ell') &:= \sum_j [\ell']_j \, \phi^j.
-\end{align}
-These form a pair of bounded inverses on the dual space, analogous to $\Pi$ and $\pi$ on the primal space.
-Although $(\ell^2)' \cong \ell^2$ via Riesz for the standard $\ell^2$ inner product, we keep the prime here to avoid silently identifying coefficient vectors and coefficient functionals.
 
-\section{The Gram matrix}
-\label{sec:gram-matrix}
+The Riesz bounds \eqref{eq:riesz-bounds-ped} imply:
 
-\begin{definition}[Gram operator / mass matrix]
-\label{def:gram-operator}
-Let $\{\phi_j\}$ be a Riesz basis for $H$. The \emph{Gram operator}
-(or \emph{mass operator}) is
-\begin{equation}
-  \label{eq:gram-def}
-  \mathbf{M}_\phi := \pi^* \pi : \ell^2 \to \ell^2,
-  \qquad
-  [\mathbf{M}_\phi]_{jk} = (\phi_k, \phi_j)_H.
-\end{equation}
-In finite dimensions ($N$-truncation) it becomes the $N \times N$ matrix
-\begin{equation}
-  \label{eq:gram-finite}
-  [\mathbf{M}_{\phi,N}]_{jk} = (\phi_k, \phi_j)_H, \qquad j, k = 1,\ldots,N.
-\end{equation}
-\end{definition}
+\begin{itemize}
+\item $\pi$ is linear,
+\item $\pi$ is bounded,
+\item $\pi$ is bijective,
+\item and its inverse is bounded.
+\end{itemize}
 
-\begin{proposition}
-\label{prop:gram-spd}
-For any Riesz basis, $\mathbf{M}_\phi$ is bounded, self-adjoint, and
-strictly positive on $\ell^2$. In particular it is invertible, and its
-finite-dimensional truncation $\mathbf{M}_{\phi,N}$ is symmetric positive
-definite (SPD) for every $N \geq 1$.
-\end{proposition}
+Thus $\pi$ is a topological isomorphism between $\ell^2$ and $H$.
+This justifies thinking of $\ell^2$ as the \emph{coefficient space}
+associated with the basis $\{\phi_j\}$.
 
-\paragraph{Gram matrix and the biorthogonal dual.}
-The biorthogonal dual basis is related to the original basis by
-\begin{equation}
-  \label{eq:biorthogonal-from-gram}
-  \psi_j = \sum_i [\mathbf{M}_{\phi}^{-1}]_{ji}\, \phi_i.
-\end{equation}
-This gives a purely computational recipe: in coefficient space $\ell^2$, the coefficient sequence
-$\mathbf{c}$ of $\psi_j$ is $\mathbf{c} = \mathbf{M}_{\phi}^{-1} e_j$, i.e. it solves
+\subsection{Analysis: From Vectors to Coefficients}
+
+Since $\pi$ is bijective, each vector $m \in H$ has a unique
+coefficient sequence $\mathbf{c}$ satisfying $\pi(\mathbf{c}) = m$.
+
+This defines the \emph{analysis operator}
 \[
-  \mathbf{M}_{\phi} \, \mathbf{c} = e_j,
+\Pi := \pi^{-1} : H \to \ell^2.
 \]
-where $e_j$ is the $j$-th standard basis vector of $\ell^2$. In practice one works with an $N$-truncation and solves
-$\mathbf{M}_{\phi,N}\,\mathbf{c} = \mathbf{e}_j$ in $\mathbb{R}^N$, then forms $\sum_i c_i \phi_i$.
 
-\paragraph{Analysis via $\phi_j$ alone.}
-Substituting \eqref{eq:biorthogonal-from-gram} into the definition of
-$\Pi$ gives
+To compute coefficients explicitly, we introduce the
+\emph{biorthogonal dual basis} $\{\psi_j\} \subset H$,
+defined by
 \begin{equation}
-  \label{eq:analysis-via-phi}
-  \Pi = \mathbf{M}_\phi^{-1}\, \pi^* : H \to \ell^2.
+(\phi_j,\psi_k)_H = \delta_{jk}.
 \end{equation}
-This means the analysis operator can be computed purely from
-$\{\phi_j\}$ --- the biorthogonal dual need not be constructed
-explicitly. One forms the matrix $\mathbf{M}_{\phi,N}$, inverts it, and
-multiplies the vector of inner products $[(\phi_j, m)_H]_j$.
+
+Then the coefficients of $m$ are given by
+\begin{equation}
+\Pi(m) = \bigl[(m,\psi_j)_H\bigr]_j.
+\end{equation}
+
+Thus:
+
+\[
+\pi \circ \Pi = \mathrm{Id}_H,
+\qquad
+\Pi \circ \pi = \mathrm{Id}_{\ell^2}.
+\]
+
+We now have a complete correspondence:
+
+\[
+\text{coefficients} \quad \longleftrightarrow \quad \text{vectors in } H.
+\]
 
 \begin{codebox}
-In pygeoinf, \texttt{HilbertSpace.coordinate\_projection} implements
-$\Pi_N : H \to \mathbb{R}^N$ via \eqref{eq:analysis-via-phi}:
-it evaluates $[\pi_N^*(m)]_j = (\phi_j, m)_H$ and then multiplies by
-$\mathbf{M}_{\phi,N}^{-1}$.
+\textbf{Notation \texorpdfstring{$\leftrightarrow$}{<->} pygeoinf (analysis/synthesis).}
+Fix a concrete \texttt{HilbertSpace} instance \texttt{H}. Its finite working dimension is
+\texttt{H.dim} (this is where ``$N$'' enters in \textit{pygeoinf}). Then:
+\begin{itemize}
+  \item The \emph{primary coefficient route} $\Pi:H\to\ell^2$ is exposed as
+  \texttt{H.coordinate\_projection} (a \texttt{LinearOperator} wrapping \texttt{to\_components}).
+  \item The synthesis map $\pi:\ell^2\to H$ is exposed as
+  \texttt{H.coordinate\_inclusion} (wrapping \texttt{from\_components}).
+  \item The ``inner-product vector'' route uses the adjoint
+  $\pi^{*_{\ell^2}}:H\to\ell^2$, available as \texttt{H.coordinate\_inclusion.adjoint}.
+\end{itemize}
+In short, the coefficient vector is \texttt{c = H.coordinate\_projection(m)} (this is $\Pi m$),
+and reconstruction is \texttt{m = H.coordinate\_inclusion(c)} (this is $\pi\mathbf{c}$).
 \end{codebox}
 
-\paragraph{Riesz isomorphism on the coefficient space.}
-On the finite coefficient space $\mathbb{R}^N$, there are (at least) two natural metrics:
-the standard Euclidean inner product $\mathbf{a}^\top\mathbf{b}$, and the inner product induced from $H$ by the synthesis map
+\section{The Gram Matrix: The Metric Hidden in the Basis}
+
+Up to now we have only discussed linear representation.
+We now ask a deeper question:
+
+\medskip
+\emph{How is the inner product of $H$ expressed in terms of coefficients?}
+\medskip
+
+Let $\mathbf{c} = \Pi m$ and $\mathbf{d} = \Pi n$.
+Then
 \[
-  (\mathbf{a},\mathbf{b})_{\pi_N} := (\pi_N\,\mathbf{a},\,\pi_N\,\mathbf{b})_H.
+(m,n)_H
+=
+(\pi \mathbf{c}, \pi \mathbf{d})_H.
 \]
-With respect to the standard basis $\{\mathbf{e}_j\}$ of $\mathbb{R}^N$, the induced inner product has matrix representation
-\begin{equation}
-  \label{eq:induced-inner-product-gram}
-  (\mathbf{a},\mathbf{b})_{\pi_N} = \mathbf{a}^\top\, \mathbf{M}_{\phi,N}\, \mathbf{b}.
-\end{equation}
-Equipping $\mathbb{R}^N$ with this induced metric, the Riesz maps are given by the Gram matrix:
-\begin{equation}
-  \label{eq:riesz-RN}
-  \Riesz_{\mathbb{R}^N}(\mathbf{a}) = \mathbf{M}_{\phi,N}^{-1}\mathbf{a},
-  \qquad
-  \Riesz_{\mathbb{R}^N}^{-1}(\mathbf{u}) = \mathbf{M}_{\phi,N}\, \mathbf{u}.
-\end{equation}
-Here we write elements of $(\mathbb{R}^N)'$ in coordinates using the dual basis $\{\mathbf{e}^j\}$; equivalently, we identify a functional $\ell'\in(\mathbb{R}^N)'$ with its coordinate vector $\mathbf{a}\in\mathbb{R}^N$ defined by $a_j := \ell'(\mathbf{e}_j)$.
-This explains the ubiquity of the Gram matrix in inversion formulas: it
-converts coefficient vectors between the primal and dual representations.
 
-\section{Finite-dimensional approximation}
-\label{sec:finite-approximation}
+If the basis were orthonormal, this would equal $(\mathbf{c},\mathbf{d})_{\ell^2}$.
+But for a general Riesz basis this is false.
 
-All computation in pygeoinf is finite-dimensional. For a Riesz basis
-$\{\phi_j\}_{j=1}^\infty$ we fix a truncation parameter $N$ and define:
+\subsection{The Induced Coefficient Inner Product}
 
+Define
 \begin{equation}
-  \label{eq:MN-def}
-  H_N := \mathrm{span}\{\phi_1, \ldots, \phi_N\} \subset H.
+(\mathbf{c},\mathbf{d})_\pi := (\pi \mathbf{c},\pi \mathbf{d})_H .
 \end{equation}
 
-The \emph{truncated analysis and synthesis operators} are
+This turns $\ell^2$ into a Hilbert space in which
+\[
+\pi : (\ell^2,(\cdot,\cdot)_\pi)
+\to
+(H,(\cdot,\cdot)_H)
+\]
+is an isometry.
+
+Thus the geometry of $H$ is transferred to coefficient space.
+
+\subsection{The Gram Operator}
+
+We now express this induced inner product relative to the
+\emph{standard} $\ell^2$ inner product
+\[
+(\mathbf{c},\mathbf{d})_{\ell^2} = \sum_j [\mathbf{c}]_j [\mathbf{d}]_j.
+\]
+
+There exists a unique bounded, self-adjoint, strictly positive operator
+\[
+\mathbf{M}_\phi : \ell^2 \to \ell^2
+\]
+such that
+\begin{equation}
+(\mathbf{c},\mathbf{d})_\pi = (\mathbf{M}_\phi \mathbf{c}, \mathbf{d})_{\ell^2}.
+\end{equation}
+
+A direct calculation shows
+\begin{equation}
+[\mathbf{M}_\phi]_{jk} = (\phi_k,\phi_j)_H,
+\qquad
+\mathbf{M}_\phi = \pi^{*_{\ell^2}} \pi.
+\end{equation}
+
+where $*_{\ell^2}$ denotes adjoint w.r.t. the $\ell^2$ inner product.  The matrix $\mathbf{M}_\phi$ measures how the basis vectors overlap.
+It is the \emph{metric tensor} of the representation.
+
+\subsection{Why the Gram Matrix Matters}
+
+The Riesz basis bounds imply
+\[
+A \|\mathbf{c}\|_{\ell^2}^2
+\le
+(\mathbf{M}_\phi \mathbf{c},\mathbf{c})_{\ell^2}
+\le
+B \|\mathbf{c}\|_{\ell^2}^2,
+\]
+so $\mathbf{M}_\phi$ is symmetric positive definite and invertible.
+
+Moreover, the analysis operator can be computed via
+\begin{equation}
+\boxed{
+\Pi = \mathbf{M}_\phi^{-1} \pi^{*_{\ell^2}}.
+}
+\end{equation}
+
+This identity is fundamental:
+
+\begin{quote}
+\emph{We do not need the dual basis explicitly.
+The Gram matrix contains all the necessary information.}
+\end{quote}
+
+\begin{codebox}
+\textbf{Computing coefficients via the Gram/mass operator in code.}
+When you know the synthesis map $\pi$ and can form its Hilbert adjoint
+$\pi^{*_{\ell^2}}$, you can recover the analysis operator via
+$\Pi = \mathbf{M}_\phi^{-1}\pi^{*_{\ell^2}}$ with
+$\mathbf{M}_\phi = \pi^{*_{\ell^2}}\pi$.
+
+In \textit{pygeoinf}, with \texttt{H: HilbertSpace} and \texttt{N = H.dim}:
+\begin{itemize}
+  \item \texttt{pi = H.coordinate\_inclusion} is $\pi: \mathbb{R}^N\to H$,
+  \item \texttt{pi\_star = pi.adjoint} is $\pi^{*_{\ell^2}}: H\to\mathbb{R}^N$,
+  \item \texttt{M = pi\_star @ pi} is $\mathbf{M}_{\phi}:\mathbb{R}^N\to\mathbb{R}^N$.
+\end{itemize}
+Then for a vector $m\in H$:
+\begin{enumerate}
+  \item Form \texttt{b = pi\_star(m)} (this is the $\pi^{*_{\ell^2}}m$ ``inner-product vector''),
+  \item Solve \texttt{M c = b} for \texttt{c} (this is $\Pi m$).
+\end{enumerate}
+Practical note: use \texttt{.adjoint} for Hilbert adjoints; \texttt{.dual} is the Banach dual ($\pi'$) and differs unless you are in a standard Euclidean setting.
+\end{codebox}
+
+\section{Duality and the Riesz Map in Coordinates}
+
+The dual space $H'$ contains functionals.
+The Riesz isomorphism
+\[
+\Riesz_H : H' \to H
+\]
+identifies each functional with its representing vector.
+
+Its inverse
+\[
+\Riesz_H^{-1} : H \to H'
+\]
+turns a vector into its corresponding functional.
+
+\subsection{What Happens in Coordinates}
+\label{ssec:riesz-in-coordinates}
+
+Suppose $m \in H$ has coefficient vector $\mathbf{c} = \Pi m \in \ell^2$.
+Equivalently, $m = \pi \mathbf{c}$.
+
+We would like to understand the \emph{coordinate representation} of the
+functional $\Riesz_H^{-1} m \in H'$.  Concretely, we ask:
+
+\medskip
+\emph{If we turn $m$ into a functional via $\Riesz_H^{-1}$, and then extract
+its coefficients in coefficient space, what do we get?}
+\medskip
+
+Recall:
+\begin{itemize}
+\item The inverse Riesz map $\Riesz_H^{-1}:H\to H'$ is characterized by
+\begin{equation}
+\label{eq:riesz-inv-def}
+\langle \Riesz_H^{-1} u, v\rangle = (u,v)_H
+\qquad \forall\, u,v\in H.
+\end{equation}
+
+\item The Banach adjoint (dual operator) of synthesis $\pi:\ell^2\to H$ is
+\begin{equation}
+\label{eq:pi-prime-def}
+\pi' : H' \to (\ell^2)', \qquad
+(\pi' \ell)(\mathbf{d}) := \langle \ell, \pi \mathbf{d}\rangle
+\qquad \forall\,\ell\in H',\ \mathbf{d}\in \ell^2.
+\end{equation}
+
+\item The coefficient-space Riesz map $\Riesz_{\ell^2}:(\ell^2)'\to \ell^2$
+(for the \emph{standard} $\ell^2$ inner product) is characterized by
+\begin{equation}
+\label{eq:riesz-l2-def}
+(\Riesz_{\ell^2}\eta,\mathbf{d})_{\ell^2} = \eta(\mathbf{d})
+\qquad \forall\,\eta\in(\ell^2)',\ \mathbf{d}\in\ell^2.
+\end{equation}
+
+\item The Gram/mass operator $\mathbf{M}_\phi:\ell^2\to\ell^2$ is defined by
+\begin{equation}
+\label{eq:gram-def-here}
+(\pi \mathbf{c},\pi \mathbf{d})_H = (\mathbf{M}_\phi \mathbf{c},\mathbf{d})_{\ell^2}
+\qquad \forall\,\mathbf{c},\mathbf{d}\in\ell^2.
+\end{equation}
+Equivalently, $\mathbf{M}_\phi=\pi^{*_{\ell^2}}\pi$.
+\end{itemize}
+
+\paragraph{Derivation of the coordinate identity.}
+Let $m\in H$ be arbitrary and set $\mathbf{c}:=\Pi m$ so that $m=\pi\mathbf{c}$.
+Define the coefficient functional
+\[
+\eta := \pi'(\Riesz_H^{-1} m)\in(\ell^2)'.
+\]
+We compute $\eta(\mathbf{d})$ for an arbitrary coefficient vector
+$\mathbf{d}\in\ell^2$:
 \begin{align}
-  \label{eq:PiN-piN}
-  \Pi_N : H \to \mathbb{R}^N,
-  &\quad \Pi_N(m) = \bigl[(m, \psi_j)_H\bigr]_{j=1}^N, \\
-  \pi_N : \mathbb{R}^N \to H_N,
-  &\quad \pi_N(\mathbf{c}) = \sum_{j=1}^N c_j\, \phi_j.
+\eta(\mathbf{d})
+&= \bigl(\pi'(\Riesz_H^{-1} m)\bigr)(\mathbf{d})
+&& \text{(definition of $\eta$)} \nonumber\\
+&= \left\langle \Riesz_H^{-1} m,\ \pi\mathbf{d}\right\rangle
+&& \text{(definition of $\pi'$)} \label{eq:coord-deriv-1}\\
+&= (m,\pi\mathbf{d})_H
+&& \text{(Riesz characterization \eqref{eq:riesz-inv-def})} \label{eq:coord-deriv-2}\\
+&= (\pi\mathbf{c},\pi\mathbf{d})_H
+&& \text{(since $m=\pi\mathbf{c}$)} \label{eq:coord-deriv-3}\\
+&= (\mathbf{M}_\phi\mathbf{c},\mathbf{d})_{\ell^2}
+&& \text{(Gram identity \eqref{eq:gram-def-here}).} \label{eq:coord-deriv-4}
 \end{align}
-
-The \emph{orthogonal projection} onto $H_N$ is
+Now compare \eqref{eq:coord-deriv-4} with the defining property of the
+coefficient-space Riesz map \eqref{eq:riesz-l2-def}.
+Since \eqref{eq:riesz-l2-def} says that $\Riesz_{\ell^2}\eta$ is the unique
+vector in $\ell^2$ satisfying
+\[
+(\Riesz_{\ell^2}\eta,\mathbf{d})_{\ell^2}=\eta(\mathbf{d})\quad\forall\,\mathbf{d},
+\]
+and we have just shown that $\eta(\mathbf{d})=(\mathbf{M}_\phi\mathbf{c},\mathbf{d})_{\ell^2}$
+for all $\mathbf{d}$, it follows that
+\[
+\Riesz_{\ell^2}\eta = \mathbf{M}_\phi \mathbf{c}.
+\]
+Substituting back $\eta=\pi'(\Riesz_H^{-1} m)$ and $\mathbf{c}=\Pi m$ yields the
+operator identity
 \begin{equation}
-  \label{eq:PN-proj}
-  P_N := \pi_N \Pi_N : H \to H_N,
+\label{eq:riesz-coord-identity}
+\boxed{
+\Riesz_{\ell^2}\,\pi'\,\Riesz_H^{-1}
+=
+\mathbf{M}_\phi\,\Pi.
+}
 \end{equation}
-which satisfies $(m - P_N m, \psi_j)_H = 0$ for all $j \leq N$. As $N
-\to \infty$, $\|m - P_N m\|_H \to 0$ for every $m \in H$.
+
+\paragraph{Interpretation: why this means $\mathbf{M}_\phi$ is the coordinate representation of $\Riesz_H^{-1}$.}
+Equation \eqref{eq:riesz-coord-identity} is an equality of maps $H\to \ell^2$.
+Read it from right to left and from left to right:
+
+\begin{itemize}
+\item The map $\Pi:H\to\ell^2$ takes a vector $m$ and returns its \emph{primal}
+coefficient vector $\mathbf{c}=\Pi m$.
+
+\item Multiplication by $\mathbf{M}_\phi$ converts this primal coefficient
+vector into $\mathbf{M}_\phi\mathbf{c}\in\ell^2$.
+
+\item The composite $\Riesz_{\ell^2}\,\pi'\,\Riesz_H^{-1}$ does the same job
+but via the dual space: it first turns $m$ into its functional
+$\Riesz_H^{-1}m\in H'$, then extracts the corresponding coefficient functional
+$\pi'(\Riesz_H^{-1}m)\in(\ell^2)'$, and finally identifies that functional with
+a coefficient vector in $\ell^2$ using $\Riesz_{\ell^2}$.
+
+\end{itemize}
+
+Thus, after choosing coordinates via $\Pi$ (on $H$) and via
+$\Riesz_{\ell^2}\circ \pi'$ (on $H'$), the inverse Riesz map
+$\Riesz_H^{-1}:H\to H'$ is represented by the operator $\mathbf{M}_\phi$ on the
+coefficient space.  In this precise sense,
+
+\begin{center}
+\textbf{$\mathbf{M}_\phi$ is the coordinate (matrix/operator) representation of $\Riesz_H^{-1}$.}
+\end{center}
+
+Equivalently, one may solve \eqref{eq:riesz-coord-identity} for $\Riesz_H^{-1}$:
+\begin{equation}
+\label{eq:riesz-inv-from-gram}
+\Riesz_H^{-1}
+=
+(\pi')^{-1}\,\Riesz_{\ell^2}^{-1}\,\mathbf{M}_\phi\,\Pi,
+\end{equation}
+which makes explicit that $\mathbf{M}_\phi$ is the ``middle'' coordinate map
+that carries primal coefficients to dual coefficients.
+
+
+\begin{figure}[t]
+\centering
+\begin{tikzcd}[column sep=large,row sep=large]
+H \arrow[rr,"\Pi_N"] \arrow[rd,swap,"\Pi"] \arrow[ddd, swap, bend right=25, "\Riesz_H^{-1}"] & & \mathbb{R}^N \arrow[ll, bend right=25, swap, "\pi_N"] \arrow[ddd, bend left=25, "\mathbf{M}_{\phi, N}"]\\
+& \ell^2 \arrow[lu, bend right=25, swap, "\pi"]  \arrow[d, bend right=25, swap, "\Riesz_{\ell^2}^{-1} \mathbf{M}_{\phi}"] & \\
+& (\ell^2)' \arrow[dl, swap, "\Pi'"] \arrow[u, swap, "\Riesz_{\ell^2} \mathbf{M}_{\phi}^{-1}"]& \\
+H' \arrow[rr, swap, "\pi_N'"] \arrow[ur, swap, bend right=25, "\pi'"] \arrow[uuu,"\Riesz_H"] & &
+(\mathbb{R}^N)' \arrow[ll, bend left=25, "\Pi_N'"] \arrow[uuu, "\mathbf{M}_{\phi, N}^{-1}"]
+\end{tikzcd}
+\caption{Commutative diagram of primal and dual coefficient maps in \textit{pygeoinf}.
+The analysis operator $\Pi: H \to \ell^2$ extracts primal coefficients, while its inverse (synthesis) $\pi: \ell^2 \to H$ reconstructs vectors .
+The Riesz isomorphism $\mathcal{R}_H: H' \to H$ identifies dual functionals with primal representatives; its inverse $\mathcal{R}_H^{-1}: H \to H'$ maps a vector to its unique functional form $\langle \mathcal{R}_H^{-1} u, v \rangle = (u, v)_H$ .
+In the coefficient space, the Gram matrix $\mathbf{M}_{\phi}$ acts as the coordinate representation of the inverse Riesz map, transforming primal coefficients into dual coefficients .
+The diagram commutes such that extracting dual coefficients directly from a functional is equivalent to mapping primal coefficients through the Gram matrix: $\Riesz_{\ell^2} \circ \pi' \circ \mathcal{R}_H^{-1} = \mathbf{M}_{\phi} \circ \Pi$ (identifying $(\ell^2)' \cong \ell^2$ via $\Riesz_{\ell^2}$).}
+\label{fig:primal-dual-coeff}
+\end{figure}
+
+\section{Finite-Dimensional Approximation}
+
+In practice we never work with infinite coefficient sequences.
+Instead, we truncate the basis to the first $N$ elements and work in the
+finite-dimensional subspace
+\begin{equation}
+H_N := \mathrm{span}\{\phi_1,\dots,\phi_N\} \subset H.
+\end{equation}
+
+Everything in the infinite-dimensional theory now reduces to linear algebra.
+
+\subsection{Finite Synthesis and Analysis}
+
+Define the truncated synthesis operator
+\begin{equation}
+\pi_N : \mathbb{R}^N \to H_N,
+\qquad
+\pi_N(\mathbf{c}) := \sum_{j=1}^N [\mathbf{c}]_j \phi_j .
+\end{equation}
+
+Since $\{\phi_1,\dots,\phi_N\}$ is linearly independent,
+$\pi_N$ is a linear isomorphism.
+
+Its inverse is the truncated analysis operator
+\begin{equation}
+\Pi_N : H_N \to \mathbb{R}^N,
+\qquad
+\Pi_N(m) = \mathbf{c} \quad \text{such that } m=\pi_N(\mathbf{c}).
+\end{equation}
+
+Thus
+\begin{equation}
+\pi_N \circ \Pi_N = \mathrm{Id}_{H_N},
+\qquad
+\Pi_N \circ \pi_N = \mathrm{Id}_{\mathbb{R}^N}.
+\end{equation}
+
+\subsection{The Finite Gram Matrix}
+
+The geometry of $H_N$ is encoded by the
+$N\times N$ Gram (mass) matrix
+\begin{equation}
+[\mathbf{M}_{\phi,N}]_{jk}
+:=
+(\phi_k,\phi_j)_H,
+\qquad 1 \le j,k \le N.
+\end{equation}
+
+A direct calculation shows
+\begin{equation}
+(\pi_N \mathbf{c},\pi_N \mathbf{d})_H
+=
+(\mathbf{c}, \mathbf{M}_{\phi,N} \mathbf{d})_{\mathbb{R}^N},
+\end{equation}
+where $(\mathbf{c},\mathbf{d})_{\mathbb{R}^N}=\mathbf{c}^\top \mathbf{d}$ is the standard Euclidean inner product.
+
+Thus $M_{\phi,N}$ represents the induced inner product
+\[
+(\mathbf{c},\mathbf{d})_\pi := (\pi_N \mathbf{c},\pi_N \mathbf{d})_H.
+\]
+
+\subsection{Properties of the Finite Gram Matrix}
+
+The matrix $\mathbf{M}_{\phi,N}$ is:
+
+\begin{itemize}
+\item symmetric,
+\item strictly positive definite,
+\item invertible.
+\end{itemize}
+
+Indeed,
+\[
+\mathbf{c}^\top \mathbf{M}_{\phi,N} \mathbf{c}
+=
+\|\pi_N \mathbf{c}\|_H^2,
+\]
+and this vanishes only if $\mathbf{c}=0$.
+
+\subsection{Finite Analysis via the Gram Matrix}
+
+Taking adjoints relative to the standard Euclidean inner product,
+\[
+\pi_N^* : H_N \to \mathbb{R}^N,
+\qquad
+(\pi_N^* m)_j = (m,\phi_j)_H.
+\]
+
+The truncated analysis operator satisfies
+\begin{equation}
+\boxed{
+\Pi_N = \mathbf{M}_{\phi,N}^{-1} \pi_N^*.
+}
+\end{equation}
+
+Thus coefficients can be computed without explicitly constructing
+the dual basis:
+\begin{enumerate}
+\item Compute inner products with $\phi_j$.
+\item Solve a linear system with matrix $\mathbf{M}_{\phi,N}$.
+\end{enumerate}
+
+\subsection{Finite Riesz Map in Coordinates}
+
+The Riesz isomorphism restricted to $H_N$ satisfies
+\[
+\langle \Riesz_H^{-1} m , v \rangle
+=
+(m,v)_H,
+\qquad
+m,v \in H_N.
+\]
+
+In coefficient form, let $\mathbf{c}=\Pi_N m$.
+Then the dual coefficients of $\Riesz_H^{-1} m$ are
+\begin{equation}
+\boxed{
+\Riesz_{\mathbb{R}^N}\,\pi_N'\,\Riesz_H^{-1}
+=
+\mathbf{M}_{\phi,N}\,\Pi_N.
+}
+\end{equation}
+
+In purely matrix terms:
+
+\begin{equation}
+\text{dual coefficients}
+=
+\mathbf{M}_{\phi,N}\,(\text{primal coefficients}).
+\end{equation}
+
+Thus the finite Gram matrix is the matrix representation
+of the inverse Riesz map on $H_N$.
+
+\subsection{Summary: What Changes in Finite Dimensions}
+
+In infinite dimensions:
+\begin{itemize}
+\item $\ell^2$ and $H$ are infinite Hilbert spaces.
+\item $\mathbf{M}_\phi$ is a bounded positive operator.
+\item Riesz maps are abstract isomorphisms.
+\end{itemize}
+
+In finite dimensions:
+\begin{itemize}
+\item All spaces are Euclidean.
+\item All operators are matrices.
+\item The Riesz map becomes multiplication by a symmetric positive definite matrix.
+\item The Gram matrix \emph{is} that matrix.
+\end{itemize}
+
+Thus the finite-dimensional setting is not an approximation of the structure ---
+it is the exact same structure realized in linear algebra form.
 
 \begin{whybox}
-The projection $P_N$ is the fundamental link between infinite-dimensional
-theory and finite computation. Every algorithm in pygeoinf ultimately
-operates on $\mathbb{R}^N$ via the maps $\Pi_N$ and $\pi_N$; the theory
-guarantees that as $N$ grows the computed results converge to the
-infinite-dimensional truth.
+This is the key theory\,$\leftrightarrow$\,computation bridge: the abstract operators
+($\pi$, $\Pi$, adjoints, and Riesz maps) do not disappear when you discretize.
+Choosing a concrete \texttt{HilbertSpace} (and therefore a specific \texttt{dim}) \emph{is} the discretization.
+Once that choice is made, \textit{pygeoinf} computes adjoints using the declared inner products,
+so the same identities (e.g.\ $\Pi = \mathbf{M}^{-1}\pi^{*_{\ell^2}}$) remain valid and numerically meaningful.
+As you increase \texttt{dim} (or refine the underlying space), you are moving along a controlled family of finite problems that approximate the intended infinite-dimensional model.
 \end{whybox}
-
 \section{Concrete spaces in pygeoinf}
 \label{sec:concrete-spaces}
 
@@ -1241,7 +1582,7 @@ explains how to create your own.
 $\mathbb{R}^n$ with the standard inner product $(u, v) = \sum_i u_i v_i =
 \mathbf{u}^\top \mathbf{v}$. The Riesz map is the identity: $\Riesz = \mathrm{Id}$.
 The basis $\{\phi_j\} = \{\mathbf{e}_j\}$ is the standard ONB, so $\mathbf{M}_\phi
-= \mathbf{I}$ and $\Pi = \pi^* = \mathrm{Id}$.
+= \mathbf{I}$ and $\Pi = \pi^{*_{\ell^2}} = \mathrm{Id}$.
 
 When you use \texttt{EuclideanSpace(n)}, adjacent operator transposes
 \emph{are} adjoints, and you recover the classical formulas of linear
@@ -1304,96 +1645,38 @@ Subclass \texttt{HilbertSpace} and implement:
   \item \texttt{to\_components(x)} --- compute $\Pi(x) \in \mathbb{R}^N$.
   \item \texttt{from\_components(c)} --- compute $\pi(\mathbf{c}) \in H$.
 \end{itemize}
-All other methods (\texttt{norm}, \texttt{distance}, \texttt{project},
-\texttt{riesz}, \texttt{gram\_matrix}, \texttt{coordinate\_projection},
-\texttt{coordinate\_inclusion}, \ldots) are derived automatically from
-the above.
+All other methods (\texttt{norm}, \texttt{squared\_norm}, \texttt{distance},
+\texttt{riesz}, \texttt{inverse\_riesz}, \texttt{coordinate\_projection},
+\texttt{coordinate\_inclusion}, \ldots) are derived automatically from the above.
 \end{codebox}
 
 \begin{examplebox}
-\textbf{Trapezoidal $L^2$ approximation.}
-Suppose your model lives in $L^2([0,1])$ and you discretize using a
-non-uniform grid $0 = x_0 < x_1 < \cdots < x_N = 1$ with midpoints
-$x_j^* = (x_{j-1} + x_j)/2$ and widths $\Delta x_j = x_j - x_{j-1}$.
-Implement:
-\begin{lstlisting}
-class NonUniformL2(HilbertSpace):
-    def __init__(self, x):
-        self._x = np.asarray(x)        # grid points
-        self._dx = np.diff(x)          # cell widths Delta x_j
-    @property
-    def dim(self):
-        return len(self._dx)
-    def inner_product(self, u, v):
-        return np.dot(u * self._dx, v)  # sum u_j v_j Delta x_j
-    def to_dual(self, u):
-        return u * self._dx             # (R^-1 u)_j = u_j Delta x_j
-    def from_dual(self, up):
-        return up / self._dx            # (R ell)_j = ell_j / Delta x_j
-    def to_components(self, u):
-        return u.copy()                 # basis = piecewise constant
-    def from_components(self, c):
-        return c.copy()
-    def zero(self):
-        return np.zeros(self.dim)
-    def basis_vector(self, j):
-        e = np.zeros(self.dim); e[j] = 1.0; return e
-\end{lstlisting}
-With this space, \texttt{to\_dual} implements the mass-weighting that
-equation~\eqref{eq:correct-min-norm} requires: the adjoint formula
-becomes $\mathbf{G}^* = \mathbf{M}^{-1}\mathbf{G}^\top\mathbf{M}_\mathcal{D}$
-automatically.
+\textbf{Example (quadrature-weighted $L^2$ via \texttt{MassWeightedHilbertSpace}).}
+Suppose you discretize $[0,1]$ on a non-uniform grid with cell widths
+$\Delta x_j$ and represent a function by its sampled values
+$\mathbf{u}=(u_j)\in\mathbb{R}^N$.
+The quadrature-weighted inner product
+\[
+(\mathbf{u},\mathbf{v}) \approx \sum_{j=1}^N u_j v_j\,\Delta x_j
+\]
+is obtained by taking an underlying Euclidean space $X=\mathbb{R}^N$ and a diagonal
+mass operator $\mathbf{M}=\mathrm{diag}(\Delta x_j)$, then forming the mass-weighted space
+$X_{\mathbf{M}}$.
+
+In \textit{pygeoinf} this is the canonical pattern:
+\begin{itemize}
+  \item \texttt{X = EuclideanSpace(N)}
+  \item \texttt{dx = np.asarray([\ldots])  \# quadrature weights (e.g. cell widths)}
+  \item \texttt{M = LinearOperator.from\_matrix(X, X, np.diag(dx))}
+  \item \texttt{Minv = LinearOperator.from\_matrix(X, X, np.diag(1.0/dx))}
+  \item \texttt{H = MassWeightedHilbertSpace(X, M, Minv)}
+\end{itemize}
+Then \texttt{H.inner\_product(u, v)} computes $\langle \mathbf{M}\mathbf{u},\mathbf{v}\rangle$
+and the Riesz maps become $\Riesz_H = \Riesz_X\circ\mathbf{M}$ and
+$\Riesz_H^{-1}=\mathbf{M}^{-1}\circ\Riesz_X^{-1}$, exactly matching
+\eqref{eq:mass-weighted-ip}.
 \end{examplebox}
 
-\section{Summary and commutative diagram}
-\label{sec:hilbert-summary}
-
-All the maps introduced in this chapter fit together in a single
-commutative diagram. Let $H$ be a Hilbert space with Riesz basis
-$\{\phi_j\}_{j=1}^N$ (finite-dimensional for conciseness). The spaces,
-dual spaces, coefficient space $\mathbb{R}^N$, its dual, and all the maps
-between them commute as follows:
-
-\medskip
-\begin{center}
-\begin{tikzcd}[row sep=3em, column sep=4em]
-H
-  \arrow[r, blue, "\Pi_N"]
-  \arrow[d, "\Riesz^{-1}"']
-&
-\mathbb{R}^N
-  \arrow[d, "\mathbf{M}_{\phi,N}"]
-  \arrow[l, bend right=20, blue, "\pi_N"']
-\\
-H'
-  \arrow[r, blue, "\pi_N'"]
-  \arrow[u, "\Riesz"]
-&
-(\mathbb{R}^N)'
-  \arrow[l, bend right=20, blue, "\Pi_N'"']
-  \arrow[u, "\mathbf{M}_{\phi,N}^{-1}"]
-\end{tikzcd}
-\end{center}
-\medskip
-
-Reading the diagram:
-\begin{itemize}
-  \item The \textcolor{blue}{blue horizontal arrows} are the analysis
-    ($\Pi_N$) and synthesis ($\pi_N$) operators and their dual maps.
-  \item The vertical arrows on the left are the Riesz maps for $H$.
-  \item The vertical arrows on the right are the Gram matrix and its
-    inverse, corresponding to the Riesz maps for $\mathbb{R}^N$ equipped
-    with the basis inner product.
-  \item Every path between two nodes gives the same result: the diagram
-    commutes.
-\end{itemize}
-
-The outer square expresses $\Riesz^{-1} = \Pi_N' \circ \mathbf{M}_{\phi,N}
-\circ \Pi_N$, which is the coordinate representation of the Riesz map.
-In \cref{ch:linear-operators} this diagram will be extended to include
-a forward operator $G : \modelspace \to \dataspace$ and its adjoint
-$G^*$, each appearing as arrows connecting two copies of the above
-diagram (one for $\modelspace$, one for $\dataspace$).
 
 
 % ============================================================================
