@@ -2250,6 +2250,114 @@ matrix whose transpose implements the adjoint action at the level of
 coefficients (via \eqref{eq:galerkin-rmatvec-adjoint}), and is the view in
 which self-adjointness manifests as matrix symmetry.
 
+\section{Worked example: \texttt{from\_matrix}, dual vs adjoint, and Galerkin matrices}
+\label{sec:linear-operator-worked-example}
+
+This chapter is written with an infinite-dimensional viewpoint: $G$ is an
+operator between Hilbert spaces. The following example is therefore to be read
+as a \emph{coordinate representation} used for computation (think: restricting
+to a finite trial/test space and choosing bases), not as a change in the
+underlying mathematical objects.
+
+\paragraph{Set-up.}
+Let the model space be Euclidean,
+\(\modelspace = \mathbb{R}^2\) with the standard inner product.
+Let the data space be a \emph{mass-weighted} Euclidean space built from an
+underlying $H=\mathbb{R}^2$:
+\begin{equation}
+  \ipD{u}{v} = u^\top W v,
+  \qquad
+  W = \diag(2,3).
+\end{equation}
+The geometry is encoded by the mass/Gram operator $W$ (equivalently the Riesz
+maps). In particular, identifying a primal $d\in\dataspace$ with a dual element
+$d'\in\dataspace'$ introduces $W$.
+
+Now define a tiny matrix-backed operator $G:\modelspace\to\dataspace$ via
+\(A\in\mathbb{R}^{2\times 2}\):
+\begin{equation}
+  A = \begin{bmatrix} 1 & 2 \\ 0 & 1 \end{bmatrix}.
+\end{equation}
+
+\begin{lstlisting}
+import numpy as np
+
+from pygeoinf.hilbert_space import EuclideanSpace, MassWeightedHilbertSpace
+from pygeoinf.linear_operators import LinearOperator
+
+V = EuclideanSpace(2)                      # model space (primal vectors are length-2 arrays)
+H = EuclideanSpace(2)
+
+W = LinearOperator.self_adjoint_from_matrix(H, np.diag([2.0, 3.0]))
+W_inv = LinearOperator.self_adjoint_from_matrix(H, np.diag([0.5, 1.0/3.0]))
+D = MassWeightedHilbertSpace(H, W, W_inv)  # data space with <u,v>_D = u^T W v
+
+A = np.array([[1.0, 2.0],
+              [0.0, 1.0]])
+G = LinearOperator.from_matrix(V, D, A, galerkin=False)
+
+m = np.array([1.0, -1.0])
+d = G(m)                 # primal vector in D
+
+dp = D.to_dual(d)         # dual element in D'  (a LinearForm)
+mp = G.dual(dp)           # dual element in V'
+g  = G.adjoint(d)         # primal vector in V
+
+# Consistency check (Riesz-first identity):
+# g == V.from_dual( G.dual( D.to_dual(d) ) )
+\end{lstlisting}
+
+\paragraph{Type distinctions (what each map consumes).}
+The same operator gives rise to three different (typed) actions:
+\begin{itemize}
+  \item $G$ acts on \emph{primal vectors} $m\in\modelspace$ and returns a primal
+    vector $d\in\dataspace$.
+  \item $G'\equiv\texttt{G.dual}$ acts on \emph{linear forms} $d'\in\dataspace'$
+    and returns a linear form $m'\in\modelspace'$.
+  \item $G^*\equiv\texttt{G.adjoint}$ acts on \emph{primal vectors} $d\in\dataspace$
+    and returns a primal vector in $\modelspace$.
+\end{itemize}
+Even in finite dimensions these are not interchangeable: the identifications
+between primal and dual spaces are part of the Hilbert-space geometry.
+
+\paragraph{One place where dual and adjoint differ.}
+In coordinates, the Banach-dual action is
+\begin{equation}
+  \label{eq:worked-example-dual-action}
+  \text{if } d'\in\dataspace' \text{ has dual components } \mathbf{c}_{d'},
+  \qquad
+  \Pi_{\modelspace'}\bigl(G'(d')\bigr) = A^\top\,\mathbf{c}_{d'}.
+\end{equation}
+But the Hilbert adjoint involves the Riesz identification in the data space.
+With $\ipD{u}{v}=u^\top W v$ we have, conceptually,
+\(\Riesz_{\dataspace}^{-1}(d)\leftrightarrow W\,d\).
+Thus the adjoint acts as
+\begin{equation}
+  \label{eq:worked-example-adjoint-action}
+  \Pi_{\modelspace}\bigl(G^*(d)\bigr) = A^\top W\,\Pi_{\dataspace}(d),
+\end{equation}
+which differs from \eqref{eq:worked-example-dual-action} by the $W$ factor.
+This is exactly why the library keeps \texttt{dual} and \texttt{adjoint}
+separate: $G'$ is a dual-to-dual map, while $G^*$ is a primal-to-primal map.
+
+\paragraph{The two matrix modes in this example.}
+By default, \texttt{G.matrix(...)} returns a matrix-free SciPy
+\texttt{LinearOperator} (\texttt{dense=False}). To materialise a dense
+array for inspection, use \texttt{dense=True}. For the same operator,
+the two dense matrix views are
+\begin{align}
+  \texttt{G.matrix(dense=True,\, galerkin=False)} &= A
+  = \begin{bmatrix} 1 & 2 \\ 0 & 1 \end{bmatrix},\\
+  \texttt{G.matrix(dense=True,\, galerkin=True)}  &= W A
+  = \begin{bmatrix} 2 & 4 \\ 0 & 3 \end{bmatrix}.
+\end{align}
+The component view returns the component-to-component map, while the Galerkin
+view left-multiplies by the codomain mass/Gram matrix (equivalently,
+post-composes with $\Riesz_{\dataspace}^{-1}$) so that the reverse
+multiply corresponds to the Hilbert adjoint. This is the same content as the
+abstract identity $G^* = \Riesz_{\modelspace} \circ G' \circ \Riesz_{\dataspace}^{-1}$,
+written in coordinates.
+
 \section{Operators as stacks of linear forms}
 \label{sec:operator-from-forms}
 % G = [ℓ₁, ..., ℓ_M]ᵀ with ℓᵢ ∈ M'.
