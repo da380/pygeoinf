@@ -1876,8 +1876,13 @@ Useful methods/properties: \texttt{\_\_call\_\_(x)}, \texttt{components},
 
 \section{Motivation: the forward operator}
 \label{sec:operator-motivation}
-% G: M → D maps models to data. This is the mathematical description of
-% your forward physics.
+In inverse problems we distinguish a \emph{model space} $\modelspace$ and a
+\emph{data space} $\dataspace$. The forward physics is encoded as a linear map
+$G: \modelspace \to \dataspace$ taking a model $m$ to the data $d = G(m)$ it
+predicts.
+Throughout this chapter we use the evaluation convention $G(x)$ (rather than
+juxtaposition $Gx$) to emphasize that operators are functions, and to match the
+callable operator objects in the \texttt{pygeoinf} API.
 
 \begin{whybox}
 The forward operator $G$ is the mathematical encoding of your physics.
@@ -1888,18 +1893,166 @@ the matrix transpose.
 
 \section{Definition and properties}
 \label{sec:operator-definition}
-% Bounded linear maps. Domain, codomain. Operator algebra: +, scalar ×, @.
+
+\paragraph{Definition (bounded linear operator).}
+Let $\modelspace$ and $\dataspace$ be normed vector spaces (in particular,
+Hilbert spaces in the applications in this manual). A map
+$G: \modelspace \to \dataspace$ is \emph{linear} if
+\begin{equation}
+  G(\alpha m_1 + \beta m_2) = \alpha\,G(m_1) + \beta\,G(m_2)
+  \qquad \forall\; m_1,m_2\in\modelspace,\; \alpha,\beta\in\mathbb{R}.
+\end{equation}
+It is \emph{bounded} if there exists a constant $C < \infty$ such that
+\begin{equation}
+  \label{eq:bounded-linear-operator}
+  \|G(m)\|_{\dataspace} \le C\,\|m\|_{\modelspace}
+  \qquad \forall\; m\in\modelspace.
+\end{equation}
+The smallest such constant is the \emph{operator norm}
+$\|G\| = \sup_{\|m\|_{\modelspace}=1} \|G(m)\|_{\dataspace}$.
+In Hilbert spaces, boundedness is equivalent to continuity, and it is the
+assumption that makes adjoints and discretisations behave well.
+
+\begin{codebox}
+Notation \(\leftrightarrow\) \texttt{pygeoinf} API (linear operators):
+\[
+  G: \modelspace \to \dataspace
+  \;\equiv\;
+  \texttt{LinearOperator(domain, codomain, mapping)}
+  \quad \text{and evaluate via } \texttt{G(m)}.
+\]
+\[
+  G'\;\text{(Banach dual)} \;\equiv\; \texttt{G.dual},
+  \qquad
+  G^*\;\text{(Hilbert adjoint)} \;\equiv\; \texttt{G.adjoint}.
+\]
+\[
+  \Riesz_{\modelspace} \equiv \texttt{domain.from\_dual},\quad
+  \Riesz_{\modelspace}^{-1} \equiv \texttt{domain.to\_dual},
+  \qquad
+  \Riesz_{\dataspace} \equiv \texttt{codomain.from\_dual},\quad
+  \Riesz_{\dataspace}^{-1} \equiv \texttt{codomain.to\_dual}.
+\]
+\end{codebox}
 
 \section{The Banach dual (transpose) $G'$}
 \label{sec:banach-dual}
-% Definition: ⟨G'd', m⟩ = ⟨d', Gm⟩.
-% Why this is NOT the adjoint in general.
+
+The definition of $G'$ requires only dual pairings; it makes sense for any
+bounded linear operator between normed spaces.
+
+\paragraph{Typing.}
+Let $\modelspace$ and $\dataspace$ be normed vector spaces and let
+$G : \modelspace \to \dataspace$ be a bounded linear operator.
+Then the continuous dual spaces $\modelspace'$ and $\dataspace'$ are Banach
+spaces (\cref{def:dual-space}), and the dual pairing is denoted by
+$\pair{\cdot}{\cdot}$.
+
+\paragraph{Definition (Banach dual / transpose).}
+The \emph{Banach dual} (also called the \emph{transpose}) of $G$ is the bounded
+linear map
+\begin{equation}
+  \label{eq:banach-dual-typing}
+  G' : \dataspace' \to \modelspace'
+\end{equation}
+defined by
+\begin{equation}
+  \label{eq:banach-dual-def}
+  \pair{G'(d')}{m} := \pair{d'}{G(m)}
+  \qquad \forall\; d'\in\dataspace',\; m\in\modelspace.
+\end{equation}
+Equivalently, for each $d'\in\dataspace'$, the element $G'(d')\in\modelspace'$
+is the functional
+\begin{equation}
+  (G'(d'))(m) = d'(G(m)).
+\end{equation}
+
+\paragraph{Boundedness.}
+From \eqref{eq:banach-dual-def} and \eqref{eq:bounded-linear-operator}, for any
+$d'\in\dataspace'$ we have
+\begin{equation}
+  \|G'(d')\|_{\modelspace'}
+  = \sup_{\|m\|_{\modelspace}=1} \bigl|\pair{G'(d')}{m}\bigr|
+  = \sup_{\|m\|_{\modelspace}=1} \bigl|\pair{d'}{G(m)}\bigr|
+  \le \|d'\|_{\dataspace'}\,\|G\|,
+\end{equation}
+so $G'$ is bounded with $\|G'\|\le\|G\|$.
+
+\paragraph{Why $G'$ is not an adjoint.}
+The map $G'$ acts on \emph{dual} elements and produces a dual element.
+Even when $\modelspace$ and $\dataspace$ are Hilbert spaces, the Hilbert adjoint
+$G^*$ (next section) is a map $\dataspace \to \modelspace$ between the primal
+spaces. To pass from $G'$ to $G^*$ we must use the Riesz maps, i.e.\ identify
+dual vectors with their Riesz representatives in the primal spaces.
 
 \section{The Hilbert adjoint $G^*$}
 \label{sec:hilbert-adjoint}
-% Definition: (Gm, d)_D = (m, G*d)_M.
-% The commuting relation: G* = R_M ∘ G' ∘ R_D⁻¹.
-% Full derivation.
+
+From here on we assume that both spaces are Hilbert spaces, so that we have
+inner products and Riesz maps available.
+
+\paragraph{Typing.}
+Let $\modelspace$ and $\dataspace$ be Hilbert spaces with inner products
+$\ipM{\cdot}{\cdot}$ and $\ipD{\cdot}{\cdot}$, and let
+$G : \modelspace \to \dataspace$ be bounded and linear.
+
+\paragraph{Definition (Hilbert adjoint).}
+The \emph{Hilbert adjoint} of $G$ is the unique bounded linear operator
+\begin{equation}
+  \label{eq:hilbert-adjoint-typing}
+  G^* : \dataspace \to \modelspace
+\end{equation}
+such that
+\begin{equation}
+  \label{eq:hilbert-adjoint-def}
+  \ipD{G(m)}{d} = \ipM{m}{G^*(d)}
+  \qquad \forall\; m\in\modelspace,\; d\in\dataspace.
+\end{equation}
+
+\paragraph{Existence and construction (Riesz representation).}
+Fix $d\in\dataspace$ and define a linear functional on $\modelspace$ by
+\begin{equation}
+  \label{eq:adjoint-functional}
+  \ell_d(m) := \ipD{G(m)}{d}.
+\end{equation}
+Boundedness of $G$ implies $\ell_d\in\modelspace'$. By the Riesz theorem
+(\cref{thm:riesz}) there exists a unique element $u\in\modelspace$ such that
+$\ell_d(m)=\ipM{m}{u}$ for all $m$. We define $G^*(d):=u$.
+
+\paragraph{Derivation of the commuting relation.}
+Let $\Riesz_{\modelspace}:\modelspace'\to\modelspace$ and
+$\Riesz_{\dataspace}:\dataspace'\to\dataspace$ denote the Riesz maps, with
+inverses $\Riesz_{\modelspace}^{-1}:\modelspace\to\modelspace'$ and
+$\Riesz_{\dataspace}^{-1}:\dataspace\to\dataspace'$.
+Using the identity (\cref{sec:dual-space}, \cref{sec:riesz-theorem})
+\begin{equation}
+  \label{eq:pairing-via-riesz}
+  \pair{\ell}{x} = \ip{x}{\Riesz\ell}{X}
+  \qquad (\ell\in X',\; x\in X),
+\end{equation}
+we compute, for arbitrary $m\in\modelspace$ and $d\in\dataspace$,
+\begin{align}
+  \ipD{G(m)}{d}
+  &= \pair{\Riesz_{\dataspace}^{-1} d}{G(m)}
+    && \text{by \eqref{eq:pairing-via-riesz} in $X=\dataspace$} \\
+  &= \pair{G'\bigl(\Riesz_{\dataspace}^{-1} d\bigr)}{m}
+    && \text{by the definition of $G'$ \eqref{eq:banach-dual-def}} \\
+  &= \ipM{m}{\Riesz_{\modelspace}\,G'\,\Riesz_{\dataspace}^{-1}(d)}
+    && \text{by \eqref{eq:pairing-via-riesz} in $X=\modelspace$.}
+\end{align}
+Comparing with \eqref{eq:hilbert-adjoint-def} and using uniqueness in the Riesz
+representation, we obtain the key relation
+\begin{equation}
+  \label{eq:adjoint-from-dual}
+  G^* = \Riesz_{\modelspace} \circ G' \circ \Riesz_{\dataspace}^{-1}.
+\end{equation}
+
+\paragraph{API correspondence.}
+In \texttt{pygeoinf}, this is exactly the rule that turns the Banach dual into a
+Hilbert adjoint:
+\begin{equation}
+  \texttt{G.adjoint} \;=\; \texttt{domain.from\_dual}\,\circ\,\texttt{G.dual}\,\circ\,\texttt{codomain.to\_dual}.
+\end{equation}
 
 \begin{pitfallbox}
 If you are used to thinking of the matrix transpose as the adjoint, beware:
@@ -1931,10 +2084,6 @@ $G^* = \Riesz_{\modelspace} \circ G' \circ \Riesz_{\dataspace}^{-1}$.
 Given linear forms $\ell_i \in \modelspace'$, construct the forward operator via
 \texttt{LinearOperator.from\_linear\_forms([$\ell_1, \ldots, \ell_M$])}.
 \end{codebox}
-
-\section{Kernel and range}
-\label{sec:kernel-range}
-% Null space ker(G), range im(G), fundamental decomposition m = m_null + m_data.
 
 \section{Constructing operators in pygeoinf}
 \label{sec:constructing-operators}
