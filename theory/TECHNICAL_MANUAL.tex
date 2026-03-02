@@ -2508,6 +2508,65 @@ constructs a self-adjoint operator, interpreting \texttt{K} as Galerkin.
 builds an operator whose rows are linear forms $\ell_i\in\modelspace'$.
 \end{codebox}
 
+\section{Advanced routines: randomized spectral surrogates}
+\label{sec:linear-operator-advanced-routines}
+
+Beyond construction and basic algebra, \texttt{LinearOperator} provides a small
+set of \emph{advanced routines} that build cheap, low-rank spectral surrogates
+of an operator. These are primarily intended for \emph{diagnostics} (``what is
+the effective rank/spectrum here?''), for quick \emph{surrogate models} in
+experiments, and for developing \emph{preconditioning intuition} before you
+commit to a full-scale solver.
+
+\paragraph{\texttt{random\_svd}.}
+\texttt{G.random\_svd(size\_estimate, ...)} returns three operator factors
+\((U,\,\Sigma,\,V)\) with an internal Euclidean space $\mathbb{R}^r$ (where $r$
+is the achieved rank returned by the routine) such that
+the composition
+\(G \approx U\,\Sigma\,V\)
+acts as a rank-$r$ approximation of $G$ in the chosen matrix view.
+Concretely, $V:\modelspace\to\mathbb{R}^r$ maps a model to low-dimensional
+coordinates, $\Sigma$ is a diagonal operator of approximate singular values, and
+$U:\mathbb{R}^r\to\dataspace$ maps back into the data space.
+Use this when you want a quick picture of dominant input/output directions,
+cheaply compress an operator for prototyping, or build a low-rank surrogate that
+is fast to apply repeatedly.
+
+\paragraph{\texttt{random\_eig}.}
+\texttt{A.random\_eig(size\_estimate, ...)} returns an approximate eigensystem for a square
+operator (an automorphism). It produces an ``expansion'' operator
+\(U:\mathbb{R}^r\to\modelspace\) together with a diagonal operator of
+eigenvalues $\Lambda$ so that, in the intended self-adjoint setting,
+\(A \approx U\,\Lambda\,U^*\).
+This is useful for sanity-checking spectral behaviour (e.g. identifying dominant
+modes, verifying approximate symmetry/self-adjointness in practice), and for
+building simple spectral preconditioner sketches.
+
+\paragraph{\texttt{random\_cholesky}.}
+\texttt{C.random\_cholesky(size\_estimate, ...)} returns an operator factor
+\(F:\mathbb{R}^r\to\modelspace\) intended for positive-definite, self-adjoint
+operators such that
+\(C \approx F\,F^*\).
+It is a convenient way to obtain an approximate ``square root'' of a covariance
+or Gram-type operator for exploratory uncertainty quantification, cheap sampling
+surrogates, and preconditioning intuition.
+
+\begin{pitfallbox}
+These routines are \emph{randomized} and \emph{approximate}. Results depend on
+the random seed and on whether the operator is well captured by a low-rank
+surrogate.
+
+More subtly, results also depend on \emph{geometry choices}: in \texttt{pygeoinf}
+the same operator has different coordinate-level matrix views (component vs
+Galerkin; \cref{sec:matrix-representations}). A ``spectrum'' computed in a
+component view is not, in general, the Hilbert-space spectrum associated with
+your inner product.
+Finally, operator properties matter: \texttt{random\_eig} is intended for
+self-adjoint/symmetric behaviour in the relevant inner product, and
+\texttt{random\_cholesky} assumes positive-definiteness; if these conditions are
+violated, the outputs may be misleading even if the code runs.
+\end{pitfallbox}
+
 \section{The full commutative diagram}
 \label{sec:operator-diagram}
 % Complete tikz-cd diagram: M, D, M', D', ℝⁿ, ℝ^{N_d}, all maps.
