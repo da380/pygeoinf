@@ -2063,18 +2063,192 @@ $G^* = \Riesz_{\modelspace} \circ G' \circ \Riesz_{\dataspace}^{-1}$.
 
 \section{Matrix representations}
 \label{sec:matrix-representations}
-% Standard matrix: A = Π_D G π_N.
-% Galerkin matrix.
-% Discrete adjoint: A* = M_φ⁻¹ Aᵀ M_b.
+
+All of the objects in this chapter are defined between infinite-dimensional
+spaces. Nevertheless, numerical algorithms require finite arrays. A
+\emph{matrix representation} is nothing more than the coordinate description of
+the restriction of $G$ to a finite-dimensional trial space and a finite-
+dimensional test space.
+
+The key point for \texttt{pygeoinf} is that there are (at least) two natural
+matrix \emph{views} of the same operator, and they differ in what the
+\texttt{rmatvec} operation means:
+\begin{enumerate}
+  \item \textbf{Component view} (\texttt{galerkin=False}): \texttt{matvec} maps
+    \emph{primal components} to \emph{primal components}, while \texttt{rmatvec}
+    represents the \emph{Banach dual} operator $G'$ and therefore acts on
+    \emph{dual components}.
+  \item \textbf{Galerkin view} (\texttt{galerkin=True}): \texttt{matvec} maps
+    \emph{primal components} to \emph{dual components} via a Riesz map in the
+    codomain, and \texttt{rmatvec} represents the \emph{Hilbert adjoint}
+    operator $G^*$.
+\end{enumerate}
+
+Both views are valid; which one you want depends on whether your algorithm is
+formulated in terms of duality pairings ($G'$) or inner products ($G^*$).
+
+\paragraph{Coordinates are not geometry.}
+The maps \texttt{to\_components/from\_components} are \emph{coordinate maps}.
+They depend on a chosen basis and are not assumed to be isometries. In
+particular, do \emph{not} assume the basis is orthonormal; the inner products
+live separately, encoded by the Gram (``mass'') matrices and Riesz maps.
 
 \subsection{The standard (component) matrix}
 \label{ssec:standard-matrix}
 
+Let $\modelspace$ and $\dataspace$ be Hilbert spaces, and choose finite-
+dimensional subspaces
+\(
+  \modelspace_N = \spn\{\phi_1,\ldots,\phi_N\} \subset \modelspace
+\)
+and
+\(
+  \dataspace_M = \spn\{\psi_1,\ldots,\psi_M\} \subset \dataspace.
+\)
+Write
+\(\pi_{\modelspace}:\mathbb{R}^N\to\modelspace_N\) for synthesis
+(``from components'') and
+\(\Pi_{\dataspace}:\dataspace_M\to\mathbb{R}^M\) for analysis
+(``to components'').
+
+The \emph{standard component matrix} of $G$ (with respect to these coordinate
+maps) is
+\begin{equation}
+  \label{eq:standard-matrix-def}
+  \Gd \;:=\; \Pi_{\dataspace}\,\circ\, G\,\circ\,\pi_{\modelspace}
+  \;\in\; \mathbb{R}^{M\times N},
+\end{equation}
+so that for a coefficient vector $\mathbf{c}\in\mathbb{R}^N$ we have
+\(
+  \Gd\,\mathbf{c} = \Pi_{\dataspace}\bigl(G(\pi_{\modelspace}\mathbf{c})\bigr),
+\)
+the \emph{primal components} of the predicted data.
+
+In this component view, \texttt{pygeoinf} uses
+\texttt{G.matrix(galerkin=False)} to build a matrix(-free) operator with
+\texttt{matvec} implementing \eqref{eq:standard-matrix-def}.
+
+\paragraph{What \texttt{rmatvec} means when \texttt{galerkin=False}.}
+The reverse multiplication does \emph{not} represent the Hilbert adjoint.
+Instead, it represents the \emph{Banach dual} $G'$:
+\begin{equation}
+  \label{eq:standard-rmatvec-dual}
+  \texttt{rmatvec}:\; \mathbb{R}^M \;\longrightarrow\; \mathbb{R}^N
+  \quad\text{corresponds to}\quad
+  G' : \dataspace' \to \modelspace'.
+\end{equation}
+Concretely, its input is interpreted as \emph{dual} components of some
+$d'\in\dataspace'$ and its output is the \emph{dual} component vector of
+$G'(d')\in\modelspace'$. This is the correct object when your algorithm is
+written in terms of dual pairings (for example, building linear functionals or
+working directly in $\dataspace'$).
+
 \subsection{The Galerkin matrix}
 \label{ssec:galerkin-matrix}
 
+When $\modelspace$ and $\dataspace$ are Hilbert spaces, we can convert primal
+vectors to dual vectors using the Riesz maps. Define the Gram (mass) matrix of
+the test space basis by
+\begin{equation}
+  \label{eq:mass-matrix-data}
+  \mass_{\dataspace} \in \mathbb{R}^{M\times M},
+  \qquad
+  (\mass_{\dataspace})_{ij} := \ipD{\psi_j}{\psi_i}.
+\end{equation}
+This matrix is precisely the coordinate representation of the map
+$\Riesz_{\dataspace}^{-1}:\dataspace_M\to\dataspace_M'$: for
+$d\in\dataspace_M$ with components $\mathbf{b}=\Pi_{\dataspace}(d)$,
+the dual element $\Riesz_{\dataspace}^{-1}d\in\dataspace'$ has dual components
+$\mass_{\dataspace}\,\mathbf{b}$.
+
+The \emph{Galerkin matrix} is then the coordinate representation of
+$\Riesz_{\dataspace}^{-1}\circ G$:
+\begin{equation}
+  \label{eq:galerkin-matrix-def}
+  \GdGal
+  \;:=\;
+  \Pi_{\dataspace'}\,\circ\, \Riesz_{\dataspace}^{-1}\,\circ\, G\,\circ\,\pi_{\modelspace}
+  \;\in\; \mathbb{R}^{M\times N}.
+\end{equation}
+In the common situation where $\Pi_{\dataspace'}$ is the dual coordinate map
+associated with the basis $\{\psi_j\}$, we have the concrete relation
+\begin{equation}
+  \label{eq:galerkin-vs-standard}
+  \GdGal = \mass_{\dataspace}\,\Gd.
+\end{equation}
+So \texttt{galerkin=True} does \emph{not} merely change a convention; it
+changes which space the output coordinates live in (primal vs dual).
+
+\paragraph{What \texttt{rmatvec} means when \texttt{galerkin=True}.}
+In this view the reverse multiplication corresponds to the \emph{Hilbert
+adjoint} $G^*$.
+More precisely, with \texttt{G.matrix(galerkin=True)}, the forward operation is
+\(
+  \mathbf{c} \mapsto \Pi_{\dataspace'}(\Riesz_{\dataspace}^{-1}G(\pi_{\modelspace}\mathbf{c}))
+\)
+and the reverse operation is
+\begin{equation}
+  \label{eq:galerkin-rmatvec-adjoint}
+  \mathbf{b} \mapsto \Pi_{\modelspace'}\bigl(\Riesz_{\modelspace}^{-1}G^*(\pi_{\dataspace}\mathbf{b})\bigr).
+\end{equation}
+This is the representation that makes the adjoint appear as a transpose at the
+matrix level and is therefore the right choice for algorithms that depend on
+symmetry/self-adjointness.
+
+\begin{pitfallbox}
+\textbf{Do not mix up the two matrix modes.}
+With \texttt{galerkin=False}, \texttt{rmatvec} acts on \emph{dual} components
+and represents $G'$. With \texttt{galerkin=True}, \texttt{rmatvec} acts on
+\emph{primal} components and represents $G^*$. Treating one as the other leads
+to silent scaling errors (missing Gram/Riesz factors) and can break algorithms.
+
+\medskip
+\textbf{Where symmetry shows up.}
+If $\modelspace=\dataspace$, the discretisation uses the same trial/test space,
+and $G$ is self-adjoint ($G=G^*$), then the Galerkin matrix $\GdGal$ is
+\emph{symmetric} ($\GdGal=\GdGal^\top$). The standard component matrix $\Gd$ is
+generally \emph{not} symmetric unless the chosen basis is orthonormal.
+\end{pitfallbox}
+
 \subsection{The discrete adjoint formula}
 \label{ssec:discrete-adjoint}
+
+Sometimes one wants a matrix that maps \emph{primal} components in the data
+space to \emph{primal} components in the model space, i.e.
+\begin{equation}
+  \label{eq:adjoint-component-matrix-def}
+  \Gadj_{\mathrm{comp}}\;:=\; \Pi_{\modelspace}\,\circ\,G^*\,\circ\,\pi_{\dataspace}
+  \;\in\;\mathbb{R}^{N\times M},
+\end{equation}
+so that $\Pi_{\modelspace}(G^*(d))=\Gadj_{\mathrm{comp}}\,\Pi_{\dataspace}(d)$.
+In non-orthonormal coordinates this is \emph{not} simply $\Gd^\top$.
+
+Let $\mass_{\modelspace}\in\mathbb{R}^{N\times N}$ and
+$\mass_{\dataspace}\in\mathbb{R}^{M\times M}$ be the Gram matrices of the
+chosen bases, i.e.
+\( (\mass_{\modelspace})_{ij}=\ipM{\phi_j}{\phi_i} \) and
+\( (\mass_{\dataspace})_{ij}=\ipD{\psi_j}{\psi_i} \).
+Then the coordinate form of the commuting relation
+\eqref{eq:adjoint-from-dual} yields the standard discrete adjoint identity
+\begin{equation}
+  \label{eq:discrete-adjoint-formula}
+  \Gadj_{\mathrm{comp}} 
+  \;=\;
+  \mass_{\modelspace}^{-1}\,\Gd^\top\,\mass_{\dataspace}.
+\end{equation}
+
+This formula makes explicit why the transpose is only the adjoint in Euclidean
+coordinates: if $\mass_{\modelspace}=I$ and $\mass_{\dataspace}=I$ (orthonormal
+bases with the standard inner product), then $\Gadj_{\mathrm{comp}}=\Gd^\top$.
+In general, the Gram matrices are unavoidable.
+
+\paragraph{Connection to \texttt{LinearOperator.matrix}.}
+The component view (\texttt{galerkin=False}) returns $\Gd$ and its
+\texttt{rmatvec} corresponds to $G'$ (dual-to-dual), not to
+$\Gadj_{\mathrm{comp}}$. The Galerkin view (\texttt{galerkin=True}) returns a
+matrix whose transpose implements the adjoint action at the level of
+coefficients (via \eqref{eq:galerkin-rmatvec-adjoint}), and is the view in
+which self-adjointness manifests as matrix symmetry.
 
 \section{Operators as stacks of linear forms}
 \label{sec:operator-from-forms}

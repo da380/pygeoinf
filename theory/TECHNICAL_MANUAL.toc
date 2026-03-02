@@ -80,114 +80,118 @@
 \contentsline {paragraph}{Derivation of the commuting relation.}{29}{paragraph*.35}%
 \contentsline {paragraph}{API correspondence.}{29}{paragraph*.36}%
 \contentsline {section}{\numberline {4.5}Matrix representations}{29}{section.4.5}%
-\contentsline {subsection}{\numberline {4.5.1}The standard (component) matrix}{29}{subsection.4.5.1}%
-\contentsline {subsection}{\numberline {4.5.2}The Galerkin matrix}{29}{subsection.4.5.2}%
-\contentsline {subsection}{\numberline {4.5.3}The discrete adjoint formula}{29}{subsection.4.5.3}%
-\contentsline {section}{\numberline {4.6}Operators as stacks of linear forms}{29}{section.4.6}%
-\contentsline {section}{\numberline {4.7}Constructing operators in pygeoinf}{29}{section.4.7}%
-\contentsline {section}{\numberline {4.8}The full commutative diagram}{30}{section.4.8}%
-\contentsline {chapter}{\numberline {5}Nonlinear Operators and Forms}{31}{chapter.5}%
-\contentsline {section}{\numberline {5.1}NonLinearOperator}{31}{section.5.1}%
-\contentsline {section}{\numberline {5.2}NonLinearForm}{31}{section.5.2}%
-\contentsline {section}{\numberline {5.3}Gradients and Hessians}{31}{section.5.3}%
-\contentsline {part}{II\hspace {1em}Geometry and Structure}{33}{part.2}%
-\contentsline {chapter}{\numberline {6}Subsets and Convex Sets}{35}{chapter.6}%
-\contentsline {section}{\numberline {6.1}Why convex sets?}{35}{section.6.1}%
-\contentsline {section}{\numberline {6.2}The Subset interface}{35}{section.6.2}%
-\contentsline {section}{\numberline {6.3}Balls and ellipsoids}{35}{section.6.3}%
-\contentsline {section}{\numberline {6.4}Half-spaces and polyhedral sets}{35}{section.6.4}%
-\contentsline {section}{\numberline {6.5}Degenerate sets: EmptySet and FullSpace}{35}{section.6.5}%
-\contentsline {section}{\numberline {6.6}Set operations}{35}{section.6.6}%
-\contentsline {chapter}{\numberline {7}Subspaces}{37}{chapter.7}%
-\contentsline {section}{\numberline {7.1}Motivation: equality constraints}{37}{section.7.1}%
-\contentsline {section}{\numberline {7.2}Orthogonal projectors}{37}{section.7.2}%
-\contentsline {section}{\numberline {7.3}Linear subspaces}{37}{section.7.3}%
-\contentsline {section}{\numberline {7.4}Affine subspaces}{37}{section.7.4}%
-\contentsline {subsection}{\numberline {7.4.1}Construction from tangent bases}{37}{subsection.7.4.1}%
-\contentsline {subsection}{\numberline {7.4.2}Construction from linear equations}{37}{subsection.7.4.2}%
-\contentsline {section}{\numberline {7.5}Tangent spaces and dimension}{37}{section.7.5}%
-\contentsline {chapter}{\numberline {8}Convex Analysis and Support Functions}{39}{chapter.8}%
-\contentsline {section}{\numberline {8.1}Why convex analysis?}{39}{section.8.1}%
-\contentsline {section}{\numberline {8.2}Support functions: intuition}{40}{section.8.2}%
-\contentsline {section}{\numberline {8.3}Formal definition and properties}{40}{section.8.3}%
-\contentsline {section}{\numberline {8.4}Subgradients and support points}{40}{section.8.4}%
-\contentsline {section}{\numberline {8.5}Concrete support functions}{40}{section.8.5}%
-\contentsline {subsection}{\numberline {8.5.1}BallSupportFunction}{40}{subsection.8.5.1}%
-\contentsline {subsection}{\numberline {8.5.2}EllipsoidSupportFunction}{40}{subsection.8.5.2}%
-\contentsline {subsection}{\numberline {8.5.3}PolyhedralSupportFunction}{40}{subsection.8.5.3}%
-\contentsline {subsection}{\numberline {8.5.4}SobolevBallSupportFunction}{40}{subsection.8.5.4}%
-\contentsline {section}{\numberline {8.6}Combinators: building complex sets from simple ones}{40}{section.8.6}%
-\contentsline {subsection}{\numberline {8.6.1}Infimal convolution (Minkowski sum)}{40}{subsection.8.6.1}%
-\contentsline {subsection}{\numberline {8.6.2}Support function sum (intersection)}{40}{subsection.8.6.2}%
-\contentsline {subsection}{\numberline {8.6.3}Scaled sums}{40}{subsection.8.6.3}%
-\contentsline {section}{\numberline {8.7}The dual master equation}{40}{section.8.7}%
-\contentsline {chapter}{\numberline {9}Gaussian Measures}{41}{chapter.9}%
-\contentsline {section}{\numberline {9.1}Why Gaussian measures?}{41}{section.9.1}%
-\contentsline {section}{\numberline {9.2}Gaussian measures on Hilbert spaces}{41}{section.9.2}%
-\contentsline {section}{\numberline {9.3}Sampling}{41}{section.9.3}%
-\contentsline {section}{\numberline {9.4}Push-forward and marginals}{41}{section.9.4}%
-\contentsline {section}{\numberline {9.5}Conditioning (Bayesian update)}{41}{section.9.5}%
-\contentsline {part}{III\hspace {1em}Problems and Algorithms}{43}{part.3}%
-\contentsline {chapter}{\numberline {10}Forward Problems}{45}{chapter.10}%
-\contentsline {section}{\numberline {10.1}The forward modelling framework}{45}{section.10.1}%
-\contentsline {section}{\numberline {10.2}ForwardProblem and LinearForwardProblem}{45}{section.10.2}%
-\contentsline {chapter}{\numberline {11}Deterministic Inversion}{47}{chapter.11}%
-\contentsline {section}{\numberline {11.1}Least-squares inversion}{47}{section.11.1}%
-\contentsline {section}{\numberline {11.2}Minimum-norm inversion}{47}{section.11.2}%
-\contentsline {section}{\numberline {11.3}Constrained inversions}{47}{section.11.3}%
-\contentsline {section}{\numberline {11.4}Connection to the dual master equation}{47}{section.11.4}%
-\contentsline {chapter}{\numberline {12}Bayesian Inversion}{49}{chapter.12}%
-\contentsline {section}{\numberline {12.1}The Bayesian framework for inverse problems}{49}{section.12.1}%
-\contentsline {section}{\numberline {12.2}Linear Bayesian inversion}{49}{section.12.2}%
-\contentsline {section}{\numberline {12.3}Constrained Bayesian inversion}{49}{section.12.3}%
-\contentsline {section}{\numberline {12.4}Posterior uncertainty}{49}{section.12.4}%
-\contentsline {chapter}{\numberline {13}Backus--Gilbert and DLI Inference}{51}{chapter.13}%
-\contentsline {section}{\numberline {13.1}The inference problem}{51}{section.13.1}%
-\contentsline {section}{\numberline {13.2}Backus--Gilbert estimators}{51}{section.13.2}%
-\contentsline {section}{\numberline {13.3}The admissible property set $\mathcal {U}$}{51}{section.13.3}%
-\contentsline {section}{\numberline {13.4}Computing $\mathcal {U}$ via the dual master equation}{51}{section.13.4}%
-\contentsline {section}{\numberline {13.5}Polytope outer approximation}{51}{section.13.5}%
-\contentsline {chapter}{\numberline {14}Convex Optimisation}{53}{chapter.14}%
-\contentsline {section}{\numberline {14.1}Overview of optimisation in pygeoinf}{53}{section.14.1}%
-\contentsline {section}{\numberline {14.2}Linear solvers}{53}{section.14.2}%
-\contentsline {section}{\numberline {14.3}Convex optimisation algorithms}{53}{section.14.3}%
-\contentsline {section}{\numberline {14.4}Preconditioners}{53}{section.14.4}%
-\contentsline {part}{IV\hspace {1em}Computational Methods and Visualisation}{55}{part.4}%
-\contentsline {chapter}{\numberline {15}Computational Utilities}{57}{chapter.15}%
-\contentsline {section}{\numberline {15.1}Randomised matrix decompositions}{57}{section.15.1}%
-\contentsline {section}{\numberline {15.2}Direct sum operators}{57}{section.15.2}%
-\contentsline {section}{\numberline {15.3}Parallel computation}{57}{section.15.3}%
-\contentsline {section}{\numberline {15.4}Auxiliary functions}{57}{section.15.4}%
-\contentsline {chapter}{\numberline {16}Visualisation}{59}{chapter.16}%
-\contentsline {section}{\numberline {16.1}The SubspaceSlicePlotter}{59}{section.16.1}%
-\contentsline {section}{\numberline {16.2}1D slices}{59}{section.16.2}%
-\contentsline {section}{\numberline {16.3}2D slices}{59}{section.16.3}%
-\contentsline {section}{\numberline {16.4}3D slices}{59}{section.16.4}%
-\contentsline {section}{\numberline {16.5}Worked example: visualising the admissible property set}{59}{section.16.5}%
-\contentsline {part}{Appendices}{63}{part*.37}%
-\contentsline {chapter}{\numberline {A}Convex Analysis Primer}{63}{appendix.A}%
-\contentsline {section}{\numberline {A.1}Convex sets and functions}{63}{section.A.1}%
-\contentsline {section}{\numberline {A.2}Separation theorems}{63}{section.A.2}%
-\contentsline {section}{\numberline {A.3}Conjugate (Fenchel--Legendre) duality}{63}{section.A.3}%
-\contentsline {section}{\numberline {A.4}Subdifferentials}{63}{section.A.4}%
-\contentsline {section}{\numberline {A.5}Infimal convolution}{63}{section.A.5}%
-\contentsline {chapter}{\numberline {B}Functional Analysis Prerequisites}{65}{appendix.B}%
-\contentsline {section}{\numberline {B.1}Banach spaces}{65}{section.B.1}%
-\contentsline {section}{\numberline {B.2}Weak and weak-* topologies}{65}{section.B.2}%
-\contentsline {section}{\numberline {B.3}Compact operators}{65}{section.B.3}%
-\contentsline {section}{\numberline {B.4}Spectral theory for self-adjoint operators}{65}{section.B.4}%
-\contentsline {chapter}{\numberline {C}Deferred Proofs}{67}{appendix.C}%
-\contentsline {chapter}{\numberline {D}Complete API Quick Reference}{69}{appendix.D}%
-\contentsline {section}{\numberline {D.1}hilbert\_space module}{69}{section.D.1}%
-\contentsline {section}{\numberline {D.2}linear\_forms module}{69}{section.D.2}%
-\contentsline {section}{\numberline {D.3}linear\_operators module}{69}{section.D.3}%
-\contentsline {section}{\numberline {D.4}subsets module}{69}{section.D.4}%
-\contentsline {section}{\numberline {D.5}subspaces module}{69}{section.D.5}%
-\contentsline {section}{\numberline {D.6}convex\_analysis module}{69}{section.D.6}%
-\contentsline {section}{\numberline {D.7}gaussian\_measure module}{69}{section.D.7}%
-\contentsline {section}{\numberline {D.8}forward\_problem module}{69}{section.D.8}%
-\contentsline {section}{\numberline {D.9}inversion module}{69}{section.D.9}%
-\contentsline {section}{\numberline {D.10}linear\_bayesian module}{69}{section.D.10}%
-\contentsline {section}{\numberline {D.11}linear\_optimisation module}{69}{section.D.11}%
-\contentsline {section}{\numberline {D.12}backus\_gilbert module}{69}{section.D.12}%
-\contentsline {section}{\numberline {D.13}visualisation module}{69}{section.D.13}%
+\contentsline {paragraph}{Coordinates are not geometry.}{30}{paragraph*.37}%
+\contentsline {subsection}{\numberline {4.5.1}The standard (component) matrix}{30}{subsection.4.5.1}%
+\contentsline {paragraph}{What \texttt {rmatvec} means when \texttt {galerkin=False}.}{30}{paragraph*.38}%
+\contentsline {subsection}{\numberline {4.5.2}The Galerkin matrix}{30}{subsection.4.5.2}%
+\contentsline {paragraph}{What \texttt {rmatvec} means when \texttt {galerkin=True}.}{31}{paragraph*.39}%
+\contentsline {subsection}{\numberline {4.5.3}The discrete adjoint formula}{31}{subsection.4.5.3}%
+\contentsline {paragraph}{Connection to \texttt {LinearOperator.matrix}.}{31}{paragraph*.40}%
+\contentsline {section}{\numberline {4.6}Operators as stacks of linear forms}{31}{section.4.6}%
+\contentsline {section}{\numberline {4.7}Constructing operators in pygeoinf}{32}{section.4.7}%
+\contentsline {section}{\numberline {4.8}The full commutative diagram}{32}{section.4.8}%
+\contentsline {chapter}{\numberline {5}Nonlinear Operators and Forms}{33}{chapter.5}%
+\contentsline {section}{\numberline {5.1}NonLinearOperator}{33}{section.5.1}%
+\contentsline {section}{\numberline {5.2}NonLinearForm}{33}{section.5.2}%
+\contentsline {section}{\numberline {5.3}Gradients and Hessians}{33}{section.5.3}%
+\contentsline {part}{II\hspace {1em}Geometry and Structure}{35}{part.2}%
+\contentsline {chapter}{\numberline {6}Subsets and Convex Sets}{37}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Why convex sets?}{37}{section.6.1}%
+\contentsline {section}{\numberline {6.2}The Subset interface}{37}{section.6.2}%
+\contentsline {section}{\numberline {6.3}Balls and ellipsoids}{37}{section.6.3}%
+\contentsline {section}{\numberline {6.4}Half-spaces and polyhedral sets}{37}{section.6.4}%
+\contentsline {section}{\numberline {6.5}Degenerate sets: EmptySet and FullSpace}{37}{section.6.5}%
+\contentsline {section}{\numberline {6.6}Set operations}{37}{section.6.6}%
+\contentsline {chapter}{\numberline {7}Subspaces}{39}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Motivation: equality constraints}{39}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Orthogonal projectors}{39}{section.7.2}%
+\contentsline {section}{\numberline {7.3}Linear subspaces}{39}{section.7.3}%
+\contentsline {section}{\numberline {7.4}Affine subspaces}{39}{section.7.4}%
+\contentsline {subsection}{\numberline {7.4.1}Construction from tangent bases}{39}{subsection.7.4.1}%
+\contentsline {subsection}{\numberline {7.4.2}Construction from linear equations}{39}{subsection.7.4.2}%
+\contentsline {section}{\numberline {7.5}Tangent spaces and dimension}{39}{section.7.5}%
+\contentsline {chapter}{\numberline {8}Convex Analysis and Support Functions}{41}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Why convex analysis?}{41}{section.8.1}%
+\contentsline {section}{\numberline {8.2}Support functions: intuition}{42}{section.8.2}%
+\contentsline {section}{\numberline {8.3}Formal definition and properties}{42}{section.8.3}%
+\contentsline {section}{\numberline {8.4}Subgradients and support points}{42}{section.8.4}%
+\contentsline {section}{\numberline {8.5}Concrete support functions}{42}{section.8.5}%
+\contentsline {subsection}{\numberline {8.5.1}BallSupportFunction}{42}{subsection.8.5.1}%
+\contentsline {subsection}{\numberline {8.5.2}EllipsoidSupportFunction}{42}{subsection.8.5.2}%
+\contentsline {subsection}{\numberline {8.5.3}PolyhedralSupportFunction}{42}{subsection.8.5.3}%
+\contentsline {subsection}{\numberline {8.5.4}SobolevBallSupportFunction}{42}{subsection.8.5.4}%
+\contentsline {section}{\numberline {8.6}Combinators: building complex sets from simple ones}{42}{section.8.6}%
+\contentsline {subsection}{\numberline {8.6.1}Infimal convolution (Minkowski sum)}{42}{subsection.8.6.1}%
+\contentsline {subsection}{\numberline {8.6.2}Support function sum (intersection)}{42}{subsection.8.6.2}%
+\contentsline {subsection}{\numberline {8.6.3}Scaled sums}{42}{subsection.8.6.3}%
+\contentsline {section}{\numberline {8.7}The dual master equation}{42}{section.8.7}%
+\contentsline {chapter}{\numberline {9}Gaussian Measures}{43}{chapter.9}%
+\contentsline {section}{\numberline {9.1}Why Gaussian measures?}{43}{section.9.1}%
+\contentsline {section}{\numberline {9.2}Gaussian measures on Hilbert spaces}{43}{section.9.2}%
+\contentsline {section}{\numberline {9.3}Sampling}{43}{section.9.3}%
+\contentsline {section}{\numberline {9.4}Push-forward and marginals}{43}{section.9.4}%
+\contentsline {section}{\numberline {9.5}Conditioning (Bayesian update)}{43}{section.9.5}%
+\contentsline {part}{III\hspace {1em}Problems and Algorithms}{45}{part.3}%
+\contentsline {chapter}{\numberline {10}Forward Problems}{47}{chapter.10}%
+\contentsline {section}{\numberline {10.1}The forward modelling framework}{47}{section.10.1}%
+\contentsline {section}{\numberline {10.2}ForwardProblem and LinearForwardProblem}{47}{section.10.2}%
+\contentsline {chapter}{\numberline {11}Deterministic Inversion}{49}{chapter.11}%
+\contentsline {section}{\numberline {11.1}Least-squares inversion}{49}{section.11.1}%
+\contentsline {section}{\numberline {11.2}Minimum-norm inversion}{49}{section.11.2}%
+\contentsline {section}{\numberline {11.3}Constrained inversions}{49}{section.11.3}%
+\contentsline {section}{\numberline {11.4}Connection to the dual master equation}{49}{section.11.4}%
+\contentsline {chapter}{\numberline {12}Bayesian Inversion}{51}{chapter.12}%
+\contentsline {section}{\numberline {12.1}The Bayesian framework for inverse problems}{51}{section.12.1}%
+\contentsline {section}{\numberline {12.2}Linear Bayesian inversion}{51}{section.12.2}%
+\contentsline {section}{\numberline {12.3}Constrained Bayesian inversion}{51}{section.12.3}%
+\contentsline {section}{\numberline {12.4}Posterior uncertainty}{51}{section.12.4}%
+\contentsline {chapter}{\numberline {13}Backus--Gilbert and DLI Inference}{53}{chapter.13}%
+\contentsline {section}{\numberline {13.1}The inference problem}{53}{section.13.1}%
+\contentsline {section}{\numberline {13.2}Backus--Gilbert estimators}{53}{section.13.2}%
+\contentsline {section}{\numberline {13.3}The admissible property set $\mathcal {U}$}{53}{section.13.3}%
+\contentsline {section}{\numberline {13.4}Computing $\mathcal {U}$ via the dual master equation}{53}{section.13.4}%
+\contentsline {section}{\numberline {13.5}Polytope outer approximation}{53}{section.13.5}%
+\contentsline {chapter}{\numberline {14}Convex Optimisation}{55}{chapter.14}%
+\contentsline {section}{\numberline {14.1}Overview of optimisation in pygeoinf}{55}{section.14.1}%
+\contentsline {section}{\numberline {14.2}Linear solvers}{55}{section.14.2}%
+\contentsline {section}{\numberline {14.3}Convex optimisation algorithms}{55}{section.14.3}%
+\contentsline {section}{\numberline {14.4}Preconditioners}{55}{section.14.4}%
+\contentsline {part}{IV\hspace {1em}Computational Methods and Visualisation}{57}{part.4}%
+\contentsline {chapter}{\numberline {15}Computational Utilities}{59}{chapter.15}%
+\contentsline {section}{\numberline {15.1}Randomised matrix decompositions}{59}{section.15.1}%
+\contentsline {section}{\numberline {15.2}Direct sum operators}{59}{section.15.2}%
+\contentsline {section}{\numberline {15.3}Parallel computation}{59}{section.15.3}%
+\contentsline {section}{\numberline {15.4}Auxiliary functions}{59}{section.15.4}%
+\contentsline {chapter}{\numberline {16}Visualisation}{61}{chapter.16}%
+\contentsline {section}{\numberline {16.1}The SubspaceSlicePlotter}{61}{section.16.1}%
+\contentsline {section}{\numberline {16.2}1D slices}{61}{section.16.2}%
+\contentsline {section}{\numberline {16.3}2D slices}{61}{section.16.3}%
+\contentsline {section}{\numberline {16.4}3D slices}{61}{section.16.4}%
+\contentsline {section}{\numberline {16.5}Worked example: visualising the admissible property set}{61}{section.16.5}%
+\contentsline {part}{Appendices}{65}{part*.41}%
+\contentsline {chapter}{\numberline {A}Convex Analysis Primer}{65}{appendix.A}%
+\contentsline {section}{\numberline {A.1}Convex sets and functions}{65}{section.A.1}%
+\contentsline {section}{\numberline {A.2}Separation theorems}{65}{section.A.2}%
+\contentsline {section}{\numberline {A.3}Conjugate (Fenchel--Legendre) duality}{65}{section.A.3}%
+\contentsline {section}{\numberline {A.4}Subdifferentials}{65}{section.A.4}%
+\contentsline {section}{\numberline {A.5}Infimal convolution}{65}{section.A.5}%
+\contentsline {chapter}{\numberline {B}Functional Analysis Prerequisites}{67}{appendix.B}%
+\contentsline {section}{\numberline {B.1}Banach spaces}{67}{section.B.1}%
+\contentsline {section}{\numberline {B.2}Weak and weak-* topologies}{67}{section.B.2}%
+\contentsline {section}{\numberline {B.3}Compact operators}{67}{section.B.3}%
+\contentsline {section}{\numberline {B.4}Spectral theory for self-adjoint operators}{67}{section.B.4}%
+\contentsline {chapter}{\numberline {C}Deferred Proofs}{69}{appendix.C}%
+\contentsline {chapter}{\numberline {D}Complete API Quick Reference}{71}{appendix.D}%
+\contentsline {section}{\numberline {D.1}hilbert\_space module}{71}{section.D.1}%
+\contentsline {section}{\numberline {D.2}linear\_forms module}{71}{section.D.2}%
+\contentsline {section}{\numberline {D.3}linear\_operators module}{71}{section.D.3}%
+\contentsline {section}{\numberline {D.4}subsets module}{71}{section.D.4}%
+\contentsline {section}{\numberline {D.5}subspaces module}{71}{section.D.5}%
+\contentsline {section}{\numberline {D.6}convex\_analysis module}{71}{section.D.6}%
+\contentsline {section}{\numberline {D.7}gaussian\_measure module}{71}{section.D.7}%
+\contentsline {section}{\numberline {D.8}forward\_problem module}{71}{section.D.8}%
+\contentsline {section}{\numberline {D.9}inversion module}{71}{section.D.9}%
+\contentsline {section}{\numberline {D.10}linear\_bayesian module}{71}{section.D.10}%
+\contentsline {section}{\numberline {D.11}linear\_optimisation module}{71}{section.D.11}%
+\contentsline {section}{\numberline {D.12}backus\_gilbert module}{71}{section.D.12}%
+\contentsline {section}{\numberline {D.13}visualisation module}{71}{section.D.13}%

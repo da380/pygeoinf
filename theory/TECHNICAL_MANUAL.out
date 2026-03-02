@@ -132,20 +132,20 @@
 \BOOKMARK [1][-]{section.16.3}{16.3 2D slices}{chapter.16}% 132
 \BOOKMARK [1][-]{section.16.4}{16.4 3D slices}{chapter.16}% 133
 \BOOKMARK [1][-]{section.16.5}{16.5 Worked example: visualising the admissible property set}{chapter.16}% 134
-\BOOKMARK [-1][-]{part*.37}{Appendices}{}% 135
-\BOOKMARK [0][-]{appendix.A}{A Convex Analysis Primer}{part*.37}% 136
+\BOOKMARK [-1][-]{part*.41}{Appendices}{}% 135
+\BOOKMARK [0][-]{appendix.A}{A Convex Analysis Primer}{part*.41}% 136
 \BOOKMARK [1][-]{section.A.1}{A.1 Convex sets and functions}{appendix.A}% 137
 \BOOKMARK [1][-]{section.A.2}{A.2 Separation theorems}{appendix.A}% 138
 \BOOKMARK [1][-]{section.A.3}{A.3 Conjugate \(Fenchel\205Legendre\) duality}{appendix.A}% 139
 \BOOKMARK [1][-]{section.A.4}{A.4 Subdifferentials}{appendix.A}% 140
 \BOOKMARK [1][-]{section.A.5}{A.5 Infimal convolution}{appendix.A}% 141
-\BOOKMARK [0][-]{appendix.B}{B Functional Analysis Prerequisites}{part*.37}% 142
+\BOOKMARK [0][-]{appendix.B}{B Functional Analysis Prerequisites}{part*.41}% 142
 \BOOKMARK [1][-]{section.B.1}{B.1 Banach spaces}{appendix.B}% 143
 \BOOKMARK [1][-]{section.B.2}{B.2 Weak and weak-* topologies}{appendix.B}% 144
 \BOOKMARK [1][-]{section.B.3}{B.3 Compact operators}{appendix.B}% 145
 \BOOKMARK [1][-]{section.B.4}{B.4 Spectral theory for self-adjoint operators}{appendix.B}% 146
-\BOOKMARK [0][-]{appendix.C}{C Deferred Proofs}{part*.37}% 147
-\BOOKMARK [0][-]{appendix.D}{D Complete API Quick Reference}{part*.37}% 148
+\BOOKMARK [0][-]{appendix.C}{C Deferred Proofs}{part*.41}% 147
+\BOOKMARK [0][-]{appendix.D}{D Complete API Quick Reference}{part*.41}% 148
 \BOOKMARK [1][-]{section.D.1}{D.1 hilbert\137space module}{appendix.D}% 149
 \BOOKMARK [1][-]{section.D.2}{D.2 linear\137forms module}{appendix.D}% 150
 \BOOKMARK [1][-]{section.D.3}{D.3 linear\137operators module}{appendix.D}% 151
