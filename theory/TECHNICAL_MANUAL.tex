@@ -2369,13 +2369,143 @@ Given linear forms $\ell_i \in \modelspace'$, construct the forward operator via
 
 \section{Constructing operators in pygeoinf}
 \label{sec:constructing-operators}
-% From callables, from matrices, from linear forms.
-% Providing vs deriving adjoint/dual mappings.
+
+The class \texttt{LinearOperator} is designed to keep the type distinctions
+visible:\;the forward map acts on primal vectors,
+the Banach-dual map acts on linear forms, and the Hilbert adjoint acts again on
+primal vectors. In code these are exposed as \texttt{G}, \texttt{G.dual}, and
+\texttt{G.adjoint}.
+
+\paragraph{The primary constructor.}
+The most flexible construction route is
+\texttt{LinearOperator(domain, codomain, mapping, ...)}.
+The callables you supply are actions on \emph{elements} of the relevant spaces,
+not on component vectors.
 
 \begin{codebox}
-\texttt{LinearOperator(domain, codomain, mapping)} is the primary constructor.
-Optionally provide \texttt{dual\_mapping} ($G'$) or \texttt{adjoint\_mapping} ($G^*$);
-the library derives the other via the Riesz maps.
+\texttt{LinearOperator(\
+  domain, codomain, mapping,\
+  dual\_mapping=..., adjoint\_mapping=...,\
+  dual\_base=..., adjoint\_base=...\
+)}
+\end{codebox}
+
+\paragraph{What the arguments mean.}
+Let $G: \modelspace \to \dataspace$ be the intended forward operator.
+Then the constructor arguments have the following semantics.
+\begin{itemize}
+  \item \texttt{mapping}: implements the primal action $G(x)\in\dataspace$ for
+    $x\in\modelspace$. This is what runs when you call \texttt{G(x)}.
+  \item \texttt{dual\_mapping}: implements the dual action
+    $G'(\ell)\in\modelspace'$ for $\ell\in\dataspace'$. In the library, a dual
+    element is represented by a \texttt{LinearForm} and is created via
+    \texttt{space.to\_dual(...)}. This is what runs when you call
+    \texttt{G.dual(yp)}.
+  \item \texttt{adjoint\_mapping}: implements the Hilbert adjoint action
+    $G^*(y)\in\modelspace$ for $y\in\dataspace$ (primal vector in the codomain).
+    This is what runs when you call \texttt{G.adjoint(y)}.
+  \item \texttt{dual\_base}, \texttt{adjoint\_base}: internal book-keeping used
+    when constructing \texttt{G.dual} and \texttt{G.adjoint}. Most users should
+    never set these explicitly.
+\end{itemize}
+
+\paragraph{What gets derived if you only provide one mapping.}
+The library prefers you to supply at least one of \texttt{dual\_mapping} or
+\texttt{adjoint\_mapping}. If you provide only one, the other is derived using
+the Riesz maps (i.e. \texttt{to\_dual} and \texttt{from\_dual}) of the spaces,
+exactly mirroring the identity
+\(G^* = \Riesz_{\modelspace} \circ G' \circ \Riesz_{\dataspace}^{-1}\).
+
+\begin{codebox}
+If you provide \texttt{dual\_mapping} (i.e. $G'$), the adjoint is derived as
+\texttt{G.adjoint(y) = domain.from\_dual( G.dual( codomain.to\_dual(y) ) )}.
+
+If you provide \texttt{adjoint\_mapping} (i.e. $G^*$), the dual is derived as
+\texttt{G.dual(yp) = domain.to\_dual( G.adjoint( codomain.from\_dual(yp) ) )}.
+\end{codebox}
+
+If you provide neither, \texttt{G.dual} falls back to the definition
+$G'(\ell)=\ell\circ G$ (composition of linear forms with the forward map) and
+\texttt{G.adjoint} is then obtained via the Riesz maps. This is mathematically
+correct, but can be much slower than a purpose-built adjoint/dual action.
+
+\paragraph{When \texttt{mapping} alone is enough.}
+Supplying only \texttt{mapping} is fine when you will \emph{only} evaluate the
+forward operator and never need \texttt{G.dual} or \texttt{G.adjoint}
+(e.g. a quick diagnostic or a forward simulation). It is also acceptable for
+very small problems where the default derived actions are not performance
+limiting.
+
+\paragraph{When you should also provide \texttt{dual\_mapping} or \texttt{adjoint\_mapping}.}
+Most inverse-problem workloads repeatedly apply an adjoint (or dual): gradients,
+Gauss--Newton steps, normal equations, Krylov solvers, and many preconditioners
+all rely on \texttt{G.adjoint} or \texttt{G.dual}. In those cases, you should
+implement at least one of these actions explicitly.
+\begin{itemize}
+  \item Prefer supplying \texttt{adjoint\_mapping} when you can write an
+    algorithmic reverse operator that maps a data-space vector to a model-space
+    vector. This is usually the most direct route for optimisation.
+  \item Prefer supplying \texttt{dual\_mapping} when your operator is naturally
+    described as a collection of linear functionals (or you already work in
+    dual space), so that applying $G'$ is simpler than applying $G^*$.
+\end{itemize}
+
+\begin{pitfallbox}
+Do not assume ``transpose equals adjoint'' unless your geometry is Euclidean.
+In \texttt{pygeoinf}, \texttt{G.dual} (Banach dual) and \texttt{G.adjoint}
+(Hilbert adjoint) are different objects in general, related by the Riesz maps
+\texttt{to\_dual}/\texttt{from\_dual}.
+\end{pitfallbox}
+
+\paragraph{Formal adjoint vs Hilbert adjoint (and why weights matter).}
+In many PDE and FEM derivations one first writes a \emph{formal adjoint}
+$G^{\dagger}$ with respect to a simple, unweighted $L^2$ pairing. However, the
+operator \emph{actually used} by algorithms in the library is the \emph{Hilbert
+adjoint} $G^*$ determined by the inner products on $\modelspace$ and
+$\dataspace$.
+When either space is a \texttt{MassWeightedHilbertSpace}, its inner
+product is defined via an underlying space $X$ and a mass operator $M$:
+\(\ip{u}{v}{Y}=\ip{M u}{v}{X}\). The Riesz map is modified accordingly (see
+\texttt{MassWeightedHilbertSpace.to\_dual} and \texttt{.from\_dual}).
+
+Concretely, if $\modelspace$ and $\dataspace$ are mass-weighted by operators
+$M_{\modelspace}$ and $M_{\dataspace}$ (identity in the unweighted case), then
+the Hilbert adjoint relates to the formal adjoint by the mass-weighted
+conjugation
+\begin{equation}
+  \label{eq:formal-vs-hilbert-adjoint}
+  G^* \,=\, M_{\modelspace}^{-1} \circ G^{\dagger} \circ M_{\dataspace}.
+\end{equation}
+
+This is exactly what \texttt{LinearOperator.from\_formal\_adjoint} encodes: you
+implement an operator (and its adjoint) on the underlying unweighted spaces,
+then \emph{lift} it to the correct weighted geometry so that
+\texttt{G.adjoint} matches the Hilbert adjoint dictated by the mass operators.
+
+\begin{codebox}
+If you already have an operator on the underlying spaces (``formal'' geometry),
+lift it to mass-weighted spaces via
+\texttt{LinearOperator.from\_formal\_adjoint(domain, codomain, op\_L2)}.
+\end{codebox}
+
+\paragraph{Safe factory routes (recommended when applicable).}
+Whenever you have a clean, explicit representation, prefer the dedicated
+factories. They avoid ambiguity about whether a matrix is interpreted in
+standard or Galerkin form and they return specialized subclasses for better
+performance.
+
+\begin{codebox}
+\texttt{LinearOperator.from\_matrix(domain, codomain, A, galerkin=False)}
+wraps a standard component matrix $A$.
+
+\texttt{LinearOperator.from\_matrix(domain, codomain, K, galerkin=True)}
+wraps a Galerkin matrix $K$ (already mass-weighted in the codomain).
+
+\texttt{LinearOperator.self\_adjoint\_from\_matrix(domain, K)}
+constructs a self-adjoint operator, interpreting \texttt{K} as Galerkin.
+
+\texttt{LinearOperator.from\_linear\_forms([$\ell_1, \ldots, \ell_N$])}
+builds an operator whose rows are linear forms $\ell_i\in\modelspace'$.
 \end{codebox}
 
 \section{The full commutative diagram}
