@@ -2569,8 +2569,71 @@ violated, the outputs may be misleading even if the code runs.
 
 \section{The full commutative diagram}
 \label{sec:operator-diagram}
-% Complete tikz-cd diagram: M, D, M', D', ℝⁿ, ℝ^{N_d}, all maps.
 
+The objects and maps introduced in this chapter — the forward operator $G$,
+its Banach dual $G'$, its Hilbert adjoint $\Gadj$, the analysis/synthesis
+(coordinate projection/inclusion) maps $\Pi_N$, and the primal and dual
+Riesz maps $\Riesz$ — fit together into a single commutative diagram.
+Figure~\ref{fig:finite-basis-diagram} shows the full picture: the outer square
+lives in the infinite-dimensional spaces $\modelspace$ and $\dataspace$; the
+inner rows involve the finite-dimensional surrogates
+$\mathbb{R}^N$ and $\mathbb{R}^{N_d}$ used in computations.
+
+The central identity threading the diagram is
+\begin{equation}
+  \label{eq:adjoint-riesz-commute}
+  \Gadj = \RieszM \circ G' \circ \RieszD^{-1},
+\end{equation}
+which says that the Hilbert adjoint is the Banach dual conjugated by the
+Riesz maps of the two spaces.  The blue arrows highlight the maps that
+depend on the inner-product geometry of $\modelspace$ and $\dataspace$: any
+change in those inner products (e.g.\ using a mass-weighted space) affects
+$\RieszM$, $\RieszD$, and therefore $\Gadj$, while leaving $G'$ and the
+coordinate maps untouched.
+
+\begin{figure}[h]
+\centering
+\begin{tikzcd}[row sep=huge, column sep=huge]
+\modelspace \arrow[rrrr, "G"]
+   \arrow[drr, blue, "\Pi_N" description]
+   \arrow[ddd, bend right=25, blue, "\RieszM^{-1}"']
+& & & & \dataspace \arrow[dl, blue, "\Pi_{\dataspace}"]
+   \arrow[llll, bend right=25, blue, "\Gadj"']
+   \arrow[ddd, bend left=25, blue, "\RieszD^{-1}"]\\
+& \modelspace_N \arrow[lu, "i_{\modelspace}"] \arrow[d, "\mathcal{R}_{\modelspace_N}"]
+& \mathbb{R}^N \arrow[d, bend left=25, "\mathcal{R}_{\mathbb{R}^N}^{-1}"]
+   \arrow[l, blue, "\pi_N"']
+   \arrow[r, "\Gd"]
+& \mathbb{R}^{N_d} \arrow[d, bend left=25, "\mathcal{R}_{\mathbb{R}^{N_d}}^{-1}"]
+   \arrow[l, bend right=25, "\Gd^*"']
+   \arrow[ru, blue, bend left=25, "\pi_{\dataspace}"]
+& \\
+& \modelspace_N' \arrow[u, bend left=25, "\mathcal{R}_{\modelspace_N}^{-1}"]
+   \arrow[r, "\pi_N'"]
+& (\mathbb{R}^N)' \arrow[u, "\mathcal{R}_{\mathbb{R}^N}"]
+   \arrow[dll, "\Pi_N'"]
+   \arrow[l, bend right=25, "(\pi_N')^{*}"']
+& (\mathbb{R}^{N_d})' \arrow[u, "\mathcal{R}_{\mathbb{R}^{N_d}}"]
+   \arrow[l, "\Gd'"]
+   \arrow[dr, bend right=25, "\Pi_{\dataspace}'"']
+& \\
+\modelspace' \arrow[uuu, blue, "\RieszM"']
+   \arrow[ru, "i'_{\modelspace}"]
+& & & &
+\dataspace' \arrow[llll, "G'"]
+   \arrow[uuu, blue, "\RieszD"]
+   \arrow[lu, "\pi_{\dataspace}'"']
+\end{tikzcd}
+\caption{Summary of all maps between $\modelspace$, $\dataspace$, their duals,
+and their finite-$N$ surrogates $\mathbb{R}^N$, $\mathbb{R}^{N_d}$.
+Blue arrows are geometry-dependent (they involve the Riesz maps of
+$\modelspace$ or $\dataspace$ and hence change when the inner products change).
+The key commuting identity is $\Gadj=\RieszM\circ G'\circ \RieszD^{-1}$
+(outer square, going top-right $\to$ bottom $\to$ top-left vs top $\to$ top-right).
+The inner rows give the finite-dimensional computational surrogates and how they
+interlock with the infinite-dimensional picture.}
+\label{fig:finite-basis-diagram}
+\end{figure}
 
 % ============================================================================
 \chapter{Nonlinear Operators and Forms}
