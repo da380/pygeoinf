@@ -1686,8 +1686,28 @@ $\Riesz_H^{-1}=\mathbf{M}^{-1}\circ\Riesz_X^{-1}$, exactly matching
 
 \section{Motivation: measurements as linear functionals}
 \label{sec:forms-motivation}
-% A seismometer, a gravity meter, a magnetometer: each produces a number
-% that depends linearly on the model. That's a linear form.
+
+Many inverse problems can be written (after linearization, if needed) as
+\[
+  \tilde{d}_i = \ell_i(m) + \varepsilon_i, \qquad i=1,\ldots,M,
+\]
+where $m\in\modelspace$ is the model, each $\ell_i\in\modelspace'$ is a
+continuous linear functional, and $\varepsilon_i$ is measurement noise.
+The data vector is therefore best understood as a \emph{stack of linear forms}
+acting on the model.
+
+\begin{examplebox}
+\textbf{Example (a localized average).}
+Let $\modelspace=L^2(\Omega)$ and let $w\in L^2(\Omega)$ be a fixed weighting
+function describing an instrument footprint or averaging kernel.
+Then
+\[
+  \ell(m) := \int_\Omega w(x)\,m(x)\,\mathrm{d}x
+\]
+is a continuous linear form.
+In a discretization, the only question is how $m$ is represented and which
+inner product defines the geometry of $\modelspace$.
+\end{examplebox}
 
 \begin{whybox}
 Every single datum in your data vector is the result of applying a
@@ -1697,24 +1717,155 @@ understanding what your data actually \emph{are} mathematically.
 
 \section{Definition}
 \label{sec:form-definition}
-% ℓ: M → ℝ, continuous, linear. Element of M'.
+
+Let $\modelspace$ be a (real) Hilbert space and let $\modelspace'$ denote its
+continuous dual.
+A \emph{linear form} is a continuous linear map
+\[
+  \ell : \modelspace \to \mathbb{R}.
+\]
+We write the duality pairing as
+\[
+  \pair{\ell}{m} := \ell(m), \qquad \ell\in\modelspace',\; m\in\modelspace.
+\]
+
+In \textit{pygeoinf}, a linear form is represented by the class
+\texttt{LinearForm(domain, \ldots)}, where \texttt{domain} is the Hilbert space
+on which the form acts.
 
 \section{Representation in coordinates}
 \label{sec:form-coordinates}
-% Components [ℓ(φ₁), ..., ℓ(φ_N)].
-% ℓ(m) = ⟨ℓ, m⟩ = cᵀ M⁻¹ m_coeffs.
+
+The library uses the domain's coordinate maps
+$\Pi:\modelspace\to\mathbb{R}^N$ (\texttt{to\_components}) and
+$\pi:\mathbb{R}^N\to\modelspace$ (\texttt{from\_components}) to provide a
+computational coordinate system.
+This is a \emph{chosen representation}: it need not be orthonormal.
+
+Let $\phi_j := \pi(e_j)$ denote the corresponding computational basis vectors
+(in code: \texttt{domain.basis\_vector(j)}), where $e_j$ are the standard unit
+vectors in $\mathbb{R}^N$.
+The component vector of a linear form $\ell$ is defined as
+\[
+  \mathbf{c}_\ell := (\ell(\phi_0),\ldots,\ell(\phi_{N-1}))^\top \in \mathbb{R}^N.
+\]
+Then for any $m\in\modelspace$ with coefficient vector $\mathbf{m}:=\Pi m$,
+linearity gives
+\[
+  \ell(m) = \sum_{j=0}^{N-1} \ell(\phi_j)\,\mathbf{m}_j
+  = \mathbf{c}_\ell^\top\,\mathbf{m}.
+\]
+This is exactly the evaluation rule used by \texttt{LinearForm}:
+\texttt{l(m) = dot(l.components, domain.to\_components(m))}.
+
+\subsection*{Two equivalent construction paths in the API}
+
+\begin{codebox}
+\textbf{(1) Provide components directly.}\\
+\texttt{l = LinearForm(domain, components=c)}\\
+Here \texttt{c} is a 1D array of length \texttt{domain.dim} representing
+$\mathbf{c}_\ell$.
+
+\medskip
+\textbf{(2) Provide a callable mapping and let pygeoinf compute components.}\\
+\texttt{l = LinearForm(domain, mapping=f, parallel=True, n\_jobs=-1)}\\
+The library computes \texttt{l.components[i]} by evaluating \texttt{f} on the
+computational basis vectors $\phi_i=\texttt{domain.basis\_vector(i)}$
+(equivalently $\phi_i=\texttt{domain.from\_components}(e_i)$):
+$\mathbf{c}_{\ell,i} = f(\phi_i)$.
+When \texttt{parallel=True}, this is done with a joblib backend; \texttt{n\_jobs}
+controls the number of workers.
+\end{codebox}
+
+\begin{pitfallbox}
+The \texttt{mapping} construction is convenient, but it assumes the callable
+really is linear (and deterministic) on the domain.
+If your \texttt{mapping} includes hidden nonlinearities (thresholding, clipping,
+normalization, stateful caches), the computed components will be inconsistent
+with the linear algebra and subsequent results may be meaningless.
+\end{pitfallbox}
 
 \section{The Riesz representative (gradient)}
 \label{sec:form-riesz-rep}
-% gradient = R(ℓ), Hessian = 0. Links to optimisation.
 
-\section{Linear forms as rank-1 operators}
+Because $\modelspace$ is a Hilbert space, every $\ell\in\modelspace'$ has a
+unique \emph{Riesz representative} $g_\ell\in\modelspace$ such that
+\[
+  \ell(m) = \pair{\ell}{m} = (g_\ell, m)_{\modelspace}\qquad\text{for all } m\in\modelspace.
+\]
+Equivalently, $g_\ell = \Riesz_{\modelspace}(\ell)$, where
+$\Riesz_{\modelspace}:\modelspace'\to\modelspace$ is the Riesz isomorphism
+listed in the notation table (\texttt{from\_dual}).
+
+In \textit{pygeoinf}, this is the mechanism that injects \emph{geometry} into
+linear forms: the component vector $\mathbf{c}_\ell$ encodes the action of
+$\ell$ on the chosen coordinate system, while the inner product on
+$\modelspace$ determines the corresponding gradient vector.
+Concretely,
+\[
+  \nabla\ell \equiv g_\ell = \texttt{domain.from\_dual(l)}.
+\]
+The Hessian of any linear form is the zero operator.
+
+\begin{remark}
+If the coordinate system is not orthonormal, then the coefficient vector
+$\Pi g_\ell$ is generally \emph{not} equal to $\mathbf{c}_\ell$.
+They are related by the Gram/mass matrix of the chosen basis.
+This is why \texttt{from\_dual} (Riesz) must be used to obtain the correct
+gradient in the domain geometry.
+\end{remark}
+
+\section{Interoperability: viewing a linear form as an operator}
 \label{sec:form-as-operator}
-% as_linear_operator(): ℓ viewed as M → ℝ.
+
+Some parts of the library (and many external numerical tools) are written in
+terms of operators rather than functionals.
+For interoperability, \texttt{LinearForm} exposes an adapter
+\texttt{as\_linear\_operator} that views $\ell$ as an operator
+$\modelspace\to\mathbb{R}$ by returning a \texttt{LinearOperator} with codomain
+\texttt{EuclideanSpace(1)}.
+
+This should be understood purely as an interface bridge, not as a conceptual
+re-framing of linear forms.
+In particular, we do \emph{not} treat a linear form as a ``rank-1 operator'' in
+the theory: its natural home is the dual space $\modelspace'$.
+
+\subsection*{Implementing your own linear form (practical guidance)}
+
+Most users should not subclass anything: instantiate \texttt{LinearForm} using
+one of the two construction paths above.
+To ensure correctness, keep the following invariants in mind:
+\begin{itemize}
+  \item \textbf{Component meaning.} The stored array \texttt{l.components} is
+    $\mathbf{c}_\ell$ with entries $\mathbf{c}_{\ell,i}=\ell(\phi_i)$ for the
+    domain's chosen basis vectors $\phi_i=\texttt{domain.basis\_vector(i)}$.
+  \item \textbf{Evaluation rule.} Evaluation uses the coordinate projection:
+    $\ell(m)=\mathbf{c}_\ell^\top\,\Pi m$.
+    If you change how \texttt{to\_components/from\_components} represent the
+    domain, you also change what \texttt{components} mean.
+  \item \textbf{Geometry lives in the Riesz map.} Use
+    \texttt{domain.from\_dual(l)} to obtain the gradient/Riesz representative.
+\end{itemize}
+
+Convenience methods commonly used in implementations and experiments:
+\begin{itemize}
+  \item Arithmetic: \texttt{l1 + l2}, \texttt{l1 - l2}, \texttt{a * l},
+    \texttt{l / a}, and in-place \texttt{l *= a}, \texttt{l += other}.
+  \item \texttt{l.copy()} for a deep copy.
+  \item \texttt{l.as\_linear\_operator} to plug a form into operator-based code.
+  \item \texttt{LinearForm.from\_linear\_operator(op)} to wrap an operator
+    \texttt{op: domain -> EuclideanSpace(1)} as a linear form.
+\end{itemize}
 
 \begin{codebox}
-\texttt{LinearForm} and \texttt{DualVector} represent elements of $\modelspace'$.
-Key methods: \texttt{\_\_call\_\_(x)}, \texttt{components}, \texttt{as\_linear\_operator()}.
+\texttt{LinearForm(domain, components=...)} stores $\mathbf{c}_\ell$ and evaluates
+via \texttt{dot(components, domain.to\_components(x))}.\\
+\texttt{LinearForm(domain, mapping=..., parallel=..., n\_jobs=...)} computes
+components by evaluating the mapping on \texttt{domain.basis\_vector(i)}.
+
+\medskip
+Useful methods/properties: \texttt{\_\_call\_\_(x)}, \texttt{components},
+\texttt{copy()}, \texttt{as\_linear\_operator}, \texttt{from\_linear\_operator(...)}.
 \end{codebox}
 
 
