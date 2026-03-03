@@ -15,6 +15,10 @@ def plot_1d_distributions(
     title: str = "Prior and Posterior Probability Distributions",
     figsize: tuple = (12, 7),
     show_plot: bool = True,
+    prior_labels: Optional[Union[str, List[str]]] = None,
+    posterior_labels: Optional[Union[str, List[str]]] = None,
+    width_scaling: float = 6.0,
+    legend_position: tuple = (0.95, 0.95),
 ):
     """
     Plot 1D probability distributions for prior and posterior measures using dual y-axes.
@@ -27,6 +31,10 @@ def plot_1d_distributions(
         title: Title for the plot
         figsize: Figure size tuple
         show_plot: Whether to display the plot
+        prior_labels: Manual labels for prior distributions (optional)
+        posterior_labels: Manual labels for posterior distributions (optional)
+        width_scaling: Width scaling factor in standard deviations (default: 6.0)
+        legend_position: Position of legend as (x, y) tuple (default: (0.95, 0.95))
 
     Returns:
         fig, (ax1, ax2): Figure and axes objects
@@ -38,6 +46,13 @@ def plot_1d_distributions(
 
     if prior_measures is not None and not isinstance(prior_measures, list):
         prior_measures = [prior_measures]
+
+    # Convert single labels to lists for uniform handling
+    if prior_labels is not None and not isinstance(prior_labels, list):
+        prior_labels = [prior_labels]
+
+    if posterior_labels is not None and not isinstance(posterior_labels, list):
+        posterior_labels = [posterior_labels]
 
     # Define color sequences
     prior_colors = [
@@ -101,9 +116,9 @@ def plot_1d_distributions(
         all_means.append(true_value)
         all_stds.append(0)  # No std for true value
 
-    # Calculate x-axis range (6 sigma coverage)
-    x_min = min([mean - 6 * std for mean, std in zip(all_means, all_stds) if std > 0])
-    x_max = max([mean + 6 * std for mean, std in zip(all_means, all_stds) if std > 0])
+    # Calculate x-axis range (width_scaling sigma coverage)
+    x_min = min([mean - width_scaling * std for mean, std in zip(all_means, all_stds) if std > 0])
+    x_max = max([mean + width_scaling * std for mean, std in zip(all_means, all_stds) if std > 0])
 
     # Add some padding around true value if needed
     if true_value is not None:
@@ -129,7 +144,9 @@ def plot_1d_distributions(
             pdf_values = stats.norm.pdf(x_axis, loc=mean, scale=std)
 
             # Determine label
-            if len(prior_measures) == 1:
+            if prior_labels is not None and i < len(prior_labels):
+                label = prior_labels[i]
+            elif len(prior_measures) == 1:
                 label = f"Prior PDF (Mean: {mean:.5f})"
             else:
                 label = f"Prior {i+1} (Mean: {mean:.5f})"
@@ -167,7 +184,9 @@ def plot_1d_distributions(
         pdf_values = stats.norm.pdf(x_axis, loc=mean, scale=std)
 
         # Determine label
-        if len(posterior_measures) == 1:
+        if posterior_labels is not None and i < len(posterior_labels):
+            label = posterior_labels[i]
+        elif len(posterior_measures) == 1:
             label = f"Posterior PDF (Mean: {mean:.5f})"
         else:
             label = f"Posterior {i+1} (Mean: {mean:.5f})"
@@ -196,7 +215,7 @@ def plot_1d_distributions(
         all_handles = handles1
         all_labels = [h.get_label() for h in all_handles]
 
-    fig.legend(all_handles, all_labels, loc="upper right", bbox_to_anchor=(0.9, 0.9))
+    ax1.legend(all_handles, all_labels, loc="upper right", bbox_to_anchor=legend_position)
     fig.suptitle(title, fontsize=16)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
@@ -222,6 +241,8 @@ def plot_corner_distributions(
     colormap: str = "Blues",
     parallel: bool = False,
     n_jobs: int = -1,
+    width_scaling: float = 3.75,
+    legend_position: tuple = (0.9, 0.95),
 ):
     """
     Create a corner plot for multi-dimensional posterior distributions.
@@ -237,6 +258,8 @@ def plot_corner_distributions(
         colormap: Colormap for 2D plots
         parallel: Compute dense covariance matrix in parallel, default False.
         n_jobs: Number of cores to use in parallel calculations, default -1.
+        width_scaling: Width scaling factor in standard deviations (default: 3.75)
+        legend_position: Position of legend as (x, y) tuple (default: (0.9, 0.95))
 
     Returns:
         fig, axes: Figure and axes array
@@ -287,7 +310,7 @@ def plot_corner_distributions(
                 sigma = np.sqrt(cov_posterior[i, i])
 
                 # Create x-axis range
-                x = np.linspace(mu - 3.75 * sigma, mu + 3.75 * sigma, 200)
+                x = np.linspace(mu - width_scaling * sigma, mu + width_scaling * sigma, 200)
                 pdf = stats.norm.pdf(x, mu, sigma)
 
                 # Plot the PDF
@@ -323,10 +346,10 @@ def plot_corner_distributions(
                 sigma_i = np.sqrt(cov_posterior[i, i])
 
                 x_range = np.linspace(
-                    mean_2d[0] - 3.75 * sigma_j, mean_2d[0] + 3.75 * sigma_j, 100
+                    mean_2d[0] - width_scaling * sigma_j, mean_2d[0] + width_scaling * sigma_j, 100
                 )
                 y_range = np.linspace(
-                    mean_2d[1] - 3.75 * sigma_i, mean_2d[1] + 3.75 * sigma_i, 100
+                    mean_2d[1] - width_scaling * sigma_i, mean_2d[1] + width_scaling * sigma_i, 100
                 )
 
                 X, Y = np.meshgrid(x_range, y_range)
@@ -401,7 +424,7 @@ def plot_corner_distributions(
     # Clean up labels by removing values after colons
     cleaned_labels = [label.split(":")[0] for label in labels_leg]
 
-    fig.legend(handles, cleaned_labels, loc="upper right", bbox_to_anchor=(0.9, 0.95))
+    fig.legend(handles, cleaned_labels, loc="upper right", bbox_to_anchor=legend_position)
 
     # Adjust main plot layout to make room on the right for the colorbar
     plt.tight_layout(rect=[0, 0, 0.88, 0.96])
