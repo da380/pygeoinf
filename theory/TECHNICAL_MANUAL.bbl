@@ -1,0 +1,41 @@
+\begin{thebibliography}{5}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Al-Attar and Crawford(2021)]{al2021linear}
+David Al-Attar and Ophelia Crawford.
+\newblock Linear inference problems with deterministic constraints.
+\newblock \emph{Geophysical Journal International}, 2021.
+\newblock \doi{10.1093/gji/ggab414}.
+
+\bibitem[Backus(1970{\natexlab{a}})]{backus1970inference}
+George Backus.
+\newblock Inference from inadequate and inaccurate data, {I}.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 65\penalty0
+  (1):\penalty0 1--7, 1970{\natexlab{a}}.
+\newblock \doi{10.1073/pnas.65.1.1}.
+
+\bibitem[Backus(1970{\natexlab{b}})]{backus1970inferenceIII}
+George Backus.
+\newblock Inference from inadequate and inaccurate data, {III}.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 67\penalty0
+  (1):\penalty0 282--289, 1970{\natexlab{b}}.
+\newblock \doi{10.1073/pnas.67.1.282}.
+
+\bibitem[Backus(1970{\natexlab{c}})]{backus1970uniqueness}
+George Backus.
+\newblock Inference from inadequate and inaccurate data, {II}.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 65\penalty0
+  (2):\penalty0 281--287, 1970{\natexlab{c}}.
+\newblock \doi{10.1073/pnas.65.2.281}.
+
+\bibitem[Stuart(2010)]{stuart2010inverse}
+Andrew~M. Stuart.
+\newblock Inverse problems: {A} {B}ayesian perspective.
+\newblock \emph{Acta Numerica}, 19:\penalty0 451--559, 2010.
+\newblock \doi{10.1017/S0962492910000061}.
+
+\end{thebibliography}
