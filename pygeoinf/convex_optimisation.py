@@ -1137,49 +1137,60 @@ class LevelBundleMethod:
     ) -> float:
         """Compute a lower bound on $f^*$ via the bundle LP.
 
-        Solves the regularised cutting-plane model minimum
+        Solves the cutting-plane LP
 
         .. math::
 
-            f_{\\text{LP}} = \\min_{\\lambda, t}\\;
-            t + \\tfrac{\\varepsilon}{2} \\|\\lambda\\|^2
+            f_{\\text{LP}} = \\min_{\\lambda, t}\\; t
             \\quad \\text{s.t.} \\quad
             f_j + \\langle g_j, \\lambda - x_j \\rangle \\leq t,
+            \\quad \\|\\lambda - \\hat{\\lambda}\\|_\\infty \\leq R,
 
-        where $\\varepsilon = 10^{-8}$ is a small regularisation to keep the
-        LP bounded.  Since $f_{\\text{LP}} \\leq f^*$, the result is a valid
+        where $R = 10^3 \\cdot (1 + \\|\\hat{\\lambda}\\|_\\infty)$ is a large
+        box that keeps the LP bounded without biasing the lower bound.
+
+        The LP is solved via :func:`scipy.optimize.linprog` (HiGHS simplex),
+        which is more reliable than ADMM-based QP solvers for this
+        nearly-unbounded pure-LP subproblem.
+
+        Since $\\hat{\\phi}(\\lambda) \\leq f(\\lambda)$ for all $\\lambda$, the
+        LP optimum satisfies $f_{\\text{LP}} \\leq f^*$, providing a valid
         global lower bound.
 
         Args:
             bundle: Current bundle of cuts.
-            lam_hat: Stability centre (used to determine the domain dimension).
+            lam_hat: Stability centre $\\hat{\\lambda}$.
             domain: Hilbert space of the decision variable.
             lam_hat_c: Component array of the stability centre.
 
         Returns:
-            Scalar lower-bound estimate $f_{\\text{LP}}$.
+            Scalar lower-bound estimate $f_{\\text{LP}}$, or ``-np.inf`` if
+            the LP cannot be solved reliably (e.g. only a single cut present
+            when the problem is genuinely unbounded).
         """
+        from scipy.optimize import linprog
+
         d = domain.dim
-        eps = 1e-8  # tiny regularisation to ensure boundedness
 
-        P = np.zeros((d + 1, d + 1))
-        P[:d, :d] = eps * np.eye(d)
+        # LP variables: z = [lambda (d), t (1)]  (d+1 variables)
+        # Objective: min t  →  c = [0, ..., 0, 1]
+        c = np.zeros(d + 1)
+        c[d] = 1.0
 
-        q_vec = np.zeros(d + 1)
-        q_vec[d] = 1.0  # minimise t
+        # Cut constraints: A_ineq @ z <= b_ineq
+        A_ub, b_ub = bundle.linearization_matrix(lam_hat, domain)
 
-        A_ineq, b_ineq = bundle.linearization_matrix(lam_hat, domain)
-        n_cuts = A_ineq.shape[0]
-        l_bounds = np.full(n_cuts, -np.inf)
+        # Box constraint: -R <= lambda_i - lam_hat_i <= R  (no constraint on t)
+        R = 1e3 * (1.0 + float(np.max(np.abs(lam_hat_c))))
+        lb = np.append(lam_hat_c - R, -np.inf)  # lower var bounds
+        ub = np.append(lam_hat_c + R, np.inf)   # upper var bounds
 
-        # Warm start: lam_hat with t = hat_phi(lam_hat)
-        hat_phi_at_lam_hat = float(
-            np.max(A_ineq[:, :d] @ lam_hat_c - b_ineq)
+        result = linprog(
+            c, A_ub=A_ub, b_ub=b_ub, bounds=list(zip(lb, ub)), method="highs"
         )
-        x0 = np.append(lam_hat_c, hat_phi_at_lam_hat)
-
-        result = self._qp_solver.solve(P, q_vec, A_ineq, l_bounds, b_ineq, x0=x0)
-        return float(result.x[d])
+        if result.status == 0:
+            return float(result.x[d])
+        return -np.inf  # infeasible or unbounded — return conservative bound
 
     def _solve_level_master(
         self,
