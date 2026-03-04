@@ -394,12 +394,116 @@ Visualise any `Subset` by slicing it with a 1D, 2D, or 3D `AffineSubspace`.
 | Module | Key exports | Description |
 |---|---|---|
 | `backus_gilbert.py` | `BackusGilbertInversion` | Classic Backus-Gilbert averaging kernels |
+| `convex_optimisation.py` | `SubgradientDescent`, `Cut`, `Bundle`, `QPSolver`, `QPResult`, `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver`, `best_available_qp_solver`, `BundleResult`, `ProximalBundleMethod`, `LevelBundleMethod`, `ChambollePockResult`, `ChambollePockSolver`, `solve_primal_feasibility`, `solve_support_values`, `SmoothedDualMaster`, `SmoothingScheduleSolver` | Non-smooth convex optimisation — subgradient, bundle-method infrastructure, proximal bundle solver, level bundle solver; optional OSQP/Clarabel QP backends; Chambolle-Pock primal-dual solver for dual master primal feasibility form |
 | `direct_sum.py` | `DirectSumLinearOperator`, `DirectSumLinearForm` | Block operators on direct sum spaces |
 | `linear_solvers.py` | `LinearSolver(ABC)` + CG/MINRES | Abstract solver + iterative implementations |
 | `preconditioners.py` | Various preconditioner classes | Used with iterative solvers |
 | `random_matrix.py` | Randomized range finder, SVD, Cholesky | Low-rank approximations |
 | `parallel.py` | `parallel_map` etc. | joblib-based parallelism helpers |
 | `auxiliary.py` | Mathematical helper functions | Miscellaneous utilities |
+
+#### `convex_optimisation.py` — Convex Optimisation (non-smooth)
+
+**Phase 1 — Core Bundle Infrastructure** (implemented 2026-03-04)
+
+| Class | Description |
+|---|---|
+| `SubgradientResult` | Result dataclass for `SubgradientDescent` |
+| `SubgradientDescent` | Constant-step subgradient descent |
+| `Cut` | Dataclass: `x`, `f`, `g`, `iteration` — one linearisation |
+| `Bundle` | Collection of `Cut` objects; builds QP constraint data |
+| `QPResult` | Dataclass: `x`, `obj`, `status` |
+| `QPSolver` | `@runtime_checkable Protocol` for `solve(P,q,A,l,u,x0)→QPResult` |
+| `SciPyQPSolver` | SLSQP-backed implementation of `QPSolver` |
+| `OSQPQPSolver` | ADMM-based implementation via `osqp` (optional); warm-start via `x0`; inf→1e30 substitution |
+| `ClarabelQPSolver` | Interior-point implementation via `clarabel` (optional); converts `l≤Ax≤u` to ZeroCone/NonnegativeCone form; tolerance attrs `tol_gap_abs`/`tol_gap_rel` |
+| `best_available_qp_solver()` | Factory: returns `OSQPQPSolver` > `ClarabelQPSolver` > `SciPyQPSolver` by availability |
+| `BundleResult` | Result dataclass for bundle method solvers |
+
+**`Bundle` key methods:**
+
+| Method | Returns | Notes |
+|---|---|---|
+| `add_cut(cut)` | `None` | Appends a `Cut` |
+| `upper_bound()` | `float` | $\min_j f_j$ — best evaluated value |
+| `best_point()` | `Vector` | $x_j$ achieving `upper_bound()` |
+| `lower_bound()` | `float` | Placeholder `-inf`; real value set by master QP in Phase 2–3 |
+| `linearization_matrix(center, domain)` | `(A, b)` | $A \in \mathbb{R}^{m\times(d+1)}$, $b\in\mathbb{R}^m$; encodes $A[\lambda;t]\leq b$ |
+| `compress(max_size)` | `None` | Keeps last `max_size` cuts |
+| `__len__()` | `int` | Number of cuts |
+
+**`SciPyQPSolver` standard form:** $\min \tfrac{1}{2}x^\top P x + q^\top x$ s.t. $l \leq Ax \leq u$.
+
+**Tests:** `tests/test_bundle_core.py` — 10 tests, all passing.
+
+**Phase 2 — Proximal Bundle Method** (implemented 2026-03-04)
+
+| Class / Function | Description |
+|---|---|
+| `_get_value_and_subgradient(oracle, x)` | Duck-typed helper: calls `oracle.value_and_subgradient(x)` if available, else `(oracle(x), oracle.subgradient(x))` |
+| `ProximalBundleMethod` | Proximal bundle for $\min f(\lambda)$; constructor `(oracle, /, *, rho0, rho_factor, tolerance, max_iterations, bundle_size, store_iterates, qp_solver)`; public `solve(x0) → BundleResult` |
+
+**`ProximalBundleMethod` convergence logic:**
+- Solves master QP with *t* variable extracted directly as `result.x[d]` (not derived from `qp_obj` — the SLSQP objective omits the constant `+(ρ/2)‖λ̂‖²`).
+- Warm-start: `t = f_hat` (always feasible).
+- Step classification: serious if `f_next < f_hat`; null otherwise.
+- `f_low` reset to $-\infty$ on each **serious step** (avoids spurious convergence when the model is exact on linear pieces); updated by `max(f_low, t_opt)` on **null steps**.
+- Gap check `f_hat - f_low ≤ tolerance` done only after updating `f_low` (i.e., after null steps only).
+
+**`DualMasterCostFunction.value_and_subgradient`** (in `backus_gilbert.py`):
+Shares `G*λ`, `hilbert_residual`, and support-point queries in one pass; returns `(f, g)`.
+
+**Tests:** `tests/test_proximal_bundle.py` (6 tests), `tests/test_dual_master_cost.py` (1 test) — all passing.
+
+**Phase 3 — Level Bundle Method** (implemented 2026-03-04)
+
+| Class / Helper | Description |
+|---|---|
+| `LevelBundleMethod` | Level bundle for $\min f(\lambda)$; constructor `(oracle, /, *, alpha, tolerance, max_iterations, bundle_size, store_iterates, qp_solver)`; public `solve(x0) → BundleResult` |
+
+**`LevelBundleMethod` algorithm:**
+- Level: $f_{\text{lev}} = \alpha f_{\text{low}} + (1-\alpha) f_{\text{up}}$, default $\alpha = 0.1$.
+- Master QP objective: $\tfrac{1}{2}\|\lambda-\hat{\lambda}\|^2$ (no penalty on $t$); decision var $z=[\lambda, t]$.
+- Constraints: cut constraints **plus** level constraint $t \leq f_{\text{lev}}$.
+- Lower bound: computed each iteration by solving the regularised LP $\min t + \tfrac{\varepsilon}{2}\|\lambda\|^2$ s.t. cuts (tiny $\varepsilon=10^{-8}$); `f_low = max(f_low, f_LP)`.
+- Infeasibility recovery: if QP fails, widen alpha by ×1.5 (capped at 0.9) for up to 3 attempts; fallback to an emergency proximal step.
+- Serious step: `f_next < f_hat` → update stability centre; null step: add cut only.
+
+**Tests:** `tests/test_level_bundle.py` — 6 tests, all passing:
+- `test_level_bundle_quadratic_1d` — minimises $\lambda^2+2\lambda$ to $\lambda^*=-1$
+- `test_level_bundle_nonsmooth_1d` — minimises $|\lambda-0.5|$ to $\lambda^*=0.5$
+- `test_level_bundle_gap_certificate` — converged gap ≤ 10×tolerance
+- `test_level_bundle_infeasibility_recovery` — $\alpha=10^{-8}$, no crash
+- `test_level_bundle_dual_master` — finite $f_{\text{best}}$ on `DualMasterCostFunction`
+- `test_level_vs_proximal_agreement` — agrees with `ProximalBundleMethod` within 0.01
+
+**Phase 7 — Chambolle-Pock Primal-Dual Solver** (implemented 2026-03-04)
+
+Solves the **primal feasibility form** of the dual master:
+
+$$h_U(q) = \max_{m \in B,\, v \in V} \langle T^*q, m\rangle \quad\text{s.t.}\quad Gm + v = \tilde{d}$$
+
+via the first-order saddle-point algorithm of Chambolle & Pock (2011).
+
+| Class / Function | Description |
+|---|---|
+| `ChambollePockResult` | Dataclass: `m` (model primal), `v` (data primal), `mu` (dual), `primal_dual_gap` (feasibility residual), `converged`, `num_iterations` |
+| `ChambollePockSolver` | Solves $\max_{m\in B, v\in V}\langle c,m\rangle$ s.t. $Gm+v=\tilde{d}$ via Chambolle-Pock; constructor `(B, V, G, d_tilde, /, *, sigma, tau, theta, max_iterations, tolerance)` |
+| `solve_primal_feasibility(cost, qs, cp_solver)` | Batch wrapper: computes $h_U(q_i)$ for each $q_i$ by calling `cp_solver.solve(T^*q_i)` and returning $\langle T^*q_i, m^*\rangle$ as `np.ndarray` |
+
+**`ChambollePockSolver` key details:**
+- Operator $K = [G;\; I_D]$: primal var $x=(m,v)$, dual var $\mu\in D$.
+- Step-size auto-selection via 20-step power iteration on $G^\top G$: `G_norm_est = sqrt(dominant_eigenvalue)`, `K_norm = sqrt(G_norm_est² + 1) × 1.01`, `tau = sigma = 0.99 / K_norm`.
+- Iterations: dual update $\mu \mathrel{+}= \sigma(G\bar m + \bar v - \tilde d)$; primal update $m \leftarrow \operatorname{proj}_B(m - \tau G^\top\mu + \tau c)$; $v \leftarrow \operatorname{proj}_V(v - \tau\mu)$; over-relaxation $\bar m = m + \theta\Delta m$.
+- Projection support: `BallSupportFunction` only (ball projection $c + r(z-c)/\max(\|z-c\|,r)$); `EllipsoidSupportFunction` raises `NotImplementedError`.
+- Convergence: feasibility residual $\|Gm+v-\tilde d\| < \text{tolerance}$.
+
+**Tests:** `tests/test_chambolle_pock.py` — 5 tests, all passing:
+- `test_chambolle_pock_feasibility` — $\|Gm+v-\tilde d\| \leq 10\times\text{tol}$
+- `test_chambolle_pock_m_in_B` — $\|m - c_B\| \leq r_B + 10^{-3}$
+- `test_chambolle_pock_v_in_V` — $\|v - c_V\| \leq r_V + 10^{-3}$
+- `test_chambolle_pock_returns_result` — result type and finite attributes
+- `test_solve_primal_feasibility_multiple_directions` — agrees with `ProximalBundleMethod` at rtol=0.15, atol=1e-2
 
 ---
 
@@ -479,6 +583,15 @@ Located in `pygeoinf/theory/`:
 - `theory_papers_index.md` — paper catalog (if present)
 
 The `Theory-Validator-subagent` reads these automatically when reviewing mathematical code. Cite specific sections in docstrings as `theory.txt §X.Y`.
+
+---
+
+## Plans (Selected)
+
+Located in `pygeoinf/plans/`:
+- `bundle-methods-optimizer-plan.md` — implementation plan for level bundle methods targeting dual master problems.
+- `dual_master_implementation.md` — implementation + testing plan for `DualMasterCostFunction` and related tooling.
+- `dual-master-fast-convex-optimisation-report.md` — algorithm/API proposals for faster, more robust minimisation of `DualMasterCostFunction` (bundle, proximal bundle, primal-dual, smoothing, warm-start).
 
 ---
 

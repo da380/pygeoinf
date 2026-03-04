@@ -241,7 +241,64 @@ class DualMasterCostFunction(NonLinearForm):
             self.domain.add(term2_subgrad, term3_subgrad),
         )
 
-    def _gradient(self, lam: Vector) -> Vector:
+    def value_and_subgradient(self, lam: "Vector") -> "tuple[float, Vector]":
+        """Compute the value and a subgradient of $\\varphi(\\lambda; q)$ in one pass.
+
+        Shares the computation of $G^* \\lambda$ and the support points $v$, $w$
+        between the value and subgradient evaluations, avoiding redundant work.
+
+        The dual master cost function is
+
+        .. math::
+
+            \\varphi(\\lambda; q)
+            = \\langle \\lambda, \\tilde{d} \\rangle_D
+              + \\sigma_B(T^* q - G^* \\lambda)
+              + \\sigma_V(-\\lambda)
+
+        and a subgradient at $\\lambda$ is
+
+        .. math::
+
+            g = \\tilde{d} - G v - w,
+
+        where $v \\in \\partial \\sigma_B(T^* q - G^* \\lambda)$ and
+        $w \\in \\partial \\sigma_V(-\\lambda)$.
+
+        Args:
+            lam: Dual variable $\\lambda \\in D$.
+
+        Returns:
+            A tuple ``(f, g)`` where ``f = φ(λ; q)`` is the scalar value and
+            ``g ∈ ∂φ(λ; q)`` is a subgradient vector in $D$.
+        """
+        # Shared computation
+        Gstar_lam = self._G.adjoint(lam)
+        hilbert_residual = self._model_space.subtract(self._Tstar_q, Gstar_lam)
+        neg_lam = self.domain.negative(lam)
+
+        v = self._model_prior_support.support_point(hilbert_residual)
+        w = self._data_error_support.support_point(neg_lam)
+
+        if v is None or w is None:
+            # Fall back to separate calls
+            return self._mapping(lam), self._finite_difference_gradient(lam)
+
+        # Value
+        term1 = self.domain.inner_product(lam, self._observed_data)
+        term2 = self._model_prior_support(hilbert_residual)
+        term3 = self._data_error_support(neg_lam)
+        f = term1 + term2 + term3
+
+        # Subgradient
+        term1_subgrad = self._observed_data
+        term2_subgrad = self.domain.negative(self._G(v))
+        term3_subgrad = self.domain.negative(w)
+        g = self.domain.add(term1_subgrad, self.domain.add(term2_subgrad, term3_subgrad))
+
+        return f, g
+
+    def _gradient(self, lam: "Vector") -> "Vector":
         """
         Alias for _subgradient for backward compatibility.
 
