@@ -1,0 +1,790 @@
+"""
+Provides concrete implementations of function spaces on the two-sphere (S²).
+
+This module uses the abstract framework from the symmetric space module to create
+fully-featured `Lebesgue` (L²) and `Sobolev` (Hˢ) Hilbert spaces for functions
+defined on the surface of a sphere.
+
+It utilizes the `pyshtools` library for highly efficient and accurate spherical
+harmonic transforms. Following a compositional design, this module first
+defines a base `Lebesgue` space and then constructs the `Sobolev` space as a
+`MassWeightedHilbertSpace` over it. The module also includes powerful plotting
+utilities built on `cartopy` for professional-quality geospatial visualization.
+
+Key Classes
+-----------
+- `SphereHelper`: A mixin class providing the core geometry, spherical harmonic
+  transform machinery, and `cartopy`-based plotting utilities.
+- `Lebesgue`: A concrete implementation of the L²(S²) space of square-integrable
+  functions on the sphere.
+- `Sobolev`: A concrete implementation of the Hˢ(S²) space of functions with a
+  specified degree of smoothness.
+"""
+
+from __future__ import annotations
+from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
+from scipy.sparse import diags, coo_array
+
+
+try:
+    import pyshtools as sh
+    from pyshtools.shio import SHCilmToVector
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+except ImportError:
+    raise ImportError(
+        "pyshtools and cartopy are required for the sphere module. "
+        "Please install them with 'pip install pygeoinf[sphere]'"
+    )
+
+
+from pygeoinf.linear_forms import LinearForm
+
+from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
+
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
+    from cartopy.mpl.geoaxes import GeoAxes
+    from cartopy.crs import Projection
+    from pyshtools import SHGrid
+
+
+class SphereHelper:
+    """
+    A mixin providing common functionality for function spaces on the sphere.
+
+    This helper is not intended for direct instantiation. It provides the core
+    geometry (radius, grid type), the spherical harmonic transform machinery via
+    `pyshtools`, and `cartopy`-based plotting utilities that are shared by the
+    `Lebesgue` and `Sobolev` space classes.
+    """
+
+    def __init__(
+        self,
+        lmax: int,
+        radius: float,
+        grid: str,
+        extend: bool,
+    ):
+        """
+        Args:
+            lmax: The maximum spherical harmonic degree to be represented.
+            radius: Radius of the sphere.
+            grid: The `pyshtools` grid type.
+            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+        """
+
+        if lmax < 0:
+            raise ValueError("lmax must be non-negative")
+
+        self._lmax: int = lmax
+        self._radius: float = radius
+
+        if grid == "DH2":
+            self._grid = "DH"
+            self._sampling = 2
+        else:
+            self._grid = grid
+            self._sampling = 1
+
+        self._extend: bool = extend
+
+        # SH coefficient options fixed internally
+        self._normalization: str = "ortho"
+        self._csphase: int = 1
+
+    @property
+    def lmax(self) -> int:
+        """The maximum spherical harmonic truncation degree."""
+        return self._lmax
+
+    @property
+    def radius(self) -> float:
+        """The radius of the sphere."""
+        return self._radius
+
+    @property
+    def grid(self) -> str:
+        """The `pyshtools` grid type used for spatial representations."""
+        return self._grid
+
+    @property
+    def sampling(self) -> int:
+        """The sampling factor used for spatial representations."""
+        return self._sampling
+
+    @property
+    def extend(self) -> bool:
+        """True if the spatial grid includes both 0 and 360-degree longitudes."""
+        return self._extend
+
+    @property
+    def normalization(self) -> str:
+        """The spherical harmonic normalization convention used ('ortho')."""
+        return self._normalization
+
+    @property
+    def csphase(self) -> int:
+        """The Condon-Shortley phase convention used (1)."""
+        return self._csphase
+
+    def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
+        """
+        Returns an element of the space by projecting a given function.
+
+        Args:
+            f: A function that takes a point `(lat, lon)` and returns a value.
+        """
+        u = sh.SHGrid.from_zeros(
+            self.lmax, grid=self.grid, extend=self.extend, sampling=self._sampling
+        )
+        for j, lon in enumerate(u.lons()):
+            for i, lat in enumerate(u.lats()):
+                u.data[i, j] = f((lat, lon))
+
+        return u
+
+    def to_coefficients(self, u: sh.SHGrid) -> sh.SHCoeffs:
+        """Maps a function vector to its spherical harmonic coefficients."""
+        return u.expand(normalization=self.normalization, csphase=self.csphase)
+
+    def from_coefficients(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
+        """Maps spherical harmonic coefficients to a function vector."""
+        grid = self.grid if self._sampling == 1 else "DH2"
+        return ulm.expand(grid=grid, extend=self.extend)
+
+    def plot(
+        self,
+        u: sh.SHGrid,
+        /,
+        *,
+        projection: "Projection" = ccrs.PlateCarree(),
+        contour: bool = False,
+        cmap: str = "RdBu",
+        coasts: bool = False,
+        rivers: bool = False,
+        borders: bool = False,
+        map_extent: Optional[List[float]] = None,
+        gridlines: bool = True,
+        symmetric: bool = False,
+        contour_lines: bool = False,
+        contour_lines_kwargs: Optional[dict] = None,
+        num_levels: int = 10,
+        **kwargs,
+    ) -> Tuple[Figure, "GeoAxes", Any]:
+        """
+        Creates a map plot of a function on the sphere using `cartopy`.
+
+        Args:
+            u: The element to be plotted.
+            projection: A `cartopy.crs` projection. Defaults to `PlateCarree`.
+            contour: If True, creates a filled contour plot. Otherwise, a `pcolormesh` plot.
+            cmap: The colormap name.
+            coasts: If True, draws coastlines.
+            rivers: If True, draws major rivers.
+            borders: If True, draws country borders.
+            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` to set map bounds.
+            gridlines: If True, draws latitude/longitude gridlines.
+            symmetric: If True, centers the color scale symmetrically around zero.
+            contour_lines: If True, overlays contour lines on the plot.
+            contour_lines_kwargs: A dictionary of keyword arguments for styling the
+                contour lines (e.g., {'colors': 'k', 'linewidths': 0.5})
+            num_levels: The number of levels to generate automatically if `levels`
+                is not provided directly.
+            **kwargs: Additional keyword arguments forwarded to the plotting function
+                (`ax.contourf` or `ax.pcolormesh`).
+
+        Returns:
+            A tuple `(figure, axes, image)` containing the Matplotlib and Cartopy objects.
+        """
+
+        lons = u.lons()
+        lats = u.lats()
+
+        figsize: Tuple[int, int] = kwargs.pop("figsize", (10, 8))
+        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": projection})
+
+        if map_extent is not None:
+            ax.set_extent(map_extent, crs=ccrs.PlateCarree())
+        if coasts:
+            ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+        if rivers:
+            ax.add_feature(cfeature.RIVERS, linewidth=0.8)
+        if borders:
+            ax.add_feature(cfeature.BORDERS, linewidth=0.8)
+
+        kwargs.setdefault("cmap", cmap)
+        if symmetric:
+            data_max = 1.2 * np.nanmax(np.abs(u.data))
+            kwargs.setdefault("vmin", -data_max)
+            kwargs.setdefault("vmax", data_max)
+
+        if "levels" in kwargs:
+            levels = kwargs.pop("levels")
+        else:
+            vmin = kwargs.get("vmin", np.nanmin(u.data))
+            vmax = kwargs.get("vmax", np.nanmax(u.data))
+            levels = np.linspace(vmin, vmax, num_levels)
+
+        im: Any
+        if contour:
+            kwargs.pop("vmin", None)
+            kwargs.pop("vmax", None)
+            im = ax.contourf(
+                lons,
+                lats,
+                u.data,
+                transform=ccrs.PlateCarree(),
+                levels=levels,
+                **kwargs,
+            )
+        else:
+            im = ax.pcolormesh(
+                lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs
+            )
+
+        if contour_lines:
+            cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
+            cl_kwargs.setdefault("colors", "k")
+            cl_kwargs.setdefault("linewidths", 0.5)
+
+            ax.contour(
+                lons,
+                lats,
+                u.data,
+                transform=ccrs.PlateCarree(),
+                levels=levels,
+                **cl_kwargs,
+            )
+
+        if gridlines:
+            lat_interval = kwargs.pop("lat_interval", 30)
+            lon_interval = kwargs.pop("lon_interval", 30)
+            gl = ax.gridlines(
+                linestyle="--",
+                draw_labels=True,
+                dms=True,
+                x_inline=False,
+                y_inline=False,
+            )
+            gl.xlocator = mticker.MultipleLocator(lon_interval)
+            gl.ylocator = mticker.MultipleLocator(lat_interval)
+            gl.xformatter = LongitudeFormatter()
+            gl.yformatter = LatitudeFormatter()
+
+        return fig, ax, im
+
+    def plot_geodesic(
+        self,
+        p1: Tuple[float, float],
+        p2: Tuple[float, float],
+        ax: Optional["GeoAxes"] = None,
+        n_points: int = 100,
+        **kwargs,
+    ) -> Tuple["Figure", "GeoAxes"]:
+        """
+        Plots a geodesic curve onto a Cartopy map.
+        """
+        points, _ = self.geodesic_quadrature(p1, p2, n_points=n_points)
+        lats, lons = zip(*points)
+
+        if ax is None:
+            fig, ax = plt.subplots(
+                figsize=kwargs.pop("figsize", (10, 8)),
+                subplot_kw={"projection": ccrs.PlateCarree()},
+            )
+        else:
+            fig = ax.get_figure()
+
+        kwargs.setdefault("color", "black")
+        kwargs.setdefault("linewidth", 2)
+
+        ax.plot(lons, lats, transform=ccrs.Geodetic(), **kwargs)
+
+        return fig, ax
+
+    def plot_geodesic_network(
+        self,
+        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+        ax: Optional["GeoAxes"] = None,
+        n_points: int = 50,
+        **kwargs,
+    ) -> Tuple["Figure", "GeoAxes"]:
+        """
+        Plots a network of geodesic paths onto a Cartopy map.
+
+        This method iterates through a list of source-receiver pairs and renders
+        each as a great-circle arc. It is useful for visualizing the spatial
+        coverage of a tomographic survey.
+
+        Args:
+            paths: A list of ((lat1, lon1), (lat2, lon2)) tuples.
+            ax: An existing cartopy GeoAxes object. If None, a new figure is created.
+            n_points: Number of points used to render each curve. A lower value
+                (e.g., 50) is often sufficient for batch plotting many lines.
+            **kwargs: Keyword arguments passed to the underlying plot calls
+                (e.g., color, alpha, linewidth).
+
+        Returns:
+            A tuple (figure, axes) containing the plot objects.
+        """
+
+        if ax is None:
+            figsize = kwargs.pop("figsize", (12, 10))
+            fig, ax = plt.subplots(
+                figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()}
+            )
+            ax.set_global()
+            ax.coastlines()
+        else:
+            fig = ax.get_figure()
+
+        kwargs.setdefault("color", "black")
+        kwargs.setdefault("linewidth", 0.8)
+        kwargs.setdefault("alpha", 0.5)
+
+        for p1, p2 in paths:
+            self.plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
+
+        sources = list(set([tuple(p[0]) for p in paths]))
+        receivers = list(set([tuple(p[1]) for p in paths]))
+
+        src_lats, src_lons = zip(*sources)
+        rec_lats, rec_lons = zip(*receivers)
+
+        src_style = kwargs.pop("source_kwargs", {})
+        src_style.setdefault("marker", "*")
+        src_style.setdefault("color", "gold")
+        src_style.setdefault("s", 150)
+        src_style.setdefault("edgecolor", "black")
+        src_style.setdefault("zorder", 5)
+
+        ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
+
+        rec_style = kwargs.pop("receiver_kwargs", {})
+        rec_style.setdefault("marker", "o")
+        rec_style.setdefault("color", "red")
+        rec_style.setdefault("s", 50)
+        rec_style.setdefault("edgecolor", "white")
+        rec_style.setdefault("zorder", 5)
+
+        ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
+
+        return fig, ax
+
+    def sample_power_measure(
+        self,
+        measure,
+        n_samples,
+        /,
+        *,
+        lmin=None,
+        lmax=None,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ):
+        """
+        Takes in a Gaussian measure on the space, draws n_samples from
+        and returns samples for the spherical harmonic power at degrees in
+        the indicated range.
+        """
+
+        lmin = 0 if lmin is None else lmin
+        lmax = self.lmax if lmax is None else min(self.lmax, lmax)
+
+        samples = measure.samples(n_samples, parallel=parallel, n_jobs=n_jobs)
+
+        powers = []
+        for u in samples:
+            ulm = self.to_coefficients(u)
+            powers.append(ulm.spectrum(lmax=lmax, convention="power")[lmin:])
+
+        return powers
+
+    # --------------------------------------------------------------- #
+    #                         private methods                         #
+    # ----------------------------------------------------------------#
+
+    def _grid_name(self):
+        return self.grid if self._sampling == 1 else "DH2"
+
+    def _coefficient_to_component_mapping(self) -> coo_array:
+        """Builds a sparse matrix to map `pyshtools` coeffs to component vectors."""
+        row_dim = (self.lmax + 1) ** 2
+        col_dim = 2 * (self.lmax + 1) ** 2
+
+        row, col = 0, 0
+        rows, cols = [], []
+        for l in range(self.lmax + 1):
+            col = l * (self.lmax + 1)
+            for _ in range(l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        for l in range(self.lmax + 1):
+            col = (self.lmax + 1) ** 2 + l * (self.lmax + 1) + 1
+            for _ in range(1, l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        data = [1.0] * row_dim
+        return coo_array(
+            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=float
+        ).tocsc()
+
+    def _degree_dependent_scaling_values(self, f: Callable[[int], float]) -> diags:
+        """Creates a diagonal sparse matrix from a function of degree `l`."""
+        ls = np.arange(self.lmax + 1)
+        f_vectorized = np.vectorize(f)
+        values = f_vectorized(ls)
+        counts = 2 * ls + 1
+        return np.repeat(values, counts)
+
+
+class Lebesgue(SphereHelper, AbstractSymmetricLebesgueSpace):
+    """
+    Implementation of the Lebesgue space L² on a sphere.
+
+    This class represents square-integrable functions on a sphere. A function is
+    represented by its values on an evenly spaced grid. The co-ordinate basis for
+    the space is through spherical harmonic expansions.
+    """
+
+    def __init__(
+        self,
+        lmax: int,
+        /,
+        *,
+        radius: float = 1,
+        grid: str = "DH",
+        extend: bool = True,
+    ):
+        """
+        Args:
+            lmax: Maximum degree for the expansions.
+            radius: Radius of the sphere. Defaults to 1.
+            grid: pyshtools grid type. Defaults to "DH"
+            extend: If true longitudes wrap fully. Defaults to True.
+        """
+        SphereHelper.__init__(self, lmax, radius, grid, extend)
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, (lmax + 1) ** 2, False)
+
+    # ------------------------------------------------------ #
+    #           Methods for SymmetricHilbertSpace            #
+    # ------------------------------------------------------ #
+
+    def index_to_integer(self, k: Tuple[int, int]) -> int:
+        l = np.asarray(l)
+        m = np.asarray(m)
+
+        if np.any(np.abs(m) > l) or np.any(l < 0):
+            raise ValueError("Invalid spherical harmonic: |m| must be <= l, and l >= 0")
+
+        return np.where(m >= 0, l**2 + m, l**2 + l + np.abs(m))
+
+    def integer_to_index(self, i: int) -> Tuple[int, int]:
+        i = np.asarray(i)
+
+        if np.any(i < 0):
+            raise ValueError("Index cannot be negative.")
+
+        l = np.floor(np.sqrt(i)).astype(int)
+        r = i - l**2
+        m = np.where(r <= l, r, l - r)
+
+        return l, m
+
+    def laplacian_eigenvalue(self, k: Tuple[int, int]) -> float:
+        """
+        Returns the (l.m)-th eigenvalue of the Laplacian.
+
+        Args:
+            k = (l,m): The index of the eigenvalue to return.
+        """
+        l = k[0]
+        return l * (l + 1) / self.radius**2
+
+    def laplacian_eigenvector_squared_norm(self, k: Tuple[int, int]) -> float:
+        return self.radius**2
+
+    def laplacian_eigenvectors_at_point(self, point: Tuple[float, float]) -> np.ndarray:
+        latitude, longitude = point
+        colatitude = 90.0 - latitude
+
+        coeffs = sh.expand.spharm(
+            self.lmax,
+            colatitude,
+            longitude,
+            normalization=self.normalization,
+            degrees=True,
+        )
+        return SHCilmToVector(coeffs)
+
+    def random_point(self) -> List[float]:
+        """Returns a random point as `[latitude, longitude]`."""
+        latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
+        longitude = np.random.uniform(0.0, 360.0)
+        return [latitude, longitude]
+
+    def geodesic_quadrature(
+        self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
+    ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
+        """
+        Generates Gauss-Legendre quadrature points and weights along a great-circle arc.
+
+        This implementation converts the start and end latitudes and longitudes into
+        unit vectors, calculates the central angle (omega), and interpolates the
+        geodesic path using SLERP.
+
+        Args:
+            p1: Start point as (latitude, longitude) in degrees.
+            p2: End point as (latitude, longitude) in degrees.
+            n_points: Number of quadrature points to generate.
+
+        Returns:
+            points: A list of (lat, lon) tuples in degrees along the geodesic.
+            weights: Integration weights scaled by the total arc length (R * omega).
+        """
+
+        def to_vector(lat, lon):
+            lat_rad, lon_rad = np.radians(lat), np.radians(lon)
+            return np.array(
+                [
+                    np.cos(lat_rad) * np.cos(lon_rad),
+                    np.cos(lat_rad) * np.sin(lon_rad),
+                    np.sin(lat_rad),
+                ]
+            )
+
+        def to_latlon(vec):
+            vec = vec / np.linalg.norm(vec)
+            lat_rad = np.arcsin(vec[2])
+            lon_rad = np.arctan2(vec[1], vec[0])
+            return (np.degrees(lat_rad), np.degrees(lon_rad))
+
+        v1, v2 = to_vector(*p1), to_vector(*p2)
+
+        dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
+        omega = np.arccos(dot_product)
+
+        if omega < 1e-10:
+            return [p1] * n_points, np.zeros(n_points)
+
+        if np.abs(omega - np.pi) < 1e-10:
+            raise ValueError(
+                "Points are antipodal; the great circle path is not unique."
+            )
+
+        x, w = np.polynomial.legendre.leggauss(n_points)
+
+        t_vals = (x + 1) / 2.0
+        scaled_weights = w * (self.radius * omega / 2.0)
+
+        sin_omega = np.sin(omega)
+        points = []
+
+        for t in t_vals:
+            coeff1 = np.sin((1 - t) * omega) / sin_omega
+            coeff2 = np.sin(t * omega) / sin_omega
+            v_interp = coeff1 * v1 + coeff2 * v2
+            points.append(to_latlon(v_interp))
+
+        return points, scaled_weights
+
+    # ------------------------------------------------------ #
+    #                 Methods for HilbertSpace               #
+    # ------------------------------------------------------ #
+
+    def to_components(self, u: sh.SHGrid) -> np.ndarray:
+        coeff = self.to_coefficients(u)
+        return self._coefficient_to_component(coeff)
+
+    def from_components(self, c: np.ndarray) -> sh.SHGrid:
+        coeff = self._component_to_coefficients(c)
+        return self.from_coefficients(coeff)
+
+    def ax(self, a: float, x: sh.SHGrid) -> None:
+        """
+        Custom in-place ax implementation for pyshtools objects.
+        x := a*x
+        """
+        x.data *= a
+
+    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
+        """
+        Custom in-place axpy implementation for pyshtools objects.
+        y := a*x + y
+        """
+        y.data += a * x.data
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev space on a sphere.
+
+        Two spaces are considered equal if they are of the same type and have
+        the same defining parameters (kmax, order, scale, and radius).
+        """
+        if not isinstance(other, Lebesgue):
+            return NotImplemented
+
+        return (
+            self.lmax == other.lmax
+            and self.radius == other.radius
+            and self.grid == other.grid
+            and self.extend == other.extend
+        )
+
+    def is_element(self, x: Any) -> bool:
+        """
+        Checks if an object is a valid element of the space.
+        """
+        if not isinstance(x, sh.SHGrid):
+            return False
+        if not x.lmax == self.lmax:
+            return False
+        if not x.grid == self._grid_name():
+            return False
+        if not x.extend == self.extend:
+            return False
+        return True
+
+    # ------------------------------------------------------ #
+    #                 Methods for HilbertModule              #
+    # ------------------------------------------------------ #
+
+    def vector_multiply(self, x1: sh.SHGrid, x2: sh.SHGrid) -> sh.SHGrid:
+        """
+        Computes the pointwise product of two functions.
+        """
+        return x1 * x2
+
+    def vector_sqrt(self, x: sh.SHGrid) -> sh.SHGrid:
+        """
+        Returns the pointwise square root of a function.
+        """
+        y = x.copy()
+        y.data = np.sqrt(x.data)
+        return y
+
+    # ------------------------------------------------------ #
+    #                      Private methods                   #
+    # ------------------------------------------------------ #
+
+    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
+        """Maps spherical harmonic coefficients to a component vector."""
+        return sh.shio.SHCilmToVector(ulm.coeffs)
+
+    def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
+        """Maps a component vector to spherical harmonic coefficients."""
+        coeffs = sh.shio.SHVectorToCilm(c)
+        return sh.SHCoeffs.from_array(
+            coeffs, normalization=self.normalization, csphase=self.csphase
+        )
+
+
+class Sobolev(SphereHelper, SymmetricSobolevSpace):
+    """
+    Implementation of the Sobolev space Hˢ on a circle.
+    """
+
+    def __init__(
+        self,
+        lmax: int,
+        order: float,
+        scale: float,
+        /,
+        radius: float = 1,
+        grid: str = "DH",
+        extend: bool = True,
+    ):
+        """
+        Args:
+        lmax: Maximum degree for the expansions.
+        order: The Sobolev order, controlling the smoothness of functions.
+        scale: The Sobolev length-scale.
+        radius: Radius of the sphere. Defaults to 1.
+        grid: pyshtools grid type. Defaults to "DH"
+        extend: If true longitudes wrap fully. Defaults to True.
+        """
+
+        SphereHelper.__init__(self, lmax, radius, grid, extend)
+
+        lebesgue_space = Lebesgue(lmax, radius=radius, grid=grid, extend=extend)
+        SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale)
+
+    @staticmethod
+    def from_sobolev_parameters(
+        order: float,
+        scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        grid: str = "DH",
+        rtol: float = 1e-8,
+        power_of_two: bool = False,
+    ) -> "Sobolev":
+        """
+        Creates an instance with `lmax` chosen based on the Sobolev parameters.
+
+        This factory method estimates the spherical harmonic truncation degree
+        (`lmax`) required to represent the space while meeting a specified
+        relative tolerance for the truncation error. This is useful when the
+        required `lmax` is not known a priori.
+
+        Args:
+            order: The order of the Sobolev space, controlling smoothness.
+            scale: The non-dimensional length-scale for the space.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The `pyshtools` grid type (e.g., 'DH'). Defaults to 'DH'.
+            rtol: The relative tolerance used to determine the `lmax`.
+            power_of_two: If True, `lmax` is set to the next power of two.
+
+        Returns:
+            An instance of the Sobolev class with a calculated `lmax`.
+        """
+        if order <= 1.0:
+            raise ValueError("This method is only applicable for orders > 1.0")
+
+        summation = 1.0
+        l = 0
+        err = 1.0
+
+        def sobolev_func(deg):
+            return (1.0 + (scale / radius) ** 2 * deg * (deg + 1)) ** order
+
+        while err > rtol:
+            l += 1
+            term = 1 / sobolev_func(l)
+            summation += term
+            err = term / summation
+            if l > 10000:
+                raise RuntimeError("Failed to converge on a stable lmax.")
+
+        if power_of_two:
+            n = int(np.log2(l))
+            l = 2 ** (n + 1)
+
+        lmax = l
+        return Sobolev(
+            lmax,
+            order,
+            scale,
+            radius=radius,
+            grid=grid,
+        )
+
+    def ax(self, a: float, x: sh.SHGrid) -> None:
+        self.underlying_space.ax(a, x)
+
+    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
+        self.underlying_space.axpy(a, x, y)

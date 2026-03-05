@@ -1071,3 +1071,16 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
         return self.underlying_space.geodesic_quadrature(p1, p2, n_points)
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev spaces.
+        """
+        if not isinstance(other, SymmetricSobolevSpace):
+            return NotImplemented
+
+        check1 = self.underlying_space == other.underlying_space
+        check2 = self.order == other.order
+        check3 = self.scale == other.scale
+
+        return check1 and check2 and check3
