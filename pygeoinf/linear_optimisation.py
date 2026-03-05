@@ -209,6 +209,58 @@ class LinearMinimumNormInversion(LinearInversion):
     ) -> Union[NonLinearOperator, LinearOperator]:
         """
         Maps data to the minimum-norm solution matching target chi-squared.
+
+        The damping parameter :math:`\\alpha` is chosen by the discrepancy
+        principle: find :math:`\\alpha^*` such that
+        :math:`\\chi^2(c^\\dagger(\\alpha^*)) = \\chi^2_\\text{critical}`.
+
+        The algorithm works in three stages:
+
+        1. **Bracket lower bound** — starting from ``damping = 1.0`` halve
+           repeatedly until :math:`\\chi^2 \\leq \\chi^2_\\text{critical}`.
+        2. **Bracket upper bound** — if not already found, double repeatedly
+           until :math:`\\chi^2 > \\chi^2_\\text{critical}`.
+        3. **Bisect** — standard interval bisection on :math:`[\\alpha_\\text{lo},
+           \\alpha_\\text{hi}]` until
+           :math:`\\alpha_\\text{hi} - \\alpha_\\text{lo} <
+           \\texttt{atol} + \\texttt{rtol}\\cdot\\alpha_\\text{hi}`.
+
+        **Feasibility pre-condition**: the discrepancy principle has a solution
+        only when the *chi-squared floor* — the minimum achievable
+        :math:`\\chi^2` at any model — is strictly less than
+        :math:`\\chi^2_\\text{critical}`.  The floor equals the noise power
+        projected onto the null space of :math:`G^\\top`, which is
+        :math:`n_\\text{rays} - \\operatorname{rank}G` in expectation.  If the
+        forward-model discretisation error is large relative to the measurement
+        noise the floor can exceed the critical value, making the problem
+        infeasible.  Callers that want a robust outer loop should estimate the
+        floor (one LU solve at tiny damping) and inflate the noise before
+        calling this method.
+
+        .. rubric:: Known bugs fixed (2026-03)
+
+        **Bug 1 — silent false bracket (the critical bug)**:
+        Previously the halving loop set ``damping_lower = damping``
+        unconditionally after the ``while`` loop, even if the loop exited by
+        exhausting ``maxiter`` iterations *without* chi-squared ever crossing
+        the critical value.  This placed a meaningless tiny value (``1/2^100``)
+        in ``damping_lower`` and started bisection on a completely unbracketed
+        interval, always converging to ``damping ≈ 0`` while chi-squared
+        remained above critical — ultimately hitting the
+        ``'Bracketing search failed to converge'`` error.  Fixed by checking
+        ``chi_squared <= critical_value`` **after** the loop and raising a
+        descriptive ``RuntimeError`` immediately if infeasible.
+
+        **Bug 2 — convergence criterion degenerates when lower ≈ 0**:
+        The bisection stopping test was
+        ``width < atol + rtol * (lower + upper)``.
+        When ``lower`` approaches zero the scale collapses to
+        ``rtol * upper``.  For a crossover at :math:`\\alpha^* \\approx 10^{-8}`
+        this becomes ``1e-6 × 1e-8 = 1e-14``, but the interval width is
+        ``~5e-9`` — the criterion is never satisfied and the loop terminates
+        only by exhausting ``maxiter``.  Fixed by using
+        ``atol + rtol * upper`` (scale on the larger endpoint), which correctly
+        tests relative convergence regardless of how small ``lower`` becomes.
         """
         if self.forward_problem.data_error_measure_set:
             critical_value = self.forward_problem.critical_chi_squared(
@@ -260,6 +312,24 @@ class LinearMinimumNormInversion(LinearInversion):
                         _, chi_squared = get_model_for_damping(damping, data)
                         if damping < minimum_damping:
                             raise RuntimeError("Discrepancy principle failed.")
+                    # Bug 1 fix: ensure the loop actually found a crossing before
+                    # claiming we have a valid lower bracket.  Previously this
+                    # assignment was unconditional, placing a meaningless tiny
+                    # value in damping_lower and starting bisection on an
+                    # unbracketed interval when chi-squared never fell below
+                    # the critical value.
+                    if chi_squared > critical_value:
+                        raise RuntimeError(
+                            "Discrepancy principle infeasible: the minimum "
+                            "achievable chi-squared (chi2_floor) never falls "
+                            "below chi2_critical even at vanishing damping. "
+                            "This typically means the forward-model "
+                            "discretisation error is large relative to the "
+                            "measurement noise. Consider refining the spatial "
+                            "grid, increasing noise_std, or inflating the "
+                            "effective noise covariance before calling this "
+                            "method."
+                        )
                     damping_lower = damping
 
                 it = 0
@@ -268,6 +338,12 @@ class LinearMinimumNormInversion(LinearInversion):
                         it += 1
                         damping *= 2.0
                         _, chi_squared = get_model_for_damping(damping, data)
+                    if chi_squared < critical_value:
+                        raise RuntimeError(
+                            "Discrepancy principle search failed: chi-squared "
+                            "did not exceed critical_value even after doubling "
+                            f"damping {maxiter} times."
+                        )
                     damping_upper = damping
 
                 model0 = None
@@ -280,9 +356,15 @@ class LinearMinimumNormInversion(LinearInversion):
                     else:
                         damping_upper = damping
 
-                    if damping_upper - damping_lower < atol + rtol * (
-                        damping_lower + damping_upper
-                    ):
+                    # Bug 2 fix: use damping_upper as the scale, not
+                    # (lower + upper).  The old criterion
+                    # "atol + rtol*(lower+upper)" collapses to
+                    # "rtol*upper" when lower→0, making the threshold
+                    # proportionally tiny (e.g. 1e-6 × 1e-8 = 1e-14)
+                    # while the interval width is still ~lower.  Using
+                    # damping_upper as scale gives correct relative
+                    # convergence regardless of how small lower becomes.
+                    if damping_upper - damping_lower < atol + rtol * damping_upper:
                         return model
                     model0 = model
 

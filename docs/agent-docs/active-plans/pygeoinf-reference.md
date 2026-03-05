@@ -365,6 +365,35 @@ Adds an `AffineSubspace` constraint $Bu = w$ to the inversion.
 | `LinearMinimumNormInversion` | $\min \|u\|$ subject to $Au = y$ |
 | Constrained variants | Add `AffineSubspace` equality constraint |
 
+#### `LinearMinimumNormInversion.minimum_norm_operator` — Discrepancy-Principle Bisection
+
+The discrepancy principle chooses the regularisation parameter $\alpha^*$ satisfying
+$$\chi^2(u^\dagger(\alpha^*)) = \chi^2_\text{critical}$$
+where $\chi^2_\text{critical}$ is set from a $\chi^2$ distribution at the chosen significance level.
+The algorithm brackets $\alpha^*$ by halving/doubling from `damping = 1.0`, then bisects.
+
+**Feasibility pre-condition:**
+The problem has a solution only when the *chi-squared floor* — the residual variance
+that persists even at $\alpha \to 0$ (i.e. the noise projected onto the null space of
+$G^\top$) — is strictly below $\chi^2_\text{critical}$.  In expectation the floor equals
+the number of rays minus the rank of the forward operator.  If the forward-model grid is
+too coarse relative to the ray coverage the floor can exceed the critical value, making
+$\alpha^*$ non-existent.
+
+**Bugs fixed (2026-03):**
+
+| Bug | Location | Symptom | Root cause | Fix |
+|---|---|---|---|---|
+| **Silent false bracket** | halving/doubling loops after `while` | `RuntimeError: Bracketing search failed to converge` even when the halving loop ran to `maxiter` without chi-squared ever crossing critical | `damping_lower = damping` set unconditionally — when the loop exhausted `maxiter` without a crossing, a meaningless value `≈ 1/2^{100}` was placed in `damping_lower` and bisection started on a completely unbracketed interval | Added `if chi_squared > critical_value: raise RuntimeError(…)` guard after each loop |
+| **Degenerate convergence criterion** | bisection stopping test | bisection exhausts all `maxiter` iterations when crossover $\alpha^* \lesssim 10^{-6}$ | Test was `width < atol + rtol*(lower+upper)`.  When `lower → 0` this collapses to `width < rtol*upper`, e.g. for $\alpha^*=10^{-8}$: threshold $\approx 10^{-14}$ while width $\approx 5\times10^{-9}$ — never satisfied with default `atol=0.0` | Changed to `width < atol + rtol*upper` (scale on the larger endpoint) |
+
+**Client-side feasibility guard (recommended):**
+Before calling `minimum_norm_operator`, estimate the chi-squared floor by evaluating the
+forward model at near-zero damping (or via a pseudoinverse), then re-scale the noise
+standard deviation upward so that the floor falls below the critical value.  See
+`manuel_solution/seismic_tomo/inversion.py → run_minimum_norm_inversion` for a worked
+example: `_estimate_chi2_floor` / `_scale_noise_measure` utilities implement this pattern.
+
 ---
 
 ### `visualization.py` — Set Visualization

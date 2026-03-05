@@ -1,7 +1,13 @@
 # Agent Configuration for pygeoinf
 
 ## Plan Directory
-`plans/`
+`docs/agent-docs/`
+
+All agent-oriented materials live in this directory:
+- **`docs/agent-docs/active-plans/`** — In-progress plans
+- **`docs/agent-docs/completed-plans/`** — Finished projects (reference archive)
+- **`docs/agent-docs/references/`** — Research reports, exploration findings, superseded plans
+- **`docs/agent-docs/theory/`** — Theory documents and research papers
 
 ## Package Context
 **pygeoinf** is an abstract Hilbert space framework for geophysical inverse problems and Bayesian inference.
@@ -18,10 +24,10 @@
 
 ## Theory Documents
 Mathematical foundations for Deterministic Linear Inversion (DLI):
-- **`theory/theory.txt`** (2672 lines) - Main LaTeX document "DLI as Convex Analysis problems"
+- **`docs/agent-docs/theory/theory.txt`** (2672 lines) - Main LaTeX document "DLI as Convex Analysis problems"
 - **`docs/theory_map.md`** (758 lines) - Theory-to-code mapping reference
 - **`docs/theory_papers_index.md`** (400 lines) - Index of 18 reference papers
-- **`theory/`** directory - 18 PDF research papers on inverse problems
+- **`docs/agent-docs/theory/`** directory - 18 PDF research papers on inverse problems + LaTeX technical manual
 
 Key theory concepts:
 - Model space M (Banach/Hilbert), Data space D, Property space P
