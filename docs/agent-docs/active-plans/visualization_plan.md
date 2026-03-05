@@ -1,46 +1,50 @@
 # Visualization Plan — Phase 8 (pygeoinf)
 
-**Location:** `pygeoinf/plans/visualization_plan.md`
+**Location:** `pygeoinf/docs/agent-docs/active-plans/visualization_plan.md`
 
-**Purpose:** Detailed roadmap for Phase 8 visualization implementation. Consolidates existing `SubspaceSlicePlotter` implementation and provides TDD-ready tasks for Atlas/Sisyphus orchestration.
+**Purpose:** Detailed roadmap for Phase 8 visualization implementation. Consolidates existing `SubspaceSlicePlotter` and other plotting functions. V1.1 (module consolidation) is already complete as of 2026-02-19.
 
 ---
 
 ## Progress Summary
 
-**Overall Progress:** 1/9 tasks complete (~11%)
+**Overall Progress:** 4/9 sub-tasks complete (~44%)
 
 | Task | Status | Owner | Progress | Notes |
 |------|--------|-------|----------|-------|
-| V1: Core module setup | ⏸️ NOT STARTED | Sisyphus | 0/3 | Move SubspaceSlicePlotter, expose plot() function |
+| V1.1: Create pygeoinf/visualization.py | ✅ DONE | N/A | 3/3 | SubspaceSlicePlotter moved, plot_1d_distributions + plot_corner_distributions included |
+| V1.2: Add plot_slice() function | ⏸️ NOT STARTED | Sisyphus | 0/1 | Convenience wrapper for SubspaceSlicePlotter |
+| V1.3: Smoke tests | ⏸️ NOT STARTED | Sisyphus | 0/3 | Test file exists (test_visualization.py) but empty, needs implementation |
 | V2: Subset.plot() API | ⏸️ NOT STARTED | Sisyphus | 0/2 | Add entrypoint to Subset base class |
 | V3: Plotly 3D backend | ⏸️ NOT STARTED | Sisyphus | 0/4 | Interactive rendering; optional for MVP |
 | V4: Demo notebook | ⏸️ NOT STARTED | Sisyphus | 0/1 | Ball/Ellipsoid/HalfSpace slices + HTML export |
 | V5: Polish & docs | ⏸️ NOT STARTED | Sisyphus | 0/2 | README section, agent usage guide |
-| **Foundation** | 🟨 IN PROGRESS | - | 1/1 | `SubspaceSlicePlotter` exists in `plot.py` ✅ |
 
 ---
 
-## Current State (Foundation) ✅
+## Current State ✅
 
-**What exists:**
-- ✅ `SubspaceSlicePlotter` class in `pygeoinf/plot.py` (fully functional)
-- ✅ Membership-oracle slice plotting (1D/2D/3D)
-- ✅ 1D: bar plots with pixel-based height conversion
-- ✅ 2D: filled contours and line contours
-- ✅ 3D: voxel and surface plots (matplotlib backend)
-- ✅ Parameter validation (7 checks)
-- ✅ Flexible instantiation with sensible defaults
-- ✅ Used in test harness: `test_polyhedra.py`
+**What exists (Foundation complete):**
+- ✅ `pygeoinf/visualization.py` module (1214 lines, created 2026-02-19)
+- ✅ `SubspaceSlicePlotter` class (line 223) — fully functional
+  - Membership-oracle slice plotting (1D/2D/3D)
+  - 1D: bar plots with pixel-based height conversion
+  - 2D: filled contours and line contours
+  - 3D: voxel and surface plots (matplotlib backend)
+  - Parameter validation (7 checks)
+  - Flexible instantiation with sensible defaults
+- ✅ `plot_1d_distributions()` function (line 18) — dual-axis prior/posterior visualization
+- ✅ `plot_corner_distributions()` function (line 1008) — multi-dimensional marginal distributions
+- ✅ Exported from `pygeoinf/__init__.py` (public API)
 
 **What's NOT done:**
-- ❌ No official `pygeoinf/visualization.py` module
-- ❌ No `Subset.plot()` entrypoint
+- ❌ No `plot_slice()` convenience function
+- ❌ No `Subset.plot()` entrypoint on base class
 - ❌ No Plotly backend for interactive 3D
 - ❌ No demo notebook
-- ❌ No formal unit tests
+- ❌ Test file exists but stubbed (pytest.fail placeholder)
 
-**Next step:** Tasks V1 → V2 → V3 → V4 → V5
+**Next step:** V1.2 (plot_slice) → V1.3 (tests) → V2 (Subset.plot) → V3–V5
 
 ---
 
@@ -56,26 +60,31 @@
 
 ## Detailed Task Breakdown
 
-### Task V1: Core Module Setup ⏸️
+### Task V1: Core Module Setup — V1.1 ✅, V1.2–V1.3 ⏸️
 
-**Status:** NOT STARTED (0/3 sub-tasks)
-**Owner:** Sisyphus
-**Depends on:** None (can start immediately)
-**Files:** `pygeoinf/visualization.py` (create), `tests/test_visualization.py` (update)
+**Overall Status:** V1.1 DONE (2026-02-19), V1.2–V1.3 NOT STARTED (2/3 sub-tasks remaining)
+**Owner:** Sisyphus (for V1.2–V1.3)
+**Depends on:** None (V1.1 already complete; V1.2–V1.3 can start immediately)
+**Files:** `pygeoinf/visualization.py` (exists; no changes needed), `tests/test_visualization.py` (update)
 
 #### Goal
-Move `SubspaceSlicePlotter` from `pygeoinf/plot.py` into official `pygeoinf/visualization.py` module and expose clean public API.
+V1.1 (consolidate into visualization.py) is **already complete**. Remaining work: add `plot_slice()` convenience function and write smoke tests.
 
 #### Sub-Tasks
 
-**V1.1** — Create `pygeoinf/visualization.py` module
-- [ ] Move `SubspaceSlicePlotter` class from `plot.py`
-- [ ] Move all imports (matplotlib, numpy, typing, HilbertSpace, etc.)
-- [ ] Add module docstring explaining visualization architecture
-- [ ] Export public API: `__all__ = ['SubspaceSlicePlotter', 'plot_slice']`
-- [ ] Keep `plot.py` temporarily (dual location for backward compatibility or deprecation warning)
+**V1.1** — ✅ DONE (2026-02-19): Create `pygeoinf/visualization.py` module and move classes
+- [x] Move `SubspaceSlicePlotter` class from `plot.py` → visualization.py (line 223)
+- [x] Include `plot_1d_distributions()` (line 18) and `plot_corner_distributions()` (line 1008)
+- [x] All imports in place (matplotlib, numpy, typing, HilbertSpace, etc.)
+- [x] Module docstring present
+- [x] Export from `pygeoinf.__init__.py` as public API
+- [x] Old `plot.py` file removed (not needed)
 
-**V1.2** — Add `plot_slice()` convenience function
+**V1.2** — Add `plot_slice()` convenience function ⏸️ NOT STARTED
+
+**Objective:** Create a top-level convenience function so users can write `plot_slice(subset, on_subspace)` instead of instantiating `SubspaceSlicePlotter` directly.
+
+**Implementation:**
 ```python
 def plot_slice(
     subset: ConvexSubset,
@@ -103,21 +112,33 @@ def plot_slice(
     return plotter.plot()
 ```
 
-**V1.3** — Add smoke tests for V1
-- [ ] Test: `test_visualization_import()` — verify `pygeoinf.visualization` module loads
-- [ ] Test: `test_plot_slice_ball_2d()` — plot Ball slice on 2D subspace, verify Figure returned
-- [ ] Test: `test_plot_slice_ball_3d()` — plot Ball slice on 3D subspace, verify Figure returned (matplotlib backend)
+**Tests to write:**
+- Test: `test_plot_slice_exists()` — verify function is callable
+- Test: `test_plot_slice_ball_2d()` — plot Ball on 2D subspace, verify Figure returned
+- Test: `test_plot_slice_half_space_3d()` — plot HalfSpace on 3D subspace, verify Figure returned
 
-#### Acceptance Criteria
-✅ `pygeoinf/visualization.py` exists and exports `SubspaceSlicePlotter`, `plot_slice`
-✅ `plot_slice()` works for 2D and 3D Ball subsets without errors
-✅ Smoke tests pass without GUI (use matplotlib Agg backend)
+**Acceptance Criteria:**
+- ✅ `plot_slice()` function exists and is imported from `pygeoinf.visualization`
+- ✅ Works for 2D and 3D subsets without errors
+- ✅ Returns a matplotlib Figure object
 
----
+**V1.3** — Write smoke tests for V1.2 ⏸️ NOT STARTED
 
-### Task V2: Subset.plot() API ⏸️
+**Objective:** Populate `tests/test_visualization.py` with basic import and functional tests.
 
-**Status:** NOT STARTED (0/2 sub-tasks)
+**File:** `tests/test_visualization.py` (currently stubbed with pytest.fail placeholder)
+
+**Tests to write:**
+- [ ] `test_visualization_import()` — verify `pygeoinf.visualization` module loads and exports expected symbols
+- [ ] `test_subspace_slice_plotter_exists()` — instantiate and basic property checks
+- [ ] `test_plot_slice_ball_2d()` — end-to-end: create Ball, 2D subspace, call plot_slice, check return type
+- [ ] `test_plot_slice_ellipsoid_3d()` — end-to-end: create Ellipsoid, 3D subspace, call plot_slice, check return type
+- [ ] `test_plot_1d_distributions()` — smoke test for plot_1d_distributions (already exists)
+
+**Acceptance Criteria:**
+- ✅ All 5+ tests pass without GUI (use matplotlib Agg backend)
+- ✅ No external dependencies required (plotly optional)
+- ✅ Tests cover import, instantiation, and 2D/3D rendering paths
 **Owner:** Sisyphus
 **Depends on:** V1 ✅
 **Files:** `pygeoinf/subsets.py`
