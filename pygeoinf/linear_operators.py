@@ -1374,11 +1374,9 @@ class SparseMatrixLinearOperator(MatrixLinearOperator):
         """
         Overrides the base method to efficiently compute the dense matrix.
         """
-        # ⚡️ Fast path: Use the highly optimized .toarray() method.
+
         if galerkin == self.is_galerkin:
             return self._matrix.toarray()
-
-        # Fallback path for when a basis conversion is needed.
         else:
             return super()._compute_dense_matrix(galerkin, parallel, n_jobs)
 
@@ -1605,13 +1603,46 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
 
         return self.__getattr__("sqrt")()
 
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+
+        try:
+            new_data = func(self._matrix.data)
+        except (TypeError, AttributeError):
+            vectorized_func = np.vectorize(func)
+            new_data = vectorized_func(self._matrix.data)
+
+        return DiagonalSparseMatrixLinearOperator(
+            self.domain,
+            self.codomain,
+            (new_data, self.offsets),
+            galerkin=self.is_galerkin,
+        )
+
     def extract_diagonals(
         self,
         offsets: List[int],
         /,
         *,
         galerkin: bool = True,
-        # parallel and n_jobs are ignored but kept for signature consistency
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[np.ndarray, List[int]]:
@@ -1624,10 +1655,7 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         if galerkin != self.is_galerkin:
             return super().extract_diagonals(offsets, galerkin=galerkin)
 
-        # Create a result array and fill it with the requested stored diagonals
         result_diagonals = np.zeros((len(offsets), self.domain.dim))
-
-        # Create a mapping from stored offset to its data row for quick lookup
         stored_diagonals = dict(zip(self.offsets, self._matrix.data))
 
         for i, k in enumerate(offsets):

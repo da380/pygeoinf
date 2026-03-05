@@ -681,6 +681,26 @@ class GaussianMeasure:
         cov = self.covariance
         return cov(u)
 
+    def rescale_directional_variance(
+        self, direction: Vector, target_std: float
+    ) -> GaussianMeasure:
+        """
+        Returns a new measure where Var[<x, direction>] is scaled to target_std^2.
+
+        The expectation of the resulting measure remains unchanged.
+        """
+
+        expectation = self.expectation
+        shifted_measure = self.affine_mapping(translation=-expectation)
+
+        current_var = self.domain.inner_product(self.covariance(direction), direction)
+        if current_var <= 0:
+            raise ValueError("Directional variance must be positive to rescale.")
+        norm = target_std / np.sqrt(current_var)
+
+        scaled_measure = norm * shifted_measure
+        return scaled_measure.affine_mapping(translation=expectation)
+
     def __neg__(self) -> GaussianMeasure:
         """Returns a measure with a negated expectation."""
         if self.covariance_factor_set:
