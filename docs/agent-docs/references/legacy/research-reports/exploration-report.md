@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> Early exploration report from codebase analysis phase.
+> See: docs/agent-docs/references/living/pygeoinf-reference.md for current architecture
+> Kept as historical snapshot of package understanding.
+
 # pygeoinf Explorer Report — Comprehensive Module Inventory
 
 **Date:** 2026-02-27

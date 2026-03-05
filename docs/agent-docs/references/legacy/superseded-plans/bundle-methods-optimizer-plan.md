@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> This Prometheus research plan was superseded by the full bundle-methods implementation.
+> See: docs/agent-docs/active-plans/bundle-methods-full-plan.md (Phases 1-7 completed)
+> Kept for historical reference only.
+
 # Plan: Bundle Methods Optimizer for Non-Smooth Convex Optimization
 
 **TL;DR:** Implement level bundle methods in pygeoinf to solve non-smooth convex minimization problems with superior convergence compared to subgradient descent. Bundle methods build cutting-plane models, solve quadratic master problems, and provide automatic step sizing with gap-based optimality certificates. Target application: DualMasterCostFunction minimization for computing support values h_U(q).

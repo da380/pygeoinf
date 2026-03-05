@@ -1,6 +1,11 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> Prometheus research precursor to dual_master_implementation.md.
+> Implementation completed in bundle-methods phases 2-7.
+> Kept for historical reference of research process.
+
 # Dual Master — Prometheus Research Plan
 
-Reference: `pygeoinf/pygeoinf/DUAL_MASTER_IMPLEMENTATION_PLAN.md`
+Reference: `pygeoinf/docs/agent-docs/references/legacy/superseded-plans/dual_master_prometheus.md`
 
 Purpose
 - Capture research tasks, open questions, and recommended experiments required before implementation.

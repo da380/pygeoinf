@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> Research report on fast convex optimization strategies (Phase 4-6 work).
+> Completed implementation in bundle-methods-full-plan phases 4-6.
+> Kept for understanding of optimization design considerations.
+
 # DualMasterCostFunction — Faster / More Robust Convex Optimisation
 
 **Scope:** Robust, practical algorithms to compute

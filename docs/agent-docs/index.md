@@ -19,11 +19,14 @@ Plans currently under development or awaiting implementation. These move here wh
 - **Lifecycle:** Planned → Active → Completed
 
 ### `references/`
-Exploration reports, research summaries, and living agent-facing references.
+Exploration reports, research summaries, and **living reference documents**.
 
-- **Purpose:** Intermediate findings used to inform planning
-- **Examples:** Oracle research reports, exploration summaries, theory integration proposals
-- **Retention:** Keep while actively referenced; archive or delete after plan completion
+- **Purpose:**
+  - Intermediate findings used to inform planning
+  - **Living architecture references** (`*-reference.md`) — describe package structure, class hierarchies, APIs
+- **Examples:** Oracle research reports, exploration summaries, theory integration proposals, `pygeoinf-reference.md`
+- **Retention:** Keep indefinitely; references especially valuable for agent learning
+- **Agent usage:** Agents **must read `*-reference.md` first** before exploring source files
 
 ### `theory/`
 Theory-to-code mappings and mathematical validation materials used by Theory-Validator-subagent.

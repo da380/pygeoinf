@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> Analysis of example notebooks from early exploration phase.
+> See: demos/ folder and active plans for current examples.
+> Kept for historical understanding of demo structure.
+
 # Paper Demos Exploration Report
 
 **Date:** 2025-01-XX

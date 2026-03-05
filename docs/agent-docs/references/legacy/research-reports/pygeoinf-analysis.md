@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> Deep analysis of package structure from exploration phase.
+> See: docs/agent-docs/references/living/pygeoinf-reference.md for current understanding
+> Kept as historical snapshot of package analysis.
+
 ---
 task: pygeoinf-architecture-analysis
 repo: pygeoinf

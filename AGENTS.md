@@ -43,6 +43,13 @@ Key theory concepts:
 - Spectral methods with fast transforms
 - **pygeoinf depends on intervalinf for concrete spaces**
 
+## Package Quick References
+All files matching `docs/agent-docs/references/*-reference.md` are **condensed reference documents** that agents **must read first** before exploring individual source files. Currently: `pygeoinf-reference.md`
+
+**Read rule:** Before exploring any source files, read every `*-reference.md` in `docs/agent-docs/references/`.
+
+**Update rule:** After changes, **update all `*-reference.md` files** to reflect additions, removals, or modifications. Stale references are actively harmful.
+
 ## Current Development Status
 Working on: Dual Master implementation (~50% complete, Phase 4/8)
 - Phase 1-3: ✅ Architecture, support functions, cost function

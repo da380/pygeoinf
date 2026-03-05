@@ -5,9 +5,14 @@ handoff:
     prompt: Implement the plan
 ---
 
+> ⚠️ **ARCHIVED** (2026-03-05)
+> DualMasterCostFunction was fully implemented as Phase 2 of bundle-methods-full-plan.md.
+> See: docs/agent-docs/completed-plans/bundle-methods-full-plan-phase-2-complete.md
+> Kept for reference to understand implementation approach.
+
 # Dual Master — Implementation Plan (Atlas)
 
-Location: `pygeoinf/plans/dual_master_implementation.md`
+Location: `pygeoinf/docs/agent-docs/references/legacy/superseded-plans/dual_master_implementation.md`
 
 ## Purpose
 Concrete, phase-by-phase TDD plan for implementing the dual master equation cost function for Direct Linear Inversion in pygeoinf. This plan is meant for Atlas orchestration and Sisyphus implementation.

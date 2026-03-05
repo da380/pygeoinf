@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> Test coverage snapshot from Phase 4-7 implementation.
+> Run `pytest tests/` for current test status.
+> Kept for historical record of test evolution.
+
 ---
 type: test-status
 package: pygeoinf

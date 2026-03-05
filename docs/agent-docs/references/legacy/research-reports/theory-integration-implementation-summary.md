@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED** (2026-03-05)
+> This was a historical integration (Feb 2024, before agent restructuring).
+> Theory validators are now configured in: .github/agents/
+> Kept for understanding of theory integration evolution.
+
 # Theory Integration Implementation - Complete
 
 **Implementation Date:** 2024

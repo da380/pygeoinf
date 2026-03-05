@@ -4,6 +4,11 @@ created: 2026-02-17
 status: proposal
 ---
 
+> ⚠️ **ARCHIVED** (2026-03-05)
+> Integration proposal for theory-aware agent system.
+> See: theory-integration-implementation-summary.md for completed integration
+> Kept to understand design rationale of validator system.
+
 # Theory-Aware Agent Development: Integration Proposal
 
 ## Executive Summary
