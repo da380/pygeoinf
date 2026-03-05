@@ -31,6 +31,6 @@ subspace = pgf.subspaces.AffineSubspace.from_tangent_basis(
     solver=None
 )
 
-plotter = pgf.visualization.SubspaceSlicePlotter(polyhedra, subspace)
+plotter = pgf.plot.SubspaceSlicePlotter(polyhedra, subspace)
 
 fig, ax, mask = plotter.plot(bounds=[(-5.0, 5.0), (-5.0, 5.0)])

@@ -12,9 +12,9 @@
 
 | Task | Status | Owner | Progress | Notes |
 |------|--------|-------|----------|-------|
-| V1.1: Create pygeoinf/visualization.py | ✅ DONE | N/A | 3/3 | SubspaceSlicePlotter moved, plot_1d_distributions + plot_corner_distributions included |
+| V1.1: Create pygeoinf/plot.py | ✅ DONE | N/A | 3/3 | SubspaceSlicePlotter moved, plot_1d_distributions + plot_corner_distributions included |
 | V1.2: Add plot_slice() function | ⏸️ NOT STARTED | Sisyphus | 0/1 | Convenience wrapper for SubspaceSlicePlotter |
-| V1.3: Smoke tests | ⏸️ NOT STARTED | Sisyphus | 0/3 | Test file exists (test_visualization.py) but empty, needs implementation |
+| V1.3: Smoke tests | ⏸️ NOT STARTED | Sisyphus | 0/3 | Test file exists (test_plot.py) but empty, needs implementation |
 | V2: Subset.plot() API | ⏸️ NOT STARTED | Sisyphus | 0/2 | Add entrypoint to Subset base class |
 | V3: Plotly 3D backend | ⏸️ NOT STARTED | Sisyphus | 0/4 | Interactive rendering; optional for MVP |
 | V4: Demo notebook | ⏸️ NOT STARTED | Sisyphus | 0/1 | Ball/Ellipsoid/HalfSpace slices + HTML export |
@@ -25,7 +25,7 @@
 ## Current State ✅
 
 **What exists (Foundation complete):**
-- ✅ `pygeoinf/visualization.py` module (1214 lines, created 2026-02-19)
+- ✅ `pygeoinf/plot.py` module (1214 lines, created 2026-02-19)
 - ✅ `SubspaceSlicePlotter` class (line 223) — fully functional
   - Membership-oracle slice plotting (1D/2D/3D)
   - 1D: bar plots with pixel-based height conversion
@@ -65,15 +65,15 @@
 **Overall Status:** V1.1 DONE (2026-02-19), V1.2–V1.3 NOT STARTED (2/3 sub-tasks remaining)
 **Owner:** Sisyphus (for V1.2–V1.3)
 **Depends on:** None (V1.1 already complete; V1.2–V1.3 can start immediately)
-**Files:** `pygeoinf/visualization.py` (exists; no changes needed), `tests/test_visualization.py` (update)
+**Files:** `pygeoinf/plot.py` (exists; no changes needed), `tests/test_plot.py` (update)
 
 #### Goal
-V1.1 (consolidate into visualization.py) is **already complete**. Remaining work: add `plot_slice()` convenience function and write smoke tests.
+V1.1 (consolidate into plot.py) is **already complete**. Remaining work: add `plot_slice()` convenience function and write smoke tests.
 
 #### Sub-Tasks
 
-**V1.1** — ✅ DONE (2026-02-19): Create `pygeoinf/visualization.py` module and move classes
-- [x] Move `SubspaceSlicePlotter` class from `plot.py` → visualization.py (line 223)
+**V1.1** — ✅ DONE (2026-02-19): Create `pygeoinf/plot.py` module and move classes
+- [x] Move `SubspaceSlicePlotter` class from `plot.py` → plot.py (line 223)
 - [x] Include `plot_1d_distributions()` (line 18) and `plot_corner_distributions()` (line 1008)
 - [x] All imports in place (matplotlib, numpy, typing, HilbertSpace, etc.)
 - [x] Module docstring present
@@ -118,18 +118,18 @@ def plot_slice(
 - Test: `test_plot_slice_half_space_3d()` — plot HalfSpace on 3D subspace, verify Figure returned
 
 **Acceptance Criteria:**
-- ✅ `plot_slice()` function exists and is imported from `pygeoinf.visualization`
+- ✅ `plot_slice()` function exists and is imported from `pygeoinf.plot`
 - ✅ Works for 2D and 3D subsets without errors
 - ✅ Returns a matplotlib Figure object
 
 **V1.3** — Write smoke tests for V1.2 ⏸️ NOT STARTED
 
-**Objective:** Populate `tests/test_visualization.py` with basic import and functional tests.
+**Objective:** Populate `tests/test_plot.py` with basic import and functional tests.
 
-**File:** `tests/test_visualization.py` (currently stubbed with pytest.fail placeholder)
+**File:** `tests/test_plot.py` (currently stubbed with pytest.fail placeholder)
 
 **Tests to write:**
-- [ ] `test_visualization_import()` — verify `pygeoinf.visualization` module loads and exports expected symbols
+- [ ] `test_visualization_import()` — verify `pygeoinf.plot` module loads and exports expected symbols
 - [ ] `test_subspace_slice_plotter_exists()` — instantiate and basic property checks
 - [ ] `test_plot_slice_ball_2d()` — end-to-end: create Ball, 2D subspace, call plot_slice, check return type
 - [ ] `test_plot_slice_ellipsoid_3d()` — end-to-end: create Ellipsoid, 3D subspace, call plot_slice, check return type
@@ -213,7 +213,7 @@ class Subset(ABC):
 **Status:** NOT STARTED (0/4 sub-tasks)
 **Owner:** Sisyphus
 **Depends on:** V1 + V2
-**Files:** `pygeoinf/visualization.py` (extend), `pyproject.toml` (update deps)
+**Files:** `pygeoinf/plot.py` (extend), `pyproject.toml` (update deps)
 
 #### Goal
 Add interactive 3D rendering via Plotly (GPU-accelerated WebGL, smooth rotation/zoom/pan, HTML export).
@@ -228,7 +228,7 @@ Add interactive 3D rendering via Plotly (GPU-accelerated WebGL, smooth rotation/
   ```
 - [ ] Or (alternative): list plotly as a soft dependency with graceful fallback
 
-**V3.2** — Implement Plotly backend in `visualization.py`
+**V3.2** — Implement Plotly backend in `plot.py`
 ```python
 def _plot_slice_plotly_3d(
     subset: ConvexSubset,
@@ -411,8 +411,8 @@ Create end-to-end demonstration notebook showing visualization workflows for all
 
 ## Design Decisions
 
-### 1. Why separate `visualization.py` from `plot.py`?
-**Rationale:** `plot.py` is currently a thin wrapper; `visualization.py` will be the public, stable API. Keeps concerns separated and allows future plotting backends (e.g., D3.js, Three.js) to be added alongside matplotlib/Plotly.
+### 1. Why separate `plot.py` from `plot.py`?
+**Rationale:** `plot.py` is currently a thin wrapper; `plot.py` will be the public, stable API. Keeps concerns separated and allows future plotting backends (e.g., D3.js, Three.js) to be added alongside matplotlib/Plotly.
 
 ### 2. Why Optional Plotly dependency?
 **Rationale:** Not everyone needs 3D interactive rendering. Making Plotly optional reduces install size and keeps dependencies lean for CLI-only users. Graceful fallback (error message with install instructions) improves UX.
@@ -432,11 +432,11 @@ Create end-to-end demonstration notebook showing visualization workflows for all
 
 | File | Status | Responsibility |
 |------|--------|-----------------|
-| `pygeoinf/visualization.py` | 📝 TO CREATE | Public API: `SubspaceSlicePlotter`, `plot_slice()`, backend integration |
-| `pygeoinf/plot.py` | ✅ EXISTS | Current home of `SubspaceSlicePlotter` (temporary; migrate to visualization.py) |
+| `pygeoinf/plot.py` | 📝 TO CREATE | Public API: `SubspaceSlicePlotter`, `plot_slice()`, backend integration |
+| `pygeoinf/plot.py` | ✅ EXISTS | Current home of `SubspaceSlicePlotter` (temporary; migrate to plot.py) |
 | `pygeoinf/subsets.py` | 🔄 TO MODIFY | Add `plot()` method to `Subset` base class |
 | `pygeoinf/README.md` | 🔄 TO MODIFY | Add visualization quick-start section |
-| `tests/test_visualization.py` | 📝 TO CREATE/UPDATE | Smoke tests + unit tests for all tasks |
+| `tests/test_plot.py` | 📝 TO CREATE/UPDATE | Smoke tests + unit tests for all tasks |
 | `pygeoinf/testing_sets/visualization_demo.ipynb` | 📝 TO CREATE | End-to-end demo notebook |
 | `pyproject.toml` | 🔄 TO MODIFY | Add plotly to optional deps |
 
@@ -447,13 +447,13 @@ Create end-to-end demonstration notebook showing visualization workflows for all
 ### Single task test
 ```bash
 cd pygeoinf
-PYTHONPATH=. pytest -q tests/test_visualization.py::test_visualization_import
+PYTHONPATH=. pytest -q tests/test_plot.py::test_visualization_import
 ```
 
 ### All visualization tests
 ```bash
 cd pygeoinf
-PYTHONPATH=. pytest -q tests/test_visualization.py
+PYTHONPATH=. pytest -q tests/test_plot.py
 ```
 
 ### Run demo notebook (after V4 complete)
@@ -471,7 +471,7 @@ Phase 8.V{task}: {title}
 
 What changed: {files modified}
 Why: Complete Phase 8 visualization tasks (see plans/visualization_plan.md)
-Tests: pytest -q tests/test_visualization.py::test_*
+Tests: pytest -q tests/test_plot.py::test_*
 Status: {acceptance criteria status}
 ```
 
@@ -480,12 +480,12 @@ Example:
 Phase 8.V1: Core visualization module setup
 
 What changed:
-- Created pygeoinf/visualization.py (moved SubspaceSlicePlotter from plot.py)
+- Created pygeoinf/plot.py (moved SubspaceSlicePlotter from plot.py)
 - Added plot_slice() convenience function
 - Updated __all__ exports
 
 Why: Consolidate visualization into official module (Phase 8.V1)
-Tests: pytest -q tests/test_visualization.py (all pass)
+Tests: pytest -q tests/test_plot.py (all pass)
 Status: V1 acceptance criteria met ✅
 ```
 
@@ -497,7 +497,7 @@ Status: V1 acceptance criteria met ✅
 
 1. **V1 (Core setup)** — Move code, expose API, write smoke tests
    ```bash
-   echo "Create pygeoinf/visualization.py and populate"
+   echo "Create pygeoinf/plot.py and populate"
    # Expected time: 1–2 hours
    ```
 
@@ -509,7 +509,7 @@ Status: V1 acceptance criteria met ✅
 
 3. **V3 (Plotly backend)** — Interactive 3D rendering
    ```bash
-   echo "Extend visualization.py with Plotly backend"
+   echo "Extend plot.py with Plotly backend"
    # Expected time: 1–2 hours
    ```
 
@@ -528,7 +528,7 @@ Status: V1 acceptance criteria met ✅
 **Recommended Start:**
 ```bash
 conda activate inferences3
-code pygeoinf/visualization.py
+code pygeoinf/plot.py
 # Begin V1 implementation with TDD
 ```
 

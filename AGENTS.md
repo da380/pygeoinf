@@ -59,4 +59,4 @@ Working on: Dual Master implementation (~50% complete, Phase 4/8)
 
 Known issues:
 - 13 test failures due to type hint compatibility (Python 3.10 vs 3.11 requirement)
-- Need to add `from __future__ import annotations` to visualization.py:1
+- Need to add `from __future__ import annotations` to plot.py:1

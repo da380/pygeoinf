@@ -58,7 +58,7 @@ pygeoinf/pygeoinf/
 ├── convex_analysis.py     ← SupportFunction hierarchy + combinators
 ├── convex_optimisation.py ← Convex optimisation algorithms
 │
-├── visualization.py       ← SubspaceSlicePlotter (1D/2D/3D set slices)
+├── plot.py       ← SubspaceSlicePlotter (1D/2D/3D set slices)
 ├── plot.py                ← Lower-level plotting utilities
 │
 ├── auxiliary.py           ← Miscellaneous mathematical helpers
@@ -396,7 +396,7 @@ example: `_estimate_chi2_floor` / `_scale_noise_measure` utilities implement thi
 
 ---
 
-### `visualization.py` — Set Visualization
+### `plot.py` — Set Visualization
 
 #### `SubspaceSlicePlotter`
 
@@ -599,7 +599,7 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.linear_bayesian import LinearBayesianInversion
 from pygeoinf.linear_optimisation import LinearLeastSquaresInversion
-from pygeoinf.visualization import SubspaceSlicePlotter
+from pygeoinf.plot import SubspaceSlicePlotter
 ```
 
 ---
