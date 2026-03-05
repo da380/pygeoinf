@@ -62,19 +62,6 @@ class AbstractInvariantLebesgueSpace(ABC):
         """The dimension of the Hilbert space."""
 
     @abstractmethod
-    def random_point(self) -> Any:
-        """Returns a single random point from the underlying symmetric space."""
-
-    def random_points(self, n: int) -> List[Any]:
-        """
-        Returns a list of `n` random points.
-
-        Args:
-            n: The number of random points to generate.
-        """
-        return [self.random_point() for _ in range(n)]
-
-    @abstractmethod
     def laplacian_eigenvalue(self, k: int | tuple[int, ...]) -> float:
         """
         Returns the eigenvalue of the Laplacian for a given mode index.
@@ -134,6 +121,19 @@ class AbstractInvariantLebesgueSpace(ABC):
             points: List of manifold coordinates.
             weights: Integration weights scaled by the line element.
         """
+
+    @abstractmethod
+    def random_point(self) -> Any:
+        """Returns a single random point from the underlying symmetric space."""
+
+    def random_points(self, n: int) -> List[Any]:
+        """
+        Returns a list of `n` random points.
+
+        Args:
+            n: The number of random points to generate.
+        """
+        return [self.random_point() for _ in range(n)]
 
     def invariant_automorphism(self, f: Callable[[float], float]) -> LinearOperator:
         """

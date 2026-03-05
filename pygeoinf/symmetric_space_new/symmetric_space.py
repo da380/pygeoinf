@@ -19,7 +19,12 @@ from typing import Callable, Any, List, Optional, TypeAlias, Iterator
 import numpy as np
 from scipy.sparse import diags
 
-from pygeoinf.hilbert_space import HilbertSpace, HilbertModule, Vector
+from pygeoinf.hilbert_space import (
+    HilbertSpace,
+    HilbertModule,
+    Vector,
+    MassWeightedHilbertModule,
+)
 from pygeoinf.linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
@@ -53,7 +58,7 @@ class InvariantLinearAutomorphism(DiagonalSparseMatrixLinearOperator):
             eigenvalues: A vector of the operator's eigenvalues
         """
         diagonals = (eigenvalues.reshape(1, -1), [0])
-        super().__init__(domain, domain, diagonals, galerkin=True)
+        super().__init__(domain, domain, diagonals)
 
     @staticmethod
     def from_index_function(
@@ -100,6 +105,23 @@ class InvariantLinearAutomorphism(DiagonalSparseMatrixLinearOperator):
         Returns the trace of the automorphism.
         """
         return np.sum(self.eigenvalues)
+
+    @property
+    def inverse(self) -> InvariantLinearAutomorphism:
+        """
+        Returns the inverse of the invariant automorphism.
+
+        Since the operator is diagonal in the spectral basis, the inverse
+        is formed by taking the reciprocal of the eigenvalues.
+        """
+        current_eigenvalues = self.eigenvalues
+
+        if np.any(current_eigenvalues == 0):
+            raise ValueError("Cannot invert an operator with zero eigenvalues.")
+
+        return InvariantLinearAutomorphism(
+            self.domain, np.reciprocal(current_eigenvalues)
+        )
 
     def __neg__(self) -> InvariantLinearAutomorphism:
         current_diagonal = self.eigenvalues
@@ -263,51 +285,26 @@ class InvariantGaussianMeasure(GaussianMeasure):
     #                        Public methods                      #
     # ---------------------------------------------------------- #
 
-    def rescale_total_variance(self, target_std: float) -> InvariantGaussianMeasure:
+    def rescale_norm_variance(self, std: float) -> InvariantGaussianMeasure:
         """
-        Returns a new measure with total variance (Trace) scaled to target_std^2.
+        Returns a new measure whose covariance is scaled such that
 
-        The expectation (mean) of the measure remains unchanged.
+        E[||x - E[x]||^2] = std^2.
+
+        The expectation of the measure is unchanged.
         """
         current_trace = self.covariance.trace
 
         if current_trace <= 0:
             raise ValueError("Trace must be positive to perform rescaling.")
 
-        scale_factor_squared = (target_std**2) / current_trace
+        scale_factor_squared = (std**2) / current_trace
         new_variances = self.spectral_variances * scale_factor_squared
 
         return InvariantGaussianMeasure(
             self.domain,
             new_variances,
             expectation=self.expectation,
-        )
-
-    # Inside InvariantGaussianMeasure (symmetric_space.py)
-
-    def rescale_directional_variance(
-        self, direction: Vector, target_std: float
-    ) -> InvariantGaussianMeasure:
-        """
-        Rescales the covariance such that Var[<x, direction>] = target_std^2.
-
-        The expectation remains unchanged.
-        """
-
-        current_directional_variance = self.domain.inner_product(
-            self.covariance(direction), direction
-        )
-
-        if current_directional_variance <= 0:
-            raise ValueError(
-                "Directional variance must be positive to perform rescaling."
-            )
-
-        scale_factor_squared = (target_std**2) / current_directional_variance
-        new_variances = self.spectral_variances * scale_factor_squared
-
-        return InvariantGaussianMeasure(
-            self.domain, new_variances, expectation=self.expectation
         )
 
     # ------------------------------------------------------#
@@ -515,7 +512,7 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """
 
     @abstractmethod
-    def laplacian_eigenvalue(self, k: int | tuple[int, ...]) -> float:
+    def laplacian_eigenvalue(self, k: Index) -> float:
         """
         Returns the eigenvalue of the Laplacian for a given index.
 
@@ -541,7 +538,7 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """
 
     @abstractmethod
-    def laplacian_eigenvectors_at_point(self, x: Point) -> List[Value]:
+    def laplacian_eigenvectors_at_point(self, x: Point) -> np.ndarray:
         """
         Returns a list of the values of the eigenvectors at a given point
 
@@ -598,8 +595,7 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
 
         Args:
             f: The function
-            expectation: The expected value for measure. Defaults to None which
-                means the zero vector
+            expectation: The expected value for measure. Defaults to zero
 
         Returns:
             The measure as an instance of InvariantGaussianMeasure
@@ -624,27 +620,192 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
 
         Args:
             f: The function
-            expectation: The expected value for measure. Defaults to None which
-                means the zero vector
+            expectation: The expected value for measure. Defaults to zero
             std: The desired standard deviation
 
         Returns:
             The measure as an instance of InvariantGaussianMeasure
         """
+        initial_measure = self.invariant_gaussian_measure(f, expectation=expectation)
+        return initial_measure.rescale_norm_variance(std)
 
-        initial_measure = self.invariant_gaussian_measure(f)
-        norm = std / np.sqrt(initial_measure.covariance.trace)
-        intermediate_measure = norm * initial_measure
-        return intermediate_measure.affine_mapping(translation=expectation)
+    def sobolev_kernel_gaussian_measure(
+        self, order: float, scale: float, /, *, expectation: Vector = None
+    ):
+        """
+        Returns an invariant Gaussian measure with a Sobolev-type covariance
+        equal to (1 + scale^2 * Δ)^-order.
+
+        Args:
+            order: Order parameter for the covariance.
+            scale: Scale parameter for the covariance.
+            expectation: The expected value for measure. Defaults to zero
+        """
+        return self.invariant_gaussian_measure(
+            lambda k: (1 + scale**2 * k) ** (-order), expectation=expectation
+        )
+
+    def norm_scaled_sobolev_kernel_gaussian_measure(
+        self,
+        order: float,
+        scale: float,
+        /,
+        *,
+        expectation: Vector = None,
+        std: float = 1,
+    ):
+        """
+        Returns an invariant Gaussian measure with a Sobolev-type covariance
+        proportional to (1 + scale^2 * Δ)^-order.
+
+        The measure's covariance is scaled such that the expected value for the
+        samples norm is equal to the given standard deviation.
+
+        Args:
+            order: Order parameter for the covariance.
+            scale: Scale parameter for the covariance.
+            expectation: The expected value for measure. Defaults to zero
+            std: The desired standard deviation
+        """
+        return self.norm_scaled_invariant_gaussian_measure(
+            lambda k: (1 + scale**2 * k) ** -order, expectation=expectation, std=std
+        )
+
+    def heat_kernel_gaussian_measure(
+        self, scale: float, /, *, expectation: Vector = None
+    ):
+        """
+        Returns an invariant Gaussian measure with a heat kernel covariance
+        equal to exp(-scale^2 * Δ).
+
+        Args:
+            scale: Scale parameter for the covariance.
+            expectation: The expected value for measure. Defaults to zero
+        """
+        return self.invariant_gaussian_measure(
+            lambda k: np.exp(-(scale**2) * k), expectation=expectation
+        )
+
+    def norm_scaled_heat_kernel_gaussian_measure(
+        self, scale: float, /, *, expectation: Vector = None, std: float = 1
+    ):
+        """
+        Returns an invariant Gaussian measure with a heat kernel covariance
+        equal to exp(-scale^2 * Δ).
+
+        Args:
+            scale: Scale parameter for the covariance.
+            expectation: The expected value for measure. Defaults to zero
+            std: The desired standard deviation
+        """
+        return self.norm_scaled_invariant_gaussian_measure(
+            lambda k: np.exp(-(scale**2) * k), expectation=expectation, std=std
+        )
 
 
-class SymmetricHilbertModule(SymmetricHilbertSpace, HilbertModule, ABC):
+class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
     """
-    A specialisation of the SymmetricHilbertSpace class for which
-    elements of the space can be multipled. In addition to the
-    abstract methods required within the base class, derived
-    classed must provide implementations for:
+    A specialisation for scalar-valued L² function spaces on symmetric manifolds.
+
+    To be instantiated, such a class must provide the following additional methods:
 
     vector_multiply
     vector_sqrt
     """
+
+
+class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
+    """
+    The Sobolev space Hˢ constructed over a symmetric Lebesgue space.
+
+    This implementation leverages the mass-weighting framework to ensure that
+    the inner product and dual mappings correctly account for the smoothness
+    order and scale.
+    """
+
+    def __init__(
+        self,
+        lebesgue_space: AbstractSymmetricLebesgueSpace,
+        order: float,
+        scale: float,
+    ) -> None:
+        """
+        Args:
+            lebesgue_space: The underlying L² space (which provides Δ eigenvalues).
+            order: The Sobolev smoothness order (s).
+            scale: The Sobolev length-scale (κ).
+        """
+        self._order = order
+        self._scale = scale
+
+        mass_operator = lebesgue_space.invariant_automorphism(self.sobolev_function)
+        inverse_mass_operator = mass_operator.inverse
+
+        MassWeightedHilbertModule.__init__(
+            self, lebesgue_space, mass_operator, inverse_mass_operator
+        )
+
+        SymmetricHilbertSpace.__init__(
+            self,
+            lebesgue_space.spatial_dimension,
+            lebesgue_space.dim,
+            False,
+        )
+
+    @property
+    def order(self) -> float:
+        """The Sobolev order."""
+        return self._order
+
+    @property
+    def scale(self) -> float:
+        """The Sobolev length-scale."""
+        return self._scale
+
+    def sobolev_function(self, lambda_val) -> float:
+        """
+        Returns the value of the Sobolev function associated with the space.
+        """
+        return (1.0 + (self.scale**2) * lambda_val) ** self.order
+
+    def dirac(self, point: Point) -> LinearForm:
+        """
+        Returns the Dirac measure at the chosen point.
+        """
+        if self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("The Dirac measure is not defined on this space.")
+        cxp = self.laplacian_eigenvectors_at_point(point)
+        return LinearForm(self, components=cxp)
+
+    def dirac_representation(self, point) -> Vector:
+        """
+        Returns the representation of the Dirac measure at the chosen point.
+        """
+        return self.from_dual(self.dirac(point))
+
+    # --- Deferring Abstract Methods to the Underlying Lebesgue Space ---
+
+    def index_to_integer(self, k: Index) -> int:
+        return self.underlying_space.index_to_integer(k)
+
+    def integer_to_index(self, i: int) -> Index:
+        return self.underlying_space.integer_to_index(i)
+
+    def laplacian_eigenvalue(self, k: Index) -> float:
+        return self.underlying_space.laplacian_eigenvalue(k)
+
+    def laplacian_eigenvector_squared_norm(self, k: Index) -> float:
+        """
+        Returns the squared norm of the k-th eigenfunction in the Sobolev metric.
+        ||φ||²_Hˢ = (1 + κ²λ)ˢ * ||φ||²_L²
+        """
+        l2_norm_sq = self.underlying_space.laplacian_eigenvector_squared_norm(k)
+        lambda_k = self.laplacian_eigenvalue(k)
+        weight = self.sobolev_function(lambda_k)
+        return l2_norm_sq * weight
+
+    def laplacian_eigenvectors_at_point(self, x: Point) -> List[Value]:
+        return self.underlying_space.laplacian_eigenvectors_at_point(x)
+
+    def random_point(self) -> Point:
+        return self.underlying_space.random_point()

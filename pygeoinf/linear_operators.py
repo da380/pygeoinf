@@ -966,6 +966,9 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
                 scipy_op_wrapper, n_jobs=n_jobs
             )
 
+    def __call__(self, x: Any) -> Any:
+        return super().__call__(x)
+
     def __neg__(self) -> LinearOperator:
         domain = self.domain
         codomain = self.codomain
