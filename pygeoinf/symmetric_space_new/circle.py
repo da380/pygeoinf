@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Callable, Any, Optional, Tuple
+from typing import Callable, Any, Optional, Tuple, List
 
 import numpy as np
 from scipy.fft import rfft, irfft
@@ -219,10 +219,41 @@ class Lebesgue(CircleHelper, AbstractSymmetricLebesgueSpace):
         k_vals = np.arange(self.kmax + 1)
         cos_terms = np.cos(k_vals * theta)
         sin_terms = np.sin(k_vals[1 : self.kmax] * theta)
-        return np.concatenate([cos_terms, -sin_terms])
+        return (
+            self._metric
+            @ np.concatenate([cos_terms, -sin_terms])
+            / (np.sqrt(2 * np.pi * self.radius))
+        )
 
     def random_point(self) -> float:
         return np.random.uniform(0, 2 * np.pi)
+
+    def geodesic_quadrature(
+        self, p1: float, p2: float, n_points: int
+    ) -> Tuple[List[float], np.ndarray]:
+        """
+        Returns quadrature points and weights for the shortest arc between p1 and p2.
+
+        Args:
+            p1: Starting angle in radians.
+            p2: Ending angle in radians.
+            n_points: Number of quadrature points.
+
+        Returns:
+            points: A list of angles (floats) along the shortest arc.
+            weights: Integration weights scaled by the arc length.
+        """
+        diff = (p2 - p1 + np.pi) % (2 * np.pi) - np.pi
+        arc_length = np.abs(diff) * self.radius
+
+        x, w = np.polynomial.legendre.leggauss(n_points)
+
+        t = (x + 1) / 2.0
+        angles = p1 + t * diff
+
+        scaled_weights = w * (arc_length / 2.0)
+
+        return angles.tolist(), scaled_weights
 
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #

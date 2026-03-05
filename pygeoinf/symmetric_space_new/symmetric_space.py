@@ -14,7 +14,7 @@ measures.
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Any, List, Optional, TypeAlias, Iterator
+from typing import Callable, Any, List, Optional, TypeAlias, Iterator, Tuple
 
 import numpy as np
 from scipy.sparse import diags
@@ -24,6 +24,7 @@ from pygeoinf.hilbert_space import (
     HilbertModule,
     Vector,
     MassWeightedHilbertModule,
+    EuclideanSpace,
 )
 from pygeoinf.linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from pygeoinf.linear_forms import LinearForm
@@ -550,6 +551,18 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     def random_point(self) -> Any:
         """Returns a single random point from the underlying symmetric space."""
 
+    @abstractmethod
+    def geodesic_quadrature(
+        self, p1: Any, p2: Any, n_points: int
+    ) -> Tuple[List[Any], np.ndarray]:
+        """
+        Returns quadrature points and weights for a geodesic between p1 and p2.
+
+        Returns:
+            points: List of manifold coordinates.
+            weights: Integration weights scaled by the line element.
+        """
+
     # ------------------------------------------------------------#
     #                        Public methods                       #
     # ------------------------------------------------------------#
@@ -569,6 +582,15 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         else:
             cx = self._inverse_metric @ cxp
             return self.from_components(cx)
+
+    def random_points(self, n: int) -> List[Point]:
+        """
+        Returns a list of `n` random points.
+
+        Args:
+            n: The number of random points to generate.
+        """
+        return [self.random_point() for _ in range(n)]
 
     def invariant_automorphism(
         self, f: Callable[float, float]
@@ -783,7 +805,246 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         """
         return self.from_dual(self.dirac(point))
 
-    # --- Deferring Abstract Methods to the Underlying Lebesgue Space ---
+    def point_evaluation_operator(self, points: List[Any]) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        The resulting operator maps a function (a vector in this space) to a
+        vector in Euclidean space containing the function's values at the
+        specified locations. This is the primary mechanism for creating a
+        forward operator that links a function field to a set of discrete
+        measurements.
+
+        Args:
+            points: A list of points at which to evaluate the functions.
+        """
+        if self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        dim = len(points)
+        matrix = np.zeros((dim, self.dim))
+
+        for i, point in enumerate(points):
+            cp = self.dirac(point).components
+            matrix[i, :] = cp
+
+        return LinearOperator.from_matrix(
+            self, EuclideanSpace(dim), matrix, galerkin=True
+        )
+
+    def point_value_scaled_invariant_gaussian_measure(
+        self,
+        f: Callable[[float], float],
+        /,
+        *,
+        expectation: Vector = None,
+        std: float = 1,
+    ):
+        """
+        Returns an invariant Gaussian measure with covariance proportional to f(Δ),
+        where f must be such that this operator is trace-class.
+
+        The covariance of the operator is scaled such that the standard deviation
+        of the point-wise values are equal to the given std.
+
+        Args:
+            f: A real-valued function that is well-defined on the spectrum
+               of the Laplacian, Δ.
+            std: The desired standard deviation for the pointwise values.
+
+        Raises:
+            NotImplementedError: If the Sobolev order is less than n/2, with n the spatial dimension.
+
+        Notes:
+            This method applies for symmetric spaces an invariant measures. As a result, the
+            pointwise variance is the same at all points. Internally, a random point is chosen
+            to carry out the normalisation.
+        """
+
+        unscaled_measure = InvariantGaussianMeasure.from_function(
+            self, f, expectation=expectation
+        )
+
+        return unscaled_measure.rescale_directional_variance(
+            self.dirac_representation(self.random_point()), std
+        )
+
+    def point_value_scaled_sobolev_kernel_gaussian_measure(
+        self,
+        order: float,
+        scale: float,
+        /,
+        *,
+        expectation: Vector = None,
+        std: float = 1,
+    ):
+        """
+        Returns an invariant Gaussian measure with a Sobolev-type covariance
+        proportional to (1 + scale^2 * Δ)^-order.
+
+        The covariance of the operator is scaled such that the standard deviation
+        of the point-wise values are equal to the given amplitude.
+
+        Args:
+            order: Order parameter for the covariance.
+            scale: Scale parameter for the covariance.
+            std: The desired standard deviation for the pointwise values.
+        """
+        return self.point_value_scaled_invariant_gaussian_measure(
+            lambda k: (1 + scale**2 * k) ** -order, expectation=expectation, std=std
+        )
+
+    def point_value_scaled_heat_kernel_gaussian_measure(
+        self, scale: float, /, *, expectation: Vector = None, std: float = 1
+    ):
+        """
+        Returns an invariant Gaussian measure with a heat-kernel covariance
+        proportional to exp(-scale^2 * Δ).
+
+        The covariance of the operator is scaled such that the standard deviation
+        of the point-wise values are equal to the given amplitude.
+
+        Args:
+            scale: Scale parameter for the covariance.
+            std: The desired standard deviation for the pointwise values.
+        """
+        return self.point_value_scaled_invariant_gaussian_measure(
+            lambda k: np.exp(-(scale**2) * k), expectation=expectation, std=std
+        )
+
+    def geodesic_integral(
+        self, p1: Point, p2: Point, /, *, n_points: Optional[int] = None
+    ) -> LinearForm:
+        """
+        Returns a linear functional representing the line integral of a function
+        along a geodesic path.
+
+        This method approximates the integral :math:`\\int_{\\gamma} u(s) ds`, where
+        :math:`\\gamma` is the shortest path (geodesic) connecting points `p1` and `p2`.
+        The integral is represented as a :class:`LinearForm` in the dual space,
+        constructed by summing weighted point evaluations (Dirac measures) along
+        the path.
+
+        For Hilbert spaces with a specified :attr:`scale`, the method can
+        automatically determine the required quadrature density to resolve the
+        smooth features of the space's sensitivity kernels.
+
+        Args:
+            p1: The starting point of the geodesic. The type is manifold-dependent
+                (e.g., float for :class:`Circle`, tuple for :class:`Sphere`).
+            p2: The end point of the geodesic.
+            n_points (int, optional): The number of Gauss-Legendre quadrature points.
+                If None, it is heuristically determined as:
+                :math:`n = \\lceil (\\text{arc\\_length} / \\text{scale}) \\times 2 \\rceil`.
+                This ensures at least two points per characteristic length-scale,
+                providing stable sampling of the sensitivity kernel. Defaults to None.
+
+        Returns:
+            LinearForm: A linear functional whose action on a vector `u` computes
+                 the approximated line integral.
+
+        Raises:
+            NotImplementedError: If the Sobolev order :math:`s` is less than or
+                equal to half the spatial dimension :math:`n/2`.
+        """
+        if self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError(
+                f"Order {self.order} is too low for point evaluation on a "
+                f"{self.spatial_dimension}D manifold."
+            )
+
+        if n_points is None:
+            _, temp_weights = self.geodesic_quadrature(p1, p2, n_points=2)
+            arc_length = np.sum(temp_weights)
+            n_points = int(np.ceil((arc_length / self.scale) * 2.0))
+            n_points = max(2, n_points)
+
+        points, weights = self.geodesic_quadrature(p1, p2, n_points)
+
+        total_components = np.zeros(self.dim)
+        for pt, weight in zip(points, weights):
+            total_components += weight * self.dirac(pt).components
+
+        return LinearForm(self, components=total_components)
+
+    def geodesic_integral_representation(
+        self, p1: Point, p2: Point, /, *, n_points: Optional[int] = None
+    ) -> Vector:
+        """
+        Returns the Riesz representation (sensitivity kernel) of the line integral.
+
+        This maps the LinearForm (the integral functional) back into the
+        primal Hilbert space. Visualizing this vector reveals the "sensitivity"
+        of the line integral to perturbations at different locations in the domain.
+
+        Args:
+            p1, p2: Start and end points of the geodesic.
+            n_points: Number of quadrature points.
+        """
+        integral_form = self.geodesic_integral(p1, p2, n_points=n_points)
+        return self.from_dual(integral_form)
+
+    def path_average_operator(self, paths, /, *, n_points=None):
+        """
+        Constructs a tomographic operator mapping a function field to its
+        line integrals along a set of geodesic paths.
+
+        Note: Despite the name, this operator returns the line integral
+        (the dual pairing of the function with the path functional) rather
+        than a normalized average, unless the user manually scales the forms.
+        This corresponds to the 'path average' convention often used in
+        seismic and atmospheric tomography.
+
+        Args:
+            paths (List[Tuple[Any, Any]]): A list of start and end point pairs
+                defining the geodesics.
+            n_points (int, optional): The number of quadrature points per path.
+                If None, the heuristic based on the Sobolev scale is used.
+
+        Returns:
+            LinearOperator: An operator mapping Space -> EuclideanSpace(len(paths)).
+                The adjoint of this operator performs the 'back-projection'
+                mapping data residuals into the function space.
+        """
+        path_forms = [
+            self.geodesic_integral(p1, p2, n_points=n_points) for p1, p2 in paths
+        ]
+        return LinearOperator.from_linear_forms(path_forms)
+
+    def random_source_receiver_paths(
+        self, n_sources: int, n_receivers: int
+    ) -> List[Tuple[Any, Any]]:
+        """
+        Generates a list of source-receiver pairs by connecting every source to
+        every receiver.
+
+        This method uses the existing :meth:`random_points` logic to generate
+        coordinates appropriate for the specific symmetric space. For a set
+        of S sources and R receivers, this returns a list of S*R paths.
+
+        Args:
+            n_sources: The number of random source locations to generate.
+            n_receivers: The number of random receiver locations to generate.
+
+        Returns:
+            List[Tuple[Any, Any]]: A list of tuples, where each tuple contains
+                a (source, receiver) pair.
+        """
+        # Generate the points using the existing base class method
+        sources = self.random_points(n_sources)
+        receivers = self.random_points(n_receivers)
+
+        # Create the full-mesh network
+        paths = []
+        for src in sources:
+            for rec in receivers:
+                paths.append((src, rec))
+
+        return paths
+
+    # ------------------------------------------------------- #
+    #          Methods defered to the Lebesgue space          #
+    # ------------------------------------------------------- #
 
     def index_to_integer(self, k: Index) -> int:
         return self.underlying_space.index_to_integer(k)
@@ -795,10 +1056,6 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         return self.underlying_space.laplacian_eigenvalue(k)
 
     def laplacian_eigenvector_squared_norm(self, k: Index) -> float:
-        """
-        Returns the squared norm of the k-th eigenfunction in the Sobolev metric.
-        ||φ||²_Hˢ = (1 + κ²λ)ˢ * ||φ||²_L²
-        """
         l2_norm_sq = self.underlying_space.laplacian_eigenvector_squared_norm(k)
         lambda_k = self.laplacian_eigenvalue(k)
         weight = self.sobolev_function(lambda_k)
@@ -809,3 +1066,8 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
 
     def random_point(self) -> Point:
         return self.underlying_space.random_point()
+
+    def geodesic_quadrature(
+        self, p1: Any, p2: Any, n_points: int
+    ) -> Tuple[List[Any], np.ndarray]:
+        return self.underlying_space.geodesic_quadrature(p1, p2, n_points)

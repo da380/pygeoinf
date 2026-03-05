@@ -749,17 +749,17 @@ class GaussianMeasure:
         return self.affine_mapping(translation=translation)
 
     def rescale_directional_variance(
-        self, direction: Vector, target_std: float
+        self, direction: Vector, std: float
     ) -> GaussianMeasure:
         """
-        Returns a new measure where Var[<x, direction>] is scaled to target_std^2.
+        Returns a new measure where Var[<x, direction>] is scaled to std^2.
 
         The expectation of the resulting measure is unchanged.
         """
         current_var = self.directional_variance(direction)
         if current_var <= 0:
             raise ValueError("Directional variance must be positive to rescale.")
-        norm = target_std / np.sqrt(current_var)
+        norm = std / np.sqrt(current_var)
         shifted_measure = self.zero_expectation()
         scaled_measure = norm * shifted_measure
         return scaled_measure.affine_mapping(translation=self.expectation)
