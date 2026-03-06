@@ -185,9 +185,10 @@ class Subset(ABC):
         color: str = "steelblue",
         show_plot: bool = True,
         ax=None,
+        backend: str = "auto",
     ):
         """
-        Visualize this subset along a 1D or 2D affine subspace.
+        Visualize this subset along a 1D, 2D, or 3D affine subspace.
 
         Delegates to `pygeoinf.plot.plot_slice`. For `EuclideanSpace` domains of
         dimension 1 or 2, *on_subspace* may be omitted and a canonical full-space
@@ -205,6 +206,8 @@ class Subset(ABC):
             color: Color string for 1D plots (passed to ``plot_slice``).
             show_plot: Whether to call ``plt.show()`` (passed to ``plot_slice``).
             ax: Optional existing ``Axes`` to draw into (passed to ``plot_slice``).
+            backend: Rendering backend — ``"auto"`` (default), ``"matplotlib"``,
+                or ``"plotly"`` (passed to ``plot_slice``).
 
         Returns:
             ``(fig, ax, payload)`` — identical to ``plot_slice``.
@@ -212,7 +215,6 @@ class Subset(ABC):
         Raises:
             ValueError: If *on_subspace* is ``None`` and the domain is not a 1D or
                 2D ``EuclideanSpace``.
-            NotImplementedError: For subspaces of dimension ≥ 3.
             TypeError: If the domain is not an ``EuclideanSpace``.
         """
         from .plot import plot_slice
@@ -247,6 +249,7 @@ class Subset(ABC):
             color=color,
             show_plot=show_plot,
             ax=ax,
+            backend=backend,
         )
 
 

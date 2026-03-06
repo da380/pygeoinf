@@ -198,15 +198,14 @@ All sets derive from `Subset(ABC)`:
 | Method | Description |
 |---|---|
 | `is_element(x)` | Membership test → `bool` |
-| `project(x)` | Euclidean projection onto the set |
 | `boundary` | The set's boundary (returns a `Subset`) |
-| `plot(on_subspace=None, *, bounds, grid_size, rtol, alpha, cmap, color, show_plot, ax)` | Visualize via `plot_slice()`; auto-builds default subspace for 1D/2D `EuclideanSpace` |
+| `plot(on_subspace=None, *, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5, cmap="Blues", color="steelblue", show_plot=True, ax=None, backend="auto")` | Visualize via `plot_slice()`; auto-builds a default subspace for 1D/2D `EuclideanSpace`, requires an explicit subspace otherwise; `backend` is `"auto"`, `"matplotlib"`, or `"plotly"` (Phase 1: all values use the Matplotlib path) |
 
 **Concrete classes:**
 
 | Class | Constructor | Mathematical set |
 |---|---|---|
-| `Ball` | `Ball(space, center, radius)` | $\{x : \|x - c\| \leq r\}$ |
+| `Ball` | `Ball(space, center, radius, open_set=True)` | $\{x : \|x - c\| < r\}$ by default; set `open_set=False` for the closed ball |
 | `Ellipsoid` | `Ellipsoid(space, center, radius, operator)` | $\{x : \|A(x-c)\| \leq r\}$ |
 | `HalfSpace` | `HalfSpace(space, normal, offset)` | $\{x : n^T x \leq \alpha\}$ |
 | `PolyhedralSet` | `PolyhedralSet(space, halfspaces)` | Intersection of `HalfSpace` objects |
@@ -404,7 +403,9 @@ Slice any `Subset` along a 1D, 2D, or 3D `AffineSubspace` for visualization.
 
 **Constructor:** `SubspaceSlicePlotter(subset, on_subspace, *, grid_size=200, rtol=1e-6, alpha=0.5, bar_pixel_height=6)`
 
-**Method:** `.plot(bounds, cmap="Blues", color="steelblue", show_plot=True, ax=None) → (fig, ax, payload)`
+**Method:** `.plot(bounds, cmap="Blues", color="steelblue", show_plot=True, ax=None, backend="auto") → (fig, ax, payload)`
+
+`backend`: `"auto"` (default) | `"matplotlib"` | `"plotly"`. In Phase 1 all three values fall through to the existing Matplotlib path; Plotly rendering is added in Phase 2.
 
 | Subspace dimension | `payload` type | Method |
 |---|---|---|
@@ -416,11 +417,11 @@ Slice any `Subset` along a 1D, 2D, or 3D `AffineSubspace` for visualization.
 - `PolyhedralSet` → exact affine slice via `scipy.spatial.HalfspaceIntersection` + convex hull → payload is vertex array (1D, 2D, and 3D); **never uses the grid** (no oracle calls).
 - All other sets → raster membership-oracle sampling on a `grid_size^n` grid → payload is boolean mask (1D, 2D, and 3D). 3D mask uses `indexing='ij'` so `mask[i,j,k]` = membership at `(u[i], v[j], w[k])`. 3D uses `Axes3D.voxels()` with parameter-coordinate edge arrays (not raw voxel indices). `UserWarning` emitted when `grid_size > 30` for non-`PolyhedralSet` 3D sets.
 
-#### `plot_slice()` — Convenience Wrapper (Phase 2/4)
+#### `plot_slice()` — Convenience Wrapper
 
 ```python
 plot_slice(subset, on_subspace, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5,
-           cmap="Blues", color="steelblue", show_plot=True, ax=None)
+           cmap="Blues", color="steelblue", show_plot=True, ax=None, backend="auto")
     → (fig, ax, payload)
 ```
 

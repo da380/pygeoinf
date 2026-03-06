@@ -752,6 +752,7 @@ class SubspaceSlicePlotter:
         color: str = "steelblue",
         show_plot: bool = True,
         ax: Optional[matplotlib.axes.Axes] = None,
+        backend: str = "auto",
     ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
         """
         Main plotting method. Orchestrates bounds parsing, grid generation,
@@ -763,6 +764,9 @@ class SubspaceSlicePlotter:
             color: Color for 1D (ignored for 2D/3D)
             show_plot: Whether to display the plot
             ax: Optional existing Axes
+            backend: Rendering backend — ``"auto"`` (default), ``"matplotlib"``,
+                or ``"plotly"``. In Phase 1 all values fall through to the
+                existing Matplotlib path; full Plotly support is added in Phase 2.
 
         Returns:
             (fig, ax, payload) tuple
@@ -1072,6 +1076,7 @@ def plot_slice(
     color: str = "steelblue",
     show_plot: bool = True,
     ax=None,
+    backend: str = "auto",
 ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
     """
     Convenience wrapper: slice a subset along a 1D, 2D, or 3D affine subspace and plot.
@@ -1090,6 +1095,9 @@ def plot_slice(
         color: Color string for 1D plots.
         show_plot: Whether to call ``plt.show()``.
         ax: Optional existing ``Axes`` (or ``Axes3D``) to draw into.
+        backend: Rendering backend — ``"auto"`` (default), ``"matplotlib"``,
+            or ``"plotly"``. In Phase 1 all values fall through to the existing
+            Matplotlib path; full Plotly support is added in Phase 2.
 
     Returns:
         ``(fig, ax, payload)`` — identical to ``SubspaceSlicePlotter.plot()``.
@@ -1121,7 +1129,7 @@ def plot_slice(
     plotter = SubspaceSlicePlotter(
         subset, on_subspace, grid_size=grid_size, rtol=rtol, alpha=alpha
     )
-    return plotter.plot(bounds=bounds, cmap=cmap, color=color, show_plot=show_plot, ax=ax)
+    return plotter.plot(bounds=bounds, cmap=cmap, color=color, show_plot=show_plot, ax=ax, backend=backend)
 
 
 def plot_corner_distributions(

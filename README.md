@@ -35,6 +35,46 @@ The library is built on a few key concepts:
 * **Block Operators**: Construct complex operators from smaller components using `BlockLinearOperator`, `ColumnLinearOperator`, and `RowLinearOperator`. This is ideal for coupled inverse problems.
 * **Parallelisation**: Many expensive operations are parallelized with `joblib`, including dense matrix construction and randomized algorithms.
 
+## Visualization
+
+`pygeoinf` provides high-level tools to visualize geometric subsets.
+
+### Subset Visualization
+
+Any `Subset` in a Euclidean domain can be visualized along a 1D, 2D, or 3D affine subspace. The library automatically handles:
+- **Exact plotting** for polyhedral sets (defined by inequalities).
+- **Sampling-based plotting** for general convex sets (balls, ellipsoids, etc.).
+- **Voxel-based rendering** for 3D slices.
+
+```python
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.plot import plot_slice
+from pygeoinf.subsets import Ball
+from pygeoinf.subspaces import AffineSubspace
+
+# Automatic 2D full-space slice via Subset.plot()
+domain2 = EuclideanSpace(2)
+ball2 = Ball(domain2, center=domain2.zero, radius=1.0)
+fig2, ax2, mask2 = ball2.plot(bounds=(-1.4, 1.4, -1.4, 1.4), show_plot=False)
+
+# Explicit 2D slice through a 3D ball via plot_slice()
+domain3 = EuclideanSpace(3)
+ball3 = Ball(domain3, center=domain3.zero, radius=1.0)
+slice_plane = AffineSubspace.from_tangent_basis(
+    domain3,
+    [domain3.basis_vector(0), domain3.basis_vector(1)],
+    translation=0.2 * domain3.basis_vector(2),
+)
+fig_slice, ax_slice, payload = plot_slice(
+    ball3,
+    slice_plane,
+    bounds=(-1.2, 1.2, -1.2, 1.2),
+    show_plot=False,
+)
+```
+
+For full interactive examples in this repository, including 3D voxel rendering and exact polyhedral slices, see `pygeoinf/pygeoinf/testing_sets/visualization_demo.ipynb`. For sampled 3D plots, keep `grid_size` modest (around `20`-`30`) because the oracle path scales like $O(N^3)$.
+
 ## Installation
 
 The package can be installed directly using pip. By default, this will perform a minimal installation.
@@ -59,7 +99,7 @@ cd pygeoinf
 poetry install
 ```
 
-You can install all optional dependencies for development—including tools for running the test suite, 
+You can install all optional dependencies for development—including tools for running the test suite,
 building the documentation, and running the Jupyter tutorials—by using the ```--with``` flag and specifying the ```dev``` group.
 
 ```bash

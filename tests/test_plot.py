@@ -917,3 +917,117 @@ class TestPlotSlice3D:
         with pytest.warns(UserWarning, match=r"3D sampled rendering"):
             SubspaceSlicePlotter(ball_3d, subspace_3d, grid_size=31)
         plt.close("all")
+
+
+# =============================================================================
+# Phase 1 (Interactive 3D Plan): backend parameter wiring
+# =============================================================================
+
+
+class TestBackendParameterPhase1:
+    """Phase 1: backend parameter is wired through the public plotting surface."""
+
+    def test_plot_slice_backend_parameter_defaults(self):
+        """plot_slice() must accept backend kwarg and default to 'auto'."""
+        import inspect
+        sig = inspect.signature(plot_slice)
+        assert "backend" in sig.parameters, "plot_slice must have a backend parameter"
+        assert sig.parameters["backend"].default == "auto", (
+            "Default backend must be 'auto'"
+        )
+
+    def test_plot_slice_backend_valid_values(self):
+        """plot_slice() must accept 'auto', 'matplotlib', and 'plotly' as backend values.
+
+        In Phase 1 all three backend values fall through to the Matplotlib path,
+        so the returned figure must be a matplotlib.figure.Figure in every case.
+        """
+        domain = EuclideanSpace(dim=2)
+        e1 = np.array([1.0, 0.0])
+        e2 = np.array([0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subspace = AffineSubspace.from_tangent_basis(domain, [e1, e2])
+        ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
+
+        for backend in ("auto", "matplotlib", "plotly"):
+            fig, ax, payload = plot_slice(
+                ball, subspace,
+                bounds=(-1.0, 1.0, -1.0, 1.0),
+                grid_size=5,
+                show_plot=False,
+                backend=backend,
+            )
+            # Phase 1: all backend values must still use the Matplotlib path
+            assert isinstance(fig, matplotlib.figure.Figure), (
+                f"backend={backend!r} must use Matplotlib path in Phase 1, "
+                f"got {type(fig).__name__}"
+            )
+            plt.close(fig)
+
+    def test_subspace_slice_plotter_plot_backend_parameter(self):
+        """SubspaceSlicePlotter.plot() must accept backend kwarg and default to 'auto'."""
+        import inspect
+        sig = inspect.signature(SubspaceSlicePlotter.plot)
+        assert "backend" in sig.parameters, (
+            "SubspaceSlicePlotter.plot must have a backend parameter"
+        )
+        assert sig.parameters["backend"].default == "auto", (
+            "Default backend must be 'auto'"
+        )
+
+    def test_subset_plot_backend_parameter_exists(self):
+        """Subset.plot() must accept backend kwarg and default to 'auto'."""
+        import inspect
+        from pygeoinf.subsets import Subset
+        sig = inspect.signature(Subset.plot)
+        assert "backend" in sig.parameters, "Subset.plot must have a backend parameter"
+        assert sig.parameters["backend"].default == "auto", (
+            "Default backend must be 'auto'"
+        )
+
+    def test_subset_plot_forwards_backend(self):
+        """Subset.plot() must forward the backend kwarg to plot_slice()."""
+        domain = EuclideanSpace(dim=2)
+        ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
+
+        with patch("pygeoinf.plot.SubspaceSlicePlotter") as mock_plotter_cls:
+            mock_plotter = Mock()
+            mock_plotter.plot.return_value = (Mock(), Mock(), np.ones((5, 5), dtype=bool))
+            mock_plotter_cls.return_value = mock_plotter
+
+            ball.plot(show_plot=False, grid_size=5, backend="matplotlib")
+
+            # plot() on internal plotter must have been called with backend="matplotlib"
+            call_kwargs = mock_plotter.plot.call_args.kwargs
+            assert call_kwargs.get("backend") == "matplotlib", (
+                f"Expected backend='matplotlib' forwarded to plotter.plot(), "
+                f"got: {call_kwargs}"
+            )
+
+    def test_plot_slice_3d_auto_uses_existing_matplotlib_path(self):
+        """backend='auto' on a 3D plot must use the current Matplotlib path (Phase 1)."""
+        domain = EuclideanSpace(dim=3)
+        e1 = np.array([1.0, 0.0, 0.0])
+        e2 = np.array([0.0, 1.0, 0.0])
+        e3 = np.array([0.0, 0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subspace = AffineSubspace.from_tangent_basis(domain, [e1, e2, e3])
+        ball = Ball(domain, np.zeros(3), radius=0.5, open_set=False)
+
+        fig, ax, payload = plot_slice(
+            ball,
+            subspace,
+            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+            grid_size=5,
+            show_plot=False,
+            backend="auto",
+        )
+        # Phase 1: 'auto' still uses the Matplotlib path
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert hasattr(ax, "set_zlim"), (
+            "auto backend must still produce a 3D Matplotlib axes in Phase 1"
+        )
+        assert isinstance(payload, np.ndarray)
+        plt.close(fig)
