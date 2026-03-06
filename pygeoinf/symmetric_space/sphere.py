@@ -29,10 +29,10 @@ import matplotlib.ticker as mticker
 import numpy as np
 from scipy.sparse import diags, coo_array
 
-from joblib import Parallel, delayed
 
 try:
     import pyshtools as sh
+    from pyshtools.shio import SHCilmToVector
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
@@ -42,18 +42,13 @@ except ImportError:
         "Please install them with 'pip install pygeoinf[sphere]'"
     )
 
-from pygeoinf.hilbert_space import (
-    EuclideanSpace,
-    HilbertModule,
-    MassWeightedHilbertModule,
-)
+
+from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
-from pygeoinf.linear_forms import LinearForm
-from .symmetric_space import (
-    AbstractInvariantLebesgueSpace,
-    AbstractInvariantSobolevSpace,
-)
 from .sh_tools import SHVectorConverter
+
+
+from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 
 
 if TYPE_CHECKING:
@@ -87,6 +82,10 @@ class SphereHelper:
             grid: The `pyshtools` grid type.
             extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
         """
+
+        if lmax < 0:
+            raise ValueError("lmax must be non-negative")
+
         self._lmax: int = lmax
         self._radius: float = radius
 
@@ -102,13 +101,6 @@ class SphereHelper:
         # SH coefficient options fixed internally
         self._normalization: str = "ortho"
         self._csphase: int = 1
-
-    def orthonormalised(self) -> bool:
-        """The space is orthonormalised."""
-        return True
-
-    def _space(self):
-        return self
 
     @property
     def lmax(self) -> int:
@@ -144,53 +136,6 @@ class SphereHelper:
     def csphase(self) -> int:
         """The Condon-Shortley phase convention used (1)."""
         return self._csphase
-
-    @property
-    def spatial_dimension(self) -> int:
-        """The dimension of the space."""
-        return 2
-
-    def random_point(self) -> List[float]:
-        """Returns a random point as `[latitude, longitude]`."""
-        latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
-        longitude = np.random.uniform(0.0, 360.0)
-        return [latitude, longitude]
-
-    def laplacian_eigenvalue(self, k: [int, int]) -> float:
-        """
-        Returns the (l.m)-th eigenvalue of the Laplacian.
-
-        Args:
-            k = (l,m): The index of the eigenvalue to return.
-        """
-        l = k[0]
-        return l * (l + 1) / self.radius**2
-
-    def degree_from_laplacian_eigenvalue(self, eig: float) -> float:
-        """
-        Returns the degree corresponding to a given eigenvalue.
-
-        Note that the value is returned as a float
-
-        Args:
-            eig: The eigenvalue.
-        """
-        return np.sqrt(self.radius**2 * eig + 0.25)
-
-    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
-        """
-        Returns the trace of the automorphism of the form f(Δ) with f a function
-        that is well-defined on the spectrum of the Laplacian.
-
-        Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian.
-        """
-        trace = 0
-        for l in range(self.lmax + 1):
-            for m in range(-l, l + 1):
-                trace += f(self.laplacian_eigenvalue((l, m)))
-        return trace
 
     def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
         """
@@ -465,6 +410,136 @@ class SphereHelper:
 
         return powers
 
+    # --------------------------------------------------------------- #
+    #                         private methods                         #
+    # ----------------------------------------------------------------#
+
+    def _grid_name(self):
+        return self.grid if self._sampling == 1 else "DH2"
+
+    def _coefficient_to_component_mapping(self) -> coo_array:
+        """Builds a sparse matrix to map `pyshtools` coeffs to component vectors."""
+        row_dim = (self.lmax + 1) ** 2
+        col_dim = 2 * (self.lmax + 1) ** 2
+
+        row, col = 0, 0
+        rows, cols = [], []
+        for l in range(self.lmax + 1):
+            col = l * (self.lmax + 1)
+            for _ in range(l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        for l in range(self.lmax + 1):
+            col = (self.lmax + 1) ** 2 + l * (self.lmax + 1) + 1
+            for _ in range(1, l + 1):
+                rows.append(row)
+                row += 1
+                cols.append(col)
+                col += 1
+
+        data = [1.0] * row_dim
+        return coo_array(
+            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=float
+        ).tocsc()
+
+    def _degree_dependent_scaling_values(self, f: Callable[[int], float]) -> diags:
+        """Creates a diagonal sparse matrix from a function of degree `l`."""
+        ls = np.arange(self.lmax + 1)
+        f_vectorized = np.vectorize(f)
+        values = f_vectorized(ls)
+        counts = 2 * ls + 1
+        return np.repeat(values, counts)
+
+
+class Lebesgue(SphereHelper, AbstractSymmetricLebesgueSpace):
+    """
+    Implementation of the Lebesgue space L² on a sphere.
+
+    This class represents square-integrable functions on a sphere. A function is
+    represented by its values on an evenly spaced grid. The co-ordinate basis for
+    the space is through spherical harmonic expansions.
+    """
+
+    def __init__(
+        self,
+        lmax: int,
+        /,
+        *,
+        radius: float = 1,
+        grid: str = "DH",
+        extend: bool = True,
+    ):
+        """
+        Args:
+            lmax: Maximum degree for the expansions.
+            radius: Radius of the sphere. Defaults to 1.
+            grid: pyshtools grid type. Defaults to "DH"
+            extend: If true longitudes wrap fully. Defaults to True.
+        """
+        SphereHelper.__init__(self, lmax, radius, grid, extend)
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, (lmax + 1) ** 2, False)
+
+    # ------------------------------------------------------ #
+    #           Methods for SymmetricHilbertSpace            #
+    # ------------------------------------------------------ #
+
+    def index_to_integer(self, k: Tuple[int, int]) -> int:
+        l, m = k
+        l = np.asarray(l)
+        m = np.asarray(m)
+
+        if np.any(np.abs(m) > l) or np.any(l < 0):
+            raise ValueError("Invalid spherical harmonic: |m| must be <= l, and l >= 0")
+
+        return np.where(m >= 0, l**2 + m, l**2 + l + np.abs(m))
+
+    def integer_to_index(self, i: int) -> Tuple[int, int]:
+        i = np.asarray(i)
+
+        if np.any(i < 0):
+            raise ValueError("Index cannot be negative.")
+
+        l = np.floor(np.sqrt(i)).astype(int)
+        r = i - l**2
+        m = np.where(r <= l, r, l - r)
+
+        return l, m
+
+    def laplacian_eigenvalue(self, k: Tuple[int, int]) -> float:
+        """
+        Returns the (l.m)-th eigenvalue of the Laplacian.
+
+        Args:
+            k = (l,m): The index of the eigenvalue to return.
+        """
+        l = k[0]
+        return l * (l + 1) / self.radius**2
+
+    def laplacian_eigenvector_squared_norm(self, k: Tuple[int, int]) -> float:
+        return self.radius**2
+
+    def laplacian_eigenvectors_at_point(self, point: Tuple[float, float]) -> np.ndarray:
+        latitude, longitude = point
+        colatitude = 90.0 - latitude
+
+        coeffs = sh.expand.spharm(
+            self.lmax,
+            colatitude,
+            longitude,
+            normalization=self.normalization,
+            degrees=True,
+        )
+        return SHCilmToVector(coeffs)
+
+    def random_point(self) -> List[float]:
+        """Returns a random point as `[latitude, longitude]`."""
+        latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
+        longitude = np.random.uniform(0.0, 360.0)
+        return [latitude, longitude]
+
     def geodesic_quadrature(
         self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
     ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
@@ -530,92 +605,9 @@ class SphereHelper:
 
         return points, scaled_weights
 
-    # --------------------------------------------------------------- #
-    #                         private methods                         #
-    # ----------------------------------------------------------------#
-
-    def _grid_name(self):
-        return self.grid if self._sampling == 1 else "DH2"
-
-    def _coefficient_to_component_mapping(self) -> coo_array:
-        """Builds a sparse matrix to map `pyshtools` coeffs to component vectors."""
-        row_dim = (self.lmax + 1) ** 2
-        col_dim = 2 * (self.lmax + 1) ** 2
-
-        row, col = 0, 0
-        rows, cols = [], []
-        for l in range(self.lmax + 1):
-            col = l * (self.lmax + 1)
-            for _ in range(l + 1):
-                rows.append(row)
-                row += 1
-                cols.append(col)
-                col += 1
-
-        for l in range(self.lmax + 1):
-            col = (self.lmax + 1) ** 2 + l * (self.lmax + 1) + 1
-            for _ in range(1, l + 1):
-                rows.append(row)
-                row += 1
-                cols.append(col)
-                col += 1
-
-        data = [1.0] * row_dim
-        return coo_array(
-            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=float
-        ).tocsc()
-
-    def _degree_dependent_scaling_values(self, f: Callable[[int], float]) -> diags:
-        """Creates a diagonal sparse matrix from a function of degree `l`."""
-        ls = np.arange(self.lmax + 1)
-        f_vectorized = np.vectorize(f)
-        values = f_vectorized(ls)
-        counts = 2 * ls + 1
-        return np.repeat(values, counts)
-
-    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
-        """Maps spherical harmonic coefficients to a component vector."""
-        return sh.shio.SHCilmToVector(ulm.coeffs)
-
-    def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
-        """Maps a component vector to spherical harmonic coefficients."""
-        coeffs = sh.shio.SHVectorToCilm(c)
-        return sh.SHCoeffs.from_array(
-            coeffs, normalization=self.normalization, csphase=self.csphase
-        )
-
-
-class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
-    """
-    Implementation of the Lebesgue space L² on the sphere.
-
-    This class represents square-integrable functions on a sphere. A function is
-    represented by a `pyshtools.SHGrid` object, which stores its values on a
-    regular grid in latitude and longitude. The L² inner product is defined
-    in the spherical harmonic domain.
-    """
-
-    def __init__(
-        self,
-        lmax: int,
-        /,
-        *,
-        radius: float = 1,
-        grid: str = "DH",
-        extend: bool = True,
-    ):
-
-        if lmax < 0:
-            raise ValueError("lmax must be non-negative")
-
-        self._dim = (lmax + 1) ** 2
-
-        SphereHelper.__init__(self, lmax, radius, grid, extend)
-
-    @property
-    def dim(self) -> int:
-        """The dimension of the space."""
-        return self._dim
+    # ------------------------------------------------------ #
+    #                 Methods for HilbertSpace               #
+    # ------------------------------------------------------ #
 
     def to_components(self, u: sh.SHGrid) -> np.ndarray:
         coeff = self.to_coefficients(u)
@@ -623,16 +615,6 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
     def from_components(self, c: np.ndarray) -> sh.SHGrid:
         coeff = self._component_to_coefficients(c)
-        return self.from_coefficients(coeff)
-
-    def to_dual(self, u: sh.SHGrid) -> LinearForm:
-        coeff = self.to_coefficients(u)
-        cp = self._coefficient_to_component(coeff) * self.radius**2
-        return self.dual.from_components(cp)
-
-    def from_dual(self, up: LinearForm) -> sh.SHGrid:
-        cp = self.dual.to_components(up) / self.radius**2
-        coeff = self._component_to_coefficients(cp)
         return self.from_coefficients(coeff)
 
     def ax(self, a: float, x: sh.SHGrid) -> None:
@@ -649,20 +631,6 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         """
         y.data += a * x.data
 
-    def vector_multiply(self, x1: sh.SHGrid, x2: sh.SHGrid) -> sh.SHGrid:
-        """
-        Computes the pointwise product of two functions.
-        """
-        return x1 * x2
-
-    def vector_sqrt(self, x: sh.SHGrid) -> sh.SHGrid:
-        """
-        Returns the pointwise square root of a function.
-        """
-        y = x.copy()
-        y.data = np.sqrt(x.data)
-        return y
-
     def __eq__(self, other: object) -> bool:
         """
         Checks for mathematical equality with another Sobolev space on a sphere.
@@ -673,7 +641,12 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         if not isinstance(other, Lebesgue):
             return NotImplemented
 
-        return self.lmax == other.lmax and self.radius == other.radius
+        return (
+            self.lmax == other.lmax
+            and self.radius == other.radius
+            and self.grid == other.grid
+            and self.extend == other.extend
+        )
 
     def is_element(self, x: Any) -> bool:
         """
@@ -689,37 +662,29 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
             return False
         return True
 
-    def eigenfunction_norms(self) -> np.ndarray:
-        """Returns a list of the norms of the eigenfunctions."""
-        return np.fromiter(
-            [self.radius for i in range(self.dim)],
-            dtype=float,
-        )
+    # ------------------------------------------------------ #
+    #                 Methods for HilbertModule              #
+    # ------------------------------------------------------ #
 
-    def invariant_automorphism_from_index_function(
-        self, g: Callable[[(int, int)], float]
-    ) -> LinearOperator:
-        values = self._degree_dependent_scaling_values(lambda l: g((l, 0)))
-        matrix = diags([values], [0])
+    def vector_multiply(self, x1: sh.SHGrid, x2: sh.SHGrid) -> sh.SHGrid:
+        """
+        Computes the pointwise product of two functions.
+        """
+        return x1 * x2
 
-        def mapping(u):
-            c = matrix @ (self.to_components(u))
-            coeff = self._component_to_coefficients(c)
-            return self.from_coefficients(coeff)
+    def vector_sqrt(self, x: sh.SHGrid) -> sh.SHGrid:
+        """
+        Returns the pointwise square root of a function.
+        """
+        y = x.copy()
+        y.data = np.sqrt(x.data)
+        return y
 
-        return LinearOperator.self_adjoint(self, mapping)
+    # ------------------------------------------------------ #
+    #                   Additional methods                   #
+    # ------------------------------------------------------ #
 
-    def __str__(self) -> str:
-        """Returns a human-readable string summary of the space."""
-        return (
-            f"Lebesgue space on sphere:\n"
-            f"lmax={self.lmax}\n"
-            f"radius={self.radius}\n"
-            f"grid={self.grid}\n"
-            f"extend={self.extend}"
-        )
-
-    def to_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
 
@@ -760,7 +725,7 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
-    def from_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a vector of coefficients to a function.
 
@@ -800,16 +765,25 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
         return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
 
+    # ------------------------------------------------------ #
+    #                      Private methods                   #
+    # ------------------------------------------------------ #
 
-class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevSpace):
+    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
+        """Maps spherical harmonic coefficients to a component vector."""
+        return sh.shio.SHCilmToVector(ulm.coeffs)
+
+    def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
+        """Maps a component vector to spherical harmonic coefficients."""
+        coeffs = sh.shio.SHVectorToCilm(c)
+        return sh.SHCoeffs.from_array(
+            coeffs, normalization=self.normalization, csphase=self.csphase
+        )
+
+
+class Sobolev(SphereHelper, SymmetricSobolevSpace):
     """
-    Implementation of the Sobolev space Hˢ on the sphere.
-
-    This class represents functions with a specified degree of smoothness. It is
-    constructed as a `MassWeightedHilbertModule` over the `Lebesgue` space, where
-    the mass operator weights the spherical harmonic coefficients to enforce
-    smoothness. This is the primary class for defining smooth, random function
-    fields (e.g., for geophysics or climate science).
+    Implementation of the Sobolev space Hˢ on a circle.
     """
 
     def __init__(
@@ -822,23 +796,20 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
         grid: str = "DH",
         extend: bool = True,
     ):
-
-        if lmax < 0:
-            raise ValueError("lmax must be non-negative")
+        """
+        Args:
+        lmax: Maximum degree for the expansions.
+        order: The Sobolev order, controlling the smoothness of functions.
+        scale: The Sobolev length-scale.
+        radius: Radius of the sphere. Defaults to 1.
+        grid: pyshtools grid type. Defaults to "DH"
+        extend: If true longitudes wrap fully. Defaults to True.
+        """
 
         SphereHelper.__init__(self, lmax, radius, grid, extend)
-        AbstractInvariantSobolevSpace.__init__(self, order, scale)
 
-        lebesgue = Lebesgue(lmax, radius=radius, grid=grid, extend=extend)
-
-        mass_operator = lebesgue.invariant_automorphism(self.sobolev_function)
-        inverse_mass_operator = lebesgue.invariant_automorphism(
-            lambda k: 1.0 / self.sobolev_function(k)
-        )
-
-        MassWeightedHilbertModule.__init__(
-            self, lebesgue, mass_operator, inverse_mass_operator
-        )
+        lebesgue_space = Lebesgue(lmax, radius=radius, grid=grid, extend=extend)
+        SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale)
 
     @staticmethod
     def from_sobolev_parameters(
@@ -847,7 +818,6 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
         /,
         *,
         radius: float = 1.0,
-        vector_as_SHGrid: bool = True,
         grid: str = "DH",
         rtol: float = 1e-8,
         power_of_two: bool = False,
@@ -902,144 +872,13 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             grid=grid,
         )
 
-    def __eq__(self, other: object) -> bool:
-        """
-        Checks for mathematical equality with another Sobolev space on a sphere.
+    def ax(self, a: float, x: sh.SHGrid) -> None:
+        self.underlying_space.ax(a, x)
 
-        Two spaces are considered equal if they are of the same type and have
-        the same defining parameters (kmax, order, scale, and radius).
-        """
-        if not isinstance(other, Sobolev):
-            return NotImplemented
+    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
+        self.underlying_space.axpy(a, x, y)
 
-        return (
-            self.lmax == other.lmax
-            and self.radius == other.radius
-            and self.order == other.order
-            and self.scale == other.scale
-        )
-
-    def eigenfunction_norms(self) -> np.ndarray:
-        """Returns a list of the norms of the eigenfunctions."""
-        values = self._degree_dependent_scaling_values(
-            lambda l: np.sqrt(self.sobolev_function(self.laplacian_eigenvalue((l, 0))))
-        )
-        return self.radius * np.fromiter(values, dtype=float)
-
-    def dirac(self, point: (float, float)) -> LinearForm:
-        """
-        Returns the linear functional for point evaluation (Dirac measure).
-
-        Args:
-            point: A tuple containing `(latitude, longitude)`.
-        """
-        latitude, longitude = point
-        colatitude = 90.0 - latitude
-
-        coeffs = sh.expand.spharm(
-            self.lmax,
-            colatitude,
-            longitude,
-            normalization=self.normalization,
-            degrees=True,
-        )
-        ulm = sh.SHCoeffs.from_array(
-            coeffs,
-            normalization=self.normalization,
-            csphase=self.csphase,
-        )
-
-        c = self._coefficient_to_component(ulm)
-        return self.dual.from_components(c)
-
-    def __str__(self) -> str:
-        """Returns a human-readable string summary of the space."""
-        return (
-            f"Lebesgue space on sphere:\n"
-            f"lmax={self.lmax}\n"
-            f"order={self.order}\n"
-            f"scale={self.scale}\n"
-            f"radius={self.radius}\n"
-            f"grid={self.grid}\n"
-            f"extend={self.extend}"
-        )
-
-    def point_evaluation_operator(
-        self,
-        points: List[Tuple[float, float]],
-        /,
-        *,
-        matrix_free: bool = False,
-        parallel=False,
-        n_jobs=-1,
-    ) -> LinearOperator:
-        """
-        Returns a linear operator that evaluates a function at a list of points.
-
-        Args:
-            points: A list of (latitude, longitude) tuples in degrees.
-            matrix_free: If True, uses an optimized, matrix-free implementation to
-                save memory. If False (default), constructs a dense matrix.
-            parallel: In the matrix-free case compute adjoint mapping in parallel
-                default is False
-            n_jobs: Number of processors to use within parallel calculations
-        """
-        if self.order <= self.spatial_dimension / 2:
-            raise NotImplementedError(
-                f"Sobolev order {self.order} is too low for point evaluation on S²."
-            )
-
-        if matrix_free:
-            lats, lons = zip(*points)
-            lats_array = np.array(lats)
-            lons_array = np.array(lons)
-
-            def mapping(u: sh.SHGrid) -> np.ndarray:
-                ulm = self.to_coefficients(u)
-                return ulm.expand(
-                    lat=lats_array,
-                    lon=lons_array,
-                )
-
-            def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
-                if parallel:
-
-                    def compute_chunk(indices_chunk):
-                        local_v = self.zero
-                        for idx in indices_chunk:
-                            v_i = self.dirac_representation(points[idx])
-                            self.axpy(data[idx], v_i, local_v)
-                        return local_v
-
-                    chunks = np.array_split(
-                        range(len(data)), n_jobs if n_jobs > 0 else 8
-                    )
-                    results = Parallel(n_jobs=n_jobs)(
-                        delayed(compute_chunk)(c) for c in chunks
-                    )
-
-                    total_v = self.zero
-                    for res in results:
-                        self.axpy(1.0, res, total_v)
-                    return total_v
-                else:
-                    total_v = self.zero
-                    for i, val in enumerate(data):
-                        v_i = self.dirac_representation(points[i])
-                        self.axpy(val, v_i, total_v)
-                    return total_v
-
-            return LinearOperator(
-                self,
-                EuclideanSpace(len(points)),
-                mapping,
-                adjoint_mapping=adjoint_mapping,
-            )
-
-        # Standard path: delegate to the ABC for dense matrix construction
-        return super().point_evaluation_operator(points)
-
-    def to_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
 
@@ -1062,13 +901,13 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
         """
 
-        l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin)
+        l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin=lmin)
 
         return LinearOperator.from_formal_adjoint(
             self, l2_operator.codomain, l2_operator
         )
 
-    def from_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a vector of coefficients to a function.
 
@@ -1090,6 +929,6 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
         """
 
-        l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin)
+        l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin=lmin)
 
         return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)

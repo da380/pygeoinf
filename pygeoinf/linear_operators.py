@@ -1598,13 +1598,12 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         The square root of the operator, computed via functional calculus.
         Requires the operator to be strictly diagonal with non-negative entries.
         """
-
         if np.any(self._matrix.data < 0):
             raise ValueError(
                 "Cannot take the square root of an operator with negative entries."
             )
 
-        return self.__getattr__("sqrt")()
+        return self.apply_function(lambda x: np.sqrt(x))
 
     def apply_function(
         self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
@@ -1667,53 +1666,13 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
 
         return result_diagonals, offsets
 
-    def __getattr__(self, name: str):
-        """
-        Dynamically proxies method calls to the underlying dia_array.
-
-        For element-wise mathematical functions that return a new operator,
-        this method enforces that the operator must be strictly diagonal.
-        """
-
-        if name == "_matrix" or name.startswith("__"):
-            raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{name}'"
-            )
-
-        attr = getattr(self._matrix, name)
-
-        if callable(attr):
-
-            def wrapper(*args, **kwargs):
-                result = attr(*args, **kwargs)
-
-                if isinstance(result, sp.sparray):
-                    if not self.is_strictly_diagonal:
-                        raise NotImplementedError(
-                            f"Element-wise function '{name}' is only defined for "
-                            "strictly diagonal operators."
-                        )
-
-                    return DiagonalSparseMatrixLinearOperator(
-                        self.domain,
-                        self.codomain,
-                        (result.data, result.offsets),
-                        galerkin=self.is_galerkin,
-                    )
-                else:
-                    return result
-
-            return wrapper
-        else:
-            return attr
-
     def __abs__(self):
         """Explicitly handle the built-in abs() function."""
-        return self.__getattr__("__abs__")()
+        return self.apply_function(np.abs)
 
     def __pow__(self, power):
         """Explicitly handle the power operator (**)."""
-        return self.__getattr__("__pow__")(power)
+        return self.apply_function(lambda x: x**power)
 
 
 class NormalSumOperator(LinearOperator):
