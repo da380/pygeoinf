@@ -43,7 +43,10 @@ except ImportError:
     )
 
 
-from pygeoinf.linear_forms import LinearForm
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.linear_operators import LinearOperator
+from .sh_tools import SHVectorConverter
+
 
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 
@@ -677,6 +680,91 @@ class Lebesgue(SphereHelper, AbstractSymmetricLebesgueSpace):
         return y
 
     # ------------------------------------------------------ #
+    #                   Additional methods                   #
+    # ------------------------------------------------------ #
+
+    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
+        r"""
+        Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
+
+        The operator maps an element of the Hilbert space to a vector in $\mathbb{R}^k$.
+        The coefficients in the output vector are ordered by degree $l$ (major)
+        and order $m$ (minor), from $-l$ to $+l$.
+
+        **Ordering:**
+
+        .. math::
+            u = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
+
+        (assuming `lmin=0`).
+
+        Args:
+            lmax: The maximum spherical harmonic degree to include in the output.
+            lmin: The minimum spherical harmonic degree to include. Defaults to 0.
+
+        Returns:
+            A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
+        """
+
+        converter = SHVectorConverter(lmax, lmin)
+        codomain = EuclideanSpace(converter.vector_size)
+
+        def mapping(u: SHGrid) -> np.ndarray:
+            ulm = self.to_coefficients(u)
+            return converter.to_vector(ulm.coeffs)
+
+        def adjoint_mapping(data: np.ndarray) -> SHGrid:
+            coeffs = converter.from_vector(data, output_lmax=self.lmax)
+            ulm = sh.SHCoeffs.from_array(
+                coeffs,
+                normalization=self.normalization,
+                csphase=self.csphase,
+            )
+            return self.from_coefficients(ulm) / self.radius**2
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
+        r"""
+        Returns a LinearOperator mapping a vector of coefficients to a function.
+
+        The operator maps a vector in $\mathbb{R}^k$ to an element of the Hilbert space.
+        The input vector must follow the standard $l$-major, $m$-minor ordering.
+
+        **Ordering:**
+
+        .. math::
+            v = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
+
+        (assuming `lmin=0`).
+
+        Args:
+            lmax: The maximum spherical harmonic degree expected in the input.
+            lmin: The minimum spherical harmonic degree expected. Defaults to 0.
+
+        Returns:
+            A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
+        """
+
+        converter = SHVectorConverter(lmax, lmin)
+        domain = EuclideanSpace(converter.vector_size)
+
+        def mapping(data: np.ndarray) -> SHGrid:
+            coeffs = converter.from_vector(data, output_lmax=self.lmax)
+            ulm = sh.SHCoeffs.from_array(
+                coeffs,
+                normalization=self.normalization,
+                csphase=self.csphase,
+            )
+            return self.from_coefficients(ulm)
+
+        def adjoint_mapping(u: SHGrid) -> np.ndarray:
+            ulm = self.to_coefficients(u)
+            return converter.to_vector(ulm.coeffs) * self.radius**2
+
+        return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
+
+    # ------------------------------------------------------ #
     #                      Private methods                   #
     # ------------------------------------------------------ #
 
@@ -788,3 +876,58 @@ class Sobolev(SphereHelper, SymmetricSobolevSpace):
 
     def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
         self.underlying_space.axpy(a, x, y)
+
+    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
+        r"""
+        Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
+
+        The operator maps an element of the Hilbert space to a vector in $\mathbb{R}^k$.
+        The coefficients in the output vector are ordered by degree $l$ (major)
+        and order $m$ (minor), from $-l$ to $+l$.
+
+        **Ordering:**
+
+        .. math::
+            u = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
+
+        (assuming `lmin=0`).
+
+        Args:
+            lmax: The maximum spherical harmonic degree to include in the output.
+            lmin: The minimum spherical harmonic degree to include. Defaults to 0.
+
+        Returns:
+            A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
+        """
+
+        l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin=lmin)
+
+        return LinearOperator.from_formal_adjoint(
+            self, l2_operator.codomain, l2_operator
+        )
+
+    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
+        r"""
+        Returns a LinearOperator mapping a vector of coefficients to a function.
+
+        The operator maps a vector in $\mathbb{R}^k$ to an element of the Hilbert space.
+        The input vector must follow the standard $l$-major, $m$-minor ordering.
+
+        **Ordering:**
+
+        .. math::
+            v = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
+
+        (assuming `lmin=0`).
+
+        Args:
+            lmax: The maximum spherical harmonic degree expected in the input.
+            lmin: The minimum spherical harmonic degree expected. Defaults to 0.
+
+        Returns:
+            A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
+        """
+
+        l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin=lmin)
+
+        return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)

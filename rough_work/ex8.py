@@ -11,12 +11,12 @@ np.random.seed(42)
 # ==========================================
 model_space = Sobolev.from_sobolev_parameters(2.0, 0.05)
 
-n_data = 100
+n_data = 50
 observation_points = model_space.random_points(n_data)
 forward_operator = model_space.point_evaluation_operator(observation_points)
 data_space = forward_operator.codomain
 
-standard_deviation = 0.01
+standard_deviation = 0.5
 data_error_measure = inf.GaussianMeasure.from_standard_deviation(
     data_space, standard_deviation
 )

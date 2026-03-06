@@ -1674,6 +1674,12 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         For element-wise mathematical functions that return a new operator,
         this method enforces that the operator must be strictly diagonal.
         """
+
+        if name == "_matrix" or name.startswith("__"):
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
+
         attr = getattr(self._matrix, name)
 
         if callable(attr):

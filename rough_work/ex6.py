@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from cartopy import crs as ccrs
 import pygeoinf as inf
-from pygeoinf.symmetric_space.sphere import Sobolev
+from pygeoinf.symmetric_space_new.sphere import Sobolev
 
 
 # Set the model space
@@ -13,7 +13,7 @@ model_space = Sobolev(lmax, order, scale)
 
 # Set up the forward problem
 print("Setting up the forward problem")
-sources = 10
+sources = 20
 receivers = 50
 
 paths = model_space.random_source_receiver_paths(sources, receivers)
@@ -29,7 +29,7 @@ forward_problem = inf.LinearForwardProblem(
 
 # Set a prior and make synthetic data
 prior_order = 2
-prior_scale = 0.05
+prior_scale = 0.1
 model_prior_measure = model_space.point_value_scaled_sobolev_kernel_gaussian_measure(
     prior_order, prior_scale
 )
