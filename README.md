@@ -44,7 +44,8 @@ The library is built on a few key concepts:
 Any `Subset` in a Euclidean domain can be visualized along a 1D, 2D, or 3D affine subspace. The library automatically handles:
 - **Exact plotting** for polyhedral sets (defined by inequalities).
 - **Sampling-based plotting** for general convex sets (balls, ellipsoids, etc.).
-- **Voxel-based rendering** for 3D slices.
+- **Voxel-based rendering** for 3D slices using Matplotlib.
+- **Interactive 3D rendering** via Plotly isosurfaces / meshes when `plotly` is installed (`pip install pygeoinf[interactive]`); `backend="auto"` selects Plotly automatically and falls back to Matplotlib with a warning if it is absent.
 
 ```python
 from pygeoinf.hilbert_space import EuclideanSpace
@@ -71,9 +72,27 @@ fig_slice, ax_slice, payload = plot_slice(
     bounds=(-1.2, 1.2, -1.2, 1.2),
     show_plot=False,
 )
+
+# Full 3D rendering — backend="auto" uses Plotly when installed, Matplotlib otherwise.
+# With Plotly: returns (plotly.graph_objects.Figure, None, mask)
+# Without Plotly (fallback): returns (matplotlib.figure.Figure, Axes3D, mask)
+full_space_3d = AffineSubspace.from_tangent_basis(
+    domain3,
+    [domain3.basis_vector(0), domain3.basis_vector(1), domain3.basis_vector(2)],
+)
+fig_3d, ax_3d, mask_3d = plot_slice(
+    ball3,
+    full_space_3d,
+    bounds=(-1.1, 1.1, -1.1, 1.1, -1.1, 1.1),
+    grid_size=22,
+    backend="auto",   # Plotly if available, Matplotlib fallback
+    show_plot=False,
+)
 ```
 
 For full interactive examples in this repository, including 3D voxel rendering and exact polyhedral slices, see `pygeoinf/pygeoinf/testing_sets/visualization_demo.ipynb`. For sampled 3D plots, keep `grid_size` modest (around `20`-`30`) because the oracle path scales like $O(N^3)$.
+
+> **Return-type note:** `backend="auto"` for 3D returns `ax=None` (Plotly) or `ax=Axes3D` (Matplotlib). The `payload` is always the same boolean mask or vertex array regardless of backend.
 
 ## Installation
 
@@ -89,6 +108,13 @@ To include the functionality for functions on the sphere, you can install the `s
 ```bash
 # Installation with sphere-related features
 pip install pygeoinf[sphere]
+```
+
+To enable interactive 3D subset visualization (Plotly isosurfaces and meshes), install the `interactive` extra.
+
+```bash
+# Installation with interactive 3D plotting
+pip install pygeoinf[interactive]
 ```
 
 For development, you can clone the repository and install using Poetry:

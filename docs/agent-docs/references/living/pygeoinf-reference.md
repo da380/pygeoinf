@@ -407,6 +407,8 @@ Slice any `Subset` along a 1D, 2D, or 3D `AffineSubspace` for visualization.
 
 `backend`: `"auto"` (default) | `"matplotlib"` | `"plotly"`. `"auto"` prefers Plotly for 3D when installed, warns and falls back to Matplotlib otherwise; 1D/2D always use Matplotlib.
 
+**Optional dependency:** Plotly is not installed by default. Enable it with `pip install pygeoinf[interactive]`. Without it `backend="auto"` warns and falls back to Matplotlib for 3D.
+
 | Subspace dimension | `payload` type | Method |
 |---|---|---|
 | 1D | boolean mask `(grid_size,)` or `[lo, hi]` interval (PolyhedralSet) | Bar plot |
