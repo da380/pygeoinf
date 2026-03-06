@@ -199,7 +199,7 @@ All sets derive from `Subset(ABC)`:
 |---|---|
 | `is_element(x)` | Membership test → `bool` |
 | `boundary` | The set's boundary (returns a `Subset`) |
-| `plot(on_subspace=None, *, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5, cmap="Blues", color="steelblue", show_plot=True, ax=None, backend="auto")` | Visualize via `plot_slice()`; auto-builds a default subspace for 1D/2D `EuclideanSpace`, requires an explicit subspace otherwise; `backend` is `"auto"`, `"matplotlib"`, or `"plotly"` (Phase 1: all values use the Matplotlib path) |
+| `plot(on_subspace=None, *, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5, cmap="Blues", color="steelblue", show_plot=True, ax=None, backend="auto")` | Visualize via `plot_slice()`; auto-builds a default subspace for 1D/2D `EuclideanSpace`, requires an explicit subspace otherwise; `backend` is `"auto"`, `"matplotlib"`, or `"plotly"`; `"auto"` prefers Plotly for 3D when installed, warns and falls back to Matplotlib otherwise; 1D/2D always use Matplotlib |
 
 **Concrete classes:**
 
@@ -405,17 +405,17 @@ Slice any `Subset` along a 1D, 2D, or 3D `AffineSubspace` for visualization.
 
 **Method:** `.plot(bounds, cmap="Blues", color="steelblue", show_plot=True, ax=None, backend="auto") → (fig, ax, payload)`
 
-`backend`: `"auto"` (default) | `"matplotlib"` | `"plotly"`. In Phase 1 all three values fall through to the existing Matplotlib path; Plotly rendering is added in Phase 2.
+`backend`: `"auto"` (default) | `"matplotlib"` | `"plotly"`. `"auto"` prefers Plotly for 3D when installed, warns and falls back to Matplotlib otherwise; 1D/2D always use Matplotlib.
 
 | Subspace dimension | `payload` type | Method |
 |---|---|---|
 | 1D | boolean mask `(grid_size,)` or `[lo, hi]` interval (PolyhedralSet) | Bar plot |
 | 2D | boolean mask `(grid_size, grid_size)` or `(n_verts, 2)` polygon vertices (PolyhedralSet) | Filled region |
-| 3D | boolean mask `(grid_size, grid_size, grid_size)` (oracle path) or `(n_verts, 3)` vertex array (PolyhedralSet exact path) | `mplot3d` voxels / Poly3D |
+| 3D | boolean mask `(grid_size, grid_size, grid_size)` (oracle path) or `(n_verts, 3)` vertex array (PolyhedralSet exact path) | Matplotlib: `mplot3d` voxels / Poly3D; Plotly: `go.Isosurface` (sampled) / `go.Mesh3d` (PolyhedralSet) |
 
 **Two rendering paths:**
 - `PolyhedralSet` → exact affine slice via `scipy.spatial.HalfspaceIntersection` + convex hull → payload is vertex array (1D, 2D, and 3D); **never uses the grid** (no oracle calls).
-- All other sets → raster membership-oracle sampling on a `grid_size^n` grid → payload is boolean mask (1D, 2D, and 3D). 3D mask uses `indexing='ij'` so `mask[i,j,k]` = membership at `(u[i], v[j], w[k])`. 3D uses `Axes3D.voxels()` with parameter-coordinate edge arrays (not raw voxel indices). `UserWarning` emitted when `grid_size > 30` for non-`PolyhedralSet` 3D sets.
+- All other sets → raster membership-oracle sampling on a `grid_size^n` grid → payload is boolean mask (1D, 2D, and 3D). 3D mask uses `indexing='ij'` so `mask[i,j,k]` = membership at `(u[i], v[j], w[k])`. 3D with Matplotlib uses `Axes3D.voxels()` with parameter-coordinate edge arrays (not raw voxel indices); 3D with Plotly uses `go.Isosurface` (sampled) or `go.Mesh3d` (PolyhedralSet). `UserWarning` emitted when `grid_size > 30` for non-`PolyhedralSet` 3D sets.
 
 #### `plot_slice()` — Convenience Wrapper
 
@@ -426,7 +426,7 @@ plot_slice(subset, on_subspace, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5
 ```
 
 Thin wrapper over `SubspaceSlicePlotter`. Supports **1D, 2D, and 3D subspaces**.
-For 3D, the returned `ax` is an `Axes3D` instance (`hasattr(ax, 'set_zlim')` is `True`).
+For 3D with Matplotlib backend, `ax` is an `Axes3D` instance; with `backend='plotly'` (or `"auto"` when Plotly is installed), `ax` is `None`.
 Exported from both `pygeoinf.plot` and the top-level `pygeoinf` namespace.
 
 ---

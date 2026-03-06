@@ -708,6 +708,7 @@ class TestPlotSliceWrapper:
             bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
             grid_size=5,
             show_plot=False,
+            backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(payload, np.ndarray)
@@ -798,6 +799,7 @@ class TestPlotSlice3D:
             bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
             grid_size=5,
             show_plot=False,
+            backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(payload, np.ndarray)
@@ -815,6 +817,7 @@ class TestPlotSlice3D:
             bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
             grid_size=5,
             show_plot=False,
+            backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
         # 3D axes expose set_zlim; use this as a lightweight 3D check
@@ -832,6 +835,7 @@ class TestPlotSlice3D:
             bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
             grid_size=5,
             show_plot=False,
+            backend="matplotlib",
         )
         # grid_size=5 → linspace(-1, 1, 5) → [-1., -0.5,  0.,  0.5,  1.]
         # index 2 is the point at 0.0 in each dimension → origin is in ball
@@ -842,7 +846,8 @@ class TestPlotSlice3D:
         """SubspaceSlicePlotter.plot() works directly for a 3D Ball."""
         plotter = SubspaceSlicePlotter(ball_3d, subspace_3d, grid_size=5)
         fig, ax, payload = plotter.plot(
-            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0), show_plot=False
+            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0), show_plot=False,
+            backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
         assert payload.shape == (5, 5, 5)
@@ -866,6 +871,7 @@ class TestPlotSlice3D:
             bounds=(-0.6, 0.6, -0.3, 0.3, -0.1, 0.1),
             grid_size=3,
             show_plot=False,
+            backend="matplotlib",
         )
         assert payload.shape == (3, 3, 3), f"Expected (3,3,3), got {payload.shape}"
         # (0,0,0) with dist sqrt(0.36+0.09+0.01) ≈ 0.66 > 0.5 — outside
@@ -897,6 +903,7 @@ class TestPlotSlice3D:
             subspace_3d,
             bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
             show_plot=False,
+            backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
         assert hasattr(ax, "set_zlim"), "3D exact path must return Axes3D"
@@ -1005,8 +1012,9 @@ class TestBackendParameterPhase1:
                 f"got: {call_kwargs}"
             )
 
-    def test_plot_slice_3d_auto_uses_existing_matplotlib_path(self):
-        """backend='auto' on a 3D plot must use the current Matplotlib path (Phase 1)."""
+    def test_plot_slice_3d_auto_uses_plotly_when_available(self):
+        """backend='auto' on a 3D plot returns a Plotly figure when plotly is installed."""
+        go = pytest.importorskip("plotly.graph_objects")
         domain = EuclideanSpace(dim=3)
         e1 = np.array([1.0, 0.0, 0.0])
         e2 = np.array([0.0, 1.0, 0.0])
@@ -1024,10 +1032,145 @@ class TestBackendParameterPhase1:
             show_plot=False,
             backend="auto",
         )
-        # Phase 1: 'auto' still uses the Matplotlib path
-        assert isinstance(fig, matplotlib.figure.Figure)
-        assert hasattr(ax, "set_zlim"), (
-            "auto backend must still produce a 3D Matplotlib axes in Phase 1"
+        # Phase 2: 'auto' with plotly installed must return a Plotly figure
+        assert isinstance(fig, go.Figure), (
+            f"auto backend with plotly installed must return go.Figure, got {type(fig)}"
         )
+        assert ax is None, "ax must be None for Plotly figures"
+        assert isinstance(payload, np.ndarray)
+        plt.close("all")
+
+
+# =============================================================================
+# Phase 2 (Interactive 3D Plan): Plotly backend
+# =============================================================================
+
+
+class TestPlotSlice3DPlotlyBackend:
+    """Phase 2: Plotly 3D backend tests."""
+
+    @pytest.fixture
+    def domain_3d(self):
+        return EuclideanSpace(dim=3)
+
+    @pytest.fixture
+    def subspace_3d(self, domain_3d):
+        """3D affine subspace spanning all of R^3 (identity slice)."""
+        e1 = np.array([1.0, 0.0, 0.0])
+        e2 = np.array([0.0, 1.0, 0.0])
+        e3 = np.array([0.0, 0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return AffineSubspace.from_tangent_basis(domain_3d, [e1, e2, e3])
+
+    @pytest.fixture
+    def ball_3d(self, domain_3d):
+        return Ball(domain_3d, np.zeros(3), radius=0.5, open_set=False)
+
+    @pytest.fixture
+    def box_3d(self, domain_3d):
+        """Box [-0.5, 0.5]^3 as a PolyhedralSet (6 half-spaces)."""
+        half_spaces = []
+        for dim_idx in range(3):
+            normal = np.zeros(3)
+            normal[dim_idx] = 1.0
+            half_spaces.append(HalfSpace(domain_3d, normal, 0.5, inequality_type="<="))
+            half_spaces.append(HalfSpace(domain_3d, normal, -0.5, inequality_type=">="))
+        return PolyhedralSet(domain_3d, half_spaces)
+
+    def test_plot_slice_3d_plotly_missing_dependency(self, ball_3d, subspace_3d):
+        """backend='plotly' raises ImportError when plotly is not installed."""
+        with patch.dict("sys.modules", {"plotly": None, "plotly.graph_objects": None}):
+            with pytest.raises(ImportError, match="[Pp]lotly"):
+                plot_slice(
+                    ball_3d,
+                    subspace_3d,
+                    bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+                    grid_size=5,
+                    show_plot=False,
+                    backend="plotly",
+                )
+
+    def test_plot_slice_3d_auto_falls_back_to_matplotlib(self, ball_3d, subspace_3d):
+        """backend='auto' falls back to Matplotlib with a warning when plotly is unavailable."""
+        with patch.dict("sys.modules", {"plotly": None, "plotly.graph_objects": None}):
+            with pytest.warns(UserWarning, match="[Pp]lotly"):
+                fig, ax, payload = plot_slice(
+                    ball_3d,
+                    subspace_3d,
+                    bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+                    grid_size=5,
+                    show_plot=False,
+                    backend="auto",
+                )
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert hasattr(ax, "set_zlim"), "Fallback must produce a 3D Matplotlib axes"
         assert isinstance(payload, np.ndarray)
         plt.close(fig)
+
+    def test_plot_slice_3d_plotly_returns_figure(self, ball_3d, subspace_3d):
+        """backend='plotly' returns a Plotly figure for 3D ball (sampled path)."""
+        go = pytest.importorskip("plotly.graph_objects")
+
+        fig, ax_or_none, payload = plot_slice(
+            ball_3d,
+            subspace_3d,
+            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+            grid_size=5,
+            show_plot=False,
+            backend="plotly",
+        )
+        assert isinstance(fig, go.Figure), (
+            f"backend='plotly' must return go.Figure, got {type(fig)}"
+        )
+        assert ax_or_none is None, "ax must be None for Plotly figures"
+        assert isinstance(payload, np.ndarray)
+        assert payload.shape == (5, 5, 5)
+        assert payload.dtype == bool
+        # Sampled 3D path renders as an Isosurface trace.
+        assert len(fig.data) >= 1, "Plotly figure must contain at least one trace"
+        assert isinstance(fig.data[0], go.Isosurface), (
+            f"Sampled 3D path must use go.Isosurface trace, got {type(fig.data[0])}"
+        )
+
+    def test_plot_slice_polyhedral_3d_plotly_exact_path(self, box_3d, subspace_3d):
+        """backend='plotly' returns a Plotly figure for 3D PolyhedralSet (exact path)."""
+        go = pytest.importorskip("plotly.graph_objects")
+
+        fig, ax_or_none, payload = plot_slice(
+            box_3d,
+            subspace_3d,
+            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+            show_plot=False,
+            backend="plotly",
+        )
+        assert isinstance(fig, go.Figure), (
+            f"backend='plotly' polyhedral exact path must return go.Figure, got {type(fig)}"
+        )
+        assert ax_or_none is None
+        assert isinstance(payload, np.ndarray)
+        assert payload.ndim == 2 and payload.shape[1] == 3
+        assert payload.shape[0] >= 4, "3D polytope must have at least 4 vertices"
+        # Exact polyhedral 3D path renders as a Mesh3d trace.
+        assert len(fig.data) >= 1, "Plotly figure must contain at least one trace"
+        assert isinstance(fig.data[0], go.Mesh3d), (
+            f"Exact 3D polyhedral path must use go.Mesh3d trace, got {type(fig.data[0])}"
+        )
+
+    def test_plot_slice_plotly_rejects_matplotlib_ax(self, ball_3d, subspace_3d):
+        """Passing a Matplotlib ax when backend='plotly' raises ValueError."""
+        pytest.importorskip("plotly.graph_objects")
+        fig_mpl, ax_mpl = plt.subplots()
+        try:
+            with pytest.raises(ValueError, match="[Aa]x"):
+                plot_slice(
+                    ball_3d,
+                    subspace_3d,
+                    bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+                    grid_size=5,
+                    show_plot=False,
+                    backend="plotly",
+                    ax=ax_mpl,
+                )
+        finally:
+            plt.close(fig_mpl)

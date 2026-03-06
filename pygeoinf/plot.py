@@ -6,7 +6,7 @@ import numpy as np
 import scipy.stats as stats
 import scipy.optimize
 import scipy.spatial
-from typing import Union, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Union, List, Optional, Tuple, TYPE_CHECKING
 
 from .hilbert_space import EuclideanSpace
 from .subsets import Subset, PolyhedralSet
@@ -745,6 +745,134 @@ class SubspaceSlicePlotter:
     # Main Dispatcher
     # ===========================
 
+    def _resolve_backend(self, backend: str) -> str:
+        """Resolve the effective rendering backend for the current dimension.
+
+        Plotly is only used for 3D plots.  For 1D/2D the result is always
+        ``"matplotlib"``.  For 3D:
+
+        - ``"matplotlib"`` → ``"matplotlib"``
+        - ``"plotly"``     → ``"plotly"`` (raises ``ImportError`` if not installed)
+        - ``"auto"``       → ``"plotly"`` when plotly is importable, otherwise
+          ``"matplotlib"`` with a ``UserWarning``.
+        """
+        if self.dimension != 3:
+            return "matplotlib"
+
+        if backend == "matplotlib":
+            return "matplotlib"
+
+        if backend == "plotly":
+            try:
+                import plotly.graph_objects  # noqa: F401
+            except ImportError:
+                raise ImportError(
+                    "backend='plotly' requires the 'plotly' package. "
+                    "Install it with: pip install pygeoinf[interactive]"
+                ) from None
+            return "plotly"
+
+        if backend == "auto":
+            try:
+                import plotly.graph_objects  # noqa: F401
+                return "plotly"
+            except ImportError:
+                import warnings as _w
+                _w.warn(
+                    "Plotly is not installed; falling back to Matplotlib for 3D "
+                    "rendering.  Install it with: pip install pygeoinf[interactive]",
+                    UserWarning,
+                    stacklevel=4,
+                )
+                return "matplotlib"
+
+        raise ValueError(
+            f"backend must be 'auto', 'matplotlib', or 'plotly', got {backend!r}"
+        )
+
+    def _render_3d_plotly(
+        self,
+        param_grid: Tuple[np.ndarray, np.ndarray, np.ndarray],
+        mask: np.ndarray,
+        bounds: tuple,
+        show_plot: bool,
+    ) -> tuple:
+        """Render 3D sampled membership mask as an interactive Plotly isosurface.
+
+        Returns:
+            ``(fig, None, mask)`` where *fig* is a ``plotly.graph_objects.Figure``
+            and the second element is ``None`` (no Matplotlib Axes is created).
+        """
+        import plotly.graph_objects as go
+
+        U, V, W = param_grid
+        fig = go.Figure(data=go.Isosurface(
+            x=U.ravel(),
+            y=V.ravel(),
+            z=W.ravel(),
+            value=mask.astype(float).ravel(),
+            isomin=0.5,
+            isomax=1.5,
+            surface_count=1,
+            colorscale="Blues",
+            opacity=self.alpha,
+            showscale=False,
+        ))
+        u_min, u_max, v_min, v_max, w_min, w_max = bounds
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(title="Local Param 1 (u)", range=[u_min, u_max]),
+                yaxis=dict(title="Local Param 2 (v)", range=[v_min, v_max]),
+                zaxis=dict(title="Local Param 3 (w)", range=[w_min, w_max]),
+            ),
+            title=f"3D Slice: {self.subset.__class__.__name__}",
+        )
+        if show_plot:
+            fig.show()
+        return fig, None, mask
+
+    def _render_3d_polyhedral_plotly(
+        self,
+        pts: np.ndarray,
+        bounds: tuple,
+        show_plot: bool,
+    ) -> tuple:
+        """Render 3D polyhedral exact vertices as an interactive Plotly mesh.
+
+        Args:
+            pts: Vertex array of shape ``(n_vertices, 3)`` in parameter space.
+            bounds: ``(u_min, u_max, v_min, v_max, w_min, w_max)``.
+
+        Returns:
+            ``(fig, None, pts)``.
+        """
+        import plotly.graph_objects as go
+
+        hull = scipy.spatial.ConvexHull(pts)
+        fig = go.Figure(data=go.Mesh3d(
+            x=pts[:, 0],
+            y=pts[:, 1],
+            z=pts[:, 2],
+            i=hull.simplices[:, 0],
+            j=hull.simplices[:, 1],
+            k=hull.simplices[:, 2],
+            opacity=self.alpha,
+            color="lightblue",
+            flatshading=True,
+        ))
+        u_min, u_max, v_min, v_max, w_min, w_max = bounds
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(title="Local Param 1", range=[u_min, u_max]),
+                yaxis=dict(title="Local Param 2", range=[v_min, v_max]),
+                zaxis=dict(title="Local Param 3", range=[w_min, w_max]),
+            ),
+            title=f"3D Slice (Exact): {self.subset.__class__.__name__}",
+        )
+        if show_plot:
+            fig.show()
+        return fig, None, pts
+
     def plot(
         self,
         bounds: Optional[Union[tuple, List]] = None,
@@ -753,7 +881,7 @@ class SubspaceSlicePlotter:
         show_plot: bool = True,
         ax: Optional[matplotlib.axes.Axes] = None,
         backend: str = "auto",
-    ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+    ) -> tuple:
         """
         Main plotting method. Orchestrates bounds parsing, grid generation,
         membership sampling, and dimension-specific rendering.
@@ -763,23 +891,39 @@ class SubspaceSlicePlotter:
             cmap: Colormap for 2D/3D (ignored for 1D)
             color: Color for 1D (ignored for 2D/3D)
             show_plot: Whether to display the plot
-            ax: Optional existing Axes
+            ax: Optional existing Matplotlib Axes (must be ``None`` when
+                ``backend='plotly'``).
             backend: Rendering backend — ``"auto"`` (default), ``"matplotlib"``,
-                or ``"plotly"``. In Phase 1 all values fall through to the
-                existing Matplotlib path; full Plotly support is added in Phase 2.
+                or ``"plotly"``.  ``"auto"`` selects Plotly for 3D when it is
+                installed and falls back to Matplotlib otherwise.  1D/2D always
+                use Matplotlib regardless of the backend value.
 
         Returns:
-            (fig, ax, payload) tuple
+            ``(fig, ax, payload)`` tuple.
 
-            By default, payload is the boolean membership mask evaluated on the
-            parameter grid.
+            When the Matplotlib backend is used *fig* is a
+            ``matplotlib.figure.Figure`` and *ax* is a Matplotlib Axes.
+            When the Plotly backend is used *fig* is a
+            ``plotly.graph_objects.Figure`` and *ax* is ``None``.
 
-            For `PolyhedralSet`, a fast exact method is used (no grid sampling)
-            and the payload is instead geometric:
-            - 1D: array([u_lo, u_hi]) interval endpoints
-            - 2D: array of polygon vertices with shape (n_vertices, 2)
-            - 3D: array of polytope vertices with shape (n_vertices, 3)
+            *payload* semantics are independent of backend:
+
+            - Sampled path (non-``PolyhedralSet``): boolean membership mask.
+            - Exact path (``PolyhedralSet``): vertex array in parameter coords.
+
+        Raises:
+            ValueError: If ``ax`` is not ``None`` when ``backend='plotly'``.
         """
+        # Resolve effective backend (handles fallback + import check)
+        effective_backend = self._resolve_backend(backend)
+
+        # Reject a Matplotlib ax when Plotly is the active backend
+        if effective_backend == "plotly" and ax is not None:
+            raise ValueError(
+                "ax must be None when backend='plotly'; pass ax=None or use "
+                "backend='matplotlib'."
+            )
+
         # Parse bounds for this dimension
         parsed_bounds = self.parse_bounds(bounds)
 
@@ -792,6 +936,7 @@ class SubspaceSlicePlotter:
                 color=color,
                 show_plot=show_plot,
                 ax=ax,
+                backend=effective_backend,
             )
 
         # Generate parameter grid
@@ -808,6 +953,9 @@ class SubspaceSlicePlotter:
             return self._render_2d(param_grid, mask, parsed_bounds, cmap,
                                    show_plot, ax)
         elif self.dimension == 3:
+            if effective_backend == "plotly":
+                return self._render_3d_plotly(param_grid, mask, parsed_bounds,
+                                              show_plot)
             return self._render_3d(param_grid, mask, parsed_bounds, cmap,
                                    show_plot, ax)
 
@@ -918,7 +1066,8 @@ class SubspaceSlicePlotter:
         color: str,
         show_plot: bool,
         ax: Optional[matplotlib.axes.Axes],
-    ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+        backend: str = "matplotlib",
+    ) -> tuple:
         """Exact plotting for PolyhedralSet slices in 1D/2D/3D (within bounds)."""
         A, b = self._polyhedral_inequalities_in_params(bounds)
         k = self.dimension
@@ -1036,6 +1185,9 @@ class SubspaceSlicePlotter:
             return fig, ax, verts
 
         # k == 3
+        if backend == "plotly":
+            return self._render_3d_polyhedral_plotly(pts, bounds, show_plot)
+
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
         if ax is None:
@@ -1077,7 +1229,7 @@ def plot_slice(
     show_plot: bool = True,
     ax=None,
     backend: str = "auto",
-) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+) -> Tuple[Any, Optional[matplotlib.axes.Axes], np.ndarray]:
     """
     Convenience wrapper: slice a subset along a 1D, 2D, or 3D affine subspace and plot.
 
@@ -1096,8 +1248,9 @@ def plot_slice(
         show_plot: Whether to call ``plt.show()``.
         ax: Optional existing ``Axes`` (or ``Axes3D``) to draw into.
         backend: Rendering backend — ``"auto"`` (default), ``"matplotlib"``,
-            or ``"plotly"``. In Phase 1 all values fall through to the existing
-            Matplotlib path; full Plotly support is added in Phase 2.
+            or ``"plotly"``. ``"auto"`` prefers Plotly for 3D when it is
+            installed and warns then falls back to Matplotlib otherwise;
+            1D/2D always use Matplotlib.
 
     Returns:
         ``(fig, ax, payload)`` — identical to ``SubspaceSlicePlotter.plot()``.
@@ -1119,7 +1272,12 @@ def plot_slice(
           - 2D: shape ``(n_vertices, 2)`` — polygon vertices
           - 3D: shape ``(n_vertices, 3)`` — polytope vertices
 
-        For 3D subspaces the returned ``ax`` is an ``Axes3D`` instance.
+        For 3D subspaces using ``backend='matplotlib'`` (or ``backend='auto'``
+        when Plotly is not installed), ``fig`` is a
+        ``matplotlib.figure.Figure`` and ``ax`` is an ``Axes3D`` instance.
+        For 3D subspaces using ``backend='plotly'`` (or ``backend='auto'``
+        when Plotly *is* installed), ``fig`` is a
+        ``plotly.graph_objects.Figure`` and ``ax`` is ``None``.
 
     Raises:
         TypeError: If ``subset.domain`` is not an ``EuclideanSpace``.
