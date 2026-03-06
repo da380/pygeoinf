@@ -163,13 +163,13 @@ class Cut:
     """A linearisation cut for a convex function at a point.
 
     A cut records the function value and a subgradient at an evaluation point,
-    defining the affine lower bound $f_j + \\langle g_j, \\lambda - x_j \\rangle
-    \\leq f(\\lambda)$ for all $\\lambda$.
+    defining the affine lower bound: f_j + <g_j, lambda - x_j> <= f(lambda)
+    for all lambda.
 
     Attributes:
         x: Evaluation point (a Hilbert-space vector).
-        f: Function value $f(x)$.
-        g: Subgradient $g \\in \\partial f(x)$.
+        f: Function value f(x).
+        g: Subgradient g in partial_f(x).
         iteration: Iteration index at which this cut was generated.
     """
 
@@ -183,12 +183,8 @@ class Bundle:
     """Collection of cutting-plane linearisations of a convex function.
 
     A bundle stores a list of :class:`Cut` objects and provides utilities
-    for building the piecewise-linear epigraph model
-
-    .. math::
-
-        \\hat{\\phi}(\\lambda) = \\max_j \\bigl[ f_j + \\langle g_j,\\ \\lambda - x_j \\rangle \\bigr]
-
+    for building the piecewise-linear epigraph model:
+        hat_phi(lambda) = max_j [ f_j + <g_j, lambda - x_j> ]
     used by proximal and level bundle methods.
 
     Examples:
@@ -215,9 +211,9 @@ class Bundle:
         return len(self._cuts)
 
     def lower_bound(self) -> float:
-        """Return a placeholder lower bound ($-\\infty$).
+        """Return a placeholder lower bound (-infinity).
 
-        The true lower bound $\\min_{\\lambda} \\hat{\\phi}(\\lambda)$ is computed
+        The true lower bound min_lambda hat_phi(lambda) is computed
         as the master QP/LP objective value by the outer bundle solver (Phase 2–3).
         This placeholder allows :class:`BundleResult` to report ``f_low`` before
         any master problem has been solved.
@@ -231,10 +227,10 @@ class Bundle:
         """Return the best (lowest) function value seen so far.
 
         This is a valid upper bound on the optimum since
-        $f^* \\leq f(x_j)$ for all recorded points $x_j$.
+        f* <= f(x_j) for all recorded points x_j.
 
         Returns:
-            $\\min_j f_j$.
+            min_j f_j.
 
         Raises:
             ValueError: If the bundle is empty.
@@ -247,7 +243,7 @@ class Bundle:
         """Return the evaluation point with the lowest recorded function value.
 
         Returns:
-            The vector $x_j$ achieving $\\min_j f_j$.
+            The vector x_j achieving min_j f_j.
 
         Raises:
             ValueError: If the bundle is empty.
@@ -263,16 +259,13 @@ class Bundle:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Build the inequality constraint matrix for the epigraph QP.
 
-        For each cut $(x_j, f_j, g_j)$ the cutting-plane constraint is
+        For each cut (x_j, f_j, g_j) the cutting-plane constraint is:
+            f_j + <g_j, lambda - x_j> <= t
+        which is equivalent to:
+            g_j^T @ lambda - t <= g_j^T @ x_j - f_j
 
-        .. math::
-
-            f_j + \\langle g_j,\\ \\lambda - x_j \\rangle \\leq t
-            \\quad\\Longleftrightarrow\\quad
-            g_j^\\top \\lambda - t \\leq g_j^\\top x_j - f_j.
-
-        Stacking all cuts gives the system $A_{\\text{ineq}} [\\lambda; t] \\leq b$ where row
-        $i$ is $[g_i^\\top\\; -1]$ and $b_i = g_i^\\top x_i - f_i$.
+        Stacking all cuts gives the system A_ineq @ [lambda; t] <= b where row
+        i is [g_i^T, -1] and b_i = g_i^T @ x_i - f_i.
 
         Args:
             stability_center: Current stability/proximal centre (not used to build
@@ -283,8 +276,8 @@ class Bundle:
         Returns:
             A tuple ``(A_ineq, b_ineq)`` where
 
-            * ``A_ineq`` has shape ``(n_cuts, dim + 1)``  — columns correspond to
-              $[\\lambda_1, \\ldots, \\lambda_d, t]$.
+            * ``A_ineq`` has shape ``(n_cuts, dim + 1)`` — columns are
+              [lambda_1, ..., lambda_d, t].
             * ``b_ineq`` has shape ``(n_cuts,)``.
 
         Raises:
@@ -339,12 +332,9 @@ class QPResult:
 class QPSolver(Protocol):
     """Protocol for QP solvers used by bundle methods.
 
-    Solvers must implement the OSQP standard form
-
-    .. math::
-
-        \\min_{x}\\; \\tfrac{1}{2} x^\\top P x + q^\\top x
-        \\quad\\text{s.t.}\\quad l \\leq A x \\leq u.
+    Solvers must implement the OSQP standard form:
+        min_x (1/2) x^T @ P @ x + q^T @ x
+        subject to: l <= A @ x <= u
 
     Args:
         P: Symmetric positive-semi-definite Hessian, shape ``(n, n)``.
@@ -373,7 +363,7 @@ class SciPyQPSolver:
     """QP solver backed by :func:`scipy.optimize.minimize` with ``method='SLSQP'``.
 
     Implements the :class:`QPSolver` protocol.  Converts the OSQP standard-form
-    bounds $l \\leq Ax \\leq u$ to SLSQP inequality/equality constraints.
+    bounds $l ≤ Ax ≤ u$ to SLSQP inequality/equality constraints.
 
     Notes:
         SLSQP is a gradient-based method suitable for small to medium problems
@@ -557,7 +547,7 @@ class OSQPQPSolver:
 class ClarabelQPSolver:
     """QP solver using Clarabel (interior-point). Requires ``pip install clarabel``.
 
-    Converts the OSQP standard form $l \\leq Ax \\leq u$ to Clarabel's cone
+    Converts the OSQP standard form $l ≤ Ax ≤ u$ to Clarabel's cone
     form internally.  Equality constraints ($l_i = u_i$) are handled via
     :class:`clarabel.ZeroConeT`; inequality constraints via
     :class:`clarabel.NonnegativeConeT`.
@@ -615,9 +605,9 @@ class ClarabelQPSolver:
             :class:`QPResult` with ``status='solved'`` on success.
 
         Notes:
-            Clarabel's constraint form is $Ax + s = b$, $s \\in K$.  For
-            :class:`~clarabel.NonnegativeConeT` this means $b - Ax \\geq 0$, i.e.
-            $Ax \\leq b$.  Each OSQP row is therefore expanded into at most two
+            Clarabel's constraint form is $Ax + s = b$, $s ∈ K$.  For
+            :class:`~clarabel.NonnegativeConeT` this means $b - Ax ≥ 0$, i.e.
+            $Ax ≤ b$.  Each OSQP row is therefore expanded into at most two
             Clarabel rows.
         """
         import clarabel
@@ -765,40 +755,31 @@ def _get_value_and_subgradient(
 class ProximalBundleMethod:
     """Proximal bundle method for minimising a non-smooth convex function.
 
-    Solves
+    Solves:
+        min_{lambda in D} f(lambda)
 
-    .. math::
-
-        \\min_{\\lambda \\in D}\\; f(\\lambda)
-
-    where $f$ is a convex function accessible through a value + subgradient
+    where f is a convex function accessible through a value + subgradient
     oracle (a :class:`~pygeoinf.nonlinear_forms.NonLinearForm` with
     ``subgradient``).
 
-    At each iteration the *master QP* is
+    At each iteration the *master QP* is:
+        min_{lambda, t} t + (rho / 2) ||lambda - lambda_hat||^2
+        subject to: f_j + <g_j, lambda - x_j> <= t  for all j in bundle
 
-    .. math::
-
-        \\min_{\\lambda, t}\\;
-        t + \\tfrac{\\rho}{2} \\|\\lambda - \\hat{\\lambda}\\|^2
-        \\quad \\text{s.t.} \\quad
-        f_j + \\langle g_j,\\, \\lambda - x_j \\rangle \\leq t
-        \\quad \\forall j \\in \\text{bundle},
-
-    where $\\hat{\\lambda}$ is the current *stability centre* and $\\rho > 0$
+    where lambda_hat is the current *stability centre* and rho > 0
     is the proximal weight.
 
-    A *serious step* is taken whenever the new oracle value $f(\\lambda_+) <
-    f(\\hat{\\lambda})$; otherwise a *null step* occurs and $\\rho$ is increased to
+    A *serious step* is taken whenever the new oracle value f(lambda_+) <
+    f(lambda_hat); otherwise a *null step* occurs and rho is increased to
     tighten the proximal term.
 
     Args:
         oracle: Non-smooth convex functional with subgradient oracle.
-        rho0: Initial proximal weight $\\rho > 0$.
-        rho_factor: Multiplicative factor applied to $\\rho$ on null steps (divide
+        rho0: Initial proximal weight rho > 0.
+        rho_factor: Multiplicative factor applied to rho on null steps (divide
             on serious steps).
         tolerance: Convergence tolerance; terminates when the duality gap
-            $f_{\\text{up}} - f_{\\text{low}} \\leq \\text{tolerance}$.
+            f_up - f_low <= tolerance.
         max_iterations: Maximum number of oracle calls.
         bundle_size: Maximum number of cuts retained in the bundle.
         store_iterates: If ``True``, all iterates are stored in
@@ -863,17 +844,14 @@ class ProximalBundleMethod:
     ) -> "tuple[Vector, float]":
         """Solve the proximal bundle master QP.
 
-        Minimises
-
-        .. math::
-
-            t + \\tfrac{\\rho}{2} \\|\\lambda - \\hat{\\lambda}\\|^2
+        Minimises:
+            t + (rho / 2) ||lambda - lambda_hat||^2
 
         subject to the bundle cutting-plane constraints.
 
         Args:
             bundle: Current bundle of cuts.
-            lam_hat: Stability centre $\\hat{\\lambda}$.
+            lam_hat: Stability centre $\hat{λ}$.
             rho: Proximal weight.
             domain: Hilbert space of the decision variable.
             x0_comps: Warm-start components for the QP solver.
@@ -1027,54 +1005,40 @@ class ProximalBundleMethod:
 class LevelBundleMethod:
     """Level bundle method for minimising a non-smooth convex function.
 
-    Solves
+    Solves:
+        min_{lambda in D} f(lambda)
 
-    .. math::
-
-        \\min_{\\lambda \\in D}\\; f(\\lambda)
-
-    where $f$ is a convex function accessible through a value + subgradient
+    where f is a convex function accessible through a value + subgradient
     oracle (a :class:`~pygeoinf.nonlinear_forms.NonLinearForm` with
     ``subgradient``).
 
-    At each iteration the *level master QP* is
+    At each iteration the *level master QP* is:
+        min_{lambda, t} (1/2) ||lambda - lambda_hat||^2
+        subject to: f_j + <g_j, lambda - x_j> <= t  for all j
+                   t <= f_lev
 
-    .. math::
+    where the level is: f_lev = alpha * f_low + (1 - alpha) * f_up, alpha in (0,1).
 
-        \\min_{\\lambda, t}\\; \\tfrac{1}{2} \\|\\lambda - \\hat{\\lambda}\\|^2
-        \\quad \\text{s.t.} \\quad
-        f_j + \\langle g_j,\\, \\lambda - x_j \\rangle \\leq t
-        \\quad \\forall j,
-        \\quad t \\leq f_{\\text{lev}},
-
-    where the level is $f_{\\text{lev}} = \\alpha f_{\\text{low}} +
-    (1 - \\alpha) f_{\\text{up}}$, $\\alpha \\in (0, 1)$.
-
-    The lower bound $f_{\\text{low}}$ is maintained as the LP optimal value of
+    The lower bound f_low is maintained as the LP optimal value of
     the cutting-plane model:
-
-    .. math::
-
-        f_{\\text{LP}} = \\min_{\\lambda}\\; \\hat{\\phi}(\\lambda)
-        = \\min_{\\lambda, t}\\; t
-        \\quad \\text{s.t.} \\quad
-        f_j + \\langle g_j, \\lambda - x_j \\rangle \\leq t.
+        f_LP = min_{lambda} hat_phi(lambda)
+             = min_{lambda, t} t
+        subject to: f_j + <g_j, lambda - x_j> <= t
 
     **Infeasibility handling.**  If the level QP is infeasible (which can
-    happen when $f_{\\text{lev}} < f_{\\text{LP}}$ for a tight $\\alpha$),
-    $\\alpha$ is widened by a factor of $1.5$ (capped at $0.9$) for up to
-    three attempts.  If all attempts fail an emergency proximal step is taken
-    (minimise $t + \\tfrac{1}{2} \\|\\lambda - \\hat{\\lambda}\\|^2$ over the
-    current bundle) so the stability centre and bundle are always updated.
+    happen when f_lev < f_LP for a tight alpha), alpha is widened by a factor
+    of 1.5 (capped at 0.9) for up to three attempts. If all attempts fail an
+    emergency proximal step is taken (minimize t + (1/2) ||lambda - lambda_hat||^2
+    over the current bundle) so the stability centre and bundle are always updated.
 
     Args:
         oracle: Non-smooth convex functional with subgradient oracle.
-        alpha: Level parameter $\\alpha \\in (0, 1)$ controlling how
-            aggressively the level is set towards the lower bound.  Smaller
+        alpha: Level parameter alpha in (0, 1) controlling how
+            aggressively the level is set towards the lower bound. Smaller
             values are more aggressive (risk infeasibility); larger are more
-            conservative.  Defaults to ``0.1``.
+            conservative. Defaults to ``0.1``.
         tolerance: Convergence tolerance; terminates when the duality gap
-            $f_{\\text{up}} - f_{\\text{low}} \\leq \\text{tolerance}$.
+            f_up - f_low <= tolerance.
         max_iterations: Maximum number of oracle calls.
         bundle_size: Maximum number of cuts retained in the bundle.
         store_iterates: If ``True``, all iterates are stored in
@@ -1135,36 +1099,31 @@ class LevelBundleMethod:
         domain: "HilbertSpace",
         lam_hat_c: np.ndarray,
     ) -> float:
-        """Compute a lower bound on $f^*$ via the bundle LP.
+        """Compute a lower bound on f* via the bundle LP.
 
-        Solves the cutting-plane LP
+        Solves the cutting-plane LP:
+            f_LP = min_{lambda, t} t
+            subject to: f_j + <g_j, lambda - x_j> <= t
+                       ||lambda - lambda_hat||_inf <= R
 
-        .. math::
-
-            f_{\\text{LP}} = \\min_{\\lambda, t}\\; t
-            \\quad \\text{s.t.} \\quad
-            f_j + \\langle g_j, \\lambda - x_j \\rangle \\leq t,
-            \\quad \\|\\lambda - \\hat{\\lambda}\\|_\\infty \\leq R,
-
-        where $R = 10^3 \\cdot (1 + \\|\\hat{\\lambda}\\|_\\infty)$ is a large
-        box that keeps the LP bounded without biasing the lower bound.
+        where R = 1e3 * (1 + ||lambda_hat||_inf) is a large box that keeps
+        the LP bounded without biasing the lower bound.
 
         The LP is solved via :func:`scipy.optimize.linprog` (HiGHS simplex),
         which is more reliable than ADMM-based QP solvers for this
         nearly-unbounded pure-LP subproblem.
 
-        Since $\\hat{\\phi}(\\lambda) \\leq f(\\lambda)$ for all $\\lambda$, the
-        LP optimum satisfies $f_{\\text{LP}} \\leq f^*$, providing a valid
-        global lower bound.
+        Since hat_phi(lambda) <= f(lambda) for all lambda, the
+        LP optimum satisfies f_LP <= f*, providing a valid global lower bound.
 
         Args:
             bundle: Current bundle of cuts.
-            lam_hat: Stability centre $\\hat{\\lambda}$.
+            lam_hat: Stability centre $\hat{λ}$.
             domain: Hilbert space of the decision variable.
             lam_hat_c: Component array of the stability centre.
 
         Returns:
-            Scalar lower-bound estimate $f_{\\text{LP}}$, or ``-np.inf`` if
+            Scalar lower-bound estimate f_LP, or ``-np.inf`` if
             the LP cannot be solved reliably (e.g. only a single cut present
             when the problem is genuinely unbounded).
         """
@@ -1203,20 +1162,17 @@ class LevelBundleMethod:
     ) -> QPResult:
         """Solve the level-bundle master QP.
 
-        Minimises
+        Minimises:
+            (1/2) ||lambda - lambda_hat||^2
 
-        .. math::
+        subject to the bundle cutting-plane constraints AND the level
+        constraint t <= f_lev.
 
-            \\tfrac{1}{2} \\|\\lambda - \\hat{\\lambda}\\|^2
-
-        subject to the bundle cutting-plane constraints **and** the level
-        constraint $t \\leq f_{\\text{lev}}$.
-
-        Decision variable: $z = [\\lambda_1, \\ldots, \\lambda_d, t]$.
+        Decision variable: z = [lambda_1, ..., lambda_d, t].
 
         Args:
             bundle: Current bundle of cuts.
-            lam_hat: Stability centre $\\hat{\\lambda}$.
+            lam_hat: Stability centre $\hat{λ}$.
             f_lev: Level value; upper bound on $t$.
             domain: Hilbert space of the decision variable.
             lam_hat_c: Component array of the stability centre.
@@ -1235,11 +1191,11 @@ class LevelBundleMethod:
         q_vec = np.zeros(d + 1)
         q_vec[:d] = -lam_hat_c
 
-        # Cut constraints: A_ineq @ z ≤ b_ineq
+        # Cut constraints: A_ineq @ z <= b_ineq
         A_ineq, b_ineq = bundle.linearization_matrix(lam_hat, domain)
         n_cuts = A_ineq.shape[0]
 
-        # Level constraint: t ≤ f_lev  →  [0…0, 1] @ z ≤ f_lev
+        # Level constraint: t <= f_lev (i.e. [0...0, 1] @ z <= f_lev)
         A_level = np.zeros((1, d + 1))
         A_level[0, d] = 1.0
 
@@ -1260,8 +1216,8 @@ class LevelBundleMethod:
     ) -> "tuple[Vector, float]":
         """Emergency proximal fallback when all level QP attempts fail.
 
-        Minimises $t + \\tfrac{1}{2} \\|\\lambda - \\hat{\\lambda}\\|^2$ subject
-        to the bundle cutting-plane constraints (no level constraint).
+        Minimises: t + (1/2) ||lambda - lambda_hat||^2
+        subject to the bundle cutting-plane constraints (no level constraint).
 
         Args:
             bundle: Current bundle of cuts.
@@ -1447,14 +1403,14 @@ def solve_support_values(
 ):
     """Compute support function values for multiple directions.
 
-    Solves the dual master minimisation for each direction $q_i \\in q_s$,
+    Solves the dual master minimisation for each direction q_i in qs,
     optionally warm-starting from the previous direction's solution.
 
-    The support function of a set $U$ evaluated at direction $q$ is:
+    The support function of a set U evaluated at direction q is:
 
-    $$h_U(q) = \\min_{\\lambda} f(q, \\lambda)$$
+        h_U(q) = min_{lambda} f(q, lambda)
 
-    where $f(q, \\cdot)$ is the dual master cost with direction $q$.
+    where f(q, ·) is the dual master cost with direction q.
 
     Args:
         cost: DualMasterCostFunction instance with a ``set_direction`` method.
@@ -1539,12 +1495,12 @@ class ChambollePockResult:
     """Result from :class:`ChambollePockSolver`.
 
     Attributes:
-        m: Primal variable $m^* \\in B$ (model space).
-        v: Primal variable $v^* \\in V$ (data space).
-        mu: Dual variable $\\mu^* \\in D$ (data space).  Approximates the
+        m: Primal variable m* in B (model space).
+        v: Primal variable v* in V (data space).
+        mu: Dual variable mu* in D (data space). Approximates the
             optimal Lagrange multiplier for the equality constraint
-            $Gm + v = \\tilde{d}$.
-        primal_dual_gap: Feasibility residual $\\|Gm^* + v^* - \\tilde{d}\\|$
+            G @ m + v = d_tilde.
+        primal_dual_gap: Feasibility residual ||G @ m* + v* - d_tilde||
             at termination.
         converged: ``True`` if ``primal_dual_gap < tolerance``.
         num_iterations: Number of iterations performed.
@@ -1561,43 +1517,37 @@ class ChambollePockResult:
 class ChambollePockSolver:
     r"""Solve the primal feasibility form of the dual master via Chambolle-Pock.
 
-    Solves the constrained maximisation
+    Solves the constrained maximisation:
+        h_U(q) = max_{m in B, v in V} <c, m>
+                 subject to: G @ m + v = d_tilde
 
-    .. math::
-
-        h_U(q) = \max_{m \in B,\, v \in V}\; \langle c, m \rangle
-                 \quad\text{s.t.}\quad Gm + v = \tilde{d}
-
-    where $c = T^* q$ is the linear objective and the feasible set
-    $(B, V, G, \tilde{d})$ is **fixed**, using the first-order primal-dual
+    where c = T* @ q is the linear objective and the feasible set
+    (B, V, G, d_tilde) is **fixed**, using the first-order primal-dual
     algorithm of Chambolle & Pock (2011).
 
-    The saddle-point reformulation (with dual variable $\mu \in D$) is:
+    The saddle-point reformulation (with dual variable mu in D) is:
+        min_{m in B, v in V} max_{mu}
+            <G @ m + v - d_tilde, mu> - <c, m>
 
-    .. math::
+    with operator K = [G; I_D] : M x D -> D.
 
-        \min_{m \in B,\, v \in V}\; \max_{\mu}\;
-            \langle Gm + v - \tilde{d},\, \mu \rangle - \langle c, m \rangle
+    **Convergence rate:** O(1/N) in the primal-dual gap when
+    tau * sigma * ||K||^2 <= 1 (where ||K||^2 <= ||G||^2 + 1).
 
-    with operator $K = [G;\, I_D] : M \times D \to D$.
-
-    **Convergence rate:** $O(1/N)$ in the primal-dual gap when
-    $\tau \sigma \|K\|^2 \le 1$ ($\\|K\\|^2 \le \\|G\\|^2 + 1$).
-
-    This is particularly efficient when the objective $c = T^*q$ changes while
-    the feasible set $(B, V, G, \\tilde{d})$ remains fixed.
+    This is particularly efficient when the objective c = T* @ q changes while
+    the feasible set (B, V, G, d_tilde) remains fixed.
 
     Args:
-        B: Support function for the model prior ($B \\subset M$).
-        V: Support function for the data error set ($V \\subset D$).
-        G: Forward operator $G: M \\to D$.
-        d_tilde: Observed data vector $\\tilde{d} \\in D$.
-        sigma: Dual step size.  If ``None``, auto-selected from power iteration.
-        tau: Primal step size.  If ``None``, auto-selected from power iteration.
+        B: Support function for the model prior (B subset of M).
+        V: Support function for the data error set (V subset of D).
+        G: Forward operator G: M -> D.
+        d_tilde: Observed data vector d_tilde in D.
+        sigma: Dual step size. If ``None``, auto-selected from power iteration.
+        tau: Primal step size. If ``None``, auto-selected from power iteration.
         theta: Over-relaxation parameter (default 1.0).
         max_iterations: Maximum number of iterations.
         tolerance: Convergence tolerance on feasibility residual
-            $\\|Gm + v - \\tilde{d}\\|$.
+            ||G @ m + v - d_tilde||.
 
     References:
         Chambolle A. & Pock T. (2011). A First-Order Primal-Dual Algorithm for
@@ -1641,11 +1591,11 @@ class ChambollePockSolver:
             self._tau = tau
 
     def _compute_step_sizes(self) -> "tuple[float, float]":
-        """Estimate $\\|G\\|$ via 20 steps of power iteration.
+        """Estimate ||G|| via 20 steps of power iteration.
 
         Returns:
-            ``(sigma, tau)`` satisfying $\\tau \\sigma \\|K\\|^2 \\le 0.99$
-            where $K = [G;\\ I]$ so $\\|K\\|^2 \\le \\|G\\|^2 + 1$.
+            (sigma, tau) satisfying tau * sigma * ||K||^2 <= 0.99
+            where K = [G; I] so ||K||^2 <= ||G||^2 + 1.
         """
         model_space = self._model_space
         G = self._G
@@ -1746,24 +1696,24 @@ class ChambollePockSolver:
             h_U = \max_{m \in B,\, v \in V}\; \langle c, m \rangle
                   \quad\text{s.t.}\quad Gm + v = \tilde{d}
 
-        Iteration (with $\\theta = 1$, $K = [G;\\ I]$):
+        Iteration (with $θ = 1$, $K = [G;\\ I]$):
 
-        #. $\\mu^{n+1} = \\mu^n + \\sigma(G\\bar{m}^n + \\bar{v}^n - \\tilde{d})$
-        #. $m^{n+1} = \\operatorname{proj}_B\\bigl(m^n - \\tau G^* \\mu^{n+1} + \\tau c\\bigr)$
-        #. $v^{n+1} = \\operatorname{proj}_V\\bigl(v^n - \\tau \\mu^{n+1}\\bigr)$
-        #. $\\bar{m}^{n+1} = m^{n+1} + \\theta(m^{n+1} - m^n)$,
-           $\\bar{v}^{n+1} = v^{n+1} + \\theta(v^{n+1} - v^n)$
+        #. $μ^{n+1} = μ^n + σ(G\\bar{m}^n + \\bar{v}^n - \\tilde{d})$
+        #. $m^{n+1} = \\operatorname{proj}_B\\bigl(m^n - τ G^* μ^{n+1} + τ c\\bigr)$
+        #. $v^{n+1} = \\operatorname{proj}_V\\bigl(v^n - τ μ^{n+1}\\bigr)$
+        #. $\\bar{m}^{n+1} = m^{n+1} + θ(m^{n+1} - m^n)$,
+           v_bar^{n+1} = v^{n+1} + theta * (v^{n+1} - v^n)
 
         Convergence is declared when the feasibility residual
-        $\\|Gm + v - \\tilde{d}\\| < \\text{tolerance}$.
+        ||G @ m + v - d_tilde|| < tolerance.
 
         Args:
-            c: Linear objective coefficient in model space (typically $c = T^* q$).
-            m0: Initial model vector.  Defaults to zero.
+            c: Linear objective coefficient in model space (typically c = T* @ q).
+            m0: Initial model vector. Defaults to zero.
 
         Returns:
             :class:`ChambollePockResult` containing the primal optimisers
-            $(m^*, v^*)$, dual variable $\\mu^*$, feasibility gap, and
+            $(m^*, v^*)$, dual variable $μ^*$, feasibility gap, and
             convergence diagnostics.
         """
         model_space = self._model_space
@@ -1851,31 +1801,28 @@ def solve_primal_feasibility(
     qs: "list[Vector] | np.ndarray",
     cp_solver: ChambollePockSolver,
 ) -> np.ndarray:
-    r"""Compute support values $h_U(q_i)$ using the primal feasibility form.
+    r"""Compute support values h_U(q_i) using the primal feasibility form.
 
-    Solves one Chambolle-Pock problem for each direction $q_i$
-    (using $c = T^* q_i$), exploiting that the feasible set
-    $(B, V, G, \\tilde{d})$ is independent of $q$.
+    Solves one Chambolle-Pock problem for each direction q_i
+    (using c = T* @ q_i), exploiting that the feasible set
+    (B, V, G, d_tilde) is independent of q.
 
-    The support value for direction $q$ is
+    The support value for direction q is:
+        h_U(q) = max_{m in B, v in V} <T* @ q, m>
+                 subject to: G @ m + v = d_tilde
+               = <T* @ q, m*(q)>
 
-    .. math::
-
-        h_U(q) = \max_{m \in B,\, v \in V}\; \langle T^* q, m \rangle
-                 \quad\text{s.t.}\quad Gm + v = \tilde{d}
-               = \langle T^* q,\ m^*(q) \rangle
-
-    where $m^*(q)$ is returned by :meth:`ChambollePockSolver.solve`.
+    where m*(q) is returned by :meth:`ChambollePockSolver.solve`.
 
     Args:
         cost: :class:`~pygeoinf.backus_gilbert.DualMasterCostFunction` holding
-            references to $T$, $G$, and the model space.
+            references to T, G, and the model space.
         qs: Directions to evaluate; a list of Vectors (in the property space)
             or an ``np.ndarray`` of shape ``(p, prop_dim)``.
         cp_solver: Pre-configured :class:`ChambollePockSolver` for the problem.
 
     Returns:
-        ``np.ndarray`` of shape ``(p,)`` with $h_U(q_i)$ for each direction.
+        ``np.ndarray`` of shape ``(p,)`` with h_U(q_i) for each direction.
     """
     model_space = cost._model_space
     T = cost._T
@@ -1897,7 +1844,7 @@ def solve_primal_feasibility(
 class SmoothedDualMaster:
     """Smooth approximation of DualMasterCostFunction using Moreau-Yosida smoothing.
 
-    Smooths the norm-type support functions with parameter $\\varepsilon$, making
+    Smooths the norm-type support functions with parameter epsilon, making
     the objective differentiable. Only supports :class:`BallSupportFunction` and
     :class:`EllipsoidSupportFunction`.
 
@@ -1905,50 +1852,50 @@ class SmoothedDualMaster:
 
     .. math::
 
-        \\sigma_{B,\\varepsilon}(z) = \\langle z, c \\rangle + r\\,\\sqrt{\\|z\\|^2 + \\varepsilon^2}
+        σ_{B,\\varepsilon}(z) = ⟨ z, c ⟩ + r\\,\\sqrt{‖z‖^2 + \\varepsilon^2}
 
     and its gradient w.r.t. $z$ is
 
     .. math::
 
-        \\nabla_z \\sigma_{B,\\varepsilon}(z) = c + r\\,\\frac{z}{\\sqrt{\\|z\\|^2 + \\varepsilon^2}}
+        \\nabla_z σ_{B,\\varepsilon}(z) = c + r\\,\\frac{z}{\\sqrt{‖z‖^2 + \\varepsilon^2}}
 
     The smoothed ellipsoid support is
 
     .. math::
 
-        \\sigma_{E,\\varepsilon}(z) = \\langle z, c \\rangle
-            + r\\,\\sqrt{\\langle z,\\, A^{-1}z \\rangle + \\varepsilon^2}
+        σ_{E,\\varepsilon}(z) = ⟨ z, c ⟩
+            + r\\,\\sqrt{⟨ z,\\, A^{-1}z ⟩ + \\varepsilon^2}
 
     and its gradient w.r.t. $z$ is
 
     .. math::
 
-        \\nabla_z \\sigma_{E,\\varepsilon}(z) = c
-            + r\\,\\frac{A^{-1}z}{\\sqrt{\\langle z,\\, A^{-1}z \\rangle + \\varepsilon^2}}
+        \\nabla_z σ_{E,\\varepsilon}(z) = c
+            + r\\,\\frac{A^{-1}z}{\\sqrt{⟨ z,\\, A^{-1}z ⟩ + \\varepsilon^2}}
 
     The full smoothed objective and its gradient are
 
     .. math::
 
-        \\varphi_\\varepsilon(\\lambda) = \\langle\\lambda, \\tilde{d}\\rangle
-            + \\sigma_{B,\\varepsilon}(T^*q - G^*\\lambda)
-            + \\sigma_{V,\\varepsilon}(-\\lambda)
+        \\varphi_\\varepsilon(λ) = ⟨λ, \\tilde{d}⟩
+            + σ_{B,\\varepsilon}(T^*q - G^*λ)
+            + σ_{V,\\varepsilon}(-λ)
 
     .. math::
 
-        \\nabla_\\lambda \\varphi_\\varepsilon(\\lambda)
+        \\nabla_λ \\varphi_\\varepsilon(λ)
             = \\tilde{d}
-            - G\\,\\nabla_{z_1}\\sigma_{B,\\varepsilon}(z_1)
-            - \\nabla_{z_2}\\sigma_{V,\\varepsilon}(z_2)
+            - G\\,\\nabla_{z_1}σ_{B,\\varepsilon}(z_1)
+            - \\nabla_{z_2}σ_{V,\\varepsilon}(z_2)
 
-    where $z_1 = T^*q - G^*\\lambda$ and $z_2 = -\\lambda$.
+    where $z_1 = T^*q - G^*λ$ and $z_2 = -λ$.
 
     Args:
         cost: :class:`~pygeoinf.backus_gilbert.DualMasterCostFunction` instance.
         epsilon: Smoothing parameter ($> 0$). Smaller values give a better
             approximation but a larger Lipschitz constant
-            $L = r\\|G\\|^2 / \\varepsilon$.
+            $L = r‖G‖^2 / \\varepsilon$.
 
     Raises:
         NotImplementedError: If either support function is not a
@@ -1994,13 +1941,13 @@ class SmoothedDualMaster:
     ) -> "tuple[float, Vector]":
         """Smoothed value and gradient of a ball support function at *z*.
 
-        For $\\sigma_{B,\\varepsilon}(z) = \\langle z, c \\rangle
-        + r\\sqrt{\\|z\\|^2 + \\varepsilon^2}$:
+        For $σ_{B,\\varepsilon}(z) = ⟨ z, c ⟩
+        + r\\sqrt{‖z‖^2 + \\varepsilon^2}$:
 
         .. math::
 
-            \\nabla_z \\sigma_{B,\\varepsilon}(z)
-                = c + r\\,\\frac{z}{\\sqrt{\\|z\\|^2 + \\varepsilon^2}}
+            \\nabla_z σ_{B,\\varepsilon}(z)
+                = c + r\\,\\frac{z}{\\sqrt{‖z‖^2 + \\varepsilon^2}}
 
         Args:
             z: Argument vector in the primal domain of *sigma*.
@@ -2028,13 +1975,13 @@ class SmoothedDualMaster:
     ) -> "tuple[float, Vector]":
         """Smoothed value and gradient of an ellipsoid support function at *z*.
 
-        For $\\sigma_{E,\\varepsilon}(z) = \\langle z, c \\rangle
-        + r\\sqrt{\\langle z, A^{-1}z \\rangle + \\varepsilon^2}$:
+        For $σ_{E,\\varepsilon}(z) = ⟨ z, c ⟩
+        + r\\sqrt{⟨ z, A^{-1}z ⟩ + \\varepsilon^2}$:
 
         .. math::
 
-            \\nabla_z \\sigma_{E,\\varepsilon}(z)
-                = c + r\\,\\frac{A^{-1}z}{\\sqrt{\\langle z, A^{-1}z \\rangle + \\varepsilon^2}}
+            \\nabla_z σ_{E,\\varepsilon}(z)
+                = c + r\\,\\frac{A^{-1}z}{\\sqrt{⟨ z, A^{-1}z ⟩ + \\varepsilon^2}}
 
         Args:
             z: Argument vector in the primal domain of *sigma*.
@@ -2071,10 +2018,10 @@ class SmoothedDualMaster:
     # ------------------------------------------------------------------
 
     def __call__(self, lam: "Vector") -> float:
-        """Evaluate the smoothed objective $\\varphi_\\varepsilon(\\lambda)$.
+        """Evaluate the smoothed objective $\\varphi_\\varepsilon(λ)$.
 
         Args:
-            lam: Dual variable $\\lambda \\in D$.
+            lam: Dual variable $λ ∈ D$.
 
         Returns:
             Smoothed objective value (float).
@@ -2098,20 +2045,20 @@ class SmoothedDualMaster:
         return term1 + term2 + term3
 
     def gradient(self, lam: "Vector") -> "Vector":
-        """Compute the gradient $\\nabla_\\lambda \\varphi_\\varepsilon(\\lambda)$.
+        """Compute the gradient $\\nabla_λ \\varphi_\\varepsilon(λ)$.
 
-        Uses the chain rule through $z_1 = T^*q - G^*\\lambda$ and
-        $z_2 = -\\lambda$:
+        Uses the chain rule through $z_1 = T^*q - G^*λ$ and
+        $z_2 = -λ$:
 
         .. math::
 
-            \\nabla_\\lambda \\varphi_\\varepsilon
+            \\nabla_λ \\varphi_\\varepsilon
                 = \\tilde{d}
-                    - G\\,\\nabla_{z_1}\\sigma_{B,\\varepsilon}(z_1)
-                    - \\nabla_{z_2}\\sigma_{V,\\varepsilon}(z_2)
+                    - G\\,\\nabla_{z_1}σ_{B,\\varepsilon}(z_1)
+                    - \\nabla_{z_2}σ_{V,\\varepsilon}(z_2)
 
         Args:
-            lam: Dual variable $\\lambda \\in D$.
+            lam: Dual variable $λ ∈ D$.
 
         Returns:
             Gradient vector in $D$.
@@ -2151,12 +2098,9 @@ class SmoothedLBFGSSolver:
 
     Uses Moreau-Yosida smoothing with a geometric continuation schedule:
 
-    .. math::
+        epsilon_0 >> epsilon_1 >> ... >> epsilon_{L-1} ≈ tol
 
-        \\varepsilon_0 \\gg \\varepsilon_1 \\gg \\cdots \\gg \\varepsilon_{L-1}
-            \\approx \\text{tol}
-
-    where $\\varepsilon_i = \\varepsilon_0 \\times 10^{-i}$. Each level is
+    where epsilon_i = epsilon_0 × 10^{-i}. Each level is
     solved with L-BFGS-B, warm-starting from the previous solution.
 
     Note:
@@ -2168,7 +2112,7 @@ class SmoothedLBFGSSolver:
         epsilon0: Initial smoothing parameter (default ``1e-2``).
         n_levels: Number of continuation levels (default ``5``).
         tolerance: Target accuracy; last epsilon is
-            $\\varepsilon_0 \\times 10^{-(n\\_levels - 1)}$.
+            $\\varepsilon_0 × 10^{-(n\\_levels - 1)}$.
         max_iter_per_level: Maximum L-BFGS-B iterations per level
             (default ``500``).
     """
@@ -2193,7 +2137,7 @@ class SmoothedLBFGSSolver:
         """Run the smoothed L-BFGS-B continuation and return the result.
 
         Args:
-            lam0: Starting point $\\lambda_0 \\in D$.
+            lam0: Starting point $λ_0 ∈ D$.
 
         Returns:
             :class:`BundleResult` with ``gap`` and ``f_low`` set to
