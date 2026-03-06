@@ -222,20 +222,30 @@ def plot_1d_distributions(
 
 class SubspaceSlicePlotter:
     """
-    Unified plotter for visualizing subsets on 1D, 2D, and 3D affine subspaces.
+    Plotter for visualizing subsets sliced along 1D, 2D, or (partially) 3D affine subspaces.
 
-    This class encapsulates the logic for:
-    - Extracting and validating subspace geometry (tangent basis, translation)
-    - Parsing flexible bounds formats for any dimension
-    - Generating parameter grids (1D/2D/3D)
-    - Embedding parameter space points into ambient space
-    - Sampling subset membership via oracle evaluation
-    - Dimension-specific visualization
+    **Fully implemented for 1D and 2D subspaces** via two rendering paths:
+
+    - ``PolyhedralSet`` → exact affine slice via ``scipy.spatial.HalfspaceIntersection``
+      + convex hull; payload is vertex array.
+    - All other sets → raster oracle sampling on a ``grid_size^n`` grid; payload is
+      boolean membership mask.
+
+    **3D support is intentionally partial**:
+
+    - For ``PolyhedralSet``, the exact path (``_plot_polyhedral_exact``) computes and
+      renders a 3D polytope using ``mpl_toolkits.mplot3d`` (internal use only).
+    - For all other sets, ``_render_3d`` raises ``NotImplementedError`` — generic 3D
+      oracle rendering is not implemented.
+    - The public ``plot_slice()`` wrapper intentionally rejects all 3D subspaces
+      (dimension >= 3) via ``NotImplementedError``, so callers always get 1D or 2D
+      behaviour through that API.
 
     Architecture:
-    - Common methods (parse_bounds, embed_point, sample_membership) work for all dimensions
-    - Dimension-specific _render_*() methods handle visualization
-    - This class becomes the primary implementation (replaces old plot_subset_oracle function)
+
+    - Common methods (``parse_bounds``, ``embed_point``, ``sample_membership``) work
+      for 1D, 2D, and 3D.
+    - Dimension-specific ``_render_*()`` methods handle visualization.
     """
 
     # ===========================
@@ -1003,6 +1013,58 @@ class SubspaceSlicePlotter:
             plt.show()
 
         return fig, ax3, pts
+
+
+def plot_slice(
+    subset: Subset,
+    on_subspace: "AffineSubspace",
+    bounds=None,
+    grid_size: int = 200,
+    rtol: float = 1e-6,
+    alpha: float = 0.5,
+    cmap: str = "Blues",
+    color: str = "steelblue",
+    show_plot: bool = True,
+    ax=None,
+) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
+    """
+    Convenience wrapper: slice a subset along a 1D or 2D affine subspace and plot.
+
+    Thin wrapper over `SubspaceSlicePlotter`. See that class for full documentation
+    on the ``bounds`` format and return-value semantics.
+
+    Args:
+        subset: The `Subset` to visualize (domain must be `EuclideanSpace`).
+        on_subspace: A 1D or 2D `AffineSubspace` to slice along.
+        bounds: Plot bounds — passed directly to `SubspaceSlicePlotter.plot()`.
+        grid_size: Samples per axis (passed to `SubspaceSlicePlotter`).
+        rtol: Oracle tolerance (passed to `SubspaceSlicePlotter`).
+        alpha: Fill transparency (passed to `SubspaceSlicePlotter`).
+        cmap: Colormap for 2D plots.
+        color: Color string for 1D plots.
+        show_plot: Whether to call ``plt.show()``.
+        ax: Optional existing ``Axes`` to draw into.
+
+    Returns:
+        ``(fig, ax, payload)`` — identical to ``SubspaceSlicePlotter.plot()``.
+
+    Raises:
+        NotImplementedError: If *on_subspace* has dimension >= 3 (checked before
+            ``SubspaceSlicePlotter`` is created; 3D is not yet publicly supported).
+        TypeError: If ``subset.domain`` is not an ``EuclideanSpace``.
+        ValueError: If bounds format is incompatible with the subspace dimension,
+            or if ``grid_size``, ``rtol``, or ``alpha`` are out of range.
+    """
+    tangent_basis = on_subspace.get_tangent_basis()
+    if len(tangent_basis) >= 3:
+        raise NotImplementedError(
+            "plot_slice does not yet support 3D subspaces. "
+            "Only 1D and 2D slices are currently implemented."
+        )
+    plotter = SubspaceSlicePlotter(
+        subset, on_subspace, grid_size=grid_size, rtol=rtol, alpha=alpha
+    )
+    return plotter.plot(bounds=bounds, cmap=cmap, color=color, show_plot=show_plot, ax=ax)
 
 
 def plot_corner_distributions(

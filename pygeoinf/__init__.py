@@ -121,7 +121,7 @@ from .subsets import (
     Sphere,
 )
 
-from .plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter
+from .plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter, plot_slice
 
 from .convex_optimisation import SubgradientDescent
 
@@ -230,6 +230,7 @@ __all__ = [
     "plot_1d_distributions",
     "plot_corner_distributions",
     "SubspaceSlicePlotter",
+    "plot_slice",
     # convex_optimisation
     "SubgradientDescent",
     # convex_analysis

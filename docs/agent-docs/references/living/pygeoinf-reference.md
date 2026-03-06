@@ -58,8 +58,7 @@ pygeoinf/pygeoinf/
 ├── convex_analysis.py     ← SupportFunction hierarchy + combinators
 ├── convex_optimisation.py ← Convex optimisation algorithms
 │
-├── plot.py       ← SubspaceSlicePlotter (1D/2D/3D set slices)
-├── plot.py                ← Lower-level plotting utilities
+├── plot.py                ← SubspaceSlicePlotter, plot_slice (1D/2D slices); plot_1d_distributions, plot_corner_distributions
 │
 ├── auxiliary.py           ← Miscellaneous mathematical helpers
 ├── direct_sum.py          ← DirectSumLinearOperator, DirectSumLinearForm
@@ -400,21 +399,33 @@ example: `_estimate_chi2_floor` / `_scale_noise_measure` utilities implement thi
 
 #### `SubspaceSlicePlotter`
 
-Visualise any `Subset` by slicing it with a 1D, 2D, or 3D `AffineSubspace`.
+Slice any `Subset` along a 1D or 2D `AffineSubspace` for visualization. Accepts 3D internally (partially); the public `plot_slice()` wrapper rejects 3D.
 
-**Constructor:** `SubspaceSlicePlotter(subset, on_subspace, *, grid_size=50, alpha=1.0, cmap=None, color=None)`
+**Constructor:** `SubspaceSlicePlotter(subset, on_subspace, *, grid_size=200, rtol=1e-6, alpha=0.5, bar_pixel_height=6)`
 
-**Method:** `.plot(bounds, show_plot=True, ax=None) → (fig, ax, result)`
+**Method:** `.plot(bounds, cmap="Blues", color="steelblue", show_plot=True, ax=None) → (fig, ax, payload)`
 
-| Subspace dimension | `result` type | Method |
+| Subspace dimension | `payload` type | Method |
 |---|---|---|
-| 1D | `(lo, hi)` interval | Bar plot |
-| 2D | `(n_verts, 2)` polygon vertices | Filled polygon (exact for `PolyhedralSet`) |
-| 3D | `(n_verts, 3)` vertices | 3D surface |
+| 1D | boolean mask `(grid_size,)` or `[lo, hi]` interval (PolyhedralSet) | Bar plot |
+| 2D | boolean mask `(grid_size, grid_size)` or `(n_verts, 2)` polygon vertices (PolyhedralSet) | Filled region |
+| 3D | PolyhedralSet only: `(n_verts, 3)` vertex array (internal exact path); all other sets: raises `NotImplementedError` | 3D axes (PolyhedralSet) / Error |
 
 **Two rendering paths:**
-- `PolyhedralSet` → Chebyshev center + `scipy.spatial.HalfspaceIntersection` + convex hull
-- All other sets → raster membership-oracle sampling on a `grid_size × grid_size` grid
+- `PolyhedralSet` → exact affine slice via `scipy.spatial.HalfspaceIntersection` + convex hull → payload is vertex array (works for 1D, 2D, and 3D internally)
+- All other sets → raster membership-oracle sampling on a `grid_size^n` grid → payload is boolean mask (1D and 2D only; 3D raises `NotImplementedError`)
+
+#### `plot_slice()` — Convenience Wrapper (Phase 2)
+
+```python
+plot_slice(subset, on_subspace, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5,
+           cmap="Blues", color="steelblue", show_plot=True, ax=None)
+    → (fig, ax, payload)
+```
+
+Thin wrapper over `SubspaceSlicePlotter`. Supports **1D and 2D subspaces only**.
+Raises `NotImplementedError` immediately for dimension >= 3, before delegating to `SubspaceSlicePlotter`.
+Exported from both `pygeoinf.plot` and the top-level `pygeoinf` namespace.
 
 ---
 
@@ -599,7 +610,7 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.linear_bayesian import LinearBayesianInversion
 from pygeoinf.linear_optimisation import LinearLeastSquaresInversion
-from pygeoinf.plot import SubspaceSlicePlotter
+from pygeoinf.plot import SubspaceSlicePlotter, plot_slice
 ```
 
 ---

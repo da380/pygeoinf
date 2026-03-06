@@ -15,7 +15,7 @@ import pygeoinf
 import pygeoinf.plot
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter
+from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter, plot_slice
 from pygeoinf.subspaces import AffineSubspace
 from pygeoinf.subsets import Ball, HalfSpace, PolyhedralSet
 
@@ -595,3 +595,112 @@ class TestSubspaceSlicePlotter2D:
         assert payload.shape[1] == 2
 
         plt.close(fig)
+
+
+# =============================================================================
+# Phase 2: plot_slice() convenience wrapper
+# =============================================================================
+
+
+class TestPlotSliceWrapper:
+    """Phase 2: tests for the top-level plot_slice() convenience wrapper."""
+
+    def test_plot_slice_exported(self):
+        """plot_slice must be importable from pygeoinf.plot and pygeoinf."""
+        import pygeoinf
+        import pygeoinf.plot
+
+        assert hasattr(pygeoinf.plot, "plot_slice")
+        assert callable(pygeoinf.plot.plot_slice)
+        assert hasattr(pygeoinf, "plot_slice")
+        assert pygeoinf.plot_slice is pygeoinf.plot.plot_slice
+
+    def test_plot_slice_ball_2d_returns_figure(self):
+        """plot_slice on a 2D Ball returns (fig, ax, payload) matching SubspaceSlicePlotter.plot."""
+        domain = EuclideanSpace(dim=2)
+        e1 = np.array([1.0, 0.0])
+        e2 = np.array([0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subspace = AffineSubspace.from_tangent_basis(domain, [e1, e2])
+
+        ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
+
+        fig, ax, payload = plot_slice(
+            ball, subspace, bounds=(-1.0, 1.0, -1.0, 1.0), grid_size=10, show_plot=False
+        )
+
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert isinstance(ax, matplotlib.axes.Axes)
+        assert isinstance(payload, np.ndarray)
+        assert payload.shape == (10, 10)
+        assert payload.dtype == bool
+
+        plt.close(fig)
+
+    def test_plot_slice_polyhedral_2d_returns_vertices(self):
+        """plot_slice on a 2D PolyhedralSet returns vertex array (n_vertices, 2)."""
+        domain = EuclideanSpace(dim=2)
+        e1 = np.array([1.0, 0.0])
+        e2 = np.array([0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subspace = AffineSubspace.from_tangent_basis(domain, [e1, e2])
+
+        half_spaces = [
+            HalfSpace(domain, e1, 0.5, "<="),
+            HalfSpace(domain, -e1, 0.5, "<="),
+            HalfSpace(domain, e2, 0.5, "<="),
+            HalfSpace(domain, -e2, 0.5, "<="),
+        ]
+        poly = PolyhedralSet(domain, half_spaces)
+
+        fig, ax, payload = plot_slice(
+            poly, subspace, bounds=(-1.0, 1.0, -1.0, 1.0), grid_size=10, show_plot=False
+        )
+
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert isinstance(ax, matplotlib.axes.Axes)
+        assert isinstance(payload, np.ndarray)
+        assert payload.ndim == 2
+        assert payload.shape[1] == 2
+
+        plt.close(fig)
+
+    def test_plot_slice_ball_1d_returns_mask(self):
+        """plot_slice on a 1D subspace of a 2D domain returns (fig, ax, mask)."""
+        domain = EuclideanSpace(dim=2)
+        e1 = np.array([1.0, 0.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subspace = AffineSubspace.from_tangent_basis(domain, [e1])
+
+        ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
+
+        fig, ax, payload = plot_slice(
+            ball, subspace, bounds=(-1.0, 1.0), grid_size=20, show_plot=False
+        )
+
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert isinstance(ax, matplotlib.axes.Axes)
+        assert isinstance(payload, np.ndarray)
+        assert payload.shape == (20,)
+        assert payload.dtype == bool
+        assert payload.any()  # Points near origin lie inside the ball
+
+        plt.close(fig)
+
+    def test_plot_slice_3d_raises_not_implemented(self):
+        """plot_slice must raise NotImplementedError for 3D subspaces (honest API)."""
+        domain = EuclideanSpace(dim=3)
+        e1 = np.array([1.0, 0.0, 0.0])
+        e2 = np.array([0.0, 1.0, 0.0])
+        e3 = np.array([0.0, 0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subspace = AffineSubspace.from_tangent_basis(domain, [e1, e2, e3])
+
+        ball = Ball(domain, np.zeros(3), radius=0.5, open_set=False)
+
+        with pytest.raises(NotImplementedError, match="3D"):
+            plot_slice(ball, subspace, bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0), show_plot=False)
