@@ -200,6 +200,7 @@ All sets derive from `Subset(ABC)`:
 | `is_element(x)` | Membership test → `bool` |
 | `project(x)` | Euclidean projection onto the set |
 | `boundary` | The set's boundary (returns a `Subset`) |
+| `plot(on_subspace=None, *, bounds, grid_size, rtol, alpha, cmap, color, show_plot, ax)` | Visualize via `plot_slice()`; auto-builds default subspace for 1D/2D `EuclideanSpace` |
 
 **Concrete classes:**
 

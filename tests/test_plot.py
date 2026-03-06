@@ -704,3 +704,53 @@ class TestPlotSliceWrapper:
 
         with pytest.raises(NotImplementedError, match="3D"):
             plot_slice(ball, subspace, bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0), show_plot=False)
+
+
+# =============================================================================
+# Phase 3: Subset.plot() entry point (cross-module integration)
+# =============================================================================
+
+
+class TestSubsetPlotEntryPoint:
+    """Phase 3: verify Subset.plot() is available and delegates to plot_slice()."""
+
+    def test_ball_2d_plot_method_exists(self):
+        """Ball instances must have a .plot() method."""
+        domain = EuclideanSpace(dim=2)
+        ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
+        assert callable(getattr(ball, "plot", None))
+
+    def test_ball_plot_with_explicit_subspace(self):
+        """Ball.plot() with explicit on_subspace returns (fig, ax, payload) tuple."""
+        domain = EuclideanSpace(dim=2)
+        e1 = np.array([1.0, 0.0])
+        e2 = np.array([0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subspace = AffineSubspace.from_tangent_basis(domain, [e1, e2])
+
+        ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
+        result = ball.plot(subspace, bounds=(-1.0, 1.0, -1.0, 1.0), grid_size=10, show_plot=False)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        fig, ax, payload = result
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert payload.shape == (10, 10)
+        plt.close(fig)
+
+    def test_ball_plot_auto_default_2d(self):
+        """Ball.plot() on 2D EuclideanSpace without on_subspace succeeds with auto-default."""
+        domain = EuclideanSpace(dim=2)
+        ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
+        fig, ax, payload = ball.plot(show_plot=False, grid_size=8)
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert payload.shape == (8, 8)
+        plt.close(fig)
+
+    def test_ball_plot_requires_subspace_for_3d(self):
+        """Ball.plot() on 3D domain without on_subspace raises ValueError."""
+        domain = EuclideanSpace(dim=3)
+        ball = Ball(domain, np.zeros(3), radius=0.5, open_set=False)
+        with pytest.raises(ValueError, match="on_subspace"):
+            ball.plot(show_plot=False)

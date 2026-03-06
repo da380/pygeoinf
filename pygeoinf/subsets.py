@@ -173,6 +173,82 @@ class Subset(ABC):
             subsets_to_merge.append(other)
         return Union(subsets_to_merge)
 
+    def plot(
+        self,
+        on_subspace=None,
+        *,
+        bounds=None,
+        grid_size: int = 200,
+        rtol: float = 1e-6,
+        alpha: float = 0.5,
+        cmap: str = "Blues",
+        color: str = "steelblue",
+        show_plot: bool = True,
+        ax=None,
+    ):
+        """
+        Visualize this subset along a 1D or 2D affine subspace.
+
+        Delegates to `pygeoinf.plot.plot_slice`. For `EuclideanSpace` domains of
+        dimension 1 or 2, *on_subspace* may be omitted and a canonical full-space
+        ``AffineSubspace`` will be constructed automatically. For all other domains,
+        *on_subspace* is required.
+
+        Args:
+            on_subspace: The ``AffineSubspace`` to slice along. Required unless the
+                domain is a 1D or 2D ``EuclideanSpace``.
+            bounds: Plot bounds passed to ``plot_slice``.
+            grid_size: Samples per axis (passed to ``plot_slice``).
+            rtol: Oracle tolerance (passed to ``plot_slice``).
+            alpha: Fill transparency in [0, 1] (passed to ``plot_slice``).
+            cmap: Colormap for 2D plots (passed to ``plot_slice``).
+            color: Color string for 1D plots (passed to ``plot_slice``).
+            show_plot: Whether to call ``plt.show()`` (passed to ``plot_slice``).
+            ax: Optional existing ``Axes`` to draw into (passed to ``plot_slice``).
+
+        Returns:
+            ``(fig, ax, payload)`` — identical to ``plot_slice``.
+
+        Raises:
+            ValueError: If *on_subspace* is ``None`` and the domain is not a 1D or
+                2D ``EuclideanSpace``.
+            NotImplementedError: For subspaces of dimension ≥ 3.
+            TypeError: If the domain is not an ``EuclideanSpace``.
+        """
+        from .plot import plot_slice
+
+        if on_subspace is None:
+            import warnings
+            from .hilbert_space import EuclideanSpace as _EuclideanSpace
+            from .subspaces import AffineSubspace
+
+            domain = self.domain
+            if isinstance(domain, _EuclideanSpace) and domain.dim <= 2:
+                basis = [domain.basis_vector(i) for i in range(domain.dim)]
+                # Suppress the solver-absent UserWarning: we only need geometric
+                # projection here, not Bayesian conditioning.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    on_subspace = AffineSubspace.from_tangent_basis(domain, basis)
+            else:
+                raise ValueError(
+                    "on_subspace is required. It may be omitted only for "
+                    "EuclideanSpace domains of dimension 1 or 2."
+                )
+
+        return plot_slice(
+            self,
+            on_subspace,
+            bounds=bounds,
+            grid_size=grid_size,
+            rtol=rtol,
+            alpha=alpha,
+            cmap=cmap,
+            color=color,
+            show_plot=show_plot,
+            ax=ax,
+        )
+
 
 class EmptySet(Subset):
     """
