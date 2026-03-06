@@ -58,7 +58,7 @@ pygeoinf/pygeoinf/
 ├── convex_analysis.py     ← SupportFunction hierarchy + combinators
 ├── convex_optimisation.py ← Convex optimisation algorithms
 │
-├── plot.py                ← SubspaceSlicePlotter, plot_slice (1D/2D slices); plot_1d_distributions, plot_corner_distributions
+├── plot.py                ← SubspaceSlicePlotter, plot_slice (1D/2D/3D slices); plot_1d_distributions, plot_corner_distributions
 │
 ├── auxiliary.py           ← Miscellaneous mathematical helpers
 ├── direct_sum.py          ← DirectSumLinearOperator, DirectSumLinearForm
@@ -400,7 +400,7 @@ example: `_estimate_chi2_floor` / `_scale_noise_measure` utilities implement thi
 
 #### `SubspaceSlicePlotter`
 
-Slice any `Subset` along a 1D or 2D `AffineSubspace` for visualization. Accepts 3D internally (partially); the public `plot_slice()` wrapper rejects 3D.
+Slice any `Subset` along a 1D, 2D, or 3D `AffineSubspace` for visualization.
 
 **Constructor:** `SubspaceSlicePlotter(subset, on_subspace, *, grid_size=200, rtol=1e-6, alpha=0.5, bar_pixel_height=6)`
 
@@ -410,13 +410,13 @@ Slice any `Subset` along a 1D or 2D `AffineSubspace` for visualization. Accepts 
 |---|---|---|
 | 1D | boolean mask `(grid_size,)` or `[lo, hi]` interval (PolyhedralSet) | Bar plot |
 | 2D | boolean mask `(grid_size, grid_size)` or `(n_verts, 2)` polygon vertices (PolyhedralSet) | Filled region |
-| 3D | PolyhedralSet only: `(n_verts, 3)` vertex array (internal exact path); all other sets: raises `NotImplementedError` | 3D axes (PolyhedralSet) / Error |
+| 3D | boolean mask `(grid_size, grid_size, grid_size)` (oracle path) or `(n_verts, 3)` vertex array (PolyhedralSet exact path) | `mplot3d` voxels / Poly3D |
 
 **Two rendering paths:**
-- `PolyhedralSet` → exact affine slice via `scipy.spatial.HalfspaceIntersection` + convex hull → payload is vertex array (works for 1D, 2D, and 3D internally)
-- All other sets → raster membership-oracle sampling on a `grid_size^n` grid → payload is boolean mask (1D and 2D only; 3D raises `NotImplementedError`)
+- `PolyhedralSet` → exact affine slice via `scipy.spatial.HalfspaceIntersection` + convex hull → payload is vertex array (1D, 2D, and 3D); **never uses the grid** (no oracle calls).
+- All other sets → raster membership-oracle sampling on a `grid_size^n` grid → payload is boolean mask (1D, 2D, and 3D). 3D mask uses `indexing='ij'` so `mask[i,j,k]` = membership at `(u[i], v[j], w[k])`. 3D uses `Axes3D.voxels()` with parameter-coordinate edge arrays (not raw voxel indices). `UserWarning` emitted when `grid_size > 30` for non-`PolyhedralSet` 3D sets.
 
-#### `plot_slice()` — Convenience Wrapper (Phase 2)
+#### `plot_slice()` — Convenience Wrapper (Phase 2/4)
 
 ```python
 plot_slice(subset, on_subspace, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5,
@@ -424,8 +424,8 @@ plot_slice(subset, on_subspace, bounds=None, grid_size=200, rtol=1e-6, alpha=0.5
     → (fig, ax, payload)
 ```
 
-Thin wrapper over `SubspaceSlicePlotter`. Supports **1D and 2D subspaces only**.
-Raises `NotImplementedError` immediately for dimension >= 3, before delegating to `SubspaceSlicePlotter`.
+Thin wrapper over `SubspaceSlicePlotter`. Supports **1D, 2D, and 3D subspaces**.
+For 3D, the returned `ax` is an `Axes3D` instance (`hasattr(ax, 'set_zlim')` is `True`).
 Exported from both `pygeoinf.plot` and the top-level `pygeoinf` namespace.
 
 ---

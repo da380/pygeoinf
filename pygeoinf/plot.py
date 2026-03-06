@@ -222,24 +222,15 @@ def plot_1d_distributions(
 
 class SubspaceSlicePlotter:
     """
-    Plotter for visualizing subsets sliced along 1D, 2D, or (partially) 3D affine subspaces.
+    Plotter for visualizing subsets sliced along 1D, 2D, or 3D affine subspaces.
 
-    **Fully implemented for 1D and 2D subspaces** via two rendering paths:
+    **Fully implemented for 1D, 2D, and 3D subspaces** via two rendering paths:
 
     - ``PolyhedralSet`` → exact affine slice via ``scipy.spatial.HalfspaceIntersection``
-      + convex hull; payload is vertex array.
+      + convex hull; payload is vertex array (exact for all three dimensions).
     - All other sets → raster oracle sampling on a ``grid_size^n`` grid; payload is
-      boolean membership mask.
-
-    **3D support is intentionally partial**:
-
-    - For ``PolyhedralSet``, the exact path (``_plot_polyhedral_exact``) computes and
-      renders a 3D polytope using ``mpl_toolkits.mplot3d`` (internal use only).
-    - For all other sets, ``_render_3d`` raises ``NotImplementedError`` — generic 3D
-      oracle rendering is not implemented.
-    - The public ``plot_slice()`` wrapper intentionally rejects all 3D subspaces
-      (dimension >= 3) via ``NotImplementedError``, so callers always get 1D or 2D
-      behaviour through that API.
+      boolean membership mask.  For 3D, the mask is rendered as filled voxels using
+      Matplotlib's ``mpl_toolkits.mplot3d`` backend (``Axes3D.voxels()``).
 
     Architecture:
 
@@ -317,6 +308,20 @@ class SubspaceSlicePlotter:
         if not isinstance(bar_pixel_height, int) or bar_pixel_height <= 0:
             raise ValueError(f"bar_pixel_height must be a positive int, got {bar_pixel_height}.")
         self.bar_pixel_height = bar_pixel_height
+
+        # Warn about 3D sampling cost: grid_size³ membership oracle calls.
+        # At grid_size=200 that is 8 million calls — almost always unintended.
+        # PolyhedralSet bypasses sampling entirely, so skip the warning for it.
+        _3D_GRID_WARN_THRESHOLD = 30
+        if self.dimension == 3 and grid_size > _3D_GRID_WARN_THRESHOLD and not isinstance(subset, PolyhedralSet):
+            import warnings as _warnings
+            _warnings.warn(
+                f"3D sampled rendering will evaluate {grid_size**3:,} membership oracle "
+                f"calls (grid_size={grid_size}). Consider grid_size ≤ {_3D_GRID_WARN_THRESHOLD} "
+                "for interactive use, or use a PolyhedralSet which takes the fast exact path.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     # ===========================
     # Common Methods (All Dims)
@@ -463,7 +468,10 @@ class SubspaceSlicePlotter:
             u = np.linspace(u_min, u_max, self.grid_size)
             v = np.linspace(v_min, v_max, self.grid_size)
             w = np.linspace(w_min, w_max, self.grid_size)
-            U, V, W = np.meshgrid(u, v, w, indexing='xy')
+            # indexing='ij': U[i,j,k]=u[i], V[i,j,k]=v[j], W[i,j,k]=w[k]
+            # so mask[i,j,k] = membership at (u[i], v[j], w[k]), matching
+            # parameter coords (Local Param 1=u, 2=v, 3=w).
+            U, V, W = np.meshgrid(u, v, w, indexing='ij')
             return (U, V, W)
 
     def _pixel_to_data_height(self, ax: matplotlib.axes.Axes, pixels: int) -> float:
@@ -677,23 +685,61 @@ class SubspaceSlicePlotter:
         ax: Optional[matplotlib.axes.Axes],
     ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
         """
-        Render 3D slice using isosurfaces (stub, future implementation).
+        Render 3D slice as filled voxels using Matplotlib's ``mplot3d`` backend.
+
+        Uses ``Axes3D.voxels()`` to display the boolean membership mask as a
+        set of coloured cubes.  Each voxel corresponds to one cell of the
+        parameter grid; voxels whose centre lies inside the subset are filled.
 
         Args:
-            param_grid: (U, V, W) meshgrids from _generate_param_grid()
-            mask: 3D boolean mask from sample_membership()
-            bounds: (u_min, u_max, v_min, v_max, w_min, w_max)
-            cmap: Colormap name
-            show_plot: Whether to display
-            ax: Optional 3D axes
+            param_grid: (U, V, W) meshgrids from ``_generate_param_grid()``.
+            mask: 3D boolean membership mask from ``sample_membership()``;
+                shape ``(grid_size, grid_size, grid_size)``.
+            bounds: ``(u_min, u_max, v_min, v_max, w_min, w_max)``.
+            cmap: Colormap name used to derive the voxel face colour.
+            show_plot: Whether to call ``plt.show()``.
+            ax: Optional existing ``Axes3D``; if *None* a new figure is created.
 
         Returns:
-            (fig, ax, mask) tuple
+            ``(fig, ax3, mask)`` where *ax3* is an ``Axes3D`` instance and
+            *mask* is the same boolean array passed in (payload).
         """
-        raise NotImplementedError(
-            "3D rendering not yet implemented. "
-            "Options: ax.voxels(), isosurface via mayavi/vispy, or sliced 2D views."
-        )
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers '3d' projection
+
+        u_min, u_max, v_min, v_max, w_min, w_max = bounds
+
+        if ax is None:
+            fig = plt.figure(figsize=(7, 6))
+            ax3 = fig.add_subplot(111, projection="3d")
+        else:
+            fig = ax.figure
+            ax3 = ax
+
+        facecolor = plt.get_cmap(cmap)(0.6)
+        r, g, b, _ = facecolor
+
+        # Build edge arrays so voxels are positioned in parameter coordinates
+        # rather than raw voxel-index space.
+        # mask[i,j,k] = membership at (u[i], v[j], w[k]) (indexing='ij').
+        # voxels(x_edges, y_edges, z_edges, filled) expects (grid_size+1,)
+        # 1-D arrays for uniform grids (broadcast form).
+        n = self.grid_size
+        u_edges = np.linspace(u_min, u_max, n + 1)
+        v_edges = np.linspace(v_min, v_max, n + 1)
+        w_edges = np.linspace(w_min, w_max, n + 1)
+        X_e, Y_e, Z_e = np.meshgrid(u_edges, v_edges, w_edges, indexing='ij')
+        # Bake alpha into the RGBA tuple to avoid masked-array broadcast issues.
+        ax3.voxels(X_e, Y_e, Z_e, mask, facecolors=(r, g, b, self.alpha))
+
+        ax3.set_xlabel("Local Param 1 (u)")
+        ax3.set_ylabel("Local Param 2 (v)")
+        ax3.set_zlabel("Local Param 3 (w)")
+        ax3.set_title(f"3D Slice: {self.subset.__class__.__name__}")
+
+        if show_plot:
+            plt.show()
+
+        return fig, ax3, mask
 
     # ===========================
     # Main Dispatcher
@@ -1028,39 +1074,50 @@ def plot_slice(
     ax=None,
 ) -> Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray]:
     """
-    Convenience wrapper: slice a subset along a 1D or 2D affine subspace and plot.
+    Convenience wrapper: slice a subset along a 1D, 2D, or 3D affine subspace and plot.
 
     Thin wrapper over `SubspaceSlicePlotter`. See that class for full documentation
     on the ``bounds`` format and return-value semantics.
 
     Args:
         subset: The `Subset` to visualize (domain must be `EuclideanSpace`).
-        on_subspace: A 1D or 2D `AffineSubspace` to slice along.
+        on_subspace: A 1D, 2D, or 3D `AffineSubspace` to slice along.
         bounds: Plot bounds — passed directly to `SubspaceSlicePlotter.plot()`.
         grid_size: Samples per axis (passed to `SubspaceSlicePlotter`).
         rtol: Oracle tolerance (passed to `SubspaceSlicePlotter`).
         alpha: Fill transparency (passed to `SubspaceSlicePlotter`).
-        cmap: Colormap for 2D plots.
+        cmap: Colormap for 2D/3D plots.
         color: Color string for 1D plots.
         show_plot: Whether to call ``plt.show()``.
-        ax: Optional existing ``Axes`` to draw into.
+        ax: Optional existing ``Axes`` (or ``Axes3D``) to draw into.
 
     Returns:
         ``(fig, ax, payload)`` — identical to ``SubspaceSlicePlotter.plot()``.
 
+        *payload* semantics depend on set type and dimension:
+
+        - **Sampled path** (non-``PolyhedralSet``): boolean membership mask.
+
+          - 1D: shape ``(grid_size,)``
+          - 2D: shape ``(grid_size, grid_size)``
+          - 3D: shape ``(grid_size, grid_size, grid_size)`` —
+            ``mask[i, j, k]`` is ``True`` when the point at local parameter
+            coordinates ``(u[i], v[j], w[k])`` lies inside the subset.
+
+        - **Exact path** (``PolyhedralSet``): vertex array in parameter
+          coordinates.
+
+          - 1D: ``np.array([u_lo, u_hi])`` — interval endpoints
+          - 2D: shape ``(n_vertices, 2)`` — polygon vertices
+          - 3D: shape ``(n_vertices, 3)`` — polytope vertices
+
+        For 3D subspaces the returned ``ax`` is an ``Axes3D`` instance.
+
     Raises:
-        NotImplementedError: If *on_subspace* has dimension >= 3 (checked before
-            ``SubspaceSlicePlotter`` is created; 3D is not yet publicly supported).
         TypeError: If ``subset.domain`` is not an ``EuclideanSpace``.
         ValueError: If bounds format is incompatible with the subspace dimension,
             or if ``grid_size``, ``rtol``, or ``alpha`` are out of range.
     """
-    tangent_basis = on_subspace.get_tangent_basis()
-    if len(tangent_basis) >= 3:
-        raise NotImplementedError(
-            "plot_slice does not yet support 3D subspaces. "
-            "Only 1D and 2D slices are currently implemented."
-        )
     plotter = SubspaceSlicePlotter(
         subset, on_subspace, grid_size=grid_size, rtol=rtol, alpha=alpha
     )
