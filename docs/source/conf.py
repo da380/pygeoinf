@@ -31,8 +31,17 @@ extensions = [
     "sphinx.ext.autodoc",  # Automatically generate docs from docstrings.
     "sphinx.ext.napoleon",  # Enables Sphinx to understand NumPy-style docstrings.
     "sphinx.ext.viewcode",  # Adds links to the source code from the documentation.
+    "sphinx.ext.mathjax",  # Render LaTeX math via MathJax.
     "nbsphinx",
 ]
+
+# Configure MathJax 3 to recognise $...$ (inline) and $$...$$ (display) delimiters.
+mathjax3_config = {
+    "tex": {
+        "inlineMath": [["$", "$"], ["\\(", "\\)"]],
+        "displayMath": [["$$", "$$"], ["\\[", "\\]"]],
+    }
+}
 
 templates_path = ["_templates"]
 exclude_patterns = []

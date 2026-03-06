@@ -4,16 +4,20 @@ Tests for the plot module.
 
 import pytest
 import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib
+# Set non-interactive backend before importing pyplot
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import scipy.stats as stats
 from unittest.mock import Mock, patch
+import warnings
+import pygeoinf
+import pygeoinf.plot
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.gaussian_measure import GaussianMeasure
-from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions
-
-# Use a non-interactive backend for testing
-matplotlib.use("Agg")
+from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter
+from pygeoinf.subspaces import AffineSubspace
+from pygeoinf.subsets import Ball, HalfSpace, PolyhedralSet
 
 # =============================================================================
 # Parametrised Fixtures
@@ -495,5 +499,99 @@ class TestPlotEdgeCases:
         assert fig is not None
         assert axes is not None
         # Should handle 1D case gracefully
+
+        plt.close(fig)
+
+
+# =============================================================================
+# Phase 1 Baseline: Import & SubspaceSlicePlotter Tests
+# =============================================================================
+
+
+class TestVisualizationModuleImports:
+    """Phase 1 baseline: verify pygeoinf.plot is importable and key symbols exist."""
+
+    def test_visualization_module_imports(self):
+        """pygeoinf.plot must be importable with no errors."""
+        import importlib
+        mod = importlib.import_module("pygeoinf.plot")
+        assert mod is not None
+        assert hasattr(mod, "plot_1d_distributions")
+        assert hasattr(mod, "plot_corner_distributions")
+        assert hasattr(mod, "SubspaceSlicePlotter")
+
+    def test_subspace_slice_plotter_imports(self):
+        """SubspaceSlicePlotter must be importable from pygeoinf.plot and pygeoinf."""
+        # Direct import already tested via module-level import; verify the class is callable
+        assert callable(SubspaceSlicePlotter)
+        # Also verify exposed via the top-level package
+        assert hasattr(pygeoinf, "SubspaceSlicePlotter")
+        assert pygeoinf.SubspaceSlicePlotter is SubspaceSlicePlotter
+
+
+class TestSubspaceSlicePlotter2D:
+    """Phase 1 baseline: 2D slice plotting for Ball and PolyhedralSet."""
+
+    @pytest.fixture
+    def domain_2d(self):
+        return EuclideanSpace(dim=2)
+
+    @pytest.fixture
+    def subspace_2d(self, domain_2d):
+        """2D affine subspace spanning all of R^2 (identity slice)."""
+        e1 = np.array([1.0, 0.0])
+        e2 = np.array([0.0, 1.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return AffineSubspace.from_tangent_basis(domain_2d, [e1, e2])
+
+    def test_subspace_slice_plotter_ball_2d(self, domain_2d, subspace_2d):
+        """SubspaceSlicePlotter renders a 2D ball slice without error."""
+        center = np.zeros(2)
+        ball = Ball(domain_2d, center, radius=0.5, open_set=False)
+
+        plotter = SubspaceSlicePlotter(ball, subspace_2d, grid_size=10)
+        fig, ax, payload = plotter.plot(
+            bounds=(-1.0, 1.0, -1.0, 1.0), show_plot=False
+        )
+
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert isinstance(ax, matplotlib.axes.Axes)
+        # payload is the boolean membership mask for oracle-based (Ball) path
+        assert isinstance(payload, np.ndarray)
+        assert payload.shape == (10, 10)
+        assert payload.dtype == bool
+        # The grid point closest to the origin must lie inside the ball (radius=0.5)
+        grid_coords = np.linspace(-1.0, 1.0, 10)
+        i0 = int(np.argmin(np.abs(grid_coords)))
+        assert payload[i0, i0]
+
+        plt.close(fig)
+
+    def test_subspace_slice_plotter_polyhedral_2d(self, domain_2d, subspace_2d):
+        """SubspaceSlicePlotter renders a 2D polyhedral (box) slice without error."""
+        # Box: -0.5 <= x1 <= 0.5, -0.5 <= x2 <= 0.5  (centred at origin, side length 1)
+        a1 = np.array([1.0, 0.0])
+        a2 = np.array([0.0, 1.0])
+        half_spaces = [
+            HalfSpace(domain_2d, a1, 0.5, "<="),
+            HalfSpace(domain_2d, -a1, 0.5, "<="),
+            HalfSpace(domain_2d, a2, 0.5, "<="),
+            HalfSpace(domain_2d, -a2, 0.5, "<="),
+        ]
+        poly = PolyhedralSet(domain_2d, half_spaces)
+
+        plotter = SubspaceSlicePlotter(poly, subspace_2d, grid_size=10)
+        fig, ax, payload = plotter.plot(
+            bounds=(-1.0, 1.0, -1.0, 1.0), show_plot=False
+        )
+
+        assert isinstance(fig, matplotlib.figure.Figure)
+        assert isinstance(ax, matplotlib.axes.Axes)
+        # payload for PolyhedralSet is the polygon vertex array
+        assert isinstance(payload, np.ndarray)
+        # Polyhedral path: payload is vertices array with shape (n_vertices, 2)
+        assert payload.ndim == 2
+        assert payload.shape[1] == 2
 
         plt.close(fig)
