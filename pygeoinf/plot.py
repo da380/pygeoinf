@@ -806,13 +806,18 @@ class SubspaceSlicePlotter:
         import plotly.graph_objects as go
 
         U, V, W = param_grid
+        # Render the 0/1 membership field at the boundary level 0.5.
+        # A tight band around 0.5 avoids the empty-scene case that occurs
+        # when Plotly centers a single surface at value 1.0 for boolean data.
+        iso_level = 0.5
+        iso_half_width = 1e-3
         fig = go.Figure(data=go.Isosurface(
             x=U.ravel(),
             y=V.ravel(),
             z=W.ravel(),
             value=mask.astype(float).ravel(),
-            isomin=0.5,
-            isomax=1.5,
+            isomin=iso_level - iso_half_width,
+            isomax=iso_level + iso_half_width,
             surface_count=1,
             colorscale="Blues",
             opacity=self.alpha,

@@ -95,8 +95,6 @@ from .linear_bayesian import (
     ConstrainedLinearBayesianInversion,
 )
 
-from .backus_gilbert import HyperEllipsoid
-
 from .nonlinear_optimisation import (
     ScipyUnconstrainedOptimiser,
 )
@@ -203,8 +201,6 @@ __all__ = [
     # linear_bayesian
     "LinearBayesianInversion",
     "ConstrainedLinearBayesianInversion",
-    # backus_gilbert
-    "HyperEllipsoid",
     # nonlinear_optimisation
     "ScipyUnconstrainedOptimiser",
     # Subspaces

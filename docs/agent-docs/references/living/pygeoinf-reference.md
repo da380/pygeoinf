@@ -50,7 +50,7 @@ pygeoinf/pygeoinf/
 ├── linear_optimisation.py ← LinearLeastSquaresInversion,
 │                             LinearMinimumNormInversion (+ constrained)
 ├── linear_solvers.py      ← LinearSolver ABC + iterative solvers
-├── backus_gilbert.py      ← Backus-Gilbert inversion
+├── backus_gilbert.py      ← Dual-master cost utilities for Backus-Gilbert-style inference
 │
 ├── subsets.py             ← Subset ABC, Ball, Ellipsoid, HalfSpace,
 │                             PolyhedralSet, EmptySet, FullSpace
@@ -437,7 +437,7 @@ Exported from both `pygeoinf.plot` and the top-level `pygeoinf` namespace.
 
 | Module | Key exports | Description |
 |---|---|---|
-| `backus_gilbert.py` | `BackusGilbertInversion` | Classic Backus-Gilbert averaging kernels |
+| `backus_gilbert.py` | `DualMasterCostFunction` | Dual-master objective for Backus-Gilbert-style convex formulations |
 | `convex_optimisation.py` | `SubgradientDescent`, `Cut`, `Bundle`, `QPSolver`, `QPResult`, `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver`, `best_available_qp_solver`, `BundleResult`, `ProximalBundleMethod`, `LevelBundleMethod`, `ChambollePockResult`, `ChambollePockSolver`, `solve_primal_feasibility`, `solve_support_values`, `SmoothedDualMaster`, `SmoothingScheduleSolver` | Non-smooth convex optimisation — subgradient, bundle-method infrastructure, proximal bundle solver, level bundle solver; optional OSQP/Clarabel QP backends; Chambolle-Pock primal-dual solver for dual master primal feasibility form |
 | `direct_sum.py` | `DirectSumLinearOperator`, `DirectSumLinearForm` | Block operators on direct sum spaces |
 | `linear_solvers.py` | `LinearSolver(ABC)` + CG/MINRES | Abstract solver + iterative implementations |

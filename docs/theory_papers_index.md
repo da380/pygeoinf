@@ -45,7 +45,7 @@ Spread: σ² = ∫ (r - r₀)² A(r; r₀)² dr
 ```
 
 **Code Status:**
-- ✅ Partial: `HyperEllipsoid` class in backus_gilbert.py (constraint sets)
+- ✅ Partial: `Ellipsoid` class in subsets.py covers the quadratic constraint-set representation
 - ✅ Partial: `LinearForm` represents delta functionals
 - ⏸️ Incomplete: Full Backus-Gilbert solver with trade-off curves
 - ⏸️ Future: Direct integration with DualMasterCostFunction
@@ -579,7 +579,7 @@ B = Ellipsoid(model_space, center=m0, radius=M, operator=A)
 
 | Paper | Code Module | Status | Priority |
 |-------|-------------|--------|----------|
-| Backus & Gilbert 1967 | backus_gilbert.py (HyperEllipsoid) | Partial | High |
+| Backus & Gilbert 1967 | subsets.py (Ellipsoid), backus_gilbert.py (DualMasterCostFunction) | Partial | High |
 | Backus & Gilbert 1968 | (Future: full solver) | Not started | Medium |
 | Backus 1970 I | linear_operators.py (kernel, range) | Complete | N/A |
 | Backus 1970 II | subsets.py, convex_analysis.py | Complete | N/A |

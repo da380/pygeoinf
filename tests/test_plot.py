@@ -1132,6 +1132,11 @@ class TestPlotSlice3DPlotlyBackend:
         assert isinstance(fig.data[0], go.Isosurface), (
             f"Sampled 3D path must use go.Isosurface trace, got {type(fig.data[0])}"
         )
+        assert fig.data[0].isomin < 0.5 < fig.data[0].isomax
+        assert fig.data[0].isomax - fig.data[0].isomin < 0.01, (
+            "Plotly sampled 3D path must render a narrow band around the 0.5 "
+            "membership boundary so the isosurface is visible for boolean masks"
+        )
 
     def test_plot_slice_polyhedral_3d_plotly_exact_path(self, box_3d, subspace_3d):
         """backend='plotly' returns a Plotly figure for 3D PolyhedralSet (exact path)."""
