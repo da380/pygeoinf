@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional, Any
+from typing import TYPE_CHECKING, Optional, Callable
 
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.nonlinear_forms import NonLinearForm
@@ -76,6 +76,51 @@ class SupportFunction(NonLinearForm, ABC):
     def subgradient(self, q: "Vector") -> "Vector":
         """Return a subgradient of the support function at q."""
         return self._subgradient_impl(q)
+
+    # ------------------------------------------------------------------
+    # Convenience constructors
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def callable(
+        cls,
+        primal_domain: "HilbertSpace",
+        mapping: "Callable[[Vector], float]",
+        support_point: "Optional[Callable[[Vector], Vector]]" = None,
+    ) -> "CallableSupportFunction":
+        """Construct a support function from a user-supplied callable.
+
+        Args:
+            primal_domain: The Hilbert space H.
+            mapping: A callable ``q -> float`` that evaluates $h(q)$.
+            support_point: An optional callable ``q -> Vector`` returning
+                $x^*(q) \\in \\arg\\max_{x \\in C} \\langle q, x \\rangle$.
+                When provided, ``subgradient(q)`` delegates to it.
+
+        Returns:
+            A :class:`CallableSupportFunction` instance.
+        """
+        return CallableSupportFunction(primal_domain, mapping, support_point_fn=support_point)
+
+    @classmethod
+    def point(
+        cls,
+        primal_domain: "HilbertSpace",
+        point: "Vector",
+    ) -> "PointSupportFunction":
+        """Construct the support function of the singleton set $\\{p\\}$.
+
+        For a fixed point $p \\in H$, the support function is
+        $h(q) = \\langle q, p \\rangle$.
+
+        Args:
+            primal_domain: The Hilbert space H containing $p$.
+            point: The fixed point $p$.
+
+        Returns:
+            A :class:`PointSupportFunction` instance.
+        """
+        return PointSupportFunction(primal_domain, point)
 
 
 class BallSupportFunction(SupportFunction):
@@ -345,3 +390,92 @@ class HalfSpaceSupportFunction(NonLinearForm):
                 "and return_min_norm_support_point=False."
             )
         return x_star
+
+
+# ---------------------------------------------------------------------------
+# Phase-1 constructors: CallableSupportFunction and PointSupportFunction
+# ---------------------------------------------------------------------------
+
+
+class CallableSupportFunction(SupportFunction):
+    r"""Support function defined by a user-provided callable.
+
+    Wraps an arbitrary callable $q \mapsto h(q)$ as a :class:`SupportFunction`.
+    Optionally accepts a second callable $q \mapsto x^*(q)$ that returns the
+    support point (subgradient of $h$ at $q$).
+
+    Args:
+        primal_domain: The Hilbert space $H$ on which $h$ is defined.
+        fn: A callable ``fn(q) -> float`` computing the support value $h(q)$.
+        support_point_fn: An optional callable ``support_point_fn(q) -> Vector``
+            returning $x^*(q) \in \arg\max_{x \in C} \langle q, x \rangle$.
+            When provided, :meth:`support_point` delegates to it and
+            :meth:`subgradient` returns the result.
+            When ``None``, :meth:`support_point` returns ``None`` and
+            :meth:`subgradient` raises :exc:`NotImplementedError`.
+
+    Example::
+
+        fn = lambda q: float(np.linalg.norm(q))          # L2-ball support
+        sp = lambda q: q / np.linalg.norm(q)             # support point
+        h = CallableSupportFunction(space, fn, support_point_fn=sp)
+    """
+
+    def __init__(
+        self,
+        primal_domain: "HilbertSpace",
+        fn: "Callable[[Vector], float]",
+        support_point_fn: "Optional[Callable[[Vector], Vector]]" = None,
+    ) -> None:
+        super().__init__(primal_domain)
+        self._fn = fn
+        self._support_point_fn = support_point_fn
+
+    def _mapping(self, q: "Vector") -> float:
+        return float(self._fn(q))
+
+    def support_point(self, q: "Vector") -> "Optional[Vector]":
+        """Return $x^*(q)$ via the user-supplied callback, or ``None``."""
+        if self._support_point_fn is None:
+            return None
+        return self._support_point_fn(q)
+
+
+class PointSupportFunction(SupportFunction):
+    r"""Support function of the singleton set $\{p\}$.
+
+    For a fixed point $p \in H$, the support function of the singleton
+    set $\{p\}$ is
+
+    .. math::
+
+        h_{\{p\}}(q) = \langle q, p \rangle, \quad q \in H.
+
+    The support point is always $p$ (the unique element of the set),
+    so :meth:`subgradient` is available for all query directions.
+
+    Args:
+        primal_domain: The Hilbert space $H$ containing the point $p$.
+        point: The fixed point $p$.
+
+    Example::
+
+        p = np.array([1.0, 2.0])
+        h = PointSupportFunction(space, p)
+        h(np.array([3.0, -1.0]))   # returns 3*1 + (-1)*2 = 1.0
+    """
+
+    def __init__(
+        self,
+        primal_domain: "HilbertSpace",
+        point: "Vector",
+    ) -> None:
+        super().__init__(primal_domain)
+        self._point = point
+
+    def _mapping(self, q: "Vector") -> float:
+        return float(self.primal_domain.inner_product(q, self._point))
+
+    def support_point(self, q: "Vector") -> "Vector":
+        """Return $p$ — the unique maximiser for any query direction."""
+        return self._point

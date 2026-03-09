@@ -46,7 +46,9 @@
 
 % --- Other ---
 \newcommand{\dt}{\tilde{\bm d}}
-
+\newcommand{\pt}{\tilde{\bm p}}
+\newcommand{\pb}{\bar{\bm p}}
+\newcommand{\Cd}{\mathbf{C}_{\dataspace}}
 % --- Discretization (optional) ---
 \newcommand{\Vspace}{\mathbb{V}_N}
 \newcommand{\mass}{\mathbf{M}}
@@ -1344,6 +1346,401 @@ X^\ast \;=\; K^{-1}\Big(\beta\, G \,\Tau^\ast\ -\  G  C\,\big(( G  C)^\top K^{-1
 - If $J=0$ (no constraints) we recover $X^\ast=\beta\,K^{-1} G \,\Tau^\ast$, i.e.\ $X=\Tau\, G ^\ast( G  G ^\ast+\gamma C_{\dataspace})^{-1}$ with $\gamma=\alpha/\beta$.
 
 
+% ============================================================
+\section{Al-Attar (2021) Section 3.3.1 in the Present Notation}
+\label{sec:al-attar-notation}
+% ============================================================
+
+In this section we reformulate the method of
+Al-Attar (2021), Section 3.3.1, using the notation of the present
+manuscript.
+
+\subsection*{Setting}
+
+Let
+
+\begin{itemize}
+    \item $\modelspace$ and $\dataspace$ be Hilbert spaces,
+    \item $G : \modelspace \to \dataspace$ a bounded linear operator,
+    \item observed data $\dt \in \dataspace$,
+    \item model prior a ball
+    \[
+        \Bset = B_r(0)
+        =
+        \{ m \in \modelspace : \|m\|_{\modelspace} \le r \},
+    \]
+    \item data uncertainty set defined via a strictly convex
+          negative log-likelihood
+          \[
+          \ell : \dataspace \to \mathbb{R},
+          \]
+          with confidence region
+          \[
+          \Vdata
+          =
+          \{ e \in \dataspace : \ell(e) \le s^2 \}.
+          \]
+\end{itemize}
+
+The statistically admissible model set is therefore
+
+\[
+\mathcal F
+=
+\{ m \in \modelspace :
+   \ell(\dt - Gm) \le s^2 \}
+=
+G^{-1}(\dt - \Vdata).
+\]
+
+\subsection*{Compatibility of Prior and Data}
+
+The first question addressed is whether the prior ball
+$\Bset$ is compatible with the statistically admissible models:
+
+\[
+\Bset \cap \mathcal F \neq \varnothing.
+\]
+
+This is equivalent to
+
+\[
+\inf_{m \in \mathcal F} \|m\|_{\modelspace} \le r.
+\]
+
+Thus the core optimisation problem becomes
+
+\begin{equation}
+\label{eq:alattar-minnorm}
+\min_{m \in \modelspace}
+\frac12 \|m\|_{\modelspace}^2
+\quad
+\text{s.t.}
+\quad
+\ell(\dt - Gm) \le s^2.
+\end{equation}
+
+Since $\mathcal F$ is closed and convex,
+there exists a unique minimum-norm element
+unless $0 \in \mathcal F$.
+
+\subsection*{Lagrangian Formulation}
+
+If $0 \notin \mathcal F$,
+the minimiser lies on the boundary
+$\ell(\dt - Gm)=s^2$.
+Introduce a multiplier $\eta \ge 0$ and define
+
+\[
+J(m,\eta)
+=
+\frac12 \|m\|^2
++
+\eta\big(\ell(\dt - Gm) - s^2\big).
+\]
+
+The Karush–Kuhn–Tucker conditions are
+
+\[
+\nabla_m J(m,\eta)=0,
+\qquad
+\ell(\dt - Gm)=s^2.
+\]
+
+Since
+\[
+\nabla_m J(m,\eta)
+=
+m - \eta G^\ast \nabla \ell(\dt - Gm),
+\]
+the stationarity condition is
+
+\begin{equation}
+\label{eq:alattar-kkt}
+m
+=
+\eta G^\ast \nabla \ell(\dt - Gm),
+\qquad
+\ell(\dt - Gm)=s^2.
+\end{equation}
+
+\subsection*{Reduction to a One-Dimensional Root-Finding Problem}
+
+For fixed $\eta > 0$, define
+
+\begin{equation}
+\label{eq:alattar-inner}
+m_\eta
+=
+\arg\min_{m \in \modelspace}
+\left\{
+\frac12 \|m\|^2
++
+\eta \ell(\dt - Gm)
+\right\}.
+\end{equation}
+
+Because the objective is strongly convex,
+$m_\eta$ exists and is unique.
+
+Define the scalar function
+
+\[
+\phi(\eta)
+=
+\ell(\dt - Gm_\eta).
+\]
+
+One shows that $\phi(\eta)$ is non-increasing in $\eta$.
+Hence the boundary condition
+\[
+\ell(\dt - Gm)=s^2
+\]
+can be enforced by solving the scalar equation
+
+\[
+\phi(\eta)=s^2
+\]
+
+using bisection in $\eta$.
+
+Let $\eta^\star$ denote the solution.
+Then
+
+\[
+m^\star = m_{\eta^\star}
+\]
+
+is the minimum-norm statistically admissible model,
+and compatibility holds if and only if
+
+\[
+\|m^\star\| \le r.
+\]
+
+\subsection*{Property Feasibility}
+
+To test whether a property value $w \in \propertyspace$
+is statistically admissible, one solves
+
+\[
+\min_{m \in \modelspace}
+\frac12 \|m\|^2
+\quad
+\text{s.t.}
+\quad
+\Tau m = w,
+\quad
+\ell(\dt - Gm) \le s^2.
+\]
+
+This again reduces to an inner strongly convex minimisation
+for fixed $\eta$ and an outer one-dimensional search in $\eta$.
+
+% ============================================================
+\subsection{Comparison with this work}
+\label{sec:primal-comparison}
+% ============================================================
+
+We now compare, purely at the primal level, the optimisation problem
+addressed in the present framework with the one treated in
+Section 3.3.1 of Al-Attar (2021).
+
+Throughout, let the feasible model set be
+
+\[
+\mathcal F
+=
+\Bset
+\cap
+G^{-1}(\dt - \Vdata)
+=
+\{ m \in \modelspace :
+m \in \Bset,
+\;
+\ell(\dt - Gm) \le s^2
+\},
+\]
+
+where $\Bset \subset \modelspace$ and $\Vdata \subset \dataspace$
+are closed convex sets.
+
+% ------------------------------------------------------------
+\subsubsection*{1. Property Extremisation (Present Work)}
+% ------------------------------------------------------------
+
+The objective of the present framework is to compute
+directional bounds on the admissible property set
+
+\[
+\Uset = \Tau(\mathcal F).
+\]
+
+For a fixed direction $\bm q \in \propertyspace$,
+the desired quantity is
+
+\begin{equation}
+\label{eq:primal-extremum}
+\boxed{
+\sup_{m \in \mathcal F}
+\pair{\bm q}{\Tau m}.
+}
+\end{equation}
+
+This is a linear maximisation problem over the convex set
+$\mathcal F$.
+
+Geometrically, this computes the support function
+of $\Uset$ in direction $\bm q$ and therefore
+produces exact property bounds.
+
+% ------------------------------------------------------------
+\subsubsection*{2. Property Feasibility (Al-Attar)}
+% ------------------------------------------------------------
+
+In contrast, Al-Attar considers the following question:
+
+\begin{quote}
+Given a property value $w \in \propertyspace$,
+does there exist a model $m \in \mathcal F$
+such that $\Tau m = w$?
+\end{quote}
+
+This is the primal feasibility problem
+
+\begin{equation}
+\label{eq:property-feasibility}
+\exists m \in \modelspace
+\quad \text{s.t.}\quad
+\Tau m = w,
+\quad
+m \in \Bset,
+\quad
+\ell(\dt - Gm) \le s^2.
+\end{equation}
+
+In the Hilbert setting with a ball prior
+$\Bset = B_r(0)$,
+this feasibility test reduces to
+
+\begin{equation}
+\label{eq:property-minnorm}
+\min_{m \in \modelspace}
+\frac12 \|m\|^2
+\quad
+\text{s.t.}
+\quad
+\Tau m = w,
+\quad
+\ell(\dt - Gm) \le s^2.
+\end{equation}
+
+If the minimiser satisfies $\|m^\star\| \le r$,
+then the property $w$ is admissible.
+
+Using the orthogonal decomposition
+\[
+m = \tilde m + m_0,
+\quad
+\tilde m = \Tau^\ast (\Tau \Tau^\ast)^{-1} w,
+\quad
+m_0 \in \ker \Tau,
+\]
+this reduces to a minimum-norm problem in the subspace $\ker \Tau$,
+of the same type as the basic compatibility problem.
+
+Thus Al-Attar’s method determines
+whether a specific property value $w$
+lies in $\Uset$.
+
+% ------------------------------------------------------------
+\subsubsection*{3. How Al-Attar's Method Could Produce Property Bounds}
+% ------------------------------------------------------------
+
+Although Section 3.3.1 does not explicitly compute
+the extremum \eqref{eq:primal-extremum},
+it can be obtained using the feasibility machinery.
+
+To compute
+
+\[
+\sup_{m \in \mathcal F}
+\pair{\bm q}{\Tau m},
+\]
+
+one may proceed as follows.
+
+For a scalar $t \in \mathbb{R}$,
+consider the feasibility problem
+
+\begin{equation}
+\label{eq:level-feasibility}
+\exists m \in \modelspace
+\quad \text{s.t.}\quad
+\pair{\bm q}{\Tau m} \ge t,
+\quad
+m \in \Bset,
+\quad
+\ell(\dt - Gm) \le s^2.
+\end{equation}
+
+For fixed $t$, this is a convex feasibility problem.
+In the Hilbert–ball case it reduces to
+
+\[
+\min_{m}
+\frac12 \|m\|^2
+\quad
+\text{s.t.}
+\quad
+\pair{\bm q}{\Tau m} \ge t,
+\quad
+\ell(\dt - Gm) \le s^2,
+\]
+
+which can be solved using the same
+scalar-multiplier and inner minimisation procedure
+as in Section 3.3.1.
+
+One may then perform bisection in $t$ to find the largest value
+for which \eqref{eq:level-feasibility} remains feasible.
+
+Thus
+
+\[
+\sup_{m \in \mathcal F}
+\pair{\bm q}{\Tau m}
+=
+\sup \{ t \in \mathbb{R} :
+\eqref{eq:level-feasibility} \text{ holds} \}.
+\]
+
+\paragraph{Comparison.}
+
+\begin{itemize}
+    \item The present framework computes the extremum
+          in \eqref{eq:primal-extremum}
+          directly via convex duality.
+    \item Al-Attar’s method would compute the same bound
+          by an outer bisection in property space,
+          with each feasibility test solved
+          using a minimum-norm projection problem.
+\end{itemize}
+
+The two approaches therefore operate on the same feasible set
+$\mathcal F$ but eliminate variables in different orders:
+
+\begin{itemize}
+    \item The dual-master approach eliminates the model variable first
+          and optimises in the data dual space.
+    \item The Al-Attar approach eliminates the data constraint
+          via a scalar multiplier and tests feasibility
+          for varying property levels.
+\end{itemize}
+
+Both yield the same property bounds,
+but the computational architecture is different.
+
 \section{Polytope approximations of \(\Uset\)}
 
 We now discuss how to construct \emph{polytope outer approximations} of the
@@ -1844,6 +2241,77 @@ and the chosen tangent directions \(\{\bm v_i\}_{i=1}^k\),
 and therefore integrate naturally with geometric slice
 definitions in general Banach spaces.
 
+
+\section{Incorporating data errors into Backus--Gilbert estimators}
+\label{sec:BG-with-errors-notation}
+
+% Assumes macros from convex.txt are available:
+% \ipM,\ipV,\ipD,\ipP,\pair, \modelspace,\dataspace,\propertyspace, etc. :contentReference[oaicite:2]{index=2}
+
+Let \(\bar m\in\modelspace\) denote the true model, \(G:\modelspace\to\dataspace\) the forward operator,
+and let \(\bm{\eta}\in\dataspace\) denote the data error so that the observed data
+\[
+\tilde{\bm d}=G\bar m+\bm{\eta}.
+\]
+The property of interest is \(\bar{\bm{p}}=\Tau\bar m\), with \(\Tau:\modelspace\to\propertyspace\).
+
+Fix a linear mapping \(X:\dataspace\to\propertyspace\). Define
+\[
+\pt := X\tilde{\bm d},\qquad H := \Tau - X\,G.
+\]
+Then we have the decomposition
+\begin{equation}\label{eq:BG-decomp-convex}
+\bar{\bm{p}} \;=\; \pt \;+\; H\bar m \;-\; X\,\bm{\eta}.
+\end{equation}
+Thus the estimator error \(\bar{\bm{p}}-\pt\) splits into a modelling term \(H\bar m\)
+and a propagated-noise term \(X\bm{\eta}\).
+
+\paragraph{Constraint and confidence sets.}
+Assume a prior constraint \(\Bset\subset\modelspace\); in the Hilbert case we take
+\(\Bset=B_r(0)=\{m\in\modelspace:\|m\|_{\modelspace}\le r\}\).
+Assume Gaussian data errors with covariance operator \(\Cd :\dataspace\to\dataspace\)
+and select a confidence scalar \(s>0\). The data confidence set is then the ellipsoid
+\begin{equation}\label{eq:Vdata-ell-convex}
+\Vdata \;=\; \Big\{ \bm{d} \in\dataspace:\; \tfrac12\,\ipD{\Cd^{-1}\bm{d}}{\bm{d}} \le s^2 \Big\}.
+\end{equation}
+
+\paragraph{Images in property space.}
+The image of the prior ball under \(m\mapsto \pt + H m\) is (when restricted to \(\im H\))
+characterised by the hyperellipsoidal relation
+\begin{equation}\label{eq:model-ellip-convex}
+\ipP{(H H^\ast)^{-1}(\bm p - \pt)}{\bm p - \pt} \le r^2,
+\end{equation}
+interpreting \((H H^\ast)^{-1}\) on the range of \(H\). The image of \(\Vdata\) under \(\bm d\mapsto \Cd \bm d\)
+is the ellipsoid with boundary described by
+\begin{equation}\label{eq:data-ellip-image-convex}
+\tfrac12\,\ipP{(X\Cd X^\ast)^{-1}\,\bm p}{\bm p} \le s^2,
+\end{equation}
+again interpreting the inverse on \(\im X\). Hence the admissible property vectors lie in
+the Minkowski sum
+\[
+\pt + H\Bset + X\Vdata.
+\]
+
+\paragraph{Design functional for \(X\).}
+To make the admissible region small one may minimise a scalar measure of the two ellipsoids.
+Following the source, consider
+\begin{equation}\label{eq:J-C-convex}
+J(X) \;=\; r^2\,\mathrm{tr}\!\big(H H^\ast\big) \;+\; 2 s^2\,\mathrm{tr}\!\big(X \Cd X^\ast\big),
+\qquad H=\Tau-XG.
+\end{equation}
+A Frech\'et-derivative calculation in the Hilbert--Schmidt inner product yields the unique minimiser
+\begin{equation}\label{eq:C-star-convex}
+X^\star \;=\; \Tau\,G^\ast\big( G G^\ast + 2 s^2 r^{-2} \Cd \big)^{-1},
+\end{equation}
+which generalises the error-free SOLA/Backus--Gilbert formula by incorporating the data covariance.
+The additive covariance term ensures coercivity (invertibility) of the operator in parentheses even when \(G\) fails to be surjective.
+
+\paragraph{Computation and remarks.}
+Practically, formation of \(X^\star\) requires repeated application of the inverse
+\((G G^\ast + 2 s^2 r^{-2} \Cd)^{-1}\) to data vectors; for moderate \(\dim\dataspace\) this is direct,
+otherwise use iterative solvers (e.g.\ conjugate gradients). The resulting ellipsoid is a convenient
+surrogate (an uncertainty ellipsoid around the linear estimator \(\pt=X^\star\tilde{\bm d}\));
+it coincides with the exact admissible set only in special quadratic cases.
 
 \appendix
 \section{Geometric Interpretation of Support Functions and Certificates}

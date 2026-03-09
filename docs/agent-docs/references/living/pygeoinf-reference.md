@@ -271,26 +271,28 @@ A support function $h_C(u) = \sup_{x \in C} \langle x, u \rangle$ encodes a conv
 
 | Method | Description |
 |---|---|
-| `evaluate(u)` | Compute $h_C(u)$ |
-| `subgradient(u)` | A subgradient $\in \partial h_C(u)$ |
-| `conjugate()` | Conjugate support function |
+| `__call__(u)` / `evaluate(u)` | Compute $h_C(u)$ |
+| `support_point(u)` | Optional maximiser $x^*(u) \in \arg\max_{x \in C}\langle u,x\rangle$; defaults to `None` |
+| `subgradient(u)` | Delegates to `support_point(u)`; raises `NotImplementedError` when `None` |
+
+**Convenience constructors (classmethods on `SupportFunction`):**
+
+| Factory | Returns | Description |
+|---|---|---|
+| `SupportFunction.callable(primal_domain, mapping, support_point=None)` | `CallableSupportFunction` | Wraps any callable $q \mapsto h(q)$, with optional support-point callback |
+| `SupportFunction.point(primal_domain, point)` | `PointSupportFunction` | Singleton-set support $h(q) = \langle q, p \rangle$ |
 
 **Concrete implementations:**
 
-| Class | Convex set $C$ |
-|---|---|
-| `BallSupportFunction` | $\{x: \|x\| \leq r\}$ |
-| `EllipsoidSupportFunction` | $\{x: \|Ax\| \leq r\}$ |
-| `PolyhedralSupportFunction` | Polyhedral set |
-| `SobolevBallSupportFunction` | Ball in Sobolev (mass-weighted) norm |
+| Class | Constructor | Convex set $C$ |
+|---|---|---|
+| `BallSupportFunction` | `(space, center, radius)` | $\{x: \|x - c\| \leq r\}$ |
+| `EllipsoidSupportFunction` | `(space, center, radius, shape_op, inv_op=None, inv_sqrt_op=None)` | $\{x: \|A(x-c)\| \leq r\}$ |
+| `HalfSpaceSupportFunction` | `(space, normal, offset, ineq='<=')` | Half-space; returns $+\infty$ for unbounded directions |
+| `CallableSupportFunction` | `(space, fn, support_point_fn=None)` | User-supplied callable $q \mapsto h(q)$ |
+| `PointSupportFunction` | `(space, point)` | Singleton $\{p\}$; $h(q) = \langle q, p \rangle$ |
 
-**Combinators:**
-
-| Class | Description |
-|---|---|
-| `InfimalConvolution(h1, h2)` | $(h_1 \square h_2)(u)$ |
-| `SupportFunctionSum(h1, h2)` | $h_1(u) + h_2(u)$ |
-| `SupportFunctionScaledSum(hs, ws)` | $\sum_i w_i h_i(u)$ |
+> **Phase 2 (planned):** algebraic combinators (`LinearImageSupportFunction`, translation, Minkowski sum, scaling) are not yet implemented.
 
 ---
 
