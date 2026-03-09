@@ -116,10 +116,11 @@ class TestLinearImageSupportFunction:
             LinearImageSupportFunction(ball_R3, A_R2_to_R3)
 
     def test_support_point_is_none_by_default(self, ball_R2, A_R2_to_R3):
-        """Phase 2: support_point returns None (Phase 3 will propagate)."""
+        """Phase 3: support_point now propagates from base."""
         h_image = LinearImageSupportFunction(ball_R2, A_R2_to_R3)
         q = np.array([1.0, 0.0, 0.0])
-        assert h_image.support_point(q) is None
+        # Phase 3: BallSupportFunction has support_point, so h_image should too
+        assert h_image.support_point(q) is not None
 
     def test_image_convenience_method(self, R3, ball_R2, A_R2_to_R3):
         """SupportFunction.image(A) returns a LinearImageSupportFunction on A.codomain."""
@@ -187,10 +188,11 @@ class TestMinkowskiSumSupportFunction:
             assert_allclose(h_sum(q), ball_R2(q) + point_sf_R2(q), rtol=1e-12)
 
     def test_support_point_is_none_by_default(self, ball_R2, point_sf_R2):
-        """Phase 2: support_point returns None."""
+        """Phase 3: support_point now propagates from both operands."""
         h_sum = MinkowskiSumSupportFunction(ball_R2, point_sf_R2)
         q = np.array([1.0, 0.0])
-        assert h_sum.support_point(q) is None
+        # Phase 3: Both operands have support_point, so h_sum should too
+        assert h_sum.support_point(q) is not None
 
     def test_symmetry(self, R2, ball_R2, point_sf_R2):
         """h_C + h_D == h_D + h_C (same values)."""
@@ -274,10 +276,11 @@ class TestScaledSupportFunction:
         assert isinstance(h_scaled, SupportFunction)
 
     def test_support_point_is_none_by_default(self, ball_R2):
-        """Phase 2: support_point returns None."""
+        """Phase 3: support_point now propagates from base."""
         h_scaled = ScaledSupportFunction(ball_R2, 2.0)
         q = np.array([1.0, 0.0])
-        assert h_scaled.support_point(q) is None
+        # Phase 3: BallSupportFunction has support_point, so h_scaled should too
+        assert h_scaled.support_point(q) is not None
 
     def test_mul_operator(self, R2, ball_R2):
         """h * alpha returns ScaledSupportFunction (not plain NonLinearForm)."""
@@ -416,3 +419,322 @@ class TestChainedAlgebra:
         """Multiplying by a non-scalar raises TypeError."""
         with pytest.raises((TypeError, ValueError)):
             _ = ball_R2 * "oops"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Support-point propagation through algebraic wrappers
+# ---------------------------------------------------------------------------
+
+
+class TestLinearImageSupportPointPropagation:
+    """Phase 3: LinearImageSupportFunction.support_point propagates base support points."""
+
+    def test_support_point_propagates_from_ball(self, R2, R3, ball_R2, A_R2_to_R3):
+        """LinearImageSupportFunction.support_point returns A(x_base*(A^* q)) when available."""
+        h_image = LinearImageSupportFunction(ball_R2, A_R2_to_R3)
+
+        q = np.array([1.0, 0.0, 0.0])
+        x_star = h_image.support_point(q)
+
+        # ball_R2 has a support point, so x_star should not be None
+        assert x_star is not None
+
+        # The support point should be in R^3 (the codomain of A)
+        assert x_star.shape == (3,)
+
+        # Verify: x_star should be A(x_C^*(A^*(q)))
+        adj_q = A_R2_to_R3.adjoint(q)
+        x_base = ball_R2.support_point(adj_q)
+        expected = A_R2_to_R3(x_base)  # Apply A to the base support point
+        assert_allclose(x_star, expected, rtol=1e-12)
+
+    def test_support_point_returns_none_for_callable_without_fn(self, R2, R3, A_R2_to_R3):
+        """LinearImageSupportFunction.support_point returns None when base has no support_point."""
+        # Create a callable support function without a support_point callback
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_image = LinearImageSupportFunction(h_callable, A_R2_to_R3)
+
+        q = np.array([1.0, 0.0, 0.0])
+        assert h_image.support_point(q) is None
+
+    def test_support_point_propagates_from_point_sf(self, R2, R3, A_R2_to_R3):
+        """LinearImageSupportFunction.support_point works with PointSupportFunction base."""
+        p = np.array([1.0, 2.0])
+        h_point = PointSupportFunction(R2, p)
+        h_image = LinearImageSupportFunction(h_point, A_R2_to_R3)
+
+        # For a singleton {p}, the support point is always A(p) (in the codomain)
+        q = np.array([3.0, -1.0, 0.5])
+        x_star = h_image.support_point(q)
+        assert x_star is not None
+        expected = A_R2_to_R3(p)  # Apply A to p
+        assert_allclose(x_star, expected, rtol=1e-12)
+
+    def test_subgradient_works_when_support_point_available(self, R2, R3, ball_R2, A_R2_to_R3):
+        """subgradient(q) works through linearimage when support_point is available."""
+        h_image = LinearImageSupportFunction(ball_R2, A_R2_to_R3)
+
+        q = np.array([1.0, 0.0, 0.0])
+        # subgradient should delegate to support_point and return a result
+        grad = h_image.subgradient(q)
+        assert grad is not None
+        assert grad.shape == (3,)  # Result is in R^3 (codomain of A)
+
+    def test_subgradient_raises_when_support_point_unavailable(self, R2, R3, A_R2_to_R3):
+        """subgradient(q) raises NotImplementedError when support_point is None."""
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_image = LinearImageSupportFunction(h_callable, A_R2_to_R3)
+
+        q = np.array([1.0, 0.0, 0.0])
+        with pytest.raises(NotImplementedError, match="Support point"):
+            h_image.subgradient(q)
+
+
+class TestMinkowskiSumSupportPointPropagation:
+    """Phase 3: MinkowskiSumSupportFunction.support_point adds support points when both are available."""
+
+    def test_support_point_sum_both_available(self, R2, ball_R2, point_sf_R2):
+        """MinkowskiSumSupportFunction.support_point = left.support_point + right.support_point."""
+        h_sum = MinkowskiSumSupportFunction(ball_R2, point_sf_R2)
+
+        q = np.array([1.0, 0.0])
+        x_sum = h_sum.support_point(q)
+
+        # Both have support points, so x_sum should not be None
+        assert x_sum is not None
+
+        # x_sum should equal the sum of individual support points
+        x_ball = ball_R2.support_point(q)
+        x_point = point_sf_R2.support_point(q)
+        expected = R2.add(x_ball, x_point)
+        assert_allclose(x_sum, expected, rtol=1e-12)
+
+    def test_support_point_returns_none_left_unavailable(self, R2, ball_R2):
+        """MinkowskiSumSupportFunction.support_point returns None if left has no support_point."""
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_sum = MinkowskiSumSupportFunction(h_callable, ball_R2)
+
+        q = np.array([1.0, 0.0])
+        assert h_sum.support_point(q) is None
+
+    def test_support_point_returns_none_right_unavailable(self, R2, ball_R2):
+        """MinkowskiSumSupportFunction.support_point returns None if right has no support_point."""
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_sum = MinkowskiSumSupportFunction(ball_R2, h_callable)
+
+        q = np.array([1.0, 0.0])
+        assert h_sum.support_point(q) is None
+
+    def test_support_point_returns_none_both_unavailable(self, R2):
+        """MinkowskiSumSupportFunction.support_point returns None if both have no support_point."""
+        h1 = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h2 = CallableSupportFunction(R2, lambda q: 2.0 * float(np.linalg.norm(q)))
+        h_sum = MinkowskiSumSupportFunction(h1, h2)
+
+        q = np.array([1.0, 0.0])
+        assert h_sum.support_point(q) is None
+
+    def test_subgradient_works_both_available(self, R2, ball_R2, point_sf_R2):
+        """subgradient works when both operands have support_point."""
+        h_sum = MinkowskiSumSupportFunction(ball_R2, point_sf_R2)
+
+        q = np.array([1.0, 0.0])
+        grad = h_sum.subgradient(q)
+        assert grad is not None
+        assert grad.shape == (2,)
+
+    def test_subgradient_raises_when_either_unavailable(self, R2, ball_R2):
+        """subgradient raises NotImplementedError when either operand has no support_point."""
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_sum = MinkowskiSumSupportFunction(ball_R2, h_callable)
+
+        q = np.array([1.0, 0.0])
+        with pytest.raises(NotImplementedError, match="Support point"):
+            h_sum.subgradient(q)
+
+    def test_support_point_with_minkowski_operator(self, R2, ball_R2, point_sf_R2):
+        """Support point propagates through + operator composition."""
+        h_sum = ball_R2 + point_sf_R2
+
+        q = np.array([1.0, 0.0])
+        x_sum = h_sum.support_point(q)
+        assert x_sum is not None
+
+        x_ball = ball_R2.support_point(q)
+        x_point = point_sf_R2.support_point(q)
+        expected = R2.add(x_ball, x_point)
+        assert_allclose(x_sum, expected, rtol=1e-12)
+
+
+class TestScaledSupportPointPropagation:
+    """Phase 3: ScaledSupportFunction.support_point scales base support points."""
+
+    def test_support_point_positive_scaling(self, R2, ball_R2):
+        """ScaledSupportFunction.support_point = alpha * base.support_point for alpha > 0."""
+        alpha = 2.5
+        h_scaled = ScaledSupportFunction(ball_R2, alpha)
+
+        q = np.array([1.0, 0.0])
+        x_scaled = h_scaled.support_point(q)
+
+        assert x_scaled is not None
+
+        # x_scaled should equal alpha times the base support point
+        x_base = ball_R2.support_point(q)
+        expected = R2.multiply(alpha, x_base)
+        assert_allclose(x_scaled, expected, rtol=1e-12)
+
+    def test_support_point_zero_scaling_returns_zero(self, R2, ball_R2):
+        """ScaledSupportFunction.support_point returns zero vector for alpha=0."""
+        h_zero = ScaledSupportFunction(ball_R2, 0.0)
+
+        q = np.array([1.0, 0.0])
+        x_zero = h_zero.support_point(q)
+
+        # The zero set has only the zero point as a support point everywhere
+        assert x_zero is not None
+        assert_allclose(x_zero, R2.zero, atol=1e-14)
+
+    def test_support_point_zero_scaling_for_all_directions(self, R2, ball_R2):
+        """ScaledSupportFunction with alpha=0 returns zero for any direction."""
+        h_zero = ScaledSupportFunction(ball_R2, 0.0)
+
+        rng = np.random.default_rng(20)
+        for _ in range(10):
+            q = rng.standard_normal(2)
+            x_zero = h_zero.support_point(q)
+            assert x_zero is not None
+            assert_allclose(x_zero, R2.zero, atol=1e-14)
+
+    def test_support_point_unit_scaling(self, R2, ball_R2):
+        """ScaledSupportFunction.support_point with alpha=1 equals base.support_point."""
+        h_unit = ScaledSupportFunction(ball_R2, 1.0)
+
+        q = np.array([1.0, 0.0])
+        x_unit = h_unit.support_point(q)
+        x_base = ball_R2.support_point(q)
+        assert_allclose(x_unit, x_base, rtol=1e-12)
+
+    def test_support_point_returns_none_no_base_support_point(self, R2):
+        """ScaledSupportFunction.support_point returns None if base has no support_point."""
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_scaled = ScaledSupportFunction(h_callable, 2.0)
+
+        q = np.array([1.0, 0.0])
+        assert h_scaled.support_point(q) is None
+
+    def test_subgradient_works_positive_scaling(self, R2, ball_R2):
+        """subgradient works for positively scaled support functions."""
+        h_scaled = ScaledSupportFunction(ball_R2, 3.0)
+
+        q = np.array([1.0, 0.0])
+        grad = h_scaled.subgradient(q)
+        assert grad is not None
+        assert grad.shape == (2,)
+
+    def test_subgradient_works_zero_scaling(self, R2, ball_R2):
+        """subgradient returns the zero vector for alpha=0 (support_point is available as zero)."""
+        h_zero = ScaledSupportFunction(ball_R2, 0.0)
+
+        q = np.array([1.0, 0.0])
+        grad = h_zero.subgradient(q)
+        assert grad is not None
+        assert_allclose(grad, R2.zero, atol=1e-14)
+
+    def test_subgradient_raises_when_base_unavailable(self, R2):
+        """subgradient raises NotImplementedError when base has no support_point."""
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_scaled = ScaledSupportFunction(h_callable, 2.0)
+
+        q = np.array([1.0, 0.0])
+        with pytest.raises(NotImplementedError, match="Support point"):
+            h_scaled.subgradient(q)
+
+    def test_support_point_with_mul_operator(self, R2, ball_R2):
+        """Support point propagates through * operator composition."""
+        h_scaled = ball_R2 * 2.0
+
+        q = np.array([1.0, 0.0])
+        x_scaled = h_scaled.support_point(q)
+        assert x_scaled is not None
+
+        x_base = ball_R2.support_point(q)
+        expected = R2.multiply(2.0, x_base)
+        assert_allclose(x_scaled, expected, rtol=1e-12)
+
+    def test_support_point_with_rmul_operator(self, R2, ball_R2):
+        """Support point propagates through rmul operator composition."""
+        h_scaled = 2.0 * ball_R2
+
+        q = np.array([1.0, 0.0])
+        x_scaled = h_scaled.support_point(q)
+        assert x_scaled is not None
+
+        x_base = ball_R2.support_point(q)
+        expected = R2.multiply(2.0, x_base)
+        assert_allclose(x_scaled, expected, rtol=1e-12)
+
+
+class TestComplexSupportPointPropagation:
+    """Phase 3: Support point propagation through complex nested compositions."""
+
+    def test_nested_minkowski_scaled(self, R2, ball_R2, point_sf_R2):
+        """Support point propagates through (h1 + h2) * alpha."""
+        alpha = 2.0
+        h_composed = (ball_R2 + point_sf_R2) * alpha
+        # h_composed is ScaledSupportFunction(MinkowskiSumSupportFunction(...), alpha)
+
+        q = np.array([1.0, 0.0])
+        x_composed = h_composed.support_point(q)
+
+        # Should be alpha * (x_ball + x_point)
+        assert x_composed is not None
+
+        x_ball = ball_R2.support_point(q)
+        x_point = point_sf_R2.support_point(q)
+        expected = R2.multiply(alpha, R2.add(x_ball, x_point))
+        assert_allclose(x_composed, expected, rtol=1e-12)
+
+    def test_scaled_then_add_point(self, R2, ball_R2):
+        """Support point propagates through (alpha * h) + h_p."""
+        alpha = 2.0
+        p = np.array([0.5, -0.5])
+        h_point = PointSupportFunction(R2, p)
+        h_composed = (ball_R2 * alpha) + h_point
+
+        q = np.array([1.0, 0.0])
+        x_composed = h_composed.support_point(q)
+
+        # Should be (alpha * x_ball) + x_point
+        assert x_composed is not None
+
+        x_ball = ball_R2.support_point(q)
+        x_point = h_point.support_point(q)
+        expected = R2.add(R2.multiply(alpha, x_ball), x_point)
+        assert_allclose(x_composed, expected, rtol=1e-12)
+
+    def test_support_point_propagates_through_image(self, R2, R3, ball_R2, A_R2_to_R3):
+        """Support point propagates through linear image composition."""
+        h_image = ball_R2.image(A_R2_to_R3)
+        p_codomain = np.array([1.0, 0.0, -1.0])
+        h_point_codomain = PointSupportFunction(R3, p_codomain)
+        h_composed = h_image + h_point_codomain
+
+        # h_image.primal_domain = R3, h_point_codomain.primal_domain = R3 ✓
+        q = np.array([1.0, 0.0, 0.0])
+        x_composed = h_composed.support_point(q)
+
+        assert x_composed is not None
+        x_image = h_image.support_point(q)
+        x_point = h_point_codomain.support_point(q)
+        expected = R3.add(x_image, x_point)
+        assert_allclose(x_composed, expected, rtol=1e-12)
+
+    def test_support_point_returns_none_partial_composition(self, R2, ball_R2):
+        """Support point returns None when one branch of composition has no support_point."""
+        h_callable = CallableSupportFunction(R2, lambda q: float(np.linalg.norm(q)))
+        h_composed = (ball_R2 * 2.0) + h_callable
+
+        q = np.array([1.0, 0.0])
+        # MinkowskiSum has left support point but right does not → returns None
+        assert h_composed.support_point(q) is None

@@ -305,9 +305,22 @@ A support function $h_C(u) = \sup_{x \in C} \langle x, u \rangle$ encodes a conv
 | `MinkowskiSumSupportFunction` | `(left_sf, right_sf)` | $h_{C \oplus D}(q) = h_C(q) + h_D(q)$; both must share `primal_domain` |
 | `ScaledSupportFunction` | `(base_sf, alpha)` | $h_{\alpha C}(q) = \alpha h_C(q)$; requires $\alpha \geq 0$ |
 
-> **Phase 2 note:** The new composition wrappers (`LinearImageSupportFunction`, `MinkowskiSumSupportFunction`, `ScaledSupportFunction`) leave `support_point()` returning `None`. Support-point propagation is deferred to Phase 3.
+**Phase 3: Support-point propagation semantics**
 
-> **Phase 3 (planned):** propagate support points through compositions; tighten `subgradient()` semantics for composed objects.
+All composition wrappers now propagate `support_point()` from their base operands. Semantics are conservative: when a support point cannot be determined, `None` is returned (enabling safe fallback to approximate subgradient methods).
+
+| Class | `support_point(q)` semantics |
+|---|---|
+| `LinearImageSupportFunction` | If base has support point $x_C^*(A^*q)$, returns $A(x_C^*(A^*q))$ (in codomain). Otherwise returns `None`. Handles `NotImplementedError` from base gracefully. |
+| `MinkowskiSumSupportFunction` | If **both** operands have support points $x_L^*(q)$ and $x_R^*(q)$, returns their sum $x_L^*(q) + x_R^*(q)$. If **either** is unavailable or raises `NotImplementedError`, conservatively returns `None`. |
+| `ScaledSupportFunction` | For $\alpha > 0$: returns $\alpha \cdot x_C^*(q)$ if base has support point, else `None`. For $\alpha = 0$: returns the zero vector (unique support point of singleton $\{0\}$). Handles base `NotImplementedError` gracefully. |
+
+**Subgradient propagation:**
+- `subgradient(q)` delegates to `support_point(q)` for all support functions.
+- If `support_point(q)` is available (returns a vector), subgradient succeeds.
+- If `support_point(q)` is `None`, subgradient raises `NotImplementedError` with message "Support point not available; subgradient cannot be computed."
+
+**Tests:** Phase 3 coverage includes 26 new tests covering support-point propagation, edge cases (unavailable points, zero scaling, nested compositions), and subgradient fallback behavior. All 64 support-function algebra tests pass.
 
 ---
 

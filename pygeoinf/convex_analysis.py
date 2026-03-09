@@ -607,8 +607,9 @@ class LinearImageSupportFunction(SupportFunction):
         (the space $K$ where the image $A(C)$ lives).
 
     Note:
-        Phase 2: :meth:`support_point` returns ``None``.
-        Support-point propagation is deferred to Phase 3.
+        Phase 3: :meth:`support_point` propagates support points from the base,
+        returning $x_C^*(A^* q)$ when available, or ``None`` if the base has no
+        support point available.
     """
 
     def __init__(
@@ -629,6 +630,32 @@ class LinearImageSupportFunction(SupportFunction):
 
     def _mapping(self, q: "Vector") -> float:
         return float(self._base(self._adjoint(q)))
+
+    def support_point(self, q: "Vector") -> Optional["Vector"]:
+        r"""
+        Return the support point of the image set $A(C)$ at direction $q \in K$.
+
+        For the image support function $h_{A(C)}(q) = h_C(A^* q)$, the support
+        point in direction $q$ is obtained by computing the base support point
+        $x_C^*(A^* q)$ and then applying the operator: $x_{A(C)}^*(q) = A(x_C^*(A^* q))$.
+
+        Args:
+            q: A vector in the codomain $K$.
+
+        Returns:
+            The support point $A(x_C^*(A^* q)) \in K$ if available, or ``None``.
+        """
+        adj_q = self._adjoint(q)
+        try:
+            x_base = self._base.support_point(adj_q)
+        except NotImplementedError:
+            x_base = None
+
+        if x_base is None:
+            return None
+
+        # Apply the operator to map the base support point to the codomain
+        return self._operator(x_base)
 
 
 class MinkowskiSumSupportFunction(SupportFunction):
@@ -652,8 +679,9 @@ class MinkowskiSumSupportFunction(SupportFunction):
         ValueError: If ``left.primal_domain`` and ``right.primal_domain`` differ.
 
     Note:
-        Phase 2: :meth:`support_point` returns ``None``.
-        Support-point propagation is deferred to Phase 3.
+        Phase 3: :meth:`support_point` conservatively returns the sum of support
+        points only when both operands have support points available. If either
+        operand has no support point, returns ``None`` (unavailable).
     """
 
     def __init__(
@@ -673,6 +701,38 @@ class MinkowskiSumSupportFunction(SupportFunction):
 
     def _mapping(self, q: "Vector") -> float:
         return float(self._left(q)) + float(self._right(q))
+
+    def support_point(self, q: "Vector") -> Optional["Vector"]:
+        r"""
+        Return the support point of the Minkowski sum $C \oplus D$ at direction $q$.
+
+        If both the left and right operands have support points $x_L^*(q)$ and
+        $x_R^*(q)$ available, return their sum $x_L^*(q) + x_R^*(q)$ (a support
+        point of the sum set). Otherwise return ``None`` (conservative: neither
+        is available or computing the sum is unsafe).
+
+        Args:
+            q: A vector in the shared primal space $H$.
+
+        Returns:
+            The sum of support points $x_L^*(q) + x_R^*(q)$ if both are available, or ``None``.
+        """
+        try:
+            x_left = self._left.support_point(q)
+        except NotImplementedError:
+            x_left = None
+
+        try:
+            x_right = self._right.support_point(q)
+        except NotImplementedError:
+            x_right = None
+
+        # Conservative: return sum only if both are available
+        if x_left is None or x_right is None:
+            return None
+
+        H = self.primal_domain
+        return H.add(x_left, x_right)
 
 
 class ScaledSupportFunction(SupportFunction):
@@ -695,8 +755,10 @@ class ScaledSupportFunction(SupportFunction):
         ValueError: If ``alpha < 0``.
 
     Note:
-        Phase 2: :meth:`support_point` returns ``None``.
-        Support-point propagation is deferred to Phase 3.
+        Phase 3: :meth:`support_point` propagates support points by scaling them.
+        For $\alpha > 0$: returns $\alpha \cdot x_C^*(q)$ if available;
+        For $\alpha = 0$: returns the zero vector (support point of $\{0\}$);
+        If base has no support_point, returns ``None``.
     """
 
     def __init__(
@@ -717,3 +779,32 @@ class ScaledSupportFunction(SupportFunction):
         if self._alpha == 0.0:
             return 0.0
         return self._alpha * float(self._base(q))
+
+    def support_point(self, q: "Vector") -> Optional["Vector"]:
+        r"""
+        Return the support point of the scaled set $\alpha C$ at direction $q$.
+
+        For $\alpha > 0$: Returns $\alpha \cdot x_C^*(q)$ if the base has a support point.
+        For $\alpha = 0$: Returns the zero vector (the unique support point of the singleton $\{0\}$).
+        If the base has no support point and $\alpha > 0$, returns ``None``.
+
+        Args:
+            q: A vector in the primal space $H$.
+
+        Returns:
+            The scaled support point $\alpha \cdot x_C^*(q)$, the zero vector for $\alpha=0$, or ``None``.
+        """
+        if self._alpha == 0.0:
+            # The zero set {0} has zero as its unique support point everywhere
+            return self.primal_domain.zero
+
+        try:
+            x_base = self._base.support_point(q)
+        except NotImplementedError:
+            x_base = None
+
+        if x_base is None:
+            return None
+
+        H = self.primal_domain
+        return H.multiply(self._alpha, x_base)
