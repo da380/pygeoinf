@@ -282,6 +282,16 @@ A support function $h_C(u) = \sup_{x \in C} \langle x, u \rangle$ encodes a conv
 | `SupportFunction.callable(primal_domain, mapping, support_point=None)` | `CallableSupportFunction` | Wraps any callable $q \mapsto h(q)$, with optional support-point callback |
 | `SupportFunction.point(primal_domain, point)` | `PointSupportFunction` | Singleton-set support $h(q) = \langle q, p \rangle$ |
 
+**Algebraic composition methods (Phase 2, on all `SupportFunction` instances):**
+
+| Method | Returns | Mathematical identity |
+|---|---|---|
+| `h.image(A)` | `LinearImageSupportFunction` | $h_{A(C)}(q) = h_C(A^* q)$; requires `A.domain == h.primal_domain`; `primal_domain` becomes `A.codomain` |
+| `h.translate(p)` | `MinkowskiSumSupportFunction` | $h_{C+p}(q) = h_C(q) + \langle q, p\rangle$ |
+| `h.scale(alpha)` | `ScaledSupportFunction` | $h_{\alpha C}(q) = \alpha h_C(q)$; requires $\alpha \geq 0$ |
+| `h1 + h2` | `MinkowskiSumSupportFunction` | Minkowski sum; both must be `SupportFunction` instances with same `primal_domain`; raises `TypeError` otherwise |
+| `h * alpha` / `alpha * h` | `ScaledSupportFunction` | Scalar scaling; requires $\alpha \geq 0$; raises `ValueError` for negative scalars |
+
 **Concrete implementations:**
 
 | Class | Constructor | Convex set $C$ |
@@ -290,9 +300,14 @@ A support function $h_C(u) = \sup_{x \in C} \langle x, u \rangle$ encodes a conv
 | `EllipsoidSupportFunction` | `(space, center, radius, shape_op, inv_op=None, inv_sqrt_op=None)` | $\{x: \|A(x-c)\| \leq r\}$ |
 | `HalfSpaceSupportFunction` | `(space, normal, offset, ineq='<=')` | Half-space; returns $+\infty$ for unbounded directions |
 | `CallableSupportFunction` | `(space, fn, support_point_fn=None)` | User-supplied callable $q \mapsto h(q)$ |
-| `PointSupportFunction` | `(space, point)` | Singleton $\{p\}$; $h(q) = \langle q, p \rangle$ |
+| `PointSupportFunction` | `(space, point)` | Singleton $\{p\}$; $h(q) = \langle q, p \rangle$; `support_point` always returns $p$ |
+| `LinearImageSupportFunction` | `(base_sf, operator)` | $h_{A(C)}(q) = h_C(A^* q)$; `primal_domain = operator.codomain` |
+| `MinkowskiSumSupportFunction` | `(left_sf, right_sf)` | $h_{C \oplus D}(q) = h_C(q) + h_D(q)$; both must share `primal_domain` |
+| `ScaledSupportFunction` | `(base_sf, alpha)` | $h_{\alpha C}(q) = \alpha h_C(q)$; requires $\alpha \geq 0$ |
 
-> **Phase 2 (planned):** algebraic combinators (`LinearImageSupportFunction`, translation, Minkowski sum, scaling) are not yet implemented.
+> **Phase 2 note:** The new composition wrappers (`LinearImageSupportFunction`, `MinkowskiSumSupportFunction`, `ScaledSupportFunction`) leave `support_point()` returning `None`. Support-point propagation is deferred to Phase 3.
+
+> **Phase 3 (planned):** propagate support points through compositions; tighten `subgradient()` semantics for composed objects.
 
 ---
 

@@ -126,7 +126,13 @@ from .convex_optimisation import SubgradientDescent
 from .convex_analysis import (
     SupportFunction,
     BallSupportFunction,
-    EllipsoidSupportFunction
+    EllipsoidSupportFunction,
+    HalfSpaceSupportFunction,
+    CallableSupportFunction,
+    PointSupportFunction,
+    LinearImageSupportFunction,
+    MinkowskiSumSupportFunction,
+    ScaledSupportFunction,
 )
 
 from .utils import configure_threading
@@ -233,6 +239,12 @@ __all__ = [
     "SupportFunction",
     "BallSupportFunction",
     "EllipsoidSupportFunction",
+    "HalfSpaceSupportFunction",
+    "CallableSupportFunction",
+    "PointSupportFunction",
+    "LinearImageSupportFunction",
+    "MinkowskiSumSupportFunction",
+    "ScaledSupportFunction",
     # utils
     "configure_threading",
 ]

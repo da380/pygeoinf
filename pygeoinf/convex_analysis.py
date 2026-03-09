@@ -122,6 +122,100 @@ class SupportFunction(NonLinearForm, ABC):
         """
         return PointSupportFunction(primal_domain, point)
 
+    # ------------------------------------------------------------------
+    # Algebraic composition methods (Phase 2)
+    # ------------------------------------------------------------------
+
+    def image(self, operator: "LinearOperator") -> "LinearImageSupportFunction":
+        r"""Return the support function of the linear image $A(C)$.
+
+        For a bounded linear operator $A$ with ``A.domain == self.primal_domain``,
+        returns the support function of the image set $A(C)$, which lives in
+        ``A.codomain``.  Its value is $h_{A(C)}(q) = h_C(A^* q)$.
+
+        Args:
+            operator: A bounded linear operator $A: H \to K$ with
+                ``operator.domain`` equal to ``self.primal_domain``.
+
+        Returns:
+            A :class:`LinearImageSupportFunction` on ``operator.codomain``.
+
+        Raises:
+            ValueError: If ``operator.domain != self.primal_domain``.
+        """
+        return LinearImageSupportFunction(self, operator)
+
+    def translate(self, point: "Vector") -> "MinkowskiSumSupportFunction":
+        r"""Return the support function of the translated set $C + p$.
+
+        Translation by $p \in H$ satisfies $h_{C+p}(q) = h_C(q) + \langle q, p \rangle$.
+
+        Args:
+            point: The translation vector $p \in H$ (same space as ``primal_domain``).
+
+        Returns:
+            A :class:`MinkowskiSumSupportFunction` on the same space.
+        """
+        return MinkowskiSumSupportFunction(self, PointSupportFunction(self.primal_domain, point))
+
+    def scale(self, alpha: float) -> "ScaledSupportFunction":
+        r"""Return the support function of the scaled set $\alpha C$.
+
+        Scaling satisfies $h_{\alpha C}(q) = \alpha\, h_C(q)$ for $\alpha \geq 0$.
+
+        Args:
+            alpha: A nonnegative scalar.
+
+        Returns:
+            A :class:`ScaledSupportFunction` on the same space.
+
+        Raises:
+            ValueError: If ``alpha < 0``.
+        """
+        return ScaledSupportFunction(self, alpha)
+
+    # ------------------------------------------------------------------
+    # Arithmetic operator overrides
+    # ------------------------------------------------------------------
+
+    def __add__(self, other: object) -> "MinkowskiSumSupportFunction":
+        """Return the Minkowski-sum support function $h_C + h_D$.
+
+        Both operands must be :class:`SupportFunction` instances with the
+        same ``primal_domain``.
+
+        Raises:
+            TypeError: If ``other`` is not a :class:`SupportFunction`.
+            ValueError: If ``primal_domain`` values differ.
+        """
+        if not isinstance(other, SupportFunction):
+            raise TypeError(
+                f"unsupported operand type(s) for +: 'SupportFunction' and {type(other).__name__!r}. "
+                "Both operands must be SupportFunction instances to preserve support-function algebra."
+            )
+        return MinkowskiSumSupportFunction(self, other)
+
+    def __mul__(self, alpha: object) -> "ScaledSupportFunction":
+        """Return the scaled support function $\\alpha h_C$.
+
+        Args:
+            alpha: A nonnegative scalar.
+
+        Raises:
+            TypeError: If ``alpha`` is not a real number.
+            ValueError: If ``alpha < 0``.
+        """
+        if not isinstance(alpha, (int, float, np.floating, np.integer)):
+            raise TypeError(
+                f"unsupported operand type(s) for *: 'SupportFunction' and {type(alpha).__name__!r}. "
+                "Scalar must be a real number."
+            )
+        return ScaledSupportFunction(self, float(alpha))
+
+    def __rmul__(self, alpha: object) -> "ScaledSupportFunction":
+        """Return the scaled support function $\\alpha h_C$ (reversed)."""
+        return self.__mul__(alpha)
+
 
 class BallSupportFunction(SupportFunction):
     """
@@ -479,3 +573,147 @@ class PointSupportFunction(SupportFunction):
     def support_point(self, q: "Vector") -> "Vector":
         """Return $p$ — the unique maximiser for any query direction."""
         return self._point
+
+
+# ---------------------------------------------------------------------------
+# Phase-2 algebraic combinators
+# ---------------------------------------------------------------------------
+
+
+class LinearImageSupportFunction(SupportFunction):
+    r"""Support function of the linear image $A(C)$ of a convex set $C$.
+
+    For a convex set $C \subseteq H$ with support function $h_C$ and a
+    bounded linear operator $A: H \to K$, the support function of the
+    image $A(C) \subseteq K$ is
+
+    .. math::
+
+        h_{A(C)}(q) = h_C(A^* q), \quad q \in K,
+
+    where $A^*: K \to H$ is the Hilbert-space adjoint of $A$.
+
+    Args:
+        base: The support function $h_C$ of the base set $C \subseteq H$.
+            Its ``primal_domain`` must equal ``operator.domain``.
+        operator: A bounded linear operator $A: H \to K$.
+            ``operator.domain`` must equal ``base.primal_domain``.
+
+    Raises:
+        ValueError: If ``operator.domain`` does not equal ``base.primal_domain``.
+
+    Note:
+        The ``primal_domain`` of the returned object is ``operator.codomain``
+        (the space $K$ where the image $A(C)$ lives).
+
+    Note:
+        Phase 2: :meth:`support_point` returns ``None``.
+        Support-point propagation is deferred to Phase 3.
+    """
+
+    def __init__(
+        self,
+        base: "SupportFunction",
+        operator: "LinearOperator",
+    ) -> None:
+        if operator.domain is not base.primal_domain:
+            raise ValueError(
+                "operator.domain must equal base.primal_domain. "
+                f"Got operator.domain={operator.domain!r}, "
+                f"base.primal_domain={base.primal_domain!r}."
+            )
+        super().__init__(operator.codomain)
+        self._base = base
+        self._operator = operator
+        self._adjoint = operator.adjoint
+
+    def _mapping(self, q: "Vector") -> float:
+        return float(self._base(self._adjoint(q)))
+
+
+class MinkowskiSumSupportFunction(SupportFunction):
+    r"""Support function of the Minkowski sum $C \oplus D$.
+
+    For two convex sets $C, D \subseteq H$ with support functions
+    $h_C$ and $h_D$ on the same Hilbert space $H$, the support function
+    of their Minkowski sum $C \oplus D = \{c + d : c \in C,\, d \in D\}$
+    is
+
+    .. math::
+
+        h_{C \oplus D}(q) = h_C(q) + h_D(q), \quad q \in H.
+
+    Args:
+        left: Support function $h_C$.
+        right: Support function $h_D$.
+            ``right.primal_domain`` must equal ``left.primal_domain``.
+
+    Raises:
+        ValueError: If ``left.primal_domain`` and ``right.primal_domain`` differ.
+
+    Note:
+        Phase 2: :meth:`support_point` returns ``None``.
+        Support-point propagation is deferred to Phase 3.
+    """
+
+    def __init__(
+        self,
+        left: "SupportFunction",
+        right: "SupportFunction",
+    ) -> None:
+        if left.primal_domain is not right.primal_domain:
+            raise ValueError(
+                "Both summands must share the same primal_domain. "
+                f"Got left.primal_domain={left.primal_domain!r}, "
+                f"right.primal_domain={right.primal_domain!r}."
+            )
+        super().__init__(left.primal_domain)
+        self._left = left
+        self._right = right
+
+    def _mapping(self, q: "Vector") -> float:
+        return float(self._left(q)) + float(self._right(q))
+
+
+class ScaledSupportFunction(SupportFunction):
+    r"""Support function of a nonnegatively scaled convex set $\alpha C$.
+
+    For a convex set $C \subseteq H$ with support function $h_C$ and a
+    scalar $\alpha \geq 0$, the support function of the scaled set is
+
+    .. math::
+
+        h_{\alpha C}(q) = \alpha\, h_C(q), \quad q \in H.
+
+    When $\alpha = 0$ the set $0 \cdot C = \{0\}$ and $h(q) = 0$ for all $q$.
+
+    Args:
+        base: The support function $h_C$.
+        alpha: A nonnegative scalar.
+
+    Raises:
+        ValueError: If ``alpha < 0``.
+
+    Note:
+        Phase 2: :meth:`support_point` returns ``None``.
+        Support-point propagation is deferred to Phase 3.
+    """
+
+    def __init__(
+        self,
+        base: "SupportFunction",
+        alpha: float,
+    ) -> None:
+        alpha = float(alpha)
+        if alpha < 0.0:
+            raise ValueError(
+                f"alpha must be nonnegative for support-function scaling; got alpha={alpha}."
+            )
+        super().__init__(base.primal_domain)
+        self._base = base
+        self._alpha = alpha
+
+    def _mapping(self, q: "Vector") -> float:
+        if self._alpha == 0.0:
+            return 0.0
+        return self._alpha * float(self._base(q))
