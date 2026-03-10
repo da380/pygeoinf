@@ -4,12 +4,58 @@ Module for Backus-Gilbert like methods for solving inference problems. To be don
 
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
+
 import numpy as np
 
 from .hilbert_space import HilbertSpace, Vector
 from .linear_operators import LinearOperator
 from .nonlinear_forms import NonLinearForm
 from .convex_analysis import SupportFunction
+
+
+@dataclass
+class DualMasterStats:
+    """Lightweight instrumentation counters for :class:`DualMasterCostFunction`.
+
+    All timing values are in **seconds** (wall-clock, via
+    :func:`time.perf_counter`).  Counters start at zero and are accumulated
+    across all calls since the last
+    :meth:`DualMasterCostFunction.reset_instrumentation`.
+    """
+
+    num_value_and_subgradient_calls: int = 0
+    """Total calls to :meth:`~DualMasterCostFunction.value_and_subgradient`."""
+
+    time_value_and_subgradient_s: float = 0.0
+    """Cumulative wall-clock time inside ``value_and_subgradient``."""
+
+    time_gstar_apply_s: float = 0.0
+    """Cumulative time spent computing $G^* \\lambda$."""
+
+    time_support_point_model_s: float = 0.0
+    """Cumulative time in ``model_prior_support.support_point``."""
+
+    time_support_point_data_s: float = 0.0
+    """Cumulative time in ``data_error_support.support_point``."""
+
+    time_support_value_model_s: float = 0.0
+    """Cumulative time evaluating ``model_prior_support`` (scalar value)."""
+
+    time_support_value_data_s: float = 0.0
+    """Cumulative time evaluating ``data_error_support`` (scalar value)."""
+
+    num_support_point_failures: int = 0
+    """Number of calls where a support-point returned ``None``."""
+
+    num_finite_difference_fallbacks: int = 0
+    """Number of times the finite-difference gradient fallback was used."""
+
+    time_finite_difference_s: float = 0.0
+    """Cumulative time spent inside
+    :meth:`~DualMasterCostFunction._finite_difference_gradient`.
+    """
 
 
 class DualMasterCostFunction(NonLinearForm):
@@ -59,6 +105,8 @@ class DualMasterCostFunction(NonLinearForm):
 
         self._Tstar_q = self._T.adjoint(q_direction)
 
+        self._stats = DualMasterStats()
+
         super().__init__(
             data_space, self._mapping, subgradient=self._subgradient
         )
@@ -72,6 +120,19 @@ class DualMasterCostFunction(NonLinearForm):
     def direction(self) -> Vector:
         """Current property direction q ∈ P."""
         return self._q
+
+    @property
+    def instrumentation_stats(self) -> DualMasterStats:
+        """Current accumulated instrumentation statistics.
+
+        Returns a reference to the live :class:`DualMasterStats` object.
+        Call :meth:`reset_instrumentation` to clear before a new experiment.
+        """
+        return self._stats
+
+    def reset_instrumentation(self) -> None:
+        """Reset all instrumentation counters and timers to zero."""
+        self._stats = DualMasterStats()
 
     def set_direction(self, q: Vector) -> None:
         """Update the property direction q and recompute T* q."""
@@ -158,30 +219,57 @@ class DualMasterCostFunction(NonLinearForm):
             A tuple ``(f, g)`` where ``f = φ(λ; q)`` is the scalar value and
             ``g ∈ ∂φ(λ; q)`` is a subgradient vector in $D$.
         """
-        # Shared computation
+        _t0_total = time.perf_counter()
+        s = self._stats
+        s.num_value_and_subgradient_calls += 1
+
+        # Shared computation: G* λ
+        _t0 = time.perf_counter()
         Gstar_lam = self._G.adjoint(lam)
+        s.time_gstar_apply_s += time.perf_counter() - _t0
+
         hilbert_residual = self._model_space.subtract(self._Tstar_q, Gstar_lam)
         neg_lam = self.domain.negative(lam)
 
+        # Support points
+        _t0 = time.perf_counter()
         v = self._model_prior_support.support_point(hilbert_residual)
+        s.time_support_point_model_s += time.perf_counter() - _t0
+
+        _t0 = time.perf_counter()
         w = self._data_error_support.support_point(neg_lam)
+        s.time_support_point_data_s += time.perf_counter() - _t0
 
         if v is None or w is None:
-            # Fall back to separate calls
-            return self._mapping(lam), self._finite_difference_gradient(lam)
+            s.num_support_point_failures += 1
+            s.num_finite_difference_fallbacks += 1
+            result = self._mapping(lam), self._finite_difference_gradient(lam)
+            s.time_value_and_subgradient_s += time.perf_counter() - _t0_total
+            return result
 
-        # Value
+        # Value: σ_B and σ_V evaluations
         term1 = self.domain.inner_product(lam, self._observed_data)
+
+        _t0 = time.perf_counter()
         term2 = self._model_prior_support(hilbert_residual)
+        s.time_support_value_model_s += time.perf_counter() - _t0
+
+        _t0 = time.perf_counter()
         term3 = self._data_error_support(neg_lam)
+        s.time_support_value_data_s += time.perf_counter() - _t0
+
         f = term1 + term2 + term3
 
         # Subgradient
         term1_subgrad = self._observed_data
         term2_subgrad = self.domain.negative(self._G(v))
         term3_subgrad = self.domain.negative(w)
-        g = self.domain.add(term1_subgrad, self.domain.add(term2_subgrad, term3_subgrad))
+        g = self.domain.add(
+            term1_subgrad,
+            self.domain.add(term2_subgrad, term3_subgrad),
+        )
 
+        s.time_value_and_subgradient_s += time.perf_counter() - _t0_total
         return f, g
 
     def _gradient(self, lam: "Vector") -> "Vector":
@@ -201,6 +289,7 @@ class DualMasterCostFunction(NonLinearForm):
         if eps <= 0:
             raise ValueError("eps must be positive")
 
+        _t0 = time.perf_counter()
         comps = self.domain.to_components(lam)
         grad = np.zeros_like(comps, dtype=float)
 
@@ -215,9 +304,14 @@ class DualMasterCostFunction(NonLinearForm):
             f_minus = self._mapping(lam_minus)
             grad[i] = (f_plus - f_minus) / (2.0 * eps)
 
+        self._stats.time_finite_difference_s += time.perf_counter() - _t0
         return self.domain.from_components(grad)
 
-    def _validation(self, data_space, property_space, model_space, G, T, model_prior_support, data_error_support, observed_data, q_direction) -> None:
+    def _validation(
+        self, data_space, property_space, model_space,
+        G, T, model_prior_support, data_error_support,
+        observed_data, q_direction,
+    ) -> None:
         if not isinstance(data_space, HilbertSpace):
             raise ValueError("data_space must be a HilbertSpace")
         if not isinstance(property_space, HilbertSpace):

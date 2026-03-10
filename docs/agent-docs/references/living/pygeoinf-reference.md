@@ -527,6 +527,13 @@ Exported from both `pygeoinf.plot` and the top-level `pygeoinf` namespace.
 **`DualMasterCostFunction.value_and_subgradient`** (in `backus_gilbert.py`):
 Shares `G*λ`, `hilbert_residual`, and support-point queries in one pass; returns `(f, g)`.
 
+**Phase 1 instrumentation** (added 2026-03-10):
+- `DualMasterStats` — dataclass with call counts and wall-clock timers for `DualMasterCostFunction`.
+- `DualMasterCostFunction.instrumentation_stats` — property returning the current `DualMasterStats`.
+- `DualMasterCostFunction.reset_instrumentation()` — resets all counters/timers to zero.
+- `ProximalBundleStats` — dataclass with master-solve counts, null/serious-step counts, and timing totals for `ProximalBundleMethod`.
+- `ProximalBundleMethod.instrumentation_stats` — property returning `ProximalBundleStats` from the most recent `solve()` call.
+
 **Tests:** `tests/test_proximal_bundle.py` (6 tests), `tests/test_dual_master_cost.py` (1 test) — all passing.
 
 **Phase 3 — Level Bundle Method** (implemented 2026-03-04)

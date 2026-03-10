@@ -8,7 +8,8 @@ that can provide a subgradient oracle via form.subgradient(x).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from typing import Optional, List, Tuple, TYPE_CHECKING, runtime_checkable, Protocol
 
 import numpy as np
@@ -708,7 +709,8 @@ class BundleResult:
         f_low: Lower bound on the optimum from the cutting-plane model.
         gap: Optimality gap ``f_best - f_low`` (non-negative for a valid lower bound).
         converged: Whether the gap tolerance was satisfied.
-        num_iterations: Total number of oracle calls performed.
+        num_iterations: Number of bundle loop iterations (master solves),
+            excluding the initial oracle evaluation before the loop.
         num_serious_steps: Number of serious (descent) steps taken.
         function_values: History of function values at each iteration.
         iterates: Optional history of all iterates (memory intensive).
@@ -723,6 +725,35 @@ class BundleResult:
     num_serious_steps: int
     function_values: List[float]
     iterates: Optional[List["Vector"]] = None
+
+
+@dataclass
+class ProximalBundleStats:
+    """Lightweight instrumentation counters for :class:`ProximalBundleMethod`.
+
+    Populated by the most recent call to :meth:`ProximalBundleMethod.solve`.
+    All timing values are in **seconds** (wall-clock, via
+    :func:`time.perf_counter`).
+    """
+
+    num_master_solves: int = 0
+    """Number of master QP solves performed."""
+
+    time_master_solve_s: float = 0.0
+    """Cumulative wall-clock time spent inside
+    :meth:`~ProximalBundleMethod._solve_master`.
+    """
+
+    num_null_steps: int = 0
+    """Number of null (rejected) steps taken."""
+
+    num_serious_steps: int = 0
+    """Number of serious (descent) steps taken."""
+
+    time_oracle_total_s: float = 0.0
+    """Cumulative time spent in oracle (value + subgradient) calls from
+    :meth:`~ProximalBundleMethod.solve`.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -747,7 +778,10 @@ def _get_value_and_subgradient(
     Returns:
         ``(f, g)`` — scalar value and subgradient vector.
     """
-    if hasattr(oracle, "value_and_subgradient"):
+    if (
+        hasattr(oracle, "value_and_subgradient")
+        and callable(oracle.value_and_subgradient)
+    ):
         return oracle.value_and_subgradient(x)
     return oracle(x), oracle.subgradient(x)
 
@@ -832,6 +866,16 @@ class ProximalBundleMethod:
         self._bundle_size = bundle_size
         self._store_iterates = store_iterates
         self._qp_solver: QPSolver = qp_solver if qp_solver is not None else SciPyQPSolver()
+        self._stats: Optional[ProximalBundleStats] = None
+
+    @property
+    def instrumentation_stats(self) -> Optional[ProximalBundleStats]:
+        """Instrumentation statistics from the most recent :meth:`solve` call.
+
+        Returns ``None`` before :meth:`solve` has been called.
+        Stats are reset at the start of each :meth:`solve` call.
+        """
+        return self._stats
 
     def _solve_master(
         self,
@@ -897,9 +941,16 @@ class ProximalBundleMethod:
         Returns:
             A :class:`BundleResult` summarising the optimisation run.
         """
+        # Reset instrumentation for this run.
+        self._stats = ProximalBundleStats()
+        _pb_stats = self._stats
+
         domain = self._oracle.domain
         lam_hat = x0
+
+        _t0_oracle = time.perf_counter()
         f_hat, g_hat = _get_value_and_subgradient(self._oracle, lam_hat)
+        _pb_stats.time_oracle_total_s += time.perf_counter() - _t0_oracle
 
         f_up = f_hat
         best_lam = lam_hat
@@ -920,13 +971,20 @@ class ProximalBundleMethod:
         for k in range(self._max_iterations):
             # Solve master QP — returns (lam_next, t_opt) where t_opt = result.x[d]
             # is the cutting-plane model value at lam_next: hat_phi(lam_next) <= f(lam_next).
+            _t0_master = time.perf_counter()
             lam_next, t_opt = self._solve_master(
                 bundle, lam_hat, rho, domain, lam_hat_c, t_warm=t_warm
             )
+            _pb_stats.num_master_solves += 1
+            _pb_stats.time_master_solve_s += time.perf_counter() - _t0_master
+
             lam_next_c = domain.to_components(lam_next)
 
             # Oracle evaluation
+            _t0_oracle = time.perf_counter()
             f_next, g_next = _get_value_and_subgradient(self._oracle, lam_next)
+            _pb_stats.time_oracle_total_s += time.perf_counter() - _t0_oracle
+
             function_values.append(f_next)
             if iterates is not None:
                 iterates.append(lam_next)
@@ -947,6 +1005,7 @@ class ProximalBundleMethod:
                 lam_hat_c = lam_next_c
                 f_hat = f_next
                 n_serious += 1
+                _pb_stats.num_serious_steps += 1
                 rho = rho / self._rho_factor
                 f_low = -np.inf  # reset; will be re-established after a null step
             else:
@@ -955,6 +1014,7 @@ class ProximalBundleMethod:
                 # relative to the current stability centre.  Update monotonically.
                 rho = rho * self._rho_factor
                 f_low = max(f_low, t_opt)
+                _pb_stats.num_null_steps += 1
 
             # Add cut and compress bundle
             bundle.add_cut(Cut(x=lam_next, f=f_next, g=g_next, iteration=k + 1))
