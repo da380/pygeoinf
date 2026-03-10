@@ -5,10 +5,11 @@ Covers:
 - value_and_subgradient consistency with separate _mapping / _subgradient calls.
 - Phase 1 guardrail tests: lock in expected oracle-path efficiency before
   production changes (Phases 2-3 of the DLI optimization plan).
+- Fallback branch regression: finite-difference fallback triggered when
+  support_point is unavailable; instrumentation counters correctly updated.
 """
 
 import numpy as np
-import pytest
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
@@ -130,7 +131,7 @@ class _AdjointCountingLinearOperator(LinearOperator):
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 guardrail tests (must FAIL against current production code)
+# Phase 3 guardrail tests (pass against current production code post-Phase 3)
 # ---------------------------------------------------------------------------
 
 def test_no_redundant_scalar_eval_when_support_point_exists():
@@ -143,9 +144,10 @@ def test_no_redundant_scalar_eval_when_support_point_exists():
     and self._data_error_support(neg_lam) inside value_and_subgradient is
     redundant.
 
-    This test currently FAILS against production code because value_and_subgradient
-    makes a separate scalar evaluation after fetching the support point (see the
-    ``term2 = self._model_prior_support(hilbert_residual)`` block in backus_gilbert.py).
+    Phase 3 implementation uses the fused ``value_and_support_point`` call which
+    returns both the scalar support value and the maximiser in one operation, so
+    no separate ``_mapping`` evaluation occurs.  This guardrail passes against
+    post-Phase 3 production code.
     """
     rng = np.random.default_rng(99)
     n_data, n_model, n_prop = 4, 5, 1
@@ -189,13 +191,11 @@ def test_no_repeated_adjoint_fetch_across_oracle_calls():
     """GUARDRAIL: repeated value_and_subgradient calls must NOT re-fetch G.adjoint.
 
     ``LinearOperator.adjoint`` allocates a new operator object each time it is
-    accessed (when ``_adjoint_base`` is None).  After Phase 3 the adjoint will
-    be cached once in ``DualMasterCostFunction.__init__``, so subsequent oracle
-    calls incur zero additional property accesses.
+    accessed (when ``_adjoint_base`` is None).  Phase 3 caches the adjoint once
+    in ``DualMasterCostFunction.__init__`` as ``self._G_adj = G.adjoint``, so
+    subsequent oracle calls incur zero additional property accesses.
 
-    This test currently FAILS against production code because value_and_subgradient
-    calls ``self._G.adjoint(lam)`` on every invocation, re-fetching the property
-    each time.
+    This guardrail passes against post-Phase 3 production code.
     """
     rng = np.random.default_rng(17)
     n_data, n_model, n_prop = 4, 5, 1
@@ -238,4 +238,92 @@ def test_no_repeated_adjoint_fetch_across_oracle_calls():
         f"Expected 0 adjoint accesses after init (adjoint should be cached once "
         f"at construction time), but .adjoint was accessed "
         f"{G_tracked.adjoint_access_count} times across {n_calls} oracle calls."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 fallback regression test
+# ---------------------------------------------------------------------------
+
+class _NullSupportPointFunction(BallSupportFunction):
+    """BallSupportFunction whose ``value_and_support_point`` always returns
+    ``(value, None)``, simulating a support function that cannot provide a
+    support point.  This forces the finite-difference fallback path inside
+    ``DualMasterCostFunction.value_and_subgradient``.
+    """
+
+    def value_and_support_point(self, q):
+        value = self(q)
+        return value, None
+
+
+def test_fallback_branch_correctness_and_instrumentation():
+    """Fallback path must produce the same value as the direct cost call.
+
+    When ``value_and_support_point`` returns ``(value, None)`` for either
+    support function, ``value_and_subgradient`` must:
+      - still return the correct scalar cost value (matching ``cost(lam)``);
+      - increment ``num_support_point_failures`` and
+        ``num_finite_difference_fallbacks`` by exactly 1;
+      - leave ``time_support_value_model_s`` and ``time_support_value_data_s``
+        strictly positive (since ``_mapping`` is called for the scalar value
+        and the FD gradient steps, accumulating those timers).
+    """
+    rng = np.random.default_rng(55)
+    n_data, n_model, n_prop = 4, 5, 1
+
+    data_space = EuclideanSpace(n_data)
+    model_space = EuclideanSpace(n_model)
+    prop_space = EuclideanSpace(n_prop)
+
+    G_matrix = rng.standard_normal((n_data, n_model))
+    T_matrix = rng.standard_normal((n_prop, n_model))
+    G = LinearOperator.from_matrix(model_space, data_space, G_matrix)
+    T = LinearOperator.from_matrix(model_space, prop_space, T_matrix)
+
+    model_prior = _NullSupportPointFunction(model_space, model_space.zero, 1.0)
+    data_error = _NullSupportPointFunction(data_space, data_space.zero, 0.5)
+
+    d_tilde = rng.standard_normal(n_data)
+    q_vec = rng.standard_normal(n_prop)
+    cost = DualMasterCostFunction(
+        data_space, prop_space, model_space,
+        G, T, model_prior, data_error, d_tilde, q_vec,
+    )
+
+    lam_comps = rng.standard_normal(n_data)
+    lam = data_space.from_components(lam_comps)
+
+    # Baseline: direct scalar cost (uses _mapping, which is always available)
+    f_direct = cost(lam)
+
+    cost.reset_instrumentation()
+    f_fallback, _ = cost.value_and_subgradient(lam)
+
+    # Value must match the direct call
+    np.testing.assert_allclose(
+        f_fallback,
+        f_direct,
+        rtol=1e-5,
+        err_msg=(
+            f"Fallback value {f_fallback} differs from direct cost {f_direct}"
+        ),
+    )
+
+    stats = cost.instrumentation_stats
+
+    # Fallback counters must have been incremented once
+    assert stats.num_support_point_failures == 1, (
+        f"Expected 1 support-point failure, got {stats.num_support_point_failures}"
+    )
+    assert stats.num_finite_difference_fallbacks == 1, (
+        f"Expected 1 FD fallback, got {stats.num_finite_difference_fallbacks}"
+    )
+
+    # Support-value timers must have accumulated (FD calls _mapping many times)
+    assert stats.time_support_value_model_s > 0.0, (
+        "time_support_value_model_s should be positive after fallback"
+    )
+    assert stats.time_support_value_data_s > 0.0, (
+        "time_support_value_data_s should be positive after fallback"
     )

@@ -528,6 +528,12 @@ Exported from both `pygeoinf.plot` and the top-level `pygeoinf` namespace.
 **`DualMasterCostFunction.value_and_subgradient`** (in `backus_gilbert.py`):
 Shares `G*λ`, `hilbert_residual`, and support-point queries in one pass; returns `(f, g)`.
 
+**Phase 3 oracle optimisations** (implemented 2026-03-10):
+- `self._G_adj = G.adjoint` — cached in `__init__`; all internal uses of the adjoint go through `self._G_adj(...)` to avoid repeated property allocation.
+- `value_and_subgradient` calls `value_and_support_point` (fused Phase 2 API) on each support function, obtaining `(scalar_value, support_point)` in one call. When the support point is available the scalar value is already obtained from the fused call, eliminating the redundant separate `_mapping` evaluation. Fallback path (support point unavailable) is unchanged.
+- `time_support_point_model_s` / `time_support_point_data_s` now measure the fused `value_and_support_point(...)` call in the fast path — they capture both the scalar value and the maximiser retrieval in one timed block, so their values will be larger than the pre-fusion support-point-only timing.
+- `time_support_value_model_s` / `time_support_value_data_s` are **zero in the fast path** (they only accumulate in fallback or direct `_mapping` paths); they remain in `DualMasterStats` for completeness and fallback diagnostics.
+
 **Phase 1 instrumentation** (added 2026-03-10):
 - `DualMasterStats` — dataclass with call counts and wall-clock timers for `DualMasterCostFunction`.
 - `DualMasterCostFunction.instrumentation_stats` — property returning the current `DualMasterStats`.
@@ -535,7 +541,7 @@ Shares `G*λ`, `hilbert_residual`, and support-point queries in one pass; return
 - `ProximalBundleStats` — dataclass with master-solve counts, null/serious-step counts, and timing totals for `ProximalBundleMethod`.
 - `ProximalBundleMethod.instrumentation_stats` — property returning `ProximalBundleStats` from the most recent `solve()` call.
 
-**Tests:** `tests/test_proximal_bundle.py` (6 tests), `tests/test_dual_master_cost.py` (1 test) — all passing.
+**Tests:** `tests/test_proximal_bundle.py` (6 tests), `tests/test_dual_master_cost.py` (4 tests) — all passing.
 
 **Phase 3 — Level Bundle Method** (implemented 2026-03-04)
 
