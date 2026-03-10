@@ -309,7 +309,7 @@ The output of the above script will look similar to the following figure:
 
 * **Advanced Optimisation Algorithms**: To complement the non-linear framework, `pygeoinf` now includes a suite of optimisation algorithms. You can use the custom `GradientDescent` solver or leverage the power of SciPy's optimization library with methods like 'BFGS', 'L-BFGS-B', and 'Newton-CG'. Derivative-free methods such as 'Powell' and 'Nelder-Mead' are also supported for problems where gradients are unavailable.
 
-* **Backus-Gilbert Methods**: The foundations for the Backus-Gilbert method have been implemented. While this feature is still evolving, the core components are in place for you to begin exploring this powerful inference technique.
+* **Convex-Analysis Inversion (DLI/Backus-Gilbert)**: The `convex_analysis` and `convex_optimisation` modules provide a complete Deterministic Linear Inference (DLI) workflow via dual proximal-bundle optimization, as well as the Backus-Gilbert admissible-region framework with Minkowski-sum support-function algebra. Both methods are ready for production use. End-to-end demos are available in the `intervalinf/demos/convex_analysis/` directory.
 
 ## Future Plans
 

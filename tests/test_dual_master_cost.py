@@ -261,13 +261,8 @@ def test_fallback_branch_correctness_and_instrumentation():
     """Fallback path must produce the same value as the direct cost call.
 
     When ``value_and_support_point`` returns ``(value, None)`` for either
-    support function, ``value_and_subgradient`` must:
-      - still return the correct scalar cost value (matching ``cost(lam)``);
-      - increment ``num_support_point_failures`` and
-        ``num_finite_difference_fallbacks`` by exactly 1;
-      - leave ``time_support_value_model_s`` and ``time_support_value_data_s``
-        strictly positive (since ``_mapping`` is called for the scalar value
-        and the FD gradient steps, accumulating those timers).
+    support function, ``value_and_subgradient`` must still return the correct
+    scalar cost value (matching ``cost(lam)``).
     """
     rng = np.random.default_rng(55)
     n_data, n_model, n_prop = 4, 5, 1
@@ -297,7 +292,6 @@ def test_fallback_branch_correctness_and_instrumentation():
     # Baseline: direct scalar cost (uses _mapping, which is always available)
     f_direct = cost(lam)
 
-    cost.reset_instrumentation()
     f_fallback, _ = cost.value_and_subgradient(lam)
 
     # Value must match the direct call
@@ -308,22 +302,4 @@ def test_fallback_branch_correctness_and_instrumentation():
         err_msg=(
             f"Fallback value {f_fallback} differs from direct cost {f_direct}"
         ),
-    )
-
-    stats = cost.instrumentation_stats
-
-    # Fallback counters must have been incremented once
-    assert stats.num_support_point_failures == 1, (
-        f"Expected 1 support-point failure, got {stats.num_support_point_failures}"
-    )
-    assert stats.num_finite_difference_fallbacks == 1, (
-        f"Expected 1 FD fallback, got {stats.num_finite_difference_fallbacks}"
-    )
-
-    # Support-value timers must have accumulated (FD calls _mapping many times)
-    assert stats.time_support_value_model_s > 0.0, (
-        "time_support_value_model_s should be positive after fallback"
-    )
-    assert stats.time_support_value_data_s > 0.0, (
-        "time_support_value_data_s should be positive after fallback"
     )

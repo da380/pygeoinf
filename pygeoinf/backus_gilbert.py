@@ -1,16 +1,11 @@
 """
-Backus-Gilbert style dual master cost function and instrumentation.
+Backus-Gilbert style dual master cost function.
 
 Provides :class:`DualMasterCostFunction` — the oracle $\\varphi(\\lambda; q)$
-minimised over $\\lambda$ in convex Backus-Gilbert / dual-level-set inversion —
-and :class:`DualMasterStats`, a lightweight dataclass that accumulates wall-clock
-timers and call counters for profiling oracle evaluations.
+minimised over $\\lambda$ in convex Backus-Gilbert / dual-level-set inversion.
 """
 
 from __future__ import annotations
-
-import time
-from dataclasses import dataclass
 
 import numpy as np
 
@@ -18,63 +13,6 @@ from .hilbert_space import HilbertSpace, Vector
 from .linear_operators import LinearOperator
 from .nonlinear_forms import NonLinearForm
 from .convex_analysis import SupportFunction
-
-
-@dataclass
-class DualMasterStats:
-    """Lightweight instrumentation counters for :class:`DualMasterCostFunction`.
-
-    All timing values are in **seconds** (wall-clock, via
-    :func:`time.perf_counter`).  Counters start at zero and are accumulated
-    across all calls since the last
-    :meth:`DualMasterCostFunction.reset_instrumentation`.
-    """
-
-    num_value_and_subgradient_calls: int = 0
-    """Total calls to :meth:`~DualMasterCostFunction.value_and_subgradient`."""
-
-    time_value_and_subgradient_s: float = 0.0
-    """Cumulative wall-clock time inside ``value_and_subgradient``."""
-
-    time_gstar_apply_s: float = 0.0
-    """Cumulative time spent computing $G^* \\lambda$."""
-
-    time_support_point_model_s: float = 0.0
-    """Cumulative time for the fused ``model_prior_support.value_and_support_point``
-    call in the fast path.  This measures the combined cost of obtaining both
-    the scalar support value and the support-point maximiser in one operation.
-    This timer records the attempted fused evaluation even when the returned
-    support point is ``None`` and the finite-difference fallback is taken."""
-
-    time_support_point_data_s: float = 0.0
-    """Cumulative time for the fused ``data_error_support.value_and_support_point``
-    call in the fast path.  Semantics mirror ``time_support_point_model_s``:
-    measures the combined fused call, not a standalone support-point query,
-    and includes failed fused attempts that trigger fallback."""
-
-    time_support_value_model_s: float = 0.0
-    """Cumulative time for standalone scalar evaluations of ``model_prior_support``
-    (i.e. direct ``_mapping`` calls).  In the normal fast path this is **zero**
-    because the scalar value is obtained from the fused ``value_and_support_point``
-    call (timed by ``time_support_point_model_s``).  This field is only updated
-    in fallback or direct ``_mapping`` evaluation paths."""
-
-    time_support_value_data_s: float = 0.0
-    """Cumulative time for standalone scalar evaluations of ``data_error_support``
-    (i.e. direct ``_mapping`` calls).  Semantics mirror ``time_support_value_model_s``:
-    zero in the normal fast path; updated only in fallback or direct ``_mapping``
-    evaluation paths."""
-
-    num_support_point_failures: int = 0
-    """Number of calls where a support-point returned ``None``."""
-
-    num_finite_difference_fallbacks: int = 0
-    """Number of times the finite-difference gradient fallback was used."""
-
-    time_finite_difference_s: float = 0.0
-    """Cumulative time spent inside
-    :meth:`~DualMasterCostFunction._finite_difference_gradient`.
-    """
 
 
 class DualMasterCostFunction(NonLinearForm):
@@ -125,8 +63,6 @@ class DualMasterCostFunction(NonLinearForm):
 
         self._Tstar_q = self._T.adjoint(q_direction)
 
-        self._stats = DualMasterStats()
-
         super().__init__(
             data_space, self._mapping, subgradient=self._subgradient
         )
@@ -140,19 +76,6 @@ class DualMasterCostFunction(NonLinearForm):
     def direction(self) -> Vector:
         """Current property direction q ∈ P."""
         return self._q
-
-    @property
-    def instrumentation_stats(self) -> DualMasterStats:
-        """Current accumulated instrumentation statistics.
-
-        Returns a reference to the live :class:`DualMasterStats` object.
-        Call :meth:`reset_instrumentation` to clear before a new experiment.
-        """
-        return self._stats
-
-    def reset_instrumentation(self) -> None:
-        """Reset all instrumentation counters and timers to zero."""
-        self._stats = DualMasterStats()
 
     def set_direction(self, q: Vector) -> None:
         """Update the property direction q and recompute T* q."""
@@ -168,15 +91,11 @@ class DualMasterCostFunction(NonLinearForm):
         # Term 2: σ_B(T*q - G*λ)
         Gstar_lam = self._G_adj(lam)
         hilbert_residual = self._model_space.subtract(self._Tstar_q, Gstar_lam)
-        _t0 = time.perf_counter()
         term2 = self._model_prior_support(hilbert_residual)
-        self._stats.time_support_value_model_s += time.perf_counter() - _t0
 
         # Term 3: σ_V(-λ)
         neg_lam = self.domain.negative(lam)
-        _t0 = time.perf_counter()
         term3 = self._data_error_support(neg_lam)
-        self._stats.time_support_value_data_s += time.perf_counter() - _t0
 
         return term1 + term2 + term3
 
@@ -243,33 +162,18 @@ class DualMasterCostFunction(NonLinearForm):
             A tuple ``(f, g)`` where ``f = φ(λ; q)`` is the scalar value and
             ``g ∈ ∂φ(λ; q)`` is a subgradient vector in $D$.
         """
-        _t0_total = time.perf_counter()
-        s = self._stats
-        s.num_value_and_subgradient_calls += 1
-
         # Shared computation: G* λ (using cached adjoint)
-        _t0 = time.perf_counter()
         Gstar_lam = self._G_adj(lam)
-        s.time_gstar_apply_s += time.perf_counter() - _t0
 
         hilbert_residual = self._model_space.subtract(self._Tstar_q, Gstar_lam)
         neg_lam = self.domain.negative(lam)
 
         # Fused support value + support point (one call each)
-        _t0 = time.perf_counter()
         term2, v = self._model_prior_support.value_and_support_point(hilbert_residual)
-        s.time_support_point_model_s += time.perf_counter() - _t0
-
-        _t0 = time.perf_counter()
         term3, w = self._data_error_support.value_and_support_point(neg_lam)
-        s.time_support_point_data_s += time.perf_counter() - _t0
 
         if v is None or w is None:
-            s.num_support_point_failures += 1
-            s.num_finite_difference_fallbacks += 1
-            result = self._mapping(lam), self._finite_difference_gradient(lam)
-            s.time_value_and_subgradient_s += time.perf_counter() - _t0_total
-            return result
+            return self._mapping(lam), self._finite_difference_gradient(lam)
 
         # Value: term2 and term3 from fused call above
         term1 = self.domain.inner_product(lam, self._observed_data)
@@ -284,7 +188,6 @@ class DualMasterCostFunction(NonLinearForm):
             self.domain.add(term2_subgrad, term3_subgrad),
         )
 
-        s.time_value_and_subgradient_s += time.perf_counter() - _t0_total
         return f, g
 
     def _gradient(self, lam: "Vector") -> "Vector":
@@ -304,7 +207,6 @@ class DualMasterCostFunction(NonLinearForm):
         if eps <= 0:
             raise ValueError("eps must be positive")
 
-        _t0 = time.perf_counter()
         comps = self.domain.to_components(lam)
         grad = np.zeros_like(comps, dtype=float)
 
@@ -319,7 +221,6 @@ class DualMasterCostFunction(NonLinearForm):
             f_minus = self._mapping(lam_minus)
             grad[i] = (f_plus - f_minus) / (2.0 * eps)
 
-        self._stats.time_finite_difference_s += time.perf_counter() - _t0
         return self.domain.from_components(grad)
 
     def _validation(

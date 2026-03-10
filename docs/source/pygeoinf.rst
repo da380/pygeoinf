@@ -29,6 +29,22 @@ pygeoinf.backus\_gilbert module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.convex\_analysis module
+--------------------------------
+
+.. automodule:: pygeoinf.convex_analysis
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pygeoinf.convex\_optimisation module
+-------------------------------------
+
+.. automodule:: pygeoinf.convex_optimisation
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.direct\_sum module
 ---------------------------
 
@@ -141,6 +157,14 @@ pygeoinf.parallel module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.plot module
+--------------------
+
+.. automodule:: pygeoinf.plot
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.visualization module
 -------------------------------
 
@@ -165,10 +189,26 @@ pygeoinf.random\_matrix module
    :undoc-members:
    :show-inheritance:
 
+pygeoinf.subsets module
+-----------------------
+
+.. automodule:: pygeoinf.subsets
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pygeoinf.subspaces module
 -------------------------
 
 .. automodule:: pygeoinf.subspaces
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pygeoinf.utils module
+---------------------
+
+.. automodule:: pygeoinf.utils
    :members:
    :undoc-members:
    :show-inheritance:
