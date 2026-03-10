@@ -269,11 +269,12 @@ A support function $h_C(u) = \sup_{x \in C} \langle x, u \rangle$ encodes a conv
 
 #### `SupportFunction` (ABC)
 
-| Method | Description |
-|---|---|
-| `__call__(u)` / `evaluate(u)` | Compute $h_C(u)$ |
-| `support_point(u)` | Optional maximiser $x^*(u) \in \arg\max_{x \in C}\langle u,x\rangle$; defaults to `None` |
-| `subgradient(u)` | Delegates to `support_point(u)`; raises `NotImplementedError` when `None` |
+| Method | Signature / Return | Description |
+|---|---|---|
+| `__call__(u)` / `evaluate(u)` | `float` | Compute $h_C(u)$ |
+| `support_point(u)` | `Optional[Vector]` | Optional maximiser $x^*(u) \in \arg\max_{x \in C}\langle u,x\rangle$; defaults to `None` |
+| `subgradient(u)` | `Vector` | Delegates to `support_point(u)`; raises `NotImplementedError` when `None` |
+| `value_and_support_point(q)` | `tuple[float, Optional[Vector]]` | Fused `(h(q), x*(q))`; default calls `self(q)` then `support_point(q)` separately; override in concrete classes to share intermediate computations (e.g. a single norm or operator application) |
 
 **Convenience constructors (classmethods on `SupportFunction`):**
 

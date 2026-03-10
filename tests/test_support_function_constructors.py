@@ -13,8 +13,11 @@ import pytest
 from numpy.testing import assert_allclose
 
 from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.convex_analysis import (
     SupportFunction,
+    BallSupportFunction,
+    EllipsoidSupportFunction,
     CallableSupportFunction,
     PointSupportFunction,
 )
@@ -274,3 +277,186 @@ class TestSupportFunctionConvenienceConstructors:
         assert sp is not None
         sg = h.subgradient(q)
         assert_allclose(sg, sp, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: value_and_support_point fused API
+# ---------------------------------------------------------------------------
+
+
+class TestValueAndSupportPoint:
+    """Tests for SupportFunction.value_and_support_point(q).
+
+    TDD: written before the fused implementation. All tests below must be
+    green after Phase 2 implementation.
+    """
+
+    # ------------------------------------------------------------------
+    # Default implementation (SupportFunction base class)
+    # ------------------------------------------------------------------
+
+    def test_default_callable_value_consistent(self, space_2d):
+        """Default: value equals h(q) for a CallableSupportFunction."""
+        h = CallableSupportFunction(
+            space_2d,
+            lambda q: float(np.linalg.norm(q)),
+            support_point_fn=lambda q: q / np.linalg.norm(q),
+        )
+        q = np.array([3.0, 4.0])
+        val, _ = h.value_and_support_point(q)
+        assert_allclose(val, h(q), rtol=1e-12)
+
+    def test_default_callable_point_consistent(self, space_2d):
+        """Default: point equals support_point(q) for a CallableSupportFunction."""
+        def sp_fn(q):
+            return q / np.linalg.norm(q)
+
+        h = CallableSupportFunction(
+            space_2d,
+            lambda q: float(np.linalg.norm(q)),
+            support_point_fn=sp_fn,
+        )
+        q = np.array([3.0, 4.0])
+        _, pt = h.value_and_support_point(q)
+        assert pt is not None
+        assert_allclose(pt, h.support_point(q), rtol=1e-12)
+
+    def test_default_no_support_point_returns_none(self, space_2d):
+        """Default: when support_point returns None, second element is None."""
+        h = CallableSupportFunction(
+            space_2d, lambda q: float(np.linalg.norm(q))  # no support_point_fn
+        )
+        q = np.array([1.0, 2.0])
+        val, pt = h.value_and_support_point(q)
+        assert_allclose(val, h(q), rtol=1e-12)
+        assert pt is None
+
+    # ------------------------------------------------------------------
+    # BallSupportFunction overridden implementation
+    # ------------------------------------------------------------------
+
+    def test_ball_value_matches_standalone(self, space_2d):
+        """BallSupportFunction.value_and_support_point: value equals h(q)."""
+        center = np.array([1.0, 2.0])
+        h = BallSupportFunction(space_2d, center, 3.0)
+        q = np.array([4.0, -3.0])
+        val, _ = h.value_and_support_point(q)
+        assert_allclose(val, h(q), rtol=1e-12)
+
+    def test_ball_point_matches_standalone(self, space_2d):
+        """BallSupportFunction.value_and_support_point: point equals support_point(q)."""
+        center = np.array([1.0, 2.0])
+        h = BallSupportFunction(space_2d, center, 3.0)
+        q = np.array([4.0, -3.0])
+        _, pt = h.value_and_support_point(q)
+        expected = h.support_point(q)
+        assert pt is not None
+        assert expected is not None
+        assert_allclose(pt, expected, rtol=1e-12)
+
+    def test_ball_value_formula_multiple_directions(self, space_2d):
+        """BallSupportFunction: value = <q,c> + r||q|| for several directions."""
+        center = np.array([0.5, -0.5])
+        r = 2.0
+        h = BallSupportFunction(space_2d, center, r)
+        rng = np.random.default_rng(42)
+        for _ in range(5):
+            q = rng.standard_normal(2)
+            val, _ = h.value_and_support_point(q)
+            expected = float(np.dot(q, center)) + r * float(np.linalg.norm(q))
+            assert_allclose(val, expected, rtol=1e-12)
+
+    def test_ball_near_zero_q_value_correct(self, space_2d):
+        """BallSupportFunction: q≈0 gives value=0 (center_term=0, norm=0)."""
+        center = np.array([2.0, -1.0])
+        h = BallSupportFunction(space_2d, center, 0.5)
+        q = np.zeros(2)
+        val, pt = h.value_and_support_point(q)
+        assert_allclose(val, 0.0, atol=1e-14)
+        assert pt is not None
+        assert_allclose(pt, center, rtol=1e-12)
+
+    def test_ball_near_zero_q_point_is_center(self, space_2d):
+        """BallSupportFunction: q≈0 subcase — support_point is center."""
+        center = np.array([1.0, 3.0])
+        h = BallSupportFunction(space_2d, center, 1.5)
+        q = np.full(2, 1e-20)  # effectively zero
+        _, pt = h.value_and_support_point(q)
+        assert_allclose(pt, center, rtol=1e-12)
+
+    # ------------------------------------------------------------------
+    # EllipsoidSupportFunction overridden implementation
+    # ------------------------------------------------------------------
+
+    @pytest.fixture
+    def ellipsoid_h(self, space_2d):
+        """EllipsoidSupportFunction with A = diag(4, 9), center=[1,-1], r=2."""
+        center = np.array([1.0, -1.0])
+        radius = 2.0
+        A_diag = np.array([4.0, 9.0])
+        A = LinearOperator.from_matrix(space_2d, space_2d, np.diag(A_diag))
+        A_inv = LinearOperator.from_matrix(space_2d, space_2d, np.diag(1.0 / A_diag))
+        A_inv_sqrt = LinearOperator.from_matrix(
+            space_2d, space_2d, np.diag(1.0 / np.sqrt(A_diag))
+        )
+        return EllipsoidSupportFunction(space_2d, center, radius, A, A_inv, A_inv_sqrt)
+
+    def test_ellipsoid_value_matches_standalone(self, ellipsoid_h):
+        """EllipsoidSupportFunction: value_and_support_point value equals h(q)."""
+        q = np.array([3.0, 2.0])
+        val, _ = ellipsoid_h.value_and_support_point(q)
+        assert_allclose(val, ellipsoid_h(q), rtol=1e-10)
+
+    def test_ellipsoid_point_matches_standalone(self, ellipsoid_h):
+        """EllipsoidSupportFunction: point equals support_point(q)."""
+        q = np.array([3.0, 2.0])
+        _, pt = ellipsoid_h.value_and_support_point(q)
+        expected = ellipsoid_h.support_point(q)
+        assert pt is not None
+        assert expected is not None
+        assert_allclose(pt, expected, rtol=1e-10)
+
+    def test_ellipsoid_multiple_directions(self, ellipsoid_h):
+        """EllipsoidSupportFunction: value and point consistent for 5 random q."""
+        rng = np.random.default_rng(7)
+        for _ in range(5):
+            q = rng.standard_normal(2)
+            val, pt = ellipsoid_h.value_and_support_point(q)
+            assert_allclose(val, ellipsoid_h(q), rtol=1e-10)
+            assert pt is not None
+            assert_allclose(pt, ellipsoid_h.support_point(q), rtol=1e-10)
+
+    def test_ellipsoid_no_inverse_support_point_none(self, space_2d):
+        """EllipsoidSupportFunction without A_inv: value still returned, point None."""
+        center = np.array([0.0, 0.0])
+        radius = 1.0
+        A_diag = np.array([4.0, 9.0])
+        A = LinearOperator.from_matrix(space_2d, space_2d, np.diag(A_diag))
+        A_inv_sqrt = LinearOperator.from_matrix(
+            space_2d, space_2d, np.diag(1.0 / np.sqrt(A_diag))
+        )
+        # No inverse_operator – support_point returns None
+        h = EllipsoidSupportFunction(
+            space_2d, center, radius, A, inverse_sqrt_operator=A_inv_sqrt
+        )
+        q = np.array([1.0, 1.0])
+        val, pt = h.value_and_support_point(q)
+        assert pt is None
+        assert_allclose(val, h(q), rtol=1e-10)
+
+    def test_ellipsoid_zero_q_value_and_point(self, ellipsoid_h):
+        """EllipsoidSupportFunction: q=0 → value=<q,c>=0, point=center (norm_term<1e-14 branch)."""
+        q = np.zeros(2)
+        val, pt = ellipsoid_h.value_and_support_point(q)
+        # center_term = <q, c> = 0 since q is the zero vector
+        assert_allclose(val, 0.0, atol=1e-14)
+        assert pt is not None
+        # The near-zero branch returns center = [1, -1] (from fixture)
+        assert_allclose(pt, np.array([1.0, -1.0]), rtol=1e-12)
+
+    def test_ellipsoid_very_small_q_returns_center(self, ellipsoid_h):
+        """EllipsoidSupportFunction: q with tiny norm → point = center (branch check)."""
+        q = np.full(2, 1e-20)  # norm_term << 1e-14 after A_inv application
+        _, pt = ellipsoid_h.value_and_support_point(q)
+        assert pt is not None
+        assert_allclose(pt, np.array([1.0, -1.0]), rtol=1e-12)

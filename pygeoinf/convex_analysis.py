@@ -77,6 +77,33 @@ class SupportFunction(NonLinearForm, ABC):
         """Return a subgradient of the support function at q."""
         return self._subgradient_impl(q)
 
+    def value_and_support_point(
+        self, q: "Vector"
+    ) -> "tuple[float, Optional[Vector]]":
+        r"""Return ``(h(q), x*(q))`` sharing intermediate work where possible.
+
+        For a support function $h_S(q) = \sup_{x \in S} \langle q, x \rangle$,
+        the scalar value and the maximiser $x^*(q)$ often share intermediate
+        computations (e.g. a norm or an operator application).  This method
+        provides a single entry point so that overriding subclasses can exploit
+        that sharing.
+
+        The default implementation simply calls ``self(q)`` and
+        ``self.support_point(q)`` separately and is always correct.  Concrete
+        subclasses should override this when a fused computation is cheaper.
+
+        Args:
+            q: A vector in the primal domain $H$.
+
+        Returns:
+            A tuple ``(value, point)`` where
+
+            * ``value`` is the float $h(q)$, always present;
+            * ``point`` is $x^*(q) \in \arg\max_{x \in S} \langle q, x \rangle$
+              as a ``Vector``, or ``None`` when a support point is unavailable.
+        """
+        return (self(q), self.support_point(q))
+
     # ------------------------------------------------------------------
     # Convenience constructors
     # ------------------------------------------------------------------
@@ -247,6 +274,32 @@ class BallSupportFunction(SupportFunction):
         # x* = c + r * (q / ||q||)
         return H.add(self._center, H.multiply(self._radius / n, q))
 
+    def value_and_support_point(
+        self, q: "Vector"
+    ) -> "tuple[float, Optional[Vector]]":
+        r"""Return ``(h(q), x*(q))`` computing $\|q\|$ once.
+
+        Both $h(q) = \langle q, c \rangle + r\|q\|$ and
+        $x^*(q) = c + r \, q / \|q\|$ depend on $\|q\|$, so computing it once
+        halves the number of norm evaluations compared to the default
+        two-call fallback.
+
+        Args:
+            q: A vector in the primal domain $H$.
+
+        Returns:
+            ``(value, point)`` where ``value`` $= h(q)$ and ``point``
+            $= x^*(q)$, or the center $c$ when $q \approx 0$.
+        """
+        H = self.primal_domain
+        center_term = H.inner_product(q, self._center)
+        n = H.norm(q)
+        value = center_term + self._radius * n
+        if n < 1e-14:
+            return (value, self._center)
+        point = H.add(self._center, H.multiply(self._radius / n, q))
+        return (value, point)
+
 
 class EllipsoidSupportFunction(SupportFunction):
     """
@@ -328,6 +381,56 @@ class EllipsoidSupportFunction(SupportFunction):
         # x* = c + r * (A^{-1} q) / ||A^{-1/2} q||
         scaled = H.multiply(self._radius / norm_term, A_inv_q)
         return H.add(self._center, scaled)
+
+    def value_and_support_point(
+        self, q: "Vector"
+    ) -> "tuple[float, Optional[Vector]]":
+        r"""Return ``(h(q), x*(q))`` computing $A^{-1} q$ once.
+
+        When $A^{-1}$ is available, both the value
+
+        .. math::
+
+            h(q) = \langle q, c \rangle + r\,\sqrt{\langle q,\, A^{-1} q \rangle}
+
+        and the support point
+
+        .. math::
+
+            x^*(q) = c + \frac{r}{\sqrt{\langle q, A^{-1} q \rangle}} A^{-1} q
+
+        share the intermediate $A^{-1} q$ and the norm
+        $\|A^{-1/2} q\| = \sqrt{\langle q, A^{-1} q \rangle}$, so only one
+        operator application is needed instead of two.
+
+        When $A^{-1}$ is not available, falls back to calling ``self(q)``
+        (which uses $A^{-1/2}$) and returns ``None`` for the support point,
+        matching the behaviour of :meth:`support_point`.
+
+        Args:
+            q: A vector in the primal domain $H$.
+
+        Returns:
+            ``(value, point)`` where ``point`` is ``None`` when $A^{-1}$ was
+            not supplied at construction.
+        """
+        if self._A_inv is None:
+            # support_point returns None when A_inv is unavailable.
+            # Fall back to the default: value via _mapping (uses A_inv_sqrt).
+            return (self(q), None)
+
+        H = self.primal_domain
+        center_term = H.inner_product(q, self._center)
+        A_inv_q = self._A_inv(q)  # shared intermediate
+        q_sq = H.inner_product(q, A_inv_q)
+        if q_sq < 0:
+            q_sq = 0.0  # clamp numerical noise
+        norm_term = q_sq ** 0.5  # == ||A^{-1/2} q||
+        value = center_term + self._radius * norm_term
+        if norm_term < 1e-14:
+            return (value, self._center)
+        scaled = H.multiply(self._radius / norm_term, A_inv_q)
+        return (value, H.add(self._center, scaled))
 
 
 class HalfSpaceSupportFunction(NonLinearForm):
