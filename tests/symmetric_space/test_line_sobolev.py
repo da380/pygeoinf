@@ -18,19 +18,6 @@ def test_sobolev_axioms(kmax: int, a: float, b: float, c: float):
     space.check(n_checks=5)
 
 
-class TestLineSobolevGeometric:
-    """
-    Tests that depend only on the underlying geometry of the Sobolev space.
-    """
-
-    def test_project_constant_function(self):
-        """Tests if projecting a constant function f(x) = const works correctly."""
-        space = Sobolev(16, 2.0, 0.5, a=0.0, b=1.0, c=0.1)
-        projected_vector = space.project_function(lambda x: 5.0)
-        expected_vector = np.full_like(projected_vector, 5.0)
-        assert np.allclose(projected_vector, expected_vector)
-
-
 class TestLineSobolevSpecific:
     """
     Tests functionalities that are specific to the Sobolev nature of the space,
@@ -47,12 +34,8 @@ class TestLineSobolevSpecific:
         """Tests that <δ_p, f> = f(p) for different Sobolev parameters."""
         space = sobolev_space
         test_point = 0.5
-        length = space.b - space.a + 2 * space.c
 
-        # Test function periodic on the extended domain
-        test_func = lambda x: np.cos(2 * np.pi * x / length) + 2 * np.sin(
-            4 * np.pi * x / length
-        )
+        test_func = lambda x: np.exp(-((x - 0.5) ** 2) / 0.02)
 
         dirac_representation = space.dirac_representation(test_point)
         func_vector = space.project_function(test_func)

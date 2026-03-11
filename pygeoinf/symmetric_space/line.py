@@ -90,16 +90,38 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             float,
         )
 
-    def project_function(self, f: Callable[float, float]) -> np.ndarray:
+    def project_function(self, f: Callable[[float], float]) -> np.ndarray:
         """
         Returns an element of the space by projecting a given function.
 
-        The function `f` is evaluated at the grid points of the space.
+        The function `f` is evaluated at the grid points of the space. To prevent
+        spectral ringing (Gibbs phenomenon) from non-periodic functions, the
+        function is smoothly tapered to zero within the padding regions
+        [a-c, a] and [b, b+c] using a raised cosine window.
 
         Args:
-            f: A function that takes an angle (float) and returns a value.
+            f: A function that takes a point (float) and returns a value.
         """
-        return np.fromiter((f(x) for x in self.points()), float)
+        points = self.points()
+
+        vals = np.fromiter((f(x) for x in points), float)
+
+        mask = np.ones_like(points)
+
+        left_idx = (points < self.a) & (points >= self.a - self._c)
+        if np.any(left_idx):
+            x_norm_left = (points[left_idx] - (self.a - self._c)) / self._c
+            mask[left_idx] = 0.5 * (1 - np.cos(np.pi * x_norm_left))
+
+        right_idx = (points > self.b) & (points <= self.b + self._c)
+        if np.any(right_idx):
+            x_norm_right = (points[right_idx] - self.b) / self._c
+            mask[right_idx] = 0.5 * (1 + np.cos(np.pi * x_norm_right))
+
+        out_of_bounds = (points < self.a - self._c) | (points > self.b + self._c)
+        mask[out_of_bounds] = 0.0
+
+        return vals * mask
 
     def to_coefficients(self, u: np.ndarray) -> np.ndarray:
         """Maps a function vector to its complex Fourier coefficients."""
