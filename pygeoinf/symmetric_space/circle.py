@@ -12,16 +12,26 @@ from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 
 
-class CircleHelper:
+class Lebesgue(AbstractSymmetricLebesgueSpace):
     """
-    A mixin class providing common functionality for function spaces on the circle.
+    Implementation of the Lebesgue space L² on a circle.
+
+    This class represents square-integrable functions on a circle. A function is
+    represented by its values on an evenly spaced grid. The co-ordinate basis for
+    the space is through Fourier expansions.
     """
 
-    def __init__(self, kmax: int, radius: float):
+    def __init__(
+        self,
+        kmax: int,
+        /,
+        *,
+        radius: float = 1.0,
+    ):
         """
         Args:
-            kmax: The maximum Fourier degree to be represented.
-            radius: Radius of the circle.
+        kmax: The maximum Fourier degree to be represented.
+        radius: Radius of the circle. Defaults to 1.0.
         """
 
         if kmax <= 0:
@@ -36,8 +46,14 @@ class CircleHelper:
         self._fft_factor: float = np.sqrt(2 * np.pi * radius) / (2 * self.kmax)
         self._inverse_fft_factor: float = 1.0 / self._fft_factor
 
+        AbstractSymmetricLebesgueSpace.__init__(self, 1, 2 * kmax, False)
+
+    # ---------------------------------------------- #
+    #                   Properties                   #
+    # -----------------------------------------------#
+
     @property
-    def kmax(self):
+    def kmax(self) -> int:
         """The maximum Fourier degree represented in this space."""
         return self._kmax
 
@@ -66,6 +82,10 @@ class CircleHelper:
         in inverse transformations.
         """
         return self._inverse_fft_factor
+
+    # ---------------------------------------------- #
+    #                 Public methods                 #
+    # -----------------------------------------------#
 
     def angles(self) -> np.ndarray:
         """Returns a numpy array of the grid point angles."""
@@ -153,106 +173,16 @@ class CircleHelper:
         ax.fill_between(self.angles(), u - u_bound, u + u_bound, **kwargs)
         return fig, ax
 
-
-class Lebesgue(CircleHelper, AbstractSymmetricLebesgueSpace):
-    """
-    Implementation of the Lebesgue space L² on a circle.
-
-    This class represents square-integrable functions on a circle. A function is
-    represented by its values on an evenly spaced grid. The co-ordinate basis for
-    the space is through Fourier expansions.
-    """
-
-    def __init__(
-        self,
-        kmax: int,
-        /,
-        *,
-        radius: float = 1.0,
-    ):
-        """
-        Args:
-        kmax: The maximum Fourier degree to be represented.
-        radius: Radius of the circle. Defaults to 1.0.
-        """
-
-        CircleHelper.__init__(self, kmax, radius)
-        AbstractSymmetricLebesgueSpace.__init__(self, 1, 2 * kmax, False)
-
-    @staticmethod
-    def from_sobolev_parameters(
-        order: float,
-        scale: float,
-        /,
-        *,
-        radius: float = 1.0,
-        rtol: float = 1e-6,
-        power_of_two: bool = False,
-    ) -> "Sobolev":
-        """
-        Creates an instance with `kmax` chosen based on Sobolev parameters.
-
-        The method estimates the truncation error for the Dirac measure and is
-        only applicable for spaces with order > 0.5.
-
-        Args:
-            order: The Sobolev order. Must be > 0.5.
-            scale: The Sobolev length-scale.
-            radius: The radius of the circle. Defaults to 1.0.
-            rtol: Relative tolerance used in assessing truncation error.
-                Defaults to 1e-8.
-            power_of_two: If True, `kmax` is set to the next power of two.
-
-        Returns:
-            An instance of the Sobolev class with an appropriate `kmax`.
-
-        Raises:
-            ValueError: If order is <= 0.5.
-        """
-        if order <= 0.5:
-            raise ValueError("This method is only applicable for orders > 0.5")
-
-        summation = 1.0
-        k = 0
-        err = 1.0
-        while err > rtol:
-            k += 1
-            term = (1 + (scale * k / radius) ** 2) ** -order
-            summation += 2 * term
-            err = 2 * term / summation
-            if k > 100000:
-                raise RuntimeError("Failed to converge on a stable kmax.")
-
-        if power_of_two:
-            n = int(np.log2(k))
-            k = 2 ** (n + 1)
-
-        return Sobolev(k, order, scale, radius=radius)
-
     # ------------------------------------------------------ #
     #           Methods for SymmetricHilbertSpace            #
     # ------------------------------------------------------ #
 
     def integer_to_index(self, i: int) -> int:
-        """
-        Maps 0..dim-1 to a unique Fourier mode index k.
-
-        Mapping logic:
-        - i in [0, kmax] -> k = i (Constant and Cosine terms)
-        - i in [kmax+1, 2*kmax-1] -> k = -(i - kmax) (Sine terms)
-        """
         if i <= self.kmax:
             return i
         return -(i - self.kmax)
 
     def index_to_integer(self, k: int) -> int:
-        """
-        Maps a unique Fourier mode index k back to the component integer.
-
-        Inverse mapping logic:
-        - k >= 0 -> i = k
-        - k < 0  -> i = abs(k) + kmax
-        """
         if k >= 0:
             if k > self.kmax:
                 raise ValueError(f"Index k={k} exceeds kmax={self.kmax}")
@@ -285,18 +215,6 @@ class Lebesgue(CircleHelper, AbstractSymmetricLebesgueSpace):
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:
-        """
-        Returns quadrature points and weights for the shortest arc between p1 and p2.
-
-        Args:
-            p1: Starting angle in radians.
-            p2: Ending angle in radians.
-            n_points: Number of quadrature points.
-
-        Returns:
-            points: A list of angles (floats) along the shortest arc.
-            weights: Integration weights scaled by the arc length.
-        """
         diff = (p2 - p1 + np.pi) % (2 * np.pi) - np.pi
         arc_length = np.abs(diff) * self.radius
 
@@ -313,33 +231,22 @@ class Lebesgue(CircleHelper, AbstractSymmetricLebesgueSpace):
     #                 Methods for HilbertSpace               #
     # ------------------------------------------------------ #
 
-    def to_components(self, u: np.ndarray) -> np.ndarray:
-        """Converts a function vector to its real component representation."""
-        coeff = self.to_coefficients(u)
+    def to_components(self, x: np.ndarray) -> np.ndarray:
+        coeff = self.to_coefficients(x)
         return self._coefficient_to_component(coeff)
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
-        """Converts a real component vector back to a function vector."""
         coeff = self._component_to_coefficients(c)
         return self.from_coefficients(coeff)
 
-    def is_element(self, u: Any) -> bool:
-        """
-        Checks if an object is a valid element of the space.
-        """
-        if not isinstance(u, np.ndarray):
+    def is_element(self, x: Any) -> bool:
+        if not isinstance(x, np.ndarray):
             return False
-        if not u.shape == (self.dim,):
+        if not x.shape == (self.dim,):
             return False
         return True
 
     def __eq__(self, other: object) -> bool:
-        """
-        Checks for mathematical equality with another Lebesgue space on a circle.
-
-        Two spaces are considered equal if they are of the same type and have
-        the same defining parameters (kmax, order, scale, and radius).
-        """
         if not isinstance(other, Lebesgue):
             return NotImplemented
 
@@ -350,16 +257,10 @@ class Lebesgue(CircleHelper, AbstractSymmetricLebesgueSpace):
     # ------------------------------------------------------ #
 
     def vector_multiply(self, x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
-        """
-        Computes the pointwise product of two vectors.
-        """
         return x1 * x2
 
-    def vector_sqrt(self, u: np.ndarray) -> np.ndarray:
-        """
-        Returns the pointwise square root of a function.
-        """
-        return np.sqrt(u)
+    def vector_sqrt(self, x: np.ndarray) -> np.ndarray:
+        return np.sqrt(x)
 
     # ------------------------------------------------------ #
     #                      Private methods                   #
@@ -391,7 +292,7 @@ class Lebesgue(CircleHelper, AbstractSymmetricLebesgueSpace):
         return coeff
 
 
-class Sobolev(CircleHelper, SymmetricSobolevSpace):
+class Sobolev(SymmetricSobolevSpace):
     """
     Implementation of the Sobolev space Hˢ on a circle.
     """
@@ -412,11 +313,6 @@ class Sobolev(CircleHelper, SymmetricSobolevSpace):
         scale: The Sobolev length-scale.
         radius: Radius of the circle. Defaults to 1.0.
         """
-
-        if kmax < 0:
-            raise ValueError("kmax must be non-negative")
-
-        CircleHelper.__init__(self, kmax, radius)
 
         lebesgue_space = Lebesgue(kmax, radius=radius)
         SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale)
@@ -471,6 +367,41 @@ class Sobolev(CircleHelper, SymmetricSobolevSpace):
 
         return Sobolev(k, order, scale, radius=radius)
 
+    # ---------------------------------------------- #
+    #                   Properties                   #
+    # -----------------------------------------------#
+
+    @property
+    def kmax(self) -> int:
+        """The maximum Fourier degree represented in this space."""
+        return self.underlying_space.kmax
+
+    @property
+    def radius(self) -> float:
+        """The radius of the circle."""
+        return self.underlying_space.radius
+
+    @property
+    def angle_spacing(self) -> float:
+        """The angular spacing between grid points."""
+        return self.underlying_space.angle_spacing
+
+    @property
+    def fft_factor(self) -> float:
+        """
+        The factor by which the Fourier coefficients are scaled
+        in forward transformations.
+        """
+        return self.underlying_space.fft_factor
+
+    @property
+    def inverse_fft_factor(self) -> float:
+        """
+        The factor by which the Fourier coefficients are scaled
+        in inverse transformations.
+        """
+        return self.underlying_space.inverse_fft_factor
+
     @property
     def derivative_operator(self) -> LinearOperator:
         """
@@ -495,3 +426,76 @@ class Sobolev(CircleHelper, SymmetricSobolevSpace):
         )
 
         return LinearOperator.from_formal_adjoint(self, codomain, op_L2)
+
+    # ---------------------------------------------- #
+    #                 Public methods                 #
+    # -----------------------------------------------#
+
+    def angles(self) -> np.ndarray:
+        """Returns a numpy array of the grid point angles."""
+        return self.underlying_space.angles()
+
+    def project_function(self, f: Callable[[float], float]) -> np.ndarray:
+        """
+        Returns an element of the space by projecting a given function.
+
+        The function `f` is evaluated at the grid points of the space.
+
+        Args:
+            f: A function that takes an angle (float) and returns a value.
+        """
+        return self.underlying_space.project_function(f)
+
+    def to_coefficients(self, u: np.ndarray) -> np.ndarray:
+        """Maps a function vector to its complex Fourier coefficients."""
+        return self.underlying_space.to_coefficients(u)
+
+    def from_coefficients(self, coeff: np.ndarray) -> np.ndarray:
+        """Maps complex Fourier coefficients to a function vector."""
+        return self.underlying_space.from_coefficients(coeff)
+
+    def plot(
+        self,
+        u: np.ndarray,
+        fig: Optional[Figure] = None,
+        ax: Optional[Axes] = None,
+        **kwargs,
+    ) -> Tuple[Figure, Axes]:
+        """
+        Makes a simple plot of a function on the circle.
+
+        Args:
+            u: The vector representing the function to be plotted.
+            fig: An existing Matplotlib Figure object. Defaults to None.
+            ax: An existing Matplotlib Axes object. Defaults to None.
+            **kwargs: Keyword arguments forwarded to `ax.plot()`.
+
+        Returns:
+            A tuple (figure, axes) containing the plot objects.
+        """
+        return self.underlying_space.plot(u, fig=fig, ax=ax, **kwargs)
+
+    def plot_error_bounds(
+        self,
+        u: np.ndarray,
+        u_bound: np.ndarray,
+        fig: Optional[Figure] = None,
+        ax: Optional[Axes] = None,
+        **kwargs,
+    ) -> Tuple[Figure, Axes]:
+        """
+        Plots a function with pointwise error bounds.
+
+        Args:
+            u: The vector representing the mean function.
+            u_bound: A vector giving pointwise standard deviations.
+            fig: An existing Matplotlib Figure object. Defaults to None.
+            ax: An existing Matplotlib Axes object. Defaults to None.
+            **kwargs: Keyword arguments forwarded to `ax.fill_between()`.
+
+        Returns:
+            A tuple (figure, axes) containing the plot objects.
+        """
+        return self.underlying_space.plot_error_bounds(
+            u, u_bound, fig=fig, ax=ax, **kwargs
+        )
