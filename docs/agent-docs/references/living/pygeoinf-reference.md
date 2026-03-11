@@ -148,6 +148,8 @@ Direct sum $H_1 \oplus H_2$ with product inner product.
 
 **Constructor:** `HilbertSpaceDirectSum(space1, space2)`
 
+Important implementation note: `zero` and `inner_product` are handled componentwise, so direct sums can include basis-free subspaces with `dim=0` and unavailable component maps. This is what allows operator-theoretic workflows in `intervalinf` to use direct sums of `Lebesgue(..., basis=None)` blocks without routing through `to_components` / `from_components`.
+
 ---
 
 ### `linear_forms.py` — Linear Functionals

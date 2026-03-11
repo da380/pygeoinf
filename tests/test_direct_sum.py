@@ -17,6 +17,54 @@ from pygeoinf.direct_sum import (
     ColumnLinearOperator,
 )
 
+
+class _ZeroDimScalarSpace(HilbertSpace):
+    """Test-only zero-dimensional space that forbids component access."""
+
+    @property
+    def dim(self) -> int:
+        return 0
+
+    @property
+    def zero(self) -> float:
+        return 0.0
+
+    def to_dual(self, x: float):
+        return lambda y: x * y
+
+    def from_dual(self, xp):
+        raise RuntimeError("from_dual should not be called in this test")
+
+    def to_components(self, x: float) -> np.ndarray:
+        raise RuntimeError("to_components should not be called in this test")
+
+    def from_components(self, c: np.ndarray) -> float:
+        raise RuntimeError("from_components should not be called in this test")
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _ZeroDimScalarSpace)
+
+    def is_element(self, x) -> bool:
+        return isinstance(x, float)
+
+    def add(self, x: float, y: float) -> float:
+        return x + y
+
+    def subtract(self, x: float, y: float) -> float:
+        return x - y
+
+    def multiply(self, a: float, x: float) -> float:
+        return a * x
+
+    def negative(self, x: float) -> float:
+        return -x
+
+    def copy(self, x: float) -> float:
+        return float(x)
+
+    def inner_product(self, x1: float, x2: float) -> float:
+        return float(x1 * x2)
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -131,6 +179,19 @@ def test_column_linear_operator_axioms(euclidean_subspaces: list[EuclideanSpace]
 
 class TestDirectSumProperties:
     """Tests specific mathematical properties of direct sums and block operators."""
+
+    def test_zero_componentwise_for_zero_dim_subspaces(self):
+        """zero should not route through from_components for basis-free blocks."""
+        direct_sum = HilbertSpaceDirectSum([_ZeroDimScalarSpace(), _ZeroDimScalarSpace()])
+
+        assert direct_sum.zero == [0.0, 0.0]
+
+    def test_inner_product_componentwise_for_zero_dim_subspaces(self):
+        """inner_product should not route through to_components for basis-free blocks."""
+        direct_sum = HilbertSpaceDirectSum([_ZeroDimScalarSpace(), _ZeroDimScalarSpace()])
+
+        value = direct_sum.inner_product([1.5, -2.0], [3.0, 4.0])
+        assert_allclose(value, 1.5 * 3.0 + (-2.0) * 4.0)
 
     def test_projection_inclusion_identity(self, euclidean_subspaces):
         """Tests that P_i @ J_i = Id_i for projection and inclusion."""
@@ -275,3 +336,166 @@ class TestDirectSumErrorHandling:
         # Provide only one form when two are expected
         with pytest.raises(ValueError):
             direct_sum.canonical_dual_isomorphism([form1])
+
+
+# =============================================================================
+# Test Suite 5: Basis-Free Direct Sums
+# =============================================================================
+
+
+class _BasisFreeSpace(HilbertSpace):
+    """
+    Minimal HilbertSpace with dim=0 and no basis.
+
+    to_components / from_components raise AssertionError to detect any
+    path that inadvertently calls them.  zero, random, and inner_product
+    are provided directly so that HilbertSpaceDirectSum can be tested
+    without touching the component representations.
+    """
+
+    def __init__(self, scale: float = 1.0):
+        self._scale = scale  # inner-product weight
+
+    @property
+    def dim(self) -> int:
+        return 0
+
+    def to_components(self, x):
+        raise AssertionError(
+            "_BasisFreeSpace.to_components must not be called in basis-free mode"
+        )
+
+    def from_components(self, c):
+        raise AssertionError(
+            "_BasisFreeSpace.from_components must not be called in basis-free mode"
+        )
+
+    @property
+    def zero(self):
+        return np.array(0.0)
+
+    def random(self):
+        return np.array(np.random.randn())
+
+    def inner_product(self, x, y):
+        return float(x) * float(y) * self._scale
+
+    def to_dual(self, x):
+        from pygeoinf.linear_forms import LinearForm
+        # Components-independent dual: store value for later evaluation
+        val = float(x) * self._scale
+        # Use a 0-length component array just to satisfy LinearForm's interface
+        from pygeoinf.linear_forms import LinearForm as LF
+        lf = LF.__new__(LF)
+        lf.__dict__['_domain'] = self
+        lf.__dict__['_components'] = np.array([])
+        lf.__dict__['_compute'] = lambda v: float(v) * self._scale * float(x) / self._scale
+        return lf
+
+    def from_dual(self, xp):
+        return np.array(xp(np.array(1.0)) / self._scale)
+
+    def add(self, x, y):
+        return np.array(float(x) + float(y))
+
+    def subtract(self, x, y):
+        return np.array(float(x) - float(y))
+
+    def multiply(self, a, x):
+        return np.array(a * float(x))
+
+    def ax(self, a, x):
+        x *= a
+
+    def axpy(self, a, x, y):
+        result = np.array(float(y) + a * float(x))
+        y[()] = result
+        return y
+
+    def copy(self, x):
+        return np.array(float(x))
+
+    def is_element(self, x):
+        return isinstance(x, (float, np.floating, np.ndarray))
+
+    def __eq__(self, other):
+        if not isinstance(other, _BasisFreeSpace):
+            return NotImplemented
+        return self._scale == other._scale
+
+
+class TestBasisFreeDirectSum:
+    """
+    Regression tests: HilbertSpaceDirectSum must not route zero / random /
+    inner_product through to_components / from_components when the subspace
+    is basis-free (dim=0).
+    """
+
+    def test_zero_does_not_call_from_components(self):
+        """zero must be computed from subspace zeros, not from_components."""
+        space = _BasisFreeSpace()
+        ds = HilbertSpaceDirectSum([space, space])
+        # This must NOT raise AssertionError from _BasisFreeSpace.from_components
+        z = ds.zero
+        assert isinstance(z, list)
+        assert len(z) == 2
+        assert_allclose(float(z[0]), 0.0)
+        assert_allclose(float(z[1]), 0.0)
+
+    def test_random_does_not_call_from_components(self):
+        """random must be computed from subspace randoms, not from_components."""
+        space = _BasisFreeSpace()
+        ds = HilbertSpaceDirectSum([space, space])
+        np.random.seed(42)
+        v = ds.random()
+        assert isinstance(v, list)
+        assert len(v) == 2
+        # Values are random but finite
+        assert np.isfinite(float(v[0]))
+        assert np.isfinite(float(v[1]))
+
+    def test_inner_product_does_not_call_to_components(self):
+        """inner_product must use subspace inner products, not to_components."""
+        space_a = _BasisFreeSpace(scale=2.0)
+        space_b = _BasisFreeSpace(scale=3.0)
+        ds = HilbertSpaceDirectSum([space_a, space_b])
+
+        # Vectors in the direct sum
+        xs = [np.array(2.0), np.array(4.0)]
+        ys = [np.array(3.0), np.array(5.0)]
+
+        # Expected = scale_a * 2*3 + scale_b * 4*5 = 12 + 60 = 72
+        ip = ds.inner_product(xs, ys)
+        assert_allclose(ip, 72.0)
+
+    def test_nested_basis_free_direct_sum_zero(self):
+        """Nested direct sums of basis-free spaces return nested zero lists."""
+        space = _BasisFreeSpace()
+        inner_ds = HilbertSpaceDirectSum([space, space])
+        outer_ds = HilbertSpaceDirectSum([inner_ds, space])
+
+        z = outer_ds.zero
+        assert isinstance(z, list) and len(z) == 2
+        inner_z = z[0]
+        assert isinstance(inner_z, list) and len(inner_z) == 2
+        assert_allclose(float(inner_z[0]), 0.0)
+        assert_allclose(float(inner_z[1]), 0.0)
+        assert_allclose(float(z[1]), 0.0)
+
+    def test_mixed_basis_free_and_euclidean_inner_product(self):
+        """Direct sum of a basis-free space + EuclideanSpace must work."""
+        bf = _BasisFreeSpace(scale=1.0)
+        eu = EuclideanSpace(2)
+        ds = HilbertSpaceDirectSum([bf, eu])
+
+        z = ds.zero
+        assert isinstance(z, list) and len(z) == 2
+        assert_allclose(float(z[0]), 0.0)
+        assert_allclose(z[1], np.zeros(2))
+
+        xs = [np.array(3.0), np.array([1.0, 2.0])]
+        ys = [np.array(4.0), np.array([2.0, 3.0])]
+        # bf: 3*4 = 12, eu: 1*2 + 2*3 = 8  → total 20
+        ip = ds.inner_product(xs, ys)
+        assert_allclose(ip, 20.0)
+

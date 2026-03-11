@@ -66,7 +66,12 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
     @property
     @abstractmethod
     def dim(self) -> int:
-        """The finite dimension of the space."""
+        """The dimension of the finite component representation.
+
+        This is the size of the coefficient/vector representation used by
+        `to_components` and `from_components`, not necessarily the literal
+        mathematical dimension of the underlying Hilbert space.
+        """
 
     @abstractmethod
     def to_dual(self, x: Vector) -> Any:
@@ -233,6 +238,7 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         Generates a random vector from the space.
 
         The vector's components are drawn from a standard normal distribution.
+        Spaces without a component representation should override this method.
 
         Returns:
             A new random vector.
