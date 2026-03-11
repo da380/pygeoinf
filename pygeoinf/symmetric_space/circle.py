@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
+from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 
 
@@ -469,3 +470,28 @@ class Sobolev(CircleHelper, SymmetricSobolevSpace):
             k = 2 ** (n + 1)
 
         return Sobolev(k, order, scale, radius=radius)
+
+    @property
+    def derivative_operator(self) -> LinearOperator:
+        """
+        Returns the derivative operator from the space to one with a lower order.
+        """
+
+        codomain = Sobolev(self.kmax, self.order - 1, self.scale, radius=self.radius)
+
+        lebesgue_space = self.underlying_space
+        k = np.arange(self.kmax + 1)
+
+        def mapping(u):
+            coeff = lebesgue_space.to_coefficients(u)
+            diff_coeff = 1j * k * coeff
+            return lebesgue_space.from_coefficients(diff_coeff)
+
+        op_L2 = LinearOperator(
+            lebesgue_space,
+            lebesgue_space,
+            mapping,
+            adjoint_mapping=lambda u: -1 * mapping(u),
+        )
+
+        return LinearOperator.from_formal_adjoint(self, codomain, op_L2)
