@@ -5,7 +5,7 @@ from pygeoinf.symmetric_space.sphere import Sobolev
 
 
 # Set the model space
-lmax = 256
+lmax = 128
 order = 1.5
 scale = 0.05
 
@@ -14,7 +14,7 @@ model_space = Sobolev(lmax, order, scale)
 # Set up the forward problem
 print("Setting up the forward problem")
 sources = 10
-receivers = 50
+receivers = 100
 
 paths = model_space.random_source_receiver_paths(sources, receivers)
 forward_operator = model_space.path_average_operator(paths)
@@ -29,7 +29,7 @@ forward_problem = inf.LinearForwardProblem(
 
 # Set a prior and make synthetic data
 prior_order = 2
-prior_scale = 0.05
+prior_scale = 0.1
 model_prior_measure = model_space.point_value_scaled_sobolev_kernel_gaussian_measure(
     prior_order, prior_scale
 )
@@ -52,7 +52,7 @@ model_std = model_posterior_measure.sample_pointwise_std(250)
 print("Plotting the results")
 fig1, ax1, im1 = model_space.plot(model, projection=ccrs.Robinson(), coasts=True)
 ax1.set_title("True model", y=1.1)
-model_space.plot_geodesic_network(paths, ax=ax1)
+model_space.plot_geodesic_network(paths, ax=ax1, alpha=0.2)
 cbar1 = fig1.colorbar(im1, ax=ax1, orientation="horizontal", pad=0.05, shrink=0.7)
 
 
@@ -61,7 +61,7 @@ fig2, ax2, im2 = model_space.plot(
     model_posterior_measure.expectation, projection=ccrs.Robinson(), coasts=True
 )
 ax2.set_title("Posterior expectation", y=1.1)
-model_space.plot_geodesic_network(paths, ax=ax2)
+model_space.plot_geodesic_network(paths, ax=ax2, alpha=0.2)
 cbar2 = fig2.colorbar(im2, ax=ax2, orientation="horizontal", pad=0.05, shrink=0.7)
 
 
@@ -69,7 +69,7 @@ fig3, ax3, im3 = model_space.plot(
     model_std, projection=ccrs.Robinson(), coasts=True, cmap="YlGnBu"
 )
 ax3.set_title("Posterior pointwise std", y=1.1)
-model_space.plot_geodesic_network(paths, ax=ax3)
+model_space.plot_geodesic_network(paths, ax=ax3, alpha=0.2)
 cbar3 = fig3.colorbar(im3, ax=ax3, orientation="horizontal", pad=0.05, shrink=0.7)
 
 plt.show()

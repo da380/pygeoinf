@@ -10,50 +10,38 @@ harmonic transforms. Following a compositional design, this module first
 defines a base `Lebesgue` space and then constructs the `Sobolev` space as a
 `MassWeightedHilbertSpace` over it. The module also includes powerful plotting
 utilities built on `cartopy` for professional-quality geospatial visualization.
-
-Key Classes
------------
-- `SphereHelper`: A mixin class providing the core geometry, spherical harmonic
-  transform machinery, and `cartopy`-based plotting utilities.
-- `Lebesgue`: A concrete implementation of the L²(S²) space of square-integrable
-  functions on the sphere.
-- `Sobolev`: A concrete implementation of the Hˢ(S²) space of functions with a
-  specified degree of smoothness.
 """
 
 from __future__ import annotations
 from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING
 
+import math
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
-from scipy.sparse import diags, coo_array
 
-from joblib import Parallel, delayed
 
 try:
     import pyshtools as sh
+    from pyshtools.shio import SHCilmToVector
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+
+
 except ImportError:
     raise ImportError(
         "pyshtools and cartopy are required for the sphere module. "
         "Please install them with 'pip install pygeoinf[sphere]'"
-    )
+    ) from None
 
-from pygeoinf.hilbert_space import (
-    EuclideanSpace,
-    HilbertModule,
-    MassWeightedHilbertModule,
-)
+
+from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
-from pygeoinf.linear_forms import LinearForm
-from .symmetric_space import (
-    AbstractInvariantLebesgueSpace,
-    AbstractInvariantSobolevSpace,
-)
 from .sh_tools import SHVectorConverter
+
+
+from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 
 
 if TYPE_CHECKING:
@@ -63,30 +51,35 @@ if TYPE_CHECKING:
     from pyshtools import SHGrid
 
 
-class SphereHelper:
+class Lebesgue(AbstractSymmetricLebesgueSpace):
     """
-    A mixin providing common functionality for function spaces on the sphere.
+    Implementation of the Lebesgue space L² on a sphere.
 
-    This helper is not intended for direct instantiation. It provides the core
-    geometry (radius, grid type), the spherical harmonic transform machinery via
-    `pyshtools`, and `cartopy`-based plotting utilities that are shared by the
-    `Lebesgue` and `Sobolev` space classes.
+    This class represents square-integrable functions on a sphere. A function is
+    represented by its values on an evenly spaced grid. The co-ordinate basis for
+    the space is through spherical harmonic expansions.
     """
 
     def __init__(
         self,
         lmax: int,
-        radius: float,
-        grid: str,
-        extend: bool,
+        /,
+        *,
+        radius: float = 1,
+        grid: str = "DH",
+        extend: bool = True,
     ):
         """
         Args:
-            lmax: The maximum spherical harmonic degree to be represented.
-            radius: Radius of the sphere.
-            grid: The `pyshtools` grid type.
-            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+            lmax: Maximum degree for the expansions.
+            radius: Radius of the sphere. Defaults to 1.
+            grid: pyshtools grid type. Defaults to "DH"
+            extend: If true longitudes wrap fully. Defaults to True.
         """
+
+        if lmax < 0:
+            raise ValueError("lmax must be non-negative")
+
         self._lmax: int = lmax
         self._radius: float = radius
 
@@ -103,12 +96,11 @@ class SphereHelper:
         self._normalization: str = "ortho"
         self._csphase: int = 1
 
-    def orthonormalised(self) -> bool:
-        """The space is orthonormalised."""
-        return True
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, (lmax + 1) ** 2, False)
 
-    def _space(self):
-        return self
+    # ------------------------------------------------------ #
+    #                       Properties                       #
+    # ------------------------------------------------------ #
 
     @property
     def lmax(self) -> int:
@@ -146,51 +138,15 @@ class SphereHelper:
         return self._csphase
 
     @property
-    def spatial_dimension(self) -> int:
-        """The dimension of the space."""
-        return 2
-
-    def random_point(self) -> List[float]:
-        """Returns a random point as `[latitude, longitude]`."""
-        latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
-        longitude = np.random.uniform(0.0, 360.0)
-        return [latitude, longitude]
-
-    def laplacian_eigenvalue(self, k: [int, int]) -> float:
+    def grid_type(self) -> str:
         """
-        Returns the (l.m)-th eigenvalue of the Laplacian.
-
-        Args:
-            k = (l,m): The index of the eigenvalue to return.
+        Returns the pyshtools grid type.
         """
-        l = k[0]
-        return l * (l + 1) / self.radius**2
+        return self.grid if self._sampling == 1 else "DH2"
 
-    def degree_from_laplacian_eigenvalue(self, eig: float) -> float:
-        """
-        Returns the degree corresponding to a given eigenvalue.
-
-        Note that the value is returned as a float
-
-        Args:
-            eig: The eigenvalue.
-        """
-        return np.sqrt(self.radius**2 * eig + 0.25)
-
-    def trace_of_invariant_automorphism(self, f: Callable[[float], float]) -> float:
-        """
-        Returns the trace of the automorphism of the form f(Δ) with f a function
-        that is well-defined on the spectrum of the Laplacian.
-
-        Args:
-            f: A real-valued function that is well-defined on the spectrum
-               of the Laplacian.
-        """
-        trace = 0
-        for l in range(self.lmax + 1):
-            for m in range(-l, l + 1):
-                trace += f(self.laplacian_eigenvalue((l, m)))
-        return trace
+    # ------------------------------------------------------ #
+    #                    Public methods                      #
+    # ------------------------------------------------------ #
 
     def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
         """
@@ -222,7 +178,7 @@ class SphereHelper:
         u: sh.SHGrid,
         /,
         *,
-        projection: "Projection" = ccrs.PlateCarree(),
+        projection: Optional["Projection"] = None,
         contour: bool = False,
         cmap: str = "RdBu",
         coasts: bool = False,
@@ -235,137 +191,93 @@ class SphereHelper:
         contour_lines_kwargs: Optional[dict] = None,
         num_levels: int = 10,
         **kwargs,
-    ) -> Tuple[Figure, "GeoAxes", Any]:
+    ) -> Tuple["Figure", "GeoAxes", Any]:
         """
-        Creates a map plot of a function on the sphere using `cartopy`.
+        Creates a high-quality map plot of a spherical harmonic function using Cartopy.
+
+        This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
+        onto a specified map projection. It supports both pcolormesh and filled contour
+        plotting styles, along with various geographic overlays.
 
         Args:
-            u: The element to be plotted.
-            projection: A `cartopy.crs` projection. Defaults to `PlateCarree`.
-            contour: If True, creates a filled contour plot. Otherwise, a `pcolormesh` plot.
-            cmap: The colormap name.
-            coasts: If True, draws coastlines.
-            rivers: If True, draws major rivers.
-            borders: If True, draws country borders.
-            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` to set map bounds.
-            gridlines: If True, draws latitude/longitude gridlines.
-            symmetric: If True, centers the color scale symmetrically around zero.
-            contour_lines: If True, overlays contour lines on the plot.
-            contour_lines_kwargs: A dictionary of keyword arguments for styling the
-                contour lines (e.g., {'colors': 'k', 'linewidths': 0.5})
-            num_levels: The number of levels to generate automatically if `levels`
-                is not provided directly.
-            **kwargs: Additional keyword arguments forwarded to the plotting function
-                (`ax.contourf` or `ax.pcolormesh`).
+            u: The scalar field to be plotted, evaluated on a spatial grid.
+            projection: A `cartopy.crs` projection instance defining the map view.
+                Defaults to `ccrs.PlateCarree()`.
+            contour: If True, renders the field as a filled contour plot (`contourf`).
+                If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
+            cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
+            coasts: If True, overlays high-resolution coastlines. Defaults to False.
+            rivers: If True, overlays major river systems. Defaults to False.
+            borders: If True, overlays international country borders. Defaults to False.
+            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
+                extent of the map. Defaults to None (global view).
+            gridlines: If True, draws latitude and longitude gridlines with labels.
+                Defaults to True.
+            symmetric: If True, dynamically centers the color scale symmetrically around
+                zero (e.g., from -max to +max), which is ideal for anomaly fields.
+                Defaults to False.
+            contour_lines: If True, overlays solid contour lines on top of the base plot.
+                Defaults to False.
+            contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
+                for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
+            num_levels: The number of color levels to generate automatically if specific
+                `levels` are not provided in `**kwargs`. Defaults to 10.
+            **kwargs: Additional keyword arguments forwarded directly to the underlying
+                Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
 
         Returns:
-            A tuple `(figure, axes, image)` containing the Matplotlib and Cartopy objects.
+            A tuple `(fig, ax, im)` containing:
+                - fig: The generated Matplotlib Figure.
+                - ax: The Cartopy GeoAxes object.
+                - im: The rendered image object (either a QuadMesh or ContourSet).
         """
-
-        lons = u.lons()
-        lats = u.lats()
-
-        figsize: Tuple[int, int] = kwargs.pop("figsize", (10, 8))
-        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": projection})
-
-        if map_extent is not None:
-            ax.set_extent(map_extent, crs=ccrs.PlateCarree())
-        if coasts:
-            ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-        if rivers:
-            ax.add_feature(cfeature.RIVERS, linewidth=0.8)
-        if borders:
-            ax.add_feature(cfeature.BORDERS, linewidth=0.8)
-
-        kwargs.setdefault("cmap", cmap)
-        if symmetric:
-            data_max = 1.2 * np.nanmax(np.abs(u.data))
-            kwargs.setdefault("vmin", -data_max)
-            kwargs.setdefault("vmax", data_max)
-
-        if "levels" in kwargs:
-            levels = kwargs.pop("levels")
-        else:
-            vmin = kwargs.get("vmin", np.nanmin(u.data))
-            vmax = kwargs.get("vmax", np.nanmax(u.data))
-            levels = np.linspace(vmin, vmax, num_levels)
-
-        im: Any
-        if contour:
-            kwargs.pop("vmin", None)
-            kwargs.pop("vmax", None)
-            im = ax.contourf(
-                lons,
-                lats,
-                u.data,
-                transform=ccrs.PlateCarree(),
-                levels=levels,
-                **kwargs,
-            )
-        else:
-            im = ax.pcolormesh(
-                lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs
-            )
-
-        if contour_lines:
-            cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
-            cl_kwargs.setdefault("colors", "k")
-            cl_kwargs.setdefault("linewidths", 0.5)
-
-            ax.contour(
-                lons,
-                lats,
-                u.data,
-                transform=ccrs.PlateCarree(),
-                levels=levels,
-                **cl_kwargs,
-            )
-
-        if gridlines:
-            lat_interval = kwargs.pop("lat_interval", 30)
-            lon_interval = kwargs.pop("lon_interval", 30)
-            gl = ax.gridlines(
-                linestyle="--",
-                draw_labels=True,
-                dms=True,
-                x_inline=False,
-                y_inline=False,
-            )
-            gl.xlocator = mticker.MultipleLocator(lon_interval)
-            gl.ylocator = mticker.MultipleLocator(lat_interval)
-            gl.xformatter = LongitudeFormatter()
-            gl.yformatter = LatitudeFormatter()
-
-        return fig, ax, im
+        return plot(
+            u,
+            projection=projection,
+            contour=contour,
+            cmap=cmap,
+            coasts=coasts,
+            rivers=rivers,
+            borders=borders,
+            map_extent=map_extent,
+            gridlines=gridlines,
+            symmetric=symmetric,
+            contour_lines=contour_lines,
+            contour_lines_kwargs=contour_lines_kwargs,
+            num_levels=num_levels,
+            **kwargs,
+        )
 
     def plot_geodesic(
         self,
         p1: Tuple[float, float],
         p2: Tuple[float, float],
         ax: Optional["GeoAxes"] = None,
-        n_points: int = 100,
+        n_points: int = 50,
         **kwargs,
     ) -> Tuple["Figure", "GeoAxes"]:
         """
-        Plots a geodesic curve onto a Cartopy map.
+        Plots a geodesic (great-circle) curve between two points on the sphere.
+
+        This function leverages Cartopy's native `ccrs.Geodetic()` transform to
+        automatically render the shortest path between two coordinates across
+        any map projection.
+
+        Args:
+            p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
+            p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                and PlateCarree axes will be created automatically.
+            n_points: The number of points to use for interpolation. Note: Kept for
+                backwards compatibility, but interpolation is currently handled
+                natively by Cartopy's geodetic transforms.
+            **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
+                line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
+
+        Returns:
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
         """
-        points, _ = self.geodesic_quadrature(p1, p2, n_points=n_points)
-        lats, lons = zip(*points)
-
-        if ax is None:
-            fig, ax = plt.subplots(
-                figsize=kwargs.pop("figsize", (10, 8)),
-                subplot_kw={"projection": ccrs.PlateCarree()},
-            )
-        else:
-            fig = ax.get_figure()
-
-        kwargs.setdefault("color", "black")
-        kwargs.setdefault("linewidth", 2)
-
-        ax.plot(lons, lats, transform=ccrs.Geodetic(), **kwargs)
-
-        return fig, ax
+        return plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
 
     def plot_geodesic_network(
         self,
@@ -375,66 +287,28 @@ class SphereHelper:
         **kwargs,
     ) -> Tuple["Figure", "GeoAxes"]:
         """
-        Plots a network of geodesic paths onto a Cartopy map.
+        Plots a network of intersecting geodesic paths onto a Cartopy map.
 
-        This method iterates through a list of source-receiver pairs and renders
-        each as a great-circle arc. It is useful for visualizing the spatial
-        coverage of a tomographic survey.
+        This function visualizes a full source-receiver network, commonly used in
+        tomographic surveys. It renders all connection arcs as great circles and
+        overlays distinct scatter markers for the unique source and receiver locations.
 
         Args:
-            paths: A list of ((lat1, lon1), (lat2, lon2)) tuples.
-            ax: An existing cartopy GeoAxes object. If None, a new figure is created.
-            n_points: Number of points used to render each curve. A lower value
-                (e.g., 50) is often sufficient for batch plotting many lines.
-            **kwargs: Keyword arguments passed to the underlying plot calls
-                (e.g., color, alpha, linewidth).
+            paths: A list of point pairs defining the network. Each item should be
+                a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                with a global PlateCarree projection is created.
+            n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
+            **kwargs: Default styling arguments applied to the geodesic lines
+                (e.g., `color='black'`, `alpha=0.5`).
+                Special sub-dictionaries can be passed to style the markers:
+                - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
+                - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
 
         Returns:
-            A tuple (figure, axes) containing the plot objects.
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
         """
-
-        if ax is None:
-            figsize = kwargs.pop("figsize", (12, 10))
-            fig, ax = plt.subplots(
-                figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()}
-            )
-            ax.set_global()
-            ax.coastlines()
-        else:
-            fig = ax.get_figure()
-
-        kwargs.setdefault("color", "black")
-        kwargs.setdefault("linewidth", 0.8)
-        kwargs.setdefault("alpha", 0.5)
-
-        for p1, p2 in paths:
-            self.plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
-
-        sources = list(set([tuple(p[0]) for p in paths]))
-        receivers = list(set([tuple(p[1]) for p in paths]))
-
-        src_lats, src_lons = zip(*sources)
-        rec_lats, rec_lons = zip(*receivers)
-
-        src_style = kwargs.pop("source_kwargs", {})
-        src_style.setdefault("marker", "*")
-        src_style.setdefault("color", "gold")
-        src_style.setdefault("s", 150)
-        src_style.setdefault("edgecolor", "black")
-        src_style.setdefault("zorder", 5)
-
-        ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
-
-        rec_style = kwargs.pop("receiver_kwargs", {})
-        rec_style.setdefault("marker", "o")
-        rec_style.setdefault("color", "red")
-        rec_style.setdefault("s", 50)
-        rec_style.setdefault("edgecolor", "white")
-        rec_style.setdefault("zorder", 5)
-
-        ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
-
-        return fig, ax
+        return plot_geodesic_network(paths, ax=ax, n_points=n_points, **kwargs)
 
     def sample_power_measure(
         self,
@@ -464,6 +338,63 @@ class SphereHelper:
             powers.append(ulm.spectrum(lmax=lmax, convention="power")[lmin:])
 
         return powers
+
+    # ------------------------------------------------------ #
+    #           Methods for SymmetricHilbertSpace            #
+    # ------------------------------------------------------ #
+
+    import math
+
+    def index_to_integer(self, k: Tuple[int, int]) -> int:
+        l, m = k
+        if abs(m) > l or l < 0:
+            raise ValueError("Invalid spherical harmonic: |m| must be <= l, and l >= 0")
+
+        # Pure Python is much faster for scalars
+        return l**2 + m if m >= 0 else l**2 + l + abs(m)
+
+    def integer_to_index(self, i: int) -> Tuple[int, int]:
+        if i < 0:
+            raise ValueError("Index cannot be negative.")
+
+        # math.isqrt is vastly faster than np.floor(np.sqrt(i))
+        l = math.isqrt(i)
+        r = i - l**2
+        m = r if r <= l else l - r
+
+        return l, m
+
+    def laplacian_eigenvalue(self, k: Tuple[int, int]) -> float:
+        """
+        Returns the (l.m)-th eigenvalue of the Laplacian.
+
+        Args:
+            k = (l,m): The index of the eigenvalue to return.
+        """
+        l = k[0]
+        return l * (l + 1) / self.radius**2
+
+    def laplacian_eigenvector_squared_norm(self, k: Tuple[int, int]) -> float:
+        return self.radius**2
+
+    def laplacian_eigenvectors_at_point(self, point: Tuple[float, float]) -> np.ndarray:
+        latitude, longitude = point
+        colatitude = 90.0 - latitude
+
+        coeffs = sh.expand.spharm(
+            self.lmax,
+            colatitude,
+            longitude,
+            normalization=self.normalization,
+            degrees=True,
+        )
+        return SHCilmToVector(coeffs)
+
+    def random_point(self) -> List[float]:
+        """Returns a random point as `[latitude, longitude]`."""
+        latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
+        longitude = np.random.uniform(0.0, 360.0)
+        return [latitude, longitude]
 
     def geodesic_quadrature(
         self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
@@ -530,92 +461,9 @@ class SphereHelper:
 
         return points, scaled_weights
 
-    # --------------------------------------------------------------- #
-    #                         private methods                         #
-    # ----------------------------------------------------------------#
-
-    def _grid_name(self):
-        return self.grid if self._sampling == 1 else "DH2"
-
-    def _coefficient_to_component_mapping(self) -> coo_array:
-        """Builds a sparse matrix to map `pyshtools` coeffs to component vectors."""
-        row_dim = (self.lmax + 1) ** 2
-        col_dim = 2 * (self.lmax + 1) ** 2
-
-        row, col = 0, 0
-        rows, cols = [], []
-        for l in range(self.lmax + 1):
-            col = l * (self.lmax + 1)
-            for _ in range(l + 1):
-                rows.append(row)
-                row += 1
-                cols.append(col)
-                col += 1
-
-        for l in range(self.lmax + 1):
-            col = (self.lmax + 1) ** 2 + l * (self.lmax + 1) + 1
-            for _ in range(1, l + 1):
-                rows.append(row)
-                row += 1
-                cols.append(col)
-                col += 1
-
-        data = [1.0] * row_dim
-        return coo_array(
-            (data, (rows, cols)), shape=(row_dim, col_dim), dtype=float
-        ).tocsc()
-
-    def _degree_dependent_scaling_values(self, f: Callable[[int], float]) -> diags:
-        """Creates a diagonal sparse matrix from a function of degree `l`."""
-        ls = np.arange(self.lmax + 1)
-        f_vectorized = np.vectorize(f)
-        values = f_vectorized(ls)
-        counts = 2 * ls + 1
-        return np.repeat(values, counts)
-
-    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
-        """Maps spherical harmonic coefficients to a component vector."""
-        return sh.shio.SHCilmToVector(ulm.coeffs)
-
-    def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
-        """Maps a component vector to spherical harmonic coefficients."""
-        coeffs = sh.shio.SHVectorToCilm(c)
-        return sh.SHCoeffs.from_array(
-            coeffs, normalization=self.normalization, csphase=self.csphase
-        )
-
-
-class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
-    """
-    Implementation of the Lebesgue space L² on the sphere.
-
-    This class represents square-integrable functions on a sphere. A function is
-    represented by a `pyshtools.SHGrid` object, which stores its values on a
-    regular grid in latitude and longitude. The L² inner product is defined
-    in the spherical harmonic domain.
-    """
-
-    def __init__(
-        self,
-        lmax: int,
-        /,
-        *,
-        radius: float = 1,
-        grid: str = "DH",
-        extend: bool = True,
-    ):
-
-        if lmax < 0:
-            raise ValueError("lmax must be non-negative")
-
-        self._dim = (lmax + 1) ** 2
-
-        SphereHelper.__init__(self, lmax, radius, grid, extend)
-
-    @property
-    def dim(self) -> int:
-        """The dimension of the space."""
-        return self._dim
+    # ------------------------------------------------------ #
+    #                 Methods for HilbertSpace               #
+    # ------------------------------------------------------ #
 
     def to_components(self, u: sh.SHGrid) -> np.ndarray:
         coeff = self.to_coefficients(u)
@@ -623,16 +471,6 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
     def from_components(self, c: np.ndarray) -> sh.SHGrid:
         coeff = self._component_to_coefficients(c)
-        return self.from_coefficients(coeff)
-
-    def to_dual(self, u: sh.SHGrid) -> LinearForm:
-        coeff = self.to_coefficients(u)
-        cp = self._coefficient_to_component(coeff) * self.radius**2
-        return self.dual.from_components(cp)
-
-    def from_dual(self, up: LinearForm) -> sh.SHGrid:
-        cp = self.dual.to_components(up) / self.radius**2
-        coeff = self._component_to_coefficients(cp)
         return self.from_coefficients(coeff)
 
     def ax(self, a: float, x: sh.SHGrid) -> None:
@@ -649,6 +487,41 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         """
         y.data += a * x.data
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Checks for mathematical equality with another Sobolev space on a sphere.
+
+        Two spaces are considered equal if they are of the same type and have
+        the same defining parameters (kmax, order, scale, and radius).
+        """
+        if not isinstance(other, Lebesgue):
+            return NotImplemented
+
+        return (
+            self.lmax == other.lmax
+            and self.radius == other.radius
+            and self.grid == other.grid
+            and self.extend == other.extend
+        )
+
+    def is_element(self, x: Any) -> bool:
+        """
+        Checks if an object is a valid element of the space.
+        """
+        if not isinstance(x, sh.SHGrid):
+            return False
+        if not x.lmax == self.lmax:
+            return False
+        if not x.grid == self.grid_type:
+            return False
+        if not x.extend == self.extend:
+            return False
+        return True
+
+    # ------------------------------------------------------ #
+    #                 Methods for HilbertModule              #
+    # ------------------------------------------------------ #
+
     def vector_multiply(self, x1: sh.SHGrid, x2: sh.SHGrid) -> sh.SHGrid:
         """
         Computes the pointwise product of two functions.
@@ -663,63 +536,11 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
         y.data = np.sqrt(x.data)
         return y
 
-    def __eq__(self, other: object) -> bool:
-        """
-        Checks for mathematical equality with another Sobolev space on a sphere.
+    # ------------------------------------------------------ #
+    #                   Additional methods                   #
+    # ------------------------------------------------------ #
 
-        Two spaces are considered equal if they are of the same type and have
-        the same defining parameters (kmax, order, scale, and radius).
-        """
-        if not isinstance(other, Lebesgue):
-            return NotImplemented
-
-        return self.lmax == other.lmax and self.radius == other.radius
-
-    def is_element(self, x: Any) -> bool:
-        """
-        Checks if an object is a valid element of the space.
-        """
-        if not isinstance(x, sh.SHGrid):
-            return False
-        if not x.lmax == self.lmax:
-            return False
-        if not x.grid == self._grid_name():
-            return False
-        if not x.extend == self.extend:
-            return False
-        return True
-
-    def eigenfunction_norms(self) -> np.ndarray:
-        """Returns a list of the norms of the eigenfunctions."""
-        return np.fromiter(
-            [self.radius for i in range(self.dim)],
-            dtype=float,
-        )
-
-    def invariant_automorphism_from_index_function(
-        self, g: Callable[[(int, int)], float]
-    ) -> LinearOperator:
-        values = self._degree_dependent_scaling_values(lambda l: g((l, 0)))
-        matrix = diags([values], [0])
-
-        def mapping(u):
-            c = matrix @ (self.to_components(u))
-            coeff = self._component_to_coefficients(c)
-            return self.from_coefficients(coeff)
-
-        return LinearOperator.self_adjoint(self, mapping)
-
-    def __str__(self) -> str:
-        """Returns a human-readable string summary of the space."""
-        return (
-            f"Lebesgue space on sphere:\n"
-            f"lmax={self.lmax}\n"
-            f"radius={self.radius}\n"
-            f"grid={self.grid}\n"
-            f"extend={self.extend}"
-        )
-
-    def to_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
 
@@ -760,7 +581,7 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
-    def from_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a vector of coefficients to a function.
 
@@ -800,16 +621,25 @@ class Lebesgue(SphereHelper, HilbertModule, AbstractInvariantLebesgueSpace):
 
         return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
 
+    # ------------------------------------------------------ #
+    #                      Private methods                   #
+    # ------------------------------------------------------ #
 
-class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevSpace):
+    def _coefficient_to_component(self, ulm: sh.SHCoeffs) -> np.ndarray:
+        """Maps spherical harmonic coefficients to a component vector."""
+        return sh.shio.SHCilmToVector(ulm.coeffs)
+
+    def _component_to_coefficients(self, c: np.ndarray) -> sh.SHCoeffs:
+        """Maps a component vector to spherical harmonic coefficients."""
+        coeffs = sh.shio.SHVectorToCilm(c)
+        return sh.SHCoeffs.from_array(
+            coeffs, normalization=self.normalization, csphase=self.csphase
+        )
+
+
+class Sobolev(SymmetricSobolevSpace):
     """
-    Implementation of the Sobolev space Hˢ on the sphere.
-
-    This class represents functions with a specified degree of smoothness. It is
-    constructed as a `MassWeightedHilbertModule` over the `Lebesgue` space, where
-    the mass operator weights the spherical harmonic coefficients to enforce
-    smoothness. This is the primary class for defining smooth, random function
-    fields (e.g., for geophysics or climate science).
+    Implementation of the Sobolev space Hˢ on a circle.
     """
 
     def __init__(
@@ -822,23 +652,18 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
         grid: str = "DH",
         extend: bool = True,
     ):
+        """
+        Args:
+        lmax: Maximum degree for the expansions.
+        order: The Sobolev order, controlling the smoothness of functions.
+        scale: The Sobolev length-scale.
+        radius: Radius of the sphere. Defaults to 1.
+        grid: pyshtools grid type. Defaults to "DH"
+        extend: If true longitudes wrap fully. Defaults to True.
+        """
 
-        if lmax < 0:
-            raise ValueError("lmax must be non-negative")
-
-        SphereHelper.__init__(self, lmax, radius, grid, extend)
-        AbstractInvariantSobolevSpace.__init__(self, order, scale)
-
-        lebesgue = Lebesgue(lmax, radius=radius, grid=grid, extend=extend)
-
-        mass_operator = lebesgue.invariant_automorphism(self.sobolev_function)
-        inverse_mass_operator = lebesgue.invariant_automorphism(
-            lambda k: 1.0 / self.sobolev_function(k)
-        )
-
-        MassWeightedHilbertModule.__init__(
-            self, lebesgue, mass_operator, inverse_mass_operator
-        )
+        lebesgue_space = Lebesgue(lmax, radius=radius, grid=grid, extend=extend)
+        SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale)
 
     @staticmethod
     def from_sobolev_parameters(
@@ -847,7 +672,6 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
         /,
         *,
         radius: float = 1.0,
-        vector_as_SHGrid: bool = True,
         grid: str = "DH",
         rtol: float = 1e-8,
         power_of_two: bool = False,
@@ -902,144 +726,242 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             grid=grid,
         )
 
-    def __eq__(self, other: object) -> bool:
+    # ----------------------------------------- #
+    #                 Properties                #
+    # ----------------------------------------- #
+
+    @property
+    def lmax(self) -> int:
+        """The maximum spherical harmonic truncation degree."""
+        return self.underlying_space.lmax
+
+    @property
+    def radius(self) -> float:
+        """The radius of the sphere."""
+        return self.underlying_space.radius
+
+    @property
+    def grid(self) -> str:
+        """The `pyshtools` grid type used for spatial representations."""
+        return self.underlying_space.grid
+
+    @property
+    def sampling(self) -> int:
+        """The sampling factor used for spatial representations."""
+        return self.underlying_space.sampling
+
+    @property
+    def extend(self) -> bool:
+        """True if the spatial grid includes both 0 and 360-degree longitudes."""
+        return self.underlying_space.extend
+
+    @property
+    def normalization(self) -> str:
+        """The spherical harmonic normalization convention used ('ortho')."""
+        return self.underlying_space.normalization
+
+    @property
+    def csphase(self) -> int:
+        """The Condon-Shortley phase convention used (1)."""
+        return self.underlying_space.csphase
+
+    @property
+    def grid_type(self) -> str:
         """
-        Checks for mathematical equality with another Sobolev space on a sphere.
-
-        Two spaces are considered equal if they are of the same type and have
-        the same defining parameters (kmax, order, scale, and radius).
+        Returns the pyshtools grid type.
         """
-        if not isinstance(other, Sobolev):
-            return NotImplemented
+        return self.underlying_space.grid_type
 
-        return (
-            self.lmax == other.lmax
-            and self.radius == other.radius
-            and self.order == other.order
-            and self.scale == other.scale
-        )
+    # -------------------------------------------------- #
+    #                   Public methods                   #
+    # -------------------------------------------------- #
 
-    def eigenfunction_norms(self) -> np.ndarray:
-        """Returns a list of the norms of the eigenfunctions."""
-        values = self._degree_dependent_scaling_values(
-            lambda l: np.sqrt(self.sobolev_function(self.laplacian_eigenvalue((l, 0))))
-        )
-        return self.radius * np.fromiter(values, dtype=float)
-
-    def dirac(self, point: (float, float)) -> LinearForm:
+    def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
         """
-        Returns the linear functional for point evaluation (Dirac measure).
+        Returns an element of the space by projecting a given function.
 
         Args:
-            point: A tuple containing `(latitude, longitude)`.
+            f: A function that takes a point `(lat, lon)` and returns a value.
         """
-        latitude, longitude = point
-        colatitude = 90.0 - latitude
+        return self.underlying_space.project_function(f)
 
-        coeffs = sh.expand.spharm(
-            self.lmax,
-            colatitude,
-            longitude,
-            normalization=self.normalization,
-            degrees=True,
-        )
-        ulm = sh.SHCoeffs.from_array(
-            coeffs,
-            normalization=self.normalization,
-            csphase=self.csphase,
-        )
+    def to_coefficients(self, u: sh.SHGrid) -> sh.SHCoeffs:
+        """Maps a function vector to its spherical harmonic coefficients."""
+        return self.underlying_space.to_coefficients(u)
 
-        c = self._coefficient_to_component(ulm)
-        return self.dual.from_components(c)
+    def from_coefficients(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
+        """Maps spherical harmonic coefficients to a function vector."""
+        return self.underlying_space.from_coefficients(ulm)
 
-    def __str__(self) -> str:
-        """Returns a human-readable string summary of the space."""
-        return (
-            f"Lebesgue space on sphere:\n"
-            f"lmax={self.lmax}\n"
-            f"order={self.order}\n"
-            f"scale={self.scale}\n"
-            f"radius={self.radius}\n"
-            f"grid={self.grid}\n"
-            f"extend={self.extend}"
-        )
-
-    def point_evaluation_operator(
+    def plot(
         self,
-        points: List[Tuple[float, float]],
+        u: sh.SHGrid,
         /,
         *,
-        matrix_free: bool = False,
-        parallel=False,
-        n_jobs=-1,
-    ) -> LinearOperator:
+        projection: "Projection" = ccrs.PlateCarree(),
+        contour: bool = False,
+        cmap: str = "RdBu",
+        coasts: bool = False,
+        rivers: bool = False,
+        borders: bool = False,
+        map_extent: Optional[List[float]] = None,
+        gridlines: bool = True,
+        symmetric: bool = False,
+        contour_lines: bool = False,
+        contour_lines_kwargs: Optional[dict] = None,
+        num_levels: int = 10,
+        **kwargs,
+    ) -> Tuple[Figure, "GeoAxes", Any]:
         """
-        Returns a linear operator that evaluates a function at a list of points.
+        Creates a high-quality map plot of a spherical harmonic function using Cartopy.
+
+        This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
+        onto a specified map projection. It supports both pcolormesh and filled contour
+        plotting styles, along with various geographic overlays.
 
         Args:
-            points: A list of (latitude, longitude) tuples in degrees.
-            matrix_free: If True, uses an optimized, matrix-free implementation to
-                save memory. If False (default), constructs a dense matrix.
-            parallel: In the matrix-free case compute adjoint mapping in parallel
-                default is False
-            n_jobs: Number of processors to use within parallel calculations
+            u: The scalar field to be plotted, evaluated on a spatial grid.
+            projection: A `cartopy.crs` projection instance defining the map view.
+                Defaults to `ccrs.PlateCarree()`.
+            contour: If True, renders the field as a filled contour plot (`contourf`).
+                If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
+            cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
+            coasts: If True, overlays high-resolution coastlines. Defaults to False.
+            rivers: If True, overlays major river systems. Defaults to False.
+            borders: If True, overlays international country borders. Defaults to False.
+            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
+                extent of the map. Defaults to None (global view).
+            gridlines: If True, draws latitude and longitude gridlines with labels.
+                Defaults to True.
+            symmetric: If True, dynamically centers the color scale symmetrically around
+                zero (e.g., from -max to +max), which is ideal for anomaly fields.
+                Defaults to False.
+            contour_lines: If True, overlays solid contour lines on top of the base plot.
+                Defaults to False.
+            contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
+                for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
+            num_levels: The number of color levels to generate automatically if specific
+                `levels` are not provided in `**kwargs`. Defaults to 10.
+            **kwargs: Additional keyword arguments forwarded directly to the underlying
+                Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
+
+        Returns:
+            A tuple `(fig, ax, im)` containing:
+                - fig: The generated Matplotlib Figure.
+                - ax: The Cartopy GeoAxes object.
+                - im: The rendered image object (either a QuadMesh or ContourSet).
         """
-        if self.order <= self.spatial_dimension / 2:
-            raise NotImplementedError(
-                f"Sobolev order {self.order} is too low for point evaluation on S²."
-            )
+        return self.underlying_space.plot(
+            u,
+            projection=projection,
+            contour=contour,
+            cmap=cmap,
+            coasts=coasts,
+            rivers=rivers,
+            borders=borders,
+            map_extent=map_extent,
+            gridlines=gridlines,
+            symmetric=symmetric,
+            contour_lines=contour_lines,
+            contour_lines_kwargs=contour_lines_kwargs,
+            num_levels=num_levels,
+            **kwargs,
+        )
 
-        if matrix_free:
-            lats, lons = zip(*points)
-            lats_array = np.array(lats)
-            lons_array = np.array(lons)
+    def plot_geodesic(
+        self,
+        p1: Tuple[float, float],
+        p2: Tuple[float, float],
+        ax: Optional["GeoAxes"] = None,
+        n_points: int = 50,
+        **kwargs,
+    ) -> Tuple["Figure", "GeoAxes"]:
+        """
+        Plots a geodesic (great-circle) curve between two points on the sphere.
 
-            def mapping(u: sh.SHGrid) -> np.ndarray:
-                ulm = self.to_coefficients(u)
-                return ulm.expand(
-                    lat=lats_array,
-                    lon=lons_array,
-                )
+        This function leverages Cartopy's native `ccrs.Geodetic()` transform to
+        automatically render the shortest path between two coordinates across
+        any map projection.
 
-            def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
-                if parallel:
+        Args:
+            p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
+            p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                and PlateCarree axes will be created automatically.
+            n_points: The number of points to use for interpolation. Note: Kept for
+                backwards compatibility, but interpolation is currently handled
+                natively by Cartopy's geodetic transforms.
+            **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
+                line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
 
-                    def compute_chunk(indices_chunk):
-                        local_v = self.zero
-                        for idx in indices_chunk:
-                            v_i = self.dirac_representation(points[idx])
-                            self.axpy(data[idx], v_i, local_v)
-                        return local_v
+        Returns:
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
+        """
+        return self.underlying_space.plot_geodesic(
+            p1, p2, ax=ax, n_points=n_points, **kwargs
+        )
 
-                    chunks = np.array_split(
-                        range(len(data)), n_jobs if n_jobs > 0 else 8
-                    )
-                    results = Parallel(n_jobs=n_jobs)(
-                        delayed(compute_chunk)(c) for c in chunks
-                    )
+    def plot_geodesic_network(
+        self,
+        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+        ax: Optional["GeoAxes"] = None,
+        n_points: int = 50,
+        **kwargs,
+    ) -> Tuple["Figure", "GeoAxes"]:
+        """
+        Plots a network of intersecting geodesic paths onto a Cartopy map.
 
-                    total_v = self.zero
-                    for res in results:
-                        self.axpy(1.0, res, total_v)
-                    return total_v
-                else:
-                    total_v = self.zero
-                    for i, val in enumerate(data):
-                        v_i = self.dirac_representation(points[i])
-                        self.axpy(val, v_i, total_v)
-                    return total_v
+        This function visualizes a full source-receiver network, commonly used in
+        tomographic surveys. It renders all connection arcs as great circles and
+        overlays distinct scatter markers for the unique source and receiver locations.
 
-            return LinearOperator(
-                self,
-                EuclideanSpace(len(points)),
-                mapping,
-                adjoint_mapping=adjoint_mapping,
-            )
+        Args:
+            paths: A list of point pairs defining the network. Each item should be
+                a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                with a global PlateCarree projection is created.
+            n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
+            **kwargs: Default styling arguments applied to the geodesic lines
+                (e.g., `color='black'`, `alpha=0.5`).
+                Special sub-dictionaries can be passed to style the markers:
+                - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
+                - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
 
-        # Standard path: delegate to the ABC for dense matrix construction
-        return super().point_evaluation_operator(points)
+        Returns:
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
+        """
+        return self.underlying_space.plot_geodesic_network(
+            paths, ax=ax, n_points=n_points, **kwargs
+        )
 
-    def to_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def sample_power_measure(
+        self,
+        measure,
+        n_samples,
+        /,
+        *,
+        lmin=None,
+        lmax=None,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ):
+        """
+        Takes in a Gaussian measure on the space, draws n_samples from
+        and returns samples for the spherical harmonic power at degrees in
+        the indicated range.
+        """
+
+        return self.underlying_space.sample_power_measure(
+            measure, n_samples, lmin=lmin, lmax=lmax, parallel=parallel, n_jobs=n_jobs
+        )
+
+    def ax(self, a: float, x: sh.SHGrid) -> None:
+        self.underlying_space.ax(a, x)
+
+    def axpy(self, a: float, x: sh.SHGrid, y: sh.SHGrid) -> None:
+        self.underlying_space.axpy(a, x, y)
+
+    def to_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
 
@@ -1062,13 +984,13 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
         """
 
-        l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin)
+        l2_operator = self.underlying_space.to_coefficient_operator(lmax, lmin=lmin)
 
         return LinearOperator.from_formal_adjoint(
             self, l2_operator.codomain, l2_operator
         )
 
-    def from_coefficient_operator(self, lmax: int, lmin: int = 0):
+    def from_coefficient_operator(self, lmax: int, /, *, lmin: int = 0):
         r"""
         Returns a LinearOperator mapping a vector of coefficients to a function.
 
@@ -1090,6 +1012,248 @@ class Sobolev(SphereHelper, MassWeightedHilbertModule, AbstractInvariantSobolevS
             A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
         """
 
-        l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin)
+        l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin=lmin)
 
         return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
+
+
+# -------------------------------------------------- #
+#             Associated plotting methods            #
+# -------------------------------------------------- #
+
+
+def plot(
+    u: "SHGrid",
+    /,
+    *,
+    projection: Optional["Projection"] = None,
+    contour: bool = False,
+    cmap: str = "RdBu",
+    coasts: bool = False,
+    rivers: bool = False,
+    borders: bool = False,
+    map_extent: Optional[List[float]] = None,
+    gridlines: bool = True,
+    symmetric: bool = False,
+    contour_lines: bool = False,
+    contour_lines_kwargs: Optional[dict] = None,
+    num_levels: int = 10,
+    **kwargs,
+) -> Tuple["Figure", "GeoAxes", Any]:
+    """
+    Creates a high-quality map plot of a spherical harmonic function using Cartopy.
+
+    This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
+    onto a specified map projection. It supports both pcolormesh and filled contour
+    plotting styles, along with various geographic overlays.
+
+    Args:
+        u: The scalar field to be plotted, evaluated on a spatial grid.
+        projection: A `cartopy.crs` projection instance defining the map view.
+            Defaults to `ccrs.PlateCarree()`.
+        contour: If True, renders the field as a filled contour plot (`contourf`).
+            If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
+        cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
+        coasts: If True, overlays high-resolution coastlines. Defaults to False.
+        rivers: If True, overlays major river systems. Defaults to False.
+        borders: If True, overlays international country borders. Defaults to False.
+        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
+            extent of the map. Defaults to None (global view).
+        gridlines: If True, draws latitude and longitude gridlines with labels.
+            Defaults to True.
+        symmetric: If True, dynamically centers the color scale symmetrically around
+            zero (e.g., from -max to +max), which is ideal for anomaly fields.
+            Defaults to False.
+        contour_lines: If True, overlays solid contour lines on top of the base plot.
+            Defaults to False.
+        contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
+            for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
+        num_levels: The number of color levels to generate automatically if specific
+            `levels` are not provided in `**kwargs`. Defaults to 10.
+        **kwargs: Additional keyword arguments forwarded directly to the underlying
+            Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
+
+    Returns:
+        A tuple `(fig, ax, im)` containing:
+            - fig: The generated Matplotlib Figure.
+            - ax: The Cartopy GeoAxes object.
+            - im: The rendered image object (either a QuadMesh or ContourSet).
+    """
+    if projection is None:
+        projection = ccrs.PlateCarree()
+
+    lons = u.lons()
+    lats = u.lats()
+
+    figsize: Tuple[int, int] = kwargs.pop("figsize", (10, 8))
+    fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": projection})
+
+    if map_extent is not None:
+        ax.set_extent(map_extent, crs=ccrs.PlateCarree())
+    if coasts:
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    if rivers:
+        ax.add_feature(cfeature.RIVERS, linewidth=0.8)
+    if borders:
+        ax.add_feature(cfeature.BORDERS, linewidth=0.8)
+
+    kwargs.setdefault("cmap", cmap)
+    if symmetric:
+        data_max = 1.2 * np.nanmax(np.abs(u.data))
+        kwargs.setdefault("vmin", -data_max)
+        kwargs.setdefault("vmax", data_max)
+
+    if "levels" in kwargs:
+        levels = kwargs.pop("levels")
+    else:
+        vmin = kwargs.get("vmin", np.nanmin(u.data))
+        vmax = kwargs.get("vmax", np.nanmax(u.data))
+        levels = np.linspace(vmin, vmax, num_levels)
+
+    im: Any
+    if contour:
+        kwargs.pop("vmin", None)
+        kwargs.pop("vmax", None)
+        im = ax.contourf(
+            lons, lats, u.data, transform=ccrs.PlateCarree(), levels=levels, **kwargs
+        )
+    else:
+        im = ax.pcolormesh(lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs)
+
+    if contour_lines:
+        cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
+        cl_kwargs.setdefault("colors", "k")
+        cl_kwargs.setdefault("linewidths", 0.5)
+        ax.contour(
+            lons, lats, u.data, transform=ccrs.PlateCarree(), levels=levels, **cl_kwargs
+        )
+
+    if gridlines:
+        lat_interval = kwargs.pop("lat_interval", 30)
+        lon_interval = kwargs.pop("lon_interval", 30)
+        gl = ax.gridlines(
+            linestyle="--", draw_labels=True, dms=True, x_inline=False, y_inline=False
+        )
+        gl.xlocator = mticker.MultipleLocator(lon_interval)
+        gl.ylocator = mticker.MultipleLocator(lat_interval)
+        gl.xformatter = LongitudeFormatter()
+        gl.yformatter = LatitudeFormatter()
+
+    return fig, ax, im
+
+
+def plot_geodesic(
+    p1: Tuple[float, float],
+    p2: Tuple[float, float],
+    ax: Optional["GeoAxes"] = None,
+    n_points: int = 50,  # Kept in signature for backwards compatibility
+    **kwargs,
+) -> Tuple["Figure", "GeoAxes"]:
+    """
+    Plots a geodesic (great-circle) curve between two points on the sphere.
+
+    This function leverages Cartopy's native `ccrs.Geodetic()` transform to
+    automatically render the shortest path between two coordinates across
+    any map projection.
+
+    Args:
+        p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
+        p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
+        ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+            and PlateCarree axes will be created automatically.
+        n_points: The number of points to use for interpolation. Note: Kept for
+            backwards compatibility, but interpolation is currently handled
+            natively by Cartopy's geodetic transforms.
+        **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
+            line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
+
+    Returns:
+        A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(
+            figsize=kwargs.pop("figsize", (10, 8)),
+            subplot_kw={"projection": ccrs.PlateCarree()},
+        )
+    else:
+        fig = ax.get_figure()
+
+    kwargs.setdefault("color", "black")
+    kwargs.setdefault("linewidth", 2)
+
+    # Cartopy handles the great circle interpolation automatically!
+    lat1, lon1 = p1
+    lat2, lon2 = p2
+    ax.plot([lon1, lon2], [lat1, lat2], transform=ccrs.Geodetic(), **kwargs)
+
+    return fig, ax
+
+
+def plot_geodesic_network(
+    paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+    ax: Optional["GeoAxes"] = None,
+    n_points: int = 50,
+    **kwargs,
+) -> Tuple["Figure", "GeoAxes"]:
+    """
+    Plots a network of intersecting geodesic paths onto a Cartopy map.
+
+    This function visualizes a full source-receiver network, commonly used in
+    tomographic surveys. It renders all connection arcs as great circles and
+    overlays distinct scatter markers for the unique source and receiver locations.
+
+    Args:
+        paths: A list of point pairs defining the network. Each item should be
+            a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
+        ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+            with a global PlateCarree projection is created.
+        n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
+        **kwargs: Default styling arguments applied to the geodesic lines
+            (e.g., `color='black'`, `alpha=0.5`).
+            Special sub-dictionaries can be passed to style the markers:
+            - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
+            - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
+
+    Returns:
+        A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
+    """
+    if ax is None:
+        figsize = kwargs.pop("figsize", (12, 10))
+        fig, ax = plt.subplots(
+            figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()}
+        )
+        ax.set_global()
+        ax.coastlines()
+    else:
+        fig = ax.get_figure()
+
+    kwargs.setdefault("color", "black")
+    kwargs.setdefault("linewidth", 0.8)
+    kwargs.setdefault("alpha", 0.5)
+
+    for p1, p2 in paths:
+        plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
+
+    sources = list(set([tuple(p[0]) for p in paths]))
+    receivers = list(set([tuple(p[1]) for p in paths]))
+
+    src_lats, src_lons = zip(*sources)
+    rec_lats, rec_lons = zip(*receivers)
+
+    src_style = kwargs.pop("source_kwargs", {})
+    src_style.setdefault("marker", "*")
+    src_style.setdefault("color", "gold")
+    src_style.setdefault("s", 150)
+    src_style.setdefault("edgecolor", "black")
+    src_style.setdefault("zorder", 5)
+    ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
+
+    rec_style = kwargs.pop("receiver_kwargs", {})
+    rec_style.setdefault("marker", "o")
+    rec_style.setdefault("color", "red")
+    rec_style.setdefault("s", 50)
+    rec_style.setdefault("edgecolor", "white")
+    rec_style.setdefault("zorder", 5)
+    ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
+
+    return fig, ax

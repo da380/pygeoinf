@@ -966,6 +966,9 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
                 scipy_op_wrapper, n_jobs=n_jobs
             )
 
+    def __call__(self, x: Any) -> Any:
+        return super().__call__(x)
+
     def __neg__(self) -> LinearOperator:
         domain = self.domain
         codomain = self.codomain
@@ -1374,11 +1377,9 @@ class SparseMatrixLinearOperator(MatrixLinearOperator):
         """
         Overrides the base method to efficiently compute the dense matrix.
         """
-        # ⚡️ Fast path: Use the highly optimized .toarray() method.
+
         if galerkin == self.is_galerkin:
             return self._matrix.toarray()
-
-        # Fallback path for when a basis conversion is needed.
         else:
             return super()._compute_dense_matrix(galerkin, parallel, n_jobs)
 
@@ -1597,13 +1598,46 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         The square root of the operator, computed via functional calculus.
         Requires the operator to be strictly diagonal with non-negative entries.
         """
-
         if np.any(self._matrix.data < 0):
             raise ValueError(
                 "Cannot take the square root of an operator with negative entries."
             )
 
-        return self.__getattr__("sqrt")()
+        return self.apply_function(lambda x: np.sqrt(x))
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+
+        try:
+            new_data = func(self._matrix.data)
+        except (TypeError, AttributeError):
+            vectorized_func = np.vectorize(func)
+            new_data = vectorized_func(self._matrix.data)
+
+        return DiagonalSparseMatrixLinearOperator(
+            self.domain,
+            self.codomain,
+            (new_data, self.offsets),
+            galerkin=self.is_galerkin,
+        )
 
     def extract_diagonals(
         self,
@@ -1611,7 +1645,6 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         /,
         *,
         galerkin: bool = True,
-        # parallel and n_jobs are ignored but kept for signature consistency
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[np.ndarray, List[int]]:
@@ -1624,10 +1657,7 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         if galerkin != self.is_galerkin:
             return super().extract_diagonals(offsets, galerkin=galerkin)
 
-        # Create a result array and fill it with the requested stored diagonals
         result_diagonals = np.zeros((len(offsets), self.domain.dim))
-
-        # Create a mapping from stored offset to its data row for quick lookup
         stored_diagonals = dict(zip(self.offsets, self._matrix.data))
 
         for i, k in enumerate(offsets):
@@ -1636,47 +1666,13 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
 
         return result_diagonals, offsets
 
-    def __getattr__(self, name: str):
-        """
-        Dynamically proxies method calls to the underlying dia_array.
-
-        For element-wise mathematical functions that return a new operator,
-        this method enforces that the operator must be strictly diagonal.
-        """
-        attr = getattr(self._matrix, name)
-
-        if callable(attr):
-
-            def wrapper(*args, **kwargs):
-                result = attr(*args, **kwargs)
-
-                if isinstance(result, sp.sparray):
-                    if not self.is_strictly_diagonal:
-                        raise NotImplementedError(
-                            f"Element-wise function '{name}' is only defined for "
-                            "strictly diagonal operators."
-                        )
-
-                    return DiagonalSparseMatrixLinearOperator(
-                        self.domain,
-                        self.codomain,
-                        (result.data, result.offsets),
-                        galerkin=self.is_galerkin,
-                    )
-                else:
-                    return result
-
-            return wrapper
-        else:
-            return attr
-
     def __abs__(self):
         """Explicitly handle the built-in abs() function."""
-        return self.__getattr__("__abs__")()
+        return self.apply_function(np.abs)
 
     def __pow__(self, power):
         """Explicitly handle the power operator (**)."""
-        return self.__getattr__("__pow__")(power)
+        return self.apply_function(lambda x: x**power)
 
 
 class NormalSumOperator(LinearOperator):

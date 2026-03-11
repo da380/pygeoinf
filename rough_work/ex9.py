@@ -1,26 +1,24 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.symmetric_space.circle import (
+from pygeoinf.symmetric_space.line import (
     Sobolev,
     plot,
     plot_error_bounds,
 )
 
-# For reproducibility
-np.random.seed(42)
 
 # ==========================================
 # 1. Setup Model Space & Forward Problem
 # ==========================================
-model_space = Sobolev.from_sobolev_parameters(2.0, 0.05)
+model_space = Sobolev.from_sobolev_parameters(2.0, 0.1, a=1, b=3)
 
 n_data = 50
 observation_points = model_space.random_points(n_data)
 forward_operator = model_space.point_evaluation_operator(observation_points)
 data_space = forward_operator.codomain
 
-standard_deviation = 0.5
+standard_deviation = 0.1
 data_error_measure = inf.GaussianMeasure.from_standard_deviation(
     data_space, standard_deviation
 )
@@ -53,6 +51,7 @@ def plot_results(
     solution_model: np.ndarray,
     solution_label: str,
     solution_std: np.ndarray = None,
+    full: bool = False,
 ):
     """Helper function to create a consistent plot."""
     fig, ax = plot(
@@ -62,10 +61,19 @@ def plot_results(
         linestyle="--",
         label="True Model",
         figsize=(15, 10),
+        full=full,
     )
 
     # Plot the solution
-    plot(space, solution_model, fig=fig, ax=ax, color="b", label=solution_label)
+    plot(
+        space,
+        solution_model,
+        fig=fig,
+        ax=ax,
+        color="b",
+        label=solution_label,
+        full=full,
+    )
 
     # Plot uncertainty bounds if provided
     if solution_std is not None:
@@ -77,6 +85,7 @@ def plot_results(
             ax=ax,
             alpha=0.2,
             color="b",
+            full=full,
         )
 
     # Plot the noisy data points
@@ -116,4 +125,5 @@ plot_results(
     solution_model=posterior_mean,
     solution_label="Posterior Mean",
     solution_std=posterior_std,
+    full=False,
 )

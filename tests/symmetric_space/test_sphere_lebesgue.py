@@ -38,7 +38,7 @@ class TestSphereLebesgueSpecifics:
         """
         coeffs = sh.SHCoeffs.from_zeros(space.lmax, normalization="ortho", csphase=1)
         coeffs.set_coeffs(1.0, 1, 0)
-        expected_grid = coeffs.expand(grid=space._grid_name())  #
+        expected_grid = coeffs.expand(grid=space.grid_type)  #
 
         # Project the function sin(latitude)
         projected_grid = space.project_function(
@@ -66,7 +66,7 @@ class TestSphereLebesgueSpecifics:
         coeffs = sh.SHCoeffs.from_random(
             power_spectrum, normalization="ortho", csphase=1
         )
-        original_grid = coeffs.expand(grid=space._grid_name())  #
+        original_grid = coeffs.expand(grid=space.grid_type)  #
 
         components = space.to_components(original_grid)
         reconstructed_grid = space.from_components(components)

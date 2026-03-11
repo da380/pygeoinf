@@ -482,32 +482,6 @@ class TestDiagonalSparseOperator:
                 domain, domain, short_values
             )
 
-    def test_getattr_proxy_methods(self):
-        """
-        Tests the __getattr__ proxy for element-wise functions and properties.
-        """
-        domain = inf.EuclideanSpace(3)
-        # Use values suitable for both abs() and sqrt() tests
-        op_pos = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            domain, domain, np.array([4.0, 9.0, 16.0])
-        )
-        op_mix = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            domain, domain, np.array([-4.0, 9.0, -16.0])
-        )
-
-        # Test the __abs__ dunder method
-        abs_op = abs(op_mix)
-        assert isinstance(abs_op, inf.DiagonalSparseMatrixLinearOperator)
-        assert np.allclose(abs_op.extract_diagonal(), [4.0, 9.0, 16.0])
-
-        # Test a method that returns a raw value
-        total = op_pos.sum()
-        assert isinstance(total, (float, np.number))
-        assert np.isclose(total, 29.0)
-
-        # Test proxying a non-callable attribute
-        assert op_pos.shape == (3, 3)
-
     def test_inverse_property(self):
         """
         Tests the .inverse property for strictly diagonal operators.

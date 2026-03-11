@@ -20,7 +20,7 @@ Key Features
 """
 
 from __future__ import annotations
-from typing import Callable, Optional, Any, List, TYPE_CHECKING
+from typing import Callable, Optional, Any, List, TYPE_CHECKING, Tuple
 import warnings
 
 import numpy as np
@@ -155,6 +155,10 @@ class GaussianMeasure:
             inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
         )
+
+    # ---------------------------------------- #
+    #                Constructors              #
+    # ---------------------------------------- #
 
     @staticmethod
     def from_standard_deviations(
@@ -339,6 +343,10 @@ class GaussianMeasure:
             inverse_covariance=inverse_covariance,
         )
 
+    # ---------------------------------------- #
+    #                 Properties               #
+    # ---------------------------------------- #
+
     @property
     def domain(self) -> HilbertSpace:
         """The Hilbert space the measure is defined on."""
@@ -395,6 +403,10 @@ class GaussianMeasure:
         """True if a method for drawing samples is available."""
         return self._sample is not None
 
+    # ---------------------------------------- #
+    #               Public methods             #
+    # ---------------------------------------- #
+
     def sample(self) -> Vector:
         """Returns a single random sample drawn from the measure."""
         if self._sample is None:
@@ -447,6 +459,10 @@ class GaussianMeasure:
             n: Number of samples to draw.
             parallel: If True, draws samples in parallel.
             n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Notes:
+            This method is only implemented for measures on HilbertModules
+            so that products of vectors can be defined.
         """
         if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
@@ -479,6 +495,10 @@ class GaussianMeasure:
             n: Number of samples to draw.
             parallel: If True, draws samples in parallel.
             n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Notes:
+            This method is only implemented for measures on HilbertModules
+            so that products of vectors can be defined.
         """
         variance = self.sample_pointwise_variance(n, parallel=parallel, n_jobs=n_jobs)
         return self.domain.vector_sqrt(variance)
@@ -681,6 +701,73 @@ class GaussianMeasure:
         cov = self.covariance
         return cov(u)
 
+    def directional_statistics(self, direction: Vector) -> Tuple[float, float]:
+        """
+        Returns the expectation and variance of the scalar Gaussian <x, direction>.
+
+        Args:
+            direction: The vector defining the linear functional.
+
+        Returns:
+            A tuple of (mean, variance).
+        """
+        expectation = self.domain.inner_product(self.expectation, direction)
+        variance = self.domain.inner_product(self.covariance(direction), direction)
+        return expectation, variance
+
+    def directional_covariance(self, d1: Vector, d2: Vector) -> float:
+        """
+            Returns the covariance between <x, d1> and <x, d2>.
+
+        Args:
+            d1: The first direction vector.
+            d2: The second direction vector.
+
+        Returns:
+            The scalar covariance <Q d1, d2>.
+        """
+        return self.domain.inner_product(self.covariance(d1), d2)
+
+    def directional_variance(self, d: Vector) -> float:
+        """
+            Returns the variance of <x, d>
+
+        Args:
+            d: The direction
+
+        Returns:
+            The scalar variance <Q d, d>.
+        """
+        return self.directional_covariance(d, d)
+
+    def zero_expectation(self) -> GaussianMeasure:
+        """
+        Returns a new measure with the same covariance, but
+        with expectation set to zero.
+        """
+        translation = self.domain.negative(self.expectation)
+        return self.affine_mapping(translation=translation)
+
+    def rescale_directional_variance(
+        self, direction: Vector, std: float
+    ) -> GaussianMeasure:
+        """
+        Returns a new measure where Var[<x, direction>] is scaled to std^2.
+
+        The expectation of the resulting measure is unchanged.
+        """
+        current_var = self.directional_variance(direction)
+        if current_var <= 0:
+            raise ValueError("Directional variance must be positive to rescale.")
+        norm = std / np.sqrt(current_var)
+        shifted_measure = self.zero_expectation()
+        scaled_measure = norm * shifted_measure
+        return scaled_measure.affine_mapping(translation=self.expectation)
+
+    # ---------------------------------------- #
+    #               Special methods            #
+    # ---------------------------------------- #
+
     def __neg__(self) -> GaussianMeasure:
         """Returns a measure with a negated expectation."""
         if self.covariance_factor_set:
@@ -763,12 +850,13 @@ class GaussianMeasure:
             sample=new_sample,
         )
 
+    # ---------------------------------------- #
+    #               Private methods            #
+    # ---------------------------------------- #
+
     def _sample_from_factor(self) -> Vector:
         """Default sampling method when a covariance factor is provided."""
         covariance_factor = self.covariance_factor
-        # Draw from standard normal in the Euclidean space
         w = np.random.randn(covariance_factor.domain.dim)
-        # Map to the Hilbert space
         value = covariance_factor(w)
-        # Add the expectation
         return self.domain.add(value, self.expectation)
