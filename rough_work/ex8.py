@@ -1,7 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.symmetric_space_new.circle import Sobolev, CircleHelper
+from pygeoinf.symmetric_space.circle import (
+    Sobolev,
+    plot,
+    plot_error_bounds,
+)
 
 # For reproducibility
 np.random.seed(42)
@@ -41,7 +45,7 @@ true_model, data = forward_problem.synthetic_model_and_data(model_prior_measure)
 # 3. Plotting Helper Function
 # ==========================================
 def plot_results(
-    space: CircleHelper,
+    space: Sobolev,
     true_model: np.ndarray,
     data: np.ndarray,
     obs_points: np.ndarray,
@@ -51,17 +55,28 @@ def plot_results(
     solution_std: np.ndarray = None,
 ):
     """Helper function to create a consistent plot."""
-    fig, ax = space.plot(
-        true_model, color="k", linestyle="--", label="True Model", figsize=(15, 10)
+    fig, ax = plot(
+        space,
+        true_model,
+        color="k",
+        linestyle="--",
+        label="True Model",
+        figsize=(15, 10),
     )
 
     # Plot the solution
-    space.plot(solution_model, fig=fig, ax=ax, color="b", label=solution_label)
+    plot(space, solution_model, fig=fig, ax=ax, color="b", label=solution_label)
 
     # Plot uncertainty bounds if provided
     if solution_std is not None:
-        space.plot_error_bounds(
-            solution_model, 2 * solution_std, fig=fig, ax=ax, alpha=0.2, color="b"
+        plot_error_bounds(
+            space,
+            solution_model,
+            2 * solution_std,
+            fig=fig,
+            ax=ax,
+            alpha=0.2,
+            color="b",
         )
 
     # Plot the noisy data points

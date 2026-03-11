@@ -113,66 +113,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """Maps complex Fourier coefficients to a function vector."""
         return irfft(coeff, n=2 * self.kmax) * self._inverse_fft_factor
 
-    def plot(
-        self,
-        u: np.ndarray,
-        fig: Optional[Figure] = None,
-        ax: Optional[Axes] = None,
-        **kwargs,
-    ) -> Tuple[Figure, Axes]:
-        """
-        Makes a simple plot of a function on the circle.
-
-        Args:
-            u: The vector representing the function to be plotted.
-            fig: An existing Matplotlib Figure object. Defaults to None.
-            ax: An existing Matplotlib Axes object. Defaults to None.
-            **kwargs: Keyword arguments forwarded to `ax.plot()`.
-
-        Returns:
-            A tuple (figure, axes) containing the plot objects.
-        """
-        figsize = kwargs.pop("figsize", (10, 8))
-
-        if fig is None:
-            fig = plt.figure(figsize=figsize)
-        if ax is None:
-            ax = fig.add_subplot()
-
-        ax.plot(self.angles(), u, **kwargs)
-        return fig, ax
-
-    def plot_error_bounds(
-        self,
-        u: np.ndarray,
-        u_bound: np.ndarray,
-        fig: Optional[Figure] = None,
-        ax: Optional[Axes] = None,
-        **kwargs,
-    ) -> Tuple[Figure, Axes]:
-        """
-        Plots a function with pointwise error bounds.
-
-        Args:
-            u: The vector representing the mean function.
-            u_bound: A vector giving pointwise standard deviations.
-            fig: An existing Matplotlib Figure object. Defaults to None.
-            ax: An existing Matplotlib Axes object. Defaults to None.
-            **kwargs: Keyword arguments forwarded to `ax.fill_between()`.
-
-        Returns:
-            A tuple (figure, axes) containing the plot objects.
-        """
-        figsize = kwargs.pop("figsize", (10, 8))
-
-        if fig is None:
-            fig = plt.figure(figsize=figsize)
-        if ax is None:
-            ax = fig.add_subplot()
-
-        ax.fill_between(self.angles(), u - u_bound, u + u_bound, **kwargs)
-        return fig, ax
-
     # ------------------------------------------------------ #
     #           Methods for SymmetricHilbertSpace            #
     # ------------------------------------------------------ #
@@ -454,48 +394,76 @@ class Sobolev(SymmetricSobolevSpace):
         """Maps complex Fourier coefficients to a function vector."""
         return self.underlying_space.from_coefficients(coeff)
 
-    def plot(
-        self,
-        u: np.ndarray,
-        fig: Optional[Figure] = None,
-        ax: Optional[Axes] = None,
-        **kwargs,
-    ) -> Tuple[Figure, Axes]:
-        """
-        Makes a simple plot of a function on the circle.
 
-        Args:
-            u: The vector representing the function to be plotted.
-            fig: An existing Matplotlib Figure object. Defaults to None.
-            ax: An existing Matplotlib Axes object. Defaults to None.
-            **kwargs: Keyword arguments forwarded to `ax.plot()`.
+# ------------------------------------------------- #
+#           Associated plotting functions           #
+# ------------------------------------------------- #
 
-        Returns:
-            A tuple (figure, axes) containing the plot objects.
-        """
-        return self.underlying_space.plot(u, fig=fig, ax=ax, **kwargs)
 
-    def plot_error_bounds(
-        self,
-        u: np.ndarray,
-        u_bound: np.ndarray,
-        fig: Optional[Figure] = None,
-        ax: Optional[Axes] = None,
-        **kwargs,
-    ) -> Tuple[Figure, Axes]:
-        """
-        Plots a function with pointwise error bounds.
+def plot(
+    space: Lebesgue | Sobolev,
+    u: np.ndarray,
+    fig: Optional[Figure] = None,
+    ax: Optional[Axes] = None,
+    **kwargs,
+) -> Tuple[Figure, Axes]:
+    """
+    Creates a simple line plot of a function on the circle.
 
-        Args:
-            u: The vector representing the mean function.
-            u_bound: A vector giving pointwise standard deviations.
-            fig: An existing Matplotlib Figure object. Defaults to None.
-            ax: An existing Matplotlib Axes object. Defaults to None.
-            **kwargs: Keyword arguments forwarded to `ax.fill_between()`.
+    Args:
+        angles: The function space.
+        u: A 1D numpy array representing the function values (the y-axis).
+        fig: An existing Matplotlib Figure object. If None, a new figure is created.
+        ax: An existing Matplotlib Axes object. If None, a new subplot is added.
+        **kwargs: Additional keyword arguments forwarded directly to `ax.plot()`
+            (e.g., `color`, `linewidth`, `label`).
 
-        Returns:
-            A tuple (figure, axes) containing the plot objects.
-        """
-        return self.underlying_space.plot_error_bounds(
-            u, u_bound, fig=fig, ax=ax, **kwargs
-        )
+    Returns:
+        A tuple `(fig, ax)` containing the Matplotlib Figure and Axes objects.
+    """
+    figsize = kwargs.pop("figsize", (10, 8))
+
+    if fig is None:
+        fig = plt.figure(figsize=figsize)
+    if ax is None:
+        ax = fig.add_subplot()
+
+    ax.plot(space.angles(), u, **kwargs)
+    return fig, ax
+
+
+def plot_error_bounds(
+    space: Lebesgue | Sobolev,
+    u: np.ndarray,
+    u_bound: np.ndarray,
+    fig: Optional[Figure] = None,
+    ax: Optional[Axes] = None,
+    **kwargs,
+) -> Tuple[Figure, Axes]:
+    """
+    Plots a function on the circle along with its pointwise error bounds.
+
+    This is particularly useful for visualizing Gaussian measures or Bayesian
+    posterior uncertainties over the circular domain.
+
+    Args:
+        space: The function space.
+        u: A 1D numpy array representing the mean function values.
+        u_bound: A 1D numpy array giving the pointwise standard deviations or bounds.
+        fig: An existing Matplotlib Figure object. If None, a new figure is created.
+        ax: An existing Matplotlib Axes object. If None, a new subplot is added.
+        **kwargs: Additional keyword arguments forwarded directly to `ax.fill_between()`
+            (e.g., `alpha`, `color`).
+
+    Returns:
+        A tuple `(fig, ax)` containing the Matplotlib Figure and Axes objects.
+    """
+    figsize = kwargs.pop("figsize", (10, 8))
+
+    if fig is None:
+        fig = plt.figure(figsize=figsize)
+    if ax is None:
+        ax = fig.add_subplot()
+
+    ax.fill_between(space.angles(), u - u_bound, u + u_bound, **kwargs)
+    return fig, ax

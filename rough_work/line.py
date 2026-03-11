@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
-from pygeoinf.symmetric_space.sphere import Lebesgue, Sobolev
+from pygeoinf.symmetric_space.line import Sobolev, plot
 
+X = Sobolev(256, 2, 0.05)
 
-X = Sobolev(10, 2, 1)
+u = X.dirac_representation(0.5)
 
-X.check()
+plot(X, u)
+
+plt.show()

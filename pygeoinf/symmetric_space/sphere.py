@@ -10,15 +10,6 @@ harmonic transforms. Following a compositional design, this module first
 defines a base `Lebesgue` space and then constructs the `Sobolev` space as a
 `MassWeightedHilbertSpace` over it. The module also includes powerful plotting
 utilities built on `cartopy` for professional-quality geospatial visualization.
-
-Key Classes
------------
-- `SphereHelper`: A mixin class providing the core geometry, spherical harmonic
-  transform machinery, and `cartopy`-based plotting utilities.
-- `Lebesgue`: A concrete implementation of the L²(S²) space of square-integrable
-  functions on the sphere.
-- `Sobolev`: A concrete implementation of the Hˢ(S²) space of functions with a
-  specified degree of smoothness.
 """
 
 from __future__ import annotations
@@ -28,7 +19,6 @@ import math
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
-from scipy.sparse import diags, coo_array
 
 
 try:
@@ -37,11 +27,13 @@ try:
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+
+
 except ImportError:
     raise ImportError(
         "pyshtools and cartopy are required for the sphere module. "
         "Please install them with 'pip install pygeoinf[sphere]'"
-    )
+    ) from None
 
 
 from pygeoinf.hilbert_space import EuclideanSpace
@@ -145,6 +137,13 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """The Condon-Shortley phase convention used (1)."""
         return self._csphase
 
+    @property
+    def grid_type(self) -> str:
+        """
+        Returns the pyshtools grid type.
+        """
+        return self.grid if self._sampling == 1 else "DH2"
+
     # ------------------------------------------------------ #
     #                    Public methods                      #
     # ------------------------------------------------------ #
@@ -179,7 +178,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         u: sh.SHGrid,
         /,
         *,
-        projection: "Projection" = ccrs.PlateCarree(),
+        projection: Optional["Projection"] = None,
         contour: bool = False,
         cmap: str = "RdBu",
         coasts: bool = False,
@@ -192,108 +191,62 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         contour_lines_kwargs: Optional[dict] = None,
         num_levels: int = 10,
         **kwargs,
-    ) -> Tuple[Figure, "GeoAxes", Any]:
+    ) -> Tuple["Figure", "GeoAxes", Any]:
         """
-        Creates a map plot of a function on the sphere using `cartopy`.
+        Creates a high-quality map plot of a spherical harmonic function using Cartopy.
+
+        This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
+        onto a specified map projection. It supports both pcolormesh and filled contour
+        plotting styles, along with various geographic overlays.
 
         Args:
-            u: The element to be plotted.
-            projection: A `cartopy.crs` projection. Defaults to `PlateCarree`.
-            contour: If True, creates a filled contour plot. Otherwise, a `pcolormesh` plot.
-            cmap: The colormap name.
-            coasts: If True, draws coastlines.
-            rivers: If True, draws major rivers.
-            borders: If True, draws country borders.
-            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` to set map bounds.
-            gridlines: If True, draws latitude/longitude gridlines.
-            symmetric: If True, centers the color scale symmetrically around zero.
-            contour_lines: If True, overlays contour lines on the plot.
-            contour_lines_kwargs: A dictionary of keyword arguments for styling the
-                contour lines (e.g., {'colors': 'k', 'linewidths': 0.5})
-            num_levels: The number of levels to generate automatically if `levels`
-                is not provided directly.
-            **kwargs: Additional keyword arguments forwarded to the plotting function
-                (`ax.contourf` or `ax.pcolormesh`).
+            u: The scalar field to be plotted, evaluated on a spatial grid.
+            projection: A `cartopy.crs` projection instance defining the map view.
+                Defaults to `ccrs.PlateCarree()`.
+            contour: If True, renders the field as a filled contour plot (`contourf`).
+                If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
+            cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
+            coasts: If True, overlays high-resolution coastlines. Defaults to False.
+            rivers: If True, overlays major river systems. Defaults to False.
+            borders: If True, overlays international country borders. Defaults to False.
+            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
+                extent of the map. Defaults to None (global view).
+            gridlines: If True, draws latitude and longitude gridlines with labels.
+                Defaults to True.
+            symmetric: If True, dynamically centers the color scale symmetrically around
+                zero (e.g., from -max to +max), which is ideal for anomaly fields.
+                Defaults to False.
+            contour_lines: If True, overlays solid contour lines on top of the base plot.
+                Defaults to False.
+            contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
+                for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
+            num_levels: The number of color levels to generate automatically if specific
+                `levels` are not provided in `**kwargs`. Defaults to 10.
+            **kwargs: Additional keyword arguments forwarded directly to the underlying
+                Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
 
         Returns:
-            A tuple `(figure, axes, image)` containing the Matplotlib and Cartopy objects.
+            A tuple `(fig, ax, im)` containing:
+                - fig: The generated Matplotlib Figure.
+                - ax: The Cartopy GeoAxes object.
+                - im: The rendered image object (either a QuadMesh or ContourSet).
         """
-
-        lons = u.lons()
-        lats = u.lats()
-
-        figsize: Tuple[int, int] = kwargs.pop("figsize", (10, 8))
-        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": projection})
-
-        if map_extent is not None:
-            ax.set_extent(map_extent, crs=ccrs.PlateCarree())
-        if coasts:
-            ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-        if rivers:
-            ax.add_feature(cfeature.RIVERS, linewidth=0.8)
-        if borders:
-            ax.add_feature(cfeature.BORDERS, linewidth=0.8)
-
-        kwargs.setdefault("cmap", cmap)
-        if symmetric:
-            data_max = 1.2 * np.nanmax(np.abs(u.data))
-            kwargs.setdefault("vmin", -data_max)
-            kwargs.setdefault("vmax", data_max)
-
-        if "levels" in kwargs:
-            levels = kwargs.pop("levels")
-        else:
-            vmin = kwargs.get("vmin", np.nanmin(u.data))
-            vmax = kwargs.get("vmax", np.nanmax(u.data))
-            levels = np.linspace(vmin, vmax, num_levels)
-
-        im: Any
-        if contour:
-            kwargs.pop("vmin", None)
-            kwargs.pop("vmax", None)
-            im = ax.contourf(
-                lons,
-                lats,
-                u.data,
-                transform=ccrs.PlateCarree(),
-                levels=levels,
-                **kwargs,
-            )
-        else:
-            im = ax.pcolormesh(
-                lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs
-            )
-
-        if contour_lines:
-            cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
-            cl_kwargs.setdefault("colors", "k")
-            cl_kwargs.setdefault("linewidths", 0.5)
-
-            ax.contour(
-                lons,
-                lats,
-                u.data,
-                transform=ccrs.PlateCarree(),
-                levels=levels,
-                **cl_kwargs,
-            )
-
-        if gridlines:
-            lat_interval = kwargs.pop("lat_interval", 30)
-            lon_interval = kwargs.pop("lon_interval", 30)
-            gl = ax.gridlines(
-                linestyle="--",
-                draw_labels=True,
-                dms=True,
-                x_inline=False,
-                y_inline=False,
-            )
-            gl.xlocator = mticker.MultipleLocator(lon_interval)
-            gl.ylocator = mticker.MultipleLocator(lat_interval)
-            gl.xformatter = LongitudeFormatter()
-            gl.yformatter = LatitudeFormatter()
-
-        return fig, ax, im
+        return plot(
+            u,
+            projection=projection,
+            contour=contour,
+            cmap=cmap,
+            coasts=coasts,
+            rivers=rivers,
+            borders=borders,
+            map_extent=map_extent,
+            gridlines=gridlines,
+            symmetric=symmetric,
+            contour_lines=contour_lines,
+            contour_lines_kwargs=contour_lines_kwargs,
+            num_levels=num_levels,
+            **kwargs,
+        )
 
     def plot_geodesic(
         self,
@@ -304,25 +257,27 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         **kwargs,
     ) -> Tuple["Figure", "GeoAxes"]:
         """
-        Plots a geodesic curve onto a Cartopy map.
+        Plots a geodesic (great-circle) curve between two points on the sphere.
+
+        This function leverages Cartopy's native `ccrs.Geodetic()` transform to
+        automatically render the shortest path between two coordinates across
+        any map projection.
+
+        Args:
+            p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
+            p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                and PlateCarree axes will be created automatically.
+            n_points: The number of points to use for interpolation. Note: Kept for
+                backwards compatibility, but interpolation is currently handled
+                natively by Cartopy's geodetic transforms.
+            **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
+                line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
+
+        Returns:
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
         """
-        points, _ = self.geodesic_quadrature(p1, p2, n_points=n_points)
-        lats, lons = zip(*points)
-
-        if ax is None:
-            fig, ax = plt.subplots(
-                figsize=kwargs.pop("figsize", (10, 8)),
-                subplot_kw={"projection": ccrs.PlateCarree()},
-            )
-        else:
-            fig = ax.get_figure()
-
-        kwargs.setdefault("color", "black")
-        kwargs.setdefault("linewidth", 2)
-
-        ax.plot(lons, lats, transform=ccrs.Geodetic(), **kwargs)
-
-        return fig, ax
+        return plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
 
     def plot_geodesic_network(
         self,
@@ -332,66 +287,28 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         **kwargs,
     ) -> Tuple["Figure", "GeoAxes"]:
         """
-        Plots a network of geodesic paths onto a Cartopy map.
+        Plots a network of intersecting geodesic paths onto a Cartopy map.
 
-        This method iterates through a list of source-receiver pairs and renders
-        each as a great-circle arc. It is useful for visualizing the spatial
-        coverage of a tomographic survey.
+        This function visualizes a full source-receiver network, commonly used in
+        tomographic surveys. It renders all connection arcs as great circles and
+        overlays distinct scatter markers for the unique source and receiver locations.
 
         Args:
-            paths: A list of ((lat1, lon1), (lat2, lon2)) tuples.
-            ax: An existing cartopy GeoAxes object. If None, a new figure is created.
-            n_points: Number of points used to render each curve. A lower value
-                (e.g., 50) is often sufficient for batch plotting many lines.
-            **kwargs: Keyword arguments passed to the underlying plot calls
-                (e.g., color, alpha, linewidth).
+            paths: A list of point pairs defining the network. Each item should be
+                a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                with a global PlateCarree projection is created.
+            n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
+            **kwargs: Default styling arguments applied to the geodesic lines
+                (e.g., `color='black'`, `alpha=0.5`).
+                Special sub-dictionaries can be passed to style the markers:
+                - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
+                - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
 
         Returns:
-            A tuple (figure, axes) containing the plot objects.
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
         """
-
-        if ax is None:
-            figsize = kwargs.pop("figsize", (12, 10))
-            fig, ax = plt.subplots(
-                figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()}
-            )
-            ax.set_global()
-            ax.coastlines()
-        else:
-            fig = ax.get_figure()
-
-        kwargs.setdefault("color", "black")
-        kwargs.setdefault("linewidth", 0.8)
-        kwargs.setdefault("alpha", 0.5)
-
-        for p1, p2 in paths:
-            self.plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
-
-        sources = list(set([tuple(p[0]) for p in paths]))
-        receivers = list(set([tuple(p[1]) for p in paths]))
-
-        src_lats, src_lons = zip(*sources)
-        rec_lats, rec_lons = zip(*receivers)
-
-        src_style = kwargs.pop("source_kwargs", {})
-        src_style.setdefault("marker", "*")
-        src_style.setdefault("color", "gold")
-        src_style.setdefault("s", 150)
-        src_style.setdefault("edgecolor", "black")
-        src_style.setdefault("zorder", 5)
-
-        ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
-
-        rec_style = kwargs.pop("receiver_kwargs", {})
-        rec_style.setdefault("marker", "o")
-        rec_style.setdefault("color", "red")
-        rec_style.setdefault("s", 50)
-        rec_style.setdefault("edgecolor", "white")
-        rec_style.setdefault("zorder", 5)
-
-        ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
-
-        return fig, ax
+        return plot_geodesic_network(paths, ax=ax, n_points=n_points, **kwargs)
 
     def sample_power_measure(
         self,
@@ -595,7 +512,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             return False
         if not x.lmax == self.lmax:
             return False
-        if not x.grid == self._grid_name():
+        if not x.grid == self.grid_type:
             return False
         if not x.extend == self.extend:
             return False
@@ -718,9 +635,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return sh.SHCoeffs.from_array(
             coeffs, normalization=self.normalization, csphase=self.csphase
         )
-
-    def _grid_name(self):
-        return self.grid if self._sampling == 1 else "DH2"
 
 
 class Sobolev(SymmetricSobolevSpace):
@@ -851,6 +765,13 @@ class Sobolev(SymmetricSobolevSpace):
         """The Condon-Shortley phase convention used (1)."""
         return self.underlying_space.csphase
 
+    @property
+    def grid_type(self) -> str:
+        """
+        Returns the pyshtools grid type.
+        """
+        return self.underlying_space.grid_type
+
     # -------------------------------------------------- #
     #                   Public methods                   #
     # -------------------------------------------------- #
@@ -892,31 +813,44 @@ class Sobolev(SymmetricSobolevSpace):
         **kwargs,
     ) -> Tuple[Figure, "GeoAxes", Any]:
         """
-        Creates a map plot of a function on the sphere using `cartopy`.
+        Creates a high-quality map plot of a spherical harmonic function using Cartopy.
+
+        This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
+        onto a specified map projection. It supports both pcolormesh and filled contour
+        plotting styles, along with various geographic overlays.
 
         Args:
-            u: The element to be plotted.
-            projection: A `cartopy.crs` projection. Defaults to `PlateCarree`.
-            contour: If True, creates a filled contour plot. Otherwise, a `pcolormesh` plot.
-            cmap: The colormap name.
-            coasts: If True, draws coastlines.
-            rivers: If True, draws major rivers.
-            borders: If True, draws country borders.
-            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` to set map bounds.
-            gridlines: If True, draws latitude/longitude gridlines.
-            symmetric: If True, centers the color scale symmetrically around zero.
-            contour_lines: If True, overlays contour lines on the plot.
-            contour_lines_kwargs: A dictionary of keyword arguments for styling the
-                contour lines (e.g., {'colors': 'k', 'linewidths': 0.5})
-            num_levels: The number of levels to generate automatically if `levels`
-                is not provided directly.
-            **kwargs: Additional keyword arguments forwarded to the plotting function
-                (`ax.contourf` or `ax.pcolormesh`).
+            u: The scalar field to be plotted, evaluated on a spatial grid.
+            projection: A `cartopy.crs` projection instance defining the map view.
+                Defaults to `ccrs.PlateCarree()`.
+            contour: If True, renders the field as a filled contour plot (`contourf`).
+                If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
+            cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
+            coasts: If True, overlays high-resolution coastlines. Defaults to False.
+            rivers: If True, overlays major river systems. Defaults to False.
+            borders: If True, overlays international country borders. Defaults to False.
+            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
+                extent of the map. Defaults to None (global view).
+            gridlines: If True, draws latitude and longitude gridlines with labels.
+                Defaults to True.
+            symmetric: If True, dynamically centers the color scale symmetrically around
+                zero (e.g., from -max to +max), which is ideal for anomaly fields.
+                Defaults to False.
+            contour_lines: If True, overlays solid contour lines on top of the base plot.
+                Defaults to False.
+            contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
+                for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
+            num_levels: The number of color levels to generate automatically if specific
+                `levels` are not provided in `**kwargs`. Defaults to 10.
+            **kwargs: Additional keyword arguments forwarded directly to the underlying
+                Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
 
         Returns:
-            A tuple `(figure, axes, image)` containing the Matplotlib and Cartopy objects.
+            A tuple `(fig, ax, im)` containing:
+                - fig: The generated Matplotlib Figure.
+                - ax: The Cartopy GeoAxes object.
+                - im: The rendered image object (either a QuadMesh or ContourSet).
         """
-
         return self.underlying_space.plot(
             u,
             projection=projection,
@@ -943,7 +877,25 @@ class Sobolev(SymmetricSobolevSpace):
         **kwargs,
     ) -> Tuple["Figure", "GeoAxes"]:
         """
-        Plots a geodesic curve onto a Cartopy map.
+        Plots a geodesic (great-circle) curve between two points on the sphere.
+
+        This function leverages Cartopy's native `ccrs.Geodetic()` transform to
+        automatically render the shortest path between two coordinates across
+        any map projection.
+
+        Args:
+            p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
+            p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                and PlateCarree axes will be created automatically.
+            n_points: The number of points to use for interpolation. Note: Kept for
+                backwards compatibility, but interpolation is currently handled
+                natively by Cartopy's geodetic transforms.
+            **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
+                line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
+
+        Returns:
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
         """
         return self.underlying_space.plot_geodesic(
             p1, p2, ax=ax, n_points=n_points, **kwargs
@@ -957,24 +909,27 @@ class Sobolev(SymmetricSobolevSpace):
         **kwargs,
     ) -> Tuple["Figure", "GeoAxes"]:
         """
-        Plots a network of geodesic paths onto a Cartopy map.
+        Plots a network of intersecting geodesic paths onto a Cartopy map.
 
-        This method iterates through a list of source-receiver pairs and renders
-        each as a great-circle arc. It is useful for visualizing the spatial
-        coverage of a tomographic survey.
+        This function visualizes a full source-receiver network, commonly used in
+        tomographic surveys. It renders all connection arcs as great circles and
+        overlays distinct scatter markers for the unique source and receiver locations.
 
         Args:
-            paths: A list of ((lat1, lon1), (lat2, lon2)) tuples.
-            ax: An existing cartopy GeoAxes object. If None, a new figure is created.
-            n_points: Number of points used to render each curve. A lower value
-                (e.g., 50) is often sufficient for batch plotting many lines.
-            **kwargs: Keyword arguments passed to the underlying plot calls
-                (e.g., color, alpha, linewidth).
+            paths: A list of point pairs defining the network. Each item should be
+                a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
+            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+                with a global PlateCarree projection is created.
+            n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
+            **kwargs: Default styling arguments applied to the geodesic lines
+                (e.g., `color='black'`, `alpha=0.5`).
+                Special sub-dictionaries can be passed to style the markers:
+                - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
+                - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
 
         Returns:
-            A tuple (figure, axes) containing the plot objects.
+            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
         """
-
         return self.underlying_space.plot_geodesic_network(
             paths, ax=ax, n_points=n_points, **kwargs
         )
@@ -1061,9 +1016,244 @@ class Sobolev(SymmetricSobolevSpace):
 
         return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
 
-    # ------------------------------------------------------ #
-    #                      Private methods                   #
-    # ------------------------------------------------------ #
 
-    def _grid_name(self):
-        return self.underlying_space._grid_name()
+# -------------------------------------------------- #
+#             Associated plotting methods            #
+# -------------------------------------------------- #
+
+
+def plot(
+    u: "SHGrid",
+    /,
+    *,
+    projection: Optional["Projection"] = None,
+    contour: bool = False,
+    cmap: str = "RdBu",
+    coasts: bool = False,
+    rivers: bool = False,
+    borders: bool = False,
+    map_extent: Optional[List[float]] = None,
+    gridlines: bool = True,
+    symmetric: bool = False,
+    contour_lines: bool = False,
+    contour_lines_kwargs: Optional[dict] = None,
+    num_levels: int = 10,
+    **kwargs,
+) -> Tuple["Figure", "GeoAxes", Any]:
+    """
+    Creates a high-quality map plot of a spherical harmonic function using Cartopy.
+
+    This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
+    onto a specified map projection. It supports both pcolormesh and filled contour
+    plotting styles, along with various geographic overlays.
+
+    Args:
+        u: The scalar field to be plotted, evaluated on a spatial grid.
+        projection: A `cartopy.crs` projection instance defining the map view.
+            Defaults to `ccrs.PlateCarree()`.
+        contour: If True, renders the field as a filled contour plot (`contourf`).
+            If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
+        cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
+        coasts: If True, overlays high-resolution coastlines. Defaults to False.
+        rivers: If True, overlays major river systems. Defaults to False.
+        borders: If True, overlays international country borders. Defaults to False.
+        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
+            extent of the map. Defaults to None (global view).
+        gridlines: If True, draws latitude and longitude gridlines with labels.
+            Defaults to True.
+        symmetric: If True, dynamically centers the color scale symmetrically around
+            zero (e.g., from -max to +max), which is ideal for anomaly fields.
+            Defaults to False.
+        contour_lines: If True, overlays solid contour lines on top of the base plot.
+            Defaults to False.
+        contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
+            for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
+        num_levels: The number of color levels to generate automatically if specific
+            `levels` are not provided in `**kwargs`. Defaults to 10.
+        **kwargs: Additional keyword arguments forwarded directly to the underlying
+            Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
+
+    Returns:
+        A tuple `(fig, ax, im)` containing:
+            - fig: The generated Matplotlib Figure.
+            - ax: The Cartopy GeoAxes object.
+            - im: The rendered image object (either a QuadMesh or ContourSet).
+    """
+    if projection is None:
+        projection = ccrs.PlateCarree()
+
+    lons = u.lons()
+    lats = u.lats()
+
+    figsize: Tuple[int, int] = kwargs.pop("figsize", (10, 8))
+    fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": projection})
+
+    if map_extent is not None:
+        ax.set_extent(map_extent, crs=ccrs.PlateCarree())
+    if coasts:
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    if rivers:
+        ax.add_feature(cfeature.RIVERS, linewidth=0.8)
+    if borders:
+        ax.add_feature(cfeature.BORDERS, linewidth=0.8)
+
+    kwargs.setdefault("cmap", cmap)
+    if symmetric:
+        data_max = 1.2 * np.nanmax(np.abs(u.data))
+        kwargs.setdefault("vmin", -data_max)
+        kwargs.setdefault("vmax", data_max)
+
+    if "levels" in kwargs:
+        levels = kwargs.pop("levels")
+    else:
+        vmin = kwargs.get("vmin", np.nanmin(u.data))
+        vmax = kwargs.get("vmax", np.nanmax(u.data))
+        levels = np.linspace(vmin, vmax, num_levels)
+
+    im: Any
+    if contour:
+        kwargs.pop("vmin", None)
+        kwargs.pop("vmax", None)
+        im = ax.contourf(
+            lons, lats, u.data, transform=ccrs.PlateCarree(), levels=levels, **kwargs
+        )
+    else:
+        im = ax.pcolormesh(lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs)
+
+    if contour_lines:
+        cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
+        cl_kwargs.setdefault("colors", "k")
+        cl_kwargs.setdefault("linewidths", 0.5)
+        ax.contour(
+            lons, lats, u.data, transform=ccrs.PlateCarree(), levels=levels, **cl_kwargs
+        )
+
+    if gridlines:
+        lat_interval = kwargs.pop("lat_interval", 30)
+        lon_interval = kwargs.pop("lon_interval", 30)
+        gl = ax.gridlines(
+            linestyle="--", draw_labels=True, dms=True, x_inline=False, y_inline=False
+        )
+        gl.xlocator = mticker.MultipleLocator(lon_interval)
+        gl.ylocator = mticker.MultipleLocator(lat_interval)
+        gl.xformatter = LongitudeFormatter()
+        gl.yformatter = LatitudeFormatter()
+
+    return fig, ax, im
+
+
+def plot_geodesic(
+    p1: Tuple[float, float],
+    p2: Tuple[float, float],
+    ax: Optional["GeoAxes"] = None,
+    n_points: int = 50,  # Kept in signature for backwards compatibility
+    **kwargs,
+) -> Tuple["Figure", "GeoAxes"]:
+    """
+    Plots a geodesic (great-circle) curve between two points on the sphere.
+
+    This function leverages Cartopy's native `ccrs.Geodetic()` transform to
+    automatically render the shortest path between two coordinates across
+    any map projection.
+
+    Args:
+        p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
+        p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
+        ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+            and PlateCarree axes will be created automatically.
+        n_points: The number of points to use for interpolation. Note: Kept for
+            backwards compatibility, but interpolation is currently handled
+            natively by Cartopy's geodetic transforms.
+        **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
+            line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
+
+    Returns:
+        A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(
+            figsize=kwargs.pop("figsize", (10, 8)),
+            subplot_kw={"projection": ccrs.PlateCarree()},
+        )
+    else:
+        fig = ax.get_figure()
+
+    kwargs.setdefault("color", "black")
+    kwargs.setdefault("linewidth", 2)
+
+    # Cartopy handles the great circle interpolation automatically!
+    lat1, lon1 = p1
+    lat2, lon2 = p2
+    ax.plot([lon1, lon2], [lat1, lat2], transform=ccrs.Geodetic(), **kwargs)
+
+    return fig, ax
+
+
+def plot_geodesic_network(
+    paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+    ax: Optional["GeoAxes"] = None,
+    n_points: int = 50,
+    **kwargs,
+) -> Tuple["Figure", "GeoAxes"]:
+    """
+    Plots a network of intersecting geodesic paths onto a Cartopy map.
+
+    This function visualizes a full source-receiver network, commonly used in
+    tomographic surveys. It renders all connection arcs as great circles and
+    overlays distinct scatter markers for the unique source and receiver locations.
+
+    Args:
+        paths: A list of point pairs defining the network. Each item should be
+            a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
+        ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
+            with a global PlateCarree projection is created.
+        n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
+        **kwargs: Default styling arguments applied to the geodesic lines
+            (e.g., `color='black'`, `alpha=0.5`).
+            Special sub-dictionaries can be passed to style the markers:
+            - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
+            - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
+
+    Returns:
+        A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
+    """
+    if ax is None:
+        figsize = kwargs.pop("figsize", (12, 10))
+        fig, ax = plt.subplots(
+            figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()}
+        )
+        ax.set_global()
+        ax.coastlines()
+    else:
+        fig = ax.get_figure()
+
+    kwargs.setdefault("color", "black")
+    kwargs.setdefault("linewidth", 0.8)
+    kwargs.setdefault("alpha", 0.5)
+
+    for p1, p2 in paths:
+        plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
+
+    sources = list(set([tuple(p[0]) for p in paths]))
+    receivers = list(set([tuple(p[1]) for p in paths]))
+
+    src_lats, src_lons = zip(*sources)
+    rec_lats, rec_lons = zip(*receivers)
+
+    src_style = kwargs.pop("source_kwargs", {})
+    src_style.setdefault("marker", "*")
+    src_style.setdefault("color", "gold")
+    src_style.setdefault("s", 150)
+    src_style.setdefault("edgecolor", "black")
+    src_style.setdefault("zorder", 5)
+    ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
+
+    rec_style = kwargs.pop("receiver_kwargs", {})
+    rec_style.setdefault("marker", "o")
+    rec_style.setdefault("color", "red")
+    rec_style.setdefault("s", 50)
+    rec_style.setdefault("edgecolor", "white")
+    rec_style.setdefault("zorder", 5)
+    ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
+
+    return fig, ax
