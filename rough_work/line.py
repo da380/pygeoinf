@@ -3,8 +3,8 @@ from pygeoinf.symmetric_space.line import Sobolev, plot
 
 X = Sobolev(256, 2, 0.05)
 
-u = X.dirac_representation(0.5)
+u = X.project_function(lambda x: x)
 
-plot(X, u)
+plot(X, u, full=True)
 
 plt.show()

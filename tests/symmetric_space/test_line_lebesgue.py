@@ -29,11 +29,29 @@ class TestLineLebesgueSpecifics:
         """Provides a Lebesgue space instance for the specific tests."""
         return Lebesgue(kmax, a=a, b=b, c=c)
 
-    def test_project_constant_function(self, space: Lebesgue):
-        """Tests if projecting a constant function f(x) = const works correctly."""
-        projected_vector = space.project_function(lambda x: 5.0)
-        expected_vector = np.full_like(projected_vector, 5.0)
-        assert np.allclose(projected_vector, expected_vector)
+    def test_project_constant_function(self, space):
+        """
+        Tests if projecting a constant function f(x) = const works correctly,
+        specifically checking the raised cosine tapering in the padding regions.
+        """
+        constant_val = 5.0
+        projected_vector = space.project_function(lambda x: constant_val)
+        points = space.points()
+
+        # 1. Check the physical interior [a, b] is exactly the constant
+        interior_mask = (points >= space.a) & (points <= space.b)
+        assert np.allclose(projected_vector[interior_mask], constant_val)
+
+        # 2. Check the exterior boundaries (<= a-c and >= b+c) are exactly zero
+        exterior_mask = (points <= space.a - space.c) | (points >= space.b + space.c)
+        if np.any(exterior_mask):
+            assert np.allclose(projected_vector[exterior_mask], 0.0)
+
+        # 3. Check the padding transition regions are strictly between 0 and the constant
+        taper_mask = (~interior_mask) & (~exterior_mask)
+        if np.any(taper_mask):
+            assert np.all(projected_vector[taper_mask] >= 0.0)
+            assert np.all(projected_vector[taper_mask] <= constant_val)
 
     def test_laplacian_eigenvalues(self, space: Lebesgue):
         """
