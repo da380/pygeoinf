@@ -121,7 +121,10 @@ from .subsets import (
 
 from .plot import plot_1d_distributions, plot_corner_distributions, SubspaceSlicePlotter, plot_slice
 
-from .convex_optimisation import SubgradientDescent
+from .convex_optimisation import (
+    SubgradientDescent,
+    ProximalBundleMethod,
+)
 
 from .convex_analysis import (
     SupportFunction,
@@ -134,6 +137,8 @@ from .convex_analysis import (
     MinkowskiSumSupportFunction,
     ScaledSupportFunction,
 )
+
+from .backus_gilbert import DualMasterCostFunction
 
 from .utils import configure_threading
 
@@ -245,6 +250,8 @@ __all__ = [
     "LinearImageSupportFunction",
     "MinkowskiSumSupportFunction",
     "ScaledSupportFunction",
+    # backus_gilbert
+    "DualMasterCostFunction",
     # utils
     "configure_threading",
 ]

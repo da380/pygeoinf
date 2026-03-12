@@ -998,7 +998,7 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         )
 
     @property
-    def support_function(self) -> Optional["SupportFunction"]:
+    def support_function(self) -> SupportFunction:
         """
         Returns the support function object for this ellipsoid.
 
@@ -1151,7 +1151,7 @@ class Ball(Ellipsoid):
         return Sphere(self.domain, self.center, self.radius)
 
     @property
-    def support_function(self) -> Optional["SupportFunction"]:
+    def support_function(self) -> SupportFunction:
         """
         Returns the support function object for this ball.
 
