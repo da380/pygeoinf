@@ -259,7 +259,7 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
 
         domain = EuclideanSpace(self.dim)
 
-        def dual_mapping(xp: Any) -> Any:
+        def dual_mapping(xp: Any) -> LinearForm:
             cp = self.dual.to_components(xp)
             return domain.to_dual(cp)
 

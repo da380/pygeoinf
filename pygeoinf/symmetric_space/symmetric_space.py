@@ -62,14 +62,6 @@ class AbstractInvariantLebesgueSpace(ABC):
         """The dimension of the Hilbert space."""
 
     @abstractmethod
-    def to_components(self, u: Any) -> np.ndarray:
-        """Maps a vector `u` to its real component representation."""
-
-    @abstractmethod
-    def from_components(self, c: np.ndarray) -> Any:
-        """Maps a real component vector back to a vector `u`."""
-
-    @abstractmethod
     def random_point(self) -> Any:
         """Returns a single random point from the underlying symmetric space."""
 
