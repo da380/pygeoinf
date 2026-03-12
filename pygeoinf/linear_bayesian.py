@@ -19,7 +19,7 @@ from typing import Optional
 from .inversion import LinearInversion
 from .gaussian_measure import GaussianMeasure
 from .forward_problem import LinearForwardProblem
-from .linear_operators import LinearOperator, NormalSumOperator
+from .linear_operators import LinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector
 from .subspaces import AffineSubspace
@@ -66,7 +66,7 @@ class LinearBayesianInversion(LinearInversion):
                 + self.forward_problem.data_error_measure.covariance
             )
         else:
-            return NormalSumOperator(forward_operator, model_prior_covariance)
+            return forward_operator @ model_prior_covariance @ forward_operator.adjoint
 
     def kalman_operator(
         self,

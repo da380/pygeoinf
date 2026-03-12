@@ -13,6 +13,7 @@ from .nonlinear_operators import NonLinearOperatorAxiomChecks
 if TYPE_CHECKING:
     from ..hilbert_space import Vector
     from ..linear_forms import LinearForm
+    from ..gaussian_measure import GaussianMeasure
 
 
 class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
@@ -154,10 +155,14 @@ class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
 
     def check(
         self,
+        /,
+        *,
         n_checks: int = 5,
         op2=None,
         check_rtol: float = 1e-5,
         check_atol: float = 1e-8,
+        domain_measure: GaussianMeasure = None,
+        codomain_measure: GaussianMeasure = None,
     ) -> None:
         """
         Runs all checks for the LinearOperator, including non-linear checks
@@ -168,18 +173,46 @@ class LinearOperatorAxiomChecks(NonLinearOperatorAxiomChecks):
             op2: An optional second operator for testing algebraic rules.
             check_rtol: The relative tolerance for numerical checks.
             check_atol: The absolute tolerance for numerical checks.
+            measure: A GaussianMeasure on the space from which
+                random samples can be generated. Defaults to None,
+                in which case the classes .random() method is used.
         """
         # First, run the parent (non-linear) checks from the base class
-        super().check(n_checks, op2=op2, check_rtol=check_rtol, check_atol=check_atol)
+        super().check(
+            n_checks=n_checks,
+            op2=op2,
+            check_rtol=check_rtol,
+            check_atol=check_atol,
+            measure=domain_measure,
+        )
+
+
+        if domain_measure is None:
+            domain_sampler = self.domain.random
+        else:
+            if domain_measure.domain != self.domain:
+                raise ValueError(
+                    "Provided measure must be defined on the operator's domain"
+                )
+            domain_sampler = domain_measure.sample
+
+        if codomain_measure is None:
+            codomain_sampler = self.codomain.random
+        else:
+            if codomain_measure.domain != self.codomain:
+                raise ValueError(
+                    "Provided measure must be defined on the operator's codomain"
+                )
+            codomain_sampler = codomain_measure.sample
 
         # Now, run the linear-specific checks
         print(
             f"Running {n_checks} additional randomized checks for linearity and adjoints..."
         )
         for _ in range(n_checks):
-            x1 = self.domain.random()
-            x2 = self.domain.random()
-            y = self.codomain.random()
+            x1 = domain_sampler()
+            x2 = domain_sampler()
+            y = codomain_sampler()
             a, b = np.random.randn(), np.random.randn()
 
             self._check_linearity(
