@@ -235,10 +235,10 @@ class Sobolev(SymmetricSobolevSpace):
         a: The left endpoint of the interval. Defaults to 0.0
         b: The right endpoint of the interval. Dafaults to 0.1
         c: The padding distance for the computational domain.
-               Defaults to 5*scale
+               Defaults to 6*scale
         """
 
-        c = 5 * scale if c is None else c
+        c = 6 * scale if c is None else c
         lebesgue_space = Lebesgue(kmax, a=a, b=b, c=c)
         SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale)
 
@@ -266,7 +266,7 @@ class Sobolev(SymmetricSobolevSpace):
             a: The left endpoint of the interval. Defaults to 0.0
             b: The right endpoint of the interval. Dafaults to 0.1
             c: The padding distance for the computational domain.
-               Defaults to 5*scale
+               Defaults to 6*scale
             rtol: Relative tolerance used in assessing truncation error.
                 Defaults to 1e-8.
             power_of_two: If True, `kmax` is set to the next power of two.
@@ -277,7 +277,7 @@ class Sobolev(SymmetricSobolevSpace):
         Raises:
             ValueError: If order is <= 0.5.
         """
-        c = 5 * scale if c is None else c
+        c = 6 * scale if c is None else c
         length = b - a + 2 * c
         radius = length / (2 * np.pi)
         circle_space = CircleSobolev.from_sobolev_parameters(

@@ -1,4 +1,13 @@
+from __future__ import annotations
+from typing import (
+    TYPE_CHECKING,
+)
+
 import numpy as np
+
+
+if TYPE_CHECKING:
+    from ..gaussian_measure import GaussianMeasure
 
 
 class HilbertSpaceAxiomChecks:
@@ -113,7 +122,7 @@ class HilbertSpaceAxiomChecks:
     def _check_gram_schmidt(self):
         """Checks the Gram-Schmidt orthonormalization process."""
         # Create a list of linearly independent vectors
-        vectors = [self.random() for _ in range(min(self.dim, 5))]
+        vectors = [self.sampler() for _ in range(min(self.dim, 5))]
         if not vectors:
             return  # Skip if dimension is 0
 
@@ -156,14 +165,14 @@ class HilbertSpaceAxiomChecks:
                 )
 
         # Check sample expectation
-        vectors = [self.random() for _ in range(5)]
+        vectors = [self.sampler() for _ in range(5)]
         mean_vec = self.sample_expectation(vectors)
 
         mean_comps = np.mean([self.to_components(v) for v in vectors], axis=0)
         if not np.allclose(self.to_components(mean_vec), mean_comps):
             raise AssertionError("Axiom failed: sample_expectation is incorrect.")
 
-    def check(self, n_checks: int = 10) -> None:
+    def check(self, /, *, n_checks: int = 10, measure: GaussianMeasure = None) -> None:
         """
         Runs a suite of randomized checks to verify the Hilbert space axioms.
 
@@ -173,13 +182,27 @@ class HilbertSpaceAxiomChecks:
 
         Args:
             n_checks: The number of randomized trials to run.
+            measure: A GaussianMeasure on the space from which
+                random samples can be generated. Defaults to None,
+                in which case the classes .random() method is used.
 
         Raises:
             AssertionError: If any of the underlying axiom checks fail.
+            ValueError: If the measure provided is defined on the wrong space.
         """
         print(
             f"\nRunning {n_checks} randomized axiom checks for {self.__class__.__name__}... (and some one-off checks)"
         )
+
+        if measure is None:
+
+            self.sampler = lambda: self.random()
+
+        else:
+            if measure.domain != self:
+                raise ValueError("Provided measure must be defined on the HilbertSpace")
+
+            self.sampler = lambda: measure.sample()
 
         # These checks only need to be run once
         self._check_gram_schmidt()
@@ -187,7 +210,7 @@ class HilbertSpaceAxiomChecks:
 
         for _ in range(n_checks):
             # Generate fresh random data for each trial
-            x, y, z = self.random(), self.random(), self.random()
+            x, y, z = self.sampler(), self.sampler(), self.sampler()
             a, b = np.random.randn(), np.random.randn()
 
             # Run all checks

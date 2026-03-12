@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    pass
+    from ..gaussian_measure import GaussianMeasure
 
 
 class NonLinearOperatorAxiomChecks:
@@ -151,10 +151,13 @@ class NonLinearOperatorAxiomChecks:
 
     def check(
         self,
+        /,
+        *,
         n_checks: int = 5,
         op2=None,
         check_rtol: float = 1e-5,
         check_atol: float = 1e-8,
+        measure: GaussianMeasure = None,
     ) -> None:
         """
         Runs randomized checks to validate the operator's derivative and
@@ -165,18 +168,35 @@ class NonLinearOperatorAxiomChecks:
             op2: An optional second operator for testing algebraic rules.
             check_rtol: The relative tolerance for numerical checks.
             check_atol: The absolute tolerance for numerical checks.
+            measure: A GaussianMeasure on the space from which
+                random samples can be generated. Defaults to None,
+                in which case the classes .random() method is used.
         """
         print(
             f"\nRunning {n_checks} randomized checks for {self.__class__.__name__}..."
         )
+
+
+        if measure is None:
+
+            sampler = self.domain.random
+
+        else:
+            if measure.domain != self.domain:
+                raise ValueError(
+                    "Provided measure must be defined on the operator's domain"
+                )
+
+            sampler = measure.sample
+
         for _ in range(n_checks):
-            x = self.domain.random()
-            v = self.domain.random()
+            x = sampler()
+            v = sampler()
             a = np.random.randn()
 
             # Ensure the direction vector 'v' is not a zero vector
             if self.domain.norm(v) < 1e-12:
-                v = self.domain.random()
+                v = sampler()
 
             # Original check
             self._check_derivative_finite_difference(

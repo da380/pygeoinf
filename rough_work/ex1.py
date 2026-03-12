@@ -1,9 +1,11 @@
-from pygeoinf.symmetric_space.sphere import Sobolev
+import pygeoinf as inf
 
-X = Sobolev(128, 2, 0.1)
+X = inf.EuclideanSpace(10)
+Y = inf.EuclideanSpace(5)
 
-points = X.random_points(1000)
+A = inf.LinearOperator(X, Y, lambda x: x[: Y.dim])
 
+mu = inf.GaussianMeasure.from_standard_deviation(X, 0.1)
+nu = inf.GaussianMeasure.from_standard_deviation(Y, 2.0)
 
-A = X.point_evaluation_operator(points, matrix_free=True, parallel=True, n_jobs=10)
-A.check()
+A.check(domain_measure=mu, codomain_measure=nu)

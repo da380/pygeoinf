@@ -1,10 +1,26 @@
-import matplotlib.pyplot as plt
-from pygeoinf.symmetric_space.line import Sobolev, plot
+import numpy as np
+from pygeoinf.symmetric_space import line
 
-X = Sobolev(256, 2, 0.05)
+# from pygeoinf.symmetric_space.line import Sobolev, plot
 
-u = X.project_function(lambda x: x)
+scale = 0.1
 
-plot(X, u, full=True)
+X = line.Sobolev(256, 2, scale, a=0, b=2 * np.pi)
+
+mu = X.heat_kernel_gaussian_measure(0.1)
+
+X.check(measure=mu)
+
+"""
+u = X.dirac_representation(0)
+
+line.plot(X, u, full=False)
+
+Y = circle.Sobolev(256, 2, scale)
+
+v = Y.dirac_representation(0)
+
+circle.plot(Y, v)
 
 plt.show()
+"""

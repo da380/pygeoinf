@@ -11,7 +11,7 @@ from pygeoinf.symmetric_space.line import (
 # ==========================================
 # 1. Setup Model Space & Forward Problem
 # ==========================================
-model_space = Sobolev.from_sobolev_parameters(2.0, 0.1, a=1, b=3)
+model_space = Sobolev.from_sobolev_parameters(2.0, 0.01, a=1, b=3)
 
 n_data = 50
 observation_points = model_space.random_points(n_data)
@@ -34,7 +34,7 @@ print(f"Data space dimension: {data_space.dim}")
 # 2. Generate Synthetic Data
 # ==========================================
 model_prior_measure = model_space.point_value_scaled_heat_kernel_gaussian_measure(
-    0.1, std=1.0
+    0.01, std=1.0
 )
 true_model, data = forward_problem.synthetic_model_and_data(model_prior_measure)
 
