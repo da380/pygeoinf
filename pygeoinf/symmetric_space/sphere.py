@@ -38,7 +38,6 @@ except ImportError:
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
-from .sh_tools import SHVectorConverter
 
 
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
@@ -544,16 +543,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         r"""
         Returns a LinearOperator mapping a function to its spherical harmonic coefficients.
 
-        The operator maps an element of the Hilbert space to a vector in $\mathbb{R}^k$.
-        The coefficients in the output vector are ordered by degree $l$ (major)
-        and order $m$ (minor), from $-l$ to $+l$.
-
-        **Ordering:**
-
-        .. math::
-            u = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
-
-        (assuming `lmin=0`).
+        The operator maps an element of the Hilbert space to a vector in \(\mathbb{R}^k\).
+        The coefficients in the output vector follow the native pyshtools ordering:
+        ordered by degree $l$ (major), and for each degree, the order $m$ is sorted
+        as $0, 1, \dots, l, -1, \dots, -l$.
 
         Args:
             lmax: The maximum spherical harmonic degree to include in the output.
@@ -562,18 +555,43 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Returns:
             A LinearOperator mapping `SHGrid` -> `numpy.ndarray`.
         """
+        vector_size = (lmax + 1) ** 2 - lmin**2
+        codomain = EuclideanSpace(vector_size)
 
-        converter = SHVectorConverter(lmax, lmin)
-        codomain = EuclideanSpace(converter.vector_size)
-
-        def mapping(u: SHGrid) -> np.ndarray:
+        def mapping(u: sh.SHGrid) -> np.ndarray:
             ulm = self.to_coefficients(u)
-            return converter.to_vector(ulm.coeffs)
+            coeffs = ulm.coeffs
+            in_lmax = coeffs.shape[1] - 1
 
-        def adjoint_mapping(data: np.ndarray) -> SHGrid:
-            coeffs = converter.from_vector(data, output_lmax=self.lmax)
+            # Align sizes to the requested lmax
+            target_coeffs = np.zeros((2, lmax + 1, lmax + 1))
+            loop_lmax = min(lmax, in_lmax)
+            target_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
+                :, : loop_lmax + 1, : loop_lmax + 1
+            ]
+
+            # Fast Fortran conversion
+            vec = sh.shio.SHCilmToVector(target_coeffs)
+
+            # Truncate lower degrees if lmin > 0
+            return vec[lmin**2 :] if lmin > 0 else vec
+
+        def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
+            # Pad missing lower degrees if lmin > 0
+            vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
+
+            # Fast Fortran conversion back to 3D array
+            coeffs = sh.shio.SHVectorToCilm(vec)
+
+            # Map back to the space's internal lmax
+            out_coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
+            loop_lmax = min(self.lmax, lmax)
+            out_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
+                :, : loop_lmax + 1, : loop_lmax + 1
+            ]
+
             ulm = sh.SHCoeffs.from_array(
-                coeffs,
+                out_coeffs,
                 normalization=self.normalization,
                 csphase=self.csphase,
             )
@@ -585,15 +603,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         r"""
         Returns a LinearOperator mapping a vector of coefficients to a function.
 
-        The operator maps a vector in $\mathbb{R}^k$ to an element of the Hilbert space.
-        The input vector must follow the standard $l$-major, $m$-minor ordering.
-
-        **Ordering:**
-
-        .. math::
-            v = [u_{0,0}, \quad u_{1,-1}, u_{1,0}, u_{1,1}, \quad u_{2,-2}, \dots, u_{2,2}, \quad \dots]
-
-        (assuming `lmin=0`).
+        The operator maps a vector in \(\mathbb{R}^k\) to an element of the Hilbert space.
+        The input vector must follow the native pyshtools ordering: ordered by
+        degree $l$ (major), and for each degree, the order $m$ is sorted as
+        $0, 1, \dots, l, -1, \dots, -l$.
 
         Args:
             lmax: The maximum spherical harmonic degree expected in the input.
@@ -602,22 +615,41 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Returns:
             A LinearOperator mapping `numpy.ndarray` -> `SHGrid`.
         """
+        vector_size = (lmax + 1) ** 2 - lmin**2
+        domain = EuclideanSpace(vector_size)
 
-        converter = SHVectorConverter(lmax, lmin)
-        domain = EuclideanSpace(converter.vector_size)
+        def mapping(data: np.ndarray) -> sh.SHGrid:
+            vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
+            coeffs = sh.shio.SHVectorToCilm(vec)
 
-        def mapping(data: np.ndarray) -> SHGrid:
-            coeffs = converter.from_vector(data, output_lmax=self.lmax)
+            out_coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
+            loop_lmax = min(self.lmax, lmax)
+            out_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
+                :, : loop_lmax + 1, : loop_lmax + 1
+            ]
+
             ulm = sh.SHCoeffs.from_array(
-                coeffs,
+                out_coeffs,
                 normalization=self.normalization,
                 csphase=self.csphase,
             )
             return self.from_coefficients(ulm)
 
-        def adjoint_mapping(u: SHGrid) -> np.ndarray:
+        def adjoint_mapping(u: sh.SHGrid) -> np.ndarray:
             ulm = self.to_coefficients(u)
-            return converter.to_vector(ulm.coeffs) * self.radius**2
+            coeffs = ulm.coeffs
+            in_lmax = coeffs.shape[1] - 1
+
+            target_coeffs = np.zeros((2, lmax + 1, lmax + 1))
+            loop_lmax = min(lmax, in_lmax)
+            target_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
+                :, : loop_lmax + 1, : loop_lmax + 1
+            ]
+
+            vec = sh.shio.SHCilmToVector(target_coeffs)
+            vec = vec[lmin**2 :] if lmin > 0 else vec
+
+            return vec * self.radius**2
 
         return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
 
