@@ -7,7 +7,6 @@ import numpy as np
 import pyshtools as sh
 
 from pygeoinf.symmetric_space.sphere import Sobolev
-from pygeoinf.symmetric_space.sh_tools import SHVectorConverter
 
 
 @pytest.mark.parametrize("lmax, radius, grid", [(8, 1.0, "DH"), (16, 6371.0, "GLQ")])
@@ -90,17 +89,21 @@ class TestSphereSobolevSpecifics:
     def test_sobolev_coefficient_mapping(self, sobolev_space: Sobolev):
         """
         Tests the coefficient operators specifically within the Sobolev context
-        to ensure they map to the correct underlying coefficients.
+        to ensure they map to the correct underlying coefficients using the
+        native pyshtools vector ordering.
         """
         lmax = sobolev_space.lmax
 
         # Generate a known coefficient vector
-        converter = SHVectorConverter(lmax)
-        vec_in = np.zeros(converter.vector_size)
+        vector_size = (lmax + 1) ** 2
+        vec_in = np.zeros(vector_size)
 
         # Set a specific coefficient (e.g., l=2, m=0) to 1.0
-        # Index calculation: l=0(1) + l=1(3) = 4. l=2 starts at 4. m=0 is +2 offset -> 6.
-        target_idx = 6
+        # pyshtools ordering: degree l major; order m is [0, 1, ..., l, -1, ..., -l]
+        # l=0 takes 1 element (index 0)
+        # l=1 takes 3 elements (indices 1, 2, 3)
+        # l=2 starts at index 4. The first element is m=0.
+        target_idx = 4
         vec_in[target_idx] = 1.0
 
         op_from = sobolev_space.from_coefficient_operator(lmax)
