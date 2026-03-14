@@ -349,3 +349,110 @@ class TestGeometricVsBayesianConstraints:
         # Bayesian respects correlation (y ~ 0.9x)
         assert np.isclose(bayes_mean_x[0], 1.0)
         assert np.isclose(bayes_mean_x[1], 0.9, atol=0.05)
+
+
+# =============================================================================
+# New Tests for Diagonal Preconditioner
+# =============================================================================
+
+
+class TestDiagonalNormalPreconditioner:
+    """Tests for the diagonal normal preconditioner optimization."""
+
+    def test_exact_diagonal_no_blocks(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the matrix-free diagonal computation exactly matches
+        the diagonal of the fully assembled dense normal matrix.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # 1. Compute using the new optimized method
+        preconditioner = inversion.diagonal_normal_preconditioner()
+
+        # The preconditioner is the *inverse* of the diagonal normal operator,
+        # so its diagonal entries should be 1 / diag(N)
+        precon_diagonal = preconditioner.extract_diagonal()
+        approx_normal_diagonal = 1.0 / precon_diagonal
+
+        # 2. Get dense matrices for exact brute-force comparison
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        # N = A Q A^T + R
+        exact_normal_matrix = A @ Q @ A.T + R
+        exact_diagonal = np.diag(exact_normal_matrix)
+
+        # 3. Compare
+        assert np.allclose(approx_normal_diagonal, exact_diagonal)
+
+    def test_block_averaging(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that providing blocks correctly averages the basis vectors
+        to compute a representative regional variance.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # The data space in the fixture is 3D.
+        # Let's block indices [0, 1] together, and leave [2] alone.
+        blocks = [[0, 1], [2]]
+
+        preconditioner = inversion.diagonal_normal_preconditioner(blocks=blocks)
+        precon_diagonal = preconditioner.extract_diagonal()
+        approx_normal_diagonal = 1.0 / precon_diagonal
+
+        # 1. Manual check for the block [0, 1]
+        data_space = forward_problem.data_space
+        model_space = forward_problem.model_space
+        A_adj = forward_problem.forward_operator.adjoint
+        Q_op = model_prior_measure.covariance
+
+        # Average basis vector: v = 0.5 * e_0 + 0.5 * e_1
+        v01 = data_space.from_components(np.array([0.5, 0.5, 0.0]))
+        f_v01 = A_adj(v01)
+        aqa_01 = model_space.inner_product(f_v01, Q_op(f_v01))
+
+        # R is identity in the fixture, so R_00 = R_11 = 1.0
+        expected_0 = aqa_01 + 1.0
+        expected_1 = aqa_01 + 1.0
+
+        assert np.isclose(approx_normal_diagonal[0], expected_0)
+        assert np.isclose(approx_normal_diagonal[1], expected_1)
+
+        # 2. Manual check for block [2] (just index 2)
+        v2 = data_space.from_components(np.array([0.0, 0.0, 1.0]))
+        f_v2 = A_adj(v2)
+        aqa_2 = model_space.inner_product(f_v2, Q_op(f_v2))
+        expected_2 = aqa_2 + 1.0
+
+        assert np.isclose(approx_normal_diagonal[2], expected_2)
+
+    def test_block_validation(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that malformed blocks raise the appropriate errors.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # Missing index 2
+        with pytest.raises(ValueError, match="must exactly partition"):
+            inversion.diagonal_normal_preconditioner(blocks=[[0, 1]])
+
+        # Duplicate index 1
+        with pytest.raises(ValueError, match="must exactly partition"):
+            inversion.diagonal_normal_preconditioner(blocks=[[0, 1], [1, 2]])
+
+        # Out of bounds index
+        with pytest.raises(ValueError, match="out of bounds"):
+            inversion.diagonal_normal_preconditioner(blocks=[[0, 1], [3]])

@@ -27,8 +27,6 @@ try:
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
-
-
 except ImportError:
     raise ImportError(
         "pyshtools and cartopy are required for the sphere module. "

@@ -2,10 +2,7 @@
 Symmetric space function spaces and utilities.
 """
 
-from . import circle
-from . import line
-from . import sphere
-
+import importlib
 
 from .symmetric_space import (
     SymmetricHilbertSpace,
@@ -16,12 +13,21 @@ from .symmetric_space import (
 )
 
 __all__ = [
-    "circle",
-    "line",
-    "sphere",
     "SymmetricHilbertSpace",
     "AbstractSymmetricLebesgueSpace",
     "SymmetricSobolevSpace",
     "InvariantLinearAutomorphism",
     "InvariantGaussianMeasure",
 ]
+
+
+def __getattr__(name):
+    """Lazily load submodules when requested."""
+    if name in ("circle", "line", "sphere"):
+        return importlib.import_module(f".{name}", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    """Ensure IDE autocompletion still sees the lazy submodules."""
+    return __all__ + ["circle", "line", "sphere"]
