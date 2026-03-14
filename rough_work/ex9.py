@@ -125,5 +125,5 @@ plot_results(
     solution_model=posterior_mean,
     solution_label="Posterior Mean",
     solution_std=posterior_std,
-    full=False,
+    full=True,
 )

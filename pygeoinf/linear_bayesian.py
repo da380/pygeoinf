@@ -14,12 +14,15 @@ Key Classes
 """
 
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List
+
+from joblib import Parallel, delayed
+import numpy as np
 
 from .inversion import LinearInversion
 from .gaussian_measure import GaussianMeasure
 from .forward_problem import LinearForwardProblem
-from .linear_operators import LinearOperator
+from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector
 from .subspaces import AffineSubspace
@@ -150,20 +153,19 @@ class LinearBayesianInversion(LinearInversion):
         if can_sample_prior and can_sample_noise:
 
             def sample():
-                # a. Sample Prior
+                # a. Sample Prior (u)
                 model_sample = self.model_prior_measure.sample()
 
-                # b. Calculate Residual
+                # b. Calculate deterministic residual (v - Bu)
                 prediction = forward_operator(model_sample)
                 data_residual = data_space.subtract(data, prediction)
 
-                # c. Perturb Residual
+                # c. Subtract full noise sample (v - Bu - z)
                 if self.forward_problem.data_error_measure_set:
-                    noise_raw = self.forward_problem.data_error_measure.sample()
-                    epsilon = data_space.subtract(noise_raw, error_expectation)
-                    data_space.axpy(1.0, epsilon, data_residual)
+                    noise_sample = self.forward_problem.data_error_measure.sample()
+                    data_residual = data_space.subtract(data_residual, noise_sample)
 
-                # d. Update
+                # d. Update with Kalman gain (u + K * residual)
                 correction = kalman_gain(data_residual)
                 return model_space.add(model_sample, correction)
 
@@ -172,6 +174,101 @@ class LinearBayesianInversion(LinearInversion):
             )
         else:
             return GaussianMeasure(covariance=covariance, expectation=expectation)
+
+    def diagonal_normal_preconditioner(
+        self,
+        /,
+        *,
+        blocks: Optional[List[List[int]]] = None,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Constructs a diagonal preconditioner for the Bayesian normal operator
+        (A Q A* + R) using an optimized formulation.
+
+        This exploits the identity <v, A Q A* v> = <A* v, Q A* v>. If blocks
+        of data indices are provided, it acts on the averaged basis vector
+        for each block to compute a robust representative regional variance,
+        requiring only one adjoint action of the forward operator per block.
+
+        Args:
+            blocks: An optional list of lists, where each sub-list contains indices
+                of data points grouped together. Must perfectly partition the data space.
+            parallel: If True, computes the adjoint actions in parallel.
+            n_jobs: Number of parallel jobs to use. -1 means all available cores.
+
+        Returns:
+            A DiagonalSparseMatrixLinearOperator representing the inverse of
+            the approximated normal operator.
+        """
+
+        data_space = self.data_space
+        model_space = self.model_space
+        A_adj = self.forward_problem.forward_operator.adjoint
+        Q = self.model_prior_measure.covariance
+        data_dim = data_space.dim
+
+        if blocks is not None:
+            flattened_indices = [idx for block in blocks for idx in block]
+
+            if (
+                len(flattened_indices) != data_dim
+                or len(set(flattened_indices)) != data_dim
+            ):
+                raise ValueError(
+                    f"The provided blocks must exactly partition the data space. "
+                    f"Expected {data_dim} unique indices, but got {len(flattened_indices)} "
+                    f"total indices with {len(set(flattened_indices))} unique."
+                )
+
+            if min(flattened_indices) < 0 or max(flattened_indices) >= data_dim:
+                raise ValueError("Block indices are out of bounds for the data space.")
+
+            blocks_to_compute = blocks
+        else:
+            blocks_to_compute = [[i] for i in range(data_dim)]
+
+        def compute_block_aqa_diag(block: List[int]) -> float:
+            """Worker function to compute the representative variance for a block."""
+            n = len(block)
+
+            # Form the averaged basis vector v = (1/n) * sum(e_i)
+            c = np.zeros(data_dim)
+            c[block] = 1.0 / n
+            v = data_space.from_components(c)
+            f = A_adj(v)
+            Q_f = Q(f)
+            return model_space.inner_product(f, Q_f)
+
+        if parallel:
+            computed_vals = Parallel(n_jobs=n_jobs)(
+                delayed(compute_block_aqa_diag)(block) for block in blocks_to_compute
+            )
+        else:
+            computed_vals = [
+                compute_block_aqa_diag(block) for block in blocks_to_compute
+            ]
+
+        aqa_diag = np.zeros(data_dim)
+        for block, val in zip(blocks_to_compute, computed_vals):
+            aqa_diag[block] = val
+
+        if self.forward_problem.data_error_measure_set:
+            r_diag = (
+                self.forward_problem.data_error_measure.covariance.extract_diagonal(
+                    galerkin=True, parallel=parallel, n_jobs=n_jobs
+                )
+            )
+            normal_diag = aqa_diag + r_diag
+        else:
+            normal_diag = aqa_diag
+
+        approx_normal_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            data_space, data_space, normal_diag, galerkin=True
+        )
+
+        return approx_normal_op.inverse
 
 
 class ConstrainedLinearBayesianInversion(LinearInversion):
