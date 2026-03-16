@@ -207,6 +207,127 @@ class TestOperatorFactories:
         assert isinstance(sparse_op, inf.SparseMatrixLinearOperator)
         assert sparse_op.is_galerkin
 
+    def test_from_vectors(self):
+        """Tests creating a LinearOperator from a list of domain vectors."""
+        domain = inf.EuclideanSpace(4)
+
+        # Create a list of random vectors in the domain
+        vectors1 = [domain.random() for _ in range(3)]
+        op1 = inf.LinearOperator.from_vectors(domain, vectors1)
+
+        # Create a second operator for the algebraic .check() suite
+        vectors2 = [domain.random() for _ in range(3)]
+        op2 = inf.LinearOperator.from_vectors(domain, vectors2)
+
+        # 1. Verify codomain dimension
+        assert op1.codomain.dim == 3
+        assert isinstance(op1.codomain, inf.EuclideanSpace)
+
+        # 2. Verify the forward mapping explicitly: A(x)_i = <v_i, x>
+        x = domain.random()
+        y_actual = op1(x)
+        y_expected = np.array([domain.inner_product(v, x) for v in vectors1])
+        assert np.allclose(y_actual, y_expected)
+
+        # 3. Verify the adjoint mapping explicitly: A*(y) = sum(y_i * v_i)
+        y = op1.codomain.random()
+        x_adj_actual = op1.adjoint(y)
+
+        x_adj_expected = domain.zero
+        for i, v in enumerate(vectors1):
+            domain.axpy(y[i], v, x_adj_expected)
+
+        assert np.allclose(
+            domain.to_components(x_adj_actual), domain.to_components(x_adj_expected)
+        )
+
+        # 4. Verify that an empty list raises a ValueError
+        with pytest.raises(ValueError, match="empty list of vectors"):
+            inf.LinearOperator.from_vectors(domain, [])
+
+        # 5. Run the comprehensive automated algebraic checks
+        op1.check(n_checks=3, op2=op2)
+
+    def test_from_vector(self):
+        """Tests creating a rank-1 LinearOperator from a single vector."""
+        domain = inf.EuclideanSpace(4)
+
+        # Create a single random vector in the domain
+        v1 = domain.random()
+        op1 = inf.LinearOperator.from_vector(domain, v1)
+
+        # Create a second operator for the algebraic .check() suite
+        v2 = domain.random()
+        op2 = inf.LinearOperator.from_vector(domain, v2)
+
+        # 1. Verify codomain dimension
+        assert op1.codomain.dim == 1
+        assert isinstance(op1.codomain, inf.EuclideanSpace)
+
+        # 2. Verify the forward mapping explicitly: A(x) = [<v, x>]
+        x = domain.random()
+        y_actual = op1(x)
+        y_expected = np.array([domain.inner_product(v1, x)])
+        assert np.allclose(y_actual, y_expected)
+
+        # 3. Verify the adjoint mapping explicitly: A*(y) = y[0] * v
+        y = op1.codomain.random()  # 1D array of size 1
+        x_adj_actual = op1.adjoint(y)
+        x_adj_expected = domain.multiply(y[0], v1)
+
+        assert np.allclose(
+            domain.to_components(x_adj_actual), domain.to_components(x_adj_expected)
+        )
+
+        # 4. Run the comprehensive automated algebraic checks
+        op1.check(n_checks=3, op2=op2)
+
+    def test_from_linear_form(self):
+        """Tests creating a rank-1 LinearOperator from a single LinearForm."""
+        domain = inf.EuclideanSpace(4)
+
+        # Create a LinearForm by mapping a random vector to the dual space
+        v1 = domain.random()
+        form1 = domain.to_dual(v1)
+        op1 = inf.LinearOperator.from_linear_form(form1)
+
+        # Create a second operator for the algebraic .check() suite
+        v2 = domain.random()
+        form2 = domain.to_dual(v2)
+        op2 = inf.LinearOperator.from_linear_form(form2)
+
+        # 1. Verify codomain dimension
+        assert op1.codomain.dim == 1
+        assert isinstance(op1.codomain, inf.EuclideanSpace)
+
+        # 2. Verify the forward mapping explicitly: A(x) = [f(x)]
+        x = domain.random()
+        y_actual = op1(x)
+        y_expected = np.array([form1(x)])
+        assert np.allclose(y_actual, y_expected)
+
+        # 3. Verify the dual mapping explicitly: A'(y') = y'_0 * f
+        y = op1.codomain.random()  # 1D array of size 1
+        yp = op1.codomain.to_dual(y)
+
+        form_actual = op1.dual(yp)
+        form_expected = domain.dual.multiply(y[0], form1)
+
+        assert np.allclose(
+            domain.dual.to_components(form_actual),
+            domain.dual.to_components(form_expected),
+        )
+
+        # 4. Verify the adjoint is correctly built internally
+        x_adj_actual = op1.adjoint(y)
+        x_adj_expected = domain.multiply(y[0], v1)
+        assert np.allclose(
+            domain.to_components(x_adj_actual), domain.to_components(x_adj_expected)
+        )
+
+        # 5. Run the comprehensive automated algebraic checks
+        op1.check(n_checks=3, op2=op2)
+
 
 class TestMatrixRepresentationLogic:
     """

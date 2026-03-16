@@ -45,7 +45,7 @@ from .checks.linear_operators import LinearOperatorAxiomChecks
 
 # This block only runs for type checkers, not at runtime
 if TYPE_CHECKING:
-    from .hilbert_space import HilbertSpace
+    from .hilbert_space import HilbertSpace, Vector
     from .linear_forms import LinearForm
 
 
@@ -255,6 +255,130 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             return domain.dual.from_components(cxp)
 
         return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+
+    @staticmethod
+    def from_linear_form(form: "LinearForm") -> "LinearOperator":
+        """
+        Creates a rank-1 LinearOperator from a single LinearForm.
+
+        The resulting operator maps from the form's domain to a 1-dimensional
+        Euclidean space.
+
+        The forward mapping evaluates the form: A(x) = [form(x)].
+        The dual mapping scales the form: A'(y') = y'_0 * form.
+        The adjoint mapping is handled automatically by the base class.
+
+        Args:
+            form: A LinearForm representing a continuous linear functional.
+
+        Returns:
+            A LinearOperator mapping from 'form.domain' to EuclideanSpace(1).
+        """
+        from .hilbert_space import EuclideanSpace
+
+        domain = form.domain
+        codomain = EuclideanSpace(1)
+
+        def mapping(x: "Vector") -> np.ndarray:
+            # Evaluate the linear form and wrap it in a 1D array
+            return np.array([form(x)])
+
+        def dual_mapping(yp: Any) -> "LinearForm":
+            # Map the 1D Euclidean dual vector to its scalar component
+            scalar = codomain.from_dual(yp)[0]
+            # The dual map simply scales the linear form in the dual space
+            return domain.dual.multiply(scalar, form)
+
+        return LinearOperator(
+            domain,
+            codomain,
+            mapping,
+            dual_mapping=dual_mapping,
+        )
+
+    @staticmethod
+    def from_vectors(domain: HilbertSpace, vectors: List[Vector]) -> "LinearOperator":
+        """
+        Creates a LinearOperator from a list of domain vectors.
+
+        The resulting operator maps from the given domain to a Euclidean space
+        of dimension n (where n is the number of vectors).
+
+        The forward mapping is given by A(x)_i = <vectors[i], x>.
+        The adjoint mapping is given by A*(y) = sum(y_i * vectors[i]).
+
+        Args:
+            domain: The Hilbert space the vectors belong to.
+            vectors: A list of vectors in the domain space.
+
+        Returns:
+            A LinearOperator mapping from 'domain' to EuclideanSpace(len(vectors)).
+
+        Raises:
+            ValueError: If the list of vectors is empty.
+        """
+        from .hilbert_space import EuclideanSpace
+
+        n = len(vectors)
+        if n == 0:
+            raise ValueError("Cannot create an operator from an empty list of vectors.")
+
+        codomain = EuclideanSpace(n)
+
+        def mapping(x: Vector) -> np.ndarray:
+            # Evaluate the inner product of x with each vector
+            return np.array([domain.inner_product(v, x) for v in vectors])
+
+        def adjoint_mapping(y: np.ndarray) -> Vector:
+            # Reconstruct a domain vector as a linear combination
+            result = domain.zero
+            for i in range(n):
+                domain.axpy(y[i], vectors[i], result)
+            return result
+
+        return LinearOperator(
+            domain,
+            codomain,
+            mapping,
+            adjoint_mapping=adjoint_mapping,
+        )
+
+    @staticmethod
+    def from_vector(domain: HilbertSpace, vector: Vector) -> "LinearOperator":
+        """
+        Creates a rank-1 LinearOperator from a single domain vector.
+
+        The resulting operator maps from the given domain to a 1-dimensional
+        Euclidean space.
+
+        The forward mapping evaluates the inner product: A(x) = [<vector, x>].
+        The adjoint mapping scales the vector: A*(y) = y[0] * vector.
+
+        Args:
+            domain: The Hilbert space the vector belongs to.
+            vector: A single vector in the domain space.
+
+        Returns:
+            A LinearOperator mapping from 'domain' to EuclideanSpace(1).
+        """
+        from .hilbert_space import EuclideanSpace
+
+        codomain = EuclideanSpace(1)
+
+        def mapping(x: Vector) -> np.ndarray:
+            # Evaluate the inner product and wrap it in a 1D array
+            return np.array([domain.inner_product(vector, x)])
+
+        def adjoint_mapping(y: np.ndarray) -> Vector:
+            # y is a 1D Euclidean vector (numpy array of size 1)
+            return domain.multiply(y[0], vector)
+
+        return LinearOperator(
+            domain,
+            codomain,
+            mapping,
+            adjoint_mapping=adjoint_mapping,
+        )
 
     @staticmethod
     def from_matrix(
@@ -1021,6 +1145,10 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             a `NonLinearOperator`.
         """
 
+        # Yield to AffineOperator to preserve structure
+        if type(other).__name__ == "AffineOperator":
+            return NotImplemented
+
         if isinstance(other, LinearOperator):
             domain = self.domain
             codomain = self.codomain
@@ -1054,6 +1182,10 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             A new `LinearOperator` if subtracting two linear operators,
             otherwise a `NonLinearOperator`.
         """
+
+        # Yield to AffineOperator to preserve structure
+        if type(other).__name__ == "AffineOperator":
+            return NotImplemented
 
         if isinstance(other, LinearOperator):
 
@@ -1093,6 +1225,10 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             A new `LinearOperator` if composing two linear operators,
             otherwise a `NonLinearOperator`.
         """
+
+        # Yield to AffineOperator to preserve structure
+        if type(other).__name__ == "AffineOperator":
+            return NotImplemented
 
         if isinstance(other, LinearOperator):
             domain = other.domain

@@ -41,6 +41,7 @@ from .linear_operators import (
     DiagonalSparseMatrixLinearOperator,
 )
 
+from .affine_operators import AffineOperator
 
 from .gaussian_measure import (
     GaussianMeasure,
@@ -152,7 +153,8 @@ __all__ = [
     "DenseMatrixLinearOperator",
     "SparseMatrixLinearOperator",
     "DiagonalSparseMatrixLinearOperator",
-    "NormalSumOperator",
+    # affine_operators
+    "AffineOperator",
     # gaussian_measure
     "GaussianMeasure",
     # direct_sum

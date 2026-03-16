@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Optional, Union
 
 from .nonlinear_operators import NonLinearOperator
+from .affine_operators import AffineOperator
 from .inversion import LinearInversion
 from .forward_problem import LinearForwardProblem
 from .linear_operators import LinearOperator
@@ -36,7 +37,7 @@ class LinearLeastSquaresInversion(LinearInversion):
     `J(u) = ||A(u) - d||² + α² * ||u||²`
     """
 
-    def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:
+    def __init__(self, forward_problem: LinearForwardProblem, /) -> None:
         super().__init__(forward_problem)
         if self.forward_problem.data_error_measure_set:
             self.assert_inverse_data_covariance()
@@ -78,11 +79,11 @@ class LinearLeastSquaresInversion(LinearInversion):
     def least_squares_operator(
         self,
         damping: float,
-        solver: "LinearSolver",
+        solver: LinearSolver,
         /,
         *,
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
-    ) -> Union[NonLinearOperator, LinearOperator]:
+    ) -> Union[LinearOperator, AffineOperator]:
         """
         Returns an operator that maps data to the least-squares solution.
 
@@ -95,13 +96,11 @@ class LinearLeastSquaresInversion(LinearInversion):
         forward_operator = self.forward_problem.forward_operator
         normal_operator = self.normal_operator(damping)
 
-        # Resolve the preconditioner if a method (LinearSolver) is provided
         resolved_preconditioner = None
         if preconditioner is not None:
             if isinstance(preconditioner, LinearOperator):
                 resolved_preconditioner = preconditioner
             elif isinstance(preconditioner, LinearSolver):
-                # Call the preconditioning method on the normal operator
                 resolved_preconditioner = preconditioner(normal_operator)
             else:
                 raise TypeError(
@@ -116,21 +115,21 @@ class LinearLeastSquaresInversion(LinearInversion):
             inverse_normal_operator = solver(normal_operator)
 
         if self.forward_problem.data_error_measure_set:
+
             inverse_data_covariance = (
                 self.forward_problem.data_error_measure.inverse_covariance
             )
 
-            def mapping(data: Vector) -> Vector:
-                shifted_data = self.forward_problem.data_space.subtract(
-                    data, self.forward_problem.data_error_measure.expectation
-                )
-                return (
-                    inverse_normal_operator
-                    @ forward_operator.adjoint
-                    @ inverse_data_covariance
-                )(shifted_data)
+            linear_part = (
+                inverse_normal_operator
+                @ forward_operator.adjoint
+                @ inverse_data_covariance
+            )
 
-            return NonLinearOperator(self.data_space, self.model_space, mapping)
+            expected_data = self.forward_problem.data_error_measure.expectation
+            translation = self.model_space.negative(linear_part(expected_data))
+
+            return AffineOperator(linear_part, translation)
         else:
             return inverse_normal_operator @ forward_operator.adjoint
 
@@ -169,7 +168,7 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         *,
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
         **kwargs,
-    ) -> NonLinearOperator:
+    ) -> AffineOperator:
         """Maps data to the constrained least-squares solution."""
         reduced_op = self._unconstrained_inversion.least_squares_operator(
             damping, solver, preconditioner=preconditioner, **kwargs
@@ -179,18 +178,18 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         domain = self.data_space
         codomain = self.model_space
 
-        def mapping(d: Vector) -> Vector:
-            d_tilde = domain.subtract(d, data_offset)
-            w = reduced_op(d_tilde)
-            return codomain.add(self._u_base, w)
+        shift_in = AffineOperator(
+            domain.identity_operator(), domain.negative(data_offset)
+        )
+        shift_out = AffineOperator(codomain.identity_operator(), self._u_base)
 
-        return NonLinearOperator(domain, codomain, mapping)
+        return shift_out @ reduced_op @ shift_in
 
 
 class LinearMinimumNormInversion(LinearInversion):
     """Finds a regularized solution using the discrepancy principle."""
 
-    def __init__(self, forward_problem: "LinearForwardProblem", /) -> None:
+    def __init__(self, forward_problem: LinearForwardProblem, /) -> None:
         super().__init__(forward_problem)
         if self.forward_problem.data_error_measure_set:
             self.assert_inverse_data_covariance()
@@ -209,6 +208,9 @@ class LinearMinimumNormInversion(LinearInversion):
     ) -> Union[NonLinearOperator, LinearOperator]:
         """
         Maps data to the minimum-norm solution matching target chi-squared.
+
+        The returned NonLinearOperator includes the exact analytical Fréchet
+        derivative of the discrepancy search, complete with its adjoint mapping.
         """
         if self.forward_problem.data_error_measure_set:
             critical_value = self.forward_problem.critical_chi_squared(
@@ -222,7 +224,6 @@ class LinearMinimumNormInversion(LinearInversion):
                 normal_operator = lsq_inversion.normal_operator(damping)
                 normal_rhs = lsq_inversion.normal_rhs(data)
 
-                # Resolve preconditioner for the specific trial damping alpha
                 res_precond = None
                 if preconditioner is not None:
                     if isinstance(preconditioner, LinearOperator):
@@ -241,11 +242,13 @@ class LinearMinimumNormInversion(LinearInversion):
                 chi_squared = self.forward_problem.chi_squared(model, data)
                 return model, chi_squared
 
-            def mapping(data: Vector) -> Vector:
-                # Bracketing search logic
+            def _solve_discrepancy(data: Vector) -> tuple[Vector, float]:
+                """Internal helper to find the model and optimal damping."""
                 chi_squared = self.forward_problem.chi_squared_from_residual(data)
+
+                # If strictly inside the acceptable ball, zero model fits perfectly.
                 if chi_squared <= critical_value:
-                    return self.model_space.zero
+                    return self.model_space.zero, 0.0
 
                 damping = 1.0
                 _, chi_squared = get_model_for_damping(damping, data)
@@ -283,12 +286,89 @@ class LinearMinimumNormInversion(LinearInversion):
                     if damping_upper - damping_lower < atol + rtol * (
                         damping_lower + damping_upper
                     ):
-                        return model
+                        return model, damping
                     model0 = model
 
                 raise RuntimeError("Bracketing search failed to converge.")
 
-            return NonLinearOperator(self.data_space, self.model_space, mapping)
+            def mapping(data: Vector) -> Vector:
+                model, _ = _solve_discrepancy(data)
+                return model
+
+            def derivative(data: Vector) -> LinearOperator:
+                model, damping = _solve_discrepancy(data)
+
+                # If data is inside the chi-squared ball, the solution is constantly
+                # the zero vector, making the derivative exactly zero.
+                if damping == 0.0:
+                    return self.model_space.zero_operator(self.data_space)
+
+                # 1. Standard Tikhonov linear part (L)
+                lsq_op = lsq_inversion.least_squares_operator(
+                    damping, solver, preconditioner=preconditioner
+                )
+                linear_part = lsq_op.linear_part
+
+                # 2. Reconstruct H^{-1} for the denominator term
+                normal_operator = lsq_inversion.normal_operator(damping)
+                res_precond = None
+                if preconditioner is not None:
+                    if isinstance(preconditioner, LinearOperator):
+                        res_precond = preconditioner
+                    else:
+                        res_precond = preconditioner(normal_operator)
+
+                if isinstance(solver, IterativeLinearSolver):
+                    inv_normal_op = solver(normal_operator, preconditioner=res_precond)
+                else:
+                    inv_normal_op = solver(normal_operator)
+
+                # 3. Pre-compute cached vectors to accelerate linear/adjoint actions
+                h_inv_u = inv_normal_op(model)
+                denominator = self.model_space.inner_product(model, h_inv_u)
+
+                residual = self.data_space.subtract(
+                    self.forward_problem.forward_operator(model), data
+                )
+                r_inv_residual = (
+                    self.forward_problem.data_error_measure.inverse_covariance(residual)
+                )
+
+                # Pre-compute w = (1/denom) * (L* u + (1/lambda) R^{-1} r)
+                l_star_u = linear_part.adjoint(model)
+                scaled_r_inv_res = self.data_space.multiply(
+                    1.0 / damping, r_inv_residual
+                )
+                w_unscaled = self.data_space.add(l_star_u, scaled_r_inv_res)
+                w = self.data_space.multiply(1.0 / denominator, w_unscaled)
+
+                # 4. Forward Fréchet derivative action
+                def df_action(delta_data: Vector) -> Vector:
+                    du_fixed = linear_part(delta_data)
+                    delta_lambda = self.data_space.inner_product(w, delta_data)
+                    return self.model_space.subtract(
+                        du_fixed, self.model_space.multiply(delta_lambda, h_inv_u)
+                    )
+
+                # 5. Adjoint Fréchet derivative action
+                def df_adjoint(delta_model: Vector) -> Vector:
+                    l_star_dy = linear_part.adjoint(delta_model)
+                    scalar = self.model_space.inner_product(h_inv_u, delta_model)
+                    return self.data_space.subtract(
+                        l_star_dy, self.data_space.multiply(scalar, w)
+                    )
+
+                return LinearOperator(
+                    self.data_space,
+                    self.model_space,
+                    df_action,
+                    adjoint_mapping=df_adjoint,
+                )
+
+            return NonLinearOperator(
+                self.data_space, self.model_space, mapping, derivative=derivative
+            )
+
         else:
             forward_operator = self.forward_problem.forward_operator
             normal_operator = forward_operator @ forward_operator.adjoint
@@ -332,6 +412,8 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
         **kwargs,
     ) -> NonLinearOperator:
         """Returns operator for constrained discrepancy principle inversion."""
+
+        # Pass all kwargs directly to the underlying solver
         reduced_op = self._unconstrained_inversion.minimum_norm_operator(
             solver, preconditioner=preconditioner, **kwargs
         )
@@ -345,4 +427,88 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             w = reduced_op(d_tilde)
             return codomain.add(self._u_base, w)
 
-        return NonLinearOperator(domain, codomain, mapping)
+        def derivative(d: Vector) -> LinearOperator:
+            # The derivative of u_base + F(d - d_offset) is just F'(d - d_offset)
+            d_tilde = domain.subtract(d, data_offset)
+            return reduced_op.derivative(d_tilde)
+
+        return NonLinearOperator(
+            domain,
+            codomain,
+            mapping,
+            derivative=derivative,
+        )
+
+    def constraint_value_mapping(
+        self,
+        data: Vector,
+        solver: LinearSolver,
+        /,
+        *,
+        preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
+        **kwargs,
+    ) -> NonLinearOperator:
+        """
+        Returns a NonLinearOperator mapping the constraint value 'w' to the
+        constrained minimum norm solution 'u' for a fixed dataset 'd'.
+
+        This operator encapsulates both the forward mapping u(w) and its
+        analytical Fréchet derivative with respect to w. It provides the exact
+        sensitivity field required to bound property regions in hypothesis
+        testing (e.g., Backus-style inference).
+        """
+        if not self._constraint.has_explicit_equation:
+            raise ValueError(
+                "Cannot compute mapping with respect to w: the constraint "
+                "was defined geometrically without an explicit equation."
+            )
+
+        # 1. Retrieve the constraint algebra stored in the AffineSubspace
+        B = self._constraint.constraint_operator
+        constraint_solver = self._constraint.solver
+
+        # 2. Build the right pseudo-inverse: B_dagger = B* @ (B B*)^{-1}
+        # This maps any constraint value w to its minimum-norm base vector in U.
+        G = B @ B.adjoint
+        if isinstance(constraint_solver, IterativeLinearSolver):
+            G_inv = constraint_solver(G)
+        else:
+            G_inv = constraint_solver(G)
+
+        B_dagger = B.adjoint @ G_inv
+
+        # 3. Get the reduced unconstrained solver
+        # The underlying reduced forward problem only depends on the tangent
+        # projector, which is invariant to 'w'. So this operator is universally valid!
+        reduced_op = self._unconstrained_inversion.minimum_norm_operator(
+            solver, preconditioner=preconditioner, **kwargs
+        )
+
+        A = self.forward_problem.forward_operator
+        Id = self.model_space.identity_operator()
+
+        domain = B.codomain  # The constraint space (W)
+        codomain = self.model_space  # The model space (U)
+
+        def mapping(w: Vector) -> Vector:
+            # u(w) = u_base(w) + F_u(d - A u_base(w))
+            u_base = B_dagger(w)
+            d_offset = A(u_base)
+            d_tilde = self.data_space.subtract(data, d_offset)
+
+            u_reduced = reduced_op(d_tilde)
+            return self.model_space.add(u_base, u_reduced)
+
+        def derivative(w: Vector) -> LinearOperator:
+            # D_w = (I - D_unc @ A) @ B_dagger
+            u_base = B_dagger(w)
+            d_offset = A(u_base)
+            d_tilde = self.data_space.subtract(data, d_offset)
+
+            # Evaluate the Fréchet derivative of the discrepancy search at d_tilde
+            D_unc = reduced_op.derivative(d_tilde)
+
+            # Chain rule composition
+            return (Id - D_unc @ A) @ B_dagger
+
+        return NonLinearOperator(domain, codomain, mapping, derivative=derivative)

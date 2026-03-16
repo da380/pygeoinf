@@ -36,6 +36,8 @@ from .linear_operators import (
     DiagonalSparseMatrixLinearOperator,
 )
 
+from .affine_operators import AffineOperator
+
 from .direct_sum import (
     BlockDiagonalLinearOperator,
 )
@@ -526,7 +528,12 @@ class GaussianMeasure:
         )
 
     def affine_mapping(
-        self, /, *, operator: LinearOperator = None, translation: Vector = None
+        self,
+        /,
+        *,
+        operator: LinearOperator = None,
+        translation: Vector = None,
+        affine_operator: AffineOperator = None,
     ) -> GaussianMeasure:
         """
         Transforms the measure under an affine map `y = A(x) + b`.
@@ -543,16 +550,29 @@ class GaussianMeasure:
             operator: The linear operator `A` in the transformation.
                 Defaults to the identity.
             translation: The translation vector `b`. Defaults to zero.
+            affine_operator: An `AffineOperator` instance representing the map.
+                If provided, `operator` and `translation` must not be used.
 
         Returns:
             The transformed `GaussianMeasure`.
         """
-        _operator = (
-            operator if operator is not None else self.domain.identity_operator()
-        )
-        _translation = (
-            translation if translation is not None else _operator.codomain.zero
-        )
+
+        # 1. Handle argument exclusivity and extract the operator/translation
+        if affine_operator is not None:
+            if operator is not None or translation is not None:
+                raise ValueError(
+                    "Cannot provide `affine_operator` alongside `operator` "
+                    "or `translation`."
+                )
+            _operator = affine_operator.linear_part
+            _translation = affine_operator.translation_part
+        else:
+            _operator = (
+                operator if operator is not None else self.domain.identity_operator()
+            )
+            _translation = (
+                translation if translation is not None else _operator.codomain.zero
+            )
 
         new_expectation = _operator.codomain.add(
             _operator(self.expectation), _translation

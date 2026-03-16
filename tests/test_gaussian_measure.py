@@ -8,6 +8,7 @@ from scipy.stats._multivariate import multivariate_normal_frozen
 from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
+from pygeoinf.affine_operators import AffineOperator
 
 # =============================================================================
 # Parametrized Fixtures
@@ -204,3 +205,45 @@ class TestGaussianMeasure:
         sample_covariance = np.cov(sample_components.T)
         expected_covariance = measure.covariance.matrix(dense=True, galerkin=True)
         assert np.allclose(sample_covariance, expected_covariance, atol=0.1)
+
+    def test_affine_mapping_with_affine_operator(self, measure: GaussianMeasure):
+        """
+        Tests that passing an AffineOperator yields the exact same
+        transformation as passing the linear part and translation separately,
+        and verifies that mixing the APIs raises an error.
+        """
+        # 1. Setup the transformation
+        transform_matrix = np.random.randn(measure.domain.dim, measure.domain.dim)
+        op = LinearOperator.from_matrix(
+            measure.domain, measure.domain, transform_matrix, galerkin=True
+        )
+        translation = measure.domain.random()
+        affine_op = AffineOperator(op, translation)
+
+        # 2. Transform the measure using the new argument
+        transformed_measure = measure.affine_mapping(affine_operator=affine_op)
+
+        # 3. Verify Expectation: mu_y = A(mu) + b
+        expected_mean = op(measure.expectation) + translation
+        assert np.allclose(
+            measure.domain.to_components(transformed_measure.expectation),
+            measure.domain.to_components(expected_mean),
+        )
+
+        # 4. Verify Covariance: C_y = A @ C @ A.T
+        C = measure.covariance.matrix(dense=True, galerkin=True)
+        A = transform_matrix
+        expected_covariance = A @ C @ A.T
+        actual_covariance = transformed_measure.covariance.matrix(
+            dense=True, galerkin=True
+        )
+        assert np.allclose(actual_covariance, expected_covariance)
+
+        # 5. Verify the exclusivity check raises a ValueError
+        error_msg = "Cannot provide `affine_operator` alongside"
+
+        with pytest.raises(ValueError, match=error_msg):
+            measure.affine_mapping(affine_operator=affine_op, operator=op)
+
+        with pytest.raises(ValueError, match=error_msg):
+            measure.affine_mapping(affine_operator=affine_op, translation=translation)
