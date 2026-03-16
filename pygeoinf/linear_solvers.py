@@ -994,6 +994,7 @@ class FCGSolver(IterativeLinearSolver):
         y: Vector,
         x0: Optional[Vector],
     ) -> Vector:
+        self._iterations = 0
         space = operator.domain
         x = space.zero if x0 is None else space.copy(x0)
 
@@ -1030,6 +1031,7 @@ class FCGSolver(IterativeLinearSolver):
 
             # Convergence check
             if space.norm(r) < self._atol + self._rtol * norm_y:
+                self._iterations += 1
                 break
 
             # Flexible Beta update: Beta = - (z_new, Ap) / (p, Ap)
@@ -1043,5 +1045,7 @@ class FCGSolver(IterativeLinearSolver):
             # Prepare for next iteration
             z = z_new
             rz = space.inner_product(r, z)
+        else:
+            self._iterations = maxiter
 
         return x
