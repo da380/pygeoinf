@@ -404,7 +404,6 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         cy = domain.to_components(y)
         cx0 = None if x0 is None else domain.to_components(x0)
 
-        # Set up the iteration counter
         self._iterations = 0
         user_callback = self._solver_kwargs.get("callback", None)
 
@@ -506,11 +505,10 @@ class CGSolver(IterativeLinearSolver):
         p = domain.copy(z)
 
         y_squared_norm = domain.squared_norm(y)
-        # If RHS is zero, solution is zero
+
         if y_squared_norm == 0.0:
             return domain.zero
 
-        # Determine tolerance
         tol_sq = max(self._atol**2, (self._rtol**2) * y_squared_norm)
 
         maxiter = self._maxiter if self._maxiter is not None else 10 * domain.dim
@@ -518,7 +516,7 @@ class CGSolver(IterativeLinearSolver):
         num = domain.inner_product(r, z)
 
         for k in range(maxiter):
-            # Check for convergence
+
             if domain.squared_norm(r) <= tol_sq:
                 self._iterations = k + 1
                 break
@@ -539,7 +537,6 @@ class CGSolver(IterativeLinearSolver):
             num = operator.domain.inner_product(r, z)
             beta = num / den
 
-            # p = z + beta * p
             domain.ax(beta, p)
             domain.axpy(1.0, z, p)
 
@@ -587,14 +584,11 @@ class MinResSolver(IterativeLinearSolver):
 
         x = domain.zero if x0 is None else domain.copy(x0)
 
-        # r1 is the UNPRECONDITIONED residual
         r1 = domain.subtract(y, operator(x))
         r2 = domain.copy(r1)
 
-        # y_vec is the PRECONDITIONED residual
         y_vec = domain.copy(r1) if preconditioner is None else preconditioner(r1)
 
-        # beta1 is the M-norm of the initial residual
         beta1 = domain.inner_product(r1, y_vec)
         if beta1 < 0:
             raise ValueError("Preconditioner is not positive definite.")
@@ -603,15 +597,12 @@ class MinResSolver(IterativeLinearSolver):
 
         beta1 = np.sqrt(beta1)
 
-        # Initial Lanczos vectors
         oldb = 0.0
         beta = beta1
 
-        # We need w vectors for the solution update (same as your w_curr, w_prev)
         w = domain.zero
         w2 = domain.zero
 
-        # Givens rotation variables
         dbar = 0.0
         epsln = 0.0
         phibar = beta1
@@ -622,65 +613,52 @@ class MinResSolver(IterativeLinearSolver):
 
         for k in range(1, maxiter + 1):
             s = 1.0 / beta
-            v = domain.multiply(s, y_vec)  # v is the normalized preconditioned vector
+            v = domain.multiply(s, y_vec)
 
-            # 1. Apply Operator (Unpreconditioned)
             Av = operator(v)
 
-            # 2. Lanczos Orthogonalization (on the unpreconditioned vectors)
             if k >= 2:
-                # Av = Av - (beta / oldb) * r1
                 domain.axpy(-(beta / oldb), r1, Av)
 
             alfa = domain.inner_product(v, Av)
 
-            # Av = Av - (alfa / beta) * r2
             domain.axpy(-(alfa / beta), r2, Av)
 
-            # Shift the old unpreconditioned vectors
             r1 = r2
-            r2 = Av  # r2 is now the new unpreconditioned Lanczos vector
+            r2 = Av
 
-            # 3. Apply Preconditioner
             y_vec = domain.copy(r2) if preconditioner is None else preconditioner(r2)
 
-            # 4. Calculate the new beta (M-norm)
             oldb = beta
             beta_sq = domain.inner_product(r2, y_vec)
             if beta_sq < 0:
                 raise ValueError("Preconditioner is not positive definite.")
             beta = np.sqrt(beta_sq)
 
-            # --- Givens Rotations (Exactly as in SciPy/MATLAB) ---
             oldeps = epsln
             delta = cs * dbar + sn * alfa
             gbar = sn * dbar - cs * alfa
             epsln = sn * beta
             dbar = -cs * beta
 
-            # Compute next rotation
             gamma = max(np.linalg.norm([gbar, beta]), 1e-15)
             cs = gbar / gamma
             sn = beta / gamma
             phi = cs * phibar
             phibar = sn * phibar
 
-            # --- Update Solution ---
             denom = 1.0 / gamma
             w1 = w2
             w2 = w
 
-            # w = (v - oldeps*w1 - delta*w2) * denom
             w_new = domain.copy(v)
             domain.axpy(-oldeps, w1, w_new)
             domain.axpy(-delta, w2, w_new)
-            domain.ax(denom, w_new)  # scale in place
+            domain.ax(denom, w_new)
             w = w_new
 
-            # x = x + phi * w
             domain.axpy(phi, w, x)
 
-            # --- Convergence Check ---
             if abs(phibar) < self._rtol * beta1 or abs(phibar) < self._atol:
                 self._iterations = k
                 break
@@ -724,18 +702,15 @@ class BICGStabSolver(IterativeLinearSolver):
 
         x = domain.zero if x0 is None else domain.copy(x0)
 
-        # Initial residual r = y - Ax
         r = domain.subtract(y, operator(x))
-        r_hat = domain.copy(r)  # shadow residual
+        r_hat = domain.copy(r)
 
         norm_y = domain.norm(y)
         if norm_y == 0.0:
             return x
 
-        # Tolerance: max(atol, rtol * norm(y)) to match SciPy logic
         atol = max(self._atol, self._rtol * norm_y)
 
-        # Initialize dummy variables
         rho_prev = 1.0
         omega = 1.0
         alpha = 1.0
@@ -746,68 +721,54 @@ class BICGStabSolver(IterativeLinearSolver):
         maxiter = self._maxiter if self._maxiter is not None else 10 * domain.dim
 
         for k in range(maxiter):
-            # 1. Early convergence check
             if domain.norm(r) < atol:
                 self._iterations = k
                 return x
 
-            # 2. rho = <r_hat, r>
             rho = domain.inner_product(r_hat, r)
-            if abs(rho) < 1e-16:  # breakdown
+            if abs(rho) < 1e-16:
                 self._iterations = k
                 break
 
-            # 3. Update search direction p
             if k > 0:
-                if abs(omega) < 1e-16:  # breakdown
+                if abs(omega) < 1e-16:
                     self._iterations = k
                     break
 
                 beta = (rho / rho_prev) * (alpha / omega)
 
-                # In-place equivalent of: p = r + beta * (p - omega * v)
-                domain.axpy(-omega, v, p)  # p = p - omega * v
-                domain.ax(beta, p)  # p = beta * p
-                domain.axpy(1.0, r, p)  # p = p + r
+                domain.axpy(-omega, v, p)
+                domain.ax(beta, p)
+                domain.axpy(1.0, r, p)
             else:
                 p = domain.copy(r)
 
-            # 4. phat = M^-1 p
             phat = domain.copy(p) if preconditioner is None else preconditioner(p)
 
-            # 5. v = A phat
             v = operator(phat)
 
-            # 6. alpha = rho / <r_hat, v>
             rv = domain.inner_product(r_hat, v)
-            if abs(rv) < 1e-16:  # breakdown
+            if abs(rv) < 1e-16:
                 self._iterations = k
                 break
             alpha = rho / rv
 
-            # 7. Update r to act as 's' (s = r - alpha * v)
             domain.axpy(-alpha, v, r)
 
-            # 8. Early exit check on 's' (which is currently stored in r)
             if domain.norm(r) < atol:
                 domain.axpy(alpha, phat, x)
                 self._iterations = k + 1
                 return x
 
-            # 9. shat = M^-1 s
             shat = domain.copy(r) if preconditioner is None else preconditioner(r)
 
-            # 10. t = A shat
             t = operator(shat)
 
-            # 11. omega = <t, s> / <t, t>
             omega = domain.inner_product(t, r) / domain.inner_product(t, t)
 
-            # 12. Update x = x + alpha * phat + omega * shat
             domain.axpy(alpha, phat, x)
             domain.axpy(omega, shat, x)
 
-            # 13. Update r to true next residual (r = s - omega * t)
             domain.axpy(-omega, t, r)
 
             rho_prev = rho
@@ -850,34 +811,28 @@ class LSQRSolver(IterativeLinearSolver):
         domain = operator.domain
         codomain = operator.codomain
 
-        # Initial Setup
         x = domain.zero if x0 is None else domain.copy(x0)
 
-        # u = y - A x
         u = codomain.subtract(y, operator(x))
         norm_y = codomain.norm(y)
 
         beta = codomain.norm(u)
         if beta > 0:
-            codomain.ax(1.0 / beta, u)  # in-place scale
+            codomain.ax(1.0 / beta, u)
 
-        # v = A* u
         v = operator.adjoint(u)
         alfa = domain.norm(v)
         if alfa > 0:
-            domain.ax(1.0 / alfa, v)  # in-place scale
+            domain.ax(1.0 / alfa, v)
 
         w = domain.copy(v)
 
-        # Variables for QR rotations and norms
         rhobar = alfa
         phibar = beta
         dampsq = damping**2
 
-        # Residual tracking variables
         res2 = 0.0
 
-        # Tolerances
         atol = self._atol
         rtol = self._rtol
         btol = atol + rtol * norm_y
@@ -889,25 +844,21 @@ class LSQRSolver(IterativeLinearSolver):
         )
 
         for k in range(maxiter):
-            # --- 1. Bidiagonalization Step ---
 
-            # u = A v - alfa * u
             Av = operator(v)
-            codomain.ax(-alfa, u)  # u = -alfa * u
-            codomain.axpy(1.0, Av, u)  # u = u + Av
+            codomain.ax(-alfa, u)
+            codomain.axpy(1.0, Av, u)
             beta = codomain.norm(u)
             if beta > 0:
                 codomain.ax(1.0 / beta, u)
 
-            # v = A* u - beta * v
             A_u = operator.adjoint(u)
-            domain.ax(-beta, v)  # v = -beta * v
-            domain.axpy(1.0, A_u, v)  # v = v + A* u
+            domain.ax(-beta, v)
+            domain.axpy(1.0, A_u, v)
             alfa = domain.norm(v)
             if alfa > 0:
                 domain.ax(1.0 / alfa, v)
 
-            # --- 2. Plane Rotation for Damping ---
             if damping > 0:
                 rhobar1 = np.sqrt(rhobar**2 + dampsq)
                 cs1 = rhobar / rhobar1
@@ -918,8 +869,6 @@ class LSQRSolver(IterativeLinearSolver):
                 rhobar1 = rhobar
                 psi = 0.0
 
-            # --- 3. Plane Rotation for Subdiagonal (SciPy's sym_ortho equivalent) ---
-            # This stable rotation is crucial for LSQR's numerical stability
             rho = np.sqrt(rhobar1**2 + beta**2)
             cs = rhobar1 / rho
             sn = beta / rho
@@ -930,31 +879,24 @@ class LSQRSolver(IterativeLinearSolver):
             phibar = sn * phibar
             tau = sn * phi
 
-            # --- 4. Update Solution and Search Direction ---
             t1 = phi / rho
             t2 = -theta / rho
 
-            # x = x + t1 * w
             domain.axpy(t1, w, x)
 
-            # w = v + t2 * w
-            domain.ax(t2, w)  # w = t2 * w
-            domain.axpy(1.0, v, w)  # w = w + v
+            domain.ax(t2, w)
+            domain.axpy(1.0, v, w)
 
-            # --- 5. Convergence Check ---
-            # Estimate the true residual norm accurately without calculating A*x
             res1 = phibar**2
             res2 = res2 + psi**2
             rnorm = np.sqrt(res1 + res2)
 
             arnorm = alfa * abs(tau)
 
-            # Stopping criteria aligned with SciPy
             if rnorm <= btol:
                 self._iterations = k + 1
                 break
 
-            # If the least-squares gradient is flat, we've found the LS minimum
             if arnorm <= atol:
                 self._iterations = k + 1
                 break
@@ -998,51 +940,39 @@ class FCGSolver(IterativeLinearSolver):
         space = operator.domain
         x = space.zero if x0 is None else space.copy(x0)
 
-        # Initial residual: r = y - Ax
         r = space.subtract(y, operator(x))
         norm_y = space.norm(y)
 
-        # Default to identity if no preconditioner exists
         if preconditioner is None:
             preconditioner = space.identity_operator()
 
-        # Initial preconditioned residual z_0 = M^-1 r_0
         z = preconditioner(r)
         p = space.copy(z)
 
-        # Initial r.z product
         rz = space.inner_product(r, z)
 
         maxiter = self._maxiter if self._maxiter is not None else 2 * space.dim
 
         for k in range(maxiter):
-            # w = A p
+
             ap = operator(p)
             pap = space.inner_product(p, ap)
 
-            # Step size alpha = (r, z) / (p, Ap)
             alpha = rz / pap
 
-            # Update solution: x = x + alpha * p
             space.axpy(alpha, p, x)
 
-            # Update residual: r = r - alpha * ap
             space.axpy(-alpha, ap, r)
 
-            # Convergence check
             if space.norm(r) < self._atol + self._rtol * norm_y:
                 self._iterations += 1
                 break
 
-            # Flexible Beta update: Beta = - (z_new, Ap) / (p, Ap)
-            # This ensures that p_new is A-orthogonal to p_old
             z_new = preconditioner(r)
             beta = -space.inner_product(z_new, ap) / pap
 
-            # Update search direction: p = z_new + beta * p
             p = space.add(z_new, space.multiply(beta, p))
 
-            # Prepare for next iteration
             z = z_new
             rz = space.inner_product(r, z)
         else:

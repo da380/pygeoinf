@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
     from .linear_forms import LinearForm
     from .linear_operators import LinearOperator
+    from .nonlinear_operators import NonLinearOperator
 
 
 class NonLinearForm:
@@ -223,3 +224,30 @@ class NonLinearForm:
             gradient=gradient,
             hessian=hessian,
         )
+
+    def __matmul__(self, other: NonLinearOperator) -> NonLinearForm:
+        """
+        Composes this form with a non-linear operator: `(self @ other)(x) = self(other(x))`.
+
+        The gradient is computed using the adjoint of the operator's Fréchet derivative:
+        grad(F o G)(x) = G'(x)* (grad_F(G(x)))
+        """
+
+        domain = other.domain
+
+        def mapping(x: Any) -> float:
+            return self(other(x))
+
+        if self.has_gradient and other.has_derivative:
+
+            def gradient(x: Vector) -> Vector:
+                inner_val = other(x)
+                grad_f = self.gradient(inner_val)
+                D_g = other.derivative(x)
+
+                return D_g.adjoint(grad_f)
+
+        else:
+            gradient = None
+
+        return NonLinearForm(domain, mapping, gradient=gradient)

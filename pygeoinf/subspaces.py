@@ -13,6 +13,7 @@ from typing import List, Optional, Any, Callable, TYPE_CHECKING
 import warnings
 import numpy as np
 
+from .affine_operators import AffineOperator
 from .linear_operators import LinearOperator
 from .hilbert_space import HilbertSpace, Vector, EuclideanSpace
 from .linear_solvers import LinearSolver, CholeskySolver, IterativeLinearSolver
@@ -163,6 +164,11 @@ class AffineSubspace(Subset):
         return self._solver
 
     @property
+    def preconditioner(self) -> Optional[LinearOperator]:
+        """Returns the preconditioner associated with the solver, if any."""
+        return self._preconditioner
+
+    @property
     def tangent_space(self) -> LinearSubspace:
         """Returns the LinearSubspace V parallel to this affine subspace."""
         return LinearSubspace(self._projector)
@@ -196,35 +202,40 @@ class AffineSubspace(Subset):
             return complement(self._translation)
         return self._constraint_value
 
-    def project(self, x: Vector) -> Vector:
+    @property
+    def pseudo_inverse(self) -> LinearOperator:
         """
-        Orthogonally projects a vector x onto the affine subspace.
-
-        Formula: P_A(x) = P(x - x0) + x0
+        Returns the right pseudo-inverse operator B^dagger = B* (B B*)^{-1}.
         """
-        diff = self.domain.subtract(x, self.translation)
-        proj_diff = self.projector(diff)
-        return self.domain.add(self.translation, proj_diff)
+        if not self.has_explicit_equation:
+            raise ValueError(
+                "Cannot compute pseudo-inverse without an explicit equation."
+            )
 
-    def is_element(self, x: Vector, /, *, rtol: float = 1e-6) -> bool:
+        B = self.constraint_operator
+        G = B @ B.adjoint
+
+        if isinstance(self.solver, IterativeLinearSolver):
+            G_inv = self.solver(G, preconditioner=self.preconditioner)
+        else:
+            G_inv = self.solver(G)
+
+        return B.adjoint @ G_inv
+
+    @property
+    def projection_operator(self) -> AffineOperator:
         """
-        Returns True if the vector x lies within the subspace.
-
-        Checks if the projection residual ||x - P_A(x)|| is small relative
-        to the norm of x (or 1.0).
-
-        Args:
-            x: The vector to check.
-            rtol: Relative tolerance for the residual check.
+        Returns the affine orthogonal projection operator onto the subspace.
+        P_A(x) = P(x) + (I - P)x_0
         """
-        proj = self.project(x)
-        diff = self.domain.subtract(x, proj)
-        norm_diff = self.domain.norm(diff)
+        linear_part = self.projector
 
-        # Scale tolerance by norm of x to handle units/scaling, consistent with Sphere/Ball
-        norm_x = self.domain.norm(x)
-        scale = max(1.0, norm_x)
-        return norm_diff <= rtol * scale
+        # The translation term is x0 - P(x0)
+        translation_part = self.domain.subtract(
+            self.translation, self.projector(self.translation)
+        )
+
+        return AffineOperator(linear_part, translation_part)
 
     @property
     def boundary(self) -> Subset:
@@ -235,62 +246,6 @@ class AffineSubspace(Subset):
         manifold without a boundary. Returns EmptySet.
         """
         return EmptySet(self.domain)
-
-    def condition_gaussian_measure(
-        self, prior: GaussianMeasure, geometric: bool = False
-    ) -> GaussianMeasure:
-        """
-        Conditions a Gaussian measure on this subspace.
-
-        Args:
-            prior: The prior Gaussian measure.
-            geometric: If True, performs a geometric projection of the measure
-                (equivalent to conditioning on "measurement = truth" with infinite
-                precision, effectively squashing the distribution onto the
-                subspace).
-                If False (default), performs standard Bayesian conditioning
-                using the constraint equation B(u) = w.
-
-        Returns:
-            The posterior (conditioned) GaussianMeasure.
-
-        Raises:
-            ValueError: If geometric=False and the subspace was constructed
-                without a solver capable of handling the constraint operator.
-        """
-        if geometric:
-            # Geometric Projection: u -> P(u - x0) + x0
-            # Affine Map: u -> P(u) + (I-P)x0
-            shift = self.domain.subtract(
-                self.translation, self.projector(self.translation)
-            )
-            return prior.affine_mapping(operator=self.projector, translation=shift)
-
-        else:
-            # Bayesian Conditioning: u | B(u)=w
-
-            # Check for singular implicit operator usage
-            if not self.has_explicit_equation and self._solver is None:
-                raise ValueError(
-                    "This subspace defines the constraint implicitly as (I-P)u = (I-P)x0. "
-                    "The operator (I-P) is singular. You must provide a solver "
-                    "capable of handling singular systems (e.g. MinRes) to the "
-                    "AffineSubspace constructor."
-                )
-
-            # Local imports to avoid circular dependency
-            from .forward_problem import LinearForwardProblem
-            from .linear_bayesian import LinearBayesianInversion
-
-            solver = self._solver
-            preconditioner = self._preconditioner
-
-            constraint_problem = LinearForwardProblem(self.constraint_operator)
-            constraint_inversion = LinearBayesianInversion(constraint_problem, prior)
-
-            return constraint_inversion.model_posterior_measure(
-                self.constraint_value, solver, preconditioner=preconditioner
-            )
 
     @classmethod
     def from_linear_equation(
@@ -446,6 +401,136 @@ class AffineSubspace(Subset):
             constraint_value=w,
             solver=solver,
         )
+
+    def project(self, x: Vector) -> Vector:
+        """
+        Orthogonally projects a vector x onto the affine subspace.
+
+        Formula: P_A(x) = P(x - x0) + x0
+        """
+        diff = self.domain.subtract(x, self.translation)
+        proj_diff = self.projector(diff)
+        return self.domain.add(self.translation, proj_diff)
+
+    def is_element(self, x: Vector, /, *, rtol: float = 1e-6) -> bool:
+        """
+        Returns True if the vector x lies within the subspace.
+
+        Checks if the projection residual ||x - P_A(x)|| is small relative
+        to the norm of x (or 1.0).
+
+        Args:
+            x: The vector to check.
+            rtol: Relative tolerance for the residual check.
+        """
+        proj = self.project(x)
+        diff = self.domain.subtract(x, proj)
+        norm_diff = self.domain.norm(diff)
+
+        # Scale tolerance by norm of x to handle units/scaling, consistent with Sphere/Ball
+        norm_x = self.domain.norm(x)
+        scale = max(1.0, norm_x)
+        return norm_diff <= rtol * scale
+
+    def with_translation(self, new_translation: Vector) -> AffineSubspace:
+        """
+        Returns a new AffineSubspace parallel to this one, shifted to pass
+        through the new translation vector.
+        """
+        if not self.domain.is_element(new_translation):
+            raise ValueError("Translation vector must be in the domain.")
+
+        # If we have an explicit B operator, we must update the w value to match the new translation
+        new_constraint_value = None
+        if self.has_explicit_equation:
+            new_constraint_value = self.constraint_operator(new_translation)
+
+        return AffineSubspace(
+            self.projector,
+            translation=new_translation,
+            constraint_operator=self._constraint_operator,
+            constraint_value=new_constraint_value,
+            solver=self.solver,
+            preconditioner=self.preconditioner,
+        )
+
+    def with_constraint_value(self, new_value: Vector) -> AffineSubspace:
+        """
+        Returns a new AffineSubspace parallel to this one, shifted to satisfy
+        the new explicit constraint equation B(u) = new_value.
+        """
+        if not self.has_explicit_equation:
+            raise ValueError(
+                "Cannot shift by constraint value without an explicit constraint operator."
+            )
+
+        # Calculate the new base translation using the pseudo-inverse
+        new_translation = self.pseudo_inverse(new_value)
+
+        return AffineSubspace(
+            self.projector,
+            translation=new_translation,
+            constraint_operator=self._constraint_operator,
+            constraint_value=new_value,
+            solver=self.solver,
+            preconditioner=self.preconditioner,
+        )
+
+    def condition_gaussian_measure(
+        self, prior: GaussianMeasure, geometric: bool = False
+    ) -> GaussianMeasure:
+        """
+        Conditions a Gaussian measure on this subspace.
+
+        Args:
+            prior: The prior Gaussian measure.
+            geometric: If True, performs a geometric projection of the measure
+                (equivalent to conditioning on "measurement = truth" with infinite
+                precision, effectively squashing the distribution onto the
+                subspace).
+                If False (default), performs standard Bayesian conditioning
+                using the constraint equation B(u) = w.
+
+        Returns:
+            The posterior (conditioned) GaussianMeasure.
+
+        Raises:
+            ValueError: If geometric=False and the subspace was constructed
+                without a solver capable of handling the constraint operator.
+        """
+        if geometric:
+            # Geometric Projection: u -> P(u - x0) + x0
+            # Affine Map: u -> P(u) + (I-P)x0
+            shift = self.domain.subtract(
+                self.translation, self.projector(self.translation)
+            )
+            return prior.affine_mapping(operator=self.projector, translation=shift)
+
+        else:
+            # Bayesian Conditioning: u | B(u)=w
+
+            # Check for singular implicit operator usage
+            if not self.has_explicit_equation and self._solver is None:
+                raise ValueError(
+                    "This subspace defines the constraint implicitly as (I-P)u = (I-P)x0. "
+                    "The operator (I-P) is singular. You must provide a solver "
+                    "capable of handling singular systems (e.g. MinRes) to the "
+                    "AffineSubspace constructor."
+                )
+
+            # Local imports to avoid circular dependency
+            from .forward_problem import LinearForwardProblem
+            from .linear_bayesian import LinearBayesianInversion
+
+            solver = self._solver
+            preconditioner = self._preconditioner
+
+            constraint_problem = LinearForwardProblem(self.constraint_operator)
+            constraint_inversion = LinearBayesianInversion(constraint_problem, prior)
+
+            return constraint_inversion.model_posterior_measure(
+                self.constraint_value, solver, preconditioner=preconditioner
+            )
 
 
 class LinearSubspace(AffineSubspace):

@@ -142,11 +142,14 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
     ) -> None:
         super().__init__(forward_problem)
         self._constraint = constraint
-        self._u_base = constraint.domain.subtract(
-            constraint.translation, constraint.projector(constraint.translation)
-        )
 
-        reduced_operator = forward_problem.forward_operator @ constraint.projector
+        # Use the projection operator to seamlessly grab the base translation
+        proj_op = constraint.projection_operator
+        self._u_base = proj_op.translation_part
+
+        # The reduced operator is just A @ P
+        reduced_operator = forward_problem.forward_operator @ proj_op.linear_part
+
         self._reduced_forward_problem = LinearForwardProblem(
             reduced_operator,
             data_error_measure=(
@@ -167,36 +170,32 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         /,
         *,
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
-        **kwargs,
     ) -> AffineOperator:
         """Maps data to the constrained least-squares solution."""
         reduced_op = self._unconstrained_inversion.least_squares_operator(
-            damping, solver, preconditioner=preconditioner, **kwargs
+            damping, solver, preconditioner=preconditioner
         )
-
         data_offset = self.forward_problem.forward_operator(self._u_base)
         domain = self.data_space
         codomain = self.model_space
-
         shift_in = AffineOperator(
             domain.identity_operator(), domain.negative(data_offset)
         )
         shift_out = AffineOperator(codomain.identity_operator(), self._u_base)
-
         return shift_out @ reduced_op @ shift_in
 
 
 class LinearMinimumNormInversion(LinearInversion):
     """Finds a regularized solution using the discrepancy principle."""
 
-    def __init__(self, forward_problem: LinearForwardProblem, /) -> None:
+    def __init__(self, forward_problem: LinearForwardProblem) -> None:
         super().__init__(forward_problem)
         if self.forward_problem.data_error_measure_set:
             self.assert_inverse_data_covariance()
 
     def minimum_norm_operator(
         self,
-        solver: "LinearSolver",
+        solver: LinearSolver,
         /,
         *,
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
@@ -246,7 +245,6 @@ class LinearMinimumNormInversion(LinearInversion):
                 """Internal helper to find the model and optimal damping."""
                 chi_squared = self.forward_problem.chi_squared_from_residual(data)
 
-                # If strictly inside the acceptable ball, zero model fits perfectly.
                 if chi_squared <= critical_value:
                     return self.model_space.zero, 0.0
 
@@ -298,10 +296,8 @@ class LinearMinimumNormInversion(LinearInversion):
             def derivative(data: Vector) -> LinearOperator:
                 model, damping = _solve_discrepancy(data)
 
-                # If data is inside the chi-squared ball, the solution is constantly
-                # the zero vector, making the derivative exactly zero.
                 if damping == 0.0:
-                    return self.model_space.zero_operator(self.data_space)
+                    return self.data_space.zero_operator(self.model_space)
 
                 # 1. Standard Tikhonov linear part (L)
                 lsq_op = lsq_inversion.least_squares_operator(
@@ -342,7 +338,7 @@ class LinearMinimumNormInversion(LinearInversion):
                 w_unscaled = self.data_space.add(l_star_u, scaled_r_inv_res)
                 w = self.data_space.multiply(1.0 / denominator, w_unscaled)
 
-                # 4. Forward Fréchet derivative action
+                # 4. Forward derivative action
                 def df_action(delta_data: Vector) -> Vector:
                     du_fixed = linear_part(delta_data)
                     delta_lambda = self.data_space.inner_product(w, delta_data)
@@ -350,7 +346,7 @@ class LinearMinimumNormInversion(LinearInversion):
                         du_fixed, self.model_space.multiply(delta_lambda, h_inv_u)
                     )
 
-                # 5. Adjoint Fréchet derivative action
+                # 5. Adjoint derivative action
                 def df_adjoint(delta_model: Vector) -> Vector:
                     l_star_dy = linear_part.adjoint(delta_model)
                     scalar = self.model_space.inner_product(h_inv_u, delta_model)
@@ -377,20 +373,39 @@ class LinearMinimumNormInversion(LinearInversion):
 
 
 class ConstrainedLinearMinimumNormInversion(LinearInversion):
-    """Finds min-norm solution subject to affine subspace constraint."""
+    """
+    Finds the minimum-norm solution subject to an affine subspace constraint.
+
+    This class solves the regularized inverse problem using the discrepancy
+    principle while strictly confining the solution to an affine subspace
+    (e.g., enforcing a specific average property value or boundary condition).
+    """
 
     def __init__(
         self, forward_problem: LinearForwardProblem, constraint: AffineSubspace
     ) -> None:
+        """
+        Initializes the constrained minimum norm inversion.
+
+        This setup decomposes the problem into a base solution satisfying the
+        affine constraint and a reduced unconstrained problem operating strictly
+        within the constraint's parallel tangent space.
+
+        Args:
+            forward_problem: The original linear forward problem.
+            constraint: The affine subspace defining the allowed model states.
+        """
         super().__init__(forward_problem)
         if self.forward_problem.data_error_measure_set:
             self.assert_inverse_data_covariance()
-        self._constraint = constraint
-        self._u_base = constraint.domain.subtract(
-            constraint.translation, constraint.projector(constraint.translation)
-        )
 
-        reduced_operator = forward_problem.forward_operator @ constraint.projector
+        self._constraint = constraint
+
+        proj_op = constraint.projection_operator
+        self._u_base = proj_op.translation_part
+
+        reduced_operator = forward_problem.forward_operator @ proj_op.linear_part
+
         self._reduced_forward_problem = LinearForwardProblem(
             reduced_operator,
             data_error_measure=(
@@ -403,19 +418,69 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             self._reduced_forward_problem
         )
 
+    def _get_reduced_operator(
+        self,
+        solver: LinearSolver,
+        preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
+        significance_level: float = 0.95,
+        minimum_damping: float = 0.0,
+        maxiter: int = 100,
+        rtol: float = 1.0e-6,
+        atol: float = 0.0,
+    ) -> NonLinearOperator:
+        """
+        Internal helper to construct the unconstrained reduced operator.
+
+        Consolidates the instantiation of the underlying discrepancy principle
+        search to ensure parameters are completely synchronized across both
+        data-to-model and property-to-model mappings.
+        """
+        return self._unconstrained_inversion.minimum_norm_operator(
+            solver,
+            preconditioner=preconditioner,
+            significance_level=significance_level,
+            minimum_damping=minimum_damping,
+            maxiter=maxiter,
+            rtol=rtol,
+            atol=atol,
+        )
+
     def minimum_norm_operator(
         self,
         solver: LinearSolver,
         /,
         *,
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
-        **kwargs,
+        significance_level: float = 0.95,
+        minimum_damping: float = 0.0,
+        maxiter: int = 100,
+        rtol: float = 1.0e-6,
+        atol: float = 0.0,
     ) -> NonLinearOperator:
-        """Returns operator for constrained discrepancy principle inversion."""
+        """
+        Returns an operator that maps data to the constrained minimum-norm solution.
+        The operator has its derivative set.
 
-        # Pass all kwargs directly to the underlying solver
-        reduced_op = self._unconstrained_inversion.minimum_norm_operator(
-            solver, preconditioner=preconditioner, **kwargs
+        Args:
+            solver: The linear solver used for the normal equations.
+            preconditioner: An optional preconditioner for iterative solvers.
+            significance_level: The target probability mass for the chi-squared distribution.
+            minimum_damping: The minimum allowed Tikhonov damping parameter.
+            maxiter: Maximum iterations for the discrepancy principle root-finding.
+            rtol: Relative tolerance for the damping parameter search.
+            atol: Absolute tolerance for the damping parameter search.
+
+        Returns:
+            A `NonLinearOperator` mapping the data space to the model space.
+        """
+        reduced_op = self._get_reduced_operator(
+            solver,
+            preconditioner,
+            significance_level,
+            minimum_damping,
+            maxiter,
+            rtol,
+            atol,
         )
 
         data_offset = self.forward_problem.forward_operator(self._u_base)
@@ -428,16 +493,10 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             return codomain.add(self._u_base, w)
 
         def derivative(d: Vector) -> LinearOperator:
-            # The derivative of u_base + F(d - d_offset) is just F'(d - d_offset)
             d_tilde = domain.subtract(d, data_offset)
             return reduced_op.derivative(d_tilde)
 
-        return NonLinearOperator(
-            domain,
-            codomain,
-            mapping,
-            derivative=derivative,
-        )
+        return NonLinearOperator(domain, codomain, mapping, derivative=derivative)
 
     def constraint_value_mapping(
         self,
@@ -446,16 +505,34 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
         /,
         *,
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
-        **kwargs,
+        significance_level: float = 0.95,
+        minimum_damping: float = 0.0,
+        maxiter: int = 100,
+        rtol: float = 1.0e-6,
+        atol: float = 0.0,
     ) -> NonLinearOperator:
-        """
-        Returns a NonLinearOperator mapping the constraint value 'w' to the
-        constrained minimum norm solution 'u' for a fixed dataset 'd'.
+        r"""
+        Returns an operator mapping a constraint value 'w' to the corresponding
+        constrained minimum norm solution 'u' for a strictly fixed dataset.
+        The operator has its derivative set.
 
-        This operator encapsulates both the forward mapping u(w) and its
-        analytical Fréchet derivative with respect to w. It provides the exact
-        sensitivity field required to bound property regions in hypothesis
-        testing (e.g., Backus-style inference).
+        Args:
+            data: The fixed observed data vector to fit.
+            solver: The linear solver used for the normal equations.
+            preconditioner: An optional preconditioner for iterative solvers.
+            significance_level: The target probability mass for the chi-squared distribution.
+            minimum_damping: The minimum allowed Tikhonov damping parameter.
+            maxiter: Maximum iterations for the discrepancy principle root-finding.
+            rtol: Relative tolerance for the damping parameter search.
+            atol: Absolute tolerance for the damping parameter search.
+
+        Returns:
+            A `NonLinearOperator` mapping the constraint codomain (the property space)
+            to the model space.
+
+        Raises:
+            ValueError: If the constraint subspace does not possess an explicit
+                equation (i.e., the operator B is missing).
         """
         if not self._constraint.has_explicit_equation:
             raise ValueError(
@@ -463,35 +540,25 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
                 "was defined geometrically without an explicit equation."
             )
 
-        # 1. Retrieve the constraint algebra stored in the AffineSubspace
-        B = self._constraint.constraint_operator
-        constraint_solver = self._constraint.solver
+        B_dagger = self._constraint.pseudo_inverse
 
-        # 2. Build the right pseudo-inverse: B_dagger = B* @ (B B*)^{-1}
-        # This maps any constraint value w to its minimum-norm base vector in U.
-        G = B @ B.adjoint
-        if isinstance(constraint_solver, IterativeLinearSolver):
-            G_inv = constraint_solver(G)
-        else:
-            G_inv = constraint_solver(G)
-
-        B_dagger = B.adjoint @ G_inv
-
-        # 3. Get the reduced unconstrained solver
-        # The underlying reduced forward problem only depends on the tangent
-        # projector, which is invariant to 'w'. So this operator is universally valid!
-        reduced_op = self._unconstrained_inversion.minimum_norm_operator(
-            solver, preconditioner=preconditioner, **kwargs
+        reduced_op = self._get_reduced_operator(
+            solver,
+            preconditioner,
+            significance_level,
+            minimum_damping,
+            maxiter,
+            rtol,
+            atol,
         )
 
         A = self.forward_problem.forward_operator
         Id = self.model_space.identity_operator()
 
-        domain = B.codomain  # The constraint space (W)
-        codomain = self.model_space  # The model space (U)
+        domain = self._constraint.constraint_operator.codomain
+        codomain = self.model_space
 
         def mapping(w: Vector) -> Vector:
-            # u(w) = u_base(w) + F_u(d - A u_base(w))
             u_base = B_dagger(w)
             d_offset = A(u_base)
             d_tilde = self.data_space.subtract(data, d_offset)
@@ -500,15 +567,12 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             return self.model_space.add(u_base, u_reduced)
 
         def derivative(w: Vector) -> LinearOperator:
-            # D_w = (I - D_unc @ A) @ B_dagger
             u_base = B_dagger(w)
             d_offset = A(u_base)
             d_tilde = self.data_space.subtract(data, d_offset)
 
-            # Evaluate the Fréchet derivative of the discrepancy search at d_tilde
             D_unc = reduced_op.derivative(d_tilde)
 
-            # Chain rule composition
             return (Id - D_unc @ A) @ B_dagger
 
         return NonLinearOperator(domain, codomain, mapping, derivative=derivative)
