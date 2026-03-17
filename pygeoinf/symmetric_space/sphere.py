@@ -170,143 +170,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         grid = self.grid if self._sampling == 1 else "DH2"
         return ulm.expand(grid=grid, extend=self.extend)
 
-    def plot(
-        self,
-        u: sh.SHGrid,
-        /,
-        *,
-        projection: Optional["Projection"] = None,
-        contour: bool = False,
-        cmap: str = "RdBu",
-        coasts: bool = False,
-        rivers: bool = False,
-        borders: bool = False,
-        map_extent: Optional[List[float]] = None,
-        gridlines: bool = True,
-        symmetric: bool = False,
-        contour_lines: bool = False,
-        contour_lines_kwargs: Optional[dict] = None,
-        num_levels: int = 10,
-        **kwargs,
-    ) -> Tuple["Figure", "GeoAxes", Any]:
-        """
-        Creates a high-quality map plot of a spherical harmonic function using Cartopy.
-
-        This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
-        onto a specified map projection. It supports both pcolormesh and filled contour
-        plotting styles, along with various geographic overlays.
-
-        Args:
-            u: The scalar field to be plotted, evaluated on a spatial grid.
-            projection: A `cartopy.crs` projection instance defining the map view.
-                Defaults to `ccrs.PlateCarree()`.
-            contour: If True, renders the field as a filled contour plot (`contourf`).
-                If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
-            cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
-            coasts: If True, overlays high-resolution coastlines. Defaults to False.
-            rivers: If True, overlays major river systems. Defaults to False.
-            borders: If True, overlays international country borders. Defaults to False.
-            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
-                extent of the map. Defaults to None (global view).
-            gridlines: If True, draws latitude and longitude gridlines with labels.
-                Defaults to True.
-            symmetric: If True, dynamically centers the color scale symmetrically around
-                zero (e.g., from -max to +max), which is ideal for anomaly fields.
-                Defaults to False.
-            contour_lines: If True, overlays solid contour lines on top of the base plot.
-                Defaults to False.
-            contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
-                for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
-            num_levels: The number of color levels to generate automatically if specific
-                `levels` are not provided in `**kwargs`. Defaults to 10.
-            **kwargs: Additional keyword arguments forwarded directly to the underlying
-                Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
-
-        Returns:
-            A tuple `(fig, ax, im)` containing:
-                - fig: The generated Matplotlib Figure.
-                - ax: The Cartopy GeoAxes object.
-                - im: The rendered image object (either a QuadMesh or ContourSet).
-        """
-        return plot(
-            u,
-            projection=projection,
-            contour=contour,
-            cmap=cmap,
-            coasts=coasts,
-            rivers=rivers,
-            borders=borders,
-            map_extent=map_extent,
-            gridlines=gridlines,
-            symmetric=symmetric,
-            contour_lines=contour_lines,
-            contour_lines_kwargs=contour_lines_kwargs,
-            num_levels=num_levels,
-            **kwargs,
-        )
-
-    def plot_geodesic(
-        self,
-        p1: Tuple[float, float],
-        p2: Tuple[float, float],
-        ax: Optional["GeoAxes"] = None,
-        n_points: int = 50,
-        **kwargs,
-    ) -> Tuple["Figure", "GeoAxes"]:
-        """
-        Plots a geodesic (great-circle) curve between two points on the sphere.
-
-        This function leverages Cartopy's native `ccrs.Geodetic()` transform to
-        automatically render the shortest path between two coordinates across
-        any map projection.
-
-        Args:
-            p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
-            p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
-            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
-                and PlateCarree axes will be created automatically.
-            n_points: The number of points to use for interpolation. Note: Kept for
-                backwards compatibility, but interpolation is currently handled
-                natively by Cartopy's geodetic transforms.
-            **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
-                line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
-
-        Returns:
-            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
-        """
-        return plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
-
-    def plot_geodesic_network(
-        self,
-        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
-        ax: Optional["GeoAxes"] = None,
-        n_points: int = 50,
-        **kwargs,
-    ) -> Tuple["Figure", "GeoAxes"]:
-        """
-        Plots a network of intersecting geodesic paths onto a Cartopy map.
-
-        This function visualizes a full source-receiver network, commonly used in
-        tomographic surveys. It renders all connection arcs as great circles and
-        overlays distinct scatter markers for the unique source and receiver locations.
-
-        Args:
-            paths: A list of point pairs defining the network. Each item should be
-                a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
-            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
-                with a global PlateCarree projection is created.
-            n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
-            **kwargs: Default styling arguments applied to the geodesic lines
-                (e.g., `color='black'`, `alpha=0.5`).
-                Special sub-dictionaries can be passed to style the markers:
-                - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
-                - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
-
-        Returns:
-            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
-        """
-        return plot_geodesic_network(paths, ax=ax, n_points=n_points, **kwargs)
-
     def sample_power_measure(
         self,
         measure,
@@ -339,8 +202,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     # ------------------------------------------------------ #
     #           Methods for SymmetricHilbertSpace            #
     # ------------------------------------------------------ #
-
-    import math
 
     def index_to_integer(self, k: Tuple[int, int]) -> int:
         l, m = k
@@ -806,6 +667,16 @@ class Sobolev(SymmetricSobolevSpace):
     #                   Public methods                   #
     # -------------------------------------------------- #
 
+    def with_order(self, order: float) -> Sobolev:
+        return Sobolev(
+            self.lmax,
+            order,
+            self.scale,
+            radius=self.radius,
+            grid=self.grid,
+            extend=self.extend,
+        )
+
     def project_function(self, f: Callable[[(float, float)], float]) -> np.ndarray:
         """
         Returns an element of the space by projecting a given function.
@@ -822,147 +693,6 @@ class Sobolev(SymmetricSobolevSpace):
     def from_coefficients(self, ulm: sh.SHCoeffs) -> sh.SHGrid:
         """Maps spherical harmonic coefficients to a function vector."""
         return self.underlying_space.from_coefficients(ulm)
-
-    def plot(
-        self,
-        u: sh.SHGrid,
-        /,
-        *,
-        projection: "Projection" = ccrs.PlateCarree(),
-        contour: bool = False,
-        cmap: str = "RdBu",
-        coasts: bool = False,
-        rivers: bool = False,
-        borders: bool = False,
-        map_extent: Optional[List[float]] = None,
-        gridlines: bool = True,
-        symmetric: bool = False,
-        contour_lines: bool = False,
-        contour_lines_kwargs: Optional[dict] = None,
-        num_levels: int = 10,
-        **kwargs,
-    ) -> Tuple[Figure, "GeoAxes", Any]:
-        """
-        Creates a high-quality map plot of a spherical harmonic function using Cartopy.
-
-        This function renders a scalar field (represented by a `pyshtools.SHGrid` object)
-        onto a specified map projection. It supports both pcolormesh and filled contour
-        plotting styles, along with various geographic overlays.
-
-        Args:
-            u: The scalar field to be plotted, evaluated on a spatial grid.
-            projection: A `cartopy.crs` projection instance defining the map view.
-                Defaults to `ccrs.PlateCarree()`.
-            contour: If True, renders the field as a filled contour plot (`contourf`).
-                If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
-            cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
-            coasts: If True, overlays high-resolution coastlines. Defaults to False.
-            rivers: If True, overlays major river systems. Defaults to False.
-            borders: If True, overlays international country borders. Defaults to False.
-            map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
-                extent of the map. Defaults to None (global view).
-            gridlines: If True, draws latitude and longitude gridlines with labels.
-                Defaults to True.
-            symmetric: If True, dynamically centers the color scale symmetrically around
-                zero (e.g., from -max to +max), which is ideal for anomaly fields.
-                Defaults to False.
-            contour_lines: If True, overlays solid contour lines on top of the base plot.
-                Defaults to False.
-            contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`
-                for styling the lines (e.g., `{'colors': 'k', 'linewidths': 0.5}`).
-            num_levels: The number of color levels to generate automatically if specific
-                `levels` are not provided in `**kwargs`. Defaults to 10.
-            **kwargs: Additional keyword arguments forwarded directly to the underlying
-                Matplotlib plotting function (`ax.contourf` or `ax.pcolormesh`).
-
-        Returns:
-            A tuple `(fig, ax, im)` containing:
-                - fig: The generated Matplotlib Figure.
-                - ax: The Cartopy GeoAxes object.
-                - im: The rendered image object (either a QuadMesh or ContourSet).
-        """
-        return self.underlying_space.plot(
-            u,
-            projection=projection,
-            contour=contour,
-            cmap=cmap,
-            coasts=coasts,
-            rivers=rivers,
-            borders=borders,
-            map_extent=map_extent,
-            gridlines=gridlines,
-            symmetric=symmetric,
-            contour_lines=contour_lines,
-            contour_lines_kwargs=contour_lines_kwargs,
-            num_levels=num_levels,
-            **kwargs,
-        )
-
-    def plot_geodesic(
-        self,
-        p1: Tuple[float, float],
-        p2: Tuple[float, float],
-        ax: Optional["GeoAxes"] = None,
-        n_points: int = 50,
-        **kwargs,
-    ) -> Tuple["Figure", "GeoAxes"]:
-        """
-        Plots a geodesic (great-circle) curve between two points on the sphere.
-
-        This function leverages Cartopy's native `ccrs.Geodetic()` transform to
-        automatically render the shortest path between two coordinates across
-        any map projection.
-
-        Args:
-            p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
-            p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
-            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
-                and PlateCarree axes will be created automatically.
-            n_points: The number of points to use for interpolation. Note: Kept for
-                backwards compatibility, but interpolation is currently handled
-                natively by Cartopy's geodetic transforms.
-            **kwargs: Keyword arguments passed directly to `ax.plot` for styling the
-                line (e.g., `color`, `linewidth`, `linestyle`, `alpha`).
-
-        Returns:
-            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
-        """
-        return self.underlying_space.plot_geodesic(
-            p1, p2, ax=ax, n_points=n_points, **kwargs
-        )
-
-    def plot_geodesic_network(
-        self,
-        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
-        ax: Optional["GeoAxes"] = None,
-        n_points: int = 50,
-        **kwargs,
-    ) -> Tuple["Figure", "GeoAxes"]:
-        """
-        Plots a network of intersecting geodesic paths onto a Cartopy map.
-
-        This function visualizes a full source-receiver network, commonly used in
-        tomographic surveys. It renders all connection arcs as great circles and
-        overlays distinct scatter markers for the unique source and receiver locations.
-
-        Args:
-            paths: A list of point pairs defining the network. Each item should be
-                a nested tuple: `((lat_source, lon_source), (lat_receiver, lon_receiver))`.
-            ax: An existing Cartopy GeoAxes object to draw on. If None, a new figure
-                with a global PlateCarree projection is created.
-            n_points: The number of interpolation points per curve (passed to `plot_geodesic`).
-            **kwargs: Default styling arguments applied to the geodesic lines
-                (e.g., `color='black'`, `alpha=0.5`).
-                Special sub-dictionaries can be passed to style the markers:
-                - `source_kwargs`: Dict of kwargs for source markers (default: gold stars).
-                - `receiver_kwargs`: Dict of kwargs for receiver markers (default: red dots).
-
-        Returns:
-            A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
-        """
-        return self.underlying_space.plot_geodesic_network(
-            paths, ax=ax, n_points=n_points, **kwargs
-        )
 
     def sample_power_measure(
         self,
@@ -1053,10 +783,10 @@ class Sobolev(SymmetricSobolevSpace):
 
 
 def plot(
-    u: "SHGrid",
+    u: SHGrid,
     /,
     *,
-    projection: Optional["Projection"] = None,
+    projection: Optional[Projection] = None,
     contour: bool = False,
     cmap: str = "RdBu",
     coasts: bool = False,
@@ -1069,7 +799,7 @@ def plot(
     contour_lines_kwargs: Optional[dict] = None,
     num_levels: int = 10,
     **kwargs,
-) -> Tuple["Figure", "GeoAxes", Any]:
+) -> Tuple[Figure, GeoAxes, Any]:
     """
     Creates a high-quality map plot of a spherical harmonic function using Cartopy.
 
@@ -1175,10 +905,12 @@ def plot(
 def plot_geodesic(
     p1: Tuple[float, float],
     p2: Tuple[float, float],
-    ax: Optional["GeoAxes"] = None,
-    n_points: int = 50,  # Kept in signature for backwards compatibility
+    /,
+    *,
+    ax: Optional[GeoAxes] = None,
+    n_points: int = 50,
     **kwargs,
-) -> Tuple["Figure", "GeoAxes"]:
+) -> Tuple[Figure, GeoAxes]:
     """
     Plots a geodesic (great-circle) curve between two points on the sphere.
 
@@ -1221,10 +953,12 @@ def plot_geodesic(
 
 def plot_geodesic_network(
     paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
-    ax: Optional["GeoAxes"] = None,
+    /,
+    *,
+    ax: Optional[GeoAxes] = None,
     n_points: int = 50,
     **kwargs,
-) -> Tuple["Figure", "GeoAxes"]:
+) -> Tuple[Figure, GeoAxes]:
     """
     Plots a network of intersecting geodesic paths onto a Cartopy map.
 
