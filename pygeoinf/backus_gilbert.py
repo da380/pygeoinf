@@ -14,7 +14,6 @@ from .inversion import LinearInference
 from .linear_optimisation import (
     LinearMinimumNormInversion,
 )
-from .nonlinear_forms import NonLinearForm
 
 
 class BackusInference(LinearInference):
