@@ -782,6 +782,25 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         """The Sobolev length-scale."""
         return self._scale
 
+    @abstractmethod
+    def with_order(self, order: float) -> SymmetricSobolevSpace:
+        """
+        Returns a new instance of the exact same space but with a modified
+        Sobolev order.
+        """
+
+    def inclusion_operator(self, target_order: float) -> LinearOperator:
+        """
+        Returns the inclusion operator from this space to one of a lower order.
+        """
+        if target_order > self.order:
+            raise ValueError(
+                "Target order must be less than or equal to the current order."
+            )
+        codomain = self.with_order(target_order)
+        underlying_identity = self.underlying_space.identity_operator()
+        return LinearOperator.from_formal_adjoint(self, codomain, underlying_identity)
+
     def sobolev_function(self, lambda_val) -> float:
         """
         Returns the value of the Sobolev function associated with the space.

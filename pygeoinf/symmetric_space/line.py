@@ -335,11 +335,10 @@ class Sobolev(SymmetricSobolevSpace):
         """
         Returns the derivative operator from the space to one with a lower order.
         """
-
         circle_op = self.circle_space.derivative_operator
-        codomain = Sobolev(
-            self.kmax, self.order - 1, self.scale, a=self.a, b=self.b, c=self.c
-        )
+
+        # Refactored: We no longer need to manually pass a, b, and c
+        codomain = self.with_order(self.order - 1)
 
         # Calculate the chain rule scaling factor
         scaling = (2 * np.pi) / self.underlying_space.circle_space.radius
@@ -355,6 +354,9 @@ class Sobolev(SymmetricSobolevSpace):
     # ---------------------------------------------- #
     #                 Public methods                 #
     # -----------------------------------------------#
+
+    def with_order(self, order: float) -> Sobolev:
+        return Sobolev(self.kmax, order, self.scale, a=self.a, b=self.b, c=self.c)
 
     def points(self) -> np.ndarray:
         """Returns a numpy array of the grid points."""

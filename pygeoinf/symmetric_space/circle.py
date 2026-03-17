@@ -347,8 +347,7 @@ class Sobolev(SymmetricSobolevSpace):
         """
         Returns the derivative operator from the space to one with a lower order.
         """
-
-        codomain = Sobolev(self.kmax, self.order - 1, self.scale, radius=self.radius)
+        codomain = self.with_order(self.order - 1)
 
         lebesgue_space = self.underlying_space
         k = np.arange(self.kmax + 1)
@@ -370,6 +369,9 @@ class Sobolev(SymmetricSobolevSpace):
     # ---------------------------------------------- #
     #                 Public methods                 #
     # -----------------------------------------------#
+
+    def with_order(self, order: float) -> Sobolev:
+        return Sobolev(self.kmax, order, self.scale, radius=self.radius)
 
     def angles(self) -> np.ndarray:
         """Returns a numpy array of the grid point angles."""
