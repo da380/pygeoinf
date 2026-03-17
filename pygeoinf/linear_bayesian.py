@@ -19,12 +19,15 @@ from typing import Optional, List
 from joblib import Parallel, delayed
 import numpy as np
 
+import scipy.sparse as sps
+import scipy.sparse.linalg as splinalg
+
 from .inversion import LinearInversion
 from .gaussian_measure import GaussianMeasure
 from .forward_problem import LinearForwardProblem
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
-from .hilbert_space import Vector
+from .hilbert_space import Vector, EuclideanSpace
 from .subspaces import AffineSubspace
 
 
@@ -269,6 +272,132 @@ class LinearBayesianInversion(LinearInversion):
         )
 
         return approx_normal_op.inverse
+
+    def sparse_localized_preconditioner(
+        self,
+        interacting_blocks: list[list[int]],
+        rank: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Builds a sparse preconditioner for the Bayesian normal equations using
+        randomized Nystrom approximations on localized, potentially overlapping sub-blocks.
+
+        Args:
+            interacting_blocks: A list of lists, where each sub-list contains the
+                                indices of data points that strongly couple to each other.
+            rank: The rank of the randomized Nystrom approximation to use per block.
+            parallel: If True, computes the sub-block approximations in parallel.
+            n_jobs: Number of CPU cores to use if parallel=True (-1 uses all cores).
+        """
+
+        forward_op = self.forward_problem.forward_operator
+        prior_cov = self.model_prior_measure.covariance
+        data_space = forward_op.codomain
+
+        noise_variance = (
+            self.forward_problem.data_error_measure.covariance.extract_diagonal(
+                parallel=parallel, n_jobs=n_jobs, galerkin=True
+            )
+            if self.forward_problem.data_error_measure_set
+            else np.zeros(self.data_space.dim)
+        )
+
+        core_normal_op = forward_op @ prior_cov @ forward_op.adjoint
+
+        data_dim = data_space.dim
+        euclidean_full = EuclideanSpace(data_dim)
+        to_components_op = data_space.coordinate_projection
+
+        print(
+            f"Building sparse preconditioner over {len(interacting_blocks)} blocks (Rank {rank})..."
+        )
+
+        # 2. Define the worker function for a single block
+        def _process_block(indices: list[int]):
+            block_size = len(indices)
+            idx_array = np.array(indices)
+
+            # Restrict to this specific block of coordinates
+            restrict_coords = euclidean_full.subspace_projection(indices)
+            P = restrict_coords @ to_components_op
+            P_star = P.adjoint
+
+            # Localized Normal Operator: H_k = P * (A Q A*) * P*
+            H_local = P @ core_normal_op @ P_star
+
+            # Randomized Nystrom Approximation
+            actual_rank = min(rank, block_size)
+
+            # Unpack correctly: (eigenvectors, eigenvalues)
+            evecs_op, evals_op = H_local.random_eig(actual_rank, method="fixed")
+
+            # 1. Extract the dense eigenvector matrix natively (shape: block_size x actual_rank)
+            V = evecs_op.matrix(dense=True, galerkin=True)
+
+            # 2. Extract the 1D array of eigenvalues
+            # Extracting the dense matrix of the diagonal operator and grabbing its diagonal
+            Lambda = evals_op.matrix(dense=True).diagonal()
+
+            # 3. Reconstruct the dense sub-block matrix purely in NumPy
+            # (V * Lambda) efficiently broadcasts the 1D eigenvalues across the columns of V
+            M_local_array = (V * Lambda) @ V.T
+
+            # 4. Extract global coordinates for the sparse COO format
+            I_local, J_local = np.meshgrid(
+                np.arange(block_size), np.arange(block_size), indexing="ij"
+            )
+            I_global = idx_array[I_local.flatten()]
+            J_global = idx_array[J_local.flatten()]
+
+            V_flattened = M_local_array.flatten()
+
+            return I_global, J_global, V_flattened
+
+        # 3. Execute the block computations (Sequential or Parallel)
+        row_indices, col_indices, values = [], [], []
+
+        if parallel:
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(_process_block)(indices) for indices in interacting_blocks
+            )
+            for I_glob, J_glob, V_flat in results:
+                row_indices.extend(I_glob)
+                col_indices.extend(J_glob)
+                values.extend(V_flat)
+        else:
+            for indices in interacting_blocks:
+                I_glob, J_glob, V_flat = _process_block(indices)
+                row_indices.extend(I_glob)
+                col_indices.extend(J_glob)
+                values.extend(V_flat)
+
+        # 4. Assemble the sparse normal matrix
+        H_sparse = sps.coo_matrix(
+            (values, (row_indices, col_indices)), shape=(data_dim, data_dim)
+        )
+
+        # 5. Add the data noise covariance (R) to the diagonal
+        R_sparse = sps.diags(noise_variance)
+        H_approx = (H_sparse + R_sparse).tocsc()
+
+        # 6. Factorize using SuperLU
+        print("Factorizing sparse matrix...")
+        splu_solver = splinalg.splu(H_approx)
+
+        # 7. Wrap the solver in a pygeoinf LinearOperator
+        def apply_preconditioner(x):
+            c = data_space.to_components(x)
+            c_solved = splu_solver.solve(c)
+            return data_space.from_components(c_solved)
+
+        return LinearOperator(
+            data_space,
+            data_space,
+            apply_preconditioner,
+            adjoint_mapping=apply_preconditioner,
+        )
 
 
 class ConstrainedLinearBayesianInversion(LinearInversion):
