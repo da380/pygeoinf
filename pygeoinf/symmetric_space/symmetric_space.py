@@ -16,6 +16,9 @@ from typing import Callable, Any, List, Optional, TypeAlias, Iterator, Tuple
 
 import numpy as np
 from scipy.sparse import diags
+from scipy.interpolate import interp1d
+import scipy.sparse as sps
+import scipy.sparse.linalg as splinalg
 
 from pygeoinf.hilbert_space import (
     HilbertSpace,
@@ -560,6 +563,14 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """
 
     @abstractmethod
+    def point_at_distance(self, p1: Point, distance: float) -> Point:
+        """
+        Returns a point located at exactly the specified geodesic distance from p1.
+        Since invariant measures are isotropic, the direction of translation
+        is arbitrary.
+        """
+
+    @abstractmethod
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
@@ -795,6 +806,24 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             blocks.setdefault(label, []).append(i)
 
         return list(blocks.values())
+
+    def pairs_within_distance(
+        self, points: List[Point], max_distance: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Finds all pairs of points within a given geodesic distance.
+        Returns arrays of row indices, column indices, and their geodesic distances.
+        """
+        n = len(points)
+        rows, cols, dists = [], [], []
+        for i in range(n):
+            for j in range(n):  # Full symmetric sweep
+                d = self.geodesic_distance(points[i], points[j])
+                if d <= max_distance:
+                    rows.append(i)
+                    cols.append(j)
+                    dists.append(d)
+        return np.array(rows), np.array(cols), np.array(dists)
 
 
 class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
@@ -1168,6 +1197,170 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             linkage_method=linkage_method,
         )
 
+    def distance_localized_preconditioner(
+        self,
+        prior_measure: InvariantGaussianMeasure,
+        points: List[Point],
+        data_error_measure: GaussianMeasure,
+        /,
+        *,
+        max_distance: float,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Builds a highly specialized, ultra-fast sparse preconditioner for point
+        evaluation problems when the prior measure is invariant.
+
+        This exploits the property that the two-point covariance depends solely
+        on the geodesic distance. It maps out the 1D covariance function along
+        a deterministic path, interpolates it, applies a Gaspari-Cohn taper to
+        ensure positive-definiteness, and populates a sparse normal matrix.
+
+        If max_distance is set to 0.0, it bypasses the distance calculations
+        and instantly builds a purely diagonal (Jacobi) preconditioner.
+
+        Args:
+            prior_measure: The invariant prior Gaussian measure.
+            points: The list of observation points.
+            data_error_measure: The Gaussian measure describing the data noise.
+            max_distance: The geodesic distance beyond which covariance is assumed
+                          to be zero (enforces sparsity). Set to 0.0 for a pure diagonal.
+            parallel: If True, computes the error measure diagonal in parallel.
+            n_jobs: Number of CPU cores to use if parallel=True.
+
+        Returns:
+            A LinearOperator representing the inverse of the approximated sparse normal matrix.
+        """
+
+        n_data = len(points)
+        data_space = EuclideanSpace(n_data)
+
+        # =======================================================
+        # SPECIAL CASE: Purely Diagonal (Jacobi) Preconditioner
+        # =======================================================
+        if max_distance <= 0.0:
+
+            # 1. Prior variance is identical everywhere for invariant measures
+            p1 = self.random_point()
+            rep1 = self.dirac_representation(p1)
+            q_rep1 = prior_measure.covariance(rep1)
+            prior_var = float(self.inner_product(rep1, q_rep1))
+
+            # 2. Extract data noise variance
+            noise_variance = data_error_measure.covariance.extract_diagonal(
+                galerkin=True, parallel=parallel, n_jobs=n_jobs
+            )
+
+            # 3. Form the inverse diagonal directly (no splu needed!)
+            inv_diag = 1.0 / (prior_var + noise_variance)
+
+            def apply_diag_preconditioner(x):
+                c_vec = data_space.to_components(x)
+                return data_space.from_components(c_vec * inv_diag)
+
+            return LinearOperator(
+                data_space,
+                data_space,
+                apply_diag_preconditioner,
+                adjoint_mapping=apply_diag_preconditioner,
+            )
+
+        # =======================================================
+        # STANDARD CASE: Distance-Localized Sparse Preconditioner
+        # =======================================================
+        # 1. Use the scale heuristic to set an array of exact distances to evaluate.
+        n_interp_points = max(10, int(4.0 * max_distance / self.scale))
+        exact_distances = np.linspace(0.0, max_distance * 1.1, n_interp_points)
+
+        # Base point and its representation
+        p1 = self.random_point()
+        rep1 = self.dirac_representation(p1)
+        q_rep1 = prior_measure.covariance(rep1)
+
+        cov_vals = []
+        for d in exact_distances:
+            # Elegantly translate the point by the exact distance using the symmetry group
+            p2 = self.point_at_distance(p1, float(d))
+            rep2 = self.dirac_representation(p2)
+            cov = self.inner_product(rep2, q_rep1)
+            cov_vals.append(cov)
+
+        # 2. Build the 1D interpolator (Linear to prevent spline ringing!)
+        cov_interpolator = interp1d(
+            exact_distances, cov_vals, kind="linear", bounds_error=False, fill_value=0.0
+        )
+
+        def gaspari_cohn_vectorized(d_array, c_val):
+            """Vectorized Gaspari-Cohn taper for lightning-fast array evaluations."""
+
+            z = d_array / c_val
+            taper = np.zeros_like(z)
+
+            mask1 = z <= 1.0
+            z1 = z[mask1]
+            taper[mask1] = (
+                1.0
+                - (5.0 / 3.0) * z1**2
+                + (5.0 / 8.0) * z1**3
+                + (1.0 / 2.0) * z1**4
+                - (1.0 / 4.0) * z1**5
+            )
+
+            mask2 = (z > 1.0) & (z <= 2.0)
+            z2 = z[mask2]
+            taper[mask2] = (
+                4.0
+                - 5.0 * z2
+                + (5.0 / 3.0) * z2**2
+                + (5.0 / 8.0) * z2**3
+                - (1.0 / 2.0) * z2**4
+                + (1.0 / 12.0) * z2**5
+                - (2.0 / 3.0) / z2
+            )
+            return taper
+
+        print(f"Finding point pairs within {max_distance}...")
+        # INSTANT K-D Tree neighbor search
+        row_indices, col_indices, dists = self.pairs_within_distance(
+            points, max_distance
+        )
+
+        print(f"Populating sparse normal matrix for {n_data} points...")
+        # INSTANT vectorized evaluation
+        c_taper = max_distance / 2.0
+        raw_vals = cov_interpolator(dists)
+        tapers = gaspari_cohn_vectorized(dists, c_taper)
+        values = raw_vals * tapers
+
+        # Build sparse matrix
+        H_sparse = sps.coo_matrix(
+            (values, (row_indices, col_indices)), shape=(n_data, n_data)
+        )
+
+        # 4. Extract data noise variance and add to the diagonal (R)
+        noise_variance = data_error_measure.covariance.extract_diagonal(
+            galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )
+        R_sparse = sps.diags(noise_variance)
+
+        H_approx = (H_sparse + R_sparse).tocsc()
+
+        # 5. Factorize and wrap in a pygeoinf LinearOperator
+        splu_solver = splinalg.splu(H_approx)
+
+        def apply_sparse_preconditioner(x):
+            c_vec = data_space.to_components(x)
+            c_solved = splu_solver.solve(c_vec)
+            return data_space.from_components(c_solved)
+
+        return LinearOperator(
+            data_space,
+            data_space,
+            apply_sparse_preconditioner,
+            adjoint_mapping=apply_sparse_preconditioner,
+        )
+
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #
     # ------------------------------------------------------- #
@@ -1196,10 +1389,18 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
     def geodesic_distance(self, p1: Point, p2: Point) -> float:
         return self.underlying_space.geodesic_distance(p1, p2)
 
+    def point_at_distance(self, p1: Point, distance: float) -> Point:
+        return self.underlying_space.point_at_distance(p1, distance)
+
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
         return self.underlying_space.geodesic_quadrature(p1, p2, n_points)
+
+    def pairs_within_distance(
+        self, points: List[Point], max_distance: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return self.underlying_space.pairs_within_distance(points, max_distance)
 
     def __eq__(self, other: object) -> bool:
         """

@@ -20,6 +20,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 
+from scipy.spatial import cKDTree
+
 
 try:
     import pyshtools as sh
@@ -263,6 +265,19 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         omega = np.arccos(dot_product)
         return float(self.radius * omega)
 
+    def point_at_distance(
+        self, p1: Tuple[float, float], distance: float
+    ) -> Tuple[float, float]:
+        """Translates a point along a meridian by the given distance."""
+        lat, lon = p1
+        omega_deg = np.degrees(distance / self.radius)
+
+        # Move North if possible, otherwise move South
+        if lat + omega_deg <= 90.0:
+            return (lat + omega_deg, lon)
+        else:
+            return (lat - omega_deg, lon)
+
     def geodesic_quadrature(
         self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
     ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
@@ -295,6 +310,40 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             points.append(self._to_latlon(v_interp))
 
         return points, scaled_weights
+
+    def pairs_within_distance(
+        self, points: List[Tuple[float, float]], max_distance: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+        # 1. Convert all (lat, lon) points to 3D Cartesian vectors
+        vecs = (
+            np.array([self._to_vector(lat, lon) for lat, lon in points]) * self.radius
+        )
+
+        # 2. Build the K-D Tree
+        tree = cKDTree(vecs)
+
+        # 3. Map geodesic max distance to Euclidean chord distance
+        # d_chord = 2 * R * sin(d_geodesic / (2R))
+        max_chord = 2.0 * self.radius * np.sin(max_distance / (2.0 * self.radius))
+
+        # 4. Query the tree (returns a sparse DOK matrix)
+        dok = tree.sparse_distance_matrix(tree, max_chord)
+        coo = dok.tocoo()
+
+        # 5. Convert chord distances back to geodesic distances
+        # d_geodesic = 2 * R * arcsin(d_chord / (2R))
+        ratio = np.clip(coo.data / (2.0 * self.radius), -1.0, 1.0)
+        geo_dists = 2.0 * self.radius * np.arcsin(ratio)
+
+        # Note: sparse_distance_matrix explicitly drops zero-distance pairs (the diagonal!)
+        # We must manually inject the diagonal back in for distance = 0.0
+        n = len(points)
+        rows = np.concatenate([coo.row, np.arange(n)])
+        cols = np.concatenate([coo.col, np.arange(n)])
+        final_dists = np.concatenate([geo_dists, np.zeros(n)])
+
+        return rows, cols, final_dists
 
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #

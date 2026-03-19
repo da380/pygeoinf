@@ -156,6 +156,9 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         diff = (p2 - p1 + np.pi) % (2 * np.pi) - np.pi
         return float(np.abs(diff) * self.radius)
 
+    def point_at_distance(self, p1: float, distance: float) -> float:
+        return (p1 + distance / self.radius) % (2 * np.pi)
+
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:

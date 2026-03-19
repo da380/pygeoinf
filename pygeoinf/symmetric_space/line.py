@@ -165,6 +165,12 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def geodesic_distance(self, p1: float, p2: float) -> float:
         return abs(p2 - p1)
 
+    def point_at_distance(self, p1: float, distance: float) -> float:
+        """Returns a point separated from p1 by the given distance."""
+        if p1 + distance <= self.b:
+            return p1 + distance
+        return p1 - distance
+
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:
