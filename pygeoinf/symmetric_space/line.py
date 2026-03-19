@@ -162,6 +162,9 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def random_point(self) -> float:
         return np.random.uniform(self.a, self.b)
 
+    def geodesic_distance(self, p1: float, p2: float) -> float:
+        return abs(p2 - p1)
+
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:

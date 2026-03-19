@@ -248,52 +248,28 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         )
         return SHCilmToVector(coeffs)
 
-    def random_point(self) -> List[float]:
+    def random_point(self) -> Tuple[float, float]:
         """Returns a random point as `[latitude, longitude]`."""
         latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
         longitude = np.random.uniform(0.0, 360.0)
-        return [latitude, longitude]
+        return (latitude, longitude)
+
+    def geodesic_distance(
+        self, p1: Tuple[float, float], p2: Tuple[float, float]
+    ) -> float:
+        """Returns the great-circle distance between two points on the sphere."""
+        v1, v2 = self._to_vector(*p1), self._to_vector(*p2)
+        dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
+        omega = np.arccos(dot_product)
+        return float(self.radius * omega)
 
     def geodesic_quadrature(
         self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
     ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
-        """
-        Generates Gauss-Legendre quadrature points and weights along a great-circle arc.
+        """Generates Gauss-Legendre quadrature points and weights along a great-circle arc."""
 
-        This implementation converts the start and end latitudes and longitudes into
-        unit vectors, calculates the central angle (omega), and interpolates the
-        geodesic path using SLERP.
-
-        Args:
-            p1: Start point as (latitude, longitude) in degrees.
-            p2: End point as (latitude, longitude) in degrees.
-            n_points: Number of quadrature points to generate.
-
-        Returns:
-            points: A list of (lat, lon) tuples in degrees along the geodesic.
-            weights: Integration weights scaled by the total arc length (R * omega).
-        """
-
-        def to_vector(lat, lon):
-            lat_rad, lon_rad = np.radians(lat), np.radians(lon)
-            return np.array(
-                [
-                    np.cos(lat_rad) * np.cos(lon_rad),
-                    np.cos(lat_rad) * np.sin(lon_rad),
-                    np.sin(lat_rad),
-                ]
-            )
-
-        def to_latlon(vec):
-            vec = vec / np.linalg.norm(vec)
-            lat_rad = np.arcsin(vec[2])
-            lon_rad = np.arctan2(vec[1], vec[0])
-            return (np.degrees(lat_rad), np.degrees(lon_rad))
-
-        v1, v2 = to_vector(*p1), to_vector(*p2)
-
-        dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
-        omega = np.arccos(dot_product)
+        arc_length = self.geodesic_distance(p1, p2)
+        omega = arc_length / self.radius
 
         if omega < 1e-10:
             return [p1] * n_points, np.zeros(n_points)
@@ -303,10 +279,11 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
                 "Points are antipodal; the great circle path is not unique."
             )
 
+        v1, v2 = self._to_vector(*p1), self._to_vector(*p2)
         x, w = np.polynomial.legendre.leggauss(n_points)
 
         t_vals = (x + 1) / 2.0
-        scaled_weights = w * (self.radius * omega / 2.0)
+        scaled_weights = w * (arc_length / 2.0)
 
         sin_omega = np.sin(omega)
         points = []
@@ -315,7 +292,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             coeff1 = np.sin((1 - t) * omega) / sin_omega
             coeff2 = np.sin(t * omega) / sin_omega
             v_interp = coeff1 * v1 + coeff2 * v2
-            points.append(to_latlon(v_interp))
+            points.append(self._to_latlon(v_interp))
 
         return points, scaled_weights
 
@@ -526,6 +503,26 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return sh.SHCoeffs.from_array(
             coeffs, normalization=self.normalization, csphase=self.csphase
         )
+
+    @staticmethod
+    def _to_vector(lat: float, lon: float) -> np.ndarray:
+        """Converts a latitude/longitude pair (in degrees) to a 3D unit vector."""
+        lat_rad, lon_rad = np.radians(lat), np.radians(lon)
+        return np.array(
+            [
+                np.cos(lat_rad) * np.cos(lon_rad),
+                np.cos(lat_rad) * np.sin(lon_rad),
+                np.sin(lat_rad),
+            ]
+        )
+
+    @staticmethod
+    def _to_latlon(vec: np.ndarray) -> Tuple[float, float]:
+        """Converts a 3D vector back to a latitude/longitude pair (in degrees)."""
+        vec = vec / np.linalg.norm(vec)
+        lat_rad = np.arcsin(vec[2])
+        lon_rad = np.arctan2(vec[1], vec[0])
+        return (np.degrees(lat_rad), np.degrees(lon_rad))
 
 
 class Sobolev(SymmetricSobolevSpace):

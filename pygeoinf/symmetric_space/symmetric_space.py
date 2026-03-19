@@ -550,6 +550,16 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """Returns a single random point from the underlying symmetric space."""
 
     @abstractmethod
+    def geodesic_distance(self, p1: Any, p2: Any) -> float:
+        """
+        Returns the shortest distance along the manifold between two points.
+
+        Args:
+            p1: The starting point.
+            p2: The end point.
+        """
+
+    @abstractmethod
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
@@ -721,6 +731,70 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         return self.norm_scaled_invariant_gaussian_measure(
             lambda k: np.exp(-(scale**2) * k), expectation=expectation, std=std
         )
+
+    def cluster_points(
+        self,
+        points: List[Point],
+        /,
+        *,
+        threshold: Optional[float] = None,
+        n_clusters: Optional[int] = None,
+        linkage_method: str = "complete",
+    ) -> List[List[int]]:
+        """
+        Clusters a list of points into interacting blocks based on their
+        geodesic distance.
+
+        This is particularly useful for generating the 'interacting_blocks'
+        required by localized preconditioners in Bayesian inversions.
+
+        Args:
+            points: A list of points on the symmetric manifold.
+            threshold: The maximum geodesic distance between points in a cluster.
+            n_clusters: The exact number of clusters to form (alternative to threshold).
+            linkage_method: The hierarchical clustering method to use ('complete',
+                            'average', 'single', etc.). Defaults to 'complete' to
+                            ensure clusters remain geographically compact.
+
+        Returns:
+            A list of lists, where each sub-list contains the indices of the
+            points belonging to a specific cluster.
+        """
+        from scipy.cluster.hierarchy import linkage, fcluster
+
+        n = len(points)
+        if n == 0:
+            return []
+        if n == 1:
+            return [[0]]
+
+        if threshold is None and n_clusters is None:
+            raise ValueError("You must specify either 'threshold' or 'n_clusters'.")
+
+        # 1. Compute pairwise geodesic distances (in SciPy's condensed 1D format)
+        # A condensed matrix is required by the linkage function
+        distances = np.zeros(n * (n - 1) // 2)
+        idx = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                distances[idx] = self.geodesic_distance(points[i], points[j])
+                idx += 1
+
+        # 2. Perform agglomerative hierarchical clustering
+        Z = linkage(distances, method=linkage_method)
+
+        # 3. Extract the flat clusters based on the user's criteria
+        if n_clusters is not None:
+            labels = fcluster(Z, t=n_clusters, criterion="maxclust")
+        else:
+            labels = fcluster(Z, t=threshold, criterion="distance")
+
+        # 4. Group the point indices by their assigned cluster label
+        blocks = {}
+        for i, label in enumerate(labels):
+            blocks.setdefault(label, []).append(i)
+
+        return list(blocks.values())
 
 
 class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
@@ -1059,6 +1133,41 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
 
         return paths
 
+    def cluster_points(
+        self,
+        points: List[Point],
+        /,
+        *,
+        threshold: Optional[float] = None,
+        n_clusters: Optional[int] = None,
+        linkage_method: str = "complete",
+    ) -> List[List[int]]:
+        """
+        Clusters a list of points into interacting blocks based on their
+        geodesic distance.
+
+        This is particularly useful for generating the 'interacting_blocks'
+        required by localized preconditioners in Bayesian inversions.
+
+        Args:
+            points: A list of points on the symmetric manifold.
+            threshold: The maximum geodesic distance between points in a cluster.
+            n_clusters: The exact number of clusters to form (alternative to threshold).
+            linkage_method: The hierarchical clustering method to use ('complete',
+                            'average', 'single', etc.). Defaults to 'complete' to
+                            ensure clusters remain geographically compact.
+
+        Returns:
+            A list of lists, where each sub-list contains the indices of the
+            points belonging to a specific cluster.
+        """
+        return self.underlying_space.cluster_points(
+            points,
+            threshold=threshold,
+            n_clusters=n_clusters,
+            linkage_method=linkage_method,
+        )
+
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #
     # ------------------------------------------------------- #
@@ -1083,6 +1192,9 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
 
     def random_point(self) -> Point:
         return self.underlying_space.random_point()
+
+    def geodesic_distance(self, p1: Point, p2: Point) -> float:
+        return self.underlying_space.geodesic_distance(p1, p2)
 
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int

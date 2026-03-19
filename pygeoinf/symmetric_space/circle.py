@@ -152,11 +152,17 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def random_point(self) -> float:
         return np.random.uniform(0, 2 * np.pi)
 
+    def geodesic_distance(self, p1: float, p2: float) -> float:
+        diff = (p2 - p1 + np.pi) % (2 * np.pi) - np.pi
+        return float(np.abs(diff) * self.radius)
+
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:
+
+        arc_length = self.geodesic_distance(p1, p2)
+
         diff = (p2 - p1 + np.pi) % (2 * np.pi) - np.pi
-        arc_length = np.abs(diff) * self.radius
 
         x, w = np.polynomial.legendre.leggauss(n_points)
 
