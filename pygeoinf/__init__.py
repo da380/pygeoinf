@@ -79,6 +79,8 @@ from .preconditioners import (
     SpectralPreconditioningMethod,
     IdentityPreconditioningMethod,
     IterativePreconditioningMethod,
+    BandedPreconditioningMethod,
+    ExactBlockPreconditioningMethod,
 )
 
 from .forward_problem import ForwardProblem, LinearForwardProblem
@@ -184,6 +186,8 @@ __all__ = [
     "JacobiPreconditioningMethod",
     "SpectralPreconditioningMethod",
     "IterativePreconditioningMethod",
+    "BandedPreconditioningMethod",
+    "ExactBlockPreconditioningMethod",
     # forward_problem
     "ForwardProblem",
     "LinearForwardProblem",

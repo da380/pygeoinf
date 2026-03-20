@@ -413,7 +413,7 @@ class LinearBayesianInversion(LinearInversion):
 
         This is primarily used to build robust, physics-based preconditioners.
         """
-        # 1. Substitute components or fall back to the exact ones
+
         A_tilde = alternate_forward_operator or self.forward_problem.forward_operator
         Q_tilde = alternate_prior_measure or self.model_prior_measure
 
@@ -424,19 +424,28 @@ class LinearBayesianInversion(LinearInversion):
         else:
             R_tilde = None
 
-        # Ensure domains match
         if A_tilde.domain != Q_tilde.domain:
             raise ValueError(
                 "The domain of the alternate forward operator must match "
                 "the domain of the prior measure."
             )
 
-        # 2. Build the new surrogate forward problem
+        if A_tilde.codomain != self.data_space:
+            raise ValueError(
+                "The data space for the alternate forward operator must "
+                "match that for the original problem"
+            )
+
+        if R_tilde.domain != self.data_space:
+            raise ValueError(
+                "The domain for the alternate error measure must "
+                "match that for the original problem"
+            )
+
         surrogate_forward_problem = LinearForwardProblem(
             A_tilde, data_error_measure=R_tilde
         )
 
-        # 3. Return the new surrogate inversion instance
         return LinearBayesianInversion(surrogate_forward_problem, Q_tilde)
 
     def surrogate_normal_preconditioner(
@@ -565,6 +574,18 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
             raise ValueError(
                 "The domain of the alternate forward operator must match "
                 "the domain of the prior measure."
+            )
+
+        if A_tilde.codomain != self.data_space:
+            raise ValueError(
+                "The data space for the alternate forward operator must "
+                "match that for the original problem"
+            )
+
+        if R_tilde.domain != self.data_space:
+            raise ValueError(
+                "The domain for the alternate error measure must "
+                "match that for the original problem"
             )
 
         # 2. Build the new surrogate forward problem
