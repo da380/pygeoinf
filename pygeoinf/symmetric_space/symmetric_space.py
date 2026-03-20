@@ -16,6 +16,9 @@ from typing import Callable, Any, List, Optional, TypeAlias, Iterator, Tuple
 
 import numpy as np
 from scipy.sparse import diags
+from scipy.interpolate import interp1d
+import scipy.sparse as sps
+import scipy.sparse.linalg as splinalg
 
 from pygeoinf.hilbert_space import (
     HilbertSpace,
@@ -30,6 +33,9 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 
 # Alias for the index for the eigenvalues or eigenfunctions
 Index: TypeAlias = int | tuple[int, ...]
+
+# Alias for the truncation degree
+Degree: TypeAlias = int | tuple[int, ...]
 
 # Alias for a point within the symmetric manifold
 Point: TypeAlias = float | tuple[float, ...]
@@ -432,16 +438,18 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     necessarily orthogonal, but need not be normalised.
     """
 
-    def __init__(self, spatial_dim: int, dim: int, orthonormal: bool):
+    def __init__(self, spatial_dim: int, degree: Degree, dim: int, orthonormal: bool):
         """
         Initializes the abstract invariant Lebesgue space.
 
         Args:
             spatial_dim: The dimension of the symmetric manifold
+            degree: The truncation degree.
             dim: The dimension of the space.
             orthonormal: True if the eigenfunction basis is orthonormal.
         """
         self._spatial_dim = spatial_dim
+        self._degree = degree
         self._dim = dim
         self._orthonormal = orthonormal
 
@@ -465,6 +473,11 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     def spatial_dimension(self) -> int:
         """The dimension of the symetric manifold."""
         return self._spatial_dim
+
+    @property
+    def degree(self) -> Degree:
+        """The spectral truncation degree of the space."""
+        return self._degree
 
     @property
     def dim(self) -> int:
@@ -550,6 +563,24 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """Returns a single random point from the underlying symmetric space."""
 
     @abstractmethod
+    def geodesic_distance(self, p1: Any, p2: Any) -> float:
+        """
+        Returns the shortest distance along the manifold between two points.
+
+        Args:
+            p1: The starting point.
+            p2: The end point.
+        """
+
+    @abstractmethod
+    def point_at_distance(self, p1: Point, distance: float) -> Point:
+        """
+        Returns a point located at exactly the specified geodesic distance from p1.
+        Since invariant measures are isotropic, the direction of translation
+        is arbitrary.
+        """
+
+    @abstractmethod
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
@@ -560,6 +591,14 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             points: List of manifold coordinates.
             weights: Integration weights scaled by the line element.
         """
+
+    @abstractmethod
+    def with_degree(self, degree: Degree) -> SymmetricHilbertSpace:
+        """Returns a new instance of the space with a modified truncation degree."""
+
+    @abstractmethod
+    def degree_transfer_operator(self, target_degree: Degree) -> LinearOperator:
+        """Returns the transfer operator from this space to one with a different degree."""
 
     # ------------------------------------------------------------#
     #                        Public methods                       #
@@ -722,6 +761,88 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             lambda k: np.exp(-(scale**2) * k), expectation=expectation, std=std
         )
 
+    def cluster_points(
+        self,
+        points: List[Point],
+        /,
+        *,
+        threshold: Optional[float] = None,
+        n_clusters: Optional[int] = None,
+        linkage_method: str = "complete",
+    ) -> List[List[int]]:
+        """
+        Clusters a list of points into interacting blocks based on their
+        geodesic distance.
+
+        This is particularly useful for generating the 'interacting_blocks'
+        required by localized preconditioners in Bayesian inversions.
+
+        Args:
+            points: A list of points on the symmetric manifold.
+            threshold: The maximum geodesic distance between points in a cluster.
+            n_clusters: The exact number of clusters to form (alternative to threshold).
+            linkage_method: The hierarchical clustering method to use ('complete',
+                            'average', 'single', etc.). Defaults to 'complete' to
+                            ensure clusters remain geographically compact.
+
+        Returns:
+            A list of lists, where each sub-list contains the indices of the
+            points belonging to a specific cluster.
+        """
+        from scipy.cluster.hierarchy import linkage, fcluster
+
+        n = len(points)
+        if n == 0:
+            return []
+        if n == 1:
+            return [[0]]
+
+        if threshold is None and n_clusters is None:
+            raise ValueError("You must specify either 'threshold' or 'n_clusters'.")
+
+        # 1. Compute pairwise geodesic distances (in SciPy's condensed 1D format)
+        # A condensed matrix is required by the linkage function
+        distances = np.zeros(n * (n - 1) // 2)
+        idx = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                distances[idx] = self.geodesic_distance(points[i], points[j])
+                idx += 1
+
+        # 2. Perform agglomerative hierarchical clustering
+        Z = linkage(distances, method=linkage_method)
+
+        # 3. Extract the flat clusters based on the user's criteria
+        if n_clusters is not None:
+            labels = fcluster(Z, t=n_clusters, criterion="maxclust")
+        else:
+            labels = fcluster(Z, t=threshold, criterion="distance")
+
+        # 4. Group the point indices by their assigned cluster label
+        blocks = {}
+        for i, label in enumerate(labels):
+            blocks.setdefault(label, []).append(i)
+
+        return list(blocks.values())
+
+    def pairs_within_distance(
+        self, points: List[Point], max_distance: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Finds all pairs of points within a given geodesic distance.
+        Returns arrays of row indices, column indices, and their geodesic distances.
+        """
+        n = len(points)
+        rows, cols, dists = [], [], []
+        for i in range(n):
+            for j in range(n):  # Full symmetric sweep
+                d = self.geodesic_distance(points[i], points[j])
+                if d <= max_distance:
+                    rows.append(i)
+                    cols.append(j)
+                    dists.append(d)
+        return np.array(rows), np.array(cols), np.array(dists)
+
 
 class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
     """
@@ -768,6 +889,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         SymmetricHilbertSpace.__init__(
             self,
             lebesgue_space.spatial_dimension,
+            lebesgue_space.degree,
             lebesgue_space.dim,
             False,
         )
@@ -789,10 +911,8 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         Sobolev order.
         """
 
-    def inclusion_operator(self, target_order: float) -> LinearOperator:
-        """
-        Returns the inclusion operator from this space to one of a lower order.
-        """
+    def order_inclusion_operator(self, target_order: float) -> LinearOperator:
+        """Returns the inclusion operator from this space to one of a lower order."""
         if target_order > self.order:
             raise ValueError(
                 "Target order must be less than or equal to the current order."
@@ -1059,6 +1179,205 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
 
         return paths
 
+    def cluster_points(
+        self,
+        points: List[Point],
+        /,
+        *,
+        threshold: Optional[float] = None,
+        n_clusters: Optional[int] = None,
+        linkage_method: str = "complete",
+    ) -> List[List[int]]:
+        """
+        Clusters a list of points into interacting blocks based on their
+        geodesic distance.
+
+        This is particularly useful for generating the 'interacting_blocks'
+        required by localized preconditioners in Bayesian inversions.
+
+        Args:
+            points: A list of points on the symmetric manifold.
+            threshold: The maximum geodesic distance between points in a cluster.
+            n_clusters: The exact number of clusters to form (alternative to threshold).
+            linkage_method: The hierarchical clustering method to use ('complete',
+                            'average', 'single', etc.). Defaults to 'complete' to
+                            ensure clusters remain geographically compact.
+
+        Returns:
+            A list of lists, where each sub-list contains the indices of the
+            points belonging to a specific cluster.
+        """
+        return self.underlying_space.cluster_points(
+            points,
+            threshold=threshold,
+            n_clusters=n_clusters,
+            linkage_method=linkage_method,
+        )
+
+    def distance_localized_preconditioner(
+        self,
+        prior_measure: InvariantGaussianMeasure,
+        points: List[Point],
+        data_error_measure: GaussianMeasure,
+        max_distance: float,
+        /,
+        *,
+        apply_taper: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Builds a highly specialized, ultra-fast sparse preconditioner for point
+        evaluation problems when the prior measure is invariant.
+
+        This exploits the property that the two-point covariance depends solely
+        on the geodesic distance. It maps out the 1D covariance function along
+        a deterministic path, interpolates it, optionally applies a Gaspari-Cohn taper to
+        ensure positive-definiteness, and populates a sparse normal matrix.
+
+        If max_distance is set to 0.0, it bypasses the distance calculations
+        and instantly builds a purely diagonal (Jacobi) preconditioner.
+
+        Args:
+            prior_measure: The invariant prior Gaussian measure.
+            points: The list of observation points.
+            data_error_measure: The Gaussian measure describing the data noise.
+            max_distance: The geodesic distance beyond which covariance is assumed
+                          to be zero (enforces sparsity). Set to 0.0 for a pure diagonal.
+            apply_taper: If true, applies Gaspari-Cohn taper.
+            parallel: If True, computes the error measure diagonal in parallel.
+            n_jobs: Number of CPU cores to use if parallel=True.
+
+        Returns:
+            A LinearOperator representing the inverse of the approximated sparse normal matrix.
+        """
+
+        n_data = len(points)
+        data_space = EuclideanSpace(n_data)
+
+        # =======================================================
+        # SPECIAL CASE: Purely Diagonal (Jacobi) Preconditioner
+        # =======================================================
+        if max_distance <= 0.0:
+
+            p1 = self.random_point()
+            rep1 = self.dirac_representation(p1)
+            q_rep1 = prior_measure.covariance(rep1)
+            prior_var = float(self.inner_product(rep1, q_rep1))
+
+            noise_variance = data_error_measure.covariance.extract_diagonal(
+                galerkin=True, parallel=parallel, n_jobs=n_jobs
+            )
+
+            inv_diag = 1.0 / (prior_var + noise_variance)
+
+            def apply_diag_preconditioner(x):
+                c_vec = data_space.to_components(x)
+                return data_space.from_components(c_vec * inv_diag)
+
+            return LinearOperator(
+                data_space,
+                data_space,
+                apply_diag_preconditioner,
+                adjoint_mapping=apply_diag_preconditioner,
+            )
+
+        # =======================================================
+        # STANDARD CASE: Distance-Localized Sparse Preconditioner
+        # =======================================================
+
+        n_interp_points = max(20, int(4.0 * max_distance / self.scale))
+        exact_distances = np.linspace(0.0, max_distance * 1.1, n_interp_points)
+
+        p1 = self.random_point()
+        rep1 = self.dirac_representation(p1)
+        q_rep1 = prior_measure.covariance(rep1)
+
+        cov_vals = []
+        for d in exact_distances:
+            p2 = self.point_at_distance(p1, float(d))
+            rep2 = self.dirac_representation(p2)
+            cov = self.inner_product(rep2, q_rep1)
+            cov_vals.append(cov)
+
+        cov_interpolator = interp1d(
+            exact_distances, cov_vals, kind="linear", bounds_error=False, fill_value=0.0
+        )
+
+        def gaspari_cohn_vectorized(d_array, c_val):
+            """Vectorized Gaspari-Cohn taper for lightning-fast array evaluations."""
+
+            z = d_array / c_val
+            taper = np.zeros_like(z)
+
+            mask1 = z <= 1.0
+            z1 = z[mask1]
+            taper[mask1] = (
+                1.0
+                - (5.0 / 3.0) * z1**2
+                + (5.0 / 8.0) * z1**3
+                + (1.0 / 2.0) * z1**4
+                - (1.0 / 4.0) * z1**5
+            )
+
+            mask2 = (z > 1.0) & (z <= 2.0)
+            z2 = z[mask2]
+            taper[mask2] = (
+                4.0
+                - 5.0 * z2
+                + (5.0 / 3.0) * z2**2
+                + (5.0 / 8.0) * z2**3
+                - (1.0 / 2.0) * z2**4
+                + (1.0 / 12.0) * z2**5
+                - (2.0 / 3.0) / z2
+            )
+
+            return taper
+
+        row_indices, col_indices, dists = self.pairs_within_distance(
+            points, max_distance
+        )
+
+        c_taper = max_distance / 2.0
+        raw_vals = cov_interpolator(dists)
+        if apply_taper:
+            tapers = gaspari_cohn_vectorized(dists, c_taper)
+            values = raw_vals * tapers
+        else:
+            values = raw_vals
+
+        H_sparse = sps.coo_matrix(
+            (values, (row_indices, col_indices)), shape=(n_data, n_data)
+        )
+
+        noise_variance = data_error_measure.covariance.extract_diagonal(
+            galerkin=True, parallel=parallel, n_jobs=n_jobs
+        )
+        R_sparse = sps.diags(noise_variance)
+
+        H_approx = (H_sparse + R_sparse).tocsc()
+
+        splu_solver = splinalg.splu(H_approx)
+
+        def apply_sparse_preconditioner(x):
+            c_vec = data_space.to_components(x)
+            c_solved = splu_solver.solve(c_vec)
+            return data_space.from_components(c_solved)
+
+        return LinearOperator(
+            data_space,
+            data_space,
+            apply_sparse_preconditioner,
+            adjoint_mapping=apply_sparse_preconditioner,
+        )
+
+    def degree_transfer_operator(self, target_degree: Degree) -> LinearOperator:
+        codomain = self.with_degree(target_degree)
+        lebesgue_inclusion = self.underlying_space.degree_transfer_operator(
+            target_degree
+        )
+        return LinearOperator.from_formal_adjoint(self, codomain, lebesgue_inclusion)
+
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #
     # ------------------------------------------------------- #
@@ -1084,10 +1403,21 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
     def random_point(self) -> Point:
         return self.underlying_space.random_point()
 
+    def geodesic_distance(self, p1: Point, p2: Point) -> float:
+        return self.underlying_space.geodesic_distance(p1, p2)
+
+    def point_at_distance(self, p1: Point, distance: float) -> Point:
+        return self.underlying_space.point_at_distance(p1, distance)
+
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
         return self.underlying_space.geodesic_quadrature(p1, p2, n_points)
+
+    def pairs_within_distance(
+        self, points: List[Point], max_distance: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return self.underlying_space.pairs_within_distance(points, max_distance)
 
     def __eq__(self, other: object) -> bool:
         """

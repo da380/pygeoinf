@@ -74,3 +74,29 @@ class TestLineLebesgueSpecifics:
         components = space.to_components(original_vector)
         reconstructed_vector = space.from_components(components)
         assert np.allclose(original_vector, reconstructed_vector)
+
+    def test_degree_and_with_degree(self, space: Lebesgue):
+        """Tests the unified degree property and the with_degree factory."""
+        assert space.degree == space.kmax
+
+        target_degree = space.kmax + 4
+        new_space = space.with_degree(target_degree)
+
+        assert new_space.degree == target_degree
+        assert new_space.a == space.a
+        assert new_space.b == space.b
+        assert new_space.c == space.c
+
+    def test_degree_transfer_operator(self, space: Lebesgue):
+        """Tests the degree transfer operator's axioms and round-trip behavior."""
+        op_up = space.degree_transfer_operator(space.kmax + 4)
+        op_up.check(n_checks=5)
+
+        op_down = op_up.codomain.degree_transfer_operator(space.kmax)
+
+        length = space.b - space.a + 2 * space.c
+        u_orig = space.project_function(lambda x: np.cos(2 * np.pi * x / length))
+        u_upsampled = op_up(u_orig)
+        u_recon = op_down(u_upsampled)
+
+        assert np.allclose(u_orig, u_recon)

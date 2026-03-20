@@ -25,8 +25,8 @@ def forward_problem() -> LinearForwardProblem:
     """
     Provides a simple, underdetermined forward problem.
     """
-    model_space = EuclideanSpace(dim=5)
-    data_space = EuclideanSpace(dim=3)
+    model_space = EuclideanSpace(dim=50)
+    data_space = EuclideanSpace(dim=30)
     matrix = np.random.randn(data_space.dim, model_space.dim)
     forward_operator = LinearOperator.from_matrix(model_space, data_space, matrix)
     error_measure = GaussianMeasure.from_standard_deviation(data_space, 1.0)
@@ -401,22 +401,24 @@ class TestDiagonalNormalPreconditioner:
         """
         inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
 
-        # The data space in the fixture is 3D.
-        # Let's block indices [0, 1] together, and leave [2] alone.
-        blocks = [[0, 1], [2]]
+        data_dim = forward_problem.data_space.dim
+
+        # We block indices [0, 1] together, leave [2] alone, and lump the rest
+        # into a third block so the entire data space is perfectly partitioned.
+        blocks = [[0, 1], [2], list(range(3, data_dim))]
 
         preconditioner = inversion.diagonal_normal_preconditioner(blocks=blocks)
-        precon_diagonal = preconditioner.extract_diagonal()
-        approx_normal_diagonal = 1.0 / precon_diagonal
 
-        # 1. Manual check for the block [0, 1]
-        data_space = forward_problem.data_space
+        # Extract diagonal to verify values
+        approx_normal_diagonal = preconditioner.inverse.extract_diagonal()
+
         model_space = forward_problem.model_space
+        data_space = forward_problem.data_space
         A_adj = forward_problem.forward_operator.adjoint
         Q_op = model_prior_measure.covariance
 
-        # Average basis vector: v = 0.5 * e_0 + 0.5 * e_1
-        v01 = data_space.from_components(np.array([0.5, 0.5, 0.0]))
+        # 1. Manual check for block [0, 1]
+        v01 = data_space.from_components(np.array([0.5, 0.5] + [0.0] * (data_dim - 2)))
         f_v01 = A_adj(v01)
         aqa_01 = model_space.inner_product(f_v01, Q_op(f_v01))
 
@@ -428,7 +430,9 @@ class TestDiagonalNormalPreconditioner:
         assert np.isclose(approx_normal_diagonal[1], expected_1)
 
         # 2. Manual check for block [2] (just index 2)
-        v2 = data_space.from_components(np.array([0.0, 0.0, 1.0]))
+        v2 = data_space.from_components(
+            np.array([0.0, 0.0, 1.0] + [0.0] * (data_dim - 3))
+        )
         f_v2 = A_adj(v2)
         aqa_2 = model_space.inner_product(f_v2, Q_op(f_v2))
         expected_2 = aqa_2 + 1.0
@@ -444,15 +448,91 @@ class TestDiagonalNormalPreconditioner:
         Verifies that malformed blocks raise the appropriate errors.
         """
         inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+        data_dim = forward_problem.data_space.dim
 
         # Missing index 2
+        missing_blocks = [[0, 1]] + [list(range(3, data_dim))]
         with pytest.raises(ValueError, match="must exactly partition"):
-            inversion.diagonal_normal_preconditioner(blocks=[[0, 1]])
+            inversion.diagonal_normal_preconditioner(blocks=missing_blocks)
 
         # Duplicate index 1
+        duplicate_blocks = [[0, 1], [1, 2]] + [list(range(3, data_dim))]
         with pytest.raises(ValueError, match="must exactly partition"):
-            inversion.diagonal_normal_preconditioner(blocks=[[0, 1], [1, 2]])
+            inversion.diagonal_normal_preconditioner(blocks=duplicate_blocks)
 
-        # Out of bounds index
+        # Out of bounds index (swapping index 2 for data_dim)
+        out_of_bounds_blocks = [[0, 1], [data_dim]] + [list(range(3, data_dim))]
         with pytest.raises(ValueError, match="out of bounds"):
-            inversion.diagonal_normal_preconditioner(blocks=[[0, 1], [3]])
+            inversion.diagonal_normal_preconditioner(blocks=out_of_bounds_blocks)
+
+
+# =============================================================================
+# New Tests for Sparse Localized Preconditioner
+# =============================================================================
+
+
+class TestSparseLocalizedPreconditioner:
+    """Tests for the sparse localized normal preconditioner."""
+
+    def test_exact_dense_match(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that with a single global block and sufficient rank, the
+        preconditioner exactly matches the inverse of the dense normal matrix.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # 1. One block containing all data indices
+        data_dim = forward_problem.data_space.dim
+        blocks = [list(range(data_dim))]
+
+        # 2. Build preconditioner with rank >= data_dim to ensure exact reconstruction
+        preconditioner = inversion.sparse_localized_preconditioner(
+            blocks, rank=data_dim
+        )
+
+        # 3. Get exact dense matrices for comparison
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        # N = A Q A^T + R
+        exact_normal_matrix = A @ Q @ A.T + R
+        exact_inverse_matrix = np.linalg.inv(exact_normal_matrix)
+
+        # 4. Extract the dense matrix from our pygeoinf LinearOperator
+        approx_inverse_matrix = preconditioner.matrix(dense=True)
+
+        # 5. Compare (should be identical up to floating point precision)
+        assert np.allclose(approx_inverse_matrix, exact_inverse_matrix)
+
+    def test_overlapping_blocks(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the COO sparse assembly correctly handles overlapping
+        sub-blocks spanning the entire data space without throwing symmetry errors.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # 1. Define overlapping blocks to tile the new 30-dimensional data space
+        data_dim = forward_problem.data_space.dim
+
+        # Creates a chain of overlapping blocks: [0...14], [10...24], [20...29]
+        blocks = [list(range(0, 15)), list(range(10, 25)), list(range(20, data_dim))]
+
+        # 2. Build preconditioner (should sum overlaps implicitly)
+        # Using rank=10 forces a true low-rank approximation of the size-15 blocks
+        preconditioner = inversion.sparse_localized_preconditioner(blocks, rank=10)
+
+        # 3. Apply it to a random data vector
+        result = preconditioner(data)
+
+        # 4. Verify the output is a valid element of the data space
+        assert forward_problem.data_space.is_element(result)

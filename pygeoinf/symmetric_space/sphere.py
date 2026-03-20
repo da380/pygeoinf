@@ -20,6 +20,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 
+from scipy.spatial import cKDTree
+
 
 try:
     import pyshtools as sh
@@ -93,7 +95,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         self._normalization: str = "ortho"
         self._csphase: int = 1
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 2, (lmax + 1) ** 2, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, lmax, (lmax + 1) ** 2, False)
 
     # ------------------------------------------------------ #
     #                       Properties                       #
@@ -248,52 +250,41 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         )
         return SHCilmToVector(coeffs)
 
-    def random_point(self) -> List[float]:
+    def random_point(self) -> Tuple[float, float]:
         """Returns a random point as `[latitude, longitude]`."""
         latitude = np.rad2deg(np.arcsin(np.random.uniform(-1.0, 1.0)))
         longitude = np.random.uniform(0.0, 360.0)
-        return [latitude, longitude]
+        return (latitude, longitude)
+
+    def geodesic_distance(
+        self, p1: Tuple[float, float], p2: Tuple[float, float]
+    ) -> float:
+        """Returns the great-circle distance between two points on the sphere."""
+        v1, v2 = self._to_vector(*p1), self._to_vector(*p2)
+        dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
+        omega = np.arccos(dot_product)
+        return float(self.radius * omega)
+
+    def point_at_distance(
+        self, p1: Tuple[float, float], distance: float
+    ) -> Tuple[float, float]:
+        """Translates a point along a meridian by the given distance."""
+        lat, lon = p1
+        omega_deg = np.degrees(distance / self.radius)
+
+        # Move North if possible, otherwise move South
+        if lat + omega_deg <= 90.0:
+            return (lat + omega_deg, lon)
+        else:
+            return (lat - omega_deg, lon)
 
     def geodesic_quadrature(
         self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
     ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
-        """
-        Generates Gauss-Legendre quadrature points and weights along a great-circle arc.
+        """Generates Gauss-Legendre quadrature points and weights along a great-circle arc."""
 
-        This implementation converts the start and end latitudes and longitudes into
-        unit vectors, calculates the central angle (omega), and interpolates the
-        geodesic path using SLERP.
-
-        Args:
-            p1: Start point as (latitude, longitude) in degrees.
-            p2: End point as (latitude, longitude) in degrees.
-            n_points: Number of quadrature points to generate.
-
-        Returns:
-            points: A list of (lat, lon) tuples in degrees along the geodesic.
-            weights: Integration weights scaled by the total arc length (R * omega).
-        """
-
-        def to_vector(lat, lon):
-            lat_rad, lon_rad = np.radians(lat), np.radians(lon)
-            return np.array(
-                [
-                    np.cos(lat_rad) * np.cos(lon_rad),
-                    np.cos(lat_rad) * np.sin(lon_rad),
-                    np.sin(lat_rad),
-                ]
-            )
-
-        def to_latlon(vec):
-            vec = vec / np.linalg.norm(vec)
-            lat_rad = np.arcsin(vec[2])
-            lon_rad = np.arctan2(vec[1], vec[0])
-            return (np.degrees(lat_rad), np.degrees(lon_rad))
-
-        v1, v2 = to_vector(*p1), to_vector(*p2)
-
-        dot_product = np.clip(np.dot(v1, v2), -1.0, 1.0)
-        omega = np.arccos(dot_product)
+        arc_length = self.geodesic_distance(p1, p2)
+        omega = arc_length / self.radius
 
         if omega < 1e-10:
             return [p1] * n_points, np.zeros(n_points)
@@ -303,10 +294,11 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
                 "Points are antipodal; the great circle path is not unique."
             )
 
+        v1, v2 = self._to_vector(*p1), self._to_vector(*p2)
         x, w = np.polynomial.legendre.leggauss(n_points)
 
         t_vals = (x + 1) / 2.0
-        scaled_weights = w * (self.radius * omega / 2.0)
+        scaled_weights = w * (arc_length / 2.0)
 
         sin_omega = np.sin(omega)
         points = []
@@ -315,9 +307,79 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             coeff1 = np.sin((1 - t) * omega) / sin_omega
             coeff2 = np.sin(t * omega) / sin_omega
             v_interp = coeff1 * v1 + coeff2 * v2
-            points.append(to_latlon(v_interp))
+            points.append(self._to_latlon(v_interp))
 
         return points, scaled_weights
+
+    def pairs_within_distance(
+        self, points: List[Tuple[float, float]], max_distance: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+        # 1. Convert all (lat, lon) points to 3D Cartesian vectors
+        vecs = (
+            np.array([self._to_vector(lat, lon) for lat, lon in points]) * self.radius
+        )
+
+        # 2. Build the K-D Tree
+        tree = cKDTree(vecs)
+
+        # 3. Map geodesic max distance to Euclidean chord distance
+        # d_chord = 2 * R * sin(d_geodesic / (2R))
+        max_chord = 2.0 * self.radius * np.sin(max_distance / (2.0 * self.radius))
+
+        # 4. Query the tree (returns a sparse DOK matrix)
+        dok = tree.sparse_distance_matrix(tree, max_chord)
+        coo = dok.tocoo()
+
+        # 5. Convert chord distances back to geodesic distances
+        # d_geodesic = 2 * R * arcsin(d_chord / (2R))
+        ratio = np.clip(coo.data / (2.0 * self.radius), -1.0, 1.0)
+        geo_dists = 2.0 * self.radius * np.arcsin(ratio)
+
+        # Note: sparse_distance_matrix explicitly drops zero-distance pairs (the diagonal!)
+        # We must manually inject the diagonal back in for distance = 0.0
+        n = len(points)
+        rows = np.concatenate([coo.row, np.arange(n)])
+        cols = np.concatenate([coo.col, np.arange(n)])
+        final_dists = np.concatenate([geo_dists, np.zeros(n)])
+
+        return rows, cols, final_dists
+
+    def with_degree(self, degree: int) -> Lebesgue:
+        return Lebesgue(degree, radius=self.radius, grid=self.grid, extend=self.extend)
+
+    def degree_transfer_operator(self, target_degree: int) -> LinearOperator:
+        """
+        Returns the transfer operator from this space to one with a different degree.
+
+        This operator leverages the hierarchical nature of the 1D SH vector to
+        efficiently truncate or zero-pad the coefficients.
+        """
+        codomain = self.with_degree(target_degree)
+
+        def mapping(u: sh.SHGrid) -> sh.SHGrid:
+            vec_in = self.to_components(u)
+            target_size = (target_degree + 1) ** 2
+
+            if target_size > vec_in.size:
+                vec_out = np.pad(vec_in, (0, target_size - vec_in.size))
+            else:
+                vec_out = vec_in[:target_size]
+
+            return codomain.from_components(vec_out)
+
+        def adjoint_mapping(v: sh.SHGrid) -> sh.SHGrid:
+            vec_in = codomain.to_components(v)
+            target_size = (self.lmax + 1) ** 2
+
+            if target_size > vec_in.size:
+                vec_out = np.pad(vec_in, (0, target_size - vec_in.size))
+            else:
+                vec_out = vec_in[:target_size]
+
+            return self.from_components(vec_out)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #
@@ -418,19 +480,13 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         codomain = EuclideanSpace(vector_size)
 
         def mapping(u: sh.SHGrid) -> np.ndarray:
-            ulm = self.to_coefficients(u)
-            coeffs = ulm.coeffs
-            in_lmax = coeffs.shape[1] - 1
+            vec = self.to_components(u)
+            target_size = (lmax + 1) ** 2
 
-            # Align sizes to the requested lmax
-            target_coeffs = np.zeros((2, lmax + 1, lmax + 1))
-            loop_lmax = min(lmax, in_lmax)
-            target_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
-
-            # Fast Fortran conversion
-            vec = sh.shio.SHCilmToVector(target_coeffs)
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
             # Truncate lower degrees if lmin > 0
             return vec[lmin**2 :] if lmin > 0 else vec
@@ -438,23 +494,14 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
             # Pad missing lower degrees if lmin > 0
             vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
+            target_size = (self.lmax + 1) ** 2
 
-            # Fast Fortran conversion back to 3D array
-            coeffs = sh.shio.SHVectorToCilm(vec)
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
-            # Map back to the space's internal lmax
-            out_coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
-            loop_lmax = min(self.lmax, lmax)
-            out_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
-
-            ulm = sh.SHCoeffs.from_array(
-                out_coeffs,
-                normalization=self.normalization,
-                csphase=self.csphase,
-            )
-            return self.from_coefficients(ulm) / self.radius**2
+            return self.from_components(vec) / self.radius**2
 
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
@@ -478,36 +525,28 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         domain = EuclideanSpace(vector_size)
 
         def mapping(data: np.ndarray) -> sh.SHGrid:
+            # Pad missing lower degrees if lmin > 0
             vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
-            coeffs = sh.shio.SHVectorToCilm(vec)
+            target_size = (self.lmax + 1) ** 2
 
-            out_coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
-            loop_lmax = min(self.lmax, lmax)
-            out_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
-            ulm = sh.SHCoeffs.from_array(
-                out_coeffs,
-                normalization=self.normalization,
-                csphase=self.csphase,
-            )
-            return self.from_coefficients(ulm)
+            return self.from_components(vec)
 
         def adjoint_mapping(u: sh.SHGrid) -> np.ndarray:
-            ulm = self.to_coefficients(u)
-            coeffs = ulm.coeffs
-            in_lmax = coeffs.shape[1] - 1
+            vec = self.to_components(u)
+            target_size = (lmax + 1) ** 2
 
-            target_coeffs = np.zeros((2, lmax + 1, lmax + 1))
-            loop_lmax = min(lmax, in_lmax)
-            target_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
-            vec = sh.shio.SHCilmToVector(target_coeffs)
+            # Truncate lower degrees if lmin > 0
             vec = vec[lmin**2 :] if lmin > 0 else vec
-
             return vec * self.radius**2
 
         return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
@@ -526,6 +565,26 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return sh.SHCoeffs.from_array(
             coeffs, normalization=self.normalization, csphase=self.csphase
         )
+
+    @staticmethod
+    def _to_vector(lat: float, lon: float) -> np.ndarray:
+        """Converts a latitude/longitude pair (in degrees) to a 3D unit vector."""
+        lat_rad, lon_rad = np.radians(lat), np.radians(lon)
+        return np.array(
+            [
+                np.cos(lat_rad) * np.cos(lon_rad),
+                np.cos(lat_rad) * np.sin(lon_rad),
+                np.sin(lat_rad),
+            ]
+        )
+
+    @staticmethod
+    def _to_latlon(vec: np.ndarray) -> Tuple[float, float]:
+        """Converts a 3D vector back to a latitude/longitude pair (in degrees)."""
+        vec = vec / np.linalg.norm(vec)
+        lat_rad = np.arcsin(vec[2])
+        lon_rad = np.arctan2(vec[1], vec[0])
+        return (np.degrees(lat_rad), np.degrees(lon_rad))
 
 
 class Sobolev(SymmetricSobolevSpace):
@@ -671,6 +730,16 @@ class Sobolev(SymmetricSobolevSpace):
         return Sobolev(
             self.lmax,
             order,
+            self.scale,
+            radius=self.radius,
+            grid=self.grid,
+            extend=self.extend,
+        )
+
+    def with_degree(self, degree: int) -> Sobolev:
+        return Sobolev(
+            degree,
+            self.order,
             self.scale,
             radius=self.radius,
             grid=self.grid,

@@ -66,3 +66,24 @@ class TestCircleSobolevSpecific:
         low_order_space = Sobolev(16, 0.5, 1.0, radius=1.0)
         with pytest.raises(NotImplementedError):
             low_order_space.dirac(np.pi / 4)
+
+    def test_degree_and_with_degree(self, sobolev_space: Sobolev):
+        """Tests the unified degree property and the with_degree factory."""
+        space = sobolev_space
+        assert space.degree == space.kmax
+
+        target_degree = space.kmax + 4
+        new_space = space.with_degree(target_degree)
+
+        assert new_space.degree == target_degree
+        assert new_space.radius == space.radius
+        assert new_space.order == space.order
+        assert new_space.scale == space.scale
+
+    def test_degree_transfer_operator(self, sobolev_space: Sobolev):
+        """Tests the degree transfer operator's axioms in a mass-weighted space."""
+        space = sobolev_space
+        op_up = space.degree_transfer_operator(space.kmax + 4)
+        op_up.check(
+            n_checks=5
+        )  # Extremely important: checks adjoint with mass operators

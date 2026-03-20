@@ -96,10 +96,11 @@ def plot_results(
 # ==========================================
 bayesian_inversion = inf.LinearBayesianInversion(forward_problem, model_prior_measure)
 
-solver = inf.CholeskySolver(galerkin=True)
-# solver = inf.CGSolver()
-# preconditioner = bayesian_inversion.diagonal_normal_preconditioner()
-model_posterior_measure = bayesian_inversion.model_posterior_measure(data, solver)
+solver = inf.CGSolver()
+preconditioner = None
+model_posterior_measure = bayesian_inversion.model_posterior_measure(
+    data, solver, preconditioner=preconditioner
+)
 posterior_mean = model_posterior_measure.expectation
 
 # Estimate the pointwise variance from posterior samples

@@ -111,3 +111,31 @@ class TestSphereLebesgueSpecifics:
         vec_out = T_to(u_from)
 
         assert np.allclose(vec_in, vec_out)
+
+    def test_degree_and_with_degree(self, space: Lebesgue):
+        """Tests the unified degree property and the with_degree factory."""
+        assert space.degree == space.lmax
+
+        target_degree = space.lmax + 4
+        new_space = space.with_degree(target_degree)
+
+        assert new_space.degree == target_degree
+        assert new_space.radius == space.radius
+        assert new_space.grid == space.grid
+        assert new_space.extend == space.extend
+
+    def test_degree_transfer_operator(self, space: Lebesgue):
+        """Tests the degree transfer operator's axioms and round-trip behavior."""
+        op_up = space.degree_transfer_operator(space.lmax + 4)
+        op_up.check(n_checks=5)
+
+        op_down = op_up.codomain.degree_transfer_operator(space.lmax)
+
+        # Test Round-Trip (Upsample then Downsample)
+        coeffs = sh.SHCoeffs.from_random(np.ones(space.lmax + 1), normalization="ortho")
+        u_orig = space.from_coefficients(coeffs)
+
+        u_upsampled = op_up(u_orig)
+        u_recon = op_down(u_upsampled)
+
+        assert np.allclose(u_orig.data, u_recon.data)
