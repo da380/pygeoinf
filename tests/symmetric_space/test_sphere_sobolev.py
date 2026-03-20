@@ -118,3 +118,21 @@ class TestSphereSobolevSpecifics:
         # Verify directly against pyshtools to ensure semantic correctness
         coeffs = sobolev_space.to_coefficients(u)
         assert np.isclose(coeffs.coeffs[0, 2, 0], 1.0)
+
+    def test_degree_and_with_degree(self, sobolev_space: Sobolev):
+        """Tests the unified degree property and the with_degree factory."""
+        space = sobolev_space
+        assert space.degree == space.lmax
+
+        target_degree = space.lmax + 4
+        new_space = space.with_degree(target_degree)
+
+        assert new_space.degree == target_degree
+        assert new_space.radius == space.radius
+        assert new_space.order == space.order
+        assert new_space.scale == space.scale
+
+    def test_degree_transfer_operator(self, sobolev_space: Sobolev):
+        """Tests the degree transfer operator's axioms in a mass-weighted space."""
+        op_up = sobolev_space.degree_transfer_operator(sobolev_space.lmax + 4)
+        op_up.check(n_checks=5)

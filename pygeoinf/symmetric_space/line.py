@@ -42,7 +42,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         radius = length / (2 * np.pi)
         self._circle_space = CircleLebesgue(kmax, radius=radius)
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 1, 2 * kmax, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 1, kmax, 2 * kmax, False)
 
     @property
     def kmax(self) -> int:
@@ -184,6 +184,26 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         points = [self.angle_to_point(th) for th in circle_points]
 
         return points, weights
+
+    def with_degree(self, degree: int) -> Lebesgue:
+        return Lebesgue(degree, a=self.a, b=self.b, c=self.c)
+
+    def degree_transfer_operator(self, target_degree: int) -> LinearOperator:
+        """
+        Returns the transfer operator from this space to one with a different degree.
+        """
+        codomain = self.with_degree(target_degree)
+
+        # We can directly leverage the isomorphic circle space's transfer operator
+        circle_transfer = self._circle_space.degree_transfer_operator(target_degree)
+
+        def mapping(u: np.ndarray) -> np.ndarray:
+            return circle_transfer(u)
+
+        def adjoint_mapping(v: np.ndarray) -> np.ndarray:
+            return circle_transfer.adjoint(v)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #
@@ -366,6 +386,9 @@ class Sobolev(SymmetricSobolevSpace):
 
     def with_order(self, order: float) -> Sobolev:
         return Sobolev(self.kmax, order, self.scale, a=self.a, b=self.b, c=self.c)
+
+    def with_degree(self, degree: int) -> Sobolev:
+        return Sobolev(degree, self.order, self.scale, a=self.a, b=self.b, c=self.c)
 
     def points(self) -> np.ndarray:
         """Returns a numpy array of the grid points."""

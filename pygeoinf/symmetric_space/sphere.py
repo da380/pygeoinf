@@ -95,7 +95,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         self._normalization: str = "ortho"
         self._csphase: int = 1
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 2, (lmax + 1) ** 2, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, lmax, (lmax + 1) ** 2, False)
 
     # ------------------------------------------------------ #
     #                       Properties                       #
@@ -345,6 +345,42 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
 
         return rows, cols, final_dists
 
+    def with_degree(self, degree: int) -> Lebesgue:
+        return Lebesgue(degree, radius=self.radius, grid=self.grid, extend=self.extend)
+
+    def degree_transfer_operator(self, target_degree: int) -> LinearOperator:
+        """
+        Returns the transfer operator from this space to one with a different degree.
+
+        This operator leverages the hierarchical nature of the 1D SH vector to
+        efficiently truncate or zero-pad the coefficients.
+        """
+        codomain = self.with_degree(target_degree)
+
+        def mapping(u: sh.SHGrid) -> sh.SHGrid:
+            vec_in = self.to_components(u)
+            target_size = (target_degree + 1) ** 2
+
+            if target_size > vec_in.size:
+                vec_out = np.pad(vec_in, (0, target_size - vec_in.size))
+            else:
+                vec_out = vec_in[:target_size]
+
+            return codomain.from_components(vec_out)
+
+        def adjoint_mapping(v: sh.SHGrid) -> sh.SHGrid:
+            vec_in = codomain.to_components(v)
+            target_size = (self.lmax + 1) ** 2
+
+            if target_size > vec_in.size:
+                vec_out = np.pad(vec_in, (0, target_size - vec_in.size))
+            else:
+                vec_out = vec_in[:target_size]
+
+            return self.from_components(vec_out)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #
     # ------------------------------------------------------ #
@@ -444,19 +480,13 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         codomain = EuclideanSpace(vector_size)
 
         def mapping(u: sh.SHGrid) -> np.ndarray:
-            ulm = self.to_coefficients(u)
-            coeffs = ulm.coeffs
-            in_lmax = coeffs.shape[1] - 1
+            vec = self.to_components(u)
+            target_size = (lmax + 1) ** 2
 
-            # Align sizes to the requested lmax
-            target_coeffs = np.zeros((2, lmax + 1, lmax + 1))
-            loop_lmax = min(lmax, in_lmax)
-            target_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
-
-            # Fast Fortran conversion
-            vec = sh.shio.SHCilmToVector(target_coeffs)
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
             # Truncate lower degrees if lmin > 0
             return vec[lmin**2 :] if lmin > 0 else vec
@@ -464,23 +494,14 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         def adjoint_mapping(data: np.ndarray) -> sh.SHGrid:
             # Pad missing lower degrees if lmin > 0
             vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
+            target_size = (self.lmax + 1) ** 2
 
-            # Fast Fortran conversion back to 3D array
-            coeffs = sh.shio.SHVectorToCilm(vec)
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
-            # Map back to the space's internal lmax
-            out_coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
-            loop_lmax = min(self.lmax, lmax)
-            out_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
-
-            ulm = sh.SHCoeffs.from_array(
-                out_coeffs,
-                normalization=self.normalization,
-                csphase=self.csphase,
-            )
-            return self.from_coefficients(ulm) / self.radius**2
+            return self.from_components(vec) / self.radius**2
 
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
@@ -504,36 +525,28 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         domain = EuclideanSpace(vector_size)
 
         def mapping(data: np.ndarray) -> sh.SHGrid:
+            # Pad missing lower degrees if lmin > 0
             vec = np.concatenate((np.zeros(lmin**2), data)) if lmin > 0 else data
-            coeffs = sh.shio.SHVectorToCilm(vec)
+            target_size = (self.lmax + 1) ** 2
 
-            out_coeffs = np.zeros((2, self.lmax + 1, self.lmax + 1))
-            loop_lmax = min(self.lmax, lmax)
-            out_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
-            ulm = sh.SHCoeffs.from_array(
-                out_coeffs,
-                normalization=self.normalization,
-                csphase=self.csphase,
-            )
-            return self.from_coefficients(ulm)
+            return self.from_components(vec)
 
         def adjoint_mapping(u: sh.SHGrid) -> np.ndarray:
-            ulm = self.to_coefficients(u)
-            coeffs = ulm.coeffs
-            in_lmax = coeffs.shape[1] - 1
+            vec = self.to_components(u)
+            target_size = (lmax + 1) ** 2
 
-            target_coeffs = np.zeros((2, lmax + 1, lmax + 1))
-            loop_lmax = min(lmax, in_lmax)
-            target_coeffs[:, : loop_lmax + 1, : loop_lmax + 1] = coeffs[
-                :, : loop_lmax + 1, : loop_lmax + 1
-            ]
+            if target_size > vec.size:
+                vec = np.pad(vec, (0, target_size - vec.size))
+            else:
+                vec = vec[:target_size]
 
-            vec = sh.shio.SHCilmToVector(target_coeffs)
+            # Truncate lower degrees if lmin > 0
             vec = vec[lmin**2 :] if lmin > 0 else vec
-
             return vec * self.radius**2
 
         return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
@@ -717,6 +730,16 @@ class Sobolev(SymmetricSobolevSpace):
         return Sobolev(
             self.lmax,
             order,
+            self.scale,
+            radius=self.radius,
+            grid=self.grid,
+            extend=self.extend,
+        )
+
+    def with_degree(self, degree: int) -> Sobolev:
+        return Sobolev(
+            degree,
+            self.order,
             self.scale,
             radius=self.radius,
             grid=self.grid,

@@ -50,3 +50,30 @@ class TestCircleLebesgueSpecifics:
         components = space.to_components(original_vector)
         reconstructed_vector = space.from_components(components)
         assert np.allclose(original_vector, reconstructed_vector)
+
+    def test_degree_and_with_degree(self, space: Lebesgue):
+        """Tests the unified degree property and the with_degree factory."""
+        assert space.degree == space.kmax
+
+        target_degree = space.kmax + 4
+        new_space = space.with_degree(target_degree)
+
+        assert new_space.degree == target_degree
+        assert new_space.radius == space.radius
+        assert isinstance(new_space, Lebesgue)
+
+    def test_degree_transfer_operator(self, space: Lebesgue):
+        """Tests the degree transfer operator's axioms and round-trip behavior."""
+        # Test Operator Axioms
+        op_up = space.degree_transfer_operator(space.kmax + 4)
+        op_up.check(n_checks=5)
+
+        op_down = op_up.codomain.degree_transfer_operator(space.kmax)
+        op_down.check(n_checks=5)
+
+        # Test Round-Trip (Upsample then Downsample)
+        u_orig = space.project_function(lambda th: np.cos(2 * th) + np.sin(th))
+        u_upsampled = op_up(u_orig)
+        u_recon = op_down(u_upsampled)
+
+        assert np.allclose(u_orig, u_recon)

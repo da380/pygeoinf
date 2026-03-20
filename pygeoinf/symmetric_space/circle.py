@@ -46,7 +46,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         self._fft_factor: float = np.sqrt(2 * np.pi * radius) / (2 * self.kmax)
         self._inverse_fft_factor: float = 1.0 / self._fft_factor
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 1, 2 * kmax, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 1, kmax, 2 * kmax, False)
 
     # ---------------------------------------------- #
     #                   Properties                   #
@@ -175,6 +175,49 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         scaled_weights = w * (arc_length / 2.0)
 
         return angles.tolist(), scaled_weights
+
+    def with_degree(self, degree: int) -> Lebesgue:
+        return Lebesgue(degree, radius=self.radius)
+
+    def degree_transfer_operator(self, target_degree: int) -> LinearOperator:
+        """
+        Returns the transfer operator from this space to one with a different degree.
+
+        This operator upsamples (by zero-padding Fourier coefficients) or
+        downsamples (by truncating Fourier coefficients) the function grid.
+        """
+        codomain = self.with_degree(target_degree)
+
+        def mapping(u: np.ndarray) -> np.ndarray:
+            # 1. Move to the frequency domain
+            c_in = self.to_coefficients(u)
+
+            # 2. Pad or truncate
+            c_out = np.zeros(target_degree + 1, dtype=complex)
+            k_min = min(self.kmax, target_degree)
+            c_out[: k_min + 1] = c_in[: k_min + 1]
+
+            # 3. Enforce a strictly real Nyquist frequency when downsampling
+            if target_degree < self.kmax:
+                c_out[target_degree] = c_out[target_degree].real + 0j
+
+            # 4. Return to the spatial domain
+            return codomain.from_coefficients(c_out)
+
+        def adjoint_mapping(v: np.ndarray) -> np.ndarray:
+            c_in = codomain.to_coefficients(v)
+
+            c_out = np.zeros(self.kmax + 1, dtype=complex)
+            k_min = min(self.kmax, target_degree)
+            c_out[: k_min + 1] = c_in[: k_min + 1]
+
+            # The adjoint must mirror the forward map's Nyquist handling perfectly
+            if self.kmax < target_degree:
+                c_out[self.kmax] = c_out[self.kmax].real + 0j
+
+            return self.from_coefficients(c_out)
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #
@@ -381,6 +424,9 @@ class Sobolev(SymmetricSobolevSpace):
 
     def with_order(self, order: float) -> Sobolev:
         return Sobolev(self.kmax, order, self.scale, radius=self.radius)
+
+    def with_degree(self, degree: int) -> Sobolev:
+        return Sobolev(degree, self.order, self.scale, radius=self.radius)
 
     def angles(self) -> np.ndarray:
         """Returns a numpy array of the grid point angles."""

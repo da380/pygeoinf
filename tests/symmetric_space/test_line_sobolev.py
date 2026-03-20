@@ -53,3 +53,20 @@ class TestLineSobolevSpecific:
         low_order_space = Sobolev(16, 0.5, 1.0, a=0.0, b=1.0, c=0.1)
         with pytest.raises(NotImplementedError):
             low_order_space.dirac(0.5)
+
+    def test_degree_and_with_degree(self, sobolev_space: Sobolev):
+        """Tests the unified degree property and the with_degree factory."""
+        space = sobolev_space
+        assert space.degree == space.kmax
+
+        target_degree = space.kmax + 4
+        new_space = space.with_degree(target_degree)
+
+        assert new_space.degree == target_degree
+        assert new_space.a == space.a
+        assert new_space.order == space.order
+
+    def test_degree_transfer_operator(self, sobolev_space: Sobolev):
+        """Tests the degree transfer operator's axioms in a mass-weighted space."""
+        op_up = sobolev_space.degree_transfer_operator(sobolev_space.kmax + 4)
+        op_up.check(n_checks=5)

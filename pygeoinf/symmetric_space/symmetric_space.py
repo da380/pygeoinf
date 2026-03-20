@@ -34,6 +34,9 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 # Alias for the index for the eigenvalues or eigenfunctions
 Index: TypeAlias = int | tuple[int, ...]
 
+# Alias for the truncation degree
+Degree: TypeAlias = int | tuple[int, ...]
+
 # Alias for a point within the symmetric manifold
 Point: TypeAlias = float | tuple[float, ...]
 
@@ -435,16 +438,18 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     necessarily orthogonal, but need not be normalised.
     """
 
-    def __init__(self, spatial_dim: int, dim: int, orthonormal: bool):
+    def __init__(self, spatial_dim: int, degree: Degree, dim: int, orthonormal: bool):
         """
         Initializes the abstract invariant Lebesgue space.
 
         Args:
             spatial_dim: The dimension of the symmetric manifold
+            degree: The truncation degree.
             dim: The dimension of the space.
             orthonormal: True if the eigenfunction basis is orthonormal.
         """
         self._spatial_dim = spatial_dim
+        self._degree = degree
         self._dim = dim
         self._orthonormal = orthonormal
 
@@ -468,6 +473,11 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     def spatial_dimension(self) -> int:
         """The dimension of the symetric manifold."""
         return self._spatial_dim
+
+    @property
+    def degree(self) -> Degree:
+        """The spectral truncation degree of the space."""
+        return self._degree
 
     @property
     def dim(self) -> int:
@@ -581,6 +591,14 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             points: List of manifold coordinates.
             weights: Integration weights scaled by the line element.
         """
+
+    @abstractmethod
+    def with_degree(self, degree: Degree) -> SymmetricHilbertSpace:
+        """Returns a new instance of the space with a modified truncation degree."""
+
+    @abstractmethod
+    def degree_transfer_operator(self, target_degree: Degree) -> LinearOperator:
+        """Returns the transfer operator from this space to one with a different degree."""
 
     # ------------------------------------------------------------#
     #                        Public methods                       #
@@ -871,6 +889,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         SymmetricHilbertSpace.__init__(
             self,
             lebesgue_space.spatial_dimension,
+            lebesgue_space.degree,
             lebesgue_space.dim,
             False,
         )
@@ -892,10 +911,8 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         Sobolev order.
         """
 
-    def inclusion_operator(self, target_order: float) -> LinearOperator:
-        """
-        Returns the inclusion operator from this space to one of a lower order.
-        """
+    def order_inclusion_operator(self, target_order: float) -> LinearOperator:
+        """Returns the inclusion operator from this space to one of a lower order."""
         if target_order > self.order:
             raise ValueError(
                 "Target order must be less than or equal to the current order."
@@ -1202,9 +1219,10 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         prior_measure: InvariantGaussianMeasure,
         points: List[Point],
         data_error_measure: GaussianMeasure,
+        max_distance: float,
         /,
         *,
-        max_distance: float,
+        apply_taper: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> LinearOperator:
@@ -1214,7 +1232,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
 
         This exploits the property that the two-point covariance depends solely
         on the geodesic distance. It maps out the 1D covariance function along
-        a deterministic path, interpolates it, applies a Gaspari-Cohn taper to
+        a deterministic path, interpolates it, optionally applies a Gaspari-Cohn taper to
         ensure positive-definiteness, and populates a sparse normal matrix.
 
         If max_distance is set to 0.0, it bypasses the distance calculations
@@ -1226,6 +1244,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             data_error_measure: The Gaussian measure describing the data noise.
             max_distance: The geodesic distance beyond which covariance is assumed
                           to be zero (enforces sparsity). Set to 0.0 for a pure diagonal.
+            apply_taper: If true, applies Gaspari-Cohn taper.
             parallel: If True, computes the error measure diagonal in parallel.
             n_jobs: Number of CPU cores to use if parallel=True.
 
@@ -1241,18 +1260,15 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         # =======================================================
         if max_distance <= 0.0:
 
-            # 1. Prior variance is identical everywhere for invariant measures
             p1 = self.random_point()
             rep1 = self.dirac_representation(p1)
             q_rep1 = prior_measure.covariance(rep1)
             prior_var = float(self.inner_product(rep1, q_rep1))
 
-            # 2. Extract data noise variance
             noise_variance = data_error_measure.covariance.extract_diagonal(
                 galerkin=True, parallel=parallel, n_jobs=n_jobs
             )
 
-            # 3. Form the inverse diagonal directly (no splu needed!)
             inv_diag = 1.0 / (prior_var + noise_variance)
 
             def apply_diag_preconditioner(x):
@@ -1269,24 +1285,21 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         # =======================================================
         # STANDARD CASE: Distance-Localized Sparse Preconditioner
         # =======================================================
-        # 1. Use the scale heuristic to set an array of exact distances to evaluate.
-        n_interp_points = max(10, int(4.0 * max_distance / self.scale))
+
+        n_interp_points = max(20, int(4.0 * max_distance / self.scale))
         exact_distances = np.linspace(0.0, max_distance * 1.1, n_interp_points)
 
-        # Base point and its representation
         p1 = self.random_point()
         rep1 = self.dirac_representation(p1)
         q_rep1 = prior_measure.covariance(rep1)
 
         cov_vals = []
         for d in exact_distances:
-            # Elegantly translate the point by the exact distance using the symmetry group
             p2 = self.point_at_distance(p1, float(d))
             rep2 = self.dirac_representation(p2)
             cov = self.inner_product(rep2, q_rep1)
             cov_vals.append(cov)
 
-        # 2. Build the 1D interpolator (Linear to prevent spline ringing!)
         cov_interpolator = interp1d(
             exact_distances, cov_vals, kind="linear", bounds_error=False, fill_value=0.0
         )
@@ -1318,27 +1331,25 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
                 + (1.0 / 12.0) * z2**5
                 - (2.0 / 3.0) / z2
             )
+
             return taper
 
-        print(f"Finding point pairs within {max_distance}...")
-        # INSTANT K-D Tree neighbor search
         row_indices, col_indices, dists = self.pairs_within_distance(
             points, max_distance
         )
 
-        print(f"Populating sparse normal matrix for {n_data} points...")
-        # INSTANT vectorized evaluation
         c_taper = max_distance / 2.0
         raw_vals = cov_interpolator(dists)
-        tapers = gaspari_cohn_vectorized(dists, c_taper)
-        values = raw_vals * tapers
+        if apply_taper:
+            tapers = gaspari_cohn_vectorized(dists, c_taper)
+            values = raw_vals * tapers
+        else:
+            values = raw_vals
 
-        # Build sparse matrix
         H_sparse = sps.coo_matrix(
             (values, (row_indices, col_indices)), shape=(n_data, n_data)
         )
 
-        # 4. Extract data noise variance and add to the diagonal (R)
         noise_variance = data_error_measure.covariance.extract_diagonal(
             galerkin=True, parallel=parallel, n_jobs=n_jobs
         )
@@ -1346,7 +1357,6 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
 
         H_approx = (H_sparse + R_sparse).tocsc()
 
-        # 5. Factorize and wrap in a pygeoinf LinearOperator
         splu_solver = splinalg.splu(H_approx)
 
         def apply_sparse_preconditioner(x):
@@ -1360,6 +1370,13 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             apply_sparse_preconditioner,
             adjoint_mapping=apply_sparse_preconditioner,
         )
+
+    def degree_transfer_operator(self, target_degree: Degree) -> LinearOperator:
+        codomain = self.with_degree(target_degree)
+        lebesgue_inclusion = self.underlying_space.degree_transfer_operator(
+            target_degree
+        )
+        return LinearOperator.from_formal_adjoint(self, codomain, lebesgue_inclusion)
 
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #

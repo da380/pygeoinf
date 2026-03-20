@@ -399,6 +399,69 @@ class LinearBayesianInversion(LinearInversion):
             adjoint_mapping=apply_preconditioner,
         )
 
+    def surrogate_inversion(
+        self,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_prior_measure: Optional[GaussianMeasure] = None,
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
+    ) -> LinearBayesianInversion:
+        """
+        Constructs a surrogate Bayesian inversion problem using simplified physics,
+        priors, or data errors.
+
+        This is primarily used to build robust, physics-based preconditioners.
+        """
+        # 1. Substitute components or fall back to the exact ones
+        A_tilde = alternate_forward_operator or self.forward_problem.forward_operator
+        Q_tilde = alternate_prior_measure or self.model_prior_measure
+
+        if alternate_data_error_measure is not None:
+            R_tilde = alternate_data_error_measure
+        elif self.forward_problem.data_error_measure_set:
+            R_tilde = self.forward_problem.data_error_measure
+        else:
+            R_tilde = None
+
+        # Ensure domains match
+        if A_tilde.domain != Q_tilde.domain:
+            raise ValueError(
+                "The domain of the alternate forward operator must match "
+                "the domain of the prior measure."
+            )
+
+        # 2. Build the new surrogate forward problem
+        surrogate_forward_problem = LinearForwardProblem(
+            A_tilde, data_error_measure=R_tilde
+        )
+
+        # 3. Return the new surrogate inversion instance
+        return LinearBayesianInversion(surrogate_forward_problem, Q_tilde)
+
+    def surrogate_normal_preconditioner(
+        self,
+        solver: LinearSolver,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_prior_measure: Optional[GaussianMeasure] = None,
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
+    ) -> LinearOperator:
+        """
+        Builds a preconditioner by exactly inverting the normal operator of a
+        simplified surrogate inverse problem.
+        """
+        # 1. Get the surrogate inverse problem
+        surrogate_inv = self.surrogate_inversion(
+            alternate_forward_operator=alternate_forward_operator,
+            alternate_prior_measure=alternate_prior_measure,
+            alternate_data_error_measure=alternate_data_error_measure,
+        )
+
+        # 2. Extract its normal operator and invert it using the provided solver
+        return solver(surrogate_inv.normal_operator)
+
 
 class ConstrainedLinearBayesianInversion(LinearInversion):
     """
@@ -468,4 +531,51 @@ class ConstrainedLinearBayesianInversion(LinearInversion):
 
         return bayes_inv.model_posterior_measure(
             data, solver, preconditioner=preconditioner
+        )
+
+    def surrogate_inversion(
+        self,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_prior_measure: Optional[GaussianMeasure] = None,
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
+        alternate_constraint: Optional[AffineSubspace] = None,
+    ) -> ConstrainedLinearBayesianInversion:
+        """
+        Constructs a surrogate constrained Bayesian inversion problem using simplified
+        physics, priors, data errors, or constraints.
+
+        This is primarily used to build robust, physics-based preconditioners for
+        constrained problems.
+        """
+        # 1. Substitute components or fall back to the exact ones
+        A_tilde = alternate_forward_operator or self.forward_problem.forward_operator
+        Q_tilde = alternate_prior_measure or self._unconstrained_prior
+
+        if alternate_data_error_measure is not None:
+            R_tilde = alternate_data_error_measure
+        elif self.forward_problem.data_error_measure_set:
+            R_tilde = self.forward_problem.data_error_measure
+        else:
+            R_tilde = None
+
+        # Ensure domains match
+        if A_tilde.domain != Q_tilde.domain:
+            raise ValueError(
+                "The domain of the alternate forward operator must match "
+                "the domain of the prior measure."
+            )
+
+        # 2. Build the new surrogate forward problem
+        surrogate_forward_problem = LinearForwardProblem(
+            A_tilde, data_error_measure=R_tilde
+        )
+
+        # 3. Handle the constraint substitution
+        C_tilde = alternate_constraint or self._constraint
+
+        # 4. Return the new surrogate constrained inversion instance
+        return ConstrainedLinearBayesianInversion(
+            surrogate_forward_problem, Q_tilde, C_tilde, geometric=self._geometric
         )
