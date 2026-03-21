@@ -94,7 +94,6 @@ from .linear_optimisation import (
 
 from .linear_bayesian import (
     LinearBayesianInversion,
-    ConstrainedLinearBayesianInversion,
 )
 
 

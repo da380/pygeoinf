@@ -28,7 +28,6 @@ from .forward_problem import LinearForwardProblem
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector, EuclideanSpace
-from .subspaces import AffineSubspace
 
 
 class LinearBayesianInversion(LinearInversion):
@@ -471,132 +470,81 @@ class LinearBayesianInversion(LinearInversion):
         # 2. Extract its normal operator and invert it using the provided solver
         return solver(surrogate_inv.normal_operator)
 
-
-class ConstrainedLinearBayesianInversion(LinearInversion):
-    """
-    Solves a linear inverse problem subject to an affine subspace constraint.
-
-    This class enforces the constraint `u in A` using either:
-    1. Bayesian Conditioning (Default): p(u | d, u in A).
-       If A is defined geometrically (no explicit equation), an implicit
-       operator (I-P) is used, which requires a robust solver in the subspace.
-    2. Geometric Projection: Projects the unconstrained posterior onto A.
-    """
-
-    def __init__(
+    def low_rank_surrogate(
         self,
-        forward_problem: LinearForwardProblem,
-        model_prior_measure: GaussianMeasure,
-        constraint: AffineSubspace,
         /,
         *,
-        geometric: bool = False,
-    ) -> None:
+        forward_rank: Optional[int] = None,
+        prior_rank: Optional[int] = None,
+        data_error_rank: Optional[int] = None,
+        forward_kwargs: Optional[dict] = None,
+        prior_kwargs: Optional[dict] = None,
+        data_error_kwargs: Optional[dict] = None,
+    ) -> LinearBayesianInversion:
         """
-        Args:
-            forward_problem: The forward problem.
-            model_prior_measure: The unconstrained prior Gaussian measure.
-            constraint: The affine subspace A.
-            geometric: If True, uses orthogonal projection (Euclidean metric).
-                       If False (default), uses Bayesian conditioning.
-        """
-        super().__init__(forward_problem)
-        self._unconstrained_prior = model_prior_measure
-        self._constraint = constraint
-        self._geometric = geometric
+        Constructs a surrogate Bayesian inversion problem by replacing the exact
+        physics and statistical measures with their low-rank approximations.
 
-    def conditioned_prior_measure(self) -> GaussianMeasure:
-        """
-        Computes the prior measure conditioned on the constraint.
-        """
-        return self._constraint.condition_gaussian_measure(
-            self._unconstrained_prior, geometric=self._geometric
-        )
-
-    def model_posterior_measure(
-        self,
-        data: Vector,
-        solver: LinearSolver,
-        /,
-        *,
-        preconditioner: Optional[LinearOperator] = None,
-    ) -> GaussianMeasure:
-        """
-        Returns the posterior Gaussian measure p(u | d, u in A).
+        This method is particularly useful for generating computationally cheap
+        surrogate models to be used in constructing preconditioners for massive,
+        ill-conditioned inverse problems (e.g., using spectral or banded methods).
+        The low-rank approximations are computed using randomized algorithms.
 
         Args:
-            data: Observed data vector.
-            solver: Solver for the data update (inverts A C_cond A* + Ce).
-            preconditioner: Preconditioner for the data update.
+            forward_rank: The target rank for the randomized Singular Value
+                Decomposition (SVD) of the forward operator. If None, the exact
+                forward operator is retained.
+            prior_rank: The target rank for the randomized eigendecomposition of
+                the model prior measure. If None, the exact prior measure is retained.
+            data_error_rank: The target rank for the randomized eigendecomposition
+                of the data error measure. If None, the exact data error measure
+                is retained.
+            forward_kwargs: Additional keyword arguments passed directly to
+                `LinearOperator.random_svd` (e.g., 'power', 'block_size', 'n_jobs').
+            prior_kwargs: Additional keyword arguments passed directly to
+                `GaussianMeasure.low_rank_approximation`.
+            data_error_kwargs: Additional keyword arguments passed directly to
+                `GaussianMeasure.low_rank_approximation`.
 
-        Note: The solver for the constraint update is managed internally by
-        the AffineSubspace object passed at initialization.
+        Returns:
+            LinearBayesianInversion: A new Bayesian inversion object configured
+            with the specified low-rank surrogate components.
+
+        Raises:
+            ValueError: If `data_error_rank` is provided but the original forward
+                problem does not have a data error measure explicitly set.
         """
-        # 1. Condition Prior
-        cond_prior = self.conditioned_prior_measure()
+        A_tilde = None
+        Q_tilde = None
+        R_tilde = None
 
-        # 2. Solve Bayesian Inverse Problem with the new prior
-        bayes_inv = LinearBayesianInversion(self.forward_problem, cond_prior)
+        # 1. Low-rank forward operator via SVD
+        if forward_rank is not None:
+            f_kwargs = forward_kwargs or {}
+            original_A = self.forward_problem.forward_operator
+            L, D, R = original_A.random_svd(forward_rank, **f_kwargs)
+            A_tilde = L @ D @ R
 
-        return bayes_inv.model_posterior_measure(
-            data, solver, preconditioner=preconditioner
-        )
-
-    def surrogate_inversion(
-        self,
-        /,
-        *,
-        alternate_forward_operator: Optional[LinearOperator] = None,
-        alternate_prior_measure: Optional[GaussianMeasure] = None,
-        alternate_data_error_measure: Optional[GaussianMeasure] = None,
-        alternate_constraint: Optional[AffineSubspace] = None,
-    ) -> ConstrainedLinearBayesianInversion:
-        """
-        Constructs a surrogate constrained Bayesian inversion problem using simplified
-        physics, priors, data errors, or constraints.
-
-        This is primarily used to build robust, physics-based preconditioners for
-        constrained problems.
-        """
-        # 1. Substitute components or fall back to the exact ones
-        A_tilde = alternate_forward_operator or self.forward_problem.forward_operator
-        Q_tilde = alternate_prior_measure or self._unconstrained_prior
-
-        if alternate_data_error_measure is not None:
-            R_tilde = alternate_data_error_measure
-        elif self.forward_problem.data_error_measure_set:
-            R_tilde = self.forward_problem.data_error_measure
-        else:
-            R_tilde = None
-
-        # Ensure domains match
-        if A_tilde.domain != Q_tilde.domain:
-            raise ValueError(
-                "The domain of the alternate forward operator must match "
-                "the domain of the prior measure."
+        # 2. Low-rank prior measure
+        if prior_rank is not None:
+            p_kwargs = prior_kwargs or {}
+            Q_tilde = self.model_prior_measure.low_rank_approximation(
+                prior_rank, **p_kwargs
             )
 
-        if A_tilde.codomain != self.data_space:
-            raise ValueError(
-                "The data space for the alternate forward operator must "
-                "match that for the original problem"
+        # 3. Low-rank data error measure
+        if data_error_rank is not None:
+            if not self.forward_problem.data_error_measure_set:
+                raise ValueError("Cannot approximate data error measure: none is set.")
+
+            d_kwargs = data_error_kwargs or {}
+            R_tilde = self.forward_problem.data_error_measure.low_rank_approximation(
+                data_error_rank, **d_kwargs
             )
 
-        if R_tilde.domain != self.data_space:
-            raise ValueError(
-                "The domain for the alternate error measure must "
-                "match that for the original problem"
-            )
-
-        # 2. Build the new surrogate forward problem
-        surrogate_forward_problem = LinearForwardProblem(
-            A_tilde, data_error_measure=R_tilde
-        )
-
-        # 3. Handle the constraint substitution
-        C_tilde = alternate_constraint or self._constraint
-
-        # 4. Return the new surrogate constrained inversion instance
-        return ConstrainedLinearBayesianInversion(
-            surrogate_forward_problem, Q_tilde, C_tilde, geometric=self._geometric
+        # 4. Feed directly into the surrogate builder
+        return self.surrogate_inversion(
+            alternate_forward_operator=A_tilde,
+            alternate_prior_measure=Q_tilde,
+            alternate_data_error_measure=R_tilde,
         )

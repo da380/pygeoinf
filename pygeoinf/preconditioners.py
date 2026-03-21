@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from .hilbert_space import Vector
 
 
+
+
 class IdentityPreconditioningMethod(LinearSolver):
     """
     A trivial preconditioning method that returns the Identity operator.

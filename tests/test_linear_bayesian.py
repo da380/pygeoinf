@@ -9,10 +9,8 @@ from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.linear_solvers import CholeskySolver
-from pygeoinf.subspaces import AffineSubspace
 from pygeoinf.linear_bayesian import (
     LinearBayesianInversion,
-    ConstrainedLinearBayesianInversion,
 )
 
 # =============================================================================
@@ -122,103 +120,6 @@ class TestLinearBayesianInversion:
 
 
 # =============================================================================
-# Constrained Bayesian Tests
-# =============================================================================
-
-
-class TestConstrainedLinearBayesianInversion:
-
-    def test_prior_conditioning_on_affine_plane(self):
-        """
-        Test conditioning a Standard Normal prior on the plane z = 1.
-        Constraint B(u) = u_z = 1.
-        """
-        r3 = EuclideanSpace(3)
-        standard_prior = GaussianMeasure.from_standard_deviation(r3, 1.0)
-
-        # Constraint: u_z = 1
-        codomain = EuclideanSpace(1)
-        e_z = r3.basis_vector(2)
-
-        def mapping(u):
-            return np.array([r3.inner_product(u, e_z)])
-
-        def adjoint(w):
-            return r3.multiply(w[0], e_z)
-
-        B = LinearOperator(r3, codomain, mapping, adjoint_mapping=adjoint)
-        w = codomain.from_components(np.array([1.0]))
-
-        # API CHANGE: Solver is now passed to the subspace factory
-        constraint = AffineSubspace.from_linear_equation(
-            B, w, CholeskySolver(galerkin=True)
-        )
-
-        fp = LinearForwardProblem(r3.identity_operator())
-        solver = ConstrainedLinearBayesianInversion(fp, standard_prior, constraint)
-
-        # API CHANGE: conditioned_prior_measure no longer takes a solver argument
-        cond_prior = solver.conditioned_prior_measure()
-
-        # Mean should be [0, 0, 1]
-        mean = r3.to_components(cond_prior.expectation)
-        assert np.allclose(mean, [0.0, 0.0, 1.0])
-
-        # Covariance should be diag(1, 1, 0)
-        cov = cond_prior.covariance.matrix(dense=True)
-        assert np.allclose(cov, np.diag([1.0, 1.0, 0.0]), atol=1e-10)
-
-    def test_posterior_update_with_constraint(self):
-        """
-        Test full inversion.
-        Data Space is R3. Constraint Space is R1.
-        This confirms we can handle separate solvers for data and constraints.
-        """
-        r3 = EuclideanSpace(3)
-        fp = LinearForwardProblem(
-            r3.identity_operator(),
-            data_error_measure=GaussianMeasure.from_standard_deviation(r3, 0.1),
-        )
-        prior = GaussianMeasure.from_standard_deviation(r3, 1.0)
-
-        # Constraint: u_z = 1
-        codomain = EuclideanSpace(1)
-        e_z = r3.basis_vector(2)
-
-        def mapping(u):
-            return np.array([r3.inner_product(u, e_z)])
-
-        def adjoint(w):
-            return r3.multiply(w[0], e_z)
-
-        B = LinearOperator(r3, codomain, mapping, adjoint_mapping=adjoint)
-        w = codomain.from_components(np.array([1.0]))
-
-        # 1. Define Constraint (Solver for Property Space attached here)
-        constraint = AffineSubspace.from_linear_equation(
-            B, w, CholeskySolver(galerkin=True)
-        )
-
-        solver = ConstrainedLinearBayesianInversion(fp, prior, constraint)
-
-        data = r3.from_components(np.array([10.0, 10.0, 10.0]))
-
-        # 2. Solve (Solver for Data Space passed here)
-        # API CHANGE: constraint_solver argument removed.
-        posterior = solver.model_posterior_measure(
-            data,
-            CholeskySolver(galerkin=True),
-        )
-
-        post_mean = r3.to_components(posterior.expectation)
-
-        # Z should be exactly 1.0 (hard constraint)
-        assert np.isclose(post_mean[2], 1.0)
-        # X/Y should be approx 9.9 (Bayesian update)
-        assert np.allclose(post_mean[:2], 9.9, atol=0.1)
-
-
-# =============================================================================
 # New Sampling Tests for LinearBayesianInversion
 # =============================================================================
 
@@ -260,95 +161,6 @@ class TestBayesianSampling:
 
         assert np.allclose(sample_mean, true_mean, atol=0.15)
         assert np.allclose(sample_cov, true_cov, atol=0.15)
-
-
-# =============================================================================
-# New Geometric vs Bayesian Constraint Tests
-# =============================================================================
-
-
-class TestGeometricVsBayesianConstraints:
-    """
-    Tests the difference between Geometric (Orthogonal) and Bayesian (Oblique)
-    conditioning.
-    """
-
-    def test_geometric_ignores_prior_covariance(self):
-        """
-        Scenario: Prior is correlated (y~x). Constraint is y=-x.
-        """
-        r2 = EuclideanSpace(2)
-
-        # 1. Correlated prior
-        L = np.array([[1.0, 0.0], [0.9, 0.4359]])
-        cov_matrix = L @ L.T
-        prior = GaussianMeasure.from_covariance_matrix(r2, cov_matrix)
-
-        # 2. Constraint: u_x + u_y = 2
-        codomain = EuclideanSpace(1)
-        vec_11 = r2.from_components(np.array([1.0, 1.0]))
-
-        def mapping(u):
-            return np.array([r2.inner_product(u, vec_11)])
-
-        def adjoint(w):
-            return r2.multiply(w[0], vec_11)
-
-        B = LinearOperator(r2, codomain, mapping, adjoint_mapping=adjoint)
-        w = codomain.from_components(np.array([2.0]))
-
-        # Attach solver to subspace definition
-        constraint = AffineSubspace.from_linear_equation(
-            B, w, CholeskySolver(galerkin=True)
-        )
-
-        fp = LinearForwardProblem(r2.identity_operator())
-
-        # 3. Geometric Inversion
-        geo_inv = ConstrainedLinearBayesianInversion(
-            fp, prior, constraint, geometric=True
-        )
-        # API CHANGE: No solver passed here
-        geo_prior = geo_inv.conditioned_prior_measure()
-        geo_mean = r2.to_components(geo_prior.expectation)
-
-        # Geometric: Shortest path from (0,0) to x+y=2 is (1,1).
-        assert np.allclose(geo_mean, [1.0, 1.0])
-
-        # 4. Second case: Constraint u_x = 1 (to force difference)
-        e_x = r2.basis_vector(0)
-
-        def map_x(u):
-            return np.array([r2.inner_product(u, e_x)])
-
-        def adj_x(w):
-            return r2.multiply(w[0], e_x)
-
-        B_x = LinearOperator(r2, codomain, map_x, adjoint_mapping=adj_x)
-        w_x = codomain.from_components(np.array([1.0]))
-
-        constraint_x = AffineSubspace.from_linear_equation(
-            B_x, w_x, CholeskySolver(galerkin=True)
-        )
-
-        # Geometric
-        geo_inv_x = ConstrainedLinearBayesianInversion(
-            fp, prior, constraint_x, geometric=True
-        )
-        geo_mean_x = r2.to_components(geo_inv_x.conditioned_prior_measure().expectation)
-        assert np.allclose(geo_mean_x, [1.0, 0.0])
-
-        # Bayesian
-        bayes_inv_x = ConstrainedLinearBayesianInversion(
-            fp, prior, constraint_x, geometric=False
-        )
-        bayes_mean_x = r2.to_components(
-            bayes_inv_x.conditioned_prior_measure().expectation
-        )
-
-        # Bayesian respects correlation (y ~ 0.9x)
-        assert np.isclose(bayes_mean_x[0], 1.0)
-        assert np.isclose(bayes_mean_x[1], 0.9, atol=0.05)
 
 
 # =============================================================================
