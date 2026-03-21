@@ -1,7 +1,7 @@
 """
-Example 13: Bayesian Inversion with Surrogate-Based Preconditioning
+Example 14: Bayesian Inversion with Surrogate-Based Preconditioning
 
-This script demonstrates solving a 1D Bayesian inverse problem on a circle
+This script demonstrates solving a 2D Bayesian inverse problem on a sphere
 using the pygeoinf library. To accelerate the iterative solver, it utilizes
 a "surrogate" problem—a cheaper, lower-resolution version of the physics and
 prior—to construct a highly efficient preconditioner.
@@ -15,27 +15,33 @@ Available Preconditioning Strategies:
     - none:     Runs the CG solver without any preconditioning.
 
 Default Parameters:
-    --n-data             1000      (Number of observation points)
-    --prior-scale        0.02      (Length scale of the prior)
-    --surrogate-degree   64        (Truncation degree for the surrogate problem)
+    --n-data             100       (Number of observation points)
+    --prior-scale        0.2       (Length scale of the prior)
+    --surrogate-degree   32        (Truncation degree for the spatial surrogate)
     --seed               42        (Random seed for reproducibility)
     --precond            'block'   (Type of preconditioner to apply)
-    --bandwidth          100       (Bandwidth for banded preconditioner)
-    --rank               50        (Rank for spectral preconditioner)
+    --bandwidth          10        (Bandwidth for banded preconditioner)
+    --rank               20        (Rank for spectral preconditioner)
     --incomplete         False     (Use Incomplete LU instead of exact LU)
+    --threshold          5         (distance relative to prior-scale used in forming blocks)
+
+Low-Rank Surrogate Options (applied ON TOP of the spatial surrogate):
+    --lr-forward         None      (Rank for randomized SVD of the forward operator)
+    --lr-prior           None      (Rank for randomized eigendecomposition of the prior)
+    --lr-data-error      None      (Rank for randomized eigendecomposition of the data error)
 
 Usage:
-    Run `python ex13.py --help` to see all available command-line arguments.
+    Run `python ex14.py --help` to see all available command-line arguments.
 """
 
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from cartopy import crs as ccrs
 import pygeoinf as inf
-from pygeoinf.symmetric_space.circle import (
+from pygeoinf.symmetric_space.sphere import (
     Sobolev,
     plot,
-    plot_error_bounds,
 )
 
 
@@ -54,67 +60,25 @@ def setup_problem_components(
     return space, forward_operator, prior_measure
 
 
-def plot_results(
-    space: Sobolev,
-    true_model: np.ndarray,
-    data: np.ndarray,
-    obs_points: np.ndarray,
-    data_std: np.ndarray,
-    solution_model: np.ndarray,
-    solution_label: str,
-    solution_std: np.ndarray = None,
-):
-    """Helper function to create a consistent plot."""
-    fig, ax = plot(
-        space,
-        true_model,
-        color="k",
-        linestyle="--",
-        label="True Model",
-        figsize=(15, 10),
-    )
-
-    plot(space, solution_model, fig=fig, ax=ax, color="b", label=solution_label)
-
-    if solution_std is not None:
-        plot_error_bounds(
-            space,
-            solution_model,
-            2 * solution_std,
-            fig=fig,
-            ax=ax,
-            alpha=0.2,
-            color="b",
-        )
-
-    ax.errorbar(obs_points, data, 2 * data_std, fmt="ko", capsize=3, label="Data")
-    ax.set_title("Inversion Results", fontsize=16)
-    ax.set_xlabel("Angle (radians)")
-    ax.set_ylabel("Function Value")
-    ax.legend()
-    ax.grid(True, linestyle=":", alpha=0.7)
-    plt.show()
-
-
 def main():
 
     parser = argparse.ArgumentParser(
-        description="Bayesian inversion with surrogate preconditioning.",
+        description="Bayesian inversion with stacked surrogate preconditioning.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     # Physics & Grid Parameters
     parser.add_argument(
-        "--n-data", type=int, default=1000, help="Number of observation points"
+        "--n-data", type=int, default=100, help="Number of observation points"
     )
     parser.add_argument(
-        "--prior-scale", type=float, default=0.02, help="Length scale of the prior"
+        "--prior-scale", type=float, default=0.2, help="Length scale of the prior"
     )
     parser.add_argument(
         "--surrogate-degree",
         type=int,
-        default=64,
-        help="Truncation degree for the surrogate problem",
+        default=32,
+        help="Truncation degree for the spatial surrogate problem",
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
@@ -129,15 +93,41 @@ def main():
         help="Type of preconditioner to apply",
     )
     parser.add_argument(
-        "--bandwidth", type=int, default=100, help="Bandwidth for banded preconditioner"
+        "--bandwidth", type=int, default=10, help="Bandwidth for banded preconditioner"
     )
     parser.add_argument(
-        "--rank", type=int, default=50, help="Rank for spectral preconditioner"
+        "--rank", type=int, default=20, help="Rank for spectral preconditioner"
     )
     parser.add_argument(
         "--incomplete",
         action="store_true",
         help="Use Incomplete LU (spilu) instead of exact LU",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=5,
+        help="Relative distance used in forming blocks",
+    )
+
+    # Low-Rank Surrogate Parameters
+    parser.add_argument(
+        "--lr-forward",
+        type=int,
+        default=None,
+        help="Rank for low-rank forward operator surrogate",
+    )
+    parser.add_argument(
+        "--lr-prior",
+        type=int,
+        default=None,
+        help="Rank for low-rank prior measure surrogate",
+    )
+    parser.add_argument(
+        "--lr-data-error",
+        type=int,
+        default=None,
+        help="Rank for low-rank data error measure surrogate",
     )
 
     args = parser.parse_args()
@@ -149,16 +139,17 @@ def main():
     # Setup Base Space & Data Grid
     # ==========================================
     print("Setting up grid and data spaces...")
-    base_space = Sobolev.from_sobolev_parameters(2.0, 0.01, power_of_two=True)
+    base_space = Sobolev(128, 2.0, args.prior_scale)
 
     observation_points = base_space.random_points(args.n_data)
-    observation_points = np.sort(observation_points)
+    lats = [lat for lat, _ in observation_points]
+    lons = [lon for _, lon in observation_points]
 
     # Dummy operator just to quickly grab the codomain size
     dummy_op = base_space.point_evaluation_operator(observation_points)
     data_space = dummy_op.codomain
 
-    standard_deviations = np.random.uniform(0.01, 0.5, data_space.dim)
+    standard_deviations = np.random.uniform(0.2, 0.5, data_space.dim)
     data_error_measure = inf.GaussianMeasure.from_standard_deviations(
         data_space, standard_deviations
     )
@@ -174,7 +165,7 @@ def main():
         forward_operator, data_error_measure=data_error_measure
     )
 
-    print(f"Model space dimension: {model_space.dim}")
+    print(f"Model space dimension (kmax): {model_space.dim}")
     print(f"Data space dimension: {data_space.dim}")
 
     # Generate Synthetic Data
@@ -186,8 +177,10 @@ def main():
     # ==========================================
     # 2. Surrogate Problem Components
     # ==========================================
-    print(f"Building surrogate problem (degree={args.surrogate_degree})...")
-    surrogate_space, surrogate_fwd_op, surrogate_prior = setup_problem_components(
+    print(f"Building spatial surrogate problem (degree={args.surrogate_degree})...")
+
+    # Step A: Always build the lower-degree spatial surrogate first
+    _, surrogate_fwd_op, surrogate_prior = setup_problem_components(
         base_space, args.surrogate_degree, observation_points, args.prior_scale
     )
 
@@ -195,6 +188,16 @@ def main():
         alternate_forward_operator=surrogate_fwd_op,
         alternate_prior_measure=surrogate_prior,
     )
+
+    # Step B: If requested, apply low-rank approximations ON TOP of the spatial surrogate
+    if args.lr_forward or args.lr_prior or args.lr_data_error:
+        print("Applying low-rank approximations to the spatial surrogate...")
+        surrogate_inv = surrogate_inv.low_rank_surrogate(
+            forward_rank=args.lr_forward,
+            prior_rank=args.lr_prior,
+            data_error_rank=args.lr_data_error,
+        )
+
     surrogate_normal_operator = surrogate_inv.normal_operator
 
     # ==========================================
@@ -205,9 +208,12 @@ def main():
         print(f"Initializing {args.precond} preconditioner...")
 
         if args.precond == "block":
+            print("Forming blocks...")
+            # Note: Clustering happens on the surrogate space points
             blocks = model_space.cluster_points(
-                observation_points, threshold=5 * args.prior_scale
+                observation_points, threshold=args.threshold * args.prior_scale
             )
+            print("Building preconditioner...")
             solver_wrapper = inf.ExactBlockPreconditioningMethod(
                 blocks, incomplete=args.incomplete
             )
@@ -228,20 +234,21 @@ def main():
     model_posterior_measure = bayesian_inversion.model_posterior_measure(
         data, solver, preconditioner=preconditioner
     )
-    posterior_mean = model_posterior_measure.expectation
+    posterior_expectation = model_posterior_measure.expectation
 
     print(f"Number of CG iterations = {solver.iterations}")
 
-    plot_results(
-        model_space,
-        true_model,
-        data,
-        observation_points,
-        standard_deviations,
-        solution_model=posterior_mean,
-        solution_label="Posterior Mean",
-        solution_std=None,
+    fig1, ax1, im1 = plot(true_model, projection=ccrs.Robinson(), coasts=True)
+    ax1.plot(lons, lats, "k^", markersize=5, transform=ccrs.PlateCarree(), alpha=0.1)
+    ax1.set_title("True Model & Observation Points")
+
+    fig2, ax2, im2 = plot(
+        posterior_expectation, projection=ccrs.Robinson(), coasts=True
     )
+    ax2.plot(lons, lats, "k^", markersize=5, transform=ccrs.PlateCarree(), alpha=0.1)
+    ax2.set_title("Posterior Mean")
+
+    plt.show()
 
 
 if __name__ == "__main__":
