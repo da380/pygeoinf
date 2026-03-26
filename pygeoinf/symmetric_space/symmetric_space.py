@@ -290,6 +290,20 @@ class InvariantGaussianMeasure(GaussianMeasure):
     #                        Public methods                      #
     # ---------------------------------------------------------- #
 
+    def zero_expectation(self) -> InvariantGaussianMeasure:
+        """
+        Returns a new invariant measure with the same covariance, but
+        with expectation set to zero.
+        """
+        if self.has_zero_expectation:
+            return self
+
+        return InvariantGaussianMeasure(
+            self.domain,
+            self.spectral_variances,
+            expectation=None,
+        )
+
     def rescale_norm_variance(self, std: float) -> InvariantGaussianMeasure:
         """
         Returns a new measure whose covariance is scaled such that
@@ -384,7 +398,7 @@ class InvariantGaussianMeasure(GaussianMeasure):
 
             return InvariantGaussianMeasure(
                 self._domain,
-                new_covariance.spectral_variances,
+                new_covariance.eigenvalues,
                 expectation=new_expectation,
             )
 
