@@ -69,9 +69,14 @@ class LinearLeastSquaresInversion(LinearInversion):
             inverse_data_covariance = (
                 self.forward_problem.data_error_measure.inverse_covariance
             )
-            shifted_data = self.forward_problem.data_space.subtract(
-                data, self.forward_problem.data_error_measure.expectation
-            )
+
+            if self.forward_problem.data_error_measure.has_zero_expectation:
+                shifted_data = data
+            else:
+                shifted_data = self.forward_problem.data_space.subtract(
+                    data, self.forward_problem.data_error_measure.expectation
+                )
+
             return (forward_operator.adjoint @ inverse_data_covariance)(shifted_data)
         else:
             return forward_operator.adjoint(data)
@@ -126,10 +131,13 @@ class LinearLeastSquaresInversion(LinearInversion):
                 @ inverse_data_covariance
             )
 
-            expected_data = self.forward_problem.data_error_measure.expectation
-            translation = self.model_space.negative(linear_part(expected_data))
-
-            return AffineOperator(linear_part, translation)
+            if self.forward_problem.data_error_measure.has_zero_expectation:
+                # Return the pure linear operator without an Affine wrapper
+                return linear_part
+            else:
+                expected_data = self.forward_problem.data_error_measure.expectation
+                translation = self.model_space.negative(linear_part(expected_data))
+                return AffineOperator(linear_part, translation)
         else:
             return inverse_normal_operator @ forward_operator.adjoint
 
@@ -303,7 +311,8 @@ class LinearMinimumNormInversion(LinearInversion):
                 lsq_op = lsq_inversion.least_squares_operator(
                     damping, solver, preconditioner=preconditioner
                 )
-                linear_part = lsq_op.linear_part
+                # Safely extract the linear part whether it's an AffineOperator or a pure LinearOperator
+                linear_part = getattr(lsq_op, "linear_part", lsq_op)
 
                 # 2. Reconstruct H^{-1} for the denominator term
                 normal_operator = lsq_inversion.normal_operator(damping)

@@ -498,12 +498,20 @@ class AffineSubspace(Subset):
             ValueError: If geometric=False and the subspace was constructed
                 without a solver capable of handling the constraint operator.
         """
+
         if geometric:
             # Geometric Projection: u -> P(u - x0) + x0
             # Affine Map: u -> P(u) + (I-P)x0
-            shift = self.domain.subtract(
-                self.translation, self.projector(self.translation)
-            )
+
+            # Optimization: If it's a linear subspace, the shift is exactly zero.
+            # Pass None to preserve the zero-expectation optimization in the measure.
+            if isinstance(self, LinearSubspace):
+                shift = None
+            else:
+                shift = self.domain.subtract(
+                    self.translation, self.projector(self.translation)
+                )
+
             return prior.affine_mapping(operator=self.projector, translation=shift)
 
         else:

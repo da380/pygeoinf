@@ -83,8 +83,10 @@ class TestLinearLeastSquaresInversion:
         lsq_inversion = LinearLeastSquaresInversion(forward_problem)
         lsq_operator = lsq_inversion.least_squares_operator(damping, solver)
 
-        # Verify that the new architecture returns an AffineOperator
-        assert isinstance(lsq_operator, AffineOperator)
+        # Verify that the architecture returns a valid Operator type
+        from pygeoinf.linear_operators import LinearOperator
+
+        assert isinstance(lsq_operator, (AffineOperator, LinearOperator))
 
         model_solution = lsq_operator(data)
 

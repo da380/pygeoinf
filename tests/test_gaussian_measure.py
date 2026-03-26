@@ -247,3 +247,60 @@ class TestGaussianMeasure:
 
         with pytest.raises(ValueError, match=error_msg):
             measure.affine_mapping(affine_operator=affine_op, translation=translation)
+
+    def test_kl_divergence_self(self, measure: GaussianMeasure):
+        """
+        The KL divergence of a measure with itself must be exactly zero.
+        """
+        kl_div = measure.kl_divergence(measure)
+        assert np.isclose(kl_div, 0.0, atol=1e-10)
+
+    def test_kl_divergence_known_values(self, space: HilbertSpace):
+        """
+        Tests the KL divergence calculation against a known analytical result.
+        P = N(0, I)
+        Q = N(mu, sigma^2 * I)
+        """
+        k = space.dim
+
+        # Measure P: Standard Normal N(0, I)
+        mean_p = space.zero
+        cov_p = np.eye(k)
+        measure_p = GaussianMeasure.from_covariance_matrix(
+            space, cov_p, expectation=mean_p
+        )
+
+        # Measure Q: N(1, 2 * I)
+        sigma_sq = 2.0
+        mean_q_components = np.ones(k)
+        mean_q = space.from_components(mean_q_components)
+        cov_q = sigma_sq * np.eye(k)
+        measure_q = GaussianMeasure.from_covariance_matrix(
+            space, cov_q, expectation=mean_q
+        )
+
+        # Analytical Calculation for D_KL(P || Q)
+        # 1. Trace term: tr( (sigma^2 I)^-1 * I ) = k / sigma^2
+        trace_term = k / sigma_sq
+        # 2. Mahalanobis term: (0 - mu)^T (sigma^2 I)^-1 (0 - mu) = k / sigma^2
+        mahalanobis_term = k / sigma_sq
+        # 3. Log det term: ln(det(Q)/det(P)) = ln((sigma^2)^k / 1) = k * ln(sigma^2)
+        log_det_term = k * np.log(sigma_sq)
+
+        expected_kl = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
+
+        actual_kl = measure_p.kl_divergence(measure_q)
+        assert np.isclose(actual_kl, expected_kl, rtol=1e-7)
+
+    def test_kl_divergence_domain_mismatch(self, measure: GaussianMeasure):
+        """
+        Verifies that computing KL divergence between measures on different
+        domains raises a ValueError.
+        """
+        other_space = EuclideanSpace(dim=measure.domain.dim + 1)
+        other_measure = GaussianMeasure.from_standard_deviation(other_space, 1.0)
+
+        with pytest.raises(
+            ValueError, match="Measures must be defined on the same domain"
+        ):
+            measure.kl_divergence(other_measure)
