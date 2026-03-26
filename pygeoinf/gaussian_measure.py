@@ -24,6 +24,7 @@ from typing import Callable, Optional, Any, List, TYPE_CHECKING, Tuple
 import warnings
 
 import numpy as np
+from scipy.linalg import cholesky, cho_solve
 from scipy.linalg import eigh
 from scipy.sparse import diags
 from scipy.stats import multivariate_normal
@@ -84,7 +85,7 @@ class GaussianMeasure:
              covariance_factor (LinearOperator, optional): A linear operator L
                  such that the covariance C = L @ L*.
              expectation (vector, optional): The expectation (mean) of the
-                 measure. Defaults to the zero vector of the space.
+                 measure. Defaults to the zero vector of the space (stored internally as None).
              sample (callable, optional): A function that returns a random
                  sample from the measure. If a `covariance_factor` is given,
                  a default sampler is created.
@@ -125,10 +126,8 @@ class GaussianMeasure:
         else:
             self._inverse_covariance = None
 
-        if expectation is None:
-            self._expectation: Vector = self.domain.zero
-        else:
-            self._expectation = expectation
+        # Store exactly what is passed (None implies a zero expectation)
+        self._expectation: Optional[Vector] = expectation
 
     @staticmethod
     def from_standard_deviation(
@@ -317,8 +316,12 @@ class GaussianMeasure:
         Args:
             measures (list): A list of `GaussianMeasure` objects.
         """
+        # Optimize expectation aggregation
+        if all(measure.has_zero_expectation for measure in measures):
+            expectation = None
+        else:
+            expectation = [measure.expectation for measure in measures]
 
-        expectation = [measure.expectation for measure in measures]
         covariance = BlockDiagonalLinearOperator(
             [measure.covariance for measure in measures]
         )
@@ -396,8 +399,15 @@ class GaussianMeasure:
         return self._inverse_covariance_factor
 
     @property
+    def has_zero_expectation(self) -> bool:
+        """True if the measure has an exactly zero expectation."""
+        return self._expectation is None
+
+    @property
     def expectation(self) -> Vector:
         """The expectation (mean) of the measure."""
+        if self.has_zero_expectation:
+            return self.domain.zero
         return self._expectation
 
     @property
@@ -477,13 +487,18 @@ class GaussianMeasure:
         samples = self.samples(n, parallel=parallel, n_jobs=n_jobs)
 
         # Compute variance using vector arithmetic
-        expectation = self.expectation
         variance = self.domain.zero
 
-        for sample in samples:
-            diff = self.domain.subtract(sample, expectation)
-            prod = self.domain.vector_multiply(diff, diff)
-            self.domain.axpy(1 / n, prod, variance)
+        if self.has_zero_expectation:
+            for sample in samples:
+                prod = self.domain.vector_multiply(sample, sample)
+                self.domain.axpy(1 / n, prod, variance)
+        else:
+            expectation = self.expectation
+            for sample in samples:
+                diff = self.domain.subtract(sample, expectation)
+                prod = self.domain.vector_multiply(diff, diff)
+                self.domain.axpy(1 / n, prod, variance)
 
         return variance
 
@@ -524,7 +539,7 @@ class GaussianMeasure:
         )
 
         return GaussianMeasure.from_covariance_matrix(
-            self.domain, covariance_matrix, expectation=self.expectation
+            self.domain, covariance_matrix, expectation=self._expectation
         )
 
     def affine_mapping(
@@ -570,13 +585,20 @@ class GaussianMeasure:
             _operator = (
                 operator if operator is not None else self.domain.identity_operator()
             )
-            _translation = (
-                translation if translation is not None else _operator.codomain.zero
-            )
+            # We delay applying codomain.zero unless required by math
+            _translation = translation
 
-        new_expectation = _operator.codomain.add(
-            _operator(self.expectation), _translation
-        )
+        # Expectation bypass
+        if self.has_zero_expectation:
+            new_expectation = (
+                _translation  # Remains None (zero) if _translation is None
+            )
+        else:
+            mapped_exp = _operator(self.expectation)
+            if _translation is None:
+                new_expectation = mapped_exp
+            else:
+                new_expectation = _operator.codomain.add(mapped_exp, _translation)
 
         if self.covariance_factor_set:
             new_covariance_factor = _operator @ self.covariance_factor
@@ -587,7 +609,10 @@ class GaussianMeasure:
             new_covariance = _operator @ self.covariance @ _operator.adjoint
 
             def new_sample() -> Vector:
-                return _operator.codomain.add(_operator(self.sample()), _translation)
+                mapped_sample = _operator(self.sample())
+                if _translation is None:
+                    return mapped_sample
+                return _operator.codomain.add(mapped_sample, _translation)
 
             return GaussianMeasure(
                 covariance=new_covariance,
@@ -701,7 +726,7 @@ class GaussianMeasure:
 
         return GaussianMeasure(
             covariance_factor=covariance_factor,
-            expectation=self.expectation,
+            expectation=self._expectation,
         )
 
     def two_point_covariance(self, point: Any) -> Vector:
@@ -731,7 +756,11 @@ class GaussianMeasure:
         Returns:
             A tuple of (mean, variance).
         """
-        expectation = self.domain.inner_product(self.expectation, direction)
+        expectation = (
+            0.0
+            if self.has_zero_expectation
+            else self.domain.inner_product(self.expectation, direction)
+        )
         variance = self.domain.inner_product(self.covariance(direction), direction)
         return expectation, variance
 
@@ -765,8 +794,29 @@ class GaussianMeasure:
         Returns a new measure with the same covariance, but
         with expectation set to zero.
         """
-        translation = self.domain.negative(self.expectation)
-        return self.affine_mapping(translation=translation)
+        if self.covariance_factor_set:
+            return GaussianMeasure(
+                covariance_factor=self.covariance_factor,
+                expectation=None,
+            )
+
+        if self.sample_set:
+            if self.has_zero_expectation:
+                new_sample = self.sample
+            else:
+                exp = self.expectation
+
+                def new_sample():
+                    return self.domain.subtract(self.sample(), exp)
+
+        else:
+            new_sample = None
+
+        return GaussianMeasure(
+            covariance=self.covariance,
+            expectation=None,
+            sample=new_sample,
+        )
 
     def rescale_directional_variance(
         self, direction: Vector, std: float
@@ -782,7 +832,71 @@ class GaussianMeasure:
         norm = std / np.sqrt(current_var)
         shifted_measure = self.zero_expectation()
         scaled_measure = norm * shifted_measure
-        return scaled_measure.affine_mapping(translation=self.expectation)
+        return scaled_measure.affine_mapping(translation=self._expectation)
+
+    def kl_divergence(self, other: GaussianMeasure) -> float:
+        """
+        Computes the exact Kullback-Leibler (KL) divergence D_KL(self || other).
+
+        This computes the divergence of 'self' (P) from the prior/reference
+        measure 'other' (Q). It uses the dense Galerkin matrix representations
+        of the covariance operators, making it suitable for measures on
+        low-dimensional spaces or direct sums thereof.
+
+        Args:
+            other: The other GaussianMeasure (usually the prior/approximating measure).
+
+        Returns:
+            The KL divergence as a float.
+
+        Raises:
+            ValueError: If the measures are not on the same domain, or if
+                        the covariances are not positive definite.
+        """
+        if self.domain != other.domain:
+            raise ValueError("Measures must be defined on the same domain.")
+
+
+        k = self.domain.dim
+
+        # 1. Extract the dense Galerkin matrices
+        G_p = self.covariance.matrix(dense=True, galerkin=True)
+        G_q = other.covariance.matrix(dense=True, galerkin=True)
+
+        # Cholesky decomposition of Q's covariance matrix for fast solving/determinant
+        try:
+            L_q = cholesky(G_q, lower=True)
+        except np.linalg.LinAlgError:
+            raise ValueError(
+                "The covariance matrix of the 'other' measure is not positive definite."
+            )
+
+        # 2. Trace term: tr(Sigma_Q^-1 Sigma_P)
+        X = cho_solve((L_q, True), G_p)
+        trace_term = np.trace(X)
+
+        # 3. Log-determinant term: ln(det(Sigma_Q)) - ln(det(Sigma_P))
+        log_det_q = 2.0 * np.sum(np.log(np.diag(L_q)))
+        sign_p, log_det_p = np.linalg.slogdet(G_p)
+        if sign_p <= 0:
+            raise ValueError(
+                "The covariance matrix of 'self' is not positive definite."
+            )
+        log_det_term = log_det_q - log_det_p
+
+        # 4. Mahalanobis term: <mu_P - mu_Q, Sigma_Q^-1 (mu_P - mu_Q)>
+        if self.has_zero_expectation and other.has_zero_expectation:
+            mahalanobis_term = 0.0
+        else:
+            diff = self.domain.subtract(self.expectation, other.expectation)
+            diff_dual = self.domain.to_dual(diff)
+            diff_c_prime = self.domain.dual.to_components(diff_dual)
+            y = cho_solve((L_q, True), diff_c_prime)
+            mahalanobis_term = np.dot(diff_c_prime, y)
+
+        # 5. Assemble the KL divergence
+        kl_div = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
+        return float(kl_div)
 
     # ---------------------------------------- #
     #               Special methods            #
@@ -790,10 +904,16 @@ class GaussianMeasure:
 
     def __neg__(self) -> GaussianMeasure:
         """Returns a measure with a negated expectation."""
+        new_expectation = (
+            None
+            if self.has_zero_expectation
+            else self.domain.negative(self.expectation)
+        )
+
         if self.covariance_factor_set:
             return GaussianMeasure(
                 covariance_factor=self.covariance_factor,
-                expectation=self.domain.negative(self.expectation),
+                expectation=new_expectation,
             )
         else:
             new_sample = (
@@ -803,16 +923,22 @@ class GaussianMeasure:
             )
             return GaussianMeasure(
                 covariance=self.covariance,
-                expectation=self.domain.negative(self.expectation),
+                expectation=new_expectation,
                 sample=new_sample,
             )
 
     def __mul__(self, alpha: float) -> GaussianMeasure:
         """Scales the measure by a scalar alpha."""
+        new_expectation = (
+            None
+            if self.has_zero_expectation
+            else self.domain.multiply(alpha, self.expectation)
+        )
+
         if self.covariance_factor_set:
             return GaussianMeasure(
                 covariance_factor=alpha * self.covariance_factor,
-                expectation=self.domain.multiply(alpha, self.expectation),
+                expectation=new_expectation,
             )
 
         new_sample = (
@@ -822,7 +948,7 @@ class GaussianMeasure:
         )
         return GaussianMeasure(
             covariance=alpha**2 * self.covariance,
-            expectation=self.domain.multiply(alpha, self.expectation),
+            expectation=new_expectation,
             sample=new_sample,
         )
 
@@ -841,6 +967,15 @@ class GaussianMeasure:
         if self.domain != other.domain:
             raise ValueError("Measures must be defined on the same domain.")
 
+        if self.has_zero_expectation and other.has_zero_expectation:
+            new_expectation = None
+        elif self.has_zero_expectation:
+            new_expectation = other.expectation
+        elif other.has_zero_expectation:
+            new_expectation = self.expectation
+        else:
+            new_expectation = self.domain.add(self.expectation, other.expectation)
+
         new_sample = (
             (lambda: self.domain.add(self.sample(), other.sample()))
             if self.sample_set and other.sample_set
@@ -848,7 +983,7 @@ class GaussianMeasure:
         )
         return GaussianMeasure(
             covariance=self.covariance + other.covariance,
-            expectation=self.domain.add(self.expectation, other.expectation),
+            expectation=new_expectation,
             sample=new_sample,
         )
 
@@ -859,6 +994,15 @@ class GaussianMeasure:
         if self.domain != other.domain:
             raise ValueError("Measures must be defined on the same domain.")
 
+        if self.has_zero_expectation and other.has_zero_expectation:
+            new_expectation = None
+        elif self.has_zero_expectation:
+            new_expectation = self.domain.negative(other.expectation)
+        elif other.has_zero_expectation:
+            new_expectation = self.expectation
+        else:
+            new_expectation = self.domain.subtract(self.expectation, other.expectation)
+
         new_sample = (
             (lambda: self.domain.subtract(self.sample(), other.sample()))
             if self.sample_set and other.sample_set
@@ -866,7 +1010,7 @@ class GaussianMeasure:
         )
         return GaussianMeasure(
             covariance=self.covariance + other.covariance,
-            expectation=self.domain.subtract(self.expectation, other.expectation),
+            expectation=new_expectation,
             sample=new_sample,
         )
 
@@ -879,4 +1023,6 @@ class GaussianMeasure:
         covariance_factor = self.covariance_factor
         w = np.random.randn(covariance_factor.domain.dim)
         value = covariance_factor(w)
+        if self.has_zero_expectation:
+            return value
         return self.domain.add(value, self.expectation)

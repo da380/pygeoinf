@@ -124,19 +124,27 @@ class LinearBayesianInversion(LinearInversion):
 
         # 2. Compute Posterior Mean
         # Shift data: d - A(mu_u)
-        shifted_data = data_space.subtract(
-            data, forward_operator(self.model_prior_measure.expectation)
-        )
+        if self.model_prior_measure.has_zero_expectation:
+            shifted_data = data_space.copy(data)
+        else:
+            shifted_data = data_space.subtract(
+                data, forward_operator(self.model_prior_measure.expectation)
+            )
 
         # Shift for noise mean: d - A(mu_u) - mu_e
         if self.forward_problem.data_error_measure_set:
-            error_expectation = self.forward_problem.data_error_measure.expectation
-            shifted_data = data_space.subtract(shifted_data, error_expectation)
-        else:
-            error_expectation = data_space.zero
+            if not self.forward_problem.data_error_measure.has_zero_expectation:
+                error_expectation = self.forward_problem.data_error_measure.expectation
+                shifted_data = data_space.subtract(shifted_data, error_expectation)
 
         mean_update = kalman_gain(shifted_data)
-        expectation = model_space.add(self.model_prior_measure.expectation, mean_update)
+
+        if self.model_prior_measure.has_zero_expectation:
+            expectation = mean_update
+        else:
+            expectation = model_space.add(
+                self.model_prior_measure.expectation, mean_update
+            )
 
         # 3. Compute Posterior Covariance (Implicitly)
         # C_post = C_u - K A C_u

@@ -309,8 +309,36 @@ class InvariantGaussianMeasure(GaussianMeasure):
         return InvariantGaussianMeasure(
             self.domain,
             new_variances,
-            expectation=self.expectation,
+            expectation=self._expectation,  # Pass the raw attribute to avoid zero instantiation
         )
+
+    def kl_divergence(self, other: GaussianMeasure) -> float:
+        """
+        Computes the exact Kullback-Leibler (KL) divergence D_KL(self || other).
+
+        If 'other' is also an InvariantGaussianMeasure, this calculates the divergence
+        in ultra-fast O(N) time directly from the spectral variances.
+        """
+        if isinstance(other, InvariantGaussianMeasure) and self.domain == other.domain:
+            k = self.domain.dim
+            var_p = self.spectral_variances
+            var_q = other.spectral_variances
+
+            trace_term = np.sum(var_p / var_q)
+            log_det_term = np.sum(np.log(var_q)) - np.sum(np.log(var_p))
+
+            if self.has_zero_expectation and other.has_zero_expectation:
+                mahalanobis_term = 0.0
+            else:
+                diff = self.domain.subtract(self.expectation, other.expectation)
+                inv_Q = other.covariance.inverse
+                diff_invQ = inv_Q(diff)
+                mahalanobis_term = self.domain.inner_product(diff, diff_invQ)
+
+            return float(0.5 * (trace_term + mahalanobis_term - k + log_det_term))
+
+        # Fallback to the dense Galerkin method for mixed types
+        return super().kl_divergence(other)
 
     # ------------------------------------------------------#
     #           Overloads of base class methods             #
@@ -328,8 +356,14 @@ class InvariantGaussianMeasure(GaussianMeasure):
         """
 
         if operator is None:
-            _translation = translation if translation is not None else self.domain.zero
-            new_expectation = self.domain.add(self.expectation, _translation)
+            if self.has_zero_expectation:
+                new_expectation = translation
+            else:
+                new_expectation = (
+                    self.domain.add(self.expectation, translation)
+                    if translation is not None
+                    else self.expectation
+                )
 
             return InvariantGaussianMeasure(
                 self.domain, self.spectral_variances, expectation=new_expectation
@@ -338,8 +372,15 @@ class InvariantGaussianMeasure(GaussianMeasure):
         if isinstance(operator, InvariantLinearAutomorphism):
             new_covariance = self.covariance @ operator @ operator
 
-            _translation = translation if translation is not None else self._domain.zero
-            new_expectation = self._domain.add(operator(self.expectation), _translation)
+            if self.has_zero_expectation:
+                new_expectation = translation
+            else:
+                mapped_exp = operator(self.expectation)
+                new_expectation = (
+                    self._domain.add(mapped_exp, translation)
+                    if translation is not None
+                    else mapped_exp
+                )
 
             return InvariantGaussianMeasure(
                 self._domain,
@@ -354,13 +395,21 @@ class InvariantGaussianMeasure(GaussianMeasure):
         return InvariantGaussianMeasure(
             self.domain,
             self.spectral_variances,
-            expectation=self.domain.negative(self.expectation),
+            expectation=(
+                None
+                if self.has_zero_expectation
+                else self.domain.negative(self.expectation)
+            ),
         )
 
     def __mul__(self, alpha: float) -> InvariantGaussianMeasure:
         """Scales the measure by a scalar alpha."""
         new_variances = (alpha**2) * self.spectral_variances
-        new_expectation = self.domain.multiply(alpha, self.expectation)
+        new_expectation = (
+            None
+            if self.has_zero_expectation
+            else self.domain.multiply(alpha, self.expectation)
+        )
 
         return InvariantGaussianMeasure(
             self.domain,
@@ -381,7 +430,15 @@ class InvariantGaussianMeasure(GaussianMeasure):
 
         if isinstance(other, InvariantGaussianMeasure):
             new_variances = self.spectral_variances + other.spectral_variances
-            new_expectation = self.domain.add(self.expectation, other.expectation)
+
+            if self.has_zero_expectation and other.has_zero_expectation:
+                new_expectation = None
+            elif self.has_zero_expectation:
+                new_expectation = other.expectation
+            elif other.has_zero_expectation:
+                new_expectation = self.expectation
+            else:
+                new_expectation = self.domain.add(self.expectation, other.expectation)
 
             return InvariantGaussianMeasure(
                 self.domain,
@@ -398,7 +455,17 @@ class InvariantGaussianMeasure(GaussianMeasure):
 
         if isinstance(other, InvariantGaussianMeasure):
             new_variances = self.spectral_variances + other.spectral_variances
-            new_expectation = self.domain.subtract(self.expectation, other.expectation)
+
+            if self.has_zero_expectation and other.has_zero_expectation:
+                new_expectation = None
+            elif self.has_zero_expectation:
+                new_expectation = self.domain.negative(other.expectation)
+            elif other.has_zero_expectation:
+                new_expectation = self.expectation
+            else:
+                new_expectation = self.domain.subtract(
+                    self.expectation, other.expectation
+                )
 
             return InvariantGaussianMeasure(
                 self.domain,
@@ -419,6 +486,9 @@ class InvariantGaussianMeasure(GaussianMeasure):
         xi = np.random.randn(self.domain.dim)
         scaled_components = xi * self._kl_scaling_array
         sample_vector = self.domain.from_components(scaled_components)
+
+        if self.has_zero_expectation:
+            return sample_vector
         return self.domain.add(sample_vector, self.expectation)
 
 
