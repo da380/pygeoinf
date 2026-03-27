@@ -16,8 +16,6 @@ if TYPE_CHECKING:
     from .hilbert_space import Vector
 
 
-
-
 class IdentityPreconditioningMethod(LinearSolver):
     """
     A trivial preconditioning method that returns the Identity operator.
@@ -342,30 +340,176 @@ class ExactBlockPreconditioningMethod(LinearSolver):
         for j in missing_indices:
             col_to_rows[j] = {j}
 
+        # 1. Get the matrix-free representation to handle to/from component mappings
+        scipy_op = operator.matrix(galerkin=self._galerkin)
+
         def _process_column(j: int):
-            e_j = domain.basis_vector(j)
-            L_e_j = operator(e_j)
+            # Standard Euclidean basis vector
+            e_j = np.zeros(domain.dim)
+            e_j[j] = 1.0
 
+            # Extract the full j-th column
+            col_vals = scipy_op @ e_j
+
+            # Only keep the rows specified by the block structure
             rows = list(col_to_rows[j])
-            vals = []
+            vals = col_vals[rows]
 
-            if self._galerkin:
-                for i in rows:
-                    e_i = codomain.basis_vector(i)
-                    vals.append(codomain.inner_product(e_i, L_e_j))
-            else:
-                c_vec = codomain.to_components(L_e_j)
-                for i in rows:
-                    vals.append(c_vec[i])
+            return rows, [j] * len(rows), vals.tolist()
 
-            return rows, [j] * len(rows), vals
-
+        # 2. Execute column processing (in parallel if requested)
         if self._parallel:
             results = Parallel(n_jobs=self._n_jobs)(
                 delayed(_process_column)(j) for j in col_to_rows.keys()
             )
         else:
             results = [_process_column(j) for j in col_to_rows.keys()]
+
+        # 3. Assemble the sparse matrix components
+        I_global, J_global, V_local = [], [], []
+        for rows, cols, vals in results:
+            I_global.extend(rows)
+            J_global.extend(cols)
+            V_local.extend(vals)
+
+        sparse_matrix = sps.coo_matrix(
+            (V_local, (I_global, J_global)), shape=(codomain.dim, domain.dim)
+        ).tocsc()
+
+        # 4. Factorize the resulting sparse representation
+        if self._incomplete:
+            factorization = splinalg.spilu(
+                sparse_matrix, drop_tol=self._drop_tol, fill_factor=self._fill_factor
+            )
+        else:
+            factorization = splinalg.splu(sparse_matrix)
+
+        def mapping(x: Vector) -> Vector:
+            c = domain.to_components(x)
+            c_solved = factorization.solve(c)
+            return codomain.from_components(c_solved)
+
+        def adjoint_mapping(y: Vector) -> Vector:
+            c = codomain.to_components(y)
+            c_solved = factorization.solve(c, trans="T")
+            return domain.from_components(c_solved)
+
+        return LinearOperator(
+            codomain,
+            domain,
+            mapping,
+            adjoint_mapping=adjoint_mapping,
+        )
+
+
+class ColumnThresholdedPreconditioningMethod(LinearSolver):
+    """
+    A LinearSolver wrapper that generates a sparse preconditioner by evaluating
+    the operator column-by-column, dropping elements that are small relative
+    to the diagonal element, and optionally capping the maximum number of
+    retained non-zeros per column.
+    """
+
+    def __init__(
+        self,
+        threshold: float,
+        /,
+        *,
+        max_nnz: Optional[int] = None,
+        galerkin: bool = True,
+        incomplete: bool = False,
+        drop_tol: float = 1e-4,
+        fill_factor: float = 10.0,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> None:
+        """
+        Args:
+            threshold: The relative cutoff value. Elements in column j with an
+                absolute value strictly less than `threshold * abs(A[j, j])` are dropped.
+            max_nnz: The maximum number of non-zero elements to retain per column.
+                If the threshold leaves more than this, only the largest are kept.
+            galerkin: Whether to extract the entries using the Galerkin representation.
+            incomplete: If True, uses an Incomplete LU (ILU) factorization.
+            drop_tol: For ILU, the relative tolerance for dropping small elements.
+            fill_factor: For ILU, the maximum allowed fill-in ratio.
+            parallel: If True, evaluates the operator columns in parallel.
+            n_jobs: Number of parallel jobs to use.
+        """
+        if threshold < 0:
+            raise ValueError("Threshold must be a non-negative number.")
+        if max_nnz is not None and max_nnz < 1:
+            raise ValueError("max_nnz must be at least 1 to retain the diagonal.")
+
+        self._threshold = threshold
+        self._max_nnz = max_nnz
+        self._galerkin = galerkin
+        self._incomplete = incomplete
+        self._drop_tol = drop_tol
+        self._fill_factor = fill_factor
+        self._parallel = parallel
+        self._n_jobs = n_jobs
+
+    def __call__(self, operator: LinearOperator) -> LinearOperator:
+        domain = operator.domain
+        codomain = operator.codomain
+
+        if domain.dim != codomain.dim:
+            raise ValueError(
+                "ColumnThresholdedPreconditioningMethod requires a square operator."
+            )
+
+        scipy_op = operator.matrix(galerkin=self._galerkin)
+
+        def _process_column(j: int):
+            e_j = np.zeros(domain.dim)
+            e_j[j] = 1.0
+
+            # Extract the j-th column
+            col_vals = scipy_op @ e_j
+            abs_vals = np.abs(col_vals)
+
+            diag_val = abs_vals[j]
+            if diag_val < 1e-14:
+                diag_val = np.max(abs_vals)
+
+            cutoff = self._threshold * diag_val
+
+            # Find all elements that satisfy the threshold
+            valid_indices = np.where(abs_vals >= cutoff)[0]
+
+            # If we exceed max_nnz, we need to strictly truncate
+            if self._max_nnz is not None and len(valid_indices) > self._max_nnz:
+
+                k = self._max_nnz - 1  # We need k extra elements (excluding diagonal)
+
+                if k > 0:
+                    # Mask the diagonal so we don't accidentally select it twice
+                    abs_vals_masked = abs_vals.copy()
+                    abs_vals_masked[j] = -1.0
+
+                    # Use O(N) argpartition to find the indices of the top k elements
+                    top_k_indices = np.argpartition(abs_vals_masked, -k)[-k:]
+                    rows = np.append(top_k_indices, j)
+                else:
+                    rows = np.array([j])
+
+            else:
+                # Standard thresholding: just ensure the diagonal is included
+                if j not in valid_indices:
+                    rows = np.append(valid_indices, j)
+                else:
+                    rows = valid_indices
+
+            vals = col_vals[rows]
+            return rows.tolist(), [j] * len(rows), vals.tolist()
+
+        if self._parallel:
+            results = Parallel(n_jobs=self._n_jobs)(
+                delayed(_process_column)(j) for j in range(domain.dim)
+            )
+        else:
+            results = [_process_column(j) for j in range(domain.dim)]
 
         I_global, J_global, V_local = [], [], []
         for rows, cols, vals in results:
