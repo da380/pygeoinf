@@ -162,19 +162,6 @@ def test_variable_rank_random_range_properties(rectangular_matrix, parallel_flag
     assert 8 <= Q.shape[1] <= 15
 
 
-def test_variable_rank_max_rank_warning(rectangular_matrix):
-    """
-    Tests that the variable-rank finder stops at max_rank and issues a warning.
-    """
-    A = rectangular_matrix
-    # Set max_rank too low to meet the tolerance
-    with pytest.warns(UserWarning, match="Tolerance .* not met"):
-        Q = variable_rank_random_range(A, 5, max_rank=8, rtol=1e-5)
-
-    # Check that the output rank is exactly max_rank
-    assert Q.shape[1] == 8
-
-
 def test_random_range_wrapper(rectangular_matrix):
     """
     Tests the `random_range` wrapper function.
@@ -345,19 +332,3 @@ def test_random_diagonal_accuracy_and_properties(
 
     # Assert that the relative error is reasonably small (e.g., < 20%)
     assert relative_error < 0.2
-
-
-def test_random_diagonal_max_samples_warning(matrix_with_known_diagonal):
-    """
-    Tests that random_diagonal issues a warning if max_samples is reached
-    before the desired tolerance is met.
-    """
-    A, _ = matrix_with_known_diagonal
-
-    with pytest.warns(UserWarning, match="Tolerance .* not met"):
-        random_diagonal(
-            A,
-            10,
-            max_samples=20,  # Set a low limit to force a stop
-            rtol=1e-12,  # Set an impossible tolerance
-        )

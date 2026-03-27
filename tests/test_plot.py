@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 import scipy.stats as stats
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions
@@ -83,7 +83,8 @@ def scipy_multivariate_normal_2d():
 @pytest.fixture
 def mock_measure_1d():
     """Provides a mock measure object for testing edge cases."""
-    mock = Mock()
+    # Add spec=GaussianMeasure here!
+    mock = Mock(spec=GaussianMeasure)
     mock.expectation = np.array([3.0])
 
     # Mock covariance object
@@ -97,7 +98,8 @@ def mock_measure_1d():
 @pytest.fixture
 def mock_measure_2d():
     """Provides a 2D mock measure object for testing edge cases."""
-    mock = Mock()
+    # Add spec=GaussianMeasure here!
+    mock = Mock(spec=GaussianMeasure)
     mock.expectation = np.array([1.0, 2.5])
 
     # Mock covariance object
@@ -118,7 +120,8 @@ class TestPlot1DDistributions:
 
     def test_single_posterior_only(self, gaussian_measure_1d):
         """Test plotting a single posterior distribution without prior."""
-        fig, ax = plot_1d_distributions(gaussian_measure_1d, show_plot=False)
+        ax = plot_1d_distributions(gaussian_measure_1d)
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -129,11 +132,11 @@ class TestPlot1DDistributions:
 
     def test_single_posterior_with_prior(self, gaussian_measure_1d, mock_measure_1d):
         """Test plotting posterior with prior distribution."""
-        fig, (ax1, ax2) = plot_1d_distributions(
+        ax1, ax2 = plot_1d_distributions(
             gaussian_measure_1d,
             prior_measures=mock_measure_1d,
-            show_plot=False,
         )
+        fig = ax1.get_figure()
 
         assert fig is not None
         assert ax1 is not None
@@ -145,9 +148,8 @@ class TestPlot1DDistributions:
 
     def test_multiple_posteriors(self, gaussian_measure_1d, mock_measure_1d):
         """Test plotting multiple posterior distributions."""
-        fig, ax = plot_1d_distributions(
-            [gaussian_measure_1d, mock_measure_1d], show_plot=False
-        )
+        ax = plot_1d_distributions([gaussian_measure_1d, mock_measure_1d])
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -158,11 +160,11 @@ class TestPlot1DDistributions:
 
     def test_multiple_priors_and_posteriors(self, gaussian_measure_1d, mock_measure_1d):
         """Test plotting multiple priors and posteriors."""
-        fig, (ax1, ax2) = plot_1d_distributions(
+        ax1, ax2 = plot_1d_distributions(
             [gaussian_measure_1d, mock_measure_1d],
             prior_measures=[mock_measure_1d, gaussian_measure_1d],
-            show_plot=False,
         )
+        fig = ax1.get_figure()
 
         assert fig is not None
         assert ax1 is not None
@@ -175,9 +177,8 @@ class TestPlot1DDistributions:
     def test_with_true_value(self, gaussian_measure_1d):
         """Test plotting with a true value line."""
         true_val = 2.5
-        fig, ax = plot_1d_distributions(
-            gaussian_measure_1d, true_value=true_val, show_plot=False
-        )
+        ax = plot_1d_distributions(gaussian_measure_1d, true_value=true_val)
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -194,7 +195,8 @@ class TestPlot1DDistributions:
 
     def test_scipy_distribution(self, scipy_multivariate_normal_1d):
         """Test plotting with scipy distribution objects."""
-        fig, ax = plot_1d_distributions(scipy_multivariate_normal_1d, show_plot=False)
+        ax = plot_1d_distributions(scipy_multivariate_normal_1d)
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -203,19 +205,19 @@ class TestPlot1DDistributions:
         plt.close(fig)
 
     def test_custom_parameters(self, gaussian_measure_1d):
-        """Test plotting with custom parameters."""
-        fig, ax = plot_1d_distributions(
+        """Test plotting with custom parameters and passing an existing ax."""
+        fig, ax_in = plt.subplots(figsize=(10, 6))
+
+        ax_out = plot_1d_distributions(
             gaussian_measure_1d,
+            ax=ax_in,
             xlabel="Custom X Label",
             title="Custom Title",
-            figsize=(10, 6),
-            show_plot=False,
         )
 
-        assert fig is not None
-        assert ax is not None
-        assert ax.get_xlabel() == "Custom X Label"
-        assert fig._suptitle.get_text() == "Custom Title"
+        assert ax_out is ax_in
+        assert ax_out.get_xlabel() == "Custom X Label"
+        assert ax_out.get_title() == "Custom Title"
         assert fig.get_size_inches()[0] == 10
         assert fig.get_size_inches()[1] == 6
 
@@ -224,13 +226,7 @@ class TestPlot1DDistributions:
     def test_empty_list_raises_error(self):
         """Test that empty posterior list raises appropriate error."""
         with pytest.raises(ValueError):
-            plot_1d_distributions([], show_plot=False)
-
-    @patch("matplotlib.pyplot.show")
-    def test_show_plot_true(self, mock_show, gaussian_measure_1d):
-        """Test that plt.show is called when show_plot=True."""
-        plot_1d_distributions(gaussian_measure_1d, show_plot=True)
-        mock_show.assert_called_once()
+            plot_1d_distributions([])
 
 
 # =============================================================================
@@ -243,7 +239,8 @@ class TestPlotCornerDistributions:
 
     def test_1d_corner_plot(self, gaussian_measure_1d):
         """Test corner plot for 1D distribution."""
-        fig, axes = plot_corner_distributions(gaussian_measure_1d, show_plot=False)
+        axes = plot_corner_distributions(gaussian_measure_1d)
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
@@ -253,7 +250,8 @@ class TestPlotCornerDistributions:
 
     def test_2d_corner_plot(self, gaussian_measure_2d):
         """Test corner plot for 2D distribution."""
-        fig, axes = plot_corner_distributions(gaussian_measure_2d, show_plot=False)
+        axes = plot_corner_distributions(gaussian_measure_2d)
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
@@ -273,7 +271,8 @@ class TestPlotCornerDistributions:
 
     def test_3d_corner_plot(self, gaussian_measure_3d):
         """Test corner plot for 3D distribution."""
-        fig, axes = plot_corner_distributions(gaussian_measure_3d, show_plot=False)
+        axes = plot_corner_distributions(gaussian_measure_3d)
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
@@ -293,11 +292,11 @@ class TestPlotCornerDistributions:
     def test_with_true_values(self, gaussian_measure_2d):
         """Test corner plot with true values."""
         true_vals = [1.2, 2.3]
-        fig, axes = plot_corner_distributions(
+        axes = plot_corner_distributions(
             gaussian_measure_2d,
             true_values=true_vals,
-            show_plot=False,
         )
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
@@ -313,9 +312,8 @@ class TestPlotCornerDistributions:
     def test_with_custom_labels(self, gaussian_measure_2d):
         """Test corner plot with custom dimension labels."""
         labels = ["Parameter A", "Parameter B"]
-        fig, axes = plot_corner_distributions(
-            gaussian_measure_2d, labels=labels, show_plot=False
-        )
+        axes = plot_corner_distributions(gaussian_measure_2d, labels=labels)
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
@@ -326,14 +324,14 @@ class TestPlotCornerDistributions:
 
     def test_custom_parameters(self, gaussian_measure_2d):
         """Test corner plot with custom parameters."""
-        fig, axes = plot_corner_distributions(
+        axes = plot_corner_distributions(
             gaussian_measure_2d,
             title="Custom Corner Plot",
             figsize=(8, 8),
             colormap="Reds",
             include_sigma_contours=False,
-            show_plot=False,
         )
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
@@ -349,15 +347,7 @@ class TestPlotCornerDistributions:
         # Missing required attributes
 
         with pytest.raises((ValueError, TypeError)):
-            plot_corner_distributions(
-                posterior_measure=invalid_measure, show_plot=False
-            )
-
-    @patch("matplotlib.pyplot.show")
-    def test_show_plot_true(self, mock_show, gaussian_measure_2d):
-        """Test that plt.show is called when show_plot=True."""
-        plot_corner_distributions(gaussian_measure_2d, show_plot=True)
-        mock_show.assert_called_once()
+            plot_corner_distributions(posterior_measure=invalid_measure)
 
 
 # =============================================================================
@@ -384,12 +374,12 @@ class TestPlotIntegration:
         )
 
         # Test 1D plotting
-        fig, (ax1, ax2) = plot_1d_distributions(
+        ax1, ax2 = plot_1d_distributions(
             posterior_measure,
             prior_measures=prior_measure,
             true_value=0.8,
-            show_plot=False,
         )
+        fig = ax1.get_figure()
 
         assert fig is not None
         assert ax1 is not None
@@ -407,12 +397,12 @@ class TestPlotIntegration:
         )
 
         # Test corner plotting
-        fig, axes = plot_corner_distributions(
+        axes = plot_corner_distributions(
             posterior_measure,
             true_values=[0.9, 2.1],
             labels=["X coordinate", "Y coordinate"],
-            show_plot=False,
         )
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
@@ -424,10 +414,8 @@ class TestPlotIntegration:
         self, gaussian_measure_1d, scipy_multivariate_normal_1d
     ):
         """Test plotting with mixed measure types."""
-        fig, ax = plot_1d_distributions(
-            [gaussian_measure_1d, scipy_multivariate_normal_1d],
-            show_plot=False,
-        )
+        ax = plot_1d_distributions([gaussian_measure_1d, scipy_multivariate_normal_1d])
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -452,7 +440,8 @@ class TestPlotEdgeCases:
             euclidean_space_1d, cov_matrix, expectation=mean
         )
 
-        fig, ax = plot_1d_distributions(measure, show_plot=False)
+        ax = plot_1d_distributions(measure)
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -467,7 +456,8 @@ class TestPlotEdgeCases:
             euclidean_space_1d, cov_matrix, expectation=mean
         )
 
-        fig, ax = plot_1d_distributions(measure, show_plot=False)
+        ax = plot_1d_distributions(measure)
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -479,9 +469,8 @@ class TestPlotEdgeCases:
         # True value very far from the distribution
         true_val = 100.0  # Distribution mean is around 2.0
 
-        fig, ax = plot_1d_distributions(
-            gaussian_measure_1d, true_value=true_val, show_plot=False
-        )
+        ax = plot_1d_distributions(gaussian_measure_1d, true_value=true_val)
+        fig = ax.get_figure()
 
         assert fig is not None
         assert ax is not None
@@ -490,7 +479,8 @@ class TestPlotEdgeCases:
 
     def test_single_dimension_corner_plot_edge_case(self, gaussian_measure_1d):
         """Test corner plot with single dimension (edge case)."""
-        fig, axes = plot_corner_distributions(gaussian_measure_1d, show_plot=False)
+        axes = plot_corner_distributions(gaussian_measure_1d)
+        fig = axes[0, 0].get_figure()
 
         assert fig is not None
         assert axes is not None
