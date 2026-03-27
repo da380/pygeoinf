@@ -1302,10 +1302,10 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         self,
         prior_measure: InvariantGaussianMeasure,
         points: List[Point],
-        data_error_measure: GaussianMeasure,
         max_distance: float,
         /,
         *,
+        data_error_measure: Optional[GaussianMeasure],
         apply_taper: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
@@ -1325,9 +1325,10 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         Args:
             prior_measure: The invariant prior Gaussian measure.
             points: The list of observation points.
-            data_error_measure: The Gaussian measure describing the data noise.
             max_distance: The geodesic distance beyond which covariance is assumed
                           to be zero (enforces sparsity). Set to 0.0 for a pure diagonal.
+            data_error_measure: The Gaussian measure describing the data noise. Can be None
+                                if the noise is already folded into the prior_measure.
             apply_taper: If true, applies Gaspari-Cohn taper.
             parallel: If True, computes the error measure diagonal in parallel.
             n_jobs: Number of CPU cores to use if parallel=True.
@@ -1349,11 +1350,13 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             q_rep1 = prior_measure.covariance(rep1)
             prior_var = float(self.inner_product(rep1, q_rep1))
 
-            noise_variance = data_error_measure.covariance.extract_diagonal(
-                galerkin=True, parallel=parallel, n_jobs=n_jobs
-            )
-
-            inv_diag = 1.0 / (prior_var + noise_variance)
+            if data_error_measure is not None:
+                noise_variance = data_error_measure.covariance.extract_diagonal(
+                    galerkin=True, parallel=parallel, n_jobs=n_jobs
+                )
+                inv_diag = 1.0 / (prior_var + noise_variance)
+            else:
+                inv_diag = 1.0 / prior_var
 
             def apply_diag_preconditioner(x):
                 c_vec = data_space.to_components(x)
@@ -1370,7 +1373,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         # STANDARD CASE: Distance-Localized Sparse Preconditioner
         # =======================================================
 
-        n_interp_points = max(20, int(4.0 * max_distance / self.scale))
+        n_interp_points = max(50, int(10.0 * max_distance / self.scale))
         exact_distances = np.linspace(0.0, max_distance * 1.1, n_interp_points)
 
         p1 = self.random_point()
@@ -1434,12 +1437,14 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             (values, (row_indices, col_indices)), shape=(n_data, n_data)
         )
 
-        noise_variance = data_error_measure.covariance.extract_diagonal(
-            galerkin=True, parallel=parallel, n_jobs=n_jobs
-        )
-        R_sparse = sps.diags(noise_variance)
-
-        H_approx = (H_sparse + R_sparse).tocsc()
+        if data_error_measure is not None:
+            noise_variance = data_error_measure.covariance.extract_diagonal(
+                galerkin=True, parallel=parallel, n_jobs=n_jobs
+            )
+            R_sparse = sps.diags(noise_variance)
+            H_approx = (H_sparse + R_sparse).tocsc()
+        else:
+            H_approx = H_sparse.tocsc()
 
         splu_solver = splinalg.splu(H_approx)
 

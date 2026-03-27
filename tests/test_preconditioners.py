@@ -8,6 +8,9 @@ from pygeoinf.preconditioners import (
     JacobiPreconditioningMethod,
     SpectralPreconditioningMethod,
     IterativePreconditioningMethod,
+    BandedPreconditioningMethod,
+    ExactBlockPreconditioningMethod,
+    ColumnThresholdedPreconditioningMethod,
 )
 from pygeoinf.linear_optimisation import LinearLeastSquaresInversion
 from pygeoinf.forward_problem import LinearForwardProblem
@@ -128,11 +131,73 @@ def test_iterative_preconditioner_with_fcg(inversion_setup, x):
     assert np.allclose(x_sol, x_ref, rtol=1e-7, atol=1e-7)
 
 
+def test_banded_preconditioner_in_least_squares(inversion_setup, x):
+    """Verifies CG converges correctly when using a banded sparse preconditioner."""
+    inversion = inversion_setup
+    damping = 0.01
+    data = inversion.forward_problem.forward_operator(x)
+
+    x_ref = get_reference_solution(inversion, damping, data)
+
+    banded_method = BandedPreconditioningMethod(2)
+    solver = CGSolver(rtol=1e-10)
+
+    ls_op = inversion.least_squares_operator(
+        damping, solver, preconditioner=banded_method
+    )
+    x_sol = ls_op(data)
+
+    assert np.allclose(x_sol, x_ref, rtol=1e-7, atol=1e-7)
+
+
+def test_exact_block_preconditioner_in_least_squares(inversion_setup, x):
+    """Verifies CG converges correctly when using an exact block preconditioner."""
+    inversion = inversion_setup
+    damping = 0.01
+    data = inversion.forward_problem.forward_operator(x)
+
+    x_ref = get_reference_solution(inversion, damping, data)
+
+    # Arbitrary contiguous blocks for the 10D test space
+    blocks = [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    block_method = ExactBlockPreconditioningMethod(blocks)
+    solver = CGSolver(rtol=1e-10)
+
+    ls_op = inversion.least_squares_operator(
+        damping, solver, preconditioner=block_method
+    )
+    x_sol = ls_op(data)
+
+    assert np.allclose(x_sol, x_ref, rtol=1e-7, atol=1e-7)
+
+
+def test_column_thresholded_preconditioner_in_least_squares(inversion_setup, x):
+    """Verifies CG converges correctly when using a dynamically thresholded sparse preconditioner."""
+    inversion = inversion_setup
+    damping = 0.1
+    data = inversion.forward_problem.forward_operator(x)
+
+    x_ref = get_reference_solution(inversion, damping, data)
+
+    threshold_method = ColumnThresholdedPreconditioningMethod(1e-3)
+    solver = CGSolver(rtol=1e-10)
+
+    ls_op = inversion.least_squares_operator(
+        damping, solver, preconditioner=threshold_method
+    )
+    x_sol = ls_op(data)
+
+    assert np.allclose(x_sol, x_ref, rtol=1e-7, atol=1e-7)
+
+
 @pytest.mark.parametrize(
     "method_class",
     [
         IdentityPreconditioningMethod,
         lambda: JacobiPreconditioningMethod(num_samples=10),
+        lambda: BandedPreconditioningMethod(2),
+        lambda: ExactBlockPreconditioningMethod([[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]]),
+        lambda: ColumnThresholdedPreconditioningMethod(0.1),
     ],
 )
 def test_preconditioner_api_consistency(inversion_setup, method_class):
