@@ -5,7 +5,6 @@ import numpy as np
 from scipy.fft import rfft, irfft
 
 import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
 from pygeoinf.linear_operators import LinearOperator
@@ -63,7 +62,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return self._radius
 
     @property
-    def angle_spacing(self) -> float:
+    def point_spacing(self) -> float:
         """The angular spacing between grid points."""
         return np.pi / self.kmax
 
@@ -87,10 +86,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     #                 Public methods                 #
     # -----------------------------------------------#
 
-    def angles(self) -> np.ndarray:
+    def points(self) -> np.ndarray:
         """Returns a numpy array of the grid point angles."""
         return np.fromiter(
-            [i * self.angle_spacing for i in range(2 * self.kmax)],
+            [i * self.point_spacing for i in range(2 * self.kmax)],
             float,
         )
 
@@ -103,7 +102,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Args:
             f: A function that takes an angle (float) and returns a value.
         """
-        return np.fromiter((f(theta) for theta in self.angles()), float)
+        return np.fromiter((f(theta) for theta in self.points()), float)
 
     def to_coefficients(self, u: np.ndarray) -> np.ndarray:
         """Maps a function vector to its complex Fourier coefficients."""
@@ -297,6 +296,7 @@ class Sobolev(SymmetricSobolevSpace):
         /,
         *,
         radius: float = 1.0,
+        safe: bool = True,
     ):
         """
         Args:
@@ -304,10 +304,12 @@ class Sobolev(SymmetricSobolevSpace):
         order: The Sobolev order, controlling the smoothness of functions.
         scale: The Sobolev length-scale.
         radius: Radius of the circle. Defaults to 1.0.
+        safe: If true, the class checks for mathematical correctness of operations
+                  where possible.
         """
 
         lebesgue_space = Lebesgue(kmax, radius=radius)
-        SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale)
+        SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale, safe=safe)
 
     @staticmethod
     def from_sobolev_parameters(
@@ -318,6 +320,7 @@ class Sobolev(SymmetricSobolevSpace):
         radius: float = 1.0,
         rtol: float = 1e-6,
         power_of_two: bool = False,
+        safe: bool = True,
     ) -> "Sobolev":
         """
         Creates an instance with `kmax` chosen based on Sobolev parameters.
@@ -332,6 +335,8 @@ class Sobolev(SymmetricSobolevSpace):
             rtol: Relative tolerance used in assessing truncation error.
                 Defaults to 1e-8.
             power_of_two: If True, `kmax` is set to the next power of two.
+            safe: If true, the class checks for mathematical correctness of operations
+                  where possible.
 
         Returns:
             An instance of the Sobolev class with an appropriate `kmax`.
@@ -339,7 +344,7 @@ class Sobolev(SymmetricSobolevSpace):
         Raises:
             ValueError: If order is <= 0.5.
         """
-        if order <= 0.5:
+        if safe and order <= 0.5:
             raise ValueError("This method is only applicable for orders > 0.5")
 
         summation = 1.0
@@ -373,10 +378,14 @@ class Sobolev(SymmetricSobolevSpace):
         """The radius of the circle."""
         return self.underlying_space.radius
 
+    def points(self) -> np.ndarray:
+        """Returns a numpy array of the grid point angles."""
+        return self.underlying_space.points()
+
     @property
-    def angle_spacing(self) -> float:
+    def point_spacing(self) -> float:
         """The angular spacing between grid points."""
-        return self.underlying_space.angle_spacing
+        return self.underlying_space.point_spacing
 
     @property
     def fft_factor(self) -> float:
@@ -460,43 +469,35 @@ class Sobolev(SymmetricSobolevSpace):
 def plot(
     space: Lebesgue | Sobolev,
     u: np.ndarray,
-    fig: Optional[Figure] = None,
     ax: Optional[Axes] = None,
     **kwargs,
-) -> Tuple[Figure, Axes]:
+) -> Axes:
     """
     Creates a simple line plot of a function on the circle.
 
     Args:
-        angles: The function space.
+        space: The function space.
         u: A 1D numpy array representing the function values (the y-axis).
-        fig: An existing Matplotlib Figure object. If None, a new figure is created.
-        ax: An existing Matplotlib Axes object. If None, a new subplot is added.
-        **kwargs: Additional keyword arguments forwarded directly to `ax.plot()`
-            (e.g., `color`, `linewidth`, `label`).
+        ax: An existing Matplotlib Axes object. If None, plots to the current active axes.
+        **kwargs: Additional keyword arguments forwarded directly to `ax.plot()`.
 
     Returns:
-        A tuple `(fig, ax)` containing the Matplotlib Figure and Axes objects.
+        The Matplotlib Axes object.
     """
-    figsize = kwargs.pop("figsize", (10, 8))
-
-    if fig is None:
-        fig = plt.figure(figsize=figsize)
     if ax is None:
-        ax = fig.add_subplot()
+        ax = plt.gca()
 
-    ax.plot(space.angles(), u, **kwargs)
-    return fig, ax
+    ax.plot(space.points(), u, **kwargs)
+    return ax
 
 
 def plot_error_bounds(
     space: Lebesgue | Sobolev,
     u: np.ndarray,
     u_bound: np.ndarray,
-    fig: Optional[Figure] = None,
     ax: Optional[Axes] = None,
     **kwargs,
-) -> Tuple[Figure, Axes]:
+) -> Axes:
     """
     Plots a function on the circle along with its pointwise error bounds.
 
@@ -507,20 +508,14 @@ def plot_error_bounds(
         space: The function space.
         u: A 1D numpy array representing the mean function values.
         u_bound: A 1D numpy array giving the pointwise standard deviations or bounds.
-        fig: An existing Matplotlib Figure object. If None, a new figure is created.
-        ax: An existing Matplotlib Axes object. If None, a new subplot is added.
-        **kwargs: Additional keyword arguments forwarded directly to `ax.fill_between()`
-            (e.g., `alpha`, `color`).
+        ax: An existing Matplotlib Axes object. If None, plots to the current active axes.
+        **kwargs: Additional keyword arguments forwarded directly to `ax.fill_between()`.
 
     Returns:
-        A tuple `(fig, ax)` containing the Matplotlib Figure and Axes objects.
+        The Matplotlib Axes object.
     """
-    figsize = kwargs.pop("figsize", (10, 8))
-
-    if fig is None:
-        fig = plt.figure(figsize=figsize)
     if ax is None:
-        ax = fig.add_subplot()
+        ax = plt.gca()
 
-    ax.fill_between(space.angles(), u - u_bound, u + u_bound, **kwargs)
-    return fig, ax
+    ax.fill_between(space.points(), u - u_bound, u + u_bound, **kwargs)
+    return ax

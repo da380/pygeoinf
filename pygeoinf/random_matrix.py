@@ -141,9 +141,6 @@ def variable_rank_random_range(
     # Form the initial basis
     basis_vectors, _ = qr(ys, mode="economic")
 
-    # Progressively sample and check for convergence
-    converged = False
-
     # Dynamically estimate norm for tolerance calculation
     tol = None
 
@@ -168,7 +165,6 @@ def variable_rank_random_range(
 
         # Check for convergence
         if error < tol:
-            converged = True
             break
 
         # If not converged, add the new information to the basis
@@ -180,16 +176,6 @@ def variable_rank_random_range(
             break
 
         basis_vectors = np.hstack([basis_vectors, new_basis[:, :cols_to_add]])
-
-    if not converged and basis_vectors.shape[1] >= max_rank:
-        # If we reached the full dimension of the matrix,
-        # the result is exact, so no warning is needed.
-        if max_rank < min(m, n):
-            warnings.warn(
-                f"Tolerance {rtol} not met before reaching max_rank={max_rank}. "
-                "Result may be inaccurate. Consider increasing `max_rank` or `power`.",
-                UserWarning,
-            )
 
     return basis_vectors
 
@@ -460,7 +446,6 @@ def random_diagonal(
     if num_samples >= max_samples:
         return diag_estimate
 
-    converged = False
     while num_samples < max_samples:
         old_diag_estimate = diag_estimate.copy()
 
@@ -487,18 +472,10 @@ def random_diagonal(
         if norm_new_diag > 0:
             error = np.linalg.norm(diag_estimate - old_diag_estimate) / norm_new_diag
             if error < rtol:
-                converged = True
                 break
 
         # Update sums and counts for next iteration
         diag_sum += new_diag_sum
         num_samples = total_samples
-
-    if not converged and num_samples >= max_samples:
-        warnings.warn(
-            f"Tolerance {rtol} not met before reaching max_samples={max_samples}. "
-            "Result may be inaccurate. Consider increasing `max_samples` or `rtol`.",
-            UserWarning,
-        )
 
     return diag_estimate

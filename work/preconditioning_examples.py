@@ -16,7 +16,7 @@ allowing for robust testing of the solver under realistic observational conditio
 Available Preconditioning Strategies:
     - none:               Runs the CG solver without any preconditioning (baseline).
     - dense:              Based on Cholesky factorisation of dense matrix normal operator
-                          for the surogate system.
+                          for the surrogate system.
     - block:              Builds an exact, block-diagonal preconditioner by clustering
                           observation points using a K-D tree. Probes the surrogate
                           operator to form the localized blocks.
@@ -64,6 +64,9 @@ Command-Line Arguments:
     --lr-forward         (int)   Rank for randomized SVD of the forward operator.
     --lr-prior           (int)   Rank for randomized eigendecomposition of the prior.
     --lr-data-error      (int)   Rank for randomized eigendecomposition of the data error.
+
+    [Plotting Parameters]
+    --std-samples        (int)   Number of samples to use for plotting pointwise STD. If 0, only Expectation is plotted.
 
 Usage Examples:
     Run with default settings (block preconditioner):
@@ -232,6 +235,15 @@ def main():
         help="Maximum number of non-zeros to retain per column for the 'sparse' preconditioner",
     )
 
+    # --- Plotting Parameters ---
+    plot_group = parser.add_argument_group("Plotting Parameters")
+    plot_group.add_argument(
+        "--std-samples",
+        type=int,
+        default=0,
+        help="Number of samples to use for plotting pointwise STD. If 0, only Expectation is plotted.",
+    )
+
     args = parser.parse_args()
 
     # For reproducibility
@@ -332,7 +344,8 @@ def main():
 
         elif args.precond == "spectral":
             solver_wrapper = inf.SpectralPreconditioningMethod(
-                rank=args.rank, method="fixed"
+                rank=args.rank,
+                method="variable",
             )
             preconditioner = solver_wrapper(surrogate_normal_operator)
 
@@ -373,54 +386,70 @@ def main():
         data, solver, preconditioner=preconditioner
     )
     posterior_expectation = model_posterior_measure.expectation
-
     print(f"Number of CG iterations = {solver.iterations}")
 
-    cmap = "seismic"
+    if args.std_samples > 0:
+        print(f"Sampling pointwise STD with {args.std_samples} samples...")
+        posterior_std = model_posterior_measure.sample_pointwise_std(args.std_samples)
 
-    fig1, ax1, im1 = plot(
-        true_model, projection=ccrs.Robinson(), coasts=True, cmap=cmap
-    )
+        fig, (ax1, ax2) = plt.subplots(
+            1,
+            2,
+            figsize=(16, 7),
+            subplot_kw={"projection": ccrs.Robinson()},
+            layout="constrained",
+        )
+    else:
+        fig, ax1 = plt.subplots(
+            1,
+            1,
+            figsize=(8, 7),
+            subplot_kw={"projection": ccrs.Robinson()},
+            layout="constrained",
+        )
+
+    cmap_exp = "seismic"
+
+    _, im1 = plot(posterior_expectation, ax=ax1, coasts=True, cmap=cmap_exp)
+
+    vmin1, vmax1 = im1.get_clim()
+
     ax1.scatter(
         lons,
         lats,
         c=data,
-        cmap=cmap,
+        cmap=cmap_exp,
+        vmin=vmin1,
+        vmax=vmax1,
         edgecolors="black",
         linewidths=0.5,
-        s=20,
+        s=25,
         transform=ccrs.PlateCarree(),
         zorder=5,
     )
 
-    ax1.set_title("True Model")
+    ax1.set_title("Posterior Expectation")
+    fig.colorbar(im1, ax=ax1, orientation="horizontal", fraction=0.05, pad=0.04)
 
-    fig2, ax2, im2 = plot(
-        posterior_expectation, projection=ccrs.Robinson(), coasts=True, cmap=cmap
-    )
-    ax2.scatter(
-        lons,
-        lats,
-        c=data,
-        cmap=cmap,
-        edgecolors="black",
-        linewidths=0.5,
-        s=20,
-        transform=ccrs.PlateCarree(),
-        zorder=5,
-    )
-    ax2.set_title("Posterior Mean")
+    if args.std_samples > 0:
+        cmap_std = "viridis"
 
-    # 1. Calculate the global min and max across both fields AND the data points
-    vmin1, vmax1 = im1.get_clim()
-    vmin2, vmax2 = im2.get_clim()
+        _, im2 = plot(posterior_std, ax=ax2, coasts=True, cmap=cmap_std)
 
-    global_vmin = min(vmin1, vmin2, np.min(data))
-    global_vmax = max(vmax1, vmax2, np.max(data))
+        ax2.scatter(
+            lons,
+            lats,
+            color="white",
+            edgecolors="black",
+            marker="o",
+            linewidths=0.5,
+            s=20,
+            transform=ccrs.PlateCarree(),
+            zorder=5,
+        )
 
-    # 2. Force both background maps to use this unified color axis
-    im1.set_clim(global_vmin, global_vmax)
-    im2.set_clim(global_vmin, global_vmax)
+        ax2.set_title("Posterior Pointwise STD")
+        fig.colorbar(im2, ax=ax2, orientation="horizontal", fraction=0.05, pad=0.04)
 
     plt.show()
 

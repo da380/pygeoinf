@@ -953,15 +953,21 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         lebesgue_space: AbstractSymmetricLebesgueSpace,
         order: float,
         scale: float,
+        /,
+        *,
+        safe: Optional[bool] = True,
     ) -> None:
         """
         Args:
             lebesgue_space: The underlying L² space (which provides Δ eigenvalues).
             order: The Sobolev smoothness order (s).
             scale: The Sobolev length-scale (κ).
+            safe: If true, the class checks for mathematical correctness of operations
+                  where possible.
         """
         self._order = order
         self._scale = scale
+        self._safe = safe
 
         mass_operator = lebesgue_space.invariant_automorphism(self.sobolev_function)
         inverse_mass_operator = mass_operator.inverse
@@ -988,6 +994,13 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         """The Sobolev length-scale."""
         return self._scale
 
+    @property
+    def safe(self) -> bool:
+        """
+        True if mathematical checks are being applied.
+        """
+        return self._safe
+
     @abstractmethod
     def with_order(self, order: float) -> SymmetricSobolevSpace:
         """
@@ -997,7 +1010,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
 
     def order_inclusion_operator(self, target_order: float) -> LinearOperator:
         """Returns the inclusion operator from this space to one of a lower order."""
-        if target_order > self.order:
+        if self.safe and target_order > self.order:
             raise ValueError(
                 "Target order must be less than or equal to the current order."
             )
@@ -1015,7 +1028,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         """
         Returns the Dirac measure at the chosen point.
         """
-        if self.order <= self.spatial_dimension / 2:
+        if self.safe and self.order <= self.spatial_dimension / 2:
             raise NotImplementedError("The Dirac measure is not defined on this space.")
         cxp = self.laplacian_eigenvectors_at_point(point)
         return LinearForm(self, components=cxp)
@@ -1039,7 +1052,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         Args:
             points: A list of points at which to evaluate the functions.
         """
-        if self.order <= self.spatial_dimension / 2:
+        if self.safe and self.order <= self.spatial_dimension / 2:
             raise NotImplementedError("Point evaluation is not defined on this space")
 
         dim = len(points)
@@ -1168,7 +1181,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             NotImplementedError: If the Sobolev order :math:`s` is less than or
                 equal to half the spatial dimension :math:`n/2`.
         """
-        if self.order <= self.spatial_dimension / 2:
+        if self.safe and self.order <= self.spatial_dimension / 2:
             raise NotImplementedError(
                 f"Order {self.order} is too low for point evaluation on a "
                 f"{self.spatial_dimension}D manifold."
