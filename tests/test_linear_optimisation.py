@@ -105,6 +105,45 @@ class TestLinearLeastSquaresInversion:
         # 3. Compare the results
         assert np.allclose(model_solution, expected_solution)
 
+    def test_least_squares_data_space_equivalence(
+        self, forward_problem: LinearForwardProblem, synthetic_data: np.ndarray
+    ):
+        """
+        Tests that the 'data_space' formalism yields the exact same model solution
+        as the 'model_space' formalism for an underdetermined problem.
+        """
+        damping = 0.1
+        solver = CholeskySolver(galerkin=True)
+
+        # 1. Solve using the standard model space formulation
+        lsq_model = LinearLeastSquaresInversion(
+            forward_problem, formalism="model_space"
+        )
+        op_model = lsq_model.least_squares_operator(damping, solver)
+        u_model = op_model(synthetic_data)
+
+        # 2. Solve using the newly added data space formulation
+        lsq_data = LinearLeastSquaresInversion(forward_problem, formalism="data_space")
+        op_data = lsq_data.least_squares_operator(damping, solver)
+        u_data = op_data(synthetic_data)
+
+        # 3. Compare the components to ensure exact mathematical equivalence
+        u_model_vec = forward_problem.model_space.to_components(u_model)
+        u_data_vec = forward_problem.model_space.to_components(u_data)
+
+        assert np.allclose(u_model_vec, u_data_vec, atol=1e-8, rtol=1e-8)
+
+    def test_invalid_formalism_raises_error(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Tests that providing an invalid formalism string raises the appropriate error.
+        """
+        with pytest.raises(
+            ValueError, match="formalism must be either 'model_space' or 'data_space'"
+        ):
+            LinearLeastSquaresInversion(forward_problem, formalism="spectral_space")
+
 
 # =============================================================================
 # Tests for ConstrainedLinearLeastSquaresInversion
@@ -205,6 +244,46 @@ class TestConstrainedLinearLeastSquaresInversion:
         # Diff = 3.0 - 2.0 = 1.0.  u_expected = data - 1.0
         expected_vec = data_vec - 1.0
         assert np.allclose(u_vec, expected_vec, atol=1e-5)
+
+    def test_constrained_least_squares_data_space_equivalence(self):
+        """
+        Tests that the 'data_space' formalism yields the exact same constrained model
+        solution as the 'model_space' formalism.
+        """
+        domain = EuclideanSpace(5)
+        fp = LinearForwardProblem(domain.identity_operator())
+
+        # Constraint: Mean(u) = 2.0
+        codomain = EuclideanSpace(1)
+        ones = np.ones((1, 5)) / 5.0
+        B = LinearOperator.from_matrix(domain, codomain, ones)
+        w = codomain.from_components(np.array([2.0]))
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        data = domain.from_components(np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
+
+        # INCREASED DAMPING: Makes the matrix well-conditioned so floating-point
+        # noise doesn't trigger the strict 1e-8 absolute tolerance.
+        damping = 0.1
+        solver = CholeskySolver(galerkin=True)
+
+        # Solve model space
+        solver_model = ConstrainedLinearLeastSquaresInversion(
+            fp, constraint, formalism="model_space"
+        )
+        u_model = solver_model.least_squares_operator(damping, solver)(data)
+
+        # Solve data space
+        solver_data = ConstrainedLinearLeastSquaresInversion(
+            fp, constraint, formalism="data_space"
+        )
+        u_data = solver_data.least_squares_operator(damping, solver)(data)
+
+        # Compare
+        u_model_vec = domain.to_components(u_model)
+        u_data_vec = domain.to_components(u_data)
+
+        assert np.allclose(u_model_vec, u_data_vec, atol=1e-8, rtol=1e-8)
 
 
 # =============================================================================
@@ -307,6 +386,46 @@ class TestLinearMinimumNormInversion:
             rtol=1e-3,
             atol=1e-3,
         )
+
+    def test_min_norm_data_space_equivalence(
+        self, forward_problem: LinearForwardProblem, synthetic_data: np.ndarray
+    ):
+        """
+        Tests that the 'data_space' formalism yields the exact same minimum norm solution
+        and derivative as the 'model_space' formalism.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        # 1. Model space formulation
+        min_norm_model = LinearMinimumNormInversion(
+            forward_problem, formalism="model_space"
+        )
+        op_model = min_norm_model.minimum_norm_operator(
+            solver, significance_level=0.95, rtol=1e-10
+        )
+        u_model = op_model(synthetic_data)
+        deriv_model = op_model.derivative(synthetic_data)
+
+        # 2. Data space formulation
+        min_norm_data = LinearMinimumNormInversion(
+            forward_problem, formalism="data_space"
+        )
+        op_data = min_norm_data.minimum_norm_operator(
+            solver, significance_level=0.95, rtol=1e-10
+        )
+        u_data = op_data(synthetic_data)
+        deriv_data = op_data.derivative(synthetic_data)
+
+        # 3. Verify equivalences
+        u_model_vec = forward_problem.model_space.to_components(u_model)
+        u_data_vec = forward_problem.model_space.to_components(u_data)
+        assert np.allclose(u_model_vec, u_data_vec, atol=1e-6, rtol=1e-6)
+
+        # Check derivative push-through identity equivalence
+        v = forward_problem.data_space.random()
+        du_model = forward_problem.model_space.to_components(deriv_model(v))
+        du_data = forward_problem.model_space.to_components(deriv_data(v))
+        assert np.allclose(du_model, du_data, atol=1e-6, rtol=1e-6)
 
 
 # =============================================================================
@@ -491,4 +610,47 @@ class TestConstrainedLinearMinimumNormInversion:
             domain.to_components(exact_dir_deriv),
             rtol=1e-3,
             atol=1e-3,
+        )
+
+    def test_constrained_min_norm_data_space_equivalence(self):
+        """
+        Tests data-space equivalence for the constrained discrepancy principle search.
+        """
+        domain = EuclideanSpace(5)
+        fp = LinearForwardProblem(
+            domain.identity_operator(),
+            data_error_measure=GaussianMeasure.from_standard_deviation(domain, 1.0),
+        )
+
+        # Constraint: Mean(u) = 10.0
+        codomain = EuclideanSpace(1)
+        ones = np.ones((1, 5)) / 5.0
+        B = LinearOperator.from_matrix(domain, codomain, ones)
+        w = codomain.from_components(np.array([10.0]))
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        data = domain.from_components(np.array([15.0, 5.0, 20.0, 0.0, 10.0]))
+        solver = CholeskySolver(galerkin=True)
+
+        # Model space
+        inv_model = ConstrainedLinearMinimumNormInversion(
+            fp, constraint, formalism="model_space"
+        )
+        op_model = inv_model.minimum_norm_operator(
+            solver, significance_level=0.95, rtol=1e-10
+        )
+
+        # Data space
+        inv_data = ConstrainedLinearMinimumNormInversion(
+            fp, constraint, formalism="data_space"
+        )
+        op_data = inv_data.minimum_norm_operator(
+            solver, significance_level=0.95, rtol=1e-10
+        )
+
+        assert np.allclose(
+            domain.to_components(op_model(data)),
+            domain.to_components(op_data(data)),
+            atol=1e-6,
+            rtol=1e-6,
         )

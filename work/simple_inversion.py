@@ -6,10 +6,8 @@ from pygeoinf.symmetric_space.sphere import Sobolev, plot, plot_geodesic_network
 
 
 # Set up the model space
-lmax = 128
 order = 2.0
 scale = 0.1
-
 prior_scale = 0.05
 model_space = Sobolev.from_heat_kernel_prior(
     prior_scale, order, scale, power_of_two=True, min_degree=64
@@ -18,8 +16,8 @@ model_space = Sobolev.from_heat_kernel_prior(
 
 # Set up the forward operator
 print("Setting up the forward problem")
-n_sources = 20
-n_receivers = 50
+n_sources = 5
+n_receivers = 100
 paths = model_space.random_source_receiver_paths(n_sources, n_receivers)
 forward_operator = model_space.path_average_operator(paths)
 
@@ -79,13 +77,13 @@ fig, (ax1, ax2) = plt.subplots(
 
 
 _, im1 = plot(model, ax=ax1)
-plot_geodesic_network(paths, ax=ax1)
+plot_geodesic_network(paths, ax=ax1, alpha=0.1)
 ax1.set_title("True model")
 fig.colorbar(im1)
 
 
 _, im2 = plot(model_out, ax=ax2)
-plot_geodesic_network(paths, ax=ax2)
+plot_geodesic_network(paths, ax=ax2, alpha=0.1)
 ax2.set_title("Posterior expectation")
 fig.colorbar(im2)
 

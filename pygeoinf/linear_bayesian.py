@@ -1,9 +1,25 @@
 """
 Implements the Bayesian framework for solving linear inverse problems.
 
-This module treats the inverse problem from a statistical perspective, aiming to
-determine the full posterior probability distribution of the unknown model
-parameters, rather than a single best-fit solution.
+This module treats the inverse problem from a statistical perspective. Rather
+than seeking a single deterministic "best-fit" solution, it aims to determine
+the full posterior probability distribution of the unknown model parameters
+given the observed data, prior knowledge, and noise statistics.
+
+A core feature of this module is its dual algebraic formalism, allowing users to
+optimize computational efficiency based on the problem geometry:
+
+- **data_space**: Assembles the data-space normal operator (size M x M, where M is
+  the data dimension).
+  Normal Operator: `N = A Q A* + R`
+  Kalman Gain:     `K = Q A* N^-1`
+  Best suited for underdetermined problems (M << N).
+
+- **model_space**: Assembles the model-space normal operator (size N x N, where N is
+  the model dimension).
+  Normal Operator: `N = Q^-1 + A* R^-1 A`
+  Kalman Gain:     `K = N^-1 A* R^-1`
+  Best suited for overdetermined problems (N << M).
 
 Key Classes
 -----------
@@ -14,7 +30,7 @@ Key Classes
 """
 
 from __future__ import annotations
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 from joblib import Parallel, delayed
 import numpy as np
@@ -34,8 +50,13 @@ class LinearBayesianInversion(LinearInversion):
     """
     Solves a linear inverse problem using Bayesian methods.
 
-    This class applies to problems of the form `d = A(u) + e`. It computes the
-    full posterior probability distribution `p(u|d)`.
+    This class applies to problems of the form `d = A(u) + e`, where `u` is
+    a Gaussian random variable representing the model prior, and `e` is a
+    Gaussian random variable representing observation noise.
+
+    It computes the exact posterior Gaussian measure `p(u|d)`, providing access
+    to the posterior expectation, the posterior covariance operator, and an
+    efficient exact-sampling mechanism using the randomize-then-optimize technique.
     """
 
     def __init__(
@@ -43,14 +64,44 @@ class LinearBayesianInversion(LinearInversion):
         forward_problem: LinearForwardProblem,
         model_prior_measure: GaussianMeasure,
         /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
     ) -> None:
         """
+        Initializes the linear Bayesian inversion problem.
+
         Args:
-            forward_problem: The forward problem linking the model to the data.
-            model_prior_measure: The prior Gaussian measure on the model space.
+            forward_problem: The forward problem linking the model to the data,
+                containing the forward operator `A` and data error measure `R`.
+            model_prior_measure: The prior Gaussian measure `Q` on the model space.
+            formalism: The algebraic space in which the normal equations are
+                assembled and solved. Must be 'model_space' or 'data_space'.
+                Defaults to 'data_space'.
+
+        Raises:
+            ValueError: If an invalid formalism string is provided, or if the
+                'model_space' formalism is selected but the necessary inverse
+                covariance operators (precision operators) are not set.
         """
         super().__init__(forward_problem)
         self._model_prior_measure: GaussianMeasure = model_prior_measure
+
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError("formalism must be either 'model_space' or 'data_space'")
+        self._formalism = formalism
+
+        if self._formalism == "model_space":
+            if not self.model_prior_measure.inverse_covariance_set:
+                raise ValueError(
+                    "Prior inverse covariance must be set for model_space formalism."
+                )
+            if (
+                self.forward_problem.data_error_measure_set
+                and not self.forward_problem.data_error_measure.inverse_covariance_set
+            ):
+                raise ValueError(
+                    "Data error inverse covariance must be set for model_space formalism."
+                )
 
     @property
     def model_prior_measure(self) -> GaussianMeasure:
@@ -60,18 +111,40 @@ class LinearBayesianInversion(LinearInversion):
     @property
     def normal_operator(self) -> LinearOperator:
         """
-        Returns the Bayesian Normal operator: N = A Q A* + R.
+        Constructs the Bayesian Normal operator for the chosen formalism.
+
+        For 'data_space': Returns `N = A Q A* + R`
+        For 'model_space': Returns `N = Q^-1 + A* R^-1 A`
+
+        Returns:
+            A LinearOperator representing the normal equations matrix.
         """
         forward_operator = self.forward_problem.forward_operator
-        model_prior_covariance = self.model_prior_measure.covariance
 
-        if self.forward_problem.data_error_measure_set:
-            return (
-                forward_operator @ model_prior_covariance @ forward_operator.adjoint
-                + self.forward_problem.data_error_measure.covariance
-            )
-        else:
-            return forward_operator @ model_prior_covariance @ forward_operator.adjoint
+        if self._formalism == "data_space":
+            model_prior_covariance = self.model_prior_measure.covariance
+            if self.forward_problem.data_error_measure_set:
+                return (
+                    forward_operator @ model_prior_covariance @ forward_operator.adjoint
+                    + self.forward_problem.data_error_measure.covariance
+                )
+            else:
+                return (
+                    forward_operator @ model_prior_covariance @ forward_operator.adjoint
+                )
+
+        else:  # model_space
+            prior_inv_cov = self.model_prior_measure.inverse_covariance
+            if self.forward_problem.data_error_measure_set:
+                data_inv_cov = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                return (
+                    prior_inv_cov
+                    + forward_operator.adjoint @ data_inv_cov @ forward_operator
+                )
+            else:
+                return prior_inv_cov + forward_operator.adjoint @ forward_operator
 
     def kalman_operator(
         self,
@@ -81,10 +154,21 @@ class LinearBayesianInversion(LinearInversion):
         preconditioner: Optional[LinearOperator] = None,
     ) -> LinearOperator:
         """
-        Returns the Kalman gain operator K = Q A* N^-1.
+        Constructs the Kalman gain operator `K`.
+
+        The Kalman gain maps data residuals to model space updates.
+
+        For 'data_space': `K = Q A* (A Q A* + R)^-1`
+        For 'model_space': `K = (Q^-1 + A* R^-1 A)^-1 A* R^-1`
+
+        Args:
+            solver: The LinearSolver used to invert the normal operator.
+            preconditioner: Optional preconditioner for iterative solvers.
+
+        Returns:
+            A LinearOperator representing the Kalman gain.
         """
         forward_operator = self.forward_problem.forward_operator
-        model_prior_covariance = self.model_prior_measure.covariance
         normal_operator = self.normal_operator
 
         if isinstance(solver, IterativeLinearSolver):
@@ -94,9 +178,21 @@ class LinearBayesianInversion(LinearInversion):
         else:
             inverse_normal_operator = solver(normal_operator)
 
-        return (
-            model_prior_covariance @ forward_operator.adjoint @ inverse_normal_operator
-        )
+        if self._formalism == "data_space":
+            model_prior_covariance = self.model_prior_measure.covariance
+            return (
+                model_prior_covariance
+                @ forward_operator.adjoint
+                @ inverse_normal_operator
+            )
+        else:  # model_space
+            if self.forward_problem.data_error_measure_set:
+                data_inv_cov = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                return inverse_normal_operator @ forward_operator.adjoint @ data_inv_cov
+            else:
+                return inverse_normal_operator @ forward_operator.adjoint
 
     def model_posterior_measure(
         self,
@@ -107,20 +203,57 @@ class LinearBayesianInversion(LinearInversion):
         preconditioner: Optional[LinearOperator] = None,
     ) -> GaussianMeasure:
         """
-        Returns the posterior Gaussian measure p(u|d).
+        Computes and returns the posterior Gaussian measure `p(u|d)`.
+
+        This method applies the Kalman update equations to find the posterior
+        expectation and covariance. If both the prior and data error measures
+        have sampling enabled, it automatically constructs a randomize-then-optimize
+        exact sampling function for the posterior.
 
         Args:
             data: The observed data vector.
             solver: A linear solver for inverting the normal operator.
-            preconditioner: An optional preconditioner.
+            preconditioner: An optional preconditioner for iterative solvers.
+
+        Returns:
+            A GaussianMeasure representing the posterior distribution.
         """
         data_space = self.data_space
         model_space = self.model_space
         forward_operator = self.forward_problem.forward_operator
         model_prior_covariance = self.model_prior_measure.covariance
 
-        # 1. Compute Kalman Gain
-        kalman_gain = self.kalman_operator(solver, preconditioner=preconditioner)
+        # 1. Resolve Inverse Normal Operator & Kalman Gain
+        normal_operator = self.normal_operator
+        if isinstance(solver, IterativeLinearSolver):
+            inverse_normal_operator = solver(
+                normal_operator, preconditioner=preconditioner
+            )
+        else:
+            inverse_normal_operator = solver(normal_operator)
+
+        if self._formalism == "data_space":
+            kalman_gain = (
+                model_prior_covariance
+                @ forward_operator.adjoint
+                @ inverse_normal_operator
+            )
+            # C_post = C_u - K A C_u
+            covariance = model_prior_covariance - (
+                kalman_gain @ forward_operator @ model_prior_covariance
+            )
+        else:  # model_space
+            if self.forward_problem.data_error_measure_set:
+                data_inv_cov = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                kalman_gain = (
+                    inverse_normal_operator @ forward_operator.adjoint @ data_inv_cov
+                )
+            else:
+                kalman_gain = inverse_normal_operator @ forward_operator.adjoint
+            # Optimization: In model space, the inverted normal operator IS the posterior covariance
+            covariance = inverse_normal_operator
 
         # 2. Compute Posterior Mean
         # Shift data: d - A(mu_u)
@@ -146,14 +279,7 @@ class LinearBayesianInversion(LinearInversion):
                 self.model_prior_measure.expectation, mean_update
             )
 
-        # 3. Compute Posterior Covariance (Implicitly)
-        # C_post = C_u - K A C_u
-        covariance = model_prior_covariance - (
-            kalman_gain @ forward_operator @ model_prior_covariance
-        )
-
-        # 4. Set up Posterior Sampling
-        # Logic: Can sample if prior is samplable AND (noise is absent OR samplable)
+        # 3. Set up Posterior Sampling (Randomize-then-Optimize)
         can_sample_prior = self.model_prior_measure.sample_set
         can_sample_noise = (
             not self.forward_problem.data_error_measure_set
@@ -194,10 +320,10 @@ class LinearBayesianInversion(LinearInversion):
         n_jobs: int = -1,
     ) -> LinearOperator:
         """
-        Constructs a diagonal preconditioner for the Bayesian normal operator
-        (A Q A* + R) using an optimized formulation.
+        Constructs a diagonal preconditioner specifically for the data-space
+        Bayesian normal operator `(A Q A* + R)`.
 
-        This exploits the identity <v, A Q A* v> = <A* v, Q A* v>. If blocks
+        This exploits the identity `<v, A Q A* v> = <A* v, Q A* v>`. If blocks
         of data indices are provided, it acts on the averaged basis vector
         for each block to compute a robust representative regional variance,
         requiring only one adjoint action of the forward operator per block.
@@ -211,7 +337,17 @@ class LinearBayesianInversion(LinearInversion):
         Returns:
             A DiagonalSparseMatrixLinearOperator representing the inverse of
             the approximated normal operator.
+
+        Raises:
+            ValueError: If the inversion was initialized with `formalism='model_space'`,
+                as this preconditioner is mathematically invalid for that normal operator.
         """
+        if self._formalism != "data_space":
+            raise ValueError(
+                "This custom preconditioner is mathematically derived for the "
+                "data-space normal operator (A Q A* + R) and cannot be used "
+                "with the model-space formalism."
+            )
 
         data_space = self.data_space
         model_space = self.model_space
@@ -240,10 +376,7 @@ class LinearBayesianInversion(LinearInversion):
             blocks_to_compute = [[i] for i in range(data_dim)]
 
         def compute_block_aqa_diag(block: List[int]) -> float:
-            """Worker function to compute the representative variance for a block."""
             n = len(block)
-
-            # Form the averaged basis vector v = (1/n) * sum(e_i)
             c = np.zeros(data_dim)
             c[block] = 1.0 / n
             v = data_space.from_components(c)
@@ -288,16 +421,30 @@ class LinearBayesianInversion(LinearInversion):
         n_jobs: int = -1,
     ) -> LinearOperator:
         """
-        Builds a sparse preconditioner for the Bayesian normal equations using
-        randomized Nystrom approximations on localized, potentially overlapping sub-blocks.
+        Builds a sparse preconditioner specifically for the data-space Bayesian
+        normal equations using randomized Nystrom approximations on localized,
+        potentially overlapping sub-blocks.
 
         Args:
             interacting_blocks: A list of lists, where each sub-list contains the
-                                indices of data points that strongly couple to each other.
+                indices of data points that strongly couple to each other.
             rank: The rank of the randomized Nystrom approximation to use per block.
             parallel: If True, computes the sub-block approximations in parallel.
             n_jobs: Number of CPU cores to use if parallel=True (-1 uses all cores).
+
+        Returns:
+            A LinearOperator representing the inverse of the sparse approximation.
+
+        Raises:
+            ValueError: If the inversion was initialized with `formalism='model_space'`,
+                as this preconditioner is mathematically invalid for that normal operator.
         """
+        if self._formalism != "data_space":
+            raise ValueError(
+                "This custom preconditioner is mathematically derived for the "
+                "data-space normal operator (A Q A* + R) and cannot be used "
+                "with the model-space formalism."
+            )
 
         forward_op = self.forward_problem.forward_operator
         prior_cov = self.model_prior_measure.covariance
@@ -321,48 +468,32 @@ class LinearBayesianInversion(LinearInversion):
             f"Building sparse preconditioner over {len(interacting_blocks)} blocks (Rank {rank})..."
         )
 
-        # 2. Define the worker function for a single block
         def _process_block(indices: list[int]):
             block_size = len(indices)
             idx_array = np.array(indices)
 
-            # Restrict to this specific block of coordinates
             restrict_coords = euclidean_full.subspace_projection(indices)
             P = restrict_coords @ to_components_op
             P_star = P.adjoint
 
-            # Localized Normal Operator: H_k = P * (A Q A*) * P*
             H_local = P @ core_normal_op @ P_star
 
-            # Randomized Nystrom Approximation
             actual_rank = min(rank, block_size)
-
-            # Unpack correctly: (eigenvectors, eigenvalues)
             evecs_op, evals_op = H_local.random_eig(actual_rank, method="fixed")
 
-            # 1. Extract the dense eigenvector matrix natively (shape: block_size x actual_rank)
             V = evecs_op.matrix(dense=True, galerkin=True)
-
-            # 2. Extract the 1D array of eigenvalues
-            # Extracting the dense matrix of the diagonal operator and grabbing its diagonal
             Lambda = evals_op.matrix(dense=True).diagonal()
-
-            # 3. Reconstruct the dense sub-block matrix purely in NumPy
-            # (V * Lambda) efficiently broadcasts the 1D eigenvalues across the columns of V
             M_local_array = (V * Lambda) @ V.T
 
-            # 4. Extract global coordinates for the sparse COO format
             I_local, J_local = np.meshgrid(
                 np.arange(block_size), np.arange(block_size), indexing="ij"
             )
             I_global = idx_array[I_local.flatten()]
             J_global = idx_array[J_local.flatten()]
-
             V_flattened = M_local_array.flatten()
 
             return I_global, J_global, V_flattened
 
-        # 3. Execute the block computations (Sequential or Parallel)
         row_indices, col_indices, values = [], [], []
 
         if parallel:
@@ -380,20 +511,16 @@ class LinearBayesianInversion(LinearInversion):
                 col_indices.extend(J_glob)
                 values.extend(V_flat)
 
-        # 4. Assemble the sparse normal matrix
         H_sparse = sps.coo_matrix(
             (values, (row_indices, col_indices)), shape=(data_dim, data_dim)
         )
 
-        # 5. Add the data noise covariance (R) to the diagonal
         R_sparse = sps.diags(noise_variance)
         H_approx = (H_sparse + R_sparse).tocsc()
 
-        # 6. Factorize using SuperLU
         print("Factorizing sparse matrix...")
         splu_solver = splinalg.splu(H_approx)
 
-        # 7. Wrap the solver in a pygeoinf LinearOperator
         def apply_preconditioner(x):
             c = data_space.to_components(x)
             c_solved = splu_solver.solve(c)
@@ -418,9 +545,22 @@ class LinearBayesianInversion(LinearInversion):
         Constructs a surrogate Bayesian inversion problem using simplified physics,
         priors, or data errors.
 
-        This is primarily used to build robust, physics-based preconditioners.
-        """
+        This is primarily used to construct robust, computationally cheap
+        surrogate models to use as preconditioners for the full, complex
+        inverse problem.
 
+        Args:
+            alternate_forward_operator: An optional simplified forward operator.
+            alternate_prior_measure: An optional simplified prior measure.
+            alternate_data_error_measure: An optional simplified data error measure.
+
+        Returns:
+            A new LinearBayesianInversion instance representing the surrogate problem.
+            The surrogate inherits the `formalism` of the parent problem.
+
+        Raises:
+            ValueError: If the alternative operators/measures exist in incompatible domains/codomains.
+        """
         A_tilde = alternate_forward_operator or self.forward_problem.forward_operator
         Q_tilde = alternate_prior_measure or self.model_prior_measure
 
@@ -453,7 +593,10 @@ class LinearBayesianInversion(LinearInversion):
             A_tilde, data_error_measure=R_tilde
         )
 
-        return LinearBayesianInversion(surrogate_forward_problem, Q_tilde)
+        # Inherit the formalism of the parent inversion
+        return LinearBayesianInversion(
+            surrogate_forward_problem, Q_tilde, formalism=self._formalism
+        )
 
     def surrogate_normal_preconditioner(
         self,
@@ -467,15 +610,21 @@ class LinearBayesianInversion(LinearInversion):
         """
         Builds a preconditioner by exactly inverting the normal operator of a
         simplified surrogate inverse problem.
+
+        Args:
+            solver: The LinearSolver to use to exactly invert the surrogate normal operator.
+            alternate_forward_operator: An optional simplified forward operator.
+            alternate_prior_measure: An optional simplified prior measure.
+            alternate_data_error_measure: An optional simplified data error measure.
+
+        Returns:
+            A LinearOperator representing the inverse of the surrogate normal equations.
         """
-        # 1. Get the surrogate inverse problem
         surrogate_inv = self.surrogate_inversion(
             alternate_forward_operator=alternate_forward_operator,
             alternate_prior_measure=alternate_prior_measure,
             alternate_data_error_measure=alternate_data_error_measure,
         )
-
-        # 2. Extract its normal operator and invert it using the provided solver
         return solver(surrogate_inv.normal_operator)
 
     def low_rank_surrogate(
@@ -493,54 +642,38 @@ class LinearBayesianInversion(LinearInversion):
         Constructs a surrogate Bayesian inversion problem by replacing the exact
         physics and statistical measures with their low-rank approximations.
 
-        This method is particularly useful for generating computationally cheap
-        surrogate models to be used in constructing preconditioners for massive,
-        ill-conditioned inverse problems (e.g., using spectral or banded methods).
-        The low-rank approximations are computed using randomized algorithms.
+        This method generates computationally cheap surrogate models to be used in
+        constructing preconditioners for massive, ill-conditioned inverse problems
+        (e.g., using spectral or banded methods). The low-rank approximations are
+        computed using randomized SVD and eigendecomposition algorithms.
 
         Args:
-            forward_rank: The target rank for the randomized Singular Value
-                Decomposition (SVD) of the forward operator. If None, the exact
-                forward operator is retained.
-            prior_rank: The target rank for the randomized eigendecomposition of
-                the model prior measure. If None, the exact prior measure is retained.
-            data_error_rank: The target rank for the randomized eigendecomposition
-                of the data error measure. If None, the exact data error measure
-                is retained.
-            forward_kwargs: Additional keyword arguments passed directly to
-                `LinearOperator.random_svd` (e.g., 'power', 'block_size', 'n_jobs').
-            prior_kwargs: Additional keyword arguments passed directly to
-                `GaussianMeasure.low_rank_approximation`.
-            data_error_kwargs: Additional keyword arguments passed directly to
-                `GaussianMeasure.low_rank_approximation`.
+            forward_rank: Target rank for the randomized SVD of the forward operator.
+            prior_rank: Target rank for the randomized eigendecomposition of the prior.
+            data_error_rank: Target rank for the randomized eigendecomposition of the noise.
+            forward_kwargs: Additional kwargs passed directly to `LinearOperator.random_svd`.
+            prior_kwargs: Additional kwargs passed directly to `GaussianMeasure.low_rank_approximation`.
+            data_error_kwargs: Additional kwargs passed directly to `GaussianMeasure.low_rank_approximation`.
 
         Returns:
-            LinearBayesianInversion: A new Bayesian inversion object configured
-            with the specified low-rank surrogate components.
-
-        Raises:
-            ValueError: If `data_error_rank` is provided but the original forward
-                problem does not have a data error measure explicitly set.
+            A LinearBayesianInversion representing the low-rank surrogate problem.
         """
         A_tilde = None
         Q_tilde = None
         R_tilde = None
 
-        # 1. Low-rank forward operator via SVD
         if forward_rank is not None:
             f_kwargs = forward_kwargs or {}
             original_A = self.forward_problem.forward_operator
             L, D, R = original_A.random_svd(forward_rank, **f_kwargs)
             A_tilde = L @ D @ R
 
-        # 2. Low-rank prior measure
         if prior_rank is not None:
             p_kwargs = prior_kwargs or {}
             Q_tilde = self.model_prior_measure.low_rank_approximation(
                 prior_rank, **p_kwargs
             )
 
-        # 3. Low-rank data error measure
         if data_error_rank is not None:
             if not self.forward_problem.data_error_measure_set:
                 raise ValueError("Cannot approximate data error measure: none is set.")
@@ -550,7 +683,6 @@ class LinearBayesianInversion(LinearInversion):
                 data_error_rank, **d_kwargs
             )
 
-        # 4. Feed directly into the surrogate builder
         return self.surrogate_inversion(
             alternate_forward_operator=A_tilde,
             alternate_prior_measure=Q_tilde,
