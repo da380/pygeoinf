@@ -87,3 +87,13 @@ class TestCircleSobolevSpecific:
         op_up.check(
             n_checks=5
         )  # Extremely important: checks adjoint with mass operators
+
+
+def test_factory_methods():
+    """Tests the automatic truncation degree factories for Sobolev spaces."""
+    space = Sobolev.from_heat_kernel_prior(0.1, 1.5, 0.5, radius=2.0, min_degree=8)
+    assert isinstance(space, Sobolev)
+    assert space.order == 1.5
+    assert space.scale == 0.5
+    assert space.radius == 2.0
+    assert space.kmax >= 8

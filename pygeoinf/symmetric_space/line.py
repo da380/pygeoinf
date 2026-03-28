@@ -78,6 +78,141 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """
         return self._circle_space
 
+    @classmethod
+    def from_covariance(
+        cls,
+        covariance_function: Callable[[float], float],
+        /,
+        *,
+        a: float = 0.0,
+        b: float = 1.0,
+        c: float = 0.1,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+    ) -> Lebesgue:
+        """
+        Creates an instance of the L² space with a Fourier truncation degree (`kmax`)
+        automatically chosen to capture the expected energy of functions drawn from
+        a specified prior measure.
+
+        This factory method calculates the expected squared norm (energy) of a random field
+        whose spectral variances are defined by the provided `covariance_function`. It iteratively
+        adds higher frequency modes until the relative contribution of the next degree drops
+        below the specified relative tolerance.
+
+        Args:
+            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
+            a: The left endpoint of the interval. Defaults to 0.0.
+            b: The right endpoint of the interval. Defaults to 1.0.
+            c: The padding distance for the computational domain. Defaults to 0.1.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree. If convergence
+                is not reached by this degree, the search terminates and returns this value.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest
+                power of two (useful for FFT optimizations). Defaults to False.
+
+        Returns:
+            Lebesgue: A fully instantiated L² space on the line with the optimal `kmax`.
+
+        Raises:
+            RuntimeError: If the energy sequence fails to converge within 100,000 iterations
+                and no `max_degree` is specified.
+        """
+        dummy_space = cls(max(1, min_degree), a=a, b=b, c=c)
+
+        optimal_degree = dummy_space.estimate_truncation_degree(
+            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
+        )
+
+        if power_of_two:
+            n = int(np.log2(optimal_degree))
+            optimal_degree = 2 ** (n + 1)
+
+        return cls(optimal_degree, a=a, b=b, c=c)
+
+    @classmethod
+    def from_heat_kernel_prior(
+        cls,
+        kernel_scale: float,
+        /,
+        *,
+        a: float = 0.0,
+        b: float = 1.0,
+        c: float = 0.1,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+    ) -> Lebesgue:
+        """
+        Creates an instance of the L² space on the line, tuned to the expected
+        energy of a Heat Kernel prior measure.
+
+        Args:
+            kernel_scale: The length-scale parameter of the heat kernel covariance.
+            a: The left endpoint of the interval. Defaults to 0.0.
+            b: The right endpoint of the interval. Defaults to 1.0.
+            c: The padding distance for the computational domain. Defaults to 0.1.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+        """
+        return cls.from_covariance(
+            cls.heat_kernel(kernel_scale),
+            a=a,
+            b=b,
+            c=c,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+        )
+
+    @classmethod
+    def from_sobolev_kernel_prior(
+        cls,
+        kernel_order: float,
+        kernel_scale: float,
+        /,
+        *,
+        a: float = 0.0,
+        b: float = 1.0,
+        c: float = 0.1,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+    ) -> Lebesgue:
+        """
+        Creates an instance of the L² space on the line, tuned to the expected
+        energy of a Sobolev-type prior measure.
+
+        Args:
+            kernel_order: The smoothness order of the Sobolev prior measure.
+            kernel_scale: The length-scale parameter of the Sobolev prior measure.
+            a: The left endpoint of the interval. Defaults to 0.0.
+            b: The right endpoint of the interval. Defaults to 1.0.
+            c: The padding distance for the computational domain. Defaults to 0.1.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+        """
+        return cls.from_covariance(
+            cls.sobolev_kernel(kernel_order, kernel_scale),
+            a=a,
+            b=b,
+            c=c,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+        )
+
     # ------------------------------------------------------ #
     #                     Public methods                     #
     # ------------------------------------------------------ #
@@ -164,12 +299,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def geodesic_distance(self, p1: float, p2: float) -> float:
         return abs(p2 - p1)
 
-    def point_at_distance(self, p1: float, distance: float) -> float:
-        """Returns a point separated from p1 by the given distance."""
-        if p1 + distance <= self.b:
-            return p1 + distance
-        return p1 - distance
-
     def geodesic_quadrature(
         self, p1: float, p2: float, n_points: int
     ) -> Tuple[List[float], np.ndarray]:
@@ -193,7 +322,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """
         codomain = self.with_degree(target_degree)
 
-        # We can directly leverage the isomorphic circle space's transfer operator
         circle_transfer = self._circle_space.degree_transfer_operator(target_degree)
 
         def mapping(u: np.ndarray) -> np.ndarray:
@@ -203,6 +331,17 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             return circle_transfer.adjoint(v)
 
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def invariant_covariance_function(
+        self, spectral_variances: np.ndarray
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        return self._circle_space.invariant_covariance_function(spectral_variances)
+
+    def degree_multiplicity(self, degree: int) -> int:
+        return self._circle_space.degree_multiplicity(degree)
+
+    def representative_index(self, degree: int) -> int:
+        return self._circle_space.representative_index(degree)
 
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #
@@ -285,7 +424,7 @@ class Sobolev(SymmetricSobolevSpace):
         rtol: float = 1e-6,
         power_of_two: bool = False,
         safe: bool = True,
-    ) -> "Sobolev":
+    ) -> Sobolev:
         """
         Creates an instance with `kmax` chosen based on Sobolev parameters.
 
@@ -319,6 +458,165 @@ class Sobolev(SymmetricSobolevSpace):
         )
 
         return Sobolev(circle_space.kmax, order, scale, a=a, b=b, c=c, safe=safe)
+
+    @classmethod
+    def from_covariance(
+        cls,
+        covariance_function: Callable[[float], float],
+        order: float,
+        scale: float,
+        /,
+        *,
+        a: float = 0.0,
+        b: float = 1.0,
+        c: Optional[float] = None,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+        safe: bool = True,
+    ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space with a Fourier truncation degree (`kmax`)
+        automatically chosen to capture the expected energy of functions drawn from
+        a specified prior measure.
+
+        This factory method calculates the expected squared norm (energy) of a random field
+        whose spectral variances are defined by the provided `covariance_function`, accounting
+        for the Sobolev mass-weighting factor. It iteratively adds higher frequency modes
+        until the relative contribution of the next degree drops below the specified tolerance.
+
+        Args:
+            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
+            order: The Sobolev order, controlling the smoothness of functions.
+            scale: The Sobolev length-scale.
+            a: The left endpoint of the interval. Defaults to 0.0.
+            b: The right endpoint of the interval. Defaults to 1.0.
+            c: The padding distance for the computational domain. Defaults to 6 * scale.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree. If convergence
+                is not reached by this degree, the search terminates and returns this value.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest
+                power of two (useful for FFT optimizations). Defaults to False.
+            safe: If True, enables mathematical correctness checks during operations.
+
+        Returns:
+            Sobolev: A fully instantiated Sobolev space on the line with the optimal `kmax`.
+
+        Raises:
+            RuntimeError: If the energy sequence fails to converge within 100,000 iterations
+                and no `max_degree` is specified.
+        """
+        dummy_space = cls(max(1, min_degree), order, scale, a=a, b=b, c=c, safe=safe)
+
+        optimal_degree = dummy_space.estimate_truncation_degree(
+            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
+        )
+
+        if power_of_two:
+            n = int(np.log2(optimal_degree))
+            optimal_degree = 2 ** (n + 1)
+
+        return cls(optimal_degree, order, scale, a=a, b=b, c=c, safe=safe)
+
+    @classmethod
+    def from_heat_kernel_prior(
+        cls,
+        kernel_scale: float,
+        order: float,
+        scale: float,
+        /,
+        *,
+        a: float = 0.0,
+        b: float = 1.0,
+        c: Optional[float] = None,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+        safe: bool = True,
+    ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space on the line, tuned to the expected
+        energy of a Heat Kernel prior measure.
+
+        Args:
+            kernel_scale: The length-scale parameter of the heat kernel covariance.
+            order: The Sobolev order defining the function space.
+            scale: The Sobolev length-scale defining the function space.
+            a: The left endpoint of the interval. Defaults to 0.0.
+            b: The right endpoint of the interval. Defaults to 1.0.
+            c: The padding distance for the computational domain. Defaults to 6 * scale.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+            safe: If True, enables mathematical correctness checks during operations.
+        """
+        return cls.from_covariance(
+            cls.heat_kernel(kernel_scale),
+            order,
+            scale,
+            a=a,
+            b=b,
+            c=c,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+            safe=safe,
+        )
+
+    @classmethod
+    def from_sobolev_kernel_prior(
+        cls,
+        kernel_order: float,
+        kernel_scale: float,
+        order: float,
+        scale: float,
+        /,
+        *,
+        a: float = 0.0,
+        b: float = 1.0,
+        c: Optional[float] = None,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+        safe: bool = True,
+    ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space on the line, tuned to the expected
+        energy of a Sobolev-type prior measure.
+
+        Args:
+            kernel_order: The smoothness order of the Sobolev prior measure.
+            kernel_scale: The length-scale parameter of the Sobolev prior measure.
+            order: The Sobolev order defining the function space.
+            scale: The Sobolev length-scale defining the function space.
+            a: The left endpoint of the interval. Defaults to 0.0.
+            b: The right endpoint of the interval. Defaults to 1.0.
+            c: The padding distance for the computational domain. Defaults to 6 * scale.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+            safe: If True, enables mathematical correctness checks during operations.
+        """
+        return cls.from_covariance(
+            cls.sobolev_kernel(kernel_order, kernel_scale),
+            order,
+            scale,
+            a=a,
+            b=b,
+            c=c,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+            safe=safe,
+        )
 
     # ---------------------------------------------- #
     #                   Properties                   #

@@ -77,3 +77,21 @@ class TestCircleLebesgueSpecifics:
         u_recon = op_down(u_upsampled)
 
         assert np.allclose(u_orig, u_recon)
+
+
+def test_factory_methods():
+    """Tests the automatic truncation degree factories for L2 spaces."""
+    # Test Heat Kernel Factory
+    space_hk = Lebesgue.from_heat_kernel_prior(
+        0.1, radius=2.5, min_degree=4, power_of_two=True
+    )
+    assert isinstance(space_hk, Lebesgue)
+    assert space_hk.radius == 2.5
+    assert space_hk.kmax >= 4
+    assert (space_hk.kmax & (space_hk.kmax - 1)) == 0  # Checks if power of two
+
+    # Test Sobolev Kernel Factory
+    space_sob = Lebesgue.from_sobolev_kernel_prior(2.0, 0.1, radius=1.0, min_degree=2)
+    assert isinstance(space_sob, Lebesgue)
+    assert space_sob.radius == 1.0
+    assert space_sob.kmax >= 2
