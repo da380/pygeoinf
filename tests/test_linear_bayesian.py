@@ -162,6 +162,103 @@ class TestBayesianSampling:
         assert np.allclose(sample_mean, true_mean, atol=0.15)
         assert np.allclose(sample_cov, true_cov, atol=0.15)
 
+    def test_formalism_equivalence(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Tests that both the 'data_space' and 'model_space' formalisms produce
+        the exact same posterior expectation and covariance.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        # 1. Solve using data space formulation
+        inv_data = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+        post_data = inv_data.model_posterior_measure(data, solver)
+
+        # 2. Solve using model space formulation
+        inv_model = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="model_space"
+        )
+        post_model = inv_model.model_posterior_measure(data, solver)
+
+        # 3. Verify Exact Equivalence
+        assert np.allclose(
+            forward_problem.model_space.to_components(post_data.expectation),
+            forward_problem.model_space.to_components(post_model.expectation),
+            atol=1e-6,
+            rtol=1e-6,
+        )
+
+        assert np.allclose(
+            post_data.covariance.matrix(dense=True),
+            post_model.covariance.matrix(dense=True),
+            atol=1e-6,
+            rtol=1e-6,
+        )
+
+    def test_invalid_formalism_initialization(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Tests that invalid formalisms and missing inverse covariances are correctly caught.
+        """
+        # Invalid string
+        with pytest.raises(ValueError, match="formalism must be either"):
+            LinearBayesianInversion(
+                forward_problem, model_prior_measure, formalism="spectral_space"
+            )
+
+        # Missing inverse covariance in prior
+        cov_only_prior = GaussianMeasure(covariance=model_prior_measure.covariance)
+        with pytest.raises(ValueError, match="Prior inverse covariance must be set"):
+            LinearBayesianInversion(
+                forward_problem, cov_only_prior, formalism="model_space"
+            )
+
+        # Missing inverse covariance in data error
+        cov_only_error = GaussianMeasure(
+            covariance=forward_problem.data_error_measure.covariance
+        )
+        bad_fp = LinearForwardProblem(
+            forward_problem.forward_operator, data_error_measure=cov_only_error
+        )
+        with pytest.raises(
+            ValueError, match="Data error inverse covariance must be set"
+        ):
+            LinearBayesianInversion(
+                bad_fp, model_prior_measure, formalism="model_space"
+            )
+
+    def test_preconditioner_guards_in_model_space(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Tests that calling data-space specific custom preconditioners raises an error
+        when the inversion is configured for the model-space formalism.
+        """
+        inv_model = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="model_space"
+        )
+
+        with pytest.raises(
+            ValueError, match="mathematically derived for the data-space"
+        ):
+            inv_model.diagonal_normal_preconditioner()
+
+        with pytest.raises(
+            ValueError, match="mathematically derived for the data-space"
+        ):
+            inv_model.sparse_localized_preconditioner(interacting_blocks=[[0, 1]])
+
 
 # =============================================================================
 # New Tests for Diagonal Preconditioner

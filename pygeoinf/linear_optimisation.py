@@ -1,23 +1,36 @@
 """
-Implements optimisation-based methods for solving linear inverse problems.
+Provides deterministic, optimization-based methods for solving linear inverse problems.
 
-This module provides classical, deterministic approaches to inversion that seek
-a single "best-fit" model. These methods are typically formulated as finding
-the model `u` that minimizes a cost functional.
+This module implements classical inversion techniques that seek a single "best-fit"
+model by minimizing a specific cost functional. It leverages the abstract operator
+algebra of the library, allowing inversions to be rigorously formulated in
+Hilbert spaces and seamlessly applied to discrete representations.
+
+A core feature of this module is its dual algebraic formalism, allowing users to
+optimize computational efficiency based on the problem geometry:
+- **Model Space Formulation**: Assembles and solves the standard normal equations
+  (size N x N, where N is the model dimension). Best suited for overdetermined problems.
+- **Data Space Formulation**: Assembles and solves the dual formulation (size M x M,
+  where M is the data dimension) using the representer method. Highly efficient for
+  underdetermined problems where data measurements are sparse compared to the model.
 
 Key Classes
 -----------
 - `LinearLeastSquaresInversion`: Solves the inverse problem by minimizing a
   Tikhonov-regularized least-squares functional.
-- `LinearMinimumNormInversion`: Finds the model with the smallest norm that
-  fits the data to a statistically acceptable degree using the discrepancy
-  principle.
-- `ConstrainedLinearLeastSquaresInversion`: Solves a linear inverse problem
-  subject to an affine subspace constraint.
+- `ConstrainedLinearLeastSquaresInversion`: Solves the regularized least-squares
+  problem strictly within an affine subspace (e.g., enforcing exact boundary
+  conditions or mean property values).
+- `LinearMinimumNormInversion`: Finds the model with the smallest norm that fits
+  the data to a statistically acceptable degree using the discrepancy principle.
+  Provides exact analytical Fréchet derivatives of the discrepancy search.
+- `ConstrainedLinearMinimumNormInversion`: Applies the discrepancy principle
+  subject to an exact affine subspace constraint, resolving the non-linear
+  mapping between constraint values and the resulting model.
 """
 
 from __future__ import annotations
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 
 from .nonlinear_operators import NonLinearOperator
 from .affine_operators import AffineOperator
@@ -33,53 +46,144 @@ class LinearLeastSquaresInversion(LinearInversion):
     """
     Solves a linear inverse problem using Tikhonov-regularized least-squares.
 
-    This method finds the model `u` that minimizes the functional:
-    `J(u) = ||A(u) - d||² + α² * ||u||²`
+    This method finds the model `u` that minimizes the cost functional:
+        J(u) = ||A(u) - d||^2_R + damping * ||u||^2
+
+    where `A` is the forward operator, `d` is the observed data, `R` is the
+    data covariance (if a data error measure is set), and `damping` is the
+    Tikhonov regularization parameter.
+
+    This class supports two formalisms for constructing the linear system:
+    1. 'model_space': Solves the standard normal equations of size (N x N),
+       where N is the model dimension. Best for overdetermined problems.
+    2. 'data_space': Solves the dual formulation of size (M x M), where M
+       is the data dimension. Best for highly underdetermined problems.
     """
 
-    def __init__(self, forward_problem: LinearForwardProblem, /) -> None:
+    def __init__(
+        self,
+        forward_problem: LinearForwardProblem,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
+    ) -> None:
+        """
+        Initializes the linear least-squares inversion.
+
+        Args:
+            forward_problem: The linear forward problem defining the mapping
+                from model space to data space, along with the optional data
+                error measure.
+            formalism: The algebraic space in which the normal equations are
+                assembled and solved. Must be either 'model_space' or 'data_space'.
+                Defaults to 'data_space'.
+
+        Raises:
+            ValueError: If an invalid formalism string is provided.
+        """
         super().__init__(forward_problem)
-        if self.forward_problem.data_error_measure_set:
+
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError("formalism must be either 'model_space' or 'data_space'")
+        self._formalism = formalism
+
+        if (
+            self.forward_problem.data_error_measure_set
+            and self._formalism == "model_space"
+        ):
             self.assert_inverse_data_covariance()
 
     def normal_operator(self, damping: float) -> LinearOperator:
-        """Returns the Tikhonov-regularized normal operator (A*WA + αI)."""
+        """
+        Constructs the regularized normal operator for the chosen formalism.
+
+        For 'model_space', this returns:  A* R^{-1} A + damping * I
+        For 'data_space', this returns:   A A* + damping * R
+
+        Args:
+            damping: The non-negative Tikhonov regularization parameter.
+
+        Returns:
+            A LinearOperator representing the left-hand side of the normal equations.
+
+        Raises:
+            ValueError: If the damping parameter is negative.
+        """
         if damping < 0:
             raise ValueError("Damping parameter must be non-negative.")
 
         forward_operator = self.forward_problem.forward_operator
-        identity = self.forward_problem.model_space.identity_operator()
 
-        if self.forward_problem.data_error_measure_set:
-            inverse_data_covariance = (
-                self.forward_problem.data_error_measure.inverse_covariance
-            )
-            return (
-                forward_operator.adjoint @ inverse_data_covariance @ forward_operator
-                + damping * identity
-            )
-        else:
-            return forward_operator.adjoint @ forward_operator + damping * identity
+        if self._formalism == "model_space":
+            identity = self.forward_problem.model_space.identity_operator()
+            if self.forward_problem.data_error_measure_set:
+                inverse_data_covariance = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                return (
+                    forward_operator.adjoint
+                    @ inverse_data_covariance
+                    @ forward_operator
+                    + damping * identity
+                )
+            else:
+                return forward_operator.adjoint @ forward_operator + damping * identity
+
+        else:  # data_space
+            identity = self.forward_problem.data_space.identity_operator()
+            if self.forward_problem.data_error_measure_set:
+                data_covariance = self.forward_problem.data_error_measure.covariance
+                return (
+                    forward_operator @ forward_operator.adjoint
+                    + damping * data_covariance
+                )
+            else:
+                return forward_operator @ forward_operator.adjoint + damping * identity
 
     def normal_rhs(self, data: Vector) -> Vector:
-        """Returns the right hand side of the normal equations (A*W d)."""
+        """
+        Computes the right-hand side vector for the normal equations.
+
+        Prior to construction, the data is shifted by the expected value of the
+        data error measure (i.e., v - z_bar), if applicable.
+
+        For 'model_space', this returns:  A* R^{-1} (v - z_bar)
+        For 'data_space', this returns:   (v - z_bar)
+
+        Args:
+            data: The observed data vector in the data space.
+
+        Returns:
+            The right-hand side Vector for the chosen linear system.
+        """
         forward_operator = self.forward_problem.forward_operator
 
-        if self.forward_problem.data_error_measure_set:
-            inverse_data_covariance = (
-                self.forward_problem.data_error_measure.inverse_covariance
+        # Calculate the shifted data (v - z_bar)
+        if (
+            self.forward_problem.data_error_measure_set
+            and not self.forward_problem.data_error_measure.has_zero_expectation
+        ):
+            shifted_data = self.forward_problem.data_space.subtract(
+                data, self.forward_problem.data_error_measure.expectation
             )
-
-            if self.forward_problem.data_error_measure.has_zero_expectation:
-                shifted_data = data
-            else:
-                shifted_data = self.forward_problem.data_space.subtract(
-                    data, self.forward_problem.data_error_measure.expectation
-                )
-
-            return (forward_operator.adjoint @ inverse_data_covariance)(shifted_data)
         else:
-            return forward_operator.adjoint(data)
+            shifted_data = data
+
+        if self._formalism == "model_space":
+            if self.forward_problem.data_error_measure_set:
+                inverse_data_covariance = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                return (forward_operator.adjoint @ inverse_data_covariance)(
+                    shifted_data
+                )
+            else:
+                return forward_operator.adjoint(shifted_data)
+
+        else:  # data_space
+            # For data space, the RHS is just the shifted data
+            # (the damping factor is accounted for analytically during operator assembly)
+            return shifted_data
 
     def least_squares_operator(
         self,
@@ -90,13 +194,29 @@ class LinearLeastSquaresInversion(LinearInversion):
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
     ) -> Union[LinearOperator, AffineOperator]:
         """
-        Returns an operator that maps data to the least-squares solution.
+        Constructs the full operator that maps observed data directly to the
+        least-squares model solution.
+
+        This method solves the internal normal equations and applies the necessary
+        algebraic transformations (and affine shifts) to recover the model parameters
+        from the data, seamlessly handling whichever formalism was selected during
+        initialization.
 
         Args:
-            damping: The Tikhonov damping parameter, alpha.
-            solver: The linear solver for inverting the normal operator.
-            preconditioner: Either a direct LinearOperator or a LinearSolver
-                method (factory) used to generate the preconditioner.
+            damping: The Tikhonov regularization parameter.
+            solver: The LinearSolver instance used to invert the normal operator.
+            preconditioner: An optional LinearOperator, or a LinearSolver factory,
+                used to precondition the normal equations. Only utilized if the
+                provided solver is an IterativeLinearSolver.
+
+        Returns:
+            A LinearOperator (or AffineOperator, if a non-zero data expectation
+            exists) that maps a vector from the data space to the optimal vector
+            in the model space.
+
+        Raises:
+            TypeError: If the provided preconditioner is neither a LinearOperator
+                nor a LinearSolver.
         """
         forward_operator = self.forward_problem.forward_operator
         normal_operator = self.normal_operator(damping)
@@ -119,37 +239,74 @@ class LinearLeastSquaresInversion(LinearInversion):
         else:
             inverse_normal_operator = solver(normal_operator)
 
-        if self.forward_problem.data_error_measure_set:
-
-            inverse_data_covariance = (
-                self.forward_problem.data_error_measure.inverse_covariance
-            )
-
-            linear_part = (
-                inverse_normal_operator
-                @ forward_operator.adjoint
-                @ inverse_data_covariance
-            )
-
-            if self.forward_problem.data_error_measure.has_zero_expectation:
-                # Return the pure linear operator without an Affine wrapper
-                return linear_part
+        # Assemble the linear part mapping based on formalism
+        if self._formalism == "model_space":
+            if self.forward_problem.data_error_measure_set:
+                inverse_data_covariance = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                linear_part = (
+                    inverse_normal_operator
+                    @ forward_operator.adjoint
+                    @ inverse_data_covariance
+                )
             else:
-                expected_data = self.forward_problem.data_error_measure.expectation
-                translation = self.model_space.negative(linear_part(expected_data))
-                return AffineOperator(linear_part, translation)
+                linear_part = inverse_normal_operator @ forward_operator.adjoint
         else:
-            return inverse_normal_operator @ forward_operator.adjoint
+            # Data space: u = A* @ (AA* + lambda R)^-1 @ (v - z_bar)
+            linear_part = forward_operator.adjoint @ inverse_normal_operator
+
+        # Apply the affine shift if there's a non-zero expectation, regardless of formalism
+        if (
+            self.forward_problem.data_error_measure_set
+            and not self.forward_problem.data_error_measure.has_zero_expectation
+        ):
+            expected_data = self.forward_problem.data_error_measure.expectation
+            translation = self.model_space.negative(linear_part(expected_data))
+            return AffineOperator(linear_part, translation)
+        else:
+            return linear_part
 
 
 class ConstrainedLinearLeastSquaresInversion(LinearInversion):
-    """Solves a linear inverse problem subject to an affine subspace constraint."""
+    """
+    Solves a linear inverse problem subject to an affine subspace constraint.
+
+    This method finds the model `u` that minimizes the Tikhonov-regularized
+    least-squares functional while strictly confining the solution to an
+    affine subspace (e.g., enforcing a specific average property value or
+    boundary condition).
+
+    Supports both 'model_space' and 'data_space' formalisms for the underlying
+    unconstrained inversion.
+    """
 
     def __init__(
-        self, forward_problem: LinearForwardProblem, constraint: AffineSubspace
+        self,
+        forward_problem: LinearForwardProblem,
+        constraint: AffineSubspace,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
     ) -> None:
+        """
+        Initializes the constrained linear least-squares inversion.
+
+        Args:
+            forward_problem: The linear forward problem.
+            constraint: The affine subspace defining the allowed model states.
+            formalism: The algebraic space in which the normal equations are
+                assembled and solved. Must be either 'model_space' or 'data_space'.
+                Defaults to 'data_space'.
+
+        Raises:
+            ValueError: If an invalid formalism string is provided.
+        """
         super().__init__(forward_problem)
         self._constraint = constraint
+
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError("formalism must be either 'model_space' or 'data_space'")
 
         # Use the projection operator to seamlessly grab the base translation
         proj_op = constraint.projection_operator
@@ -167,8 +324,9 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
             ),
         )
 
+        # Pass the formalism down to the underlying unconstrained solver
         self._unconstrained_inversion = LinearLeastSquaresInversion(
-            self._reduced_forward_problem
+            self._reduced_forward_problem, formalism=formalism
         )
 
     def least_squares_operator(
@@ -179,7 +337,9 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         *,
         preconditioner: Optional[Union[LinearOperator, LinearSolver]] = None,
     ) -> AffineOperator:
-        """Maps data to the constrained least-squares solution."""
+        """
+        Returns an operator that maps data to the constrained least-squares solution.
+        """
         reduced_op = self._unconstrained_inversion.least_squares_operator(
             damping, solver, preconditioner=preconditioner
         )
@@ -194,11 +354,42 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
 
 
 class LinearMinimumNormInversion(LinearInversion):
-    """Finds a regularized solution using the discrepancy principle."""
+    """
+    Finds a regularized solution using the discrepancy principle.
 
-    def __init__(self, forward_problem: LinearForwardProblem) -> None:
+    This method finds the model `u` with the smallest norm that fits the data
+    to a statistically acceptable degree (determined by a target chi-squared
+    value and significance level).
+
+    This class supports two formalisms for constructing the linear systems:
+    1. 'model_space': Solves the normal equations of size (N x N).
+    2. 'data_space': Solves the dual formulation of size (M x M).
+    """
+
+    def __init__(
+        self,
+        forward_problem: LinearForwardProblem,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
+    ) -> None:
+        """
+        Initializes the minimum norm inversion.
+
+        Args:
+            forward_problem: The linear forward problem.
+            formalism: The algebraic space in which the normal equations are
+                assembled and solved. Defaults to 'data_space'.
+        """
         super().__init__(forward_problem)
-        if self.forward_problem.data_error_measure_set:
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError("formalism must be either 'model_space' or 'data_space'")
+        self._formalism = formalism
+
+        if (
+            self.forward_problem.data_error_measure_set
+            and self._formalism == "model_space"
+        ):
             self.assert_inverse_data_covariance()
 
     def minimum_norm_operator(
@@ -223,11 +414,17 @@ class LinearMinimumNormInversion(LinearInversion):
             critical_value = self.forward_problem.critical_chi_squared(
                 significance_level
             )
-            lsq_inversion = LinearLeastSquaresInversion(self.forward_problem)
+            lsq_inversion = LinearLeastSquaresInversion(
+                self.forward_problem, formalism=self._formalism
+            )
 
             def get_model_for_damping(
-                damping: float, data: Vector, model0: Optional[Vector] = None
-            ) -> tuple[Vector, float]:
+                damping: float, data: Vector, sys_sol0: Optional[Vector] = None
+            ) -> tuple[Vector, float, Vector]:
+                """
+                Solves the normal equations. Returns the model, the chi-squared misfit,
+                and the raw system solution (for iterative warm starts).
+                """
                 normal_operator = lsq_inversion.normal_operator(damping)
                 normal_rhs = lsq_inversion.normal_rhs(data)
 
@@ -239,15 +436,22 @@ class LinearMinimumNormInversion(LinearInversion):
                         res_precond = preconditioner(normal_operator)
 
                 if isinstance(solver, IterativeLinearSolver):
-                    model = solver.solve_linear_system(
-                        normal_operator, res_precond, normal_rhs, model0
+                    sys_sol = solver.solve_linear_system(
+                        normal_operator, res_precond, normal_rhs, sys_sol0
                     )
                 else:
                     inverse_normal_operator = solver(normal_operator)
-                    model = inverse_normal_operator(normal_rhs)
+                    sys_sol = inverse_normal_operator(normal_rhs)
+
+                # Recover the model from the raw linear system solution
+                if self._formalism == "model_space":
+                    model = sys_sol
+                else:
+                    # In data space, sys_sol is the dual variable v'
+                    model = self.forward_problem.forward_operator.adjoint(sys_sol)
 
                 chi_squared = self.forward_problem.chi_squared(model, data)
-                return model, chi_squared
+                return model, chi_squared, sys_sol
 
             def _solve_discrepancy(data: Vector) -> tuple[Vector, float]:
                 """Internal helper to find the model and optimal damping."""
@@ -257,7 +461,7 @@ class LinearMinimumNormInversion(LinearInversion):
                     return self.model_space.zero, 0.0
 
                 damping = 1.0
-                _, chi_squared = get_model_for_damping(damping, data)
+                _, chi_squared, _ = get_model_for_damping(damping, data)
                 damping_lower = damping if chi_squared <= critical_value else None
                 damping_upper = damping if chi_squared > critical_value else None
 
@@ -266,7 +470,7 @@ class LinearMinimumNormInversion(LinearInversion):
                     while chi_squared > critical_value and it < maxiter:
                         it += 1
                         damping /= 2.0
-                        _, chi_squared = get_model_for_damping(damping, data)
+                        _, chi_squared, _ = get_model_for_damping(damping, data)
                         if damping < minimum_damping:
                             raise RuntimeError("Discrepancy principle failed.")
                     damping_lower = damping
@@ -276,13 +480,17 @@ class LinearMinimumNormInversion(LinearInversion):
                     while chi_squared < critical_value and it < maxiter:
                         it += 1
                         damping *= 2.0
-                        _, chi_squared = get_model_for_damping(damping, data)
+                        _, chi_squared, _ = get_model_for_damping(damping, data)
                     damping_upper = damping
 
-                model0 = None
+                sys_sol0 = None
                 for _ in range(maxiter):
                     damping = 0.5 * (damping_lower + damping_upper)
-                    model, chi_squared = get_model_for_damping(damping, data, model0)
+
+                    # Pass the previous linear system solution to warm-start the iterative solver
+                    model, chi_squared, sys_sol = get_model_for_damping(
+                        damping, data, sys_sol0
+                    )
 
                     if chi_squared < critical_value:
                         damping_lower = damping
@@ -293,7 +501,8 @@ class LinearMinimumNormInversion(LinearInversion):
                         damping_lower + damping_upper
                     ):
                         return model, damping
-                    model0 = model
+
+                    sys_sol0 = sys_sol
 
                 raise RuntimeError("Bracketing search failed to converge.")
 
@@ -311,7 +520,6 @@ class LinearMinimumNormInversion(LinearInversion):
                 lsq_op = lsq_inversion.least_squares_operator(
                     damping, solver, preconditioner=preconditioner
                 )
-                # Safely extract the linear part whether it's an AffineOperator or a pure LinearOperator
                 linear_part = getattr(lsq_op, "linear_part", lsq_op)
 
                 # 2. Reconstruct H^{-1} for the denominator term
@@ -328,8 +536,19 @@ class LinearMinimumNormInversion(LinearInversion):
                 else:
                     inv_normal_op = solver(normal_operator)
 
-                # 3. Pre-compute cached vectors to accelerate linear/adjoint actions
-                h_inv_u = inv_normal_op(model)
+                # Push-through identity application for data_space formulation
+                if self._formalism == "model_space":
+                    h_inv_u = inv_normal_op(model)
+                else:
+                    A = self.forward_problem.forward_operator
+                    Au = A(model)
+                    Hd_inv_Au = inv_normal_op(Au)
+                    A_star_Hd_inv_Au = A.adjoint(Hd_inv_Au)
+                    h_inv_u = self.model_space.multiply(
+                        1.0 / damping,
+                        self.model_space.subtract(model, A_star_Hd_inv_Au),
+                    )
+
                 denominator = self.model_space.inner_product(model, h_inv_u)
 
                 residual = self.data_space.subtract(
@@ -339,7 +558,6 @@ class LinearMinimumNormInversion(LinearInversion):
                     self.forward_problem.data_error_measure.inverse_covariance(residual)
                 )
 
-                # Pre-compute w = (1/denom) * (L* u + (1/lambda) R^{-1} r)
                 l_star_u = linear_part.adjoint(model)
                 scaled_r_inv_res = self.data_space.multiply(
                     1.0 / damping, r_inv_residual
@@ -347,7 +565,6 @@ class LinearMinimumNormInversion(LinearInversion):
                 w_unscaled = self.data_space.add(l_star_u, scaled_r_inv_res)
                 w = self.data_space.multiply(1.0 / denominator, w_unscaled)
 
-                # 4. Forward derivative action
                 def df_action(delta_data: Vector) -> Vector:
                     du_fixed = linear_part(delta_data)
                     delta_lambda = self.data_space.inner_product(w, delta_data)
@@ -355,7 +572,6 @@ class LinearMinimumNormInversion(LinearInversion):
                         du_fixed, self.model_space.multiply(delta_lambda, h_inv_u)
                     )
 
-                # 5. Adjoint derivative action
                 def df_adjoint(delta_model: Vector) -> Vector:
                     l_star_dy = linear_part.adjoint(delta_model)
                     scalar = self.model_space.inner_product(h_inv_u, delta_model)
@@ -386,27 +602,32 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
     Finds the minimum-norm solution subject to an affine subspace constraint.
 
     This class solves the regularized inverse problem using the discrepancy
-    principle while strictly confining the solution to an affine subspace
-    (e.g., enforcing a specific average property value or boundary condition).
+    principle while strictly confining the solution to an affine subspace.
     """
 
     def __init__(
-        self, forward_problem: LinearForwardProblem, constraint: AffineSubspace
+        self,
+        forward_problem: LinearForwardProblem,
+        constraint: AffineSubspace,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
     ) -> None:
         """
         Initializes the constrained minimum norm inversion.
 
-        This setup decomposes the problem into a base solution satisfying the
-        affine constraint and a reduced unconstrained problem operating strictly
-        within the constraint's parallel tangent space.
-
         Args:
             forward_problem: The original linear forward problem.
             constraint: The affine subspace defining the allowed model states.
+            formalism: The algebraic space in which the normal equations are
+                assembled and solved. Defaults to 'data_space'.
         """
         super().__init__(forward_problem)
-        if self.forward_problem.data_error_measure_set:
+        if self.forward_problem.data_error_measure_set and formalism == "model_space":
             self.assert_inverse_data_covariance()
+
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError("formalism must be either 'model_space' or 'data_space'")
 
         self._constraint = constraint
 
@@ -424,7 +645,7 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             ),
         )
         self._unconstrained_inversion = LinearMinimumNormInversion(
-            self._reduced_forward_problem
+            self._reduced_forward_problem, formalism=formalism
         )
 
     def _get_reduced_operator(
@@ -439,10 +660,6 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
     ) -> NonLinearOperator:
         """
         Internal helper to construct the unconstrained reduced operator.
-
-        Consolidates the instantiation of the underlying discrepancy principle
-        search to ensure parameters are completely synchronized across both
-        data-to-model and property-to-model mappings.
         """
         return self._unconstrained_inversion.minimum_norm_operator(
             solver,
@@ -469,18 +686,6 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
         """
         Returns an operator that maps data to the constrained minimum-norm solution.
         The operator has its derivative set.
-
-        Args:
-            solver: The linear solver used for the normal equations.
-            preconditioner: An optional preconditioner for iterative solvers.
-            significance_level: The target probability mass for the chi-squared distribution.
-            minimum_damping: The minimum allowed Tikhonov damping parameter.
-            maxiter: Maximum iterations for the discrepancy principle root-finding.
-            rtol: Relative tolerance for the damping parameter search.
-            atol: Absolute tolerance for the damping parameter search.
-
-        Returns:
-            A `NonLinearOperator` mapping the data space to the model space.
         """
         reduced_op = self._get_reduced_operator(
             solver,
@@ -524,24 +729,6 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
         Returns an operator mapping a constraint value 'w' to the corresponding
         constrained minimum norm solution 'u' for a strictly fixed dataset.
         The operator has its derivative set.
-
-        Args:
-            data: The fixed observed data vector to fit.
-            solver: The linear solver used for the normal equations.
-            preconditioner: An optional preconditioner for iterative solvers.
-            significance_level: The target probability mass for the chi-squared distribution.
-            minimum_damping: The minimum allowed Tikhonov damping parameter.
-            maxiter: Maximum iterations for the discrepancy principle root-finding.
-            rtol: Relative tolerance for the damping parameter search.
-            atol: Absolute tolerance for the damping parameter search.
-
-        Returns:
-            A `NonLinearOperator` mapping the constraint codomain (the property space)
-            to the model space.
-
-        Raises:
-            ValueError: If the constraint subspace does not possess an explicit
-                equation (i.e., the operator B is missing).
         """
         if not self._constraint.has_explicit_equation:
             raise ValueError(
