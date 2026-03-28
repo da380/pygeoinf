@@ -9,12 +9,16 @@ from pygeoinf.symmetric_space.sphere import Sobolev, plot, plot_geodesic_network
 lmax = 128
 order = 2.0
 scale = 0.1
-model_space = Sobolev(lmax, order, scale)
+
+prior_scale = 0.05
+model_space = Sobolev.from_heat_kernel_prior(
+    prior_scale, order, scale, power_of_two=True, min_degree=64
+)
 
 
 # Set up the forward operator
 print("Setting up the forward problem")
-n_sources = 10
+n_sources = 20
 n_receivers = 50
 paths = model_space.random_source_receiver_paths(n_sources, n_receivers)
 forward_operator = model_space.path_average_operator(paths)
@@ -29,7 +33,6 @@ forward_problem = inf.LinearForwardProblem(
 )
 
 # Set up the prior measure
-prior_scale = 0.1
 model_prior = model_space.point_value_scaled_heat_kernel_gaussian_measure(prior_scale)
 
 
@@ -42,7 +45,8 @@ inverse_problem = inf.LinearBayesianInversion(forward_problem, model_prior)
 
 # Set up the preconditioner
 print("Builing the preconditioner")
-surrogate_space = model_space.with_degree(16)
+surrogate_degree = model_space.degree // 4
+surrogate_space = model_space.with_degree(surrogate_degree)
 surrogate_operator = surrogate_space.path_average_operator(paths)
 surrogate_prior = surrogate_space.point_value_scaled_heat_kernel_gaussian_measure(
     prior_scale
@@ -70,7 +74,7 @@ model_out = model_posterior.expectation
 
 # Plot the true model
 fig, (ax1, ax2) = plt.subplots(
-    2, 1, figsize=(14, 14), subplot_kw={"projection": ccrs.PlateCarree()}
+    2, 1, figsize=(16, 16), subplot_kw={"projection": ccrs.PlateCarree()}
 )
 
 

@@ -70,3 +70,18 @@ class TestLineSobolevSpecific:
         """Tests the degree transfer operator's axioms in a mass-weighted space."""
         op_up = sobolev_space.degree_transfer_operator(sobolev_space.kmax + 4)
         op_up.check(n_checks=5)
+
+
+def test_factory_methods():
+    """Tests the automatic truncation degree factories for Sobolev spaces on a line."""
+    space = Sobolev.from_sobolev_kernel_prior(
+        2.0, 0.1, 1.0, 0.5, a=0.0, b=5.0, min_degree=4
+    )
+    assert isinstance(space, Sobolev)
+    assert space.order == 1.0
+    assert space.scale == 0.5
+    assert space.a == 0.0
+    assert space.b == 5.0
+    # If c is None in the factory, it should default to 6 * scale
+    assert space.c == 3.0
+    assert space.kmax >= 4

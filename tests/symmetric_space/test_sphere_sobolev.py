@@ -136,3 +136,17 @@ class TestSphereSobolevSpecifics:
         """Tests the degree transfer operator's axioms in a mass-weighted space."""
         op_up = sobolev_space.degree_transfer_operator(sobolev_space.lmax + 4)
         op_up.check(n_checks=5)
+
+
+def test_factory_methods():
+    """Tests the automatic truncation degree factories for Sobolev spaces on a sphere."""
+    # kernel_order (4.0) must be sufficiently > order (1.0) for the energy to be finite!
+    space = Sobolev.from_sobolev_kernel_prior(
+        4.0, 0.1, 1.0, 0.5, radius=1.0, min_degree=4, power_of_two=True
+    )
+    assert isinstance(space, Sobolev)
+    assert space.order == 1.0
+    assert space.scale == 0.5
+    assert space.radius == 1.0
+    assert space.lmax >= 4
+    assert (space.lmax & (space.lmax - 1)) == 0

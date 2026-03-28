@@ -100,3 +100,16 @@ class TestLineLebesgueSpecifics:
         u_recon = op_down(u_upsampled)
 
         assert np.allclose(u_orig, u_recon)
+
+
+def test_factory_methods():
+    """Tests the automatic truncation degree factories for L2 spaces on a line."""
+    space = Lebesgue.from_heat_kernel_prior(
+        0.1, a=-1.0, b=3.0, c=0.5, min_degree=4, power_of_two=True
+    )
+    assert isinstance(space, Lebesgue)
+    assert space.a == -1.0
+    assert space.b == 3.0
+    assert space.c == 0.5
+    assert space.kmax >= 4
+    assert (space.kmax & (space.kmax - 1)) == 0

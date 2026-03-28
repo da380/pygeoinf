@@ -139,3 +139,16 @@ class TestSphereLebesgueSpecifics:
         u_recon = op_down(u_upsampled)
 
         assert np.allclose(u_orig.data, u_recon.data)
+
+
+def test_factory_methods():
+    """Tests the automatic truncation degree factories for L2 spaces on a sphere."""
+    # Increased the kernel_scale to 500.0 to match the 6371.0 radius
+    space = Lebesgue.from_heat_kernel_prior(
+        500.0, radius=6371.0, grid="GLQ", extend=False, min_degree=2
+    )
+    assert isinstance(space, Lebesgue)
+    assert space.radius == 6371.0
+    assert space.grid == "GLQ"
+    assert space.extend is False
+    assert space.lmax >= 2

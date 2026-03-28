@@ -16,7 +16,6 @@ from typing import Callable, Any, List, Optional, TypeAlias, Iterator, Tuple
 
 import numpy as np
 from scipy.sparse import diags
-from scipy.interpolate import interp1d
 import scipy.sparse as sps
 import scipy.sparse.linalg as splinalg
 
@@ -549,8 +548,19 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             self._metric = diags([metric_values], [0])
             self._inverse_metric = diags([np.reciprocal(metric_values)], [0])
 
+    # Add to SymmetricHilbertSpace
+    @staticmethod
+    def heat_kernel(scale: float) -> Callable[[float], float]:
+        """Returns a heat kernel covariance function: exp(-scale^2 * k)."""
+        return lambda k: np.exp(-(scale**2) * k)
+
+    @staticmethod
+    def sobolev_kernel(order: float, scale: float) -> Callable[[float], float]:
+        """Returns a Sobolev kernel covariance function: (1 + scale^2 * k)^-order."""
+        return lambda k: (1.0 + scale**2 * k) ** (-order)
+
     # ------------------------------------------------------------#
-    #                          Properties                        #
+    #                          Properties                         #
     # ------------------------------------------------------------#
 
     @property
@@ -657,14 +667,6 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """
 
     @abstractmethod
-    def point_at_distance(self, p1: Point, distance: float) -> Point:
-        """
-        Returns a point located at exactly the specified geodesic distance from p1.
-        Since invariant measures are isotropic, the direction of translation
-        is arbitrary.
-        """
-
-    @abstractmethod
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
@@ -683,6 +685,23 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     @abstractmethod
     def degree_transfer_operator(self, target_degree: Degree) -> LinearOperator:
         """Returns the transfer operator from this space to one with a different degree."""
+
+    @abstractmethod
+    def invariant_covariance_function(
+        self, spectral_variances: np.ndarray
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        """
+        Returns a vectorized function that evaluates the two-point covariance
+        of an invariant measure as a function of geodesic distance.
+        """
+
+    @abstractmethod
+    def degree_multiplicity(self, degree: int) -> int:
+        """Returns the number of eigenfunctions associated with a given degree."""
+
+    @abstractmethod
+    def representative_index(self, degree: int) -> Index:
+        """Returns a valid eigenfunction index for the given degree."""
 
     # ------------------------------------------------------------#
     #                        Public methods                       #
@@ -785,7 +804,7 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             expectation: The expected value for measure. Defaults to zero
         """
         return self.invariant_gaussian_measure(
-            lambda k: (1 + scale**2 * k) ** (-order), expectation=expectation
+            self.sobolev_kernel(order, scale), expectation=expectation
         )
 
     def norm_scaled_sobolev_kernel_gaussian_measure(
@@ -826,7 +845,7 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             expectation: The expected value for measure. Defaults to zero
         """
         return self.invariant_gaussian_measure(
-            lambda k: np.exp(-(scale**2) * k), expectation=expectation
+            self.heat_kernel(scale), expectation=expectation
         )
 
     def norm_scaled_heat_kernel_gaussian_measure(
@@ -926,6 +945,53 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
                     cols.append(j)
                     dists.append(d)
         return np.array(rows), np.array(cols), np.array(dists)
+
+    def estimate_truncation_degree(
+        self,
+        covariance_function: Callable[[float], float],
+        /,
+        *,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+    ) -> int:
+        """
+        Estimates the truncation degree required to capture the expected
+        energy of a function drawn from a prior measure.
+        """
+        summation = 0.0
+        degree = 0
+        err = 1.0
+
+        while err > rtol:
+            # Safety ceiling
+            if max_degree is not None and degree >= max_degree:
+                return max_degree
+
+            idx = self.representative_index(degree)
+            lambda_val = self.laplacian_eigenvalue(idx)
+            variance = covariance_function(lambda_val)
+
+            norm_sq = self.laplacian_eigenvector_squared_norm(idx)
+            multiplicity = self.degree_multiplicity(degree)
+
+            term_energy = variance * multiplicity * norm_sq
+            summation += term_energy
+
+            if summation > 0:
+                err = term_energy / summation
+            else:
+                err = 1.0
+
+            if err <= rtol:
+                break
+
+            degree += 1
+            if degree > 100000:
+                raise RuntimeError("Failed to converge on a stable truncation degree.")
+
+        # Safety floor
+        return max(degree, min_degree)
 
 
 class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
@@ -1386,24 +1452,6 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         # STANDARD CASE: Distance-Localized Sparse Preconditioner
         # =======================================================
 
-        n_interp_points = max(50, int(10.0 * max_distance / self.scale))
-        exact_distances = np.linspace(0.0, max_distance * 1.1, n_interp_points)
-
-        p1 = self.random_point()
-        rep1 = self.dirac_representation(p1)
-        q_rep1 = prior_measure.covariance(rep1)
-
-        cov_vals = []
-        for d in exact_distances:
-            p2 = self.point_at_distance(p1, float(d))
-            rep2 = self.dirac_representation(p2)
-            cov = self.inner_product(rep2, q_rep1)
-            cov_vals.append(cov)
-
-        cov_interpolator = interp1d(
-            exact_distances, cov_vals, kind="linear", bounds_error=False, fill_value=0.0
-        )
-
         def gaspari_cohn_vectorized(d_array, c_val):
             """Vectorized Gaspari-Cohn taper for lightning-fast array evaluations."""
 
@@ -1438,8 +1486,14 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             points, max_distance
         )
 
+        # Get the exact, vectorized covariance function from the manifold
+        cov_evaluator = self.invariant_covariance_function(
+            prior_measure.spectral_variances
+        )
+        raw_vals = cov_evaluator(dists)
+
+        # The Gaspari-Cohn taper remains unchanged
         c_taper = max_distance / 2.0
-        raw_vals = cov_interpolator(dists)
         if apply_taper:
             tapers = gaspari_cohn_vectorized(dists, c_taper)
             values = raw_vals * tapers
@@ -1508,9 +1562,6 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
     def geodesic_distance(self, p1: Point, p2: Point) -> float:
         return self.underlying_space.geodesic_distance(p1, p2)
 
-    def point_at_distance(self, p1: Point, distance: float) -> Point:
-        return self.underlying_space.point_at_distance(p1, distance)
-
     def geodesic_quadrature(
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
@@ -1520,6 +1571,17 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         self, points: List[Point], max_distance: float
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         return self.underlying_space.pairs_within_distance(points, max_distance)
+
+    def invariant_covariance_function(
+        self, spectral_variances: np.ndarray
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        return self.underlying_space.invariant_covariance_function(spectral_variances)
+
+    def degree_multiplicity(self, degree: int) -> int:
+        return self.underlying_space.degree_multiplicity(degree)
+
+    def representative_index(self, degree: int) -> Index:
+        return self.underlying_space.representative_index(degree)
 
     def __eq__(self, other: object) -> bool:
         """

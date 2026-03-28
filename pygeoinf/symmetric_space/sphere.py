@@ -96,6 +96,140 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
 
         AbstractSymmetricLebesgueSpace.__init__(self, 2, lmax, (lmax + 1) ** 2, False)
 
+    @classmethod
+    def from_covariance(
+        cls,
+        covariance_function: Callable[[float], float],
+        /,
+        *,
+        radius: float = 1.0,
+        grid: str = "DH",
+        extend: bool = True,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+    ) -> Lebesgue:
+        """
+        Creates an instance of the L² space with a spherical harmonic truncation degree (`lmax`)
+        automatically chosen to capture the expected energy of functions drawn from
+        a specified prior measure.
+
+        This factory method calculates the expected squared norm (energy) of a random field
+        whose spectral variances are defined by the provided `covariance_function`. It iteratively
+        adds higher spherical harmonic degrees until the relative contribution of the next degree
+        drops below the specified relative tolerance.
+
+        Args:
+            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The pyshtools spatial grid format to use. Defaults to "DH".
+            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree. If convergence
+                is not reached by this degree, the search terminates and returns this value.
+            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
+
+        Returns:
+            Lebesgue: A fully instantiated L² space on the sphere with the optimal `lmax`.
+
+        Raises:
+            RuntimeError: If the energy sequence fails to converge within 100,000 iterations
+                and no `max_degree` is specified.
+        """
+        dummy_space = cls(max(1, min_degree), radius=radius, grid=grid, extend=extend)
+
+        optimal_degree = dummy_space.estimate_truncation_degree(
+            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
+        )
+
+        if power_of_two:
+            n = int(np.log2(optimal_degree))
+            optimal_degree = 2 ** (n + 1)
+
+        return cls(optimal_degree, radius=radius, grid=grid, extend=extend)
+
+    @classmethod
+    def from_heat_kernel_prior(
+        cls,
+        kernel_scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        grid: str = "DH",
+        extend: bool = True,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+    ) -> Lebesgue:
+        """
+        Creates an instance of the L² space on the sphere, tuned to the expected
+        energy of a Heat Kernel prior measure.
+
+        Args:
+            kernel_scale: The length-scale parameter of the heat kernel covariance.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The pyshtools spatial grid format to use. Defaults to "DH".
+            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
+        """
+        return cls.from_covariance(
+            cls.heat_kernel(kernel_scale),
+            radius=radius,
+            grid=grid,
+            extend=extend,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+        )
+
+    @classmethod
+    def from_sobolev_kernel_prior(
+        cls,
+        kernel_order: float,
+        kernel_scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        grid: str = "DH",
+        extend: bool = True,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+    ) -> Lebesgue:
+        """
+        Creates an instance of the L² space on the sphere, tuned to the expected
+        energy of a Sobolev-type prior measure.
+
+        Args:
+            kernel_order: The smoothness order of the Sobolev prior measure.
+            kernel_scale: The length-scale parameter of the Sobolev prior measure.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The pyshtools spatial grid format to use. Defaults to "DH".
+            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
+        """
+        return cls.from_covariance(
+            cls.sobolev_kernel(kernel_order, kernel_scale),
+            radius=radius,
+            grid=grid,
+            extend=extend,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+        )
+
     # ------------------------------------------------------ #
     #                       Properties                       #
     # ------------------------------------------------------ #
@@ -264,19 +398,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         omega = np.arccos(dot_product)
         return float(self.radius * omega)
 
-    def point_at_distance(
-        self, p1: Tuple[float, float], distance: float
-    ) -> Tuple[float, float]:
-        """Translates a point along a meridian by the given distance."""
-        lat, lon = p1
-        omega_deg = np.degrees(distance / self.radius)
-
-        # Move North if possible, otherwise move South
-        if lat + omega_deg <= 90.0:
-            return (lat + omega_deg, lon)
-        else:
-            return (lat - omega_deg, lon)
-
     def geodesic_quadrature(
         self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
     ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
@@ -379,6 +500,35 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             return self.from_components(vec_out)
 
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def invariant_covariance_function(
+        self, spectral_variances: np.ndarray
+    ) -> Callable[[np.ndarray], np.ndarray]:
+
+        degree_variances = np.zeros(self.lmax + 1)
+        for l in range(self.lmax + 1):
+            idx = self.index_to_integer((l, 0))
+            degree_variances[l] = spectral_variances[idx]
+
+        # Spherical harmonic addition theorem coefficients:
+        # (2l + 1) / (4 * pi * R^2)
+        coeffs = (
+            degree_variances
+            * (2 * np.arange(self.lmax + 1) + 1)
+            / (4 * np.pi * self.radius**2)
+        )
+
+        def cov_evaluator(distances: np.ndarray) -> np.ndarray:
+            cos_theta = np.cos(distances / self.radius)
+            return np.polynomial.legendre.legval(cos_theta, coeffs)
+
+        return cov_evaluator
+
+    def degree_multiplicity(self, degree: int) -> int:
+        return 2 * degree + 1
+
+    def representative_index(self, degree: int) -> Tuple[int, int]:
+        return (degree, 0)
 
     # ------------------------------------------------------ #
     #                 Methods for HilbertSpace               #
@@ -628,7 +778,7 @@ class Sobolev(SymmetricSobolevSpace):
         rtol: float = 1e-8,
         power_of_two: bool = False,
         safe: bool = True,
-    ) -> "Sobolev":
+    ) -> Sobolev:
         """
         Creates an instance with `lmax` chosen based on the Sobolev parameters.
 
@@ -674,6 +824,180 @@ class Sobolev(SymmetricSobolevSpace):
 
         lmax = l
         return Sobolev(lmax, order, scale, radius=radius, grid=grid, safe=safe)
+
+    @classmethod
+    def from_covariance(
+        cls,
+        covariance_function: Callable[[float], float],
+        order: float,
+        scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        grid: str = "DH",
+        extend: bool = True,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+        safe: bool = True,
+    ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space with a spherical harmonic truncation degree
+        (`lmax`) automatically chosen to capture the expected energy of functions drawn from
+        a specified prior measure.
+
+        This factory method calculates the expected squared norm (energy) of a random field
+        whose spectral variances are defined by the provided `covariance_function`, accounting
+        for the Sobolev mass-weighting factor. It iteratively adds higher spherical harmonic
+        degrees until the relative contribution of the next degree drops below the tolerance.
+
+        Args:
+            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
+            order: The Sobolev order, controlling the smoothness of functions.
+            scale: The Sobolev length-scale.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The pyshtools spatial grid format to use. Defaults to "DH".
+            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree. If convergence
+                is not reached by this degree, the search terminates and returns this value.
+            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
+            safe: If True, enables mathematical correctness checks during operations.
+
+        Returns:
+            Sobolev: A fully instantiated Sobolev space on the sphere with the optimal `lmax`.
+
+        Raises:
+            RuntimeError: If the energy sequence fails to converge within 100,000 iterations
+                and no `max_degree` is specified.
+        """
+        dummy_space = cls(
+            max(1, min_degree),
+            order,
+            scale,
+            radius=radius,
+            grid=grid,
+            extend=extend,
+            safe=safe,
+        )
+
+        optimal_degree = dummy_space.estimate_truncation_degree(
+            covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
+        )
+
+        if power_of_two:
+            n = int(np.log2(optimal_degree))
+            optimal_degree = 2 ** (n + 1)
+
+        return cls(
+            optimal_degree,
+            order,
+            scale,
+            radius=radius,
+            grid=grid,
+            extend=extend,
+            safe=safe,
+        )
+
+    @classmethod
+    def from_heat_kernel_prior(
+        cls,
+        kernel_scale: float,
+        order: float,
+        scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        grid: str = "DH",
+        extend: bool = True,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+        safe: bool = True,
+    ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space on the sphere, tuned to the expected
+        energy of a Heat Kernel prior measure.
+
+        Args:
+            kernel_scale: The length-scale parameter of the heat kernel covariance.
+            order: The Sobolev order defining the function space.
+            scale: The Sobolev length-scale defining the function space.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The pyshtools spatial grid format to use. Defaults to "DH".
+            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
+            safe: If True, enables mathematical correctness checks during operations.
+        """
+        return cls.from_covariance(
+            cls.heat_kernel(kernel_scale),
+            order,
+            scale,
+            radius=radius,
+            grid=grid,
+            extend=extend,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+            safe=safe,
+        )
+
+    @classmethod
+    def from_sobolev_kernel_prior(
+        cls,
+        kernel_order: float,
+        kernel_scale: float,
+        order: float,
+        scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        grid: str = "DH",
+        extend: bool = True,
+        rtol: float = 1e-6,
+        min_degree: int = 0,
+        max_degree: Optional[int] = None,
+        power_of_two: bool = False,
+        safe: bool = True,
+    ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space on the sphere, tuned to the expected
+        energy of a Sobolev-type prior measure.
+
+        Args:
+            kernel_order: The smoothness order of the Sobolev prior measure.
+            kernel_scale: The length-scale parameter of the Sobolev prior measure.
+            order: The Sobolev order defining the function space.
+            scale: The Sobolev length-scale defining the function space.
+            radius: The radius of the sphere. Defaults to 1.0.
+            grid: The pyshtools spatial grid format to use. Defaults to "DH".
+            extend: If True, the spatial grid includes both 0 and 360-degree longitudes.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 0.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `lmax` up to the nearest power of two.
+            safe: If True, enables mathematical correctness checks during operations.
+        """
+        return cls.from_covariance(
+            cls.sobolev_kernel(kernel_order, kernel_scale),
+            order,
+            scale,
+            radius=radius,
+            grid=grid,
+            extend=extend,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+            power_of_two=power_of_two,
+            safe=safe,
+        )
 
     # ----------------------------------------- #
     #                 Properties                #
