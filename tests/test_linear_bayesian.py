@@ -316,6 +316,27 @@ class TestBayesianSampling:
         ):
             inv_model.sparse_localized_preconditioner(interacting_blocks=[[0, 1]])
 
+    def test_prior_properties(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """Tests that the data_prior_measure and joint_prior_measure properties are wired correctly."""
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # 1. Data Prior Measure
+        data_prior = inversion.data_prior_measure
+        assert isinstance(data_prior, GaussianMeasure)
+        assert data_prior.domain == forward_problem.data_space
+
+        # 2. Joint Prior Measure
+        joint_prior = inversion.joint_prior_measure
+        assert isinstance(joint_prior, GaussianMeasure)
+        expected_joint_dim = (
+            forward_problem.model_space.dim + forward_problem.data_space.dim
+        )
+        assert joint_prior.domain.dim == expected_joint_dim
+
 
 # =============================================================================
 # New Tests for Diagonal Preconditioner
