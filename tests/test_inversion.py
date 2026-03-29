@@ -8,7 +8,7 @@ from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
-from pygeoinf.inversion import Inversion
+from pygeoinf.inversion import Inversion, LinearInversion
 
 
 # =============================================================================
@@ -125,3 +125,35 @@ class TestInversion:
             inv.assert_inverse_data_covariance()
         except AttributeError:
             pytest.fail("assert_inverse_data_covariance raised an error unexpectedly.")
+
+
+
+
+class ConcreteLinearInversion(LinearInversion):
+    """A simple concrete subclass for testing LinearInversion."""
+
+    pass
+
+
+class TestLinearInversion:
+    """A suite of tests for the LinearInversion base class."""
+
+    def test_measure_pass_throughs(
+        self, forward_problem_with_inv_cov: LinearForwardProblem
+    ):
+        """Tests that the statistical mapping methods successfully delegate to the forward problem."""
+        inv = ConcreteLinearInversion(forward_problem_with_inv_cov)
+        model_space = forward_problem_with_inv_cov.model_space
+
+        model = model_space.random()
+        prior = GaussianMeasure.from_standard_deviation(model_space, 1.0)
+
+        # We rely on test_forward_problem for the math; here we just ensure the wiring works.
+        dm = inv.data_measure_from_model(model)
+        assert isinstance(dm, GaussianMeasure)
+
+        dpm = inv.data_measure_from_model_measure(prior)
+        assert isinstance(dpm, GaussianMeasure)
+
+        jm = inv.joint_measure(prior)
+        assert isinstance(jm, GaussianMeasure)

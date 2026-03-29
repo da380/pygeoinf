@@ -147,6 +147,21 @@ class LinearBayesianInversion(LinearInversion):
             else:
                 return prior_inv_cov + forward_operator.adjoint @ forward_operator
 
+    @property
+    def data_prior_measure(self) -> GaussianMeasure:
+        """
+        The prior predictive distribution on the data space.
+        This represents the expected distribution of data before observation.
+        """
+        return self.data_measure_from_model_measure(self.model_prior_measure)
+
+    @property
+    def joint_prior_measure(self) -> GaussianMeasure:
+        """
+        The joint prior distribution of both the model and the data.
+        """
+        return self.joint_measure(self.model_prior_measure)
+
     def kalman_operator(
         self,
         solver: LinearSolver,

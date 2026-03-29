@@ -14,10 +14,11 @@ inversion techniques, such as the existence of a data error measure.
 from __future__ import annotations
 
 
-from .hilbert_space import HilbertSpace
+from .hilbert_space import HilbertSpace, Vector
 from .nonlinear_operators import NonLinearOperator
 from .linear_operators import LinearOperator
 from .forward_problem import LinearForwardProblem, ForwardProblem
+from .gaussian_measure import GaussianMeasure
 
 
 class Inversion:
@@ -103,6 +104,28 @@ class LinearInversion(Inversion):
         if not isinstance(forward_problem, LinearForwardProblem):
             raise ValueError("Forward problem must be a LinearForwardProblem.")
         super().__init__(forward_problem)
+
+    def data_measure_from_model(self, model: Vector) -> GaussianMeasure:
+        """
+        Returns the Gaussian measure for the data, given a specific model.
+        """
+        return self.forward_problem.data_measure_from_model(model)
+
+    def data_measure_from_model_measure(
+        self, model_measure: GaussianMeasure
+    ) -> GaussianMeasure:
+        """
+        Given a measure for the model space, returns the induced measure on the
+        data space.
+        """
+        return self.forward_problem.data_measure_from_model_measure(model_measure)
+
+    def joint_measure(self, model_measure: GaussianMeasure) -> GaussianMeasure:
+        """
+        Given a measure for the model space, returns the joint measure for the
+        model and data.
+        """
+        return self.forward_problem.joint_measure(model_measure)
 
 
 class Inference(Inversion):

@@ -23,7 +23,7 @@ from typing import Optional, List, Tuple, TYPE_CHECKING
 from scipy.stats import chi2
 
 from .gaussian_measure import GaussianMeasure
-from .direct_sum import ColumnLinearOperator
+from .direct_sum import ColumnLinearOperator, BlockLinearOperator
 from .linear_operators import LinearOperator
 
 
@@ -167,7 +167,7 @@ class LinearForwardProblem(ForwardProblem):
             joint_forward_operator, data_error_measure=data_error_measure
         )
 
-    def data_measure(self, model: Vector) -> GaussianMeasure:
+    def data_measure_from_model(self, model: Vector) -> GaussianMeasure:
         """
         Returns the Gaussian measure for the data, given a specific model.
 
@@ -183,10 +183,59 @@ class LinearForwardProblem(ForwardProblem):
         if not self.data_error_measure_set:
             raise AttributeError("Data error measure has not been set.")
 
-        # The data measure is an affine mapping of the error measure
         return self.data_error_measure.affine_mapping(
             translation=self.forward_operator(model)
         )
+
+    def data_measure_from_model_measure(
+        self, model_measure: GaussianMeasure
+    ) -> GaussianMeasure:
+        """
+        Given a measure for the model space, returns the induced measure on the
+        data space.
+        """
+
+        if model_measure.domain != self.model_space:
+            raise ValueError("Input measure not defined on the model space")
+
+        data_measure = model_measure.affine_mapping(operator=self.forward_operator)
+
+        return (
+            data_measure + self.data_error_measure
+            if self.data_error_measure_set
+            else data_measure
+        )
+
+    def joint_measure(self, model_measure: GaussianMeasure) -> GaussianMeasure:
+        """
+        Given a measure for the model space, returns the joint measure for the model
+        and data.
+        """
+
+        if self.data_error_measure_set:
+
+            op = BlockLinearOperator(
+                [
+                    [
+                        self.model_space.identity_operator(),
+                        self.data_space.zero_operator(self.model_space),
+                    ],
+                    [self.forward_operator, self.data_space.identity_operator()],
+                ]
+            )
+
+            mu = GaussianMeasure.from_direct_sum(
+                [model_measure, self.data_error_measure]
+            )
+
+            return mu.affine_mapping(operator=op)
+        else:
+
+            op = ColumnLinearOperator(
+                [self.model_space.identity_operator(), self.forward_operator]
+            )
+
+            return model_measure.affine_mapping(operator=op)
 
     def synthetic_data(self, model: Vector) -> Vector:
         """
@@ -201,7 +250,7 @@ class LinearForwardProblem(ForwardProblem):
         Returns:
             A synthetic data vector.
         """
-        return self.data_measure(model).sample()
+        return self.data_measure_from_model(model).sample()
 
     def synthetic_model_and_data(self, prior: GaussianMeasure) -> Tuple[Vector, Vector]:
         """
@@ -215,11 +264,8 @@ class LinearForwardProblem(ForwardProblem):
             A tuple `(u, d)`, where `u` is the random model and `d` is the
             corresponding synthetic data.
         """
-        u = prior.sample()
-        if self.data_error_measure_set:
-            d = self.data_measure(u).sample()
-        else:
-            d = self.forward_operator(u)
+        # Draw a single sample from the joint distribution and unpack it
+        u, d = self.joint_measure(prior).sample()
         return u, d
 
     def critical_chi_squared(self, significance_level: float) -> float:

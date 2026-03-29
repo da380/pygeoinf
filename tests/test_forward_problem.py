@@ -72,7 +72,7 @@ class TestLinearForwardProblem:
     ):
         """Tests that the data_measure method correctly shifts the mean."""
         model = model_space.random()
-        data_measure = forward_problem.data_measure(model)
+        data_measure = forward_problem.data_measure_from_model(model)
 
         # The mean of the data measure should be A(u) + error_mean
         expected_mean = (
@@ -174,3 +174,56 @@ class TestLinearForwardProblem:
         # Off-diagonal blocks should be zero
         assert np.allclose(combined_cov[:d, d:], 0)
         assert np.allclose(combined_cov[d:, :d], 0)
+
+    def test_data_measure_from_model_measure(
+        self, forward_problem: LinearForwardProblem, model_space: EuclideanSpace
+    ):
+        """Tests the induced data measure from a model measure."""
+        # Create a prior with a non-zero mean
+        prior_mean = model_space.random()
+        prior = GaussianMeasure.from_standard_deviation(
+            model_space, 2.0, expectation=prior_mean
+        )
+
+        data_prior = forward_problem.data_measure_from_model_measure(prior)
+
+        # 1. Check Expectation: A(mu_u) + mu_e
+        A = forward_problem.forward_operator.matrix(dense=True)
+        expected_mean = A @ prior_mean + forward_problem.data_error_measure.expectation
+        assert np.allclose(data_prior.expectation, expected_mean)
+
+        # 2. Check Covariance: A C_u A^T + C_e
+        Cu = prior.covariance.matrix(dense=True)
+        Ce = forward_problem.data_error_measure.covariance.matrix(dense=True)
+        expected_cov = A @ Cu @ A.T + Ce
+
+        assert np.allclose(data_prior.covariance.matrix(dense=True), expected_cov)
+
+    def test_joint_measure(
+        self, forward_problem: LinearForwardProblem, model_space: EuclideanSpace
+    ):
+        """Tests the construction of the joint (model, data) measure."""
+        prior_mean = model_space.random()
+        prior = GaussianMeasure.from_standard_deviation(
+            model_space, 2.0, expectation=prior_mean
+        )
+
+        joint = forward_problem.joint_measure(prior)
+
+        # 1. Check Expectation
+        A = forward_problem.forward_operator.matrix(dense=True)
+        expected_data_mean = (
+            A @ prior_mean + forward_problem.data_error_measure.expectation
+        )
+        expected_joint_mean = np.concatenate([prior_mean, expected_data_mean])
+
+        # Flatten joint.expectation to match the concatenated expected mean
+        assert np.allclose(np.concatenate(joint.expectation), expected_joint_mean)
+
+        # 2. Check Block Covariance Structure
+        Cu = prior.covariance.matrix(dense=True)
+        Ce = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        expected_joint_cov = np.block([[Cu, Cu @ A.T], [A @ Cu, A @ Cu @ A.T + Ce]])
+
+        assert np.allclose(joint.covariance.matrix(dense=True), expected_joint_cov)
