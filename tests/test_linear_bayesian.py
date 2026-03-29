@@ -12,6 +12,7 @@ from pygeoinf.linear_solvers import CholeskySolver
 from pygeoinf.linear_bayesian import (
     LinearBayesianInversion,
 )
+from pygeoinf.affine_operators import AffineOperator
 
 # =============================================================================
 # Fixtures for the General Test Problem (5D -> 3D)
@@ -117,6 +118,62 @@ class TestLinearBayesianInversion:
 
         assert np.allclose(actual_mean, expected_mean)
         assert np.allclose(actual_cov, expected_cov)
+
+    def test_posterior_expectation_operator(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Tests that the posterior expectation operator correctly maps data to the
+        analytical posterior mean, handling both strictly linear (zero-mean)
+        and affine (non-zero mean) cases.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        # --- Case 1: Zero Mean (Should return a purely LinearOperator) ---
+        # The default fixtures are initialized with zero expectations
+        inversion_zero = LinearBayesianInversion(forward_problem, model_prior_measure)
+        post_op_zero = inversion_zero.posterior_expectation_operator(solver)
+
+        assert isinstance(post_op_zero, LinearOperator)
+        assert not isinstance(post_op_zero, AffineOperator)
+
+        expected_mean_zero = inversion_zero.model_posterior_measure(
+            data, solver
+        ).expectation
+        operator_mean_zero = post_op_zero(data)
+
+        assert np.allclose(operator_mean_zero, expected_mean_zero)
+
+        # --- Case 2: Non-Zero Mean (Should return an AffineOperator) ---
+        # Create new measures with random non-zero expectations
+        prior_mean = forward_problem.model_space.random()
+        error_mean = forward_problem.data_space.random()
+
+        prior_nonzero = GaussianMeasure(
+            covariance=model_prior_measure.covariance, expectation=prior_mean
+        )
+        fp_nonzero = LinearForwardProblem(
+            forward_problem.forward_operator,
+            data_error_measure=GaussianMeasure(
+                covariance=forward_problem.data_error_measure.covariance,
+                expectation=error_mean,
+            ),
+        )
+
+        inversion_affine = LinearBayesianInversion(fp_nonzero, prior_nonzero)
+        post_op_affine = inversion_affine.posterior_expectation_operator(solver)
+
+        assert isinstance(post_op_affine, AffineOperator)
+
+        expected_mean_affine = inversion_affine.model_posterior_measure(
+            data, solver
+        ).expectation
+        operator_mean_affine = post_op_affine(data)
+
+        assert np.allclose(operator_mean_affine, expected_mean_affine)
 
 
 # =============================================================================

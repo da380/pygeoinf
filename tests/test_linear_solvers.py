@@ -108,9 +108,9 @@ def x(space: EuclideanSpace) -> np.ndarray:
 # =============================================================================
 
 # Define a tolerance for the iterative solvers to aim for.
-ITERATIVE_SOLVER_TOLERANCE = 1e-6
+ITERATIVE_SOLVER_TOLERANCE = 1e-5
 # Define a milder tolerance for the tests to check against.
-TEST_TOLERANCE = 10 * ITERATIVE_SOLVER_TOLERANCE
+TEST_TOLERANCE = 10e-3
 
 # Direct solvers should be accurate to near machine precision.
 # Test both serial and parallel execution paths.

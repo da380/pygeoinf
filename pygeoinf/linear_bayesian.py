@@ -30,7 +30,7 @@ Key Classes
 """
 
 from __future__ import annotations
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Union
 
 from joblib import Parallel, delayed
 import numpy as np
@@ -44,6 +44,7 @@ from .forward_problem import LinearForwardProblem
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector, EuclideanSpace
+from .affine_operators import AffineOperator
 
 
 class LinearBayesianInversion(LinearInversion):
@@ -310,6 +311,69 @@ class LinearBayesianInversion(LinearInversion):
             )
         else:
             return GaussianMeasure(covariance=covariance, expectation=expectation)
+
+    def posterior_expectation_operator(
+        self,
+        solver: LinearSolver,
+        /,
+        *,
+        preconditioner: Optional[LinearOperator] = None,
+    ) -> Union[LinearOperator, AffineOperator]:
+        """
+        Constructs the operator mapping observed data to the posterior expectation.
+
+        The mapping evaluates F(d) = mu_u + K(d - A(mu_u) - mu_e).
+
+        If the prior and data error measures both have a zero expectation, this
+        mapping is purely linear and returns the Kalman gain operator directly.
+        Otherwise, it regroups the terms into an AffineOperator:
+        F(d) = K(d) + (mu_u - K(A(mu_u) + mu_e)).
+
+        Args:
+            solver: The LinearSolver used to invert the normal operator.
+            preconditioner: Optional preconditioner for iterative solvers.
+
+        Returns:
+            A LinearOperator (if expectations are zero) or an AffineOperator.
+        """
+        kalman_gain = self.kalman_operator(solver, preconditioner=preconditioner)
+
+        zero_prior_mean = self.model_prior_measure.has_zero_expectation
+        zero_error_mean = (
+            not self.forward_problem.data_error_measure_set
+            or self.forward_problem.data_error_measure.has_zero_expectation
+        )
+
+        # Strictly linear case
+        if zero_prior_mean and zero_error_mean:
+            return kalman_gain
+
+        data_space = self.data_space
+        model_space = self.model_space
+        A = self.forward_problem.forward_operator
+
+        # 1. Compute the baseline shift in data space: A(mu_u) + mu_e
+        if zero_prior_mean and not zero_error_mean:
+            data_shift = self.forward_problem.data_error_measure.expectation
+        elif not zero_prior_mean and zero_error_mean:
+            data_shift = A(self.model_prior_measure.expectation)
+        else:
+            data_shift = data_space.add(
+                A(self.model_prior_measure.expectation),
+                self.forward_problem.data_error_measure.expectation,
+            )
+
+        # 2. Compute the translation vector in model space: mu_u - K(data_shift)
+        k_shift = kalman_gain(data_shift)
+
+        if zero_prior_mean:
+            translation = model_space.negative(k_shift)
+        else:
+            translation = model_space.subtract(
+                self.model_prior_measure.expectation, k_shift
+            )
+
+        return AffineOperator(linear_part=kalman_gain, translation=translation)
 
     def diagonal_normal_preconditioner(
         self,
