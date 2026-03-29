@@ -29,6 +29,7 @@ try:
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+    from cartopy.mpl.geoaxes import GeoAxes
 except ImportError:
     raise ImportError(
         "pyshtools and cartopy are required for the sphere module. "
@@ -44,7 +45,6 @@ from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpa
 
 
 if TYPE_CHECKING:
-    from cartopy.mpl.geoaxes import GeoAxes
     from cartopy.crs import Projection
     from pyshtools import SHGrid
 
@@ -1174,6 +1174,32 @@ class Sobolev(SymmetricSobolevSpace):
 # -------------------------------------------------- #
 
 
+def _get_or_create_geoaxes(
+    projection: Optional[Projection] = None,
+) -> Tuple[GeoAxes, bool]:
+    """
+    Safely retrieves the current GeoAxes if one exists, or creates a fresh figure
+    and GeoAxes to prevent overlapping with incompatible Cartesian plots.
+
+    Returns:
+        A tuple of (ax, is_new) where `is_new` is True if a fresh canvas was created.
+    """
+    if projection is None:
+        projection = ccrs.PlateCarree()
+
+    # 1. Check if any figures exist, and if the current figure has any axes
+    if plt.get_fignums() and plt.gcf().axes:
+        current_ax = plt.gca()
+        # 2. Test if the active axis is a Cartopy GeoAxes
+        if isinstance(current_ax, GeoAxes):
+            return current_ax, False
+
+    # 3. If no valid GeoAxes was found, safely spin up a fresh figure
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1, projection=projection)
+    return ax, True
+
+
 def plot(
     u: SHGrid,
     /,
@@ -1225,9 +1251,7 @@ def plot(
             - im: The rendered image object (either a QuadMesh or ContourSet).
     """
     if ax is None:
-        if projection is None:
-            projection = ccrs.PlateCarree()
-        ax = plt.axes(projection=projection)
+        ax, _ = _get_or_create_geoaxes(projection)
 
     lons = u.lons()
     lats = u.lats()
@@ -1240,6 +1264,10 @@ def plot(
         ax.add_feature(cfeature.RIVERS, linewidth=0.8)
     if borders:
         ax.add_feature(cfeature.BORDERS, linewidth=0.8)
+
+    # Pop gridline intervals safely BEFORE passing kwargs to plot functions
+    lat_interval = kwargs.pop("lat_interval", 30)
+    lon_interval = kwargs.pop("lon_interval", 30)
 
     kwargs.setdefault("cmap", cmap)
     if symmetric:
@@ -1273,8 +1301,6 @@ def plot(
         )
 
     if gridlines:
-        lat_interval = kwargs.pop("lat_interval", 30)
-        lon_interval = kwargs.pop("lon_interval", 30)
         gl = ax.gridlines(
             linestyle="--", draw_labels=True, dms=True, x_inline=False, y_inline=False
         )
@@ -1309,7 +1335,7 @@ def plot_geodesic(
         The Cartopy GeoAxes object.
     """
     if ax is None:
-        ax = plt.axes(projection=ccrs.PlateCarree())
+        ax, _ = _get_or_create_geoaxes(ccrs.PlateCarree())
 
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 2)
@@ -1342,9 +1368,11 @@ def plot_geodesic_network(
         The Cartopy GeoAxes object.
     """
     if ax is None:
-        ax = plt.axes(projection=ccrs.PlateCarree())
-        ax.set_global()
-        ax.coastlines()
+        ax, is_new = _get_or_create_geoaxes(ccrs.PlateCarree())
+        # Only apply global extent and coastlines if we spawned a brand-new map canvas
+        if is_new:
+            ax.set_global()
+            ax.coastlines()
 
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 0.8)
