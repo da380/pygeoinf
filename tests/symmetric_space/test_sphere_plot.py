@@ -87,3 +87,41 @@ def test_plot_geodesic_network():
     assert len(ax.lines) == 2  # Two geodesic paths
     assert len(ax.collections) == 3  # Coastlines + Sources + Receivers
     plt.close(ax.figure)
+
+
+# -------------------------------------------------- #
+#             New State-Machine Tests                #
+# -------------------------------------------------- #
+
+
+def test_plot_uses_active_geoaxes(sphere_data):
+    """Tests that plot() automatically grabs an active GeoAxes if ax=None."""
+    _, u_grid = sphere_data
+
+    fig = plt.figure()
+    ax_active = fig.add_subplot(1, 1, 1, projection=ccrs.Mollweide())
+
+    # We do not pass ax explicitly; the state machine should find ax_active
+    ax_out, _ = plot(u_grid)
+
+    assert ax_out is ax_active
+    plt.close(fig)
+
+
+def test_plot_avoids_cartesian_axis(sphere_data):
+    """Tests that plot() spawns a new figure if the active axis is not a GeoAxes."""
+    _, u_grid = sphere_data
+
+    # Create a standard non-geographic Cartesian plot
+    fig_cartesian, ax_standard = plt.subplots()
+    ax_standard.plot([1, 2, 3], [1, 4, 9])
+
+    # Call plot() without an explicit ax. It MUST ignore the active standard axis.
+    ax_geo, _ = plot(u_grid)
+
+    assert ax_geo is not ax_standard
+    assert isinstance(ax_geo, GeoAxes)
+    assert ax_geo.figure is not fig_cartesian
+
+    plt.close(fig_cartesian)
+    plt.close(ax_geo.figure)
