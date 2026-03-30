@@ -4,7 +4,6 @@ Tests for the modernized plotting functions in the sphere module.
 
 import pytest
 import matplotlib.pyplot as plt
-import numpy as np
 
 # Safely import sphere modules, skipping tests if dependencies (pyshtools/cartopy) are missing
 try:

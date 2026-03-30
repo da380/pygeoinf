@@ -388,6 +388,8 @@ def main():
     posterior_expectation = model_posterior_measure.expectation
     print(f"Number of CG iterations = {solver.iterations}")
 
+    # --- Modernized Plotting Section ---
+
     if args.std_samples > 0:
         print(f"Sampling pointwise STD with {args.std_samples} samples...")
         posterior_std = model_posterior_measure.sample_pointwise_std(args.std_samples)
@@ -403,22 +405,31 @@ def main():
         fig, ax1 = plt.subplots(
             1,
             1,
-            figsize=(8, 7),
+            figsize=(9, 7),
             subplot_kw={"projection": ccrs.Robinson()},
             layout="constrained",
         )
 
-    cmap_exp = "seismic"
-
-    _, im1 = plot(posterior_expectation, ax=ax1, coasts=True, cmap=cmap_exp)
+    ax1, im1 = plot(
+        posterior_expectation,
+        ax=ax1,
+        coasts=True,
+        cmap="seismic",
+        symmetric=True,
+        colorbar=True,
+        colorbar_kwargs={
+            "label": "Expectation Value",
+            "orientation": "horizontal",
+            "shrink": 0.8,
+        },
+    )
 
     vmin1, vmax1 = im1.get_clim()
-
     ax1.scatter(
         lons,
         lats,
         c=data,
-        cmap=cmap_exp,
+        cmap="seismic",
         vmin=vmin1,
         vmax=vmax1,
         edgecolors="black",
@@ -427,14 +438,21 @@ def main():
         transform=ccrs.PlateCarree(),
         zorder=5,
     )
-
-    ax1.set_title("Posterior Expectation")
-    fig.colorbar(im1, ax=ax1, orientation="horizontal", fraction=0.05, pad=0.04)
+    ax1.set_title("Posterior Expectation", fontsize=14, fontweight="bold")
 
     if args.std_samples > 0:
-        cmap_std = "viridis"
-
-        _, im2 = plot(posterior_std, ax=ax2, coasts=True, cmap=cmap_std)
+        ax2, im2 = plot(
+            posterior_std,
+            ax=ax2,
+            coasts=True,
+            cmap="viridis",
+            colorbar=True,
+            colorbar_kwargs={
+                "label": "Standard Deviation",
+                "orientation": "horizontal",
+                "shrink": 0.8,
+            },
+        )
 
         ax2.scatter(
             lons,
@@ -447,9 +465,11 @@ def main():
             transform=ccrs.PlateCarree(),
             zorder=5,
         )
-
-        ax2.set_title("Posterior Pointwise STD")
-        fig.colorbar(im2, ax=ax2, orientation="horizontal", fraction=0.05, pad=0.04)
+        ax2.set_title(
+            f"Posterior Pointwise STD (N={args.std_samples})",
+            fontsize=14,
+            fontweight="bold",
+        )
 
     plt.show()
 
