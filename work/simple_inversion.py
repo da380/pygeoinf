@@ -2,13 +2,20 @@ import matplotlib.pyplot as plt
 import pygeoinf as inf
 from cartopy import crs as ccrs
 
-from pygeoinf.symmetric_space.sphere import Sobolev, plot, plot_geodesic_network
+from pygeoinf.symmetric_space.sphere import (
+    Sobolev,
+    plot,
+    plot_geodesic_network,
+)
+
+# Ensure we import the corner plot utility
+from pygeoinf.plot import plot_corner_distributions
 
 
 # Set up the model space
 order = 2.0
 scale = 0.1
-prior_scale = 0.05
+prior_scale = 0.1
 model_space = Sobolev.from_heat_kernel_prior(
     prior_scale, order, scale, power_of_two=True, min_degree=64
 )
@@ -16,7 +23,7 @@ model_space = Sobolev.from_heat_kernel_prior(
 
 # Set up the forward operator
 print("Setting up the forward problem")
-n_sources = 5
+n_sources = 10
 n_receivers = 100
 paths = model_space.random_source_receiver_paths(n_sources, n_receivers)
 forward_operator = model_space.path_average_operator(paths)
@@ -42,7 +49,7 @@ inverse_problem = inf.LinearBayesianInversion(forward_problem, model_prior)
 
 
 # Set up the preconditioner
-print("Builing the preconditioner")
+print("Building the preconditioner")
 surrogate_degree = model_space.degree // 4
 surrogate_space = model_space.with_degree(surrogate_degree)
 surrogate_operator = surrogate_space.path_average_operator(paths)
@@ -67,25 +74,48 @@ model_posterior = inverse_problem.model_posterior_measure(
 )
 print(f"Solution in {solver.iterations} iterations")
 
-model_out = model_posterior.expectation
+# Corner Plot Section
+print("Generating corner plot for degree 2 coefficients")
+
+mapping_op = model_space.to_coefficient_operator(2, lmin=2)
+prior_l2 = model_prior.affine_mapping(operator=mapping_op)
+posterior_l2 = model_posterior.affine_mapping(operator=mapping_op)
+
+true_l2 = mapping_op(model)
 
 
-# Plot the true model
-fig, (ax1, ax2) = plt.subplots(
-    2, 1, figsize=(16, 16), subplot_kw={"projection": ccrs.PlateCarree()}
+labels_l2 = [r"$C_{2,0}$", r"$C_{2,1}$", r"$C_{2,2}$", r"$C_{2,-1}$", r"$C_{2,-2}$"]
+
+
+axes_corner = plot_corner_distributions(
+    posterior_l2,
+    prior_measure=prior_l2,
+    true_values=true_l2,
+    labels=labels_l2,
+    title="Posterior Distribution: Degree 2 Coefficients",
 )
 
+# --- Spatial Plotting ---
+model_out = model_posterior.expectation
 
-_, im1 = plot(model, ax=ax1)
+ax1, im1 = plot(
+    model,
+    projection=ccrs.Robinson(),
+    colorbar=True,
+    colorbar_kwargs={"label": "True model"},
+)
 plot_geodesic_network(paths, ax=ax1, alpha=0.1)
-ax1.set_title("True model")
-fig.colorbar(im1)
+ax1.set_title("True Model")
 
 
-_, im2 = plot(model_out, ax=ax2)
+ax2, im2 = plot(
+    model_out,
+    colorbar=True,
+    projection=ccrs.Robinson(),
+    colorbar_kwargs={"label": "Posterior expectation"},
+)
 plot_geodesic_network(paths, ax=ax2, alpha=0.1)
-ax2.set_title("Posterior expectation")
-fig.colorbar(im2)
+ax2.set_title("Posterior Expectation")
 
 
 plt.show()

@@ -15,7 +15,7 @@ Here you can find a set of tutorials to get you started with pygeoinf.
     tutorials/tutorial7
     tutorials/tutorial8
     tutorials/tutorial9
-    tutorials/tutorial10
+    
        
        
     

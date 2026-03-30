@@ -1174,34 +1174,36 @@ class Sobolev(SymmetricSobolevSpace):
 # -------------------------------------------------- #
 
 
-def _get_or_create_geoaxes(
+def create_map_figure(
+    figsize: Optional[Tuple[float, float]] = None,
     projection: Optional[Projection] = None,
-) -> Tuple[GeoAxes, bool]:
+    **kwargs,
+) -> Tuple[plt.Figure, GeoAxes]:
     """
-    Safely retrieves the current GeoAxes if one exists, or creates a fresh figure
-    and GeoAxes to prevent overlapping with incompatible Cartesian plots.
+    Creates a modern Matplotlib Figure and Cartopy GeoAxes optimized for maps.
+
+    Args:
+        figsize: A tuple of (width, height) in inches.
+        projection: A `cartopy.crs` projection instance. Defaults to PlateCarree.
+        **kwargs: Additional keyword arguments passed to `plt.subplots()`.
 
     Returns:
-        A tuple of (ax, is_new) where `is_new` is True if a fresh canvas was created.
+        A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
     """
     if projection is None:
         projection = ccrs.PlateCarree()
 
-    # 1. Check if any figures exist, and if the current figure has any axes
-    if plt.get_fignums() and plt.gcf().axes:
-        current_ax = plt.gca()
-        # 2. Test if the active axis is a Cartopy GeoAxes
-        if isinstance(current_ax, GeoAxes):
-            return current_ax, False
+    # Default to constrained layout to prevent map/colorbar overlap
+    kwargs.setdefault("layout", "constrained")
 
-    # 3. If no valid GeoAxes was found, safely spin up a fresh figure
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1, projection=projection)
-    return ax, True
+    fig, ax = plt.subplots(
+        figsize=figsize, subplot_kw={"projection": projection}, **kwargs
+    )
+    return fig, ax
 
 
 def plot(
-    u: SHGrid,
+    u: "SHGrid",
     /,
     *,
     ax: Optional[GeoAxes] = None,
@@ -1217,6 +1219,8 @@ def plot(
     contour_lines: bool = False,
     contour_lines_kwargs: Optional[dict] = None,
     num_levels: int = 10,
+    colorbar: bool = False,
+    colorbar_kwargs: Optional[dict] = None,
     **kwargs,
 ) -> Tuple[GeoAxes, Any]:
     """
@@ -1226,32 +1230,29 @@ def plot(
         u: The scalar field to be plotted, evaluated on a spatial grid.
         ax: An existing Cartopy GeoAxes object. If None, creates a new one.
         projection: A `cartopy.crs` projection instance defining the map view.
-            Defaults to `ccrs.PlateCarree()`.
         contour: If True, renders the field as a filled contour plot (`contourf`).
-            If False, renders it as a pseudo-color mesh (`pcolormesh`). Defaults to False.
         cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
         coasts: If True, overlays high-resolution coastlines. Defaults to False.
         rivers: If True, overlays major river systems. Defaults to False.
         borders: If True, overlays international country borders. Defaults to False.
-        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view
-            extent of the map. Defaults to None (global view).
+        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view.
         gridlines: If True, draws latitude and longitude gridlines with labels.
-            Defaults to True.
-        symmetric: If True, dynamically centers the color scale symmetrically around
-            zero (e.g., from -max to +max). Defaults to False.
+        symmetric: If True, dynamically centers the color scale symmetrically around zero.
         contour_lines: If True, overlays solid contour lines on top of the base plot.
-            Defaults to False.
         contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`.
         num_levels: The number of color levels to generate automatically. Defaults to 10.
+        colorbar: If True, attaches a colorbar to the plot. Defaults to False.
+        colorbar_kwargs: Formatting options for the colorbar (e.g., orientation, label).
         **kwargs: Additional keyword arguments forwarded to `ax.contourf` or `ax.pcolormesh`.
 
     Returns:
-        A tuple `(ax, im)` containing:
-            - ax: The Cartopy GeoAxes object.
-            - im: The rendered image object (either a QuadMesh or ContourSet).
+        A tuple `(ax, im)` containing the GeoAxes and the rendered image artist.
     """
     if ax is None:
-        ax, _ = _get_or_create_geoaxes(projection)
+        # Safely generate a new canvas using the modernized helper
+        fig, ax = create_map_figure(projection=projection)
+    else:
+        fig = ax.get_figure()
 
     lons = u.lons()
     lats = u.lats()
@@ -1309,6 +1310,13 @@ def plot(
         gl.xformatter = LongitudeFormatter()
         gl.yformatter = LatitudeFormatter()
 
+    if colorbar and fig:
+        cb_opts = colorbar_kwargs or {}
+        cb_opts.setdefault("orientation", "horizontal")
+        cb_opts.setdefault("shrink", 0.7)
+        cb_opts.setdefault("pad", 0.05)
+        fig.colorbar(im, ax=ax, **cb_opts)
+
     return ax, im
 
 
@@ -1318,7 +1326,6 @@ def plot_geodesic(
     /,
     *,
     ax: Optional[GeoAxes] = None,
-    n_points: int = 50,
     **kwargs,
 ) -> GeoAxes:
     """
@@ -1328,14 +1335,13 @@ def plot_geodesic(
         p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
         p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
         ax: An existing Cartopy GeoAxes object. If None, creates a new one.
-        n_points: The number of points to use for interpolation (kept for compatibility).
         **kwargs: Keyword arguments passed directly to `ax.plot`.
 
     Returns:
         The Cartopy GeoAxes object.
     """
     if ax is None:
-        ax, _ = _get_or_create_geoaxes(ccrs.PlateCarree())
+        _, ax = create_map_figure(projection=ccrs.PlateCarree())
 
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 2)
@@ -1352,7 +1358,6 @@ def plot_geodesic_network(
     /,
     *,
     ax: Optional[GeoAxes] = None,
-    n_points: int = 50,
     **kwargs,
 ) -> GeoAxes:
     """
@@ -1361,25 +1366,22 @@ def plot_geodesic_network(
     Args:
         paths: A list of point pairs defining the network.
         ax: An existing Cartopy GeoAxes object. If None, creates a new global view.
-        n_points: The number of interpolation points per curve.
         **kwargs: Default styling arguments applied to the geodesic lines.
 
     Returns:
         The Cartopy GeoAxes object.
     """
     if ax is None:
-        ax, is_new = _get_or_create_geoaxes(ccrs.PlateCarree())
-        # Only apply global extent and coastlines if we spawned a brand-new map canvas
-        if is_new:
-            ax.set_global()
-            ax.coastlines()
+        _, ax = create_map_figure(projection=ccrs.PlateCarree())
+        ax.set_global()
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
 
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 0.8)
     kwargs.setdefault("alpha", 0.5)
 
     for p1, p2 in paths:
-        plot_geodesic(p1, p2, ax=ax, n_points=n_points, **kwargs)
+        plot_geodesic(p1, p2, ax=ax, **kwargs)
 
     sources = list(set([tuple(p[0]) for p in paths]))
     receivers = list(set([tuple(p[1]) for p in paths]))
