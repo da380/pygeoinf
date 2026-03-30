@@ -1,7 +1,7 @@
 repos:
   # --- 1. Prevent commits to main ---
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: no-commit-to-branch
         args: [--branch, main]
