@@ -1,10 +1,13 @@
+"""
+Plotting module for pygeoinf measures and distributions.
+"""
+
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 from matplotlib.axes import Axes
 import numpy as np
 import scipy.stats as stats
 from typing import Union, List, Optional, Tuple, Any
-
 
 from .gaussian_measure import GaussianMeasure
 
@@ -222,20 +225,14 @@ def plot_1d_distributions(
     )
     ax1.set_title(title, fontsize=16, pad=15)
 
-    # Safe tight_layout wrapper
-    fig = ax1.get_figure()
-    if fig:
-        fig.tight_layout()
-
-    if prior_measures is not None:
-        return ax1, ax2
-    return ax1
+    return (ax1, ax2) if prior_measures is not None else ax1
 
 
 def plot_corner_distributions(
     posterior_measure: GaussianMeasure,
     /,
     *,
+    prior_measure: Optional[GaussianMeasure] = None,
     true_values: Optional[Union[List[float], np.ndarray]] = None,
     labels: Optional[List[str]] = None,
     title: str = "Joint Posterior Distribution",
@@ -248,10 +245,11 @@ def plot_corner_distributions(
     legend_position: tuple = (0.9, 0.95),
 ) -> np.ndarray:
     """
-    Create a corner plot for multi-dimensional posterior distributions.
+    Create a professional corner plot for multi-dimensional posterior distributions.
 
     Args:
         posterior_measure: Multi-dimensional posterior measure (pygeoinf GaussianMeasure)
+        prior_measure: Optional prior measure to plot secondary axes showing prior standard deviations.
         true_values: True values for each dimension (optional)
         labels: Labels for each dimension (optional)
         title: Title for the plot
@@ -273,11 +271,19 @@ def plot_corner_distributions(
             f"but got {type(posterior_measure).__name__}."
         )
 
-    # Safe to extract properties directly now
     mean_posterior = posterior_measure.expectation
     cov_posterior = posterior_measure.covariance.matrix(
         dense=True, parallel=parallel, n_jobs=n_jobs
     )
+
+    # Pre-compute prior matrices if provided
+    if prior_measure is not None:
+        if not isinstance(prior_measure, GaussianMeasure):
+            raise TypeError("prior_measure must be a GaussianMeasure.")
+        mean_prior = prior_measure.expectation
+        cov_prior = prior_measure.covariance.matrix(
+            dense=True, parallel=parallel, n_jobs=n_jobs
+        )
 
     n_dims = len(mean_posterior)
 
@@ -287,7 +293,14 @@ def plot_corner_distributions(
     if figsize is None:
         figsize = (3 * n_dims, 3 * n_dims)
 
-    fig, axes = plt.subplots(n_dims, n_dims, figsize=figsize)
+    # Tight grid spacing using the modern layout engine
+    fig, axes = plt.subplots(
+        n_dims,
+        n_dims,
+        figsize=figsize,
+        gridspec_kw={"wspace": 0.05, "hspace": 0.05},
+        layout="constrained",
+    )
     fig.suptitle(title, fontsize=16)
 
     # Ensure axes is always 2D array
@@ -302,6 +315,7 @@ def plot_corner_distributions(
         for j in range(n_dims):
             ax = axes[i, j]
 
+            # --- DIAGONALS (1D PDFs) ---
             if i == j:
                 mu = mean_posterior[i]
                 sigma = np.sqrt(cov_posterior[i, i])
@@ -322,10 +336,45 @@ def plot_corner_distributions(
                         label=f"True: {true_val:.2f}",
                     )
 
-                ax.set_xlabel(labels[i])
-                ax.set_ylabel("Density" if i == 0 else "")
-                ax.set_yticklabels([])
+                # Inject prior secondary axis if requested
+                if prior_measure is not None:
+                    prior_mu = mean_prior[i]
+                    prior_sigma = np.sqrt(cov_prior[i, i])
 
+                    def make_forward(p_mu, p_sig):
+                        return lambda val: (val - p_mu) / p_sig
+
+                    def make_inverse(p_mu, p_sig):
+                        return lambda stds: stds * p_sig + p_mu
+
+                    sec_ax = ax.secondary_xaxis(
+                        "top",
+                        functions=(
+                            make_forward(prior_mu, prior_sigma),
+                            make_inverse(prior_mu, prior_sigma),
+                        ),
+                    )
+                    sec_ax.set_xlabel(
+                        r"Distance from Prior Mean ($\sigma_{prior}$)",
+                        fontsize=10,
+                        color="darkgreen",
+                    )
+                    sec_ax.tick_params(axis="x", colors="darkgreen")
+
+                # X-axis logic
+                if i == n_dims - 1:
+                    ax.set_xlabel(labels[i])
+                else:
+                    ax.tick_params(labelbottom=False)
+
+                # Y-axis logic: Hide all ticks, only label the very first plot
+                ax.set_yticks([])
+                if i == 0:
+                    ax.set_ylabel("Density")
+                else:
+                    ax.set_ylabel("")
+
+            # --- OFF-DIAGONALS (2D Contours) ---
             elif i > j:
                 mean_2d = np.array([mean_posterior[j], mean_posterior[i]])
                 cov_2d = np.array(
@@ -398,12 +447,26 @@ def plot_corner_distributions(
                         label="True Value",
                     )
 
-                ax.set_xlabel(labels[j])
-                ax.set_ylabel(labels[i])
+                # X-axis logic
+                if i == n_dims - 1:
+                    ax.set_xlabel(labels[j])
+                else:
+                    ax.tick_params(labelbottom=False)
 
+                # Y-axis logic
+                if j == 0:
+                    ax.set_ylabel(labels[i])
+                else:
+                    ax.tick_params(labelleft=False)
+
+            # --- EMPTY UPPER TRIANGLE ---
             else:
-                ax.axis("off")
+                ax.set_visible(False)
 
+    # Force Matplotlib to align the outer axis labels so they don't stagger
+    fig.align_labels()
+
+    # Extract legend handles safely from the first available plots
     handles, labels_leg = axes[0, 0].get_legend_handles_labels()
     if n_dims > 1:
         handles2, labels2 = axes[1, 0].get_legend_handles_labels()
@@ -411,15 +474,21 @@ def plot_corner_distributions(
         labels_leg.extend(labels2)
 
     cleaned_labels = [label.split(":")[0] for label in labels_leg]
+
+    # Avoid duplicate legends by dict conversion trick
+    unique_legend = dict(zip(cleaned_labels, handles))
+
+    # Let constrained_layout automatically make room for the legend on the right
     fig.legend(
-        handles, cleaned_labels, loc="upper right", bbox_to_anchor=legend_position
+        unique_legend.values(),
+        unique_legend.keys(),
+        loc="upper right",
+        bbox_to_anchor=legend_position,
     )
 
-    plt.tight_layout(rect=[0, 0, 0.88, 0.96])
-
+    # Let constrained_layout handle the colorbar natively
     if n_dims > 1 and pcm is not None:
-        cbar_ax = fig.add_axes([0.9, 0.15, 0.03, 0.7])
-        cbar = fig.colorbar(pcm, cax=cbar_ax)
+        cbar = fig.colorbar(pcm, ax=axes, shrink=0.7, aspect=30, pad=0.02)
         cbar.set_label("Probability Density", size=12)
 
     return axes
