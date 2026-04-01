@@ -14,19 +14,6 @@ from numpy.testing import assert_allclose
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.subsets import HyperPlane, HalfSpace, PolyhedralSet
 
-try:
-    import pygeoinf.convex_analysis  # noqa: F401
-except ModuleNotFoundError:
-    _HAS_CONVEX_ANALYSIS = False
-else:
-    _HAS_CONVEX_ANALYSIS = True
-
-
-requires_convex_analysis = pytest.mark.skipif(
-    not _HAS_CONVEX_ANALYSIS,
-    reason="pygeoinf.convex_analysis is not available on this branch",
-)
-
 
 @pytest.fixture
 def space_2d():
@@ -216,7 +203,6 @@ class TestHalfSpace:
         assert hs_leq.is_element(p_neg) and not hs_leq.is_element(p_pos)
         assert hs_geq.is_element(p_pos) and not hs_geq.is_element(p_neg)
 
-    @requires_convex_analysis
     def test_support_function_lazy_init(self, space_2d):
         """Test that support function is lazily initialized."""
         hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 1.0)
@@ -227,7 +213,6 @@ class TestHalfSpace:
         from pygeoinf.convex_analysis import HalfSpaceSupportFunction
         assert isinstance(sf, HalfSpaceSupportFunction)
 
-    @requires_convex_analysis
     def test_support_function_bounded_direction_leq(self, space_2d):
         """Test support function for bounded direction (<=)."""
         # Half-space: x ≤ 10 (normal = [1, 0], offset = 10)
@@ -245,7 +230,6 @@ class TestHalfSpace:
         assert_allclose(result_pos, 2.0 * 10.0, rtol=1e-10)  # α * b = 2 * 10 = 20
         assert np.isinf(result_neg) and result_neg > 0, "Expected +∞ for α < 0"
 
-    @requires_convex_analysis
     def test_support_function_bounded_direction_geq(self, space_2d):
         """Test support function for bounded direction (>=)."""
         # Half-space: x ≥ 10 (normal = [1, 0], offset = 10)
@@ -263,7 +247,6 @@ class TestHalfSpace:
         assert np.isfinite(result_neg), "Expected finite value for α ≤ 0"
         assert_allclose(result_neg, -2.0 * 10.0, rtol=1e-10)  # α * b = -2 * 10 = -20
 
-    @requires_convex_analysis
     def test_support_function_perpendicular_unbounded(self, space_2d):
         """Test that perpendicular directions are unbounded."""
         # Half-space: x ≤ 5
@@ -276,7 +259,6 @@ class TestHalfSpace:
 
         assert np.isinf(result) and result > 0, "Perpendicular direction should be unbounded"
 
-    @requires_convex_analysis
     def test_support_point_minimum_norm(self, space_2d):
         """Test that support_point returns minimum-norm boundary point."""
         # Half-space: x + y ≤ 10
@@ -413,7 +395,6 @@ class TestPolyhedralSet:
 class TestNumericalRobustness:
     """Test numerical edge cases and tolerance handling."""
 
-    @requires_convex_analysis
     def test_nearly_parallel_directions(self, space_2d):
         """Test support function with nearly parallel query directions."""
         hs = HalfSpace(space_2d, np.array([1.0, 0.0]), 10.0, inequality_type='<=')

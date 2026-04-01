@@ -2,7 +2,7 @@
 
 ## Scope
 
-This reference covers [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py) and its direct tests in [tests/test_support_function_constructors.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_constructors.py) and [tests/test_support_function_algebra.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_algebra.py).
+This reference covers [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py), the convex-analysis public surface in [pygeoinf/__init__.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/__init__.py), the slice-plotting helpers in [pygeoinf/plot.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/plot.py), and their direct tests in [tests/test_support_function_constructors.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_constructors.py), [tests/test_support_function_algebra.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_algebra.py), [tests/test_plot.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_plot.py), [tests/test_subsets.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_subsets.py), and [tests/test_halfspaces.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_halfspaces.py).
 
 The module introduces support-function primitives for closed convex sets in a Hilbert space, plus algebraic combinators for linear images, Minkowski sums, and nonnegative scaling.
 
@@ -63,6 +63,28 @@ The module introduces support-function primitives for closed convex sets in a Hi
   - Represents `alpha * h_C` for `alpha >= 0`.
   - `alpha == 0` collapses to the singleton `{0}` and returns the zero vector as support point.
 
+## Visualisation Surface
+
+- `SubspaceSlicePlotter`
+  - Plots 1D, 2D, and 3D affine slices of subsets in Euclidean spaces.
+  - Uses exact polyhedral slicing for `PolyhedralSet` inputs and sampled membership masks for other subsets.
+  - Supports default bounds parsing, subspace embedding, and dimension-specific renderers.
+- `plot_slice`
+  - Functional entry point that wraps `SubspaceSlicePlotter` and returns `(figure, axes, payload)`.
+  - Serves as the implementation target for `Subset.plot()` delegation tests.
+
+## Public Exports
+
+- [pygeoinf/__init__.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/__init__.py)
+  - Re-exports the convex-analysis classes, `SubgradientDescent`, `ProximalBundleMethod`, `DualMasterCostFunction`, `SubspaceSlicePlotter`, and `plot_slice` from the package root.
+  - Must not import from `symmetric_space` for the convex-analysis port.
+
+## Packaging Notes
+
+- [pyproject.toml](/home/adrian/PhD/Inferences/pygeoinf/pyproject.toml)
+  - Adds optional extras for `osqp`, `clarabel`, and `plotly`.
+  - Should not reference excluded paths such as `symmetric_space_new`.
+
 ## File Map
 
 - [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py)
@@ -73,9 +95,19 @@ The module introduces support-function primitives for closed convex sets in a Hi
   - Algebraic composition coverage for linear images, translation, scaling, addition, operator overloading, and support-point propagation.
 - [tests/test_halfspaces.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_halfspaces.py)
   - Half-space integration coverage that now exercises the live `pygeoinf.convex_analysis` module instead of skipping import-guarded tests.
+- [pygeoinf/plot.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/plot.py)
+  - Distribution plots plus `SubspaceSlicePlotter` and `plot_slice` for subset visualisation.
+- [tests/test_plot.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_plot.py)
+  - Plot-module coverage, including the new subspace-slice plotting helpers.
+- [tests/test_subsets.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_subsets.py)
+  - `Subset.plot()` entry-point tests that verify delegation to `plot_slice` and default-subspace behaviour.
+- [pygeoinf/__init__.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/__init__.py)
+  - Package-level public export surface for convex-analysis and plotting symbols.
+- [pyproject.toml](/home/adrian/PhD/Inferences/pygeoinf/pyproject.toml)
+  - Optional dependency groups and Ruff path ignores.
 
 ## Test Expectations
 
 - Support-function constructor and algebra tests add 102 passing tests combined.
 - Half-space tests should run without skip guards once [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py) is present.
-- Full-suite baseline after the Phase 2 port: 532 passed, 1 xfailed, 1 warning.
+- Full-suite baseline after the Phase 5 visualisation/public-surface port: 624 passed, 1 xfailed, 6 warnings.
