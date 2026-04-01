@@ -66,7 +66,12 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
     @property
     @abstractmethod
     def dim(self) -> int:
-        """The finite dimension of the space."""
+        """The dimension of the finite component representation.
+
+        This is the size of the coefficient/vector representation used by
+        `to_components` and `from_components`, not necessarily the literal
+        mathematical dimension of the underlying Hilbert space.
+        """
 
     @abstractmethod
     def to_dual(self, x: Vector) -> Any:
@@ -219,9 +224,10 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         """Performs in-place scaling `x := a*x`. Defaults to `x *= a`."""
         x *= a
 
-    def axpy(self, a: float, x: Vector, y: Vector) -> None:
-        """Performs in-place operation `y := y + a*x`. Defaults to `y += a*x`."""
+    def axpy(self, a: float, x: Vector, y: Vector) -> Vector:
+        """Performs `y := y + a*x` and returns the result. Mutates y in-place when possible."""
         y += a * x
+        return y
 
     def copy(self, x: Vector) -> Vector:
         """Returns a deep copy of a vector. Defaults to `x.copy()`."""
@@ -232,6 +238,7 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         Generates a random vector from the space.
 
         The vector's components are drawn from a standard normal distribution.
+        Spaces without a component representation should override this method.
 
         Returns:
             A new random vector.
@@ -335,6 +342,20 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
             The norm of the vector.
         """
         return np.sqrt(self.squared_norm(x))
+
+    @final
+    def distance(self, x1: Vector, x2: Vector) -> float:
+        """
+        Computes the distance between two vectors, `||x1 - x2||`.
+
+        Args:
+            x1: The first vector.
+            x2: The second vector.
+
+        Returns:
+            The Hilbert-space distance between `x1` and `x2`.
+        """
+        return self.norm(self.subtract(x1, x2))
 
     @final
     def gram_schmidt(self, vectors: List[Vector]) -> List[Vector]:
@@ -788,9 +809,9 @@ class MassWeightedHilbertSpace(HilbertSpace):
         """Performs in-place scaling `x := a*x`. Defaults to `x *= a`."""
         self.underlying_space.ax(a, x)
 
-    def axpy(self, a: float, x: Vector, y: Vector) -> None:
-        """Performs in-place operation `y := y + a*x`. Defaults to `y += a*x`."""
-        self.underlying_space.axpy(a, x, y)
+    def axpy(self, a: float, x: Vector, y: Vector) -> Vector:
+        """Performs `y := y + a*x` and returns the result. Mutates y in-place when possible."""
+        return self.underlying_space.axpy(a, x, y)
 
     def copy(self, x: Vector) -> Vector:
         """Returns a deep copy of a vector. Defaults to `x.copy()`."""

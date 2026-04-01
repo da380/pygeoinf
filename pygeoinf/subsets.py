@@ -29,6 +29,7 @@ from .nonlinear_forms import NonLinearForm
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
     from .linear_operators import LinearOperator
+    from .convex_analysis import SupportFunction, HalfSpaceSupportFunction
 
 
 class Subset(ABC):
@@ -171,6 +172,85 @@ class Subset(ABC):
         else:
             subsets_to_merge.append(other)
         return Union(subsets_to_merge)
+
+    def plot(
+        self,
+        on_subspace=None,
+        *,
+        bounds=None,
+        grid_size: int = 200,
+        rtol: float = 1e-6,
+        alpha: float = 0.5,
+        cmap: str = "Blues",
+        color: str = "steelblue",
+        show_plot: bool = True,
+        ax=None,
+        backend: str = "auto",
+    ):
+        """
+        Visualize this subset along a 1D, 2D, or 3D affine subspace.
+
+        Delegates to `pygeoinf.plot.plot_slice`. For `EuclideanSpace` domains of
+        dimension 1 or 2, *on_subspace* may be omitted and a canonical full-space
+        ``AffineSubspace`` will be constructed automatically. For all other domains,
+        *on_subspace* is required.
+
+        Args:
+            on_subspace: The ``AffineSubspace`` to slice along. Required unless the
+                domain is a 1D or 2D ``EuclideanSpace``.
+            bounds: Plot bounds passed to ``plot_slice``.
+            grid_size: Samples per axis (passed to ``plot_slice``).
+            rtol: Oracle tolerance (passed to ``plot_slice``).
+            alpha: Fill transparency in [0, 1] (passed to ``plot_slice``).
+            cmap: Colormap for 2D plots (passed to ``plot_slice``).
+            color: Color string for 1D plots (passed to ``plot_slice``).
+            show_plot: Whether to call ``plt.show()`` (passed to ``plot_slice``).
+            ax: Optional existing ``Axes`` to draw into (passed to ``plot_slice``).
+            backend: Rendering backend — ``"auto"`` (default), ``"matplotlib"``,
+                or ``"plotly"`` (passed to ``plot_slice``).
+
+        Returns:
+            ``(fig, ax, payload)`` — identical to ``plot_slice``.
+
+        Raises:
+            ValueError: If *on_subspace* is ``None`` and the domain is not a 1D or
+                2D ``EuclideanSpace``.
+            TypeError: If the domain is not an ``EuclideanSpace``.
+        """
+        from .plot import plot_slice
+
+        if on_subspace is None:
+            import warnings
+            from .hilbert_space import EuclideanSpace as _EuclideanSpace
+            from .subspaces import AffineSubspace
+
+            domain = self.domain
+            if isinstance(domain, _EuclideanSpace) and domain.dim <= 2:
+                basis = [domain.basis_vector(i) for i in range(domain.dim)]
+                # Suppress the solver-absent UserWarning: we only need geometric
+                # projection here, not Bayesian conditioning.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    on_subspace = AffineSubspace.from_tangent_basis(domain, basis)
+            else:
+                raise ValueError(
+                    "on_subspace is required. It may be omitted only for "
+                    "EuclideanSpace domains of dimension 1 or 2."
+                )
+
+        return plot_slice(
+            self,
+            on_subspace,
+            bounds=bounds,
+            grid_size=grid_size,
+            rtol=rtol,
+            alpha=alpha,
+            cmap=cmap,
+            color=color,
+            show_plot=show_plot,
+            ax=ax,
+            backend=backend,
+        )
 
 
 class EmptySet(Subset):
@@ -476,10 +556,14 @@ class LevelSet(Subset):
 
 class ConvexSubset(SublevelSet):
     """
-    Represents a convex set defined as a sublevel set: S = {x | f(x) <= c}.
+    Represents a closed convex set via dual representations.
 
-    This class assumes the defining form 'f' is convex. It includes tools
-    to verify this property locally.
+    A closed convex set can be equivalently defined by:
+    1. A sublevel set: S = {x | f(x) <= c} where f is convex
+    2. Its support function: h(q) = sup{⟨q, x⟩ : x ∈ S}
+
+    This class supports both representations. The support function is abstract
+    and must be implemented by all concrete subclasses (Ball, Ellipsoid, etc.).
     """
 
     def __init__(
@@ -487,14 +571,113 @@ class ConvexSubset(SublevelSet):
         form: NonLinearForm,
         level: float,
         open_set: bool = False,
+        support_fn: Optional["SupportFunction"] = None,
     ) -> None:
         """
         Args:
             form: The defining functional f(x). Must be convex.
             level: The scalar upper bound c.
-            open_set: If True, uses strict inequality (<).
+            open_set: If True, uses strict inequality (<). If False (default), (<=).
+                Note: Support functions only apply to closed sets.
+            support_fn: Optional SupportFunction object. If provided, can be used
+                to define the set via its support function instead of a functional.
         """
         super().__init__(form, level, open_set=open_set)
+        self._support_fn = support_fn
+
+    @property
+    def support_fn(self) -> Optional["SupportFunction"]:
+        """Access the stored support function object, if any."""
+        return self._support_fn
+
+    @property
+    def is_closed(self) -> bool:
+        """
+        Returns True if the set is closed (defined by <=), False if open (<).
+        """
+        return not self.is_open
+
+    def closure(self) -> "ConvexSubset":
+        """
+        Returns the closure of this convex set.
+
+        For a convex set S:
+        - If S is already closed ({f <= c}), returns self (no copy needed).
+        - If S is open ({f < c}), returns a new closed version.
+
+        The closure is the smallest closed set containing S.
+        Note: The returned object uses the same functional and level as self,
+        with open_set flag set to False.
+
+        Returns:
+            ConvexSubset: A ConvexSubset instance (subclass) representing cl(S).
+        """
+        if self.is_closed:
+            # Already closed; return self
+            return self
+        else:
+            # Open set: create a closed version via the subclass's constructor
+            # We use type(self) to call the appropriate subclass constructor
+            # This works for Ball, Ellipsoid, etc. which override __init__
+            return type(self)(
+                self.form, self.level, open_set=False, support_fn=self._support_fn
+            )
+
+    def _warn_if_open(self, operation: str) -> "ConvexSubset":
+        """
+        Helper: warns if the set is open and returns the closure.
+
+        Args:
+            operation: Description of the operation requiring closedness.
+
+        Returns:
+            ConvexSubset: The closure if open; self if already closed.
+        """
+        if self.is_open:
+            import warnings
+            warnings.warn(
+                f"Operation '{operation}' requires a closed convex set. "
+                f"Using the closure cl(S) = {{x | f(x) <= {self.level}}} instead. "
+                f"Original set was {{x | f(x) < {self.level}}}.",
+                UserWarning,
+                stacklevel=3,
+            )
+            return self.closure()
+        return self
+
+    @property
+    @abstractmethod
+    def support_function(self) -> Optional["SupportFunction"]:
+        """
+        Returns the SupportFunction instance for this set, or None if unavailable.
+
+        This property should not raise errors if the support function cannot be
+        created (e.g., missing inverse operators for ellipsoids). The SupportFunction
+        itself is responsible for raising errors when required inputs are missing
+        during evaluation.
+        """
+
+    @abstractmethod
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Returns extreme point and support value in a given direction.
+
+        For a convex set S and direction q, computes:
+            x_max = argmax{⟨q, x⟩ : x ∈ S}
+            h(q) = sup{⟨q, x⟩ : x ∈ S}
+
+        This method must be implemented by all concrete ConvexSubset subclasses.
+
+        Args:
+            direction: A vector q specifying the direction.
+
+        Returns:
+            tuple[Vector, float]: (x_max, h(q)) where x_max achieves the supremum
+                and h(q) is the support function value.
+
+        Raises:
+            NotImplementedError: If not implemented for this set type.
+        """
 
     def check(
         self, n_samples: int = 10, /, *, rtol: float = 1e-5, atol: float = 1e-8
@@ -601,6 +784,99 @@ class ConvexIntersection(ConvexSubset):
         """Direct access to the individual convex constraints."""
         return self._subsets
 
+    @property
+    def support_function(self) -> Optional["SupportFunction"]:
+        """
+        Support function of an intersection is not generally available.
+
+        In general,
+            σ_{∩_i C_i}(q) != min_i σ_{C_i}(q).
+
+        The pointwise minimum of support functions is typically NOT sublinear,
+        hence not a valid support function of any closed convex set.
+
+        Returns:
+            None: by default. Use `support_upper_bound(direction)` for a safe
+            upper bound, or provide an optimizer to compute the true support.
+        """
+        return None
+
+    def support_upper_bound(self, direction: "Vector") -> float:
+        """
+        Safe upper bound for the true intersection support.
+
+        Because ∩_i C_i ⊆ C_i for each i, we always have
+            σ_{∩_i C_i}(q) ≤ min_i σ_{C_i}(q).
+
+        Returns:
+            float: min_i σ_{C_i}(direction)
+
+        Raises:
+            ValueError: if any component subset lacks a support function.
+        """
+        values: List[float] = []
+        for subset in self._subsets:
+            h = subset.support_function
+            if h is None:
+                raise ValueError(
+                    "Cannot compute support_upper_bound: at least one component "
+                    "subset lacks a support function."
+                )
+            values.append(float(h(direction)))
+        return float(np.min(values))
+
+    def feasible_lower_bound(
+        self, direction: "Vector", /, *, rtol: float = 1e-6
+    ) -> tuple[Optional["Vector"], float]:
+        """
+        Feasible lower bound on the true intersection support.
+
+        Strategy:
+            Try candidate maximizers from each component set (their
+            `directional_bound`). Keep the best candidate that is feasible
+            for ALL constraints (i.e., belongs to the intersection).
+
+        This is always safe (never overestimates), but may be loose.
+
+        Returns:
+            (x_best, value_best):
+              - x_best is a feasible candidate point (or None if none found)
+              - value_best = ⟨direction, x_best⟩, or -∞ if none found
+        """
+        best_x: Optional["Vector"] = None
+        best_val: float = float(np.NINF)
+
+        for subset in self._subsets:
+            x_cand, _ = subset.directional_bound(direction)
+            if all(s.is_element(x_cand, rtol=rtol) for s in self._subsets):
+                val = float(self.domain.inner_product(direction, x_cand))
+                if val > best_val:
+                    best_val = val
+                    best_x = x_cand
+
+        return best_x, best_val
+
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Directional bound for an intersection requires solving a constrained
+        maximization problem.
+
+        In general, picking the component set with the smallest support value
+        is NOT correct, because the corresponding support point need not satisfy
+        the other constraints.
+
+        Use:
+          - `support_upper_bound(direction)` for a safe upper bound
+          - `feasible_lower_bound(direction)` for a safe (feasible) lower bound
+          - or supply/implement an optimizer to solve the true problem.
+        """
+        raise NotImplementedError(
+            "ConvexIntersection.directional_bound is not available by default. "
+            "Computing the true directional bound requires solving a constrained "
+            "maximization over the intersection. Use support_upper_bound() / "
+            "feasible_lower_bound(), or provide an optimizer."
+        )
+
 
 # --- Geometric Implementations ---
 
@@ -683,6 +959,9 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         radius: float,
         operator: LinearOperator,
         open_set: bool = False,
+        *,
+        inverse_operator: Optional[LinearOperator] = None,
+        inverse_sqrt_operator: Optional[LinearOperator] = None,
     ) -> None:
         """
         Args:
@@ -696,6 +975,8 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         ConvexSubset.__init__(
             self, self._generated_form, self._generated_level, open_set=open_set
         )
+        self._inverse_operator = inverse_operator
+        self._inverse_sqrt_operator = inverse_sqrt_operator
 
     @property
     def boundary(self) -> Subset:
@@ -703,7 +984,7 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         return EllipsoidSurface(self.domain, self.center, self.radius, self.operator)
 
     @property
-    def normalized(self) -> NormalisedEllipsoid:
+    def normalized(self) -> "NormalisedEllipsoid":
         """
         Returns a normalized version of this ellipsoid with radius 1.
         The operator is scaled by 1/r^2 to represent the same set.
@@ -715,6 +996,56 @@ class Ellipsoid(ConvexSubset, _EllipsoidalGeometry):
         return NormalisedEllipsoid(
             self.domain, self.center, scaled_operator, open_set=self.is_open
         )
+
+    @property
+    def support_function(self) -> SupportFunction:
+        """
+        Returns the support function object for this ellipsoid.
+
+        This property does not require inverse operators at construction time.
+        The returned SupportFunction will raise errors if missing operators are
+        required for evaluation.
+        """
+        if self._support_fn is None:
+            from .convex_analysis import EllipsoidSupportFunction
+
+            self._support_fn = EllipsoidSupportFunction(
+                self.domain,
+                self.center,
+                self.radius,
+                self.operator,
+                inverse_operator=self._inverse_operator,
+                inverse_sqrt_operator=self._inverse_sqrt_operator,
+            )
+        return self._support_fn
+
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Returns extreme point in given direction.
+
+        For an ellipsoid E(c, r, A) and direction q:
+            x_max = c + r * (A^{-1} q) / ||A^{-1/2} q||
+            h(q) = support_function(q)
+
+        Args:
+            direction: The direction vector q.
+
+        Returns:
+            tuple[Vector, float]: (x_max, h(q))
+        """
+        self._warn_if_open("directional_bound")
+        h = self.support_function
+        if h is None:
+            raise ValueError("Support function is not available for this ellipsoid.")
+
+        x_max = h.support_point(direction)
+        if x_max is None:
+            raise NotImplementedError(
+                "directional_bound requires inverse_operator for ellipsoid support point. "
+                "Provide inverse_operator when constructing the ellipsoid."
+            )
+
+        return (x_max, h(direction))
 
 
 class NormalisedEllipsoid(Ellipsoid):
@@ -819,6 +1150,50 @@ class Ball(Ellipsoid):
         """Returns the Sphere bounding this Ball."""
         return Sphere(self.domain, self.center, self.radius)
 
+    @property
+    def support_function(self) -> SupportFunction:
+        """
+        Returns the support function object for this ball.
+
+        Always available for valid Ball instances.
+        """
+        if self._support_fn is None:
+            from .convex_analysis import BallSupportFunction
+
+            self._support_fn = BallSupportFunction(
+                self.domain, self.center, self.radius
+            )
+        return self._support_fn
+
+    def directional_bound(self, direction: "Vector") -> tuple["Vector", float]:
+        """
+        Returns extreme point in direction of 'direction'.
+
+        For a ball B(c, r) and direction q:
+            x_max = c + r * (q / ||q||)
+            h(q) = ⟨q, c⟩ + r||q||
+
+        Args:
+            direction: The direction vector q.
+
+        Returns:
+            tuple[Vector, float]: (x_max, h(q))
+        """
+        self._warn_if_open("directional_bound")
+        h = self.support_function
+        if h is None:
+            raise ValueError("Support function is not available for this ball.")
+        x_max = h.support_point(direction)
+        if x_max is None:
+            # Fallback: shouldn't happen for Ball
+            q_norm = self.domain.norm(direction)
+            if q_norm < 1e-14:
+                return (self.center, 0.0)
+            q_normalized = self.domain.multiply(1.0 / q_norm, direction)
+            radial_displacement = self.domain.multiply(self.radius, q_normalized)
+            x_max = self.domain.add(self.center, radial_displacement)
+        return (x_max, h(direction))
+
 
 class Sphere(EllipsoidSurface):
     """
@@ -843,3 +1218,496 @@ class Sphere(EllipsoidSurface):
         diff = self.domain.subtract(x, self.center)
         dist = self.domain.norm(diff)
         return abs(dist - self.radius) <= rtol * max(1.0, self.radius)
+
+
+class HyperPlane(Subset):
+    """
+    Represents a hyperplane in a Hilbert space: H = {x | ⟨a, x⟩ = b}.
+
+    A hyperplane is a flat affine subspace of codimension 1, defined by a
+    normal vector 'a' and an offset scalar 'b'.
+    """
+
+    def __init__(
+        self,
+        domain: "HilbertSpace",
+        normal_vector: "Vector",
+        offset: float,
+    ) -> None:
+        """
+        Initializes a hyperplane.
+
+        Args:
+            domain: The Hilbert space containing this hyperplane.
+            normal_vector: The normal vector 'a' defining the hyperplane.
+                Must be non-zero.
+            offset: The scalar offset 'b'. The hyperplane is {x | ⟨a, x⟩ = b}.
+
+        Raises:
+            ValueError: If normal_vector is zero or offset is not a scalar.
+        """
+        super().__init__(domain)
+
+        # Validate normal vector is non-zero
+        a_norm = self.domain.norm(normal_vector)
+        if a_norm < 1e-14:
+            raise ValueError(
+                "Normal vector must be non-zero for a hyperplane."
+            )
+
+        # Store normal vector and offset
+        self._normal_vector = normal_vector
+        self._offset = float(offset)
+
+    @property
+    def normal_vector(self) -> "Vector":
+        """The normal vector defining the hyperplane."""
+        return self._normal_vector
+
+    @property
+    def offset(self) -> float:
+        """The offset scalar b in the definition ⟨a, x⟩ = b."""
+        return self._offset
+
+    @property
+    def normal_norm(self) -> float:
+        """The Euclidean norm of the normal vector."""
+        return self.domain.norm(self._normal_vector)
+
+    def is_element(self, x: "Vector", /, *, rtol: float = 1e-6) -> bool:
+        """
+        Returns True if x lies on the hyperplane.
+
+        Checks if ⟨a, x⟩ ≈ b within relative tolerance.
+
+        Args:
+            x: A vector from the domain.
+            rtol: Relative tolerance for the equality check.
+
+        Returns:
+            bool: True if |⟨a, x⟩ - b| ≤ rtol * max(1, |b|).
+        """
+        inner_product = self.domain.inner_product(self._normal_vector, x)
+        tolerance = rtol * max(1.0, abs(self._offset))
+        return abs(inner_product - self._offset) <= tolerance
+
+    def distance_to(self, x: "Vector") -> float:
+        """
+        Computes the perpendicular distance from x to the hyperplane.
+
+        Distance = |⟨a, x⟩ - b| / ||a||
+
+        Args:
+            x: A vector from the domain.
+
+        Returns:
+            float: The perpendicular distance from x to this hyperplane.
+        """
+        inner_product = self.domain.inner_product(self._normal_vector, x)
+        a_norm = self.normal_norm
+        return abs(inner_product - self._offset) / a_norm
+
+    def project(self, x: "Vector") -> "Vector":
+        """
+        Projects a point onto the hyperplane.
+
+        The projection is: x_proj = x - ((⟨a, x⟩ - b) / ||a||²) * a
+
+        Args:
+            x: A vector from the domain.
+
+        Returns:
+            Vector: The orthogonal projection of x onto this hyperplane.
+        """
+        a_norm_sq = self.domain.inner_product(self._normal_vector, self._normal_vector)
+        inner_product = self.domain.inner_product(self._normal_vector, x)
+
+        # Compute the scalar projection coefficient
+        coeff = (inner_product - self._offset) / a_norm_sq
+
+        # Subtract coeff * a from x
+        scaled_a = self.domain.multiply(coeff, self._normal_vector)
+        x_proj = self.domain.subtract(x, scaled_a)
+
+        return x_proj
+
+    @property
+    def boundary(self) -> Subset:
+        """
+        Returns the boundary of the hyperplane (itself).
+        A hyperplane is 'thin' so its boundary is itself.
+        """
+        return self
+
+    def dimension(self) -> int:
+        """
+        Returns the geometric dimension of the hyperplane: dim(domain) - 1.
+
+        A hyperplane has codimension 1.
+
+        Returns:
+            int: The dimension of this hyperplane subspace.
+        """
+        return self.domain.dim - 1
+
+
+class HalfSpace(Subset):
+    """
+    Represents a half-space in a Hilbert space: H_+ = {x | ⟨a, x⟩ ≤ b}.
+
+    A half-space is an unbounded convex set defined by a linear inequality.
+    It is the epigraph or hypograph of a linear functional, depending on the
+    orientation of the normal vector.
+    """
+
+    def __init__(
+        self,
+        domain: "HilbertSpace",
+        normal_vector: "Vector",
+        offset: float,
+        inequality_type: str = "<=",
+    ) -> None:
+        """
+        Initializes a half-space.
+
+        Args:
+            domain: The Hilbert space containing this half-space.
+            normal_vector: The normal vector 'a' defining the half-space.
+                Must be non-zero.
+            offset: The scalar offset 'b'.
+            inequality_type: Either "<=" for {x | ⟨a, x⟩ ≤ b} (default)
+                or ">=" for {x | ⟨a, x⟩ ≥ b}.
+
+        Raises:
+            ValueError: If normal_vector is zero, offset is not scalar,
+                or inequality_type is invalid.
+        """
+        super().__init__(domain)
+
+        # Validate normal vector is non-zero
+        a_norm = self.domain.norm(normal_vector)
+        if a_norm < 1e-14:
+            raise ValueError(
+                "Normal vector must be non-zero for a half-space."
+            )
+
+        # Validate inequality type
+        if inequality_type not in ("<=", ">="):
+            raise ValueError(
+                f"inequality_type must be '<=' or '>=', got '{inequality_type}'."
+            )
+
+        # Store parameters
+        self._normal_vector = normal_vector
+        self._offset = float(offset)
+        self._inequality_type = inequality_type
+
+    @property
+    def normal_vector(self) -> "Vector":
+        """The normal vector defining the half-space."""
+        return self._normal_vector
+
+    @property
+    def offset(self) -> float:
+        """The offset scalar b in the definition ⟨a, x⟩ ≤ b or ⟨a, x⟩ ≥ b."""
+        return self._offset
+
+    @property
+    def inequality_type(self) -> str:
+        """The inequality type: '<=' or '>='."""
+        return self._inequality_type
+
+    @property
+    def normal_norm(self) -> float:
+        """The Euclidean norm of the normal vector."""
+        return self.domain.norm(self._normal_vector)
+
+    def is_element(self, x: "Vector", /, *, rtol: float = 1e-6) -> bool:
+        """
+        Returns True if x lies within the half-space.
+
+        For '<=' type: checks if ⟨a, x⟩ ≤ b + rtol * max(1, |b|).
+        For '>=' type: checks if ⟨a, x⟩ ≥ b - rtol * max(1, |b|).
+
+        Args:
+            x: A vector from the domain.
+            rtol: Relative tolerance for the inequality check.
+
+        Returns:
+            bool: True if x satisfies the half-space inequality.
+        """
+        inner_product = self.domain.inner_product(self._normal_vector, x)
+        tolerance = rtol * max(1.0, abs(self._offset))
+
+        if self._inequality_type == "<=":
+            return inner_product <= self._offset + tolerance
+        else:  # ">="
+            return inner_product >= self._offset - tolerance
+
+    def distance_to(self, x: "Vector") -> float:
+        """
+        Computes the perpendicular distance from x to the half-space boundary.
+
+        For a point inside the half-space, returns the distance to the boundary
+        plane ⟨a, x⟩ = b. For points outside, distance is negative (by convention).
+
+        Distance = (⟨a, x⟩ - b) / ||a|| (unsigned distance to boundary plane)
+
+        Args:
+            x: A vector from the domain.
+
+        Returns:
+            float: The signed distance to the boundary plane:
+                - Positive if x is on the "outside" (violating constraint)
+                - Negative if x is inside the half-space
+                - Zero if x is on the boundary
+        """
+        inner_product = self.domain.inner_product(self._normal_vector, x)
+        a_norm = self.normal_norm
+
+        if self._inequality_type == "<=":
+            # Distance = (⟨a, x⟩ - b) / ||a||
+            return (inner_product - self._offset) / a_norm
+        else:  # ">="
+            # Distance = (b - ⟨a, x⟩) / ||a|| (flipped sign)
+            return (self._offset - inner_product) / a_norm
+
+    def project(self, x: "Vector") -> "Vector":
+        """
+        Projects a point onto the half-space boundary.
+
+        This is the orthogonal projection onto the boundary hyperplane
+        {z | ⟨a, z⟩ = b}, which is independent of inequality type.
+
+        Projection: x_proj = x - ((⟨a, x⟩ - b) / ||a||²) * a
+
+        Args:
+            x: A vector from the domain.
+
+        Returns:
+            Vector: The orthogonal projection of x onto the boundary plane.
+        """
+        a_norm_sq = self.domain.inner_product(self._normal_vector, self._normal_vector)
+        inner_product = self.domain.inner_product(self._normal_vector, x)
+
+        # Compute the scalar projection coefficient
+        coeff = (inner_product - self._offset) / a_norm_sq
+
+        # Subtract coeff * a from x
+        scaled_a = self.domain.multiply(coeff, self._normal_vector)
+        x_proj = self.domain.subtract(x, scaled_a)
+
+        return x_proj
+
+    @property
+    def boundary(self) -> Subset:
+        """
+        Returns the boundary of the half-space.
+
+        The boundary of {x | ⟨a, x⟩ ≤ b} is the hyperplane {x | ⟨a, x⟩ = b}.
+
+        Returns:
+            HyperPlane: The boundary hyperplane.
+        """
+        return HyperPlane(self.domain, self._normal_vector, self._offset)
+
+    def is_bounded(self) -> bool:
+        """
+        Returns False, as half-spaces are unbounded convex sets.
+
+        A half-space extends to infinity in at least one direction.
+
+        Returns:
+            bool: Always False for half-spaces.
+        """
+        return False
+
+    @property
+    def is_empty(self) -> bool:
+        """
+        Returns False. A half-space is never empty.
+
+        Mathematically, any half-space {x | ⟨a, x⟩ ≤ b} or {x | ⟨a, x⟩ ≥ b}
+        is non-empty in a Hilbert space.
+
+        Returns:
+            bool: Always False.
+        """
+        return False
+
+    @property
+    def support_function(self) -> "HalfSpaceSupportFunction":
+        """
+        Returns the support function for this half-space.
+
+        Note:
+            Half-spaces are UNBOUNDED, so their support functions are infinite
+            in SOME directions (depends on query q and inequality type).
+            The support function may raise ValueError when unbounded.
+            This property is provided for completeness and theoretical
+            consistency with other convex sets.
+
+            Half-spaces are more useful as constraints in optimization (via
+            their indicator functions) rather than through support functions.
+
+        Returns:
+            HalfSpaceSupportFunction: Support function (may raise
+                ValueError when called with unbounded directions).
+        """
+        if not hasattr(self, "_support_fn") or self._support_fn is None:
+            from pygeoinf.convex_analysis import HalfSpaceSupportFunction
+
+            self._support_fn = HalfSpaceSupportFunction(
+                self.domain,
+                self._normal_vector,
+                self._offset,
+                self._inequality_type,
+            )
+        return self._support_fn
+
+
+class PolyhedralSet(Subset):
+    """
+    Represents a polyhedral set as the intersection of half-spaces.
+
+    P = {x | ⟨a_i, x⟩ ≤ b_i for all i} ∩ {x | ⟨a_j, x⟩ ≥ b_j for all j}
+
+    A polyhedral set is a closed, bounded or unbounded convex set defined
+    as the intersection of finitely many half-spaces.
+    """
+
+    def __init__(
+        self,
+        domain: "HilbertSpace",
+        half_spaces: list["HalfSpace"],
+    ) -> None:
+        """
+        Initialize a polyhedral set as intersection of half-spaces.
+
+        Args:
+            domain: The Hilbert space containing this polyhedral set.
+            half_spaces: A list of HalfSpace objects. The polyhedral set
+                is the intersection of all these half-spaces.
+
+        Raises:
+            ValueError: If half_spaces is empty or domains don't match.
+        """
+        super().__init__(domain)
+
+        if not half_spaces:
+            raise ValueError("PolyhedralSet requires at least one half-space.")
+
+        # Validate that all half-spaces have the same domain
+        for hs in half_spaces:
+            if hs.domain is not domain:
+                raise ValueError(
+                    "All half-spaces must have the same domain as the polyhedral set."
+                )
+
+        self._half_spaces = list(half_spaces)
+
+    @property
+    def half_spaces(self) -> list["HalfSpace"]:
+        """Returns the list of half-spaces defining this polyhedral set."""
+        return list(self._half_spaces)
+
+    def is_element(self, x: "Vector", /, *, rtol: float = 1e-6) -> bool:
+        """
+        Check if x belongs to the polyhedral set.
+
+        x ∈ P iff x satisfies all half-space constraints.
+
+        Args:
+            x: A vector from the domain.
+            rtol: Relative tolerance for constraint checks.
+
+        Returns:
+            bool: True if x satisfies all half-space constraints.
+        """
+        for hs in self._half_spaces:
+            if not hs.is_element(x, rtol=rtol):
+                return False
+        return True
+
+    @property
+    def boundary(self) -> "Subset":
+        """
+        Returns the boundary of the polyhedral set.
+
+        The boundary consists of faces where one or more constraints are
+        active (⟨a_i, x⟩ = b_i). Computing the complete boundary is complex
+        in general Hilbert spaces, so this raises NotImplementedError.
+
+        Raises:
+            NotImplementedError: General polyhedral boundary computation
+                is not yet implemented for arbitrary Hilbert spaces.
+        """
+        raise NotImplementedError(
+            "Boundary computation for general polyhedral sets is not yet "
+            "implemented. Consider specific cases (e.g., polytopes in ℝⁿ) "
+            "for practical applications."
+        )
+
+    def is_bounded(self) -> bool:
+        """
+        Check if the polyhedral set is bounded.
+
+        A polyhedral set is bounded iff it's a polytope (all variables
+        have finite bounds). This check is non-trivial in general Hilbert
+        spaces and is not yet implemented.
+
+        Returns:
+            bool: Raises NotImplementedError.
+
+        Raises:
+            NotImplementedError: Boundedness detection for general polyhedral
+                sets is not yet implemented.
+        """
+        raise NotImplementedError(
+            "Boundedness check for general polyhedral sets is not yet "
+            "implemented. This would require LP feasibility analysis."
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        """
+        Check if the polyhedral set is empty.
+
+        A polyhedral set is empty iff the intersection of half-spaces is
+        empty. This is a feasibility problem and requires LP techniques
+        to determine precisely.
+
+        Returns:
+            bool: Raises NotImplementedError.
+
+        Raises:
+            NotImplementedError: Emptiness checking for general polyhedral
+                sets requires LP feasibility testing, not yet implemented.
+        """
+        raise NotImplementedError(
+            "Emptiness check for general polyhedral sets is not yet "
+            "implemented. This would require LP feasibility analysis."
+        )
+
+    @property
+    def support_function(self) -> "Optional[SupportFunction]":
+        """
+        Returns the support function of the polyhedral set.
+
+        For a polyhedral set P = ∩_i H_i (intersection of half-spaces),
+        the support function is:
+            σ_P(q) = inf_{i} σ_{H_i}(q)
+
+        However, evaluating the infimum of support functions is complex
+        and may require iterative methods (e.g., linear programming).
+
+        Returns:
+            None: Support function for general polyhedral sets is not yet
+                implemented. Consider using the half-space constraints
+                directly in optimization or implementing LP-based evaluation.
+
+        Note:
+            For specific cases (e.g., bounded polytopes or simplices),
+            specialized implementations are available in other modules.
+        """
+        return None
