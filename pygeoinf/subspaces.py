@@ -173,6 +173,40 @@ class AffineSubspace(Subset):
         """Returns the LinearSubspace V parallel to this affine subspace."""
         return LinearSubspace(self._projector)
 
+    def get_tangent_basis(self) -> List[Vector]:
+        r"""
+        Returns an orthonormal basis for the tangent space of this affine subspace.
+
+        Extracts orthonormal basis vectors that span the tangent space $V$ by
+        applying the projector $P$ to each standard basis vector $e_i$, then
+        performing a tolerant Gram-Schmidt orthogonalisation to discard linearly
+        dependent projections.
+
+        Returns:
+            List[Vector]: Orthonormal basis vectors for the tangent space.
+        """
+        tolerance = 1e-10
+        domain = self.domain
+
+        candidates = []
+        for i in range(domain.dim):
+            e_i = domain.basis_vector(i)
+            v_i = self._projector(e_i)
+            if domain.norm(v_i) > tolerance:
+                candidates.append(v_i)
+
+        basis = []
+        for v in candidates:
+            w = domain.copy(v)
+            for b in basis:
+                w = domain.axpy(-domain.inner_product(w, b), b, w)
+            norm_w = domain.norm(w)
+            if norm_w > tolerance:
+                domain.ax(1.0 / norm_w, w)
+                basis.append(w)
+
+        return basis
+
     @property
     def has_explicit_equation(self) -> bool:
         """True if defined by B(u)=w, False if defined only by geometry."""
@@ -401,6 +435,125 @@ class AffineSubspace(Subset):
             constraint_value=w,
             solver=solver,
         )
+
+    @classmethod
+    def from_hyperplanes(
+        cls,
+        hyperplanes: List["Subset"],
+        solver: Optional[LinearSolver] = None,
+        preconditioner: Optional[LinearOperator] = None,
+    ) -> AffineSubspace:
+        """
+        Constructs an affine subspace as the intersection of hyperplanes.
+
+        Each hyperplane is defined as {x | ⟨a_i, x⟩ = b_i}. The intersection
+        of m hyperplanes defines an affine subspace of codimension m (assuming
+        the normal vectors are linearly independent).
+
+        Args:
+            hyperplanes: A list of HyperPlane objects from subsets module.
+                All hyperplanes must have the same domain.
+            solver: Solver used to invert the Gram matrix (B B*) during
+                construction. Defaults to CholeskySolver.
+            preconditioner: Optional preconditioner for iterative solvers.
+
+        Returns:
+            AffineSubspace: The affine subspace defined by the intersection.
+
+        Raises:
+            ValueError: If hyperplanes list is empty or domains don't match.
+            ImportError: If hyperplanes don't have the required attributes.
+        """
+        if not hyperplanes:
+            raise ValueError("At least one hyperplane is required.")
+
+        domain = hyperplanes[0].domain
+
+        for hp in hyperplanes:
+            if hp.domain != domain:
+                raise ValueError("All hyperplanes must have the same domain.")
+
+        try:
+            normal_vectors = [hp.normal_vector for hp in hyperplanes]
+            offsets = [hp.offset for hp in hyperplanes]
+        except AttributeError as e:
+            raise ImportError(
+                f"Hyperplane objects must have 'normal_vector' and 'offset' attributes. "
+                f"Error: {e}"
+            )
+
+        m = len(hyperplanes)
+        codomain = EuclideanSpace(m)
+
+        def constraint_mapping(x: Vector) -> np.ndarray:
+            return np.array([
+                domain.inner_product(a_i, x) for a_i in normal_vectors
+            ])
+
+        def constraint_adjoint(c: np.ndarray) -> Vector:
+            result = domain.zero
+            for i, a_i in enumerate(normal_vectors):
+                result = domain.axpy(c[i], a_i, result)
+            return result
+
+        B = LinearOperator(
+            domain, codomain, constraint_mapping, adjoint_mapping=constraint_adjoint
+        )
+
+        w = np.array(offsets)
+
+        return cls.from_linear_equation(B, w, solver=solver, preconditioner=preconditioner)
+
+    def to_hyperplanes(self) -> List["Subset"]:
+        """
+        Decomposes this affine subspace into a minimal set of hyperplanes.
+
+        Returns a list of HyperPlane objects whose intersection equals this
+        affine subspace. The number of hyperplanes equals the codimension of
+        the subspace (i.e., the rank of the constraint operator).
+
+        Returns:
+            List[HyperPlane]: The minimal set of hyperplanes defining this subspace.
+
+        Raises:
+            ValueError: If the subspace does not have an explicit constraint operator.
+            ImportError: If HyperPlane class is not available.
+        """
+        try:
+            from .subsets import HyperPlane
+        except ImportError as e:
+            raise ImportError(
+                f"Cannot import HyperPlane from subsets module. Error: {e}"
+            )
+
+        if not self.has_explicit_equation:
+            raise ValueError(
+                "Cannot convert to hyperplanes: this subspace was constructed "
+                "geometrically without an explicit constraint operator."
+            )
+
+        B = self.constraint_operator
+        w = self.constraint_value
+        codomain = B.codomain
+
+        if not isinstance(codomain, EuclideanSpace):
+            raise ValueError(
+                "Cannot convert to hyperplanes: constraint operator codomain "
+                "must be a finite-dimensional Euclidean space."
+            )
+
+        m = codomain.dim
+        hyperplanes = []
+
+        for i in range(m):
+            e_i = np.zeros(m)
+            e_i[i] = 1.0
+            a_i = B.adjoint(e_i)
+            b_i = float(w[i]) if isinstance(w, np.ndarray) else w
+            hyperplane = HyperPlane(self.domain, a_i, b_i)
+            hyperplanes.append(hyperplane)
+
+        return hyperplanes
 
     def project(self, x: Vector) -> Vector:
         """
