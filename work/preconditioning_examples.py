@@ -29,6 +29,7 @@ Available Preconditioning Strategies:
                           and interpolates it. Can optionally apply a Gaspari-Cohn taper
                           to guarantee positive definiteness.
     - sparse:             Based on a sparse approximation of the normal operator.
+    - woodbury            Based on the model-space normal operator.
 
 Command-Line Arguments:
 
@@ -125,7 +126,6 @@ def setup_problem_components(
 
 
 def main():
-
     parser = argparse.ArgumentParser(
         description="Bayesian inversion with stacked surrogate preconditioning.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -196,6 +196,7 @@ def main():
             "distance-localized",
             "none",
             "sparse",
+            "woodbury",
         ],
         default="none",
         help="Type of preconditioner to apply",
@@ -363,6 +364,10 @@ def main():
             preconditioner = inf.ColumnThresholdedPreconditioningMethod(
                 args.sparse_threshold, max_nnz=max_nnz, incomplete=True
             )(surrogate_normal_operator)
+
+        elif args.precond == "woodbury":
+            print("Forming model-space preconditioner")
+            preconditioner = surrogate_inv.woodbury_data_preconditioner()
 
         elif args.precond == "distance-localized":
             print("Building distance-localized sparse matrix...")

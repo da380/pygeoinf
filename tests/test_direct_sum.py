@@ -17,6 +17,8 @@ from pygeoinf.direct_sum import (
     ColumnLinearOperator,
 )
 
+import pickle
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -275,3 +277,106 @@ class TestDirectSumErrorHandling:
         # Provide only one form when two are expected
         with pytest.raises(ValueError):
             direct_sum.canonical_dual_isomorphism([form1])
+
+
+# =============================================================================
+# Test Suite 5: Serialization and Pickling Robustness
+# =============================================================================
+
+
+class TestSerialization:
+    """
+    Tests to ensure that direct sum spaces and block operators can be safely
+    pickled and unpickled. This guarantees compatibility with multiprocessing
+    libraries like joblib.
+    """
+
+    def test_pickle_direct_sum_space(self, euclidean_subspaces):
+        """Tests pickling of HilbertSpaceDirectSum."""
+        space = HilbertSpaceDirectSum(euclidean_subspaces)
+
+        # Serialize and deserialize
+        pickled_space = pickle.dumps(space)
+        unpickled_space = pickle.loads(pickled_space)
+
+        # Verify properties
+        assert unpickled_space.dim == space.dim
+        assert unpickled_space == space
+
+        # Verify functional mapping
+        x = space.random()
+        assert np.allclose(space.to_components(x), unpickled_space.to_components(x))
+
+    def test_pickle_block_linear_operator(self, block_operators):
+        """Tests pickling of BlockLinearOperator."""
+        operator = BlockLinearOperator(block_operators)
+
+        unpickled_op = pickle.loads(pickle.dumps(operator))
+
+        # Verify matrix assembly survived
+        assert_allclose(operator.matrix(dense=True), unpickled_op.matrix(dense=True))
+
+        # Verify forward mapping execution
+        x = operator.domain.random()
+        assert_allclose(
+            operator.codomain.to_components(operator(x)),
+            unpickled_op.codomain.to_components(unpickled_op(x)),
+        )
+
+        # Verify adjoint mapping execution
+        y = operator.codomain.random()
+        assert_allclose(
+            operator.domain.to_components(operator.adjoint(y)),
+            unpickled_op.domain.to_components(unpickled_op.adjoint(y)),
+        )
+
+    def test_pickle_block_diagonal_operator(self, euclidean_subspaces):
+        """Tests pickling of BlockDiagonalLinearOperator."""
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op2 = LinearOperator.from_matrix(s2, s2, np.random.randn(3, 3))
+        operator = BlockDiagonalLinearOperator([op1, op2])
+
+        unpickled_op = pickle.loads(pickle.dumps(operator))
+
+        assert_allclose(operator.matrix(dense=True), unpickled_op.matrix(dense=True))
+
+        x = operator.domain.random()
+        assert_allclose(
+            operator.codomain.to_components(operator(x)),
+            unpickled_op.codomain.to_components(unpickled_op(x)),
+        )
+
+    def test_pickle_row_linear_operator(self, euclidean_subspaces):
+        """Tests pickling of RowLinearOperator."""
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        op2 = LinearOperator.from_matrix(s2, s1, np.random.randn(2, 3))
+        operator = RowLinearOperator([op1, op2])
+
+        unpickled_op = pickle.loads(pickle.dumps(operator))
+
+        assert_allclose(operator.matrix(dense=True), unpickled_op.matrix(dense=True))
+
+        x = operator.domain.random()
+        assert_allclose(
+            operator.codomain.to_components(operator(x)),
+            unpickled_op.codomain.to_components(unpickled_op(x)),
+        )
+
+    def test_pickle_column_linear_operator(self, euclidean_subspaces):
+        """Tests pickling of ColumnLinearOperator."""
+        s1, s2 = euclidean_subspaces
+        op1 = LinearOperator.from_matrix(s1, s2, np.random.randn(3, 2))
+        op2 = LinearOperator.from_matrix(s1, s1, np.random.randn(2, 2))
+        operator = ColumnLinearOperator([op1, op2])
+
+        unpickled_op = pickle.loads(pickle.dumps(operator))
+
+        assert_allclose(operator.matrix(dense=True), unpickled_op.matrix(dense=True))
+
+        x = operator.domain.random()
+        assert_allclose(
+            operator.codomain.to_components(operator(x)),
+            unpickled_op.codomain.to_components(unpickled_op(x)),
+        )

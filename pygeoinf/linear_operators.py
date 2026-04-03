@@ -1045,7 +1045,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     def _compute_dense_matrix(
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
-
         # Optimization: If the codomain is smaller than the domain, it is cheaper
         # to compute the matrix of the adjoint/dual (which has fewer columns)
         # and transpose the result.
@@ -1188,7 +1187,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             return NotImplemented
 
         if isinstance(other, LinearOperator):
-
             domain = self.domain
             codomain = self.codomain
 
@@ -1284,34 +1282,41 @@ class MatrixLinearOperator(LinearOperator):
         self._galerkin = galerkin
 
         if galerkin:
-
-            def mapping(x: Any) -> Any:
-                cx = domain.to_components(x)
-                cyp = matrix @ cx
-                yp = codomain.dual.from_components(cyp)
-                return codomain.from_dual(yp)
-
-            def adjoint_mapping(y: Any) -> Any:
-                cy = codomain.to_components(y)
-                cxp = matrix.T @ cy
-                xp = domain.dual.from_components(cxp)
-                return domain.from_dual(xp)
-
-            super().__init__(domain, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
+            super().__init__(
+                domain,
+                codomain,
+                self._mapping_galerkin,
+                adjoint_mapping=self._adjoint_mapping_galerkin,
+            )
         else:
+            super().__init__(
+                domain,
+                codomain,
+                self._mapping_standard,
+                dual_mapping=self._dual_mapping_standard,
+            )
 
-            def mapping(x: Any) -> Any:
-                cx = domain.to_components(x)
-                cy = matrix @ cx
-                return codomain.from_components(cy)
+    def _mapping_galerkin(self, x: Any) -> Any:
+        cx = self.domain.to_components(x)
+        cyp = self._matrix @ cx
+        yp = self.codomain.dual.from_components(cyp)
+        return self.codomain.from_dual(yp)
 
-            def dual_mapping(yp: Any) -> Any:
-                cyp = codomain.dual.to_components(yp)
-                cxp = matrix.T @ cyp
-                return domain.dual.from_components(cxp)
+    def _adjoint_mapping_galerkin(self, y: Any) -> Any:
+        cy = self.codomain.to_components(y)
+        cxp = self._matrix.T @ cy
+        xp = self.domain.dual.from_components(cxp)
+        return self.domain.from_dual(xp)
 
-            super().__init__(domain, codomain, mapping, dual_mapping=dual_mapping)
+    def _mapping_standard(self, x: Any) -> Any:
+        cx = self.domain.to_components(x)
+        cy = self._matrix @ cx
+        return self.codomain.from_components(cy)
+
+    def _dual_mapping_standard(self, yp: Any) -> Any:
+        cyp = self.codomain.dual.to_components(yp)
+        cxp = self._matrix.T @ cyp
+        return self.domain.dual.from_components(cxp)
 
     @property
     def is_dense(self) -> bool:
@@ -1739,7 +1744,7 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
                 "Cannot take the square root of an operator with negative entries."
             )
 
-        return self.apply_function(lambda x: np.sqrt(x))
+        return self.apply_function(np.sqrt)
 
     def apply_function(
         self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
