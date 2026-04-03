@@ -267,6 +267,129 @@ class LinearLeastSquaresInversion(LinearInversion):
         else:
             return linear_part
 
+    def surrogate_inversion(
+        self,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_data_error_measure=None,  # Accepts GaussianMeasure
+    ) -> LinearLeastSquaresInversion:
+        """
+        Constructs a surrogate least-squares inversion problem using simplified physics
+        or data errors.
+        """
+        A_tilde = alternate_forward_operator or self.forward_problem.forward_operator
+
+        if alternate_data_error_measure is not None:
+            R_tilde = alternate_data_error_measure
+        elif self.forward_problem.data_error_measure_set:
+            R_tilde = self.forward_problem.data_error_measure
+        else:
+            R_tilde = None
+
+        surrogate_forward_problem = LinearForwardProblem(
+            A_tilde, data_error_measure=R_tilde
+        )
+
+        return LinearLeastSquaresInversion(
+            surrogate_forward_problem, formalism=self._formalism
+        )
+
+    def woodbury_data_preconditioner(
+        self,
+        damping: float,
+        /,
+        *,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Constructs a data-space preconditioner using the Woodbury matrix identity.
+
+        Data Space Normal Operator: N_d = A A* + damping * R
+        Woodbury Identity: N_d^-1 = (1/damping) * [R^-1 - R^-1 A (A* R^-1 A + damping * I)^-1 A* R^-1]
+        """
+        if damping <= 0:
+            raise ValueError(
+                "Damping must be strictly positive for the Woodbury identity."
+            )
+
+        from .linear_solvers import LUSolver
+
+        A = self.forward_problem.forward_operator
+
+        if not self.forward_problem.data_error_measure_set:
+            raise ValueError(
+                "Data error measure must be set for the Woodbury identity."
+            )
+        R = self.forward_problem.data_error_measure
+
+        # 1. Extract or compute R^-1
+        if R.inverse_covariance_set:
+            R_inv = R.inverse_covariance
+        else:
+            r_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
+            R_inv = r_solver(R.covariance)
+
+        # 2. Form the model-space normal operator: N_m = A* R^-1 A + damping * I
+        identity = self.model_space.identity_operator()
+        N_m = A.adjoint @ R_inv @ A + damping * identity
+
+        # 3. Exactly invert the small model-space operator
+        nm_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
+        N_m_inv = nm_solver(N_m)
+
+        # 4. Assemble the Woodbury identity
+        term2 = R_inv @ A @ N_m_inv @ A.adjoint @ R_inv
+
+        return (1.0 / damping) * (R_inv - term2)
+
+    def surrogate_woodbury_preconditioner(
+        self,
+        damping: float,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_data_error_measure=None,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Builds a data-space preconditioner by applying the Woodbury matrix identity
+        to a simplified surrogate inverse problem.
+        """
+        surrogate_inv = self.surrogate_inversion(
+            alternate_forward_operator=alternate_forward_operator,
+            alternate_data_error_measure=alternate_data_error_measure,
+        )
+        return surrogate_inv.woodbury_data_preconditioner(
+            damping, parallel=parallel, n_jobs=n_jobs
+        )
+
+    def normal_residual_callback(
+        self,
+        damping: float,
+        data: Vector,
+        /,
+        *,
+        message: str = "Iteration: {iter} | Normal Residual: {res:.3e}",
+        print_progress: bool = True,
+    ):
+        """
+        Generates a ResidualTrackingCallback pre-configured to track the
+        convergence of the least-squares normal equations for the given data vector.
+        """
+        from .linear_solvers import ResidualTrackingCallback
+
+        rhs = self.normal_rhs(data)
+
+        return ResidualTrackingCallback(
+            operator=self.normal_operator(damping),
+            y=rhs,
+            print_progress=print_progress,
+            message=message,
+        )
+
 
 class ConstrainedLinearLeastSquaresInversion(LinearInversion):
     """
@@ -351,6 +474,27 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         )
         shift_out = AffineOperator(codomain.identity_operator(), self._u_base)
         return shift_out @ reduced_op @ shift_in
+
+    def normal_residual_callback(
+        self,
+        damping: float,
+        data: Vector,
+        /,
+        *,
+        message: str = "Iteration: {iter} | Normal Residual: {res:.3e}",
+        print_progress: bool = True,
+    ):
+        """
+        Generates a ResidualTrackingCallback for the reduced, unconstrained
+        normal equations.
+        """
+        # The unconstrained inversion is acting on shifted data due to the constraint
+        data_offset = self.forward_problem.forward_operator(self._u_base)
+        shifted_data = self.data_space.subtract(data, data_offset)
+
+        return self._unconstrained_inversion.normal_residual_callback(
+            damping, shifted_data, message=message, print_progress=print_progress
+        )
 
 
 class LinearMinimumNormInversion(LinearInversion):

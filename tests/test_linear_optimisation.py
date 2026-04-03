@@ -8,7 +8,7 @@ from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
-from pygeoinf.linear_solvers import CholeskySolver
+from pygeoinf.linear_solvers import CholeskySolver, ResidualTrackingCallback
 from pygeoinf.subspaces import AffineSubspace, LinearSubspace
 from pygeoinf.affine_operators import AffineOperator
 from pygeoinf.linear_optimisation import (
@@ -17,6 +17,7 @@ from pygeoinf.linear_optimisation import (
     ConstrainedLinearLeastSquaresInversion,
     ConstrainedLinearMinimumNormInversion,
 )
+
 
 # =============================================================================
 # Fixtures for the Test Problem
@@ -143,6 +144,98 @@ class TestLinearLeastSquaresInversion:
             ValueError, match="formalism must be either 'model_space' or 'data_space'"
         ):
             LinearLeastSquaresInversion(forward_problem, formalism="spectral_space")
+
+    def test_woodbury_exact_equivalence(self, forward_problem: LinearForwardProblem):
+        """
+        Verifies that the Woodbury preconditioner exactly matches the inverse
+        of the dense data-space least-squares normal operator.
+        """
+        damping = 0.5
+        inversion = LinearLeastSquaresInversion(forward_problem)
+
+        # 1. Compute the Woodbury preconditioner
+        woodbury_precon = inversion.woodbury_data_preconditioner(damping)
+
+        # 2. Extract exact dense matrices
+        A = forward_problem.forward_operator.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        # 3. Calculate exact inverse of normal operator: (A A^T + damping * R)^-1
+        exact_normal_matrix = A @ A.T + damping * R
+        exact_inverse_matrix = np.linalg.inv(exact_normal_matrix)
+
+        # 4. Extract dense matrix from the Woodbury operator
+        woodbury_matrix = woodbury_precon.matrix(dense=True)
+
+        # 5. Compare
+        assert np.allclose(woodbury_matrix, exact_inverse_matrix, atol=1e-8)
+
+    def test_surrogate_woodbury_chaining(self, forward_problem: LinearForwardProblem):
+        """
+        Verifies that the surrogate wrapper correctly chains the surrogate
+        least-squares inversion and the Woodbury preconditioner extraction.
+        """
+        damping = 0.1
+        inversion = LinearLeastSquaresInversion(forward_problem)
+
+        # Create an arbitrary "alternate" forward operator (e.g., scaled by 0.5)
+        alt_A = 0.5 * forward_problem.forward_operator
+
+        # 1. Generate via the chained method
+        chained_precon = inversion.surrogate_woodbury_preconditioner(
+            damping, alternate_forward_operator=alt_A
+        )
+
+        # 2. Generate manually
+        manual_surrogate = inversion.surrogate_inversion(
+            alternate_forward_operator=alt_A
+        )
+        manual_precon = manual_surrogate.woodbury_data_preconditioner(damping)
+
+        # 3. Compare matrices
+        assert np.allclose(
+            chained_precon.matrix(dense=True), manual_precon.matrix(dense=True)
+        )
+
+    def test_woodbury_requires_data_error(self, forward_problem: LinearForwardProblem):
+        """
+        Verifies that the Woodbury identity fails safely if no data error measure is set.
+        """
+        # Create an inversion without a data error measure
+        fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
+        inversion = LinearLeastSquaresInversion(fp_no_noise)
+
+        with pytest.raises(ValueError, match="Data error measure must be set"):
+            inversion.woodbury_data_preconditioner(0.1)
+
+    def test_normal_residual_callback(
+        self, forward_problem: LinearForwardProblem, synthetic_data: np.ndarray
+    ):
+        """
+        Verifies that the callback generator wires the correct operator and RHS
+        into the ResidualTrackingCallback for least-squares.
+        """
+        damping = 0.2
+        inversion = LinearLeastSquaresInversion(forward_problem)
+
+        callback = inversion.normal_residual_callback(
+            damping, synthetic_data, print_progress=False
+        )
+
+        assert isinstance(callback, ResidualTrackingCallback)
+
+        # Verify the operator inside the callback is the correctly damped normal operator
+        expected_normal_matrix = inversion.normal_operator(damping).matrix(dense=True)
+        callback_normal_matrix = callback.operator.matrix(dense=True)
+
+        assert np.allclose(callback_normal_matrix, expected_normal_matrix)
+
+        # Verify the target 'y' vector in the callback is the correct normal RHS
+        expected_rhs = inversion.normal_rhs(synthetic_data)
+        assert np.allclose(
+            forward_problem.data_space.to_components(callback.y),
+            forward_problem.data_space.to_components(expected_rhs),
+        )
 
 
 # =============================================================================
@@ -284,6 +377,45 @@ class TestConstrainedLinearLeastSquaresInversion:
         u_data_vec = domain.to_components(u_data)
 
         assert np.allclose(u_model_vec, u_data_vec, atol=1e-8, rtol=1e-8)
+
+    def test_constrained_normal_residual_callback(self):
+        """
+        Verifies that the constrained callback correctly shifts the data by the
+        constraint's affine base before passing it to the unconstrained tracking logic.
+        """
+        domain = EuclideanSpace(5)
+        fp = LinearForwardProblem(
+            domain.identity_operator(),
+            data_error_measure=GaussianMeasure.from_standard_deviation(domain, 1.0),
+        )
+
+        codomain = EuclideanSpace(1)
+        ones = np.ones((1, 5)) / 5.0
+        B = LinearOperator.from_matrix(domain, codomain, ones)
+        w = codomain.from_components(np.array([2.0]))
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        inversion = ConstrainedLinearLeastSquaresInversion(fp, constraint)
+        data = domain.from_components(np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
+        damping = 0.1
+
+        callback = inversion.normal_residual_callback(
+            damping, data, print_progress=False
+        )
+
+        assert isinstance(callback, ResidualTrackingCallback)
+
+        # The underlying RHS should be derived from the shifted data: data - A(u_base)
+        u_base = constraint.projection_operator.translation_part
+        data_offset = fp.forward_operator(u_base)
+        shifted_data = domain.subtract(data, data_offset)
+
+        # We reach inside the class solely for validation of the expected shift
+        expected_rhs = inversion._unconstrained_inversion.normal_rhs(shifted_data)
+
+        assert np.allclose(
+            domain.to_components(callback.y), domain.to_components(expected_rhs)
+        )
 
 
 # =============================================================================
