@@ -1,0 +1,1575 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-8.3.5, pluggy-1.6.0
+rootdir: /home/david/dev/pygeoinf
+configfile: pyproject.toml
+plugins: anyio-4.9.0, cov-6.2.1
+collected 408 items
+
+tests/symmetric_space/test_circle_lebesgue.py ........                   [  1%]
+tests/symmetric_space/test_circle_plot.py ...                            [  2%]
+tests/symmetric_space/test_circle_sobolev.py ...........                 [  5%]
+tests/symmetric_space/test_invariant_objects.py .........                [  7%]
+tests/symmetric_space/test_line_lebesgue.py ........                     [  9%]
+tests/symmetric_space/test_line_plot.py ...                              [ 10%]
+tests/symmetric_space/test_line_sobolev.py ..........                    [ 12%]
+tests/symmetric_space/test_sphere_lebesgue.py ..........                 [ 15%]
+tests/symmetric_space/test_sphere_plot.py .......                        [ 16%]
+tests/symmetric_space/test_sphere_sobolev.py ...................         [ 21%]
+tests/test_affine_operators.py .....                                     [ 22%]
+tests/test_auxiliary.py ..................F                              [ 27%]
+tests/test_direct_sum.py .........................                       [ 33%]
+tests/test_euclidean.py .......                                          [ 35%]
+tests/test_euclidean_nonlinear_operators.py ..                           [ 35%]
+tests/test_forward_problem.py EEEEEEE                                    [ 37%]
+tests/test_gaussian_measure.py ...FF..........                           [ 41%]
+tests/test_inversion.py .......                                          [ 42%]
+tests/test_linear_bayesian.py .......FF........                          [ 47%]
+tests/test_linear_forms.py ............................................. [ 58%]
+.........                                                                [ 60%]
+tests/test_linear_operators.py ...........................FF             [ 67%]
+tests/test_linear_optimisation.py ...................                    [ 72%]
+tests/test_linear_solvers.py .......................                     [ 77%]
+tests/test_mass_weighted.py ...                                          [ 78%]
+tests/test_nonlinear_forms.py ................                           [ 82%]
+tests/test_nonlinear_optimisation.py ....x.                              [ 83%]
+tests/test_parallelism.py ....                                           [ 84%]
+tests/test_plot.py ........................                              [ 90%]
+tests/test_preconditioners.py ............                               [ 93%]
+tests/test_random_matrix.py ..............                               [ 97%]
+tests/test_subsets.py ........                                           [ 99%]
+tests/test_subspaces.py ....                                             [100%]
+
+==================================== ERRORS ====================================
+________ ERROR at setup of TestLinearForwardProblem.test_initialization ________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f1e8680>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+data_space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c3f1eae40>
+
+    @pytest.fixture
+    def data_error_measure(data_space: EuclideanSpace) -> GaussianMeasure:
+        """Provides a Gaussian measure for the data errors."""
+        # Use a non-zero mean to test that it's handled correctly
+        mean = np.array([0.5, -0.5])
+        std_devs = np.array([0.1, 0.2])
+>       return GaussianMeasure.from_standard_deviations(
+            data_space, std_devs, expectation=mean
+        )
+
+tests/test_forward_problem.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f1eaff0>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[0.1, 0.2]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+_________ ERROR at setup of TestLinearForwardProblem.test_data_measure _________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c4330f860>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+data_space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c4330e060>
+
+    @pytest.fixture
+    def data_error_measure(data_space: EuclideanSpace) -> GaussianMeasure:
+        """Provides a Gaussian measure for the data errors."""
+        # Use a non-zero mean to test that it's handled correctly
+        mean = np.array([0.5, -0.5])
+        std_devs = np.array([0.1, 0.2])
+>       return GaussianMeasure.from_standard_deviations(
+            data_space, std_devs, expectation=mean
+        )
+
+tests/test_forward_problem.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c4330fc80>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[0.1, 0.2]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+__ ERROR at setup of TestLinearForwardProblem.test_synthetic_data_statistics ___
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f03d310>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+data_space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c3f03f380>
+
+    @pytest.fixture
+    def data_error_measure(data_space: EuclideanSpace) -> GaussianMeasure:
+        """Provides a Gaussian measure for the data errors."""
+        # Use a non-zero mean to test that it's handled correctly
+        mean = np.array([0.5, -0.5])
+        std_devs = np.array([0.1, 0.2])
+>       return GaussianMeasure.from_standard_deviations(
+            data_space, std_devs, expectation=mean
+        )
+
+tests/test_forward_problem.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f03cf80>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[0.1, 0.2]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+_________ ERROR at setup of TestLinearForwardProblem.test_chi_squared __________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f16e630>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+data_space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c3f16d0a0>
+
+    @pytest.fixture
+    def data_error_measure(data_space: EuclideanSpace) -> GaussianMeasure:
+        """Provides a Gaussian measure for the data errors."""
+        # Use a non-zero mean to test that it's handled correctly
+        mean = np.array([0.5, -0.5])
+        std_devs = np.array([0.1, 0.2])
+>       return GaussianMeasure.from_standard_deviations(
+            data_space, std_devs, expectation=mean
+        )
+
+tests/test_forward_problem.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f199370>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[0.1, 0.2]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+_______ ERROR at setup of TestLinearForwardProblem.test_from_direct_sum ________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f1f1e20>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+data_space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c3f1f0170>
+
+    @pytest.fixture
+    def data_error_measure(data_space: EuclideanSpace) -> GaussianMeasure:
+        """Provides a Gaussian measure for the data errors."""
+        # Use a non-zero mean to test that it's handled correctly
+        mean = np.array([0.5, -0.5])
+        std_devs = np.array([0.1, 0.2])
+>       return GaussianMeasure.from_standard_deviations(
+            data_space, std_devs, expectation=mean
+        )
+
+tests/test_forward_problem.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f1f1250>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[0.1, 0.2]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+_ ERROR at setup of TestLinearForwardProblem.test_data_measure_from_model_measure _
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f1f23f0>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+data_space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c3f1f1a30>
+
+    @pytest.fixture
+    def data_error_measure(data_space: EuclideanSpace) -> GaussianMeasure:
+        """Provides a Gaussian measure for the data errors."""
+        # Use a non-zero mean to test that it's handled correctly
+        mean = np.array([0.5, -0.5])
+        std_devs = np.array([0.1, 0.2])
+>       return GaussianMeasure.from_standard_deviations(
+            data_space, std_devs, expectation=mean
+        )
+
+tests/test_forward_problem.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f1f0b30>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[0.1, 0.2]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+________ ERROR at setup of TestLinearForwardProblem.test_joint_measure _________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f1f2ba0>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+data_space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c3f1f1430>
+
+    @pytest.fixture
+    def data_error_measure(data_space: EuclideanSpace) -> GaussianMeasure:
+        """Provides a Gaussian measure for the data errors."""
+        # Use a non-zero mean to test that it's handled correctly
+        mean = np.array([0.5, -0.5])
+        std_devs = np.array([0.1, 0.2])
+>       return GaussianMeasure.from_standard_deviations(
+            data_space, std_devs, expectation=mean
+        )
+
+tests/test_forward_problem.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f1f05f0>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[0.1, 0.2]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+=================================== FAILURES ===================================
+________ TestEmpiricalDataErrorMeasure.test_different_domain_dimensions ________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f03e0c0>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <tests.test_auxiliary.TestEmpiricalDataErrorMeasure object at 0x733c436f44d0>
+
+    def test_different_domain_dimensions(self):
+        """Test with different domain and codomain dimensions."""
+        # Small model space, larger data space
+        model_space = EuclideanSpace(dim=3)
+        data_space = EuclideanSpace(dim=8)
+    
+>       model_measure = GaussianMeasure.from_standard_deviations(
+            model_space, np.ones(model_space.dim)
+        )
+
+tests/test_auxiliary.py:269: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c4334fd40>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[1., 1., 1.]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+__________________ TestGaussianMeasure.test_addition[space0] ___________________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f1f1490>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x733c4354c470>
+measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x733c3f08aa20>
+
+    def test_addition(self, measure: GaussianMeasure):
+        std_devs = np.random.rand(measure.domain.dim) + 0.1
+>       measure2 = GaussianMeasure.from_standard_deviations(measure.domain, std_devs)
+
+tests/test_gaussian_measure.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f1f0860>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+args = [array([[0.25209472, 0.3675605 , 0.45338955, 1.00027645]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+__________ TestGaussianMeasure.test_from_standard_deviations[space0] ___________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c435303b0>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x733c4354e510>
+space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x733c4354d550>
+
+    def test_from_standard_deviations(self, space: HilbertSpace):
+        std_devs = np.random.rand(space.dim) + 0.1
+>       measure = GaussianMeasure.from_standard_deviations(space, std_devs)
+
+tests/test_gaussian_measure.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/gaussian_measure.py:194: in from_standard_deviations
+    inverse_covariance_factor=covariance_factor.inverse,
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c435336e0>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+args = [array([[0.38709429, 0.6071189 , 0.33468503, 0.11666971]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+________ TestDiagonalNormalPreconditioner.test_exact_diagonal_no_blocks ________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3dcc1850>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <tests.test_linear_bayesian.TestDiagonalNormalPreconditioner object at 0x733c4354eae0>
+forward_problem = <pygeoinf.forward_problem.LinearForwardProblem object at 0x733c3de8c7d0>
+model_prior_measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x733c3de8c350>
+
+    def test_exact_diagonal_no_blocks(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the matrix-free diagonal computation exactly matches
+        the diagonal of the fully assembled dense normal matrix.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+    
+        # 1. Compute using the new optimized method
+>       preconditioner = inversion.diagonal_normal_preconditioner()
+
+tests/test_linear_bayesian.py:362: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/linear_bayesian.py:497: in diagonal_normal_preconditioner
+    return approx_normal_op.inverse
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3dcc33e0>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+args = [array([[57.20522867, 58.79258079, 53.52506756, 49.45146919, 49.86457073,
+        48.70529183, 55.88469138, 51.4150887...915, 52.78804051, 56.19096814, 28.96555487,
+        62.34970081, 55.95143235, 43.85053933, 49.34646496, 55.02597124]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+____________ TestDiagonalNormalPreconditioner.test_block_averaging _____________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3dcc1100>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <tests.test_linear_bayesian.TestDiagonalNormalPreconditioner object at 0x733c4356ecc0>
+forward_problem = <pygeoinf.forward_problem.LinearForwardProblem object at 0x733c3dcc3590>
+model_prior_measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x733c3dcc2210>
+
+    def test_block_averaging(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that providing blocks correctly averages the basis vectors
+        to compute a representative regional variance.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+    
+        data_dim = forward_problem.data_space.dim
+    
+        # We block indices [0, 1] together, leave [2] alone, and lump the rest
+        # into a third block so the entire data space is perfectly partitioned.
+        blocks = [[0, 1], [2], list(range(3, data_dim))]
+    
+>       preconditioner = inversion.diagonal_normal_preconditioner(blocks=blocks)
+
+tests/test_linear_bayesian.py:398: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/linear_bayesian.py:497: in diagonal_normal_preconditioner
+    return approx_normal_op.inverse
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3dcc3b60>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+args = [array([[21.53921759, 21.53921759, 50.47743663,  2.55474541,  2.55474541,
+         2.55474541,  2.55474541,  2.5547454...541,  2.55474541,  2.55474541,  2.55474541,
+         2.55474541,  2.55474541,  2.55474541,  2.55474541,  2.55474541]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+_______________ TestDiagonalSparseOperator.test_inverse_property _______________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c3f102cc0>
+func = functools.partial(<ufunc 'power'>, x2=-1)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <tests.test_linear_operators.TestDiagonalSparseOperator object at 0x733c435e4ef0>
+
+    def test_inverse_property(self):
+        """
+        Tests the .inverse property for strictly diagonal operators.
+        """
+        domain = inf.EuclideanSpace(3)
+        diagonal_values = np.array([2.0, 4.0, 5.0])
+        op = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            domain, domain, diagonal_values
+        )
+    
+        # Compute the inverse
+>       inv_op = op.inverse
+
+tests/test_linear_operators.py:617: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/linear_operators.py:1736: in inverse
+    return self**-1
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c3f100e30>
+func = functools.partial(<ufunc 'power'>, x2=-1), args = [array([[2., 4., 5.]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+________________ TestDiagonalSparseOperator.test_sqrt_property _________________
+
+self = <pygeoinf.linear_operators.DiagonalSparseMatrixLinearOperator object at 0x733c4330f350>
+func = functools.partial(<ufunc 'power'>, x2=2)
+
+    def apply_function(
+        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
+    ) -> DiagonalSparseMatrixLinearOperator:
+        """
+        Applies a function to the diagonal values (eigenvalues) of the operator.
+    
+        This supports functional calculus for strictly diagonal operators.
+        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
+    
+        Args:
+            func: A callable function, or the string name of a SciPy sparse method.
+        """
+        if not self.is_strictly_diagonal:
+            raise NotImplementedError(
+                "Functional calculus (apply_function) is only mathematically "
+                "defined here for strictly diagonal operators."
+            )
+    
+        if isinstance(func, str):
+            return self.__getattr__(func)()
+    
+        try:
+>           new_data = func(self._matrix.data)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+pygeoinf/linear_operators.py:1773: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <tests.test_linear_operators.TestDiagonalSparseOperator object at 0x733c435e50a0>
+
+    def test_sqrt_property(self):
+        """
+        Tests the .sqrt property for strictly diagonal operators.
+        """
+        domain = inf.EuclideanSpace(3)
+        diagonal_values = np.array([4.0, 9.0, 16.0])
+        op = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            domain, domain, diagonal_values
+        )
+    
+        # Compute the square root
+        sqrt_op = op.sqrt
+    
+        # Check that squaring the result gives back the original
+>       reconstructed_op = sqrt_op**2
+
+tests/test_linear_operators.py:655: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/linear_operators.py:1820: in __pow__
+    return self.apply_function(partial(np.power, x2=power))
+pygeoinf/linear_operators.py:1776: in apply_function
+    new_data = vectorized_func(self._matrix.data)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2372: in __call__
+    return self._call_as_normal(*args, **kwargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2365: in _call_as_normal
+    return self._vectorize_call(func=func, args=vargs)
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2450: in _vectorize_call
+    ufunc, otypes = self._get_ufunc_and_otypes(func=func, args=args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <numpy.vectorize object at 0x733c4330dd90>
+func = functools.partial(<ufunc 'power'>, x2=2), args = [array([[2., 3., 4.]])]
+
+    def _get_ufunc_and_otypes(self, func, args):
+        """Return (ufunc, otypes)."""
+        # frompyfunc will fail if args is empty
+        if not args:
+            raise ValueError('args can not be empty')
+    
+        if self.otypes is not None:
+            otypes = self.otypes
+    
+            # self._ufunc is a dictionary whose keys are the number of
+            # arguments (i.e. len(args)) and whose values are ufuncs created
+            # by frompyfunc. len(args) can be different for different calls if
+            # self.pyfunc has parameters with default values.  We only use the
+            # cache when func is self.pyfunc, which occurs when the call uses
+            # only positional arguments and no arguments are excluded.
+    
+            nin = len(args)
+            nout = len(self.otypes)
+            if func is not self.pyfunc or nin not in self._ufunc:
+                ufunc = frompyfunc(func, nin, nout)
+            else:
+                ufunc = None  # We'll get it from self._ufunc
+            if func is self.pyfunc:
+                ufunc = self._ufunc.setdefault(nin, ufunc)
+        else:
+            # Get number of outputs and output types by calling the function on
+            # the first entries of args.  We also cache the result to prevent
+            # the subsequent call when the ufunc is evaluated.
+            # Assumes that ufunc first evaluates the 0th elements in the input
+            # arrays (the input values are not checked to ensure this)
+            args = [asarray(arg) for arg in args]
+            if builtins.any(arg.size == 0 for arg in args):
+                raise ValueError('cannot call `vectorize` on size 0 inputs '
+                                 'unless `otypes` is set')
+    
+            inputs = [arg.flat[0] for arg in args]
+>           outputs = func(*inputs)
+E           TypeError: power() takes from 2 to 3 positional arguments but 1 were given
+
+../../.cache/pypoetry/virtualenvs/pygeoinf-0ZCu7S8P-py3.12/lib/python3.12/site-packages/numpy/lib/function_base.py:2410: TypeError
+=========================== short test summary info ============================
+FAILED tests/test_auxiliary.py::TestEmpiricalDataErrorMeasure::test_different_domain_dimensions
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_addition[space0]
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_from_standard_deviations[space0]
+FAILED tests/test_linear_bayesian.py::TestDiagonalNormalPreconditioner::test_exact_diagonal_no_blocks
+FAILED tests/test_linear_bayesian.py::TestDiagonalNormalPreconditioner::test_block_averaging
+FAILED tests/test_linear_operators.py::TestDiagonalSparseOperator::test_inverse_property
+FAILED tests/test_linear_operators.py::TestDiagonalSparseOperator::test_sqrt_property
+ERROR tests/test_forward_problem.py::TestLinearForwardProblem::test_initialization
+ERROR tests/test_forward_problem.py::TestLinearForwardProblem::test_data_measure
+ERROR tests/test_forward_problem.py::TestLinearForwardProblem::test_synthetic_data_statistics
+ERROR tests/test_forward_problem.py::TestLinearForwardProblem::test_chi_squared
+ERROR tests/test_forward_problem.py::TestLinearForwardProblem::test_from_direct_sum
+ERROR tests/test_forward_problem.py::TestLinearForwardProblem::test_data_measure_from_model_measure
+ERROR tests/test_forward_problem.py::TestLinearForwardProblem::test_joint_measure
+============= 7 failed, 393 passed, 1 xfailed, 7 errors in 19.93s ==============

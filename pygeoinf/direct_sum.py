@@ -24,6 +24,7 @@ Key Classes
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List, Any
+from functools import partial
 import numpy as np
 from scipy.linalg import block_diag
 
@@ -153,8 +154,8 @@ class HilbertSpaceDirectSum(HilbertSpace):
         return LinearOperator(
             self,
             self.subspaces[i],
-            lambda xs: self._subspace_projection_mapping(i, xs),
-            adjoint_mapping=lambda x: self._subspace_inclusion_mapping(i, x),
+            partial(self._subspace_projection_mapping, i),
+            adjoint_mapping=partial(self._subspace_inclusion_mapping, i),
         )
 
     def subspace_inclusion(self, i: int) -> LinearOperator:
@@ -168,8 +169,8 @@ class HilbertSpaceDirectSum(HilbertSpace):
         return LinearOperator(
             self.subspaces[i],
             self,
-            lambda x: self._subspace_inclusion_mapping(i, x),
-            adjoint_mapping=lambda xs: self._subspace_projection_mapping(i, xs),
+            partial(self._subspace_inclusion_mapping, i),
+            adjoint_mapping=partial(self._subspace_projection_mapping, i),
         )
 
     def canonical_dual_isomorphism(self, xps: List[LinearForm]) -> LinearForm:
@@ -302,7 +303,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
         row_dim = len(blocks)
         col_dim = len(blocks[0])
         super().__init__(
-            domain, codomain, self.__mapping, adjoint_mapping=self.__adjoint_mapping
+            domain, codomain, self._mapping, adjoint_mapping=self._adjoint_mapping
         )
         BlockStructure.__init__(self, row_dim, col_dim)
 
@@ -328,8 +329,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
 
         return np.block(block_matrices)
 
-    def __mapping(self, xs: List[Any]) -> List[Any]:
-
+    def _mapping(self, xs: List[Any]) -> List[Any]:
         ys = []
         for i in range(self.row_dim):
             codomain = self._codomains[i]
@@ -340,8 +340,7 @@ class BlockLinearOperator(LinearOperator, BlockStructure):
             ys.append(y)
         return ys
 
-    def __adjoint_mapping(self, ys: List[Any]) -> List[Any]:
-
+    def _adjoint_mapping(self, ys: List[Any]) -> List[Any]:
         xs = []
         for j in range(self.col_dim):
             domain = self._domains[j]
@@ -381,24 +380,24 @@ class ColumnLinearOperator(LinearOperator, BlockStructure):
 
         self._operators = operators
 
-        def mapping(x: Any) -> List[Any]:
-            """Applies each operator to x and returns a list of results."""
-            return [op(x) for op in self._operators]
-
-        def adjoint_mapping(ys: List[Any]) -> Any:
-            """
-            Applies the adjoint of each operator to the corresponding y_i
-            and sums the results.
-            """
-            x = domain.zero
-            for op, y in zip(self._operators, ys):
-                domain.axpy(1.0, op.adjoint(y), x)
-            return x
-
         LinearOperator.__init__(
-            self, domain, codomain, mapping, adjoint_mapping=adjoint_mapping
+            self, domain, codomain, self._mapping, adjoint_mapping=self._adjoint_mapping
         )
         BlockStructure.__init__(self, len(operators), 1)
+
+    def _mapping(self, x: Any) -> List[Any]:
+        """Applies each operator to x and returns a list of results."""
+        return [op(x) for op in self._operators]
+
+    def _adjoint_mapping(self, ys: List[Any]) -> Any:
+        """
+        Applies the adjoint of each operator to the corresponding y_i
+        and sums the results.
+        """
+        x = self.domain.zero
+        for op, y in zip(self._operators, ys):
+            self.domain.axpy(1.0, op.adjoint(y), x)
+        return x
 
     def block(self, i: int, j: int) -> LinearOperator:
         """Returns the operator in the (i, 0)-th sub-block."""
@@ -446,23 +445,23 @@ class RowLinearOperator(LinearOperator, BlockStructure):
 
         self._operators = operators
 
-        def mapping(xs: List[Any]) -> Any:
-            """
-            Applies each operator to the corresponding x_i and sums the results.
-            """
-            y = codomain.zero
-            for op, x in zip(self._operators, xs):
-                codomain.axpy(1.0, op(x), y)
-            return y
-
-        def adjoint_mapping(y: Any) -> List[Any]:
-            """Applies the adjoint of each operator to y and returns a list."""
-            return [op.adjoint(y) for op in self._operators]
-
         LinearOperator.__init__(
-            self, domain, codomain, mapping, adjoint_mapping=adjoint_mapping
+            self, domain, codomain, self._mapping, adjoint_mapping=self._adjoint_mapping
         )
         BlockStructure.__init__(self, 1, len(operators))
+
+    def _mapping(self, xs: List[Any]) -> Any:
+        """
+        Applies each operator to the corresponding x_i and sums the results.
+        """
+        y = self.codomain.zero
+        for op, x in zip(self._operators, xs):
+            self.codomain.axpy(1.0, op(x), y)
+        return y
+
+    def _adjoint_mapping(self, y: Any) -> List[Any]:
+        """Applies the adjoint of each operator to y and returns a list."""
+        return [op.adjoint(y) for op in self._operators]
 
     def block(self, i: int, j: int) -> LinearOperator:
         """Returns the operator in the (0, j)-th sub-block."""
@@ -497,15 +496,17 @@ class BlockDiagonalLinearOperator(LinearOperator, BlockStructure):
         domain = HilbertSpaceDirectSum([operator.domain for operator in operators])
         codomain = HilbertSpaceDirectSum([operator.codomain for operator in operators])
 
-        def mapping(xs: List[Any]) -> List[Any]:
-            return [operator(x) for operator, x in zip(operators, xs)]
-
-        def adjoint_mapping(ys: List[Any]) -> List[Any]:
-            return [operator.adjoint(y) for operator, y in zip(operators, ys)]
-
-        super().__init__(domain, codomain, mapping, adjoint_mapping=adjoint_mapping)
+        super().__init__(
+            domain, codomain, self._mapping, adjoint_mapping=self._adjoint_mapping
+        )
         dim = len(self._operators)
         BlockStructure.__init__(self, dim, dim)
+
+    def _mapping(self, xs: List[Any]) -> List[Any]:
+        return [operator(x) for operator, x in zip(self._operators, xs)]
+
+    def _adjoint_mapping(self, ys: List[Any]) -> List[Any]:
+        return [operator.adjoint(y) for operator, y in zip(self._operators, ys)]
 
     def block(self, i: int, j: int) -> LinearOperator:
         """
