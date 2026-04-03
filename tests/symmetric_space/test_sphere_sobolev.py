@@ -63,12 +63,12 @@ class TestSphereSobolevSpecifics:
 
         coeffs = sh.SHCoeffs.from_zeros(space.lmax, normalization="ortho", csphase=1)
         coeffs.set_coeffs(1.0, l, m)
-        harmonic_grid = space.from_coefficients(coeffs)  #
+        harmonic_grid = space.from_coefficients(coeffs)
 
         numerical_norm = space.norm(harmonic_grid)
 
-        eigenvalue = space.laplacian_eigenvalue((l, m))  #
-        scaling_factor = np.sqrt(space.sobolev_function(eigenvalue))  #
+        eigenvalue = space.laplacian_eigenvalue((l, m))
+        scaling_factor = np.sqrt(space.sobolev_function(eigenvalue))
         analytical_norm = space.radius * scaling_factor
 
         assert np.isclose(numerical_norm, analytical_norm)
@@ -100,9 +100,6 @@ class TestSphereSobolevSpecifics:
 
         # Set a specific coefficient (e.g., l=2, m=0) to 1.0
         # pyshtools ordering: degree l major; order m is [0, 1, ..., l, -1, ..., -l]
-        # l=0 takes 1 element (index 0)
-        # l=1 takes 3 elements (indices 1, 2, 3)
-        # l=2 starts at index 4. The first element is m=0.
         target_idx = 4
         vec_in[target_idx] = 1.0
 
@@ -137,10 +134,108 @@ class TestSphereSobolevSpecifics:
         op_up = sobolev_space.degree_transfer_operator(sobolev_space.lmax + 4)
         op_up.check(n_checks=5)
 
+    def test_point_evaluation_matrix_free_equivalence(self, sobolev_space: Sobolev):
+        """
+        Tests that the dense, matrix-free serial, and matrix-free parallel
+        implementations of the point evaluation operator produce mathematically
+        identical results and satisfy the LinearOperator axioms.
+        """
+        points = [(10.0, 20.0), (-45.0, 100.0), (80.0, 300.0), (0.0, 0.0), (5.0, 5.0)]
+
+        op_dense = sobolev_space.point_evaluation_operator(points, matrix_free=False)
+        op_free_serial = sobolev_space.point_evaluation_operator(
+            points, matrix_free=True, parallel=False
+        )
+        op_free_parallel = sobolev_space.point_evaluation_operator(
+            points, matrix_free=True, parallel=True, n_jobs=2
+        )
+
+        # 1. Verify axioms for all implementations
+        op_dense.check(n_checks=3)
+        op_free_serial.check(n_checks=3)
+        op_free_parallel.check(n_checks=3)
+
+        # 2. Check forward mapping equivalence
+        u = sobolev_space.random()
+        val_dense = op_dense(u)
+
+        assert np.allclose(val_dense, op_free_serial(u))
+        assert np.allclose(val_dense, op_free_parallel(u))
+
+        # 3. Check adjoint mapping equivalence
+        y = np.random.randn(len(points))
+        u_adj_dense = op_dense.adjoint(y)
+
+        assert np.allclose(u_adj_dense.data, op_free_serial.adjoint(y).data)
+        assert np.allclose(u_adj_dense.data, op_free_parallel.adjoint(y).data)
+
+    def test_path_average_matrix_free_equivalence(self, sobolev_space: Sobolev):
+        """
+        Tests that the dense, matrix-free serial, matrix-free parallel, and
+        lazy quadrature implementations of the path average operator produce
+        mathematically identical results and satisfy the LinearOperator axioms.
+        """
+        paths = [
+            ((0.0, 0.0), (10.0, 10.0)),
+            ((-20.0, 50.0), (40.0, -50.0)),
+            ((5.0, 100.0), (-5.0, 120.0)),
+        ]
+
+        op_dense = sobolev_space.path_average_operator(
+            paths, n_points=5, matrix_free=False
+        )
+        op_free_serial = sobolev_space.path_average_operator(
+            paths, n_points=5, matrix_free=True, parallel=False, lazy_quadrature=False
+        )
+        op_free_parallel = sobolev_space.path_average_operator(
+            paths,
+            n_points=5,
+            matrix_free=True,
+            parallel=True,
+            n_jobs=2,
+            lazy_quadrature=False,
+        )
+        op_lazy_serial = sobolev_space.path_average_operator(
+            paths, n_points=5, matrix_free=True, parallel=False, lazy_quadrature=True
+        )
+        op_lazy_parallel = sobolev_space.path_average_operator(
+            paths,
+            n_points=5,
+            matrix_free=True,
+            parallel=True,
+            n_jobs=2,
+            lazy_quadrature=True,
+        )
+
+        operators = [
+            op_dense,
+            op_free_serial,
+            op_free_parallel,
+            op_lazy_serial,
+            op_lazy_parallel,
+        ]
+
+        # 1. Verify axioms for all implementations
+        for op in operators:
+            op.check(n_checks=3)
+
+        # 2. Check forward mapping equivalence
+        u = sobolev_space.random()
+        val_dense = op_dense(u)
+
+        for op in operators[1:]:
+            assert np.allclose(val_dense, op(u))
+
+        # 3. Check adjoint mapping equivalence
+        y = np.random.randn(len(paths))
+        u_adj_dense = op_dense.adjoint(y)
+
+        for op in operators[1:]:
+            assert np.allclose(u_adj_dense.data, op.adjoint(y).data)
+
 
 def test_factory_methods():
     """Tests the automatic truncation degree factories for Sobolev spaces on a sphere."""
-    # kernel_order (4.0) must be sufficiently > order (1.0) for the energy to be finite!
     space = Sobolev.from_sobolev_kernel_prior(
         4.0, 0.1, 1.0, 0.5, radius=1.0, min_degree=4, power_of_two=True
     )

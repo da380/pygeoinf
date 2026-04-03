@@ -72,6 +72,9 @@ from .linear_solvers import (
     MinResSolver,
     BICGStabSolver,
     FCGSolver,
+    ProgressCallback,
+    SolutionTrackingCallback,
+    ResidualTrackingCallback,
 )
 
 from .preconditioners import (
@@ -181,6 +184,9 @@ __all__ = [
     "MinResSolver",
     "BICGStabSolver",
     "FCGSolver",
+    "ProgressCallback",
+    "SolutionTrackingCallback",
+    "ResidualTrackingCallback",
     # preconditioners
     "IdentityPreconditioningMethod",
     "JacobiPreconditioningMethod",

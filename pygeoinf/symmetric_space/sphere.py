@@ -20,6 +20,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 
+from joblib import Parallel, delayed
+
 from scipy.spatial import cKDTree
 
 
@@ -434,7 +436,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def pairs_within_distance(
         self, points: List[Tuple[float, float]], max_distance: float
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-
         # 1. Convert all (lat, lon) points to 3D Cartesian vectors
         vecs = (
             np.array([self._to_vector(lat, lon) for lat, lon in points]) * self.radius
@@ -504,7 +505,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def invariant_covariance_function(
         self, spectral_variances: np.ndarray
     ) -> Callable[[np.ndarray], np.ndarray]:
-
         degree_variances = np.zeros(self.lmax + 1)
         for l in range(self.lmax + 1):
             idx = self.index_to_integer((l, 0))
@@ -1167,6 +1167,298 @@ class Sobolev(SymmetricSobolevSpace):
         l2_operator = self.underlying_space.from_coefficient_operator(lmax, lmin=lmin)
 
         return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
+
+    def point_evaluation_operator(
+        self,
+        points: List[Tuple[float, float]],
+        /,
+        *,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Args:
+            points: A list of (latitude, longitude) tuples.
+            matrix_free: If True, evaluates the operator on-the-fly to save memory.
+            parallel: If True, distributes the matrix-free evaluations across CPU cores.
+            n_jobs: Number of parallel jobs. -1 uses all available cores.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        lats = [p[0] for p in points]
+        lons = [p[1] for p in points]
+        codomain = EuclideanSpace(len(points))
+
+        # Heuristic chunking: Target ~4 chunks per worker to balance load and overhead
+        n_points = len(points)
+        num_chunks = min(n_points, abs(n_jobs) * 4 if n_jobs > 0 else 16)
+        chunks = np.array_split(range(n_points), num_chunks)
+
+        def mapping(u: sh.SHGrid) -> np.ndarray:
+            coeffs = self.to_coefficients(u)
+
+            if not parallel:
+                raw_vals = coeffs.expand(lat=lats, lon=lons, degrees=True)
+                return np.array(raw_vals, dtype=float).flatten()
+
+            def compute_fwd_chunk(indices):
+                chunk_lats = [lats[i] for i in indices]
+                chunk_lons = [lons[i] for i in indices]
+                raw = coeffs.expand(lat=chunk_lats, lon=chunk_lons, degrees=True)
+                return np.array(raw, dtype=float).flatten()
+
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(compute_fwd_chunk)(chunk) for chunk in chunks if len(chunk) > 0
+            )
+            return np.concatenate(results)
+
+        def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
+            from pygeoinf.linear_forms import LinearForm
+
+            if not parallel:
+                total_components = np.zeros(self.dim)
+                for i, pt in enumerate(points):
+                    if y[i] != 0.0:
+                        total_components += y[i] * self.dirac(pt).components
+                return self.from_dual(LinearForm(self, components=total_components))
+
+            def compute_adj_chunk(indices):
+                local_comps = np.zeros(self.dim)
+                for i in indices:
+                    if y[i] != 0.0:
+                        local_comps += y[i] * self.dirac(points[i]).components
+                return local_comps
+
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(compute_adj_chunk)(chunk) for chunk in chunks if len(chunk) > 0
+            )
+            total_components = sum(results)
+            return self.from_dual(LinearForm(self, components=total_components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def path_average_operator(
+        self,
+        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+        /,
+        *,
+        n_points: Optional[int] = None,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        lazy_quadrature: bool = False,
+    ) -> LinearOperator:
+        """
+        Constructs a tomographic operator mapping a function field to its
+        line integrals along a set of geodesic paths.
+
+        Args:
+            paths: A list of start and end point pairs defining the geodesics.
+            n_points: The number of quadrature points per path.
+            matrix_free: If True, evaluates the integrals on-the-fly to save memory.
+            parallel: If True, distributes the matrix-free evaluations across CPU cores.
+            n_jobs: Number of parallel jobs. -1 uses all available cores.
+            lazy_quadrature: If True, computes quadrature points on-the-fly per chunk
+                to prevent memory blowouts when evaluating massive numbers of paths.
+        """
+        if not matrix_free:
+            return super().path_average_operator(paths, n_points=n_points)
+
+        n_paths = len(paths)
+        codomain = EuclideanSpace(n_paths)
+
+        # Determine chunking strategy (aim for reasonable sized blocks)
+        num_chunks = min(n_paths, abs(n_jobs) * 4 if n_jobs > 0 else 16)
+        chunks = np.array_split(range(n_paths), num_chunks)
+
+        # Helper to dynamically get quadrature points for a single path
+        def get_quad(p1, p2):
+            if n_points is None:
+                _, temp_weights = self.geodesic_quadrature(p1, p2, n_points=2)
+                arc_length = np.sum(temp_weights)
+                pts_count = int(np.ceil((arc_length / self.scale) * 2.0))
+                pts_count = max(2, pts_count)
+            else:
+                pts_count = n_points
+            return self.geodesic_quadrature(p1, p2, pts_count)
+
+        if not lazy_quadrature:
+            # =========================================================
+            # MODE 1: PRECOMPUTE ALL (Fastest, High Memory)
+            # =========================================================
+            def compute_quad_chunk(indices):
+                chunk_pts, chunk_wts = [], []
+                for i in indices:
+                    pts, wts = get_quad(*paths[i])
+                    chunk_pts.append(pts)
+                    chunk_wts.append(wts)
+                return chunk_pts, chunk_wts
+
+            if parallel:
+                quad_results = Parallel(n_jobs=n_jobs)(
+                    delayed(compute_quad_chunk)(chunk)
+                    for chunk in chunks
+                    if len(chunk) > 0
+                )
+                all_quad_points, all_quad_weights = [], []
+                for c_pts, c_wts in quad_results:
+                    all_quad_points.extend(c_pts)
+                    all_quad_weights.extend(c_wts)
+            else:
+                all_quad_points, all_quad_weights = compute_quad_chunk(range(n_paths))
+
+            flat_lats, flat_lons, path_slices = [], [], []
+            idx = 0
+            for pts in all_quad_points:
+                pts_count = len(pts)
+                for pt in pts:
+                    flat_lats.append(pt[0])
+                    flat_lons.append(pt[1])
+                path_slices.append((idx, idx + pts_count))
+                idx += pts_count
+
+            def mapping(u: sh.SHGrid) -> np.ndarray:
+                coeffs = self.to_coefficients(u)
+                if not parallel:
+                    raw = coeffs.expand(lat=flat_lats, lon=flat_lons, degrees=True)
+                    flat = np.array(raw, dtype=float).flatten()
+                    res = np.zeros(n_paths)
+                    for i, (start, end) in enumerate(path_slices):
+                        res[i] = np.sum(flat[start:end] * all_quad_weights[i])
+                    return res
+
+                def compute_fwd_chunk(indices):
+                    local_lats, local_lons, local_wts, local_slices = [], [], [], []
+                    local_idx = 0
+                    for i in indices:
+                        pts, wts = all_quad_points[i], all_quad_weights[i]
+                        for pt in pts:
+                            local_lats.append(pt[0])
+                            local_lons.append(pt[1])
+                        c_len = len(pts)
+                        local_slices.append((local_idx, local_idx + c_len))
+                        local_wts.append(wts)
+                        local_idx += c_len
+                    raw = coeffs.expand(lat=local_lats, lon=local_lons, degrees=True)
+                    flat = np.array(raw, dtype=float).flatten()
+                    res = np.zeros(len(indices))
+                    for k, (start, end) in enumerate(local_slices):
+                        res[k] = np.sum(flat[start:end] * local_wts[k])
+                    return res
+
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(compute_fwd_chunk)(chunk)
+                    for chunk in chunks
+                    if len(chunk) > 0
+                )
+                return np.concatenate(results)
+
+            def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
+                from pygeoinf.linear_forms import LinearForm
+
+                if not parallel:
+                    total_components = np.zeros(self.dim)
+                    for i in range(n_paths):
+                        if y[i] != 0.0:
+                            path_comps = np.zeros(self.dim)
+                            for pt, w in zip(all_quad_points[i], all_quad_weights[i]):
+                                path_comps += w * self.dirac(pt).components
+                            total_components += y[i] * path_comps
+                    return self.from_dual(LinearForm(self, components=total_components))
+
+                def compute_adj_chunk(indices):
+                    local_comps = np.zeros(self.dim)
+                    for i in indices:
+                        if y[i] != 0.0:
+                            path_comps = np.zeros(self.dim)
+                            for pt, w in zip(all_quad_points[i], all_quad_weights[i]):
+                                path_comps += w * self.dirac(pt).components
+                            local_comps += y[i] * path_comps
+                    return local_comps
+
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(compute_adj_chunk)(chunk)
+                    for chunk in chunks
+                    if len(chunk) > 0
+                )
+                return self.from_dual(LinearForm(self, components=sum(results)))
+
+        else:
+            # =========================================================
+            # MODE 2: LAZY EVALUATION (Slightly slower, Low Memory)
+            # =========================================================
+            def mapping(u: sh.SHGrid) -> np.ndarray:
+                coeffs = self.to_coefficients(u)
+
+                def compute_lazy_fwd_chunk(indices):
+                    local_lats, local_lons, local_wts, local_slices = [], [], [], []
+                    local_idx = 0
+                    # 1. Compute geometry dynamically for this chunk
+                    for i in indices:
+                        pts, wts = get_quad(*paths[i])
+                        for pt in pts:
+                            local_lats.append(pt[0])
+                            local_lons.append(pt[1])
+                        c_len = len(pts)
+                        local_slices.append((local_idx, local_idx + c_len))
+                        local_wts.append(wts)
+                        local_idx += c_len
+
+                    # 2. Vectorized pyshtools evaluation just for this chunk's points
+                    raw = coeffs.expand(lat=local_lats, lon=local_lons, degrees=True)
+                    flat = np.array(raw, dtype=float).flatten()
+
+                    # 3. Sum up the line integrals
+                    res = np.zeros(len(indices))
+                    for k, (start, end) in enumerate(local_slices):
+                        res[k] = np.sum(flat[start:end] * local_wts[k])
+                    return res
+
+                if parallel:
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_lazy_fwd_chunk)(chunk)
+                        for chunk in chunks
+                        if len(chunk) > 0
+                    )
+                    return np.concatenate(results)
+                else:
+                    return np.concatenate(
+                        [compute_lazy_fwd_chunk(c) for c in chunks if len(c) > 0]
+                    )
+
+            def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
+                from pygeoinf.linear_forms import LinearForm
+
+                def compute_lazy_adj_chunk(indices):
+                    local_comps = np.zeros(self.dim)
+                    for i in indices:
+                        if y[i] != 0.0:
+                            pts, wts = get_quad(*paths[i])
+                            path_comps = np.zeros(self.dim)
+                            for pt, w in zip(pts, wts):
+                                path_comps += w * self.dirac(pt).components
+                            local_comps += y[i] * path_comps
+                    return local_comps
+
+                if parallel:
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_lazy_adj_chunk)(chunk)
+                        for chunk in chunks
+                        if len(chunk) > 0
+                    )
+                    total_components = sum(results)
+                else:
+                    total_components = sum(
+                        [compute_lazy_adj_chunk(c) for c in chunks if len(c) > 0]
+                    )
+
+                return self.from_dual(LinearForm(self, components=total_components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
 
 # -------------------------------------------------- #

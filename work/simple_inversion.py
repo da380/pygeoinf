@@ -23,10 +23,12 @@ model_space = Sobolev.from_heat_kernel_prior(
 
 # Set up the forward operator
 print("Setting up the forward problem")
-n_sources = 10
-n_receivers = 100
+n_sources = 20
+n_receivers = 20
 paths = model_space.random_source_receiver_paths(n_sources, n_receivers)
-forward_operator = model_space.path_average_operator(paths)
+forward_operator = model_space.path_average_operator(
+    paths, matrix_free=True, parallel=True, n_jobs=10
+)
 
 # Set up the data errors
 data_space = forward_operator.codomain
@@ -50,7 +52,7 @@ inverse_problem = inf.LinearBayesianInversion(forward_problem, model_prior)
 
 # Set up the preconditioner
 print("Building the preconditioner")
-surrogate_degree = model_space.degree // 4
+surrogate_degree = model_space.degree // 6
 surrogate_space = model_space.with_degree(surrogate_degree)
 surrogate_operator = surrogate_space.path_average_operator(paths)
 surrogate_prior = surrogate_space.point_value_scaled_heat_kernel_gaussian_measure(
@@ -60,19 +62,25 @@ surrogate_problem = inverse_problem.surrogate_inversion(
     alternate_forward_operator=surrogate_operator,
     alternate_prior_measure=surrogate_prior,
 )
-surrogate_normal = surrogate_problem.normal_operator
-precon = inf.ColumnThresholdedPreconditioningMethod(1e-3, incomplete=True)(
-    surrogate_normal
-)
+precon = surrogate_problem.woodbury_data_preconditioner()
 
 
 # Solve the inverse problem
 print("Solving the problem")
-solver = inf.CGMatrixSolver()
+# callback = inverse_problem.normal_residual_callback(data)
+callback = inf.ProgressCallback()
+solver = inf.CGMatrixSolver(callback=callback)
 model_posterior = inverse_problem.model_posterior_measure(
     data, solver, preconditioner=precon
 )
 print(f"Solution in {solver.iterations} iterations")
+
+
+# Posterior STD
+sample = False
+if sample:
+    posterior_std = model_posterior.sample_pointwise_std(100)
+
 
 # Corner Plot Section
 print("Generating corner plot for degree 2 coefficients")
@@ -102,9 +110,10 @@ ax1, im1 = plot(
     model,
     projection=ccrs.Robinson(),
     colorbar=True,
+    symmetric=True,
     colorbar_kwargs={"label": "True model"},
 )
-plot_geodesic_network(paths, ax=ax1, alpha=0.1)
+plot_geodesic_network(paths, ax=ax1, alpha=0.05)
 ax1.set_title("True Model")
 
 
@@ -112,10 +121,23 @@ ax2, im2 = plot(
     model_out,
     colorbar=True,
     projection=ccrs.Robinson(),
+    symmetric=True,
     colorbar_kwargs={"label": "Posterior expectation"},
 )
-plot_geodesic_network(paths, ax=ax2, alpha=0.1)
+plot_geodesic_network(paths, ax=ax2, alpha=0.05)
 ax2.set_title("Posterior Expectation")
+
+
+if sample:
+    ax3, im3 = plot(
+        posterior_std,
+        colorbar=True,
+        projection=ccrs.Robinson(),
+        cmap="Reds",
+        colorbar_kwargs={"label": "Posterior expectation"},
+    )
+    plot_geodesic_network(paths, ax=ax3, alpha=0.05)
+    ax3.set_title("Posterior Expectation")
 
 
 plt.show()
