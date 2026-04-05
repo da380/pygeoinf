@@ -520,6 +520,192 @@ class GaussianMeasure:
         variance = self.sample_pointwise_variance(n, parallel=parallel, n_jobs=n_jobs)
         return self.domain.vector_sqrt(variance)
 
+    def deflated_pointwise_variance(
+        self,
+        rank: int,
+        /,
+        *,
+        size_estimate: int = 0,
+        method: str = "variable",
+        max_samples: int = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Vector:
+        """
+        Estimates the pointwise variance using a deflated Hutchinson's method.
+        """
+        from .hilbert_space import HilbertModule
+
+        if not isinstance(self.domain, HilbertModule):
+            raise NotImplementedError(
+                "Pointwise variance requires vector multiplication on the domain."
+            )
+
+        if rank < 0 or size_estimate < 0:
+            raise ValueError("Rank and size_estimate must be non-negative.")
+
+        space = self.domain
+        deterministic_var = space.zero
+
+        # -------------------------------------------------------------
+        # 1. Deterministic Low-Rank Variance
+        # -------------------------------------------------------------
+        if rank > 0:
+            if rank == 1:
+                raise ValueError("Rank must be greater than 1")
+
+            F = self.low_rank_approximation(rank, method="fixed").covariance_factor
+
+            actual_rank = F.domain.dim
+
+            for i in range(actual_rank):
+                e_i = F.domain.basis_vector(i)
+                spatial_mode = F(e_i)
+                squared_mode = space.vector_multiply(spatial_mode, spatial_mode)
+                space.axpy(1.0, squared_mode, deterministic_var)
+
+            residual_cov = self.covariance - (F @ F.adjoint)
+        else:
+            residual_cov = self.covariance
+
+        # -------------------------------------------------------------
+        # 2. Stochastic Residual Variance (Progressive Hutchinson's)
+        # -------------------------------------------------------------
+        if size_estimate == 0 and method == "fixed":
+            return deterministic_var
+
+        if max_samples is None:
+            max_samples = space.dim
+
+        num_samples = min(size_estimate, max_samples)
+
+        # Ensure Rademacher noise generates true white noise in the Hilbert space metric
+        if hasattr(space, "squared_norms"):
+            inv_norms = 1.0 / np.sqrt(space.squared_norms)
+        else:
+            inv_norms = np.array(
+                [
+                    1.0 / np.sqrt(space.squared_norm(space.basis_vector(i)))
+                    for i in range(space.dim)
+                ]
+            )
+
+        def _compute_sample_sum(n_samples_to_draw: int) -> Vector:
+            """Helper to draw a block of samples and return their spatial sum."""
+
+            def _single_sample():
+                # Scale components by 1 / ||e_i|| so Cov(z) = Identity
+                c_z = np.random.choice([-1.0, 1.0], size=space.dim) * inv_norms
+                z = space.from_components(c_z)
+                R_z = residual_cov(z)
+                return space.vector_multiply(z, R_z)
+
+            block_sum = space.zero
+            if parallel:
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(_single_sample)() for _ in range(n_samples_to_draw)
+                )
+                for res in results:
+                    space.axpy(1.0, res, block_sum)
+            else:
+                for _ in range(n_samples_to_draw):
+                    space.axpy(1.0, _single_sample(), block_sum)
+            return block_sum
+
+        # Initial batch
+        residual_sum = _compute_sample_sum(num_samples)
+        residual_est = (
+            space.multiply(1.0 / num_samples, residual_sum)
+            if num_samples > 0
+            else space.zero
+        )
+
+        # Progressive sampling
+        if method == "variable" and num_samples < max_samples:
+            while num_samples < max_samples:
+                old_est = space.copy(residual_est)
+
+                samples_to_add = min(block_size, max_samples - num_samples)
+                new_sum = _compute_sample_sum(samples_to_add)
+
+                # Update running average
+                space.axpy(1.0, new_sum, residual_sum)
+                total_samples = num_samples + samples_to_add
+                residual_est = space.multiply(1.0 / total_samples, residual_sum)
+
+                # Check convergence using the Hilbert space norm
+                norm_new = space.norm(residual_est)
+                if norm_new > 0:
+                    diff = space.subtract(residual_est, old_est)
+                    error = space.norm(diff) / norm_new
+                    if error < rtol:
+                        break
+
+                num_samples = total_samples
+
+        return space.add(deterministic_var, residual_est)
+
+    def deflated_pointwise_std(
+        self,
+        rank: int,
+        /,
+        *,
+        size_estimate: int = 0,
+        method: str = "variable",
+        max_samples: int = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> Vector:
+        """
+        Estimates the pointwise standard deviation using a deflated Hutchinson's method.
+
+        This method wraps `deflated_pointwise_variance` and returns the pointwise
+        square root of the result. It supports both fixed and progressive variable
+        sampling strategies for the stochastic residual.
+
+        Args:
+            rank: The rank of the deterministic low-rank approximation.
+            size_estimate: Initial number of samples for the stochastic residual.
+            method: 'variable' to sample until convergence, 'fixed' to stop at size_estimate.
+            max_samples: Hard limit on residual samples (defaults to domain dimension).
+            rtol: Relative tolerance for the 'variable' method.
+            block_size: Number of new samples per iteration in 'variable' method.
+            parallel: If True, computes the stochastic residual samples in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Returns:
+            A Vector representing the pointwise standard deviation.
+
+        Raises:
+            NotImplementedError: If the domain is not a HilbertModule.
+        """
+        # The variance method already checks if the domain is a HilbertModule,
+        # but we check it here too just to give a clear error message specifically for std.
+        from .hilbert_space import HilbertModule
+
+        if not isinstance(self.domain, HilbertModule):
+            raise NotImplementedError(
+                "Pointwise standard deviation requires vector multiplication on the domain "
+                "(the domain must be a HilbertModule)."
+            )
+
+        variance = self.deflated_pointwise_variance(
+            rank,
+            size_estimate=size_estimate,
+            method=method,
+            max_samples=max_samples,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        return self.domain.vector_sqrt(variance)
+
     def with_dense_covariance(self, parallel: bool = False, n_jobs: int = -1):
         """
         Forms a new Gaussian measure equivalent to the existing one, but
@@ -855,7 +1041,6 @@ class GaussianMeasure:
         """
         if self.domain != other.domain:
             raise ValueError("Measures must be defined on the same domain.")
-
 
         k = self.domain.dim
 

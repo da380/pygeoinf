@@ -129,6 +129,15 @@ from .plot import plot_1d_distributions, plot_corner_distributions
 
 from .utils import configure_threading
 
+from .datasets import (
+    load_gsn_stations,
+    download_usgs_earthquakes,
+    download_gsn_stations,
+    sample_earthquakes,
+)
+
+from .config import DATADIR
+
 __all__ = [
     # random_matrix
     "fixed_rank_random_range",
@@ -234,4 +243,11 @@ __all__ = [
     "plot_corner_distributions",
     # utils
     "configure_threading",
+    # datasets
+    "load_gsn_stations",
+    "download_gsn_stations",
+    "download_usgs_earthquakes",
+    "sample_earthquakes",
+    # congif
+    "DATADIR",
 ]

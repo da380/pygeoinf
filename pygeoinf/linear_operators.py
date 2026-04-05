@@ -1021,6 +1021,74 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             galerkin=True,
         )
 
+    def deflated_diagonal(
+        self,
+        rank: int,
+        size_estimate: int,
+        /,
+        *,
+        method: str = "variable",
+        max_samples: int = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
+        """
+        Estimates the diagonal of any square operator's component matrix using SVD deflation.
+        """
+        from .random_matrix import random_diagonal
+
+        if self.domain.dim != self.codomain.dim:
+            raise ValueError("Operator must be square to extract a diagonal.")
+
+        if rank < 0 or size_estimate < 0:
+            raise ValueError("Rank and size_estimate must be non-negative.")
+
+        dim = self.domain.dim
+        total_diagonal = np.zeros(dim)
+
+        # -------------------------------------------------------------
+        # 1. Deterministic Low-Rank Diagonal via SVD
+        # -------------------------------------------------------------
+        if rank > 0:
+            U_op, S_op, Vt_op = self.random_svd(
+                rank, method="fixed", parallel=parallel, n_jobs=n_jobs
+            )
+
+            U_mat = U_op.matrix(dense=True, galerkin=galerkin)
+            Vt_mat = Vt_op.matrix(dense=True, galerkin=galerkin)
+            S_vec = S_op.extract_diagonal(galerkin=galerkin)
+
+            total_diagonal += np.sum(U_mat * S_vec * Vt_mat.T, axis=1)
+            residual_op = self - (U_op @ S_op @ Vt_op)
+        else:
+            residual_op = self
+
+        # -------------------------------------------------------------
+        # 2. Stochastic Residual Diagonal
+        # -------------------------------------------------------------
+        # FIX: strictly require size_estimate > 0 to avoid zero-division
+        if size_estimate > 0:
+            scipy_residual_wrapper = residual_op.matrix(galerkin=galerkin)
+
+            stochastic_diag = random_diagonal(
+                scipy_residual_wrapper,
+                size_estimate,
+                method=method,
+                use_rademacher=True,
+                max_samples=max_samples,
+                rtol=rtol,
+                block_size=block_size,
+                parallel=parallel,
+                n_jobs=n_jobs,
+            )
+
+            total_diagonal += stochastic_diag
+
+        return total_diagonal
+
     def _mapping_impl(self, x: Any) -> Any:
         return self._mapping(x)
 

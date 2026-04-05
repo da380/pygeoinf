@@ -28,7 +28,7 @@ from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve, eigh
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
 from .linear_operators import LinearOperator
-from .hilbert_space import Vector
+from .hilbert_space import Vector, HilbertSpace
 
 
 class LinearSolver(ABC):
@@ -407,6 +407,9 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         self._iterations = 0
         user_callback = self._solver_kwargs.get("callback", None)
 
+        if hasattr(user_callback, "reset") and callable(user_callback.reset):
+            user_callback.reset()
+
         def iteration_counter(*args):
             self._iterations += 1
             if user_callback is not None:
@@ -421,6 +424,9 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         cxp, _ = self._solver_func(
             matrix, cy, x0=cx0, M=matrix_preconditioner, **solver_kwargs
         )
+
+        if hasattr(user_callback, "finalize") and callable(user_callback.finalize):
+            user_callback.finalize()
 
         if self._galerkin:
             xp = codomain.dual.from_components(cxp)
@@ -497,6 +503,10 @@ class CGSolver(IterativeLinearSolver):
         x0: Optional[Vector],
     ) -> Vector:
         self._iterations = 0
+
+        if hasattr(self._callback, "reset") and callable(self._callback.reset):
+            self._callback.reset()
+
         domain = operator.domain
         x = domain.zero if x0 is None else domain.copy(x0)
 
@@ -544,6 +554,9 @@ class CGSolver(IterativeLinearSolver):
 
         else:
             self._iterations = maxiter
+
+        if hasattr(self._callback, "finalize") and callable(self._callback.finalize):
+            self._callback.finalize()
 
         return x
 
@@ -987,6 +1000,14 @@ class ProgressCallback:
         self.iteration = 0
         self.message = message
 
+    def reset(self) -> None:
+        """Resets the state for a new solve."""
+        self.iteration = 0
+
+    def finalize(self) -> None:
+        """Called at the end of a solve to clean up the console output."""
+        print()
+
     def __call__(self, xk: Any) -> None:
         self.iteration += 1
         print(f"{self.message}{self.iteration}", end="\r")
@@ -1000,15 +1021,21 @@ class SolutionTrackingCallback(ProgressCallback):
     calculating diagnostics post-hoc without slowing down the inversion.
     """
 
-    def __init__(self, message: str = "Iteration: ", print_progress: bool = True):
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        message: str = "Iteration: ",
+        print_progress: bool = True,
+    ):
         super().__init__(message)
         self.print_progress = print_progress
         self.history: List[Any] = []
+        self.domain = domain
 
     def __call__(self, xk: Any) -> None:
         self.iteration += 1
         # Copy the state to prevent overwriting if the solver mutates xk in-place
-        self.history.append(xk.copy() if hasattr(xk, "copy") else xk)
+        self.history.append(self.domain.copy(xk))
 
         if self.print_progress:
             print(f"{self.message}{self.iteration}", end="\r")
