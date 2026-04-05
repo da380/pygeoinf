@@ -42,6 +42,8 @@ except ImportError:
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
 
+from pygeoinf.datasets import load_gsn_stations
+
 
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 
@@ -335,6 +337,47 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             powers.append(ulm.spectrum(lmax=lmax, convention="power")[lmin:])
 
         return powers
+
+    @staticmethod
+    def iris_stations(n_stations: int = None, include_names: bool = False):
+        """
+        Convenience method to retrieve a globally distributed set of
+        Global Seismograph Network (GSN) stations from IRIS.
+
+        Args:
+            n_stations: The number of random stations to return. If None,
+                        returns the entire available network (~177 stations).
+            include_names: If True, returns (Name, Latitude, Longitude).
+                           If False, returns (Latitude, Longitude) tuples.
+
+        Returns:
+            A list of tuples representing the station coordinates in degrees.
+        """
+        from pygeoinf.datasets import load_gsn_stations
+
+        return load_gsn_stations(n_stations=n_stations, include_names=include_names)
+
+    @staticmethod
+    def random_earthquakes(n_points: int, min_magnitude: float = 5.0):
+        """
+        Returns a random sample of real, sensible earthquake locations.
+
+        This provides a highly clustered, non-uniform spatial distribution
+        along tectonic boundaries, perfect for testing robust spatial operators.
+
+        Args:
+            n_points: The exact number of locations to return.
+            min_magnitude: The minimum magnitude threshold for the catalog.
+
+        Returns:
+            A list of (Latitude, Longitude) tuples in degrees.
+        """
+        from pygeoinf.datasets import sample_earthquakes
+
+        # The FDSN API returns (lat, lon, depth). We strip the depth
+        # since we are operating on the 2D surface of the sphere.
+        events = sample_earthquakes(n_points, min_magnitude=min_magnitude)
+        return [(lat, lon) for lat, lon, depth in events]
 
     # ------------------------------------------------------ #
     #           Methods for SymmetricHilbertSpace            #
@@ -1459,6 +1502,46 @@ class Sobolev(SymmetricSobolevSpace):
                 return self.from_dual(LinearForm(self, components=total_components))
 
         return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    @staticmethod
+    def iris_stations(n_stations: int = None, include_names: bool = False):
+        """
+        Convenience method to retrieve a globally distributed set of
+        Global Seismograph Network (GSN) stations from IRIS.
+
+        Args:
+            n_stations: The number of random stations to return. If None,
+                        returns the entire available network (~177 stations).
+            include_names: If True, returns (Name, Latitude, Longitude).
+                           If False, returns (Latitude, Longitude) tuples.
+
+        Returns:
+            A list of tuples representing the station coordinates in degrees.
+        """
+
+        return load_gsn_stations(n_stations=n_stations, include_names=include_names)
+
+    @staticmethod
+    def random_earthquakes(n_points: int, min_magnitude: float = 5.0):
+        """
+        Returns a random sample of real, sensible earthquake locations.
+
+        This provides a highly clustered, non-uniform spatial distribution
+        along tectonic boundaries, perfect for testing robust spatial operators.
+
+        Args:
+            n_points: The exact number of locations to return.
+            min_magnitude: The minimum magnitude threshold for the catalog.
+
+        Returns:
+            A list of (Latitude, Longitude) tuples in degrees.
+        """
+        from pygeoinf.datasets import sample_earthquakes
+
+        # The FDSN API returns (lat, lon, depth). We strip the depth
+        # since we are operating on the 2D surface of the sphere.
+        events = sample_earthquakes(n_points, min_magnitude=min_magnitude)
+        return [(lat, lon) for lat, lon, depth in events]
 
 
 # -------------------------------------------------- #
