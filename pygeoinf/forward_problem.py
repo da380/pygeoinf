@@ -213,7 +213,6 @@ class LinearForwardProblem(ForwardProblem):
         """
 
         if self.data_error_measure_set:
-
             op = BlockLinearOperator(
                 [
                     [
@@ -230,7 +229,6 @@ class LinearForwardProblem(ForwardProblem):
 
             return mu.affine_mapping(operator=op)
         else:
-
             op = ColumnLinearOperator(
                 [self.model_space.identity_operator(), self.forward_operator]
             )
@@ -343,3 +341,36 @@ class LinearForwardProblem(ForwardProblem):
         return self.chi_squared(model, data) < self.critical_chi_squared(
             significance_level
         )
+
+    def parameterized_problem(
+        self,
+        parameterization: LinearOperator,
+        /,
+        *,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> "LinearForwardProblem":
+        """
+        Creates a new forward problem based on a model parameterization.
+        """
+        if parameterization.codomain != self.model_space:
+            raise ValueError(
+                "The codomain of the parameterization operator must match "
+                "the model space of the forward problem."
+            )
+
+        new_op = self.forward_operator @ parameterization
+
+        # 1. Densify the forward operator
+        if dense:
+            new_op = new_op.with_dense_matrix(parallel=parallel, n_jobs=n_jobs)
+
+        # 2. Densify the data error measure (if it exists)
+        new_error_measure = self._data_error_measure
+        if new_error_measure is not None and dense:
+            new_error_measure = new_error_measure.with_dense_covariance(
+                parallel=parallel, n_jobs=n_jobs
+            )
+
+        return LinearForwardProblem(new_op, data_error_measure=new_error_measure)

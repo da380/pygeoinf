@@ -13,6 +13,8 @@ inversion techniques, such as the existence of a data error measure.
 
 from __future__ import annotations
 
+from typing import Literal
+
 
 from .hilbert_space import HilbertSpace, Vector
 from .nonlinear_operators import NonLinearOperator
@@ -94,16 +96,36 @@ class LinearInversion(Inversion):
     An abstract base class for linear inversion algorithms.
     """
 
-    def __init__(self, forward_problem: LinearForwardProblem, /) -> None:
+    def __init__(
+        self,
+        forward_problem: LinearForwardProblem,
+        /,
+        *,
+        formalism: Literal["model_space", "data_space"] = "data_space",
+    ) -> None:
         """
         Initializes the LinearInversion class.
 
         Args:
             forward_problem: An instance of a linear forward problem.
+            formalism: The algebraic space in which the normal equations are
+                assembled and solved. Must be 'model_space' or 'data_space'.
         """
         if not isinstance(forward_problem, LinearForwardProblem):
             raise ValueError("Forward problem must be a LinearForwardProblem.")
         super().__init__(forward_problem)
+
+        if formalism not in ("model_space", "data_space"):
+            raise ValueError("formalism must be either 'model_space' or 'data_space'")
+
+        self._formalism = formalism
+
+    @property
+    def formalism(self) -> Literal["model_space", "data_space"]:
+        """
+        The algebraic space in which the normal equations are assembled and solved.
+        """
+        return self._formalism
 
     def data_measure_from_model(self, model: Vector) -> GaussianMeasure:
         """
@@ -126,6 +148,36 @@ class LinearInversion(Inversion):
         model and data.
         """
         return self.forward_problem.joint_measure(model_measure)
+
+    def parameterized_inversion(
+        self,
+        parameterization: LinearOperator,
+        /,
+        *,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> "LinearInversion":
+        """
+        Constructs a parameterized surrogate of the linear inversion.
+
+        Args:
+            parameterization: A LinearOperator mapping from the parameter
+                space to the full model space.
+            dense: If True, computes and stores the parameterized forward
+                operator as a dense matrix in memory.
+            parallel: If True, computes the dense matrix in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Returns:
+            A new instance of the concrete inversion class operating on the
+            parameter space.
+        """
+        new_fp = self.forward_problem.parameterized_problem(
+            parameterization, dense=dense, parallel=parallel, n_jobs=n_jobs
+        )
+
+        return type(self)(new_fp, formalism=self.formalism)
 
 
 class Inference(Inversion):

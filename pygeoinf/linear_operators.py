@@ -1069,7 +1069,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         # -------------------------------------------------------------
         # 2. Stochastic Residual Diagonal
         # -------------------------------------------------------------
-        # FIX: strictly require size_estimate > 0 to avoid zero-division
         if size_estimate > 0:
             scipy_residual_wrapper = residual_op.matrix(galerkin=galerkin)
 
@@ -1088,6 +1087,31 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             total_diagonal += stochastic_diag
 
         return total_diagonal
+
+    def with_dense_matrix(
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> "DenseMatrixLinearOperator":
+        """
+        Returns a new operator equivalent to the existing one, but with its
+        matrix representation computed and stored internally in dense form.
+
+        Args:
+            galerkin: If True, the Galerkin representation is used. Default is False.
+            parallel: If True, computes the dense matrix in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Returns:
+            A DenseMatrixLinearOperator instance.
+        """
+
+        return DenseMatrixLinearOperator.from_linear_operator(
+            self, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
+        )
 
     def _mapping_impl(self, x: Any) -> Any:
         return self._mapping(x)

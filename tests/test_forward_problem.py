@@ -227,3 +227,46 @@ class TestLinearForwardProblem:
         expected_joint_cov = np.block([[Cu, Cu @ A.T], [A @ Cu, A @ Cu @ A.T + Ce]])
 
         assert np.allclose(joint.covariance.matrix(dense=True), expected_joint_cov)
+
+    def test_parameterized_problem(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_space: EuclideanSpace,
+    ):
+        """Tests the parameterized_problem method, including dense matrix freezing."""
+        from pygeoinf.linear_operators import DenseMatrixLinearOperator
+
+        # 1. Create a smaller parameter space and a parameterization operator
+        param_space = EuclideanSpace(dim=2)
+        param_matrix = np.random.randn(model_space.dim, param_space.dim)
+        param_op = LinearOperator.from_matrix(param_space, model_space, param_matrix)
+
+        # 2. Test standard parameterization (dense=False)
+        param_fp = forward_problem.parameterized_problem(param_op)
+
+        # The new model space should be the parameter space
+        assert param_fp.model_space == param_space
+        # The data space should remain unchanged
+        assert param_fp.data_space == forward_problem.data_space
+
+        # Verify the new forward operator matrix is exactly A @ M
+        A_mat = forward_problem.forward_operator.matrix(dense=True)
+        expected_matrix = A_mat @ param_matrix
+        assert np.allclose(
+            param_fp.forward_operator.matrix(dense=True), expected_matrix
+        )
+
+        # 3. Test dense parameterization (dense=True)
+        dense_fp = forward_problem.parameterized_problem(param_op, dense=True)
+
+        # Verify both the forward operator and the data error covariance were squashed
+        # into memory-contiguous dense operators.
+        assert isinstance(dense_fp.forward_operator, DenseMatrixLinearOperator)
+        assert isinstance(
+            dense_fp.data_error_measure.covariance, DenseMatrixLinearOperator
+        )
+
+        # Verify the domain mismatch safety check
+        bad_param_op = LinearOperator.from_matrix(param_space, param_space, np.eye(2))
+        with pytest.raises(ValueError, match="codomain of the parameterization"):
+            forward_problem.parameterized_problem(bad_param_op)
