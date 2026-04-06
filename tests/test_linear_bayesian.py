@@ -13,7 +13,7 @@ from pygeoinf.linear_bayesian import (
     LinearBayesianInversion,
 )
 from pygeoinf.affine_operators import AffineOperator
-
+from pygeoinf.linear_operators import DenseMatrixLinearOperator
 
 # =============================================================================
 # Fixtures for the General Test Problem (5D -> 3D)
@@ -684,3 +684,84 @@ class TestNormalResidualCallback:
             forward_problem.data_space.to_components(callback.y),
             forward_problem.data_space.to_components(data),
         )
+
+
+class TestBayesianParameterizedInversion:
+    """
+    Tests the parameterized surrogate generation for the Bayesian class,
+    focusing on prior push-forward and dense matrix freezing.
+    """
+
+    def test_parameterized_auto_prior_push_forward(
+        self, forward_problem, model_prior_measure
+    ):
+        """
+        Verifies that the original prior is correctly projected onto the
+        parameter space using the adjoint of the parameterization mapping.
+        """
+        # 1. Setup inversion
+        inv = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # 2. Define parameterization: Euclidean(5) -> ModelSpace(50)
+        param_space = EuclideanSpace(5)
+        # Use a random matrix to represent the mapping M
+        M_mat = np.random.randn(forward_problem.model_space.dim, param_space.dim)
+        M = LinearOperator.from_matrix(param_space, forward_problem.model_space, M_mat)
+
+        # 3. Create surrogate without providing an explicit prior
+        # This triggers: Q_param = M* @ Q_original @ M
+        surrogate = inv.parameterized_inversion(M)
+
+        # 4. Verify class and domain
+        assert isinstance(surrogate, LinearBayesianInversion)
+        assert surrogate.model_space == param_space
+        assert surrogate.model_prior_measure.domain == param_space
+
+        # 5. Verify the math of the pushed-forward covariance: C_m = M* Q M
+        Q_mat = model_prior_measure.covariance.matrix(dense=True)
+        # Note: M.adjoint matrix is M_mat.T
+        expected_pushed_cov = M_mat.T @ Q_mat @ M_mat
+        actual_pushed_cov = surrogate.model_prior_measure.covariance.matrix(dense=True)
+
+        assert np.allclose(actual_pushed_cov, expected_pushed_cov)
+
+    def test_parameterized_dense_freeze(self, forward_problem, model_prior_measure):
+        """
+        Verifies that the dense=True flag correctly squashes the operator,
+        prior, and noise measure into dense matrix objects.
+        """
+        inv = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        param_space = EuclideanSpace(2)
+        M_mat = np.random.randn(forward_problem.model_space.dim, param_space.dim)
+        M = LinearOperator.from_matrix(param_space, forward_problem.model_space, M_mat)
+
+        # Generate the dense surrogate
+        surrogate = inv.parameterized_inversion(M, dense=True)
+
+        # Verify all core probabilistic components are now DenseMatrixLinearOperators
+        # This ensures downstream solvers use fast BLAS/LAPACK routines.
+        assert isinstance(
+            surrogate.forward_problem.forward_operator, DenseMatrixLinearOperator
+        )
+        assert isinstance(
+            surrogate.forward_problem.data_error_measure.covariance,
+            DenseMatrixLinearOperator,
+        )
+        assert isinstance(
+            surrogate.model_prior_measure.covariance, DenseMatrixLinearOperator
+        )
+
+    def test_parameterized_formalism_preservation(
+        self, forward_problem, model_prior_measure
+    ):
+        """Ensures surrogate preserves the parent inversion's formalism."""
+        # Parent is model_space
+        inv = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="model_space"
+        )
+
+        M = inv.model_space.identity_operator()
+        surrogate = inv.parameterized_inversion(M)
+
+        assert surrogate.formalism == "model_space"

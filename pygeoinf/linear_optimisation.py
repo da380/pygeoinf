@@ -81,15 +81,11 @@ class LinearLeastSquaresInversion(LinearInversion):
         Raises:
             ValueError: If an invalid formalism string is provided.
         """
-        super().__init__(forward_problem)
-
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError("formalism must be either 'model_space' or 'data_space'")
-        self._formalism = formalism
+        super().__init__(forward_problem, formalism=formalism)
 
         if (
             self.forward_problem.data_error_measure_set
-            and self._formalism == "model_space"
+            and self.formalism == "model_space"
         ):
             self.assert_inverse_data_covariance()
 
@@ -114,7 +110,7 @@ class LinearLeastSquaresInversion(LinearInversion):
 
         forward_operator = self.forward_problem.forward_operator
 
-        if self._formalism == "model_space":
+        if self.formalism == "model_space":
             identity = self.forward_problem.model_space.identity_operator()
             if self.forward_problem.data_error_measure_set:
                 inverse_data_covariance = (
@@ -169,7 +165,7 @@ class LinearLeastSquaresInversion(LinearInversion):
         else:
             shifted_data = data
 
-        if self._formalism == "model_space":
+        if self.formalism == "model_space":
             if self.forward_problem.data_error_measure_set:
                 inverse_data_covariance = (
                     self.forward_problem.data_error_measure.inverse_covariance
@@ -240,7 +236,7 @@ class LinearLeastSquaresInversion(LinearInversion):
             inverse_normal_operator = solver(normal_operator)
 
         # Assemble the linear part mapping based on formalism
-        if self._formalism == "model_space":
+        if self.formalism == "model_space":
             if self.forward_problem.data_error_measure_set:
                 inverse_data_covariance = (
                     self.forward_problem.data_error_measure.inverse_covariance
@@ -292,7 +288,7 @@ class LinearLeastSquaresInversion(LinearInversion):
         )
 
         return LinearLeastSquaresInversion(
-            surrogate_forward_problem, formalism=self._formalism
+            surrogate_forward_problem, formalism=self.formalism
         )
 
     def woodbury_data_preconditioner(
@@ -425,11 +421,15 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         Raises:
             ValueError: If an invalid formalism string is provided.
         """
-        super().__init__(forward_problem)
-        self._constraint = constraint
+        super().__init__(forward_problem, formalism=formalism)
 
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError("formalism must be either 'model_space' or 'data_space'")
+        if (
+            self.forward_problem.data_error_measure_set
+            and self.formalism == "model_space"
+        ):
+            self.assert_inverse_data_covariance()
+
+        self._constraint = constraint
 
         # Use the projection operator to seamlessly grab the base translation
         proj_op = constraint.projection_operator
@@ -496,6 +496,56 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
             damping, shifted_data, message=message, print_progress=print_progress
         )
 
+    def parameterized_inversion(
+        self,
+        parameterization: LinearOperator,
+        /,
+        *,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> "ConstrainedLinearLeastSquaresInversion":
+        """
+        Constructs a parameterized surrogate of the constrained least-squares inversion.
+        """
+        if not self._constraint.has_explicit_equation:
+            raise NotImplementedError(
+                "Parameterized inversion for constrained problems is only "
+                "supported for subspaces defined by an explicit linear equation."
+            )
+
+        # 1. Pull back the constraint equation: (B @ M) m = w
+        B = self._constraint.constraint_operator
+        w = self._constraint.constraint_value
+
+        # Safety check: Number of constraints cannot exceed parameter space dimension
+        if B.codomain.dim > parameterization.domain.dim:
+            raise ValueError(
+                f"The parameter space dimension ({parameterization.domain.dim}) is "
+                f"smaller than the number of constraints ({B.codomain.dim})."
+            )
+
+        new_B = B @ parameterization
+        if dense:
+            new_B = new_B.with_dense_matrix(parallel=parallel, n_jobs=n_jobs)
+
+        # 2. Build the surrogate constraint subspace in the parameter space
+        from .subspaces import AffineSubspace
+
+        new_S = AffineSubspace.from_linear_equation(
+            new_B,
+            w,
+            solver=self._constraint.solver,
+            preconditioner=self._constraint.preconditioner,
+        )
+
+        # 3. Build the parameterized forward problem
+        new_fp = self.forward_problem.parameterized_problem(
+            parameterization, dense=dense, parallel=parallel, n_jobs=n_jobs
+        )
+
+        return type(self)(new_fp, new_S, formalism=self.formalism)
+
 
 class LinearMinimumNormInversion(LinearInversion):
     """
@@ -525,14 +575,11 @@ class LinearMinimumNormInversion(LinearInversion):
             formalism: The algebraic space in which the normal equations are
                 assembled and solved. Defaults to 'data_space'.
         """
-        super().__init__(forward_problem)
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError("formalism must be either 'model_space' or 'data_space'")
-        self._formalism = formalism
+        super().__init__(forward_problem, formalism=formalism)
 
         if (
             self.forward_problem.data_error_measure_set
-            and self._formalism == "model_space"
+            and self.formalism == "model_space"
         ):
             self.assert_inverse_data_covariance()
 
@@ -559,7 +606,7 @@ class LinearMinimumNormInversion(LinearInversion):
                 significance_level
             )
             lsq_inversion = LinearLeastSquaresInversion(
-                self.forward_problem, formalism=self._formalism
+                self.forward_problem, formalism=self.formalism
             )
 
             def get_model_for_damping(
@@ -588,7 +635,7 @@ class LinearMinimumNormInversion(LinearInversion):
                     sys_sol = inverse_normal_operator(normal_rhs)
 
                 # Recover the model from the raw linear system solution
-                if self._formalism == "model_space":
+                if self.formalism == "model_space":
                     model = sys_sol
                 else:
                     # In data space, sys_sol is the dual variable v'
@@ -681,7 +728,7 @@ class LinearMinimumNormInversion(LinearInversion):
                     inv_normal_op = solver(normal_operator)
 
                 # Push-through identity application for data_space formulation
-                if self._formalism == "model_space":
+                if self.formalism == "model_space":
                     h_inv_u = inv_normal_op(model)
                 else:
                     A = self.forward_problem.forward_operator
@@ -766,12 +813,13 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             formalism: The algebraic space in which the normal equations are
                 assembled and solved. Defaults to 'data_space'.
         """
-        super().__init__(forward_problem)
-        if self.forward_problem.data_error_measure_set and formalism == "model_space":
-            self.assert_inverse_data_covariance()
+        super().__init__(forward_problem, formalism=formalism)
 
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError("formalism must be either 'model_space' or 'data_space'")
+        if (
+            self.forward_problem.data_error_measure_set
+            and self.formalism == "model_space"
+        ):
+            self.assert_inverse_data_covariance()
 
         self._constraint = constraint
 
@@ -916,3 +964,49 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             return (Id - D_unc @ A) @ B_dagger
 
         return NonLinearOperator(domain, codomain, mapping, derivative=derivative)
+
+    def parameterized_inversion(
+        self,
+        parameterization: LinearOperator,
+        /,
+        *,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> "ConstrainedLinearMinimumNormInversion":
+        """
+        Constructs a parameterized surrogate of the constrained minimum norm inversion.
+        """
+        if not self._constraint.has_explicit_equation:
+            raise NotImplementedError(
+                "Parameterized inversion for constrained problems is only "
+                "supported for subspaces defined by an explicit linear equation."
+            )
+
+        B = self._constraint.constraint_operator
+        w = self._constraint.constraint_value
+
+        if B.codomain.dim > parameterization.domain.dim:
+            raise ValueError(
+                f"The parameter space dimension ({parameterization.domain.dim}) is "
+                f"smaller than the number of constraints ({B.codomain.dim})."
+            )
+
+        new_B = B @ parameterization
+        if dense:
+            new_B = new_B.with_dense_matrix(parallel=parallel, n_jobs=n_jobs)
+
+        from .subspaces import AffineSubspace
+
+        new_S = AffineSubspace.from_linear_equation(
+            new_B,
+            w,
+            solver=self._constraint.solver,
+            preconditioner=self._constraint.preconditioner,
+        )
+
+        new_fp = self.forward_problem.parameterized_problem(
+            parameterization, dense=dense, parallel=parallel, n_jobs=n_jobs
+        )
+
+        return type(self)(new_fp, new_S, formalism=self.formalism)

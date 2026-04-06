@@ -9,6 +9,9 @@ from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
 from pygeoinf.inversion import Inversion, LinearInversion
+from pygeoinf.linear_bayesian import LinearBayesianInversion
+from pygeoinf.linear_optimisation import LinearLeastSquaresInversion
+from pygeoinf.linear_operators import DenseMatrixLinearOperator
 
 
 # =============================================================================
@@ -127,8 +130,6 @@ class TestInversion:
             pytest.fail("assert_inverse_data_covariance raised an error unexpectedly.")
 
 
-
-
 class ConcreteLinearInversion(LinearInversion):
     """A simple concrete subclass for testing LinearInversion."""
 
@@ -157,3 +158,109 @@ class TestLinearInversion:
 
         jm = inv.joint_measure(prior)
         assert isinstance(jm, GaussianMeasure)
+
+    def test_formalism_logic(self, forward_problem_no_error: LinearForwardProblem):
+        """Tests that formalism is correctly stored and validated in the base class."""
+        # Test default
+        inv_default = ConcreteLinearInversion(forward_problem_no_error)
+        assert inv_default.formalism == "data_space"
+
+        # Test explicit
+        inv_model = ConcreteLinearInversion(
+            forward_problem_no_error, formalism="model_space"
+        )
+        assert inv_model.formalism == "model_space"
+
+        # Test validation
+        with pytest.raises(ValueError, match="formalism must be either"):
+            ConcreteLinearInversion(forward_problem_no_error, formalism="wrong_space")
+
+    def test_base_parameterized_inversion_type(
+        self, forward_problem_no_error: LinearForwardProblem
+    ):
+        """
+        Tests that the base parameterized_inversion method preserves
+        class type and formalism.
+        """
+        inv = ConcreteLinearInversion(forward_problem_no_error, formalism="model_space")
+
+        # Define a dummy parameterization (Identity)
+        param_op = inv.model_space.identity_operator()
+
+        # Create the surrogate
+        surrogate = inv.parameterized_inversion(param_op)
+
+        # Verify it is the same concrete class and has the same formalism
+        assert isinstance(surrogate, ConcreteLinearInversion)
+        assert surrogate.formalism == "model_space"
+
+
+class TestParameterizedInversions:
+    """
+    Tests the parameterized surrogate generation for concrete inversion classes.
+    """
+
+    def test_bayesian_parameterization_auto_prior(self, forward_problem_with_inv_cov):
+        """Tests the automatic prior push-forward in Bayesian parameterization."""
+        # 1. Setup a standard Bayesian inversion
+        prior = GaussianMeasure.from_standard_deviation(
+            forward_problem_with_inv_cov.model_space, 1.0
+        )
+        inv = LinearBayesianInversion(forward_problem_with_inv_cov, prior)
+
+        # 2. Define a parameterization mapping R^1 -> Model Space
+        param_space = EuclideanSpace(1)
+        # Vector in model space that our 1D parameter scales
+        template_vec = inv.model_space.random()
+        param_op = LinearOperator.from_vector(inv.model_space, template_vec).adjoint
+        # param_op maps Euclidean(1) -> ModelSpace
+
+        # 3. Create surrogate without providing a prior
+        surrogate = inv.parameterized_inversion(param_op)
+
+        assert isinstance(surrogate, LinearBayesianInversion)
+        assert surrogate.model_prior_measure.domain == param_space
+
+        # Verify the pushed-forward prior variance matches <m, Q m>
+        # where m is the adjoint of our parameterization (the template vector)
+        expected_var = inv.model_prior_measure.directional_variance(template_vec)
+        actual_var = surrogate.model_prior_measure.covariance.matrix(dense=True)[0, 0]
+        assert np.isclose(actual_var, expected_var)
+
+    def test_bayesian_parameterization_dense_freeze(self, forward_problem_with_inv_cov):
+        """Tests that the dense=True flag squashes all operators and measures."""
+        prior = GaussianMeasure.from_standard_deviation(
+            forward_problem_with_inv_cov.model_space, 1.0
+        )
+        inv = LinearBayesianInversion(forward_problem_with_inv_cov, prior)
+
+        param_op = (
+            inv.model_space.identity_operator()
+        )  # Mapping to itself for simplicity
+
+        # Create a dense surrogate
+        surrogate = inv.parameterized_inversion(param_op, dense=True)
+
+        # Verify everything is a DenseMatrixLinearOperator
+        assert isinstance(
+            surrogate.forward_problem.forward_operator, DenseMatrixLinearOperator
+        )
+        assert isinstance(
+            surrogate.forward_problem.data_error_measure.covariance,
+            DenseMatrixLinearOperator,
+        )
+        assert isinstance(
+            surrogate.model_prior_measure.covariance, DenseMatrixLinearOperator
+        )
+
+    def test_least_squares_parameterization_inheritance(self, forward_problem_no_error):
+        """Tests that LinearLeastSquaresInversion correctly inherits and uses the base method."""
+        inv = LinearLeastSquaresInversion(
+            forward_problem_no_error, formalism="data_space"
+        )
+
+        param_op = inv.model_space.identity_operator()
+        surrogate = inv.parameterized_inversion(param_op)
+
+        assert isinstance(surrogate, LinearLeastSquaresInversion)
+        assert surrogate.formalism == "data_space"

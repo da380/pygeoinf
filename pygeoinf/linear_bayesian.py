@@ -88,14 +88,10 @@ class LinearBayesianInversion(LinearInversion):
                 'model_space' formalism is selected but the necessary inverse
                 covariance operators (precision operators) are not set.
         """
-        super().__init__(forward_problem)
+        super().__init__(forward_problem, formalism=formalism)
         self._model_prior_measure: GaussianMeasure = model_prior_measure
 
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError("formalism must be either 'model_space' or 'data_space'")
-        self._formalism = formalism
-
-        if self._formalism == "model_space":
+        if self.formalism == "model_space":
             if not self.model_prior_measure.inverse_covariance_set:
                 raise ValueError(
                     "Prior inverse covariance must be set for model_space formalism."
@@ -126,7 +122,7 @@ class LinearBayesianInversion(LinearInversion):
         """
         forward_operator = self.forward_problem.forward_operator
 
-        if self._formalism == "data_space":
+        if self.formalism == "data_space":
             model_prior_covariance = self.model_prior_measure.covariance
             if self.forward_problem.data_error_measure_set:
                 return (
@@ -198,7 +194,7 @@ class LinearBayesianInversion(LinearInversion):
         else:
             inverse_normal_operator = solver(normal_operator)
 
-        if self._formalism == "data_space":
+        if self.formalism == "data_space":
             model_prior_covariance = self.model_prior_measure.covariance
             return (
                 model_prior_covariance
@@ -252,7 +248,7 @@ class LinearBayesianInversion(LinearInversion):
         else:
             inverse_normal_operator = solver(normal_operator)
 
-        if self._formalism == "data_space":
+        if self.formalism == "data_space":
             kalman_gain = (
                 model_prior_covariance
                 @ forward_operator.adjoint
@@ -425,7 +421,7 @@ class LinearBayesianInversion(LinearInversion):
             ValueError: If the inversion was initialized with `formalism='model_space'`,
                 as this preconditioner is mathematically invalid for that normal operator.
         """
-        if self._formalism != "data_space":
+        if self.formalism != "data_space":
             raise ValueError(
                 "This custom preconditioner is mathematically derived for the "
                 "data-space normal operator (A Q A* + R) and cannot be used "
@@ -522,7 +518,7 @@ class LinearBayesianInversion(LinearInversion):
             ValueError: If the inversion was initialized with `formalism='model_space'`,
                 as this preconditioner is mathematically invalid for that normal operator.
         """
-        if self._formalism != "data_space":
+        if self.formalism != "data_space":
             raise ValueError(
                 "This custom preconditioner is mathematically derived for the "
                 "data-space normal operator (A Q A* + R) and cannot be used "
@@ -678,7 +674,7 @@ class LinearBayesianInversion(LinearInversion):
 
         # Inherit the formalism of the parent inversion
         return LinearBayesianInversion(
-            surrogate_forward_problem, Q_tilde, formalism=self._formalism
+            surrogate_forward_problem, Q_tilde, formalism=self.formalism
         )
 
     def surrogate_normal_preconditioner(
@@ -890,7 +886,7 @@ class LinearBayesianInversion(LinearInversion):
                 shifted_data = data_space.subtract(shifted_data, error_expectation)
 
         # 3. Apply formalism-specific mappings
-        if self._formalism == "data_space":
+        if self.formalism == "data_space":
             # In data space, the RHS is exactly the shifted data residuals
             return shifted_data
         else:
@@ -931,3 +927,43 @@ class LinearBayesianInversion(LinearInversion):
             print_progress=print_progress,
             message=message,
         )
+
+    def parameterized_inversion(
+        self,
+        parameterization: LinearOperator,
+        /,
+        *,
+        parameter_prior: Optional[GaussianMeasure] = None,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> "LinearBayesianInversion":
+        """
+        Constructs a parameterized surrogate of the Bayesian inversion.
+        """
+        # 1. Automatically project the prior if none is provided
+        if parameter_prior is None:
+            parameter_prior = self.model_prior_measure.affine_mapping(
+                operator=parameterization.adjoint
+            )
+
+        if parameter_prior.domain != parameterization.domain:
+            raise ValueError(
+                "The domain of the parameter prior must match the domain "
+                "of the parameterization operator."
+            )
+
+        # 2. Build the new forward problem
+        new_fp = self.forward_problem.parameterized_problem(
+            parameterization, dense=dense, parallel=parallel, n_jobs=n_jobs
+        )
+
+        # 3. Ensure the prior is densified if requested OR if required by model_space.
+        # Densification automatically computes the inverse covariance factor.
+        new_prior = parameter_prior
+        if dense or self.formalism == "model_space":
+            new_prior = new_prior.with_dense_covariance(
+                parallel=parallel, n_jobs=n_jobs
+            )
+
+        return type(self)(new_fp, new_prior, formalism=self.formalism)

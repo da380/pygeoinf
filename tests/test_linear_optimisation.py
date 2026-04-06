@@ -237,6 +237,66 @@ class TestLinearLeastSquaresInversion:
             forward_problem.data_space.to_components(expected_rhs),
         )
 
+    def test_parameterized_least_squares(self, forward_problem: LinearForwardProblem):
+        """
+        Tests that LinearLeastSquaresInversion correctly generates a
+        parameterized surrogate using the base class method.
+        """
+        # 1. Setup a model-space inversion
+        lsq = LinearLeastSquaresInversion(forward_problem, formalism="model_space")
+
+        # 2. Define a parameterization mapping R^2 -> Model Space (R^5)
+        param_space = EuclideanSpace(dim=2)
+        param_matrix = np.random.randn(forward_problem.model_space.dim, param_space.dim)
+        param_op = LinearOperator.from_matrix(
+            param_space, forward_problem.model_space, param_matrix
+        )
+
+        # 3. Create the surrogate
+        surrogate = lsq.parameterized_inversion(param_op, dense=True)
+
+        # 4. Verify class type and properties
+        assert isinstance(surrogate, LinearLeastSquaresInversion)
+        assert surrogate.formalism == "model_space"
+        assert surrogate.model_space == param_space
+
+        # 5. Verify the 'dense' flag propagated correctly to the surrogate's operator
+        from pygeoinf.linear_operators import DenseMatrixLinearOperator
+
+        assert isinstance(
+            surrogate.forward_problem.forward_operator, DenseMatrixLinearOperator
+        )
+
+    def test_parameterized_numerical_consistency(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Verifies that solving the parameterized inversion is numerically
+        consistent with the full inversion.
+        """
+        damping = 0.1
+        solver = CholeskySolver(galerkin=True)
+
+        # 1. Parameterization: m = [1, 1, 1, 1, 1] * alpha
+        param_space = EuclideanSpace(dim=1)
+        ones_vec = np.ones(forward_problem.model_space.dim)
+        M = LinearOperator.from_vector(forward_problem.model_space, ones_vec).adjoint
+
+        lsq_full = LinearLeastSquaresInversion(forward_problem)
+        lsq_param = lsq_full.parameterized_inversion(M)
+
+        # 2. Synthetic data from a known parameter alpha=2.0
+        alpha_true = param_space.from_components(np.array([2.0]))
+        u_true = M(alpha_true)
+        data = forward_problem.forward_operator(u_true)  # Noise-free for consistency
+
+        # 3. Solve parameterized problem
+        op_param = lsq_param.least_squares_operator(damping, solver)
+        alpha_sol = op_param(data)
+
+        # Verify alpha is close to 2.0 (regularization will pull it slightly away)
+        assert np.allclose(alpha_sol, alpha_true, atol=0.1)
+
 
 # =============================================================================
 # Tests for ConstrainedLinearLeastSquaresInversion
@@ -416,6 +476,51 @@ class TestConstrainedLinearLeastSquaresInversion:
         assert np.allclose(
             domain.to_components(callback.y), domain.to_components(expected_rhs)
         )
+
+    def test_parameterized_constrained_least_squares(self):
+        """
+        Verifies the pullback of an explicit constraint into a parameter space.
+        """
+        domain = EuclideanSpace(5)
+        fp = LinearForwardProblem(domain.identity_operator())
+
+        # 1. Setup explicit constraint: Mean(u) = 10.0
+        codomain = EuclideanSpace(1)
+        B = LinearOperator.from_matrix(domain, codomain, np.ones((1, 5)) / 5.0)
+        w = codomain.from_components(np.array([10.0]))
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        inversion = ConstrainedLinearLeastSquaresInversion(fp, constraint)
+
+        # 2. Parameterization: m = [1, 1, 1, 1, 1] * alpha
+        # Note: This basis vector IS the constraint mode, so it can satisfy it.
+        param_space = EuclideanSpace(1)
+        M = LinearOperator.from_vector(domain, np.ones(5)).adjoint
+
+        # 3. Create Surrogate
+        surrogate = inversion.parameterized_inversion(M, dense=True)
+
+        assert isinstance(surrogate, ConstrainedLinearLeastSquaresInversion)
+        assert surrogate.model_space == param_space
+        # Verify the new constraint is 1D: (B @ M) * alpha = 10.0
+        assert surrogate._constraint.constraint_operator.domain == param_space
+        assert surrogate._constraint.constraint_operator.codomain == codomain
+
+    def test_parameterized_constrained_dimension_error(self):
+        """Tests that parameterizing with too few degrees of freedom fails."""
+        domain = EuclideanSpace(5)
+        fp = LinearForwardProblem(domain.identity_operator())
+
+        # 2 constraints in R^5
+        B = LinearOperator.from_matrix(domain, EuclideanSpace(2), np.random.randn(2, 5))
+        constraint = AffineSubspace.from_linear_equation(B, EuclideanSpace(2).zero)
+        inversion = ConstrainedLinearLeastSquaresInversion(fp, constraint)
+
+        # Parameter space of only 1 dimension (cannot satisfy 2 constraints)
+        M = LinearOperator.from_matrix(EuclideanSpace(1), domain, np.random.randn(5, 1))
+
+        with pytest.raises(ValueError, match="smaller than the number of constraints"):
+            inversion.parameterized_inversion(M)
 
 
 # =============================================================================
@@ -786,3 +891,27 @@ class TestConstrainedLinearMinimumNormInversion:
             atol=1e-6,
             rtol=1e-6,
         )
+
+    def test_parameterized_constrained_geometric_fails(self):
+        """
+        Verifies that geometric-only constraints (no explicit B operator)
+        cannot be parameterized.
+        """
+        domain = EuclideanSpace(5)
+        fp = LinearForwardProblem(domain.identity_operator())
+
+        # Create a purely geometric subspace (projection-based)
+        # Tangent space is just the first 3 coordinates
+        basis = [domain.basis_vector(i) for i in range(3)]
+
+        # Suppress the expected UserWarning from subspaces.py
+        with pytest.warns(
+            UserWarning, match="Constructing a subspace from a tangent basis"
+        ):
+            constraint = AffineSubspace.from_tangent_basis(domain, basis)
+
+        inversion = ConstrainedLinearMinimumNormInversion(fp, constraint)
+        M = domain.identity_operator()
+
+        with pytest.raises(NotImplementedError, match="explicit linear equation"):
+            inversion.parameterized_inversion(M)

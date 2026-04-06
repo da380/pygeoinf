@@ -439,7 +439,7 @@ def main():
         vmax=vmax1,
         edgecolors="black",
         linewidths=0.5,
-        s=25,
+        s=8,
         transform=ccrs.PlateCarree(),
         zorder=5,
     )
@@ -466,7 +466,7 @@ def main():
             edgecolors="black",
             marker="o",
             linewidths=0.5,
-            s=20,
+            s=8,
             transform=ccrs.PlateCarree(),
             zorder=5,
         )
