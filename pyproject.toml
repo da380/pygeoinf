@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pygeoinf"
-version = "1.6.5"
+version = "1.6.6"
 description = "A package for solving geophysical inference and inverse problems"
 authors = ["David Al-Attar, Dan Heathcote, Adrian Mag"]
 readme = "README.md"
