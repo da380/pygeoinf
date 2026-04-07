@@ -404,13 +404,19 @@ def plot_corner_distributions(
                 rv = stats.multivariate_normal(mean_2d, cov_2d)
                 Z = rv.pdf(pos)
 
+                z_max = Z.max()
+                z_min = Z[Z > 0].min() if np.any(Z > 0) else z_max * 1e-10
+
+                if z_min >= z_max:
+                    z_min = z_max * 1e-3
+
                 pcm = ax.pcolormesh(
                     X,
                     Y,
                     Z,
                     shading="auto",
                     cmap=colormap,
-                    norm=colors.LogNorm(vmin=Z.min(), vmax=Z.max()),
+                    norm=colors.LogNorm(vmin=z_min, vmax=z_max),
                 )
 
                 ax.contour(X, Y, Z, colors="black", linewidths=0.5, alpha=0.6)
