@@ -29,6 +29,7 @@ def plot_1d_distributions(
     posterior_labels: Optional[Union[str, List[str]]] = None,
     width_scaling: float = 6.0,
     legend_position: tuple = (0.95, 0.95),
+    fill_density: bool = False,
     **kwargs,
 ) -> Union[Axes, Tuple[Axes, Axes]]:
     """
@@ -45,6 +46,7 @@ def plot_1d_distributions(
         posterior_labels: Manual labels for posterior distributions (optional)
         width_scaling: Width scaling factor in standard deviations (default: 6.0)
         legend_position: Position of legend as (x, y) tuple (default: (0.95, 0.95))
+        fill_density: Whether to fill the area under the PDF curves (default: False)
         **kwargs: Additional kwargs (e.g., `figsize`) safely ignored or forwarded.
 
     Returns:
@@ -108,39 +110,33 @@ def plot_1d_distributions(
     # Calculate statistics for all distributions
     posterior_stats = extract_stats(posterior_measures)
     prior_stats = extract_stats(prior_measures) if prior_measures else []
+    all_stats = posterior_stats + prior_stats
 
-    # Determine plot range to include all distributions
-    all_means = [stat[0] for stat in posterior_stats] + [
-        stat[0] for stat in prior_stats
-    ]
-    all_stds = [stat[1] for stat in posterior_stats] + [stat[1] for stat in prior_stats]
-
+    # --- Smart Span Calculation ---
+    max_z_score = width_scaling
     if true_value is not None:
-        all_means.append(true_value)
-        all_stds.append(0)
+        for mean, std in all_stats:
+            if std > 0:
+                z = abs(true_value - mean) / std
+                max_z_score = max(max_z_score, z * 1.05)  # 5% visual buffer
 
-    # Calculate x-axis range
-    x_min = min(
-        [
-            mean - width_scaling * std
-            for mean, std in zip(all_means, all_stds)
-            if std > 0
-        ]
-    )
-    x_max = max(
-        [
-            mean + width_scaling * std
-            for mean, std in zip(all_means, all_stds)
-            if std > 0
-        ]
-    )
+    # Calculate x-axis bounds using the dynamic max_z_score
+    x_min = min([mean - max_z_score * std for mean, std in all_stats if std > 0])
+    x_max = max([mean + max_z_score * std for mean, std in all_stats if std > 0])
 
-    if true_value is not None:
-        range_size = x_max - x_min
-        x_min = min(x_min, true_value - 0.1 * range_size)
-        x_max = max(x_max, true_value + 0.1 * range_size)
+    # --- Dynamic Grid Resolution ---
+    span_width = x_max - x_min
+    valid_stds = [std for _, std in all_stats if std > 0]
 
-    x_axis = np.linspace(x_min, x_max, 1000)
+    if valid_stds:
+        min_std = min(valid_stds)
+        # Ensure we have at least 25 points per standard deviation of the narrowest peak
+        required_points = int((span_width / min_std) * 25)
+        n_pts = min(10000, max(1000, required_points))
+    else:
+        n_pts = 1000
+
+    x_axis = np.linspace(x_min, x_max, n_pts)
 
     # Get or create axes
     ax1 = plt.gca() if ax is None else ax
@@ -163,7 +159,8 @@ def plot_1d_distributions(
                 label = f"Prior {i+1} (Mean: {mean:.5f})"
 
             ax1.plot(x_axis, pdf_values, color=color, lw=2, linestyle=":", label=label)
-            ax1.fill_between(x_axis, pdf_values, color=color, alpha=0.15)
+            if fill_density:
+                ax1.fill_between(x_axis, pdf_values, color=color, alpha=0.15)
 
         ax1.tick_params(axis="y", labelcolor=color1)
         ax1.grid(True, linestyle="--")
@@ -198,7 +195,8 @@ def plot_1d_distributions(
             label = f"Posterior {i+1} (Mean: {mean:.5f})"
 
         plot_ax.plot(x_axis, pdf_values, color=color, lw=2, label=label)
-        plot_ax.fill_between(x_axis, pdf_values, color=color, alpha=0.2)
+        if fill_density:
+            plot_ax.fill_between(x_axis, pdf_values, color=color, alpha=0.2)
 
     # Plot true value if provided
     if true_value is not None:
@@ -237,12 +235,14 @@ def plot_corner_distributions(
     labels: Optional[List[str]] = None,
     title: str = "Joint Posterior Distribution",
     figsize: Optional[tuple] = None,
-    include_sigma_contours: bool = True,
     colormap: str = "Blues",
+    contour_color: str = "darkblue",
     parallel: bool = False,
     n_jobs: int = -1,
     width_scaling: float = 3.75,
     legend_position: tuple = (0.9, 0.95),
+    fill_density: bool = False,
+    num_sigmas: int = 3,
 ) -> np.ndarray:
     """
     Create a professional corner plot for multi-dimensional posterior distributions.
@@ -254,17 +254,18 @@ def plot_corner_distributions(
         labels: Labels for each dimension (optional)
         title: Title for the plot
         figsize: Figure size tuple (if None, calculated based on dimensions)
-        include_sigma_contours: Whether to include 1-sigma contour lines
-        colormap: Colormap for 2D plots
+        colormap: Colormap for 2D plots (used when fill_density=True)
+        contour_color: Uniform color for the 2D contour lines (used when fill_density=False)
         parallel: Compute dense covariance matrix in parallel, default False.
         n_jobs: Number of cores to use in parallel calculations, default -1.
-        width_scaling: Width scaling factor in standard deviations (default: 3.75)
+        width_scaling: Width scaling factor in standard deviations for default boundaries (default: 3.75)
         legend_position: Position of legend as (x, y) tuple (default: (0.9, 0.95))
+        fill_density: Whether to fill the 2D contour background with color. False is recommended for sparse truth values.
+        num_sigmas: Minimum number of standard deviation contours to draw (dynamically scales up to enclose true values).
 
     Returns:
         axes: An N x N NumPy array of Matplotlib Axes objects.
     """
-    # Strict type validation ensuring it's an authentic GaussianMeasure
     if not isinstance(posterior_measure, GaussianMeasure):
         raise TypeError(
             f"posterior_measure must be an instance of GaussianMeasure, "
@@ -275,8 +276,8 @@ def plot_corner_distributions(
     cov_posterior = posterior_measure.covariance.matrix(
         dense=True, parallel=parallel, n_jobs=n_jobs
     )
+    std_posterior = np.sqrt(np.diag(cov_posterior))
 
-    # Pre-compute prior matrices if provided
     if prior_measure is not None:
         if not isinstance(prior_measure, GaussianMeasure):
             raise TypeError("prior_measure must be a GaussianMeasure.")
@@ -293,7 +294,54 @@ def plot_corner_distributions(
     if figsize is None:
         figsize = (3 * n_dims, 3 * n_dims)
 
-    # Tight grid spacing using the modern layout engine
+    # --- Smart Contour Level Calculation (Mahalanobis Distance) ---
+    effective_num_sigmas = num_sigmas
+    if true_values is not None:
+        max_dist = 0.0
+        if n_dims > 1:
+            # Check the mathematical 2D distance for every plot pair
+            for i in range(n_dims):
+                for j in range(i):
+                    diff = np.array(
+                        [
+                            true_values[j] - mean_posterior[j],
+                            true_values[i] - mean_posterior[i],
+                        ]
+                    )
+                    cov_2d = np.array(
+                        [
+                            [cov_posterior[j, j], cov_posterior[j, i]],
+                            [cov_posterior[i, j], cov_posterior[i, i]],
+                        ]
+                    )
+                    # Add tiny epsilon to prevent singular matrix errors in perfectly correlated edge cases
+                    cov_2d += np.eye(2) * 1e-12
+                    inv_cov = np.linalg.inv(cov_2d)
+                    dist = np.sqrt(diff.T @ inv_cov @ diff)
+                    max_dist = max(max_dist, dist)
+        else:
+            # Fallback for 1D edge cases
+            max_dist = np.abs(true_values[0] - mean_posterior[0]) / std_posterior[0]
+
+        # Ensure we draw enough contours to swallow the furthest point, capped at 15 to prevent memory crashes
+        effective_num_sigmas = min(15, max(num_sigmas, int(np.ceil(max_dist))))
+
+    # --- Smart Span Calculation ---
+    display_spans = np.zeros(n_dims)
+    eval_spans = np.zeros(n_dims)
+
+    for idx in range(n_dims):
+        z_score = 0.0
+        if true_values is not None:
+            z_score = (
+                np.abs(true_values[idx] - mean_posterior[idx]) / std_posterior[idx]
+            )
+
+        # Display window must contain the default width OR the true value with a 5% visual buffer
+        display_spans[idx] = max(width_scaling, z_score * 1.05)
+        # Math evaluation grid must be at least as wide as the display OR the dynamically calculated contours
+        eval_spans[idx] = max(display_spans[idx], effective_num_sigmas + 1.0)
+
     fig, axes = plt.subplots(
         n_dims,
         n_dims,
@@ -303,7 +351,6 @@ def plot_corner_distributions(
     )
     fig.suptitle(title, fontsize=16)
 
-    # Ensure axes is always 2D array
     if n_dims == 1:
         axes = np.array([[axes]])
     elif n_dims == 2:
@@ -318,14 +365,21 @@ def plot_corner_distributions(
             # --- DIAGONALS (1D PDFs) ---
             if i == j:
                 mu = mean_posterior[i]
-                sigma = np.sqrt(cov_posterior[i, i])
-                x = np.linspace(
-                    mu - width_scaling * sigma, mu + width_scaling * sigma, 200
-                )
+                sigma = std_posterior[i]
+
+                i_eval = eval_spans[i]
+                i_disp = display_spans[i]
+
+                # Scale grid resolution, but cap it to prevent memory issues for extreme true values
+                n_pts_1d = min(5000, max(200, int(50 * i_eval)))
+
+                x = np.linspace(mu - i_eval * sigma, mu + i_eval * sigma, n_pts_1d)
                 pdf = stats.norm.pdf(x, mu, sigma)
 
                 ax.plot(x, pdf, "darkblue", label="Posterior PDF")
-                ax.fill_between(x, pdf, color="lightblue", alpha=0.6)
+
+                if fill_density:
+                    ax.fill_between(x, pdf, color="lightblue", alpha=0.6)
 
                 if true_values is not None:
                     true_val = true_values[i]
@@ -336,7 +390,8 @@ def plot_corner_distributions(
                         label=f"True: {true_val:.2f}",
                     )
 
-                # Inject prior secondary axis if requested
+                ax.set_xlim(mu - i_disp * sigma, mu + i_disp * sigma)
+
                 if prior_measure is not None:
                     prior_mu = mean_prior[i]
                     prior_sigma = np.sqrt(cov_prior[i, i])
@@ -361,13 +416,11 @@ def plot_corner_distributions(
                     )
                     sec_ax.tick_params(axis="x", colors="darkgreen")
 
-                # X-axis logic
                 if i == n_dims - 1:
                     ax.set_xlabel(labels[i])
                 else:
                     ax.tick_params(labelbottom=False)
 
-                # Y-axis logic: Hide all ticks, only label the very first plot
                 ax.set_yticks([])
                 if i == 0:
                     ax.set_ylabel("Density")
@@ -384,18 +437,25 @@ def plot_corner_distributions(
                     ]
                 )
 
-                sigma_j = np.sqrt(cov_posterior[j, j])
-                sigma_i = np.sqrt(cov_posterior[i, i])
+                sigma_j = std_posterior[j]
+                sigma_i = std_posterior[i]
+
+                j_eval = eval_spans[j]
+                i_eval = eval_spans[i]
+
+                # Scale grid resolution, cap to max 500x500 to prevent severe slowdowns
+                n_pts_j = min(500, max(100, int(25 * j_eval)))
+                n_pts_i = min(500, max(100, int(25 * i_eval)))
 
                 x_range = np.linspace(
-                    mean_2d[0] - width_scaling * sigma_j,
-                    mean_2d[0] + width_scaling * sigma_j,
-                    100,
+                    mean_2d[0] - j_eval * sigma_j,
+                    mean_2d[0] + j_eval * sigma_j,
+                    n_pts_j,
                 )
                 y_range = np.linspace(
-                    mean_2d[1] - width_scaling * sigma_i,
-                    mean_2d[1] + width_scaling * sigma_i,
-                    100,
+                    mean_2d[1] - i_eval * sigma_i,
+                    mean_2d[1] + i_eval * sigma_i,
+                    n_pts_i,
                 )
 
                 X, Y = np.meshgrid(x_range, y_range)
@@ -404,35 +464,61 @@ def plot_corner_distributions(
                 rv = stats.multivariate_normal(mean_2d, cov_2d)
                 Z = rv.pdf(pos)
 
-                z_max = Z.max()
-                z_min = Z[Z > 0].min() if np.any(Z > 0) else z_max * 1e-10
+                peak_density = rv.pdf(mean_2d)
 
-                if z_min >= z_max:
-                    z_min = z_max * 1e-3
-
-                pcm = ax.pcolormesh(
-                    X,
-                    Y,
-                    Z,
-                    shading="auto",
-                    cmap=colormap,
-                    norm=colors.LogNorm(vmin=z_min, vmax=z_max),
+                # Values are sorted ascending (lowest density/outermost ring first, to highest density/innermost last)
+                sigma_levels = sorted(
+                    [
+                        peak_density * np.exp(-0.5 * s**2)
+                        for s in range(1, effective_num_sigmas + 1)
+                    ]
                 )
 
-                ax.contour(X, Y, Z, colors="black", linewidths=0.5, alpha=0.6)
+                if fill_density:
+                    pcm = ax.pcolormesh(X, Y, Z, shading="auto", cmap=colormap)
+                    ax.contour(X, Y, Z, colors="black", linewidths=0.5, alpha=0.6)
+                    if effective_num_sigmas >= 1:
+                        ax.contour(
+                            X,
+                            Y,
+                            Z,
+                            levels=[peak_density * np.exp(-0.5)],
+                            colors="red",
+                            linewidths=1,
+                            linestyles="--",
+                            alpha=0.8,
+                        )
+                else:
+                    if sigma_levels:
+                        # Extract the base RGB components of our chosen contour color
+                        base_rgba = colors.to_rgba(contour_color)
 
-                if include_sigma_contours:
-                    sigma_level = rv.pdf(mean_2d) * np.exp(-0.5)
-                    ax.contour(
-                        X,
-                        Y,
-                        Z,
-                        levels=[sigma_level],
-                        colors="red",
-                        linewidths=1,
-                        linestyles="--",
-                        alpha=0.8,
-                    )
+                        # Build an array of opacities from faint (outer) to solid (inner)
+                        min_alpha = 0.2
+                        max_alpha = 0.9
+                        if effective_num_sigmas == 1:
+                            level_colors = [
+                                (base_rgba[0], base_rgba[1], base_rgba[2], max_alpha)
+                            ]
+                        else:
+                            # np.linspace aligns perfectly with the sorted sigma_levels:
+                            # index 0 is outermost ring (gets min_alpha), last index is innermost ring (gets max_alpha)
+                            alpha_array = np.linspace(
+                                min_alpha, max_alpha, effective_num_sigmas
+                            )
+                            level_colors = [
+                                (base_rgba[0], base_rgba[1], base_rgba[2], a)
+                                for a in alpha_array
+                            ]
+
+                        ax.contour(
+                            X,
+                            Y,
+                            Z,
+                            levels=sigma_levels,
+                            colors=level_colors,
+                            linewidths=1.5,
+                        )
 
                 ax.plot(
                     mean_posterior[j],
@@ -453,26 +539,30 @@ def plot_corner_distributions(
                         label="True Value",
                     )
 
-                # X-axis logic
+                ax.set_xlim(
+                    mean_2d[0] - display_spans[j] * sigma_j,
+                    mean_2d[0] + display_spans[j] * sigma_j,
+                )
+                ax.set_ylim(
+                    mean_2d[1] - display_spans[i] * sigma_i,
+                    mean_2d[1] + display_spans[i] * sigma_i,
+                )
+
                 if i == n_dims - 1:
                     ax.set_xlabel(labels[j])
                 else:
                     ax.tick_params(labelbottom=False)
 
-                # Y-axis logic
                 if j == 0:
                     ax.set_ylabel(labels[i])
                 else:
                     ax.tick_params(labelleft=False)
 
-            # --- EMPTY UPPER TRIANGLE ---
             else:
                 ax.set_visible(False)
 
-    # Force Matplotlib to align the outer axis labels so they don't stagger
     fig.align_labels()
 
-    # Extract legend handles safely from the first available plots
     handles, labels_leg = axes[0, 0].get_legend_handles_labels()
     if n_dims > 1:
         handles2, labels2 = axes[1, 0].get_legend_handles_labels()
@@ -480,11 +570,8 @@ def plot_corner_distributions(
         labels_leg.extend(labels2)
 
     cleaned_labels = [label.split(":")[0] for label in labels_leg]
-
-    # Avoid duplicate legends by dict conversion trick
     unique_legend = dict(zip(cleaned_labels, handles))
 
-    # Let constrained_layout automatically make room for the legend on the right
     fig.legend(
         unique_legend.values(),
         unique_legend.keys(),
@@ -492,8 +579,7 @@ def plot_corner_distributions(
         bbox_to_anchor=legend_position,
     )
 
-    # Let constrained_layout handle the colorbar natively
-    if n_dims > 1 and pcm is not None:
+    if n_dims > 1 and pcm is not None and fill_density:
         cbar = fig.colorbar(pcm, ax=axes, shrink=0.7, aspect=30, pad=0.02)
         cbar.set_label("Probability Density", size=12)
 

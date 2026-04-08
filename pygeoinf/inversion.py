@@ -13,7 +13,7 @@ inversion techniques, such as the existence of a data error measure.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 
 from .hilbert_space import HilbertSpace, Vector
@@ -149,6 +149,14 @@ class LinearInversion(Inversion):
         """
         return self.forward_problem.joint_measure(model_measure)
 
+    def with_formalism(
+        self, formalism: Literal["model_space", "data_space"]
+    ) -> LinearInversion:
+        """
+        Returns a new instance of the inversion using the specified formalism.
+        """
+        raise NotImplementedError("Must be implemented by subclasses.")
+
     def parameterized_inversion(
         self,
         parameterization: LinearOperator,
@@ -157,7 +165,8 @@ class LinearInversion(Inversion):
         dense: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> "LinearInversion":
+        formalism: Optional[Literal["model_space", "data_space"]] = None,
+    ) -> LinearInversion:
         """
         Constructs a parameterized surrogate of the linear inversion.
 
@@ -168,16 +177,20 @@ class LinearInversion(Inversion):
                 operator as a dense matrix in memory.
             parallel: If True, computes the dense matrix in parallel.
             n_jobs: Number of CPU cores to use. -1 means all available.
+            formalism: An optional override for the formalism of the new inversion.
+                If None, inherits the formalism of the parent inversion.
 
         Returns:
             A new instance of the concrete inversion class operating on the
             parameter space.
         """
+
         new_fp = self.forward_problem.parameterized_problem(
             parameterization, dense=dense, parallel=parallel, n_jobs=n_jobs
         )
 
-        return type(self)(new_fp, formalism=self.formalism)
+        target_formalism = formalism or self.formalism
+        return type(self)(new_fp, formalism=target_formalism)
 
 
 class Inference(Inversion):

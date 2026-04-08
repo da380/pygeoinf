@@ -765,3 +765,42 @@ class TestBayesianParameterizedInversion:
         surrogate = inv.parameterized_inversion(M)
 
         assert surrogate.formalism == "model_space"
+
+    def test_with_formalism(self, forward_problem, model_prior_measure):
+        """Tests that with_formalism returns a valid new instance."""
+        inv_data = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        inv_model = inv_data.with_formalism("model_space")
+
+        assert isinstance(inv_model, LinearBayesianInversion)
+        assert inv_model.formalism == "model_space"
+        assert inv_model is not inv_data
+        assert inv_data.formalism == "data_space"  # Original remains unchanged
+
+    def test_parameterized_formalism_override_auto_densifies(
+        self, forward_problem, model_prior_measure
+    ):
+        """
+        Tests that overriding the formalism to 'model_space' during parameterization
+        automatically triggers the densification of the prior measure.
+        """
+        # Start in data_space
+        inv = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        param_space = EuclideanSpace(2)
+        M = LinearOperator.from_matrix(
+            param_space, forward_problem.model_space, np.random.randn(50, 2)
+        )
+
+        # Parameterize and switch to model_space
+        surrogate = inv.parameterized_inversion(M, formalism="model_space")
+
+        assert surrogate.formalism == "model_space"
+        # The prior must be a DenseMatrixLinearOperator to support inverse covariance
+        assert isinstance(
+            surrogate.model_prior_measure.covariance, DenseMatrixLinearOperator
+        )

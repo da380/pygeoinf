@@ -194,6 +194,28 @@ class TestLinearInversion:
         assert isinstance(surrogate, ConcreteLinearInversion)
         assert surrogate.formalism == "model_space"
 
+    def test_with_formalism_raises_not_implemented(
+        self, forward_problem_no_error: LinearForwardProblem
+    ):
+        """Tests that the base with_formalism method enforces subclass implementation."""
+        inv = ConcreteLinearInversion(forward_problem_no_error)
+        with pytest.raises(NotImplementedError):
+            inv.with_formalism("model_space")
+
+    def test_parameterized_inversion_formalism_override(
+        self, forward_problem_no_error: LinearForwardProblem
+    ):
+        """Tests that parameterized_inversion correctly accepts a formalism override."""
+        inv = ConcreteLinearInversion(forward_problem_no_error, formalism="data_space")
+        param_op = inv.model_space.identity_operator()
+
+        # Override to model_space
+        surrogate = inv.parameterized_inversion(param_op, formalism="model_space")
+
+        assert surrogate.formalism == "model_space"
+        # Ensure original was not mutated
+        assert inv.formalism == "data_space"
+
 
 class TestParameterizedInversions:
     """

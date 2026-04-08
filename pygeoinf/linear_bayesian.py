@@ -64,6 +64,10 @@ class LinearBayesianInversion(LinearInversion):
     efficient exact-sampling mechanism using the randomize-then-optimize technique.
     """
 
+    # =========================================================================
+    # Initialization & Core Properties
+    # =========================================================================
+
     def __init__(
         self,
         forward_problem: LinearForwardProblem,
@@ -104,10 +108,47 @@ class LinearBayesianInversion(LinearInversion):
                     "Data error inverse covariance must be set for model_space formalism."
                 )
 
+    def with_formalism(
+        self, formalism: Literal["model_space", "data_space"]
+    ) -> LinearBayesianInversion:
+        """
+        Returns a new instance of the Bayesian inversion using the specified formalism.
+
+        Args:
+            formalism: The algebraic space in which the normal equations should be
+                assembled and solved. Must be 'model_space' or 'data_space'.
+
+        Returns:
+            A new LinearBayesianInversion instance sharing the exact same forward
+            problem and prior measure, but configured to use the specified formalism.
+        """
+        return type(self)(
+            self.forward_problem, self.model_prior_measure, formalism=formalism
+        )
+
     @property
     def model_prior_measure(self) -> GaussianMeasure:
         """The prior Gaussian measure on the model space."""
         return self._model_prior_measure
+
+    @property
+    def data_prior_measure(self) -> GaussianMeasure:
+        """
+        The prior predictive distribution on the data space.
+        This represents the expected distribution of data before observation.
+        """
+        return self.data_measure_from_model_measure(self.model_prior_measure)
+
+    @property
+    def joint_prior_measure(self) -> GaussianMeasure:
+        """
+        The joint prior distribution of both the model and the data.
+        """
+        return self.joint_measure(self.model_prior_measure)
+
+    # =========================================================================
+    # Core Algebra & Normal Equations
+    # =========================================================================
 
     @property
     def normal_operator(self) -> LinearOperator:
@@ -147,20 +188,42 @@ class LinearBayesianInversion(LinearInversion):
             else:
                 return prior_inv_cov + forward_operator.adjoint @ forward_operator
 
-    @property
-    def data_prior_measure(self) -> GaussianMeasure:
+    def get_normal_equations_rhs(self, data: Vector) -> Vector:
         """
-        The prior predictive distribution on the data space.
-        This represents the expected distribution of data before observation.
+        Computes the exact right-hand side vector (v) of the normal equations
+        N * w = v for a given observed data vector, automatically accounting
+        for non-zero prior and noise expectations.
         """
-        return self.data_measure_from_model_measure(self.model_prior_measure)
+        forward_operator = self.forward_problem.forward_operator
+        data_space = forward_operator.codomain
 
-    @property
-    def joint_prior_measure(self) -> GaussianMeasure:
-        """
-        The joint prior distribution of both the model and the data.
-        """
-        return self.joint_measure(self.model_prior_measure)
+        # 1. Shift data by the prior model expectation: d - A(mu_u)
+        if self.model_prior_measure.has_zero_expectation:
+            shifted_data = data_space.copy(data)
+        else:
+            shifted_data = data_space.subtract(
+                data, forward_operator(self.model_prior_measure.expectation)
+            )
+
+        # 2. Shift data by the noise expectation: d - A(mu_u) - mu_e
+        if self.forward_problem.data_error_measure_set:
+            if not self.forward_problem.data_error_measure.has_zero_expectation:
+                error_expectation = self.forward_problem.data_error_measure.expectation
+                shifted_data = data_space.subtract(shifted_data, error_expectation)
+
+        # 3. Apply formalism-specific mappings
+        if self.formalism == "data_space":
+            # In data space, the RHS is exactly the shifted data residuals
+            return shifted_data
+        else:
+            # In model space, the RHS is projected back via A* R^-1
+            if self.forward_problem.data_error_measure_set:
+                data_inv_cov = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                return forward_operator.adjoint(data_inv_cov(shifted_data))
+            else:
+                return forward_operator.adjoint(shifted_data)
 
     def kalman_operator(
         self,
@@ -209,6 +272,10 @@ class LinearBayesianInversion(LinearInversion):
                 return inverse_normal_operator @ forward_operator.adjoint @ data_inv_cov
             else:
                 return inverse_normal_operator @ forward_operator.adjoint
+
+    # =========================================================================
+    # Posterior Extraction
+    # =========================================================================
 
     def model_posterior_measure(
         self,
@@ -389,6 +456,39 @@ class LinearBayesianInversion(LinearInversion):
             )
 
         return AffineOperator(linear_part=kalman_gain, translation=translation)
+
+    def normal_residual_callback(
+        self,
+        data: Vector,
+        /,
+        *,
+        message: str = "CG Iteration: {iter} | Normal Residual: {res:.3e}",
+        print_progress: bool = True,
+    ) -> ResidualTrackingCallback:
+        """
+        Generates a ResidualTrackingCallback pre-configured to track the
+        convergence of the Bayesian normal equations for the given data vector.
+
+        Args:
+            data: The observed data vector.
+            message: The formatting string for printing progress.
+            print_progress: If True, prints the message to stdout at each iteration.
+
+        Returns:
+            A configured ResidualTrackingCallback ready to be passed to a solver.
+        """
+        rhs = self.get_normal_equations_rhs(data)
+
+        return ResidualTrackingCallback(
+            operator=self.normal_operator,
+            y=rhs,
+            print_progress=print_progress,
+            message=message,
+        )
+
+    # =========================================================================
+    # Preconditioners
+    # =========================================================================
 
     def diagonal_normal_preconditioner(
         self,
@@ -612,6 +712,66 @@ class LinearBayesianInversion(LinearInversion):
             adjoint_mapping=apply_preconditioner,
         )
 
+    def woodbury_data_preconditioner(
+        self,
+        /,
+        *,
+        regularization: float = 1e-6,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Constructs a data-space preconditioner using the Woodbury matrix identity.
+
+        Data Space Normal Operator: N_d = A Q A* + R
+        Woodbury Identity: N_d^-1 = R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1
+        """
+        from .linear_solvers import LUSolver
+
+        A = self.forward_problem.forward_operator
+        Q = self.model_prior_measure
+
+        if not self.forward_problem.data_error_measure_set:
+            raise ValueError(
+                "Data error measure must be set for the Woodbury identity."
+            )
+        R = self.forward_problem.data_error_measure
+
+        if R.inverse_covariance_set:
+            R_inv = R.inverse_covariance
+        else:
+            r_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
+            R_inv = r_solver(R.covariance)
+
+        if Q.inverse_covariance_set:
+            Q_inv = Q.inverse_covariance
+        else:
+            Q_mat = Q.covariance.matrix(
+                dense=True, galerkin=False, parallel=parallel, n_jobs=n_jobs
+            )
+
+            reg_val = regularization * np.max(np.abs(np.diag(Q_mat)))
+            if reg_val == 0.0:
+                reg_val = regularization
+            Q_mat += reg_val * np.eye(Q.domain.dim)
+
+            Q_reg_op = LinearOperator.from_matrix(
+                Q.domain, Q.domain, Q_mat, galerkin=False
+            )
+            q_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
+            Q_inv = q_solver(Q_reg_op)
+
+        N_m = Q_inv + A.adjoint @ R_inv @ A
+
+        nm_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
+        N_m_inv = nm_solver(N_m)
+
+        return R_inv - R_inv @ A @ N_m_inv @ A.adjoint @ R_inv
+
+    # =========================================================================
+    # Surrogates & Parameterization
+    # =========================================================================
+
     def surrogate_inversion(
         self,
         /,
@@ -706,6 +866,44 @@ class LinearBayesianInversion(LinearInversion):
         )
         return solver(surrogate_inv.normal_operator)
 
+    def surrogate_woodbury_preconditioner(
+        self,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_prior_measure: Optional[GaussianMeasure] = None,
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
+        regularization: float = 1e-6,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Builds a data-space preconditioner by applying the Woodbury matrix identity
+        to a simplified surrogate inverse problem.
+
+        This method chains the construction of the surrogate model with the
+        extraction of the Woodbury inverse in one step.
+
+        Args:
+            alternate_forward_operator: An optional simplified forward operator.
+            alternate_prior_measure: An optional simplified prior measure.
+            alternate_data_error_measure: An optional simplified data error measure.
+            regularization: Tikhonov factor for prior regularization.
+            parallel: If True, dense matrix calculations are done in parallel.
+            n_jobs: Number of parallel jobs.
+
+        Returns:
+            A LinearOperator representing the Woodbury-approximated inverse.
+        """
+        surrogate_inv = self.surrogate_inversion(
+            alternate_forward_operator=alternate_forward_operator,
+            alternate_prior_measure=alternate_prior_measure,
+            alternate_data_error_measure=alternate_data_error_measure,
+        )
+        return surrogate_inv.woodbury_data_preconditioner(
+            regularization=regularization, parallel=parallel, n_jobs=n_jobs
+        )
+
     def low_rank_surrogate(
         self,
         /,
@@ -768,166 +966,6 @@ class LinearBayesianInversion(LinearInversion):
             alternate_data_error_measure=R_tilde,
         )
 
-    def woodbury_data_preconditioner(
-        self,
-        /,
-        *,
-        regularization: float = 1e-6,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> LinearOperator:
-        """
-        Constructs a data-space preconditioner using the Woodbury matrix identity.
-
-        Data Space Normal Operator: N_d = A Q A* + R
-        Woodbury Identity: N_d^-1 = R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1
-        """
-        from .linear_solvers import LUSolver
-
-        A = self.forward_problem.forward_operator
-        Q = self.model_prior_measure
-
-        if not self.forward_problem.data_error_measure_set:
-            raise ValueError(
-                "Data error measure must be set for the Woodbury identity."
-            )
-        R = self.forward_problem.data_error_measure
-
-        if R.inverse_covariance_set:
-            R_inv = R.inverse_covariance
-        else:
-            r_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
-            R_inv = r_solver(R.covariance)
-
-        if Q.inverse_covariance_set:
-            Q_inv = Q.inverse_covariance
-        else:
-            Q_mat = Q.covariance.matrix(
-                dense=True, galerkin=False, parallel=parallel, n_jobs=n_jobs
-            )
-
-            reg_val = regularization * np.max(np.abs(np.diag(Q_mat)))
-            if reg_val == 0.0:
-                reg_val = regularization
-            Q_mat += reg_val * np.eye(Q.domain.dim)
-
-            Q_reg_op = LinearOperator.from_matrix(
-                Q.domain, Q.domain, Q_mat, galerkin=False
-            )
-            q_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
-            Q_inv = q_solver(Q_reg_op)
-
-        N_m = Q_inv + A.adjoint @ R_inv @ A
-
-        nm_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
-        N_m_inv = nm_solver(N_m)
-
-        return R_inv - R_inv @ A @ N_m_inv @ A.adjoint @ R_inv
-
-    def surrogate_woodbury_preconditioner(
-        self,
-        /,
-        *,
-        alternate_forward_operator: Optional[LinearOperator] = None,
-        alternate_prior_measure: Optional[GaussianMeasure] = None,
-        alternate_data_error_measure: Optional[GaussianMeasure] = None,
-        regularization: float = 1e-6,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> LinearOperator:
-        """
-        Builds a data-space preconditioner by applying the Woodbury matrix identity
-        to a simplified surrogate inverse problem.
-
-        This method chains the construction of the surrogate model with the
-        extraction of the Woodbury inverse in one step.
-
-        Args:
-            alternate_forward_operator: An optional simplified forward operator.
-            alternate_prior_measure: An optional simplified prior measure.
-            alternate_data_error_measure: An optional simplified data error measure.
-            regularization: Tikhonov factor for prior regularization.
-            parallel: If True, dense matrix calculations are done in parallel.
-            n_jobs: Number of parallel jobs.
-
-        Returns:
-            A LinearOperator representing the Woodbury-approximated inverse.
-        """
-        surrogate_inv = self.surrogate_inversion(
-            alternate_forward_operator=alternate_forward_operator,
-            alternate_prior_measure=alternate_prior_measure,
-            alternate_data_error_measure=alternate_data_error_measure,
-        )
-        return surrogate_inv.woodbury_data_preconditioner(
-            regularization=regularization, parallel=parallel, n_jobs=n_jobs
-        )
-
-    def get_normal_equations_rhs(self, data: Vector) -> Vector:
-        """
-        Computes the exact right-hand side vector (v) of the normal equations
-        N * w = v for a given observed data vector, automatically accounting
-        for non-zero prior and noise expectations.
-        """
-        forward_operator = self.forward_problem.forward_operator
-        data_space = forward_operator.codomain
-
-        # 1. Shift data by the prior model expectation: d - A(mu_u)
-        if self.model_prior_measure.has_zero_expectation:
-            shifted_data = data_space.copy(data)
-        else:
-            shifted_data = data_space.subtract(
-                data, forward_operator(self.model_prior_measure.expectation)
-            )
-
-        # 2. Shift data by the noise expectation: d - A(mu_u) - mu_e
-        if self.forward_problem.data_error_measure_set:
-            if not self.forward_problem.data_error_measure.has_zero_expectation:
-                error_expectation = self.forward_problem.data_error_measure.expectation
-                shifted_data = data_space.subtract(shifted_data, error_expectation)
-
-        # 3. Apply formalism-specific mappings
-        if self.formalism == "data_space":
-            # In data space, the RHS is exactly the shifted data residuals
-            return shifted_data
-        else:
-            # In model space, the RHS is projected back via A* R^-1
-            if self.forward_problem.data_error_measure_set:
-                data_inv_cov = (
-                    self.forward_problem.data_error_measure.inverse_covariance
-                )
-                return forward_operator.adjoint(data_inv_cov(shifted_data))
-            else:
-                return forward_operator.adjoint(shifted_data)
-
-    def normal_residual_callback(
-        self,
-        data: Vector,
-        /,
-        *,
-        message: str = "CG Iteration: {iter} | Normal Residual: {res:.3e}",
-        print_progress: bool = True,
-    ) -> ResidualTrackingCallback:
-        """
-        Generates a ResidualTrackingCallback pre-configured to track the
-        convergence of the Bayesian normal equations for the given data vector.
-
-        Args:
-            data: The observed data vector.
-            message: The formatting string for printing progress.
-            print_progress: If True, prints the message to stdout at each iteration.
-
-        Returns:
-            A configured ResidualTrackingCallback ready to be passed to a solver.
-        """
-        rhs = self.get_normal_equations_rhs(data)
-
-        return ResidualTrackingCallback(
-            operator=self.normal_operator,
-            y=rhs,
-            print_progress=print_progress,
-            message=message,
-        )
-
     def parameterized_inversion(
         self,
         parameterization: LinearOperator,
@@ -937,11 +975,33 @@ class LinearBayesianInversion(LinearInversion):
         dense: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> "LinearBayesianInversion":
+        formalism: Optional[Literal["model_space", "data_space"]] = None,
+    ) -> LinearBayesianInversion:
         """
         Constructs a parameterized surrogate of the Bayesian inversion.
+
+        If the target formalism resolves to 'model_space' (which is typical for
+        parameterized inversions), the parameter prior's covariance matrix will
+        be automatically densified to explicitly compute the required precision
+        (inverse covariance) operator.
+
+        Args:
+            parameterization: A LinearOperator mapping from the parameter
+                space to the full model space.
+            parameter_prior: An optional prior measure on the parameter space.
+                If not provided, the original model prior is pulled back to the
+                parameter space automatically.
+            dense: If True, computes and stores operators as dense matrices.
+            parallel: If True, computes the dense matrices in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+            formalism: An optional override for the formalism of the new inversion.
+                If None, inherits the formalism of the parent inversion.
+
+        Returns:
+            A new LinearBayesianInversion instance operating on the parameter space.
         """
-        # 1. Automatically project the prior if none is provided
+        target_formalism = formalism or self.formalism
+
         if parameter_prior is None:
             parameter_prior = self.model_prior_measure.affine_mapping(
                 operator=parameterization.adjoint
@@ -953,17 +1013,14 @@ class LinearBayesianInversion(LinearInversion):
                 "of the parameterization operator."
             )
 
-        # 2. Build the new forward problem
         new_fp = self.forward_problem.parameterized_problem(
             parameterization, dense=dense, parallel=parallel, n_jobs=n_jobs
         )
 
-        # 3. Ensure the prior is densified if requested OR if required by model_space.
-        # Densification automatically computes the inverse covariance factor.
         new_prior = parameter_prior
-        if dense or self.formalism == "model_space":
+        if dense or target_formalism == "model_space":
             new_prior = new_prior.with_dense_covariance(
                 parallel=parallel, n_jobs=n_jobs
             )
 
-        return type(self)(new_fp, new_prior, formalism=self.formalism)
+        return type(self)(new_fp, new_prior, formalism=target_formalism)

@@ -915,3 +915,55 @@ class TestConstrainedLinearMinimumNormInversion:
 
         with pytest.raises(NotImplementedError, match="explicit linear equation"):
             inversion.parameterized_inversion(M)
+
+
+# =============================================================================
+# Tests for Formalism Swapping API
+# =============================================================================
+
+
+class TestFormalismSwapping:
+    """Tests the with_formalism and formalism override APIs for optimisation classes."""
+
+    def test_unconstrained_with_formalism(self, forward_problem: LinearForwardProblem):
+        lsq_data = LinearLeastSquaresInversion(forward_problem, formalism="data_space")
+        lsq_model = lsq_data.with_formalism("model_space")
+
+        assert lsq_model.formalism == "model_space"
+        assert isinstance(lsq_model, LinearLeastSquaresInversion)
+        assert lsq_data.formalism == "data_space"
+
+        min_norm_data = LinearMinimumNormInversion(
+            forward_problem, formalism="data_space"
+        )
+        min_norm_model = min_norm_data.with_formalism("model_space")
+
+        assert min_norm_model.formalism == "model_space"
+        assert isinstance(min_norm_model, LinearMinimumNormInversion)
+
+    def test_constrained_with_formalism_and_override(
+        self, forward_problem: LinearForwardProblem
+    ):
+        domain = forward_problem.model_space
+        codomain = EuclideanSpace(1)
+        B = LinearOperator.from_matrix(domain, codomain, np.ones((1, 5)))
+        w = codomain.from_components(np.array([1.0]))
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        # 1. Test with_formalism
+        c_lsq_data = ConstrainedLinearLeastSquaresInversion(
+            forward_problem, constraint, formalism="data_space"
+        )
+        c_lsq_model = c_lsq_data.with_formalism("model_space")
+
+        assert c_lsq_model.formalism == "model_space"
+        assert c_lsq_model._constraint is constraint
+
+        # 2. Test parameterized formalism override
+        param_space = EuclideanSpace(1)
+        M = LinearOperator.from_vector(domain, np.ones(5)).adjoint
+
+        surrogate = c_lsq_data.parameterized_inversion(M, formalism="model_space")
+
+        assert surrogate.formalism == "model_space"
+        assert surrogate.model_space == param_space
