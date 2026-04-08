@@ -529,6 +529,30 @@ class Sobolev(SymmetricSobolevSpace):
         l2_op = self.underlying_space.spectral_projection_operator(modes)
         return LinearOperator.from_formal_adjoint(self, l2_op.codomain, l2_op)
 
+    def estimate_truncation_degree(
+        self,
+        covariance_function: Callable[[float], float],
+        /,
+        *,
+        rtol: float = 1e-6,
+        min_degree: int = 1,
+        max_degree: Optional[int] = None,
+    ) -> int:
+        """
+        Delegates the energy truncation search to the underlying Plane Lebesgue space,
+        ensuring it loops geometrically over (kx, ky) shells rather than flat 1D indices.
+        """
+
+        def sobolev_weighted_cov(eval_val: float) -> float:
+            return covariance_function(eval_val) * self.sobolev_function(eval_val)
+
+        return self.underlying_space.estimate_truncation_degree(
+            sobolev_weighted_cov,
+            rtol=rtol,
+            min_degree=min_degree,
+            max_degree=max_degree,
+        )
+
 
 # ------------------------------------------------- #
 #           Associated plotting functions           #
