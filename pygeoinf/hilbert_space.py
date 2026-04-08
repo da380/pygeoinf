@@ -709,6 +709,10 @@ class MassWeightedHilbertSpace(HilbertSpace):
         """The inverse of the mass operator."""
         return self._inverse_mass_operator
 
+    @property
+    def zero(self) -> Vector:
+        return self.underlying_space.zero
+
     def to_components(self, x: Vector) -> np.ndarray:
         """Delegates component mapping to the underlying space."""
         return self.underlying_space.to_components(x)
