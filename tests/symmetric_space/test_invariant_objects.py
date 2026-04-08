@@ -70,6 +70,27 @@ class TestInvariantGaussianMeasure:
         assert measure.has_zero_expectation is True
         assert measure._expectation is None
 
+    def test_automatic_inverse_covariance(self, space: Lebesgue):
+        """Tests that the inverse covariance is correctly set or skipped."""
+        # 1. Strictly positive variances -> Inverse should be set automatically
+        measure_pos = space.invariant_gaussian_measure(lambda k: 1.0 / (1.0 + k))
+        assert measure_pos.inverse_covariance_set is True
+        assert isinstance(measure_pos.inverse_covariance, InvariantLinearAutomorphism)
+
+        expected_inv_evals = 1.0 / measure_pos.spectral_variances
+        assert np.allclose(
+            measure_pos.inverse_covariance.eigenvalues, expected_inv_evals
+        )
+
+        # 2. Contains a zero variance -> Inverse should NOT be set
+        zero_vars = np.ones(space.dim)
+        zero_vars[0] = 0.0
+        measure_zero = InvariantGaussianMeasure(space, zero_vars)
+
+        assert measure_zero.inverse_covariance_set is False
+        with pytest.raises(AttributeError):
+            _ = measure_zero.inverse_covariance
+
     def test_algebra_type_preservation(self, space: Lebesgue):
         m1 = space.invariant_gaussian_measure(lambda k: 1.0)
         m2 = space.invariant_gaussian_measure(lambda k: 2.0)

@@ -30,7 +30,7 @@ print(
 # Set up the forward operator
 print("Setting up the forward problem")
 n_sources = 20
-n_receivers = 170
+n_receivers = 40
 
 # Fetch real-world geometry
 print(f"Fetching {n_receivers} IRIS stations and {n_sources} USGS events...")

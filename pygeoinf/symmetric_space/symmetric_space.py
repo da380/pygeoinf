@@ -216,10 +216,17 @@ class InvariantGaussianMeasure(GaussianMeasure):
         squared_norms = domain.squared_norms
         self._kl_scaling_array = np.sqrt(spectral_variances / squared_norms)
 
+        inverse_covariance = None
+        if np.all(spectral_variances > 0):
+            inverse_covariance = InvariantLinearAutomorphism(
+                domain, np.reciprocal(spectral_variances)
+            )
+
         super().__init__(
             covariance=covariance,
             expectation=expectation,
             sample=self._kl_sample,
+            inverse_covariance=inverse_covariance,
         )
 
     # ---------------------------------------------------------- #
@@ -1423,7 +1430,6 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         # SPECIAL CASE: Purely Diagonal (Jacobi) Preconditioner
         # =======================================================
         if max_distance <= 0.0:
-
             p1 = self.random_point()
             rep1 = self.dirac_representation(p1)
             q_rep1 = prior_measure.covariance(rep1)
