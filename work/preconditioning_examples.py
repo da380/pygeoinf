@@ -313,7 +313,7 @@ def main():
                     observation_points,
                     args.prior_scale,
                     args.prior_std,
-                    args.noise_scale_factor * args.prior_scale,
+                    0.0,
                     args.noise_amplitude_factor * args.prior_std,
                 )
             )
@@ -399,6 +399,14 @@ def main():
         print(f"Sampling pointwise STD with {args.std_samples} samples...")
         posterior_std = model_posterior_measure.sample_pointwise_std(args.std_samples)
 
+        fig, (ax1, ax2, ax3) = plt.subplots(
+            1,
+            3,
+            figsize=(24, 7),
+            subplot_kw={"projection": ccrs.Robinson()},
+            layout="constrained",
+        )
+    else:
         fig, (ax1, ax2) = plt.subplots(
             1,
             2,
@@ -406,24 +414,16 @@ def main():
             subplot_kw={"projection": ccrs.Robinson()},
             layout="constrained",
         )
-    else:
-        fig, ax1 = plt.subplots(
-            1,
-            1,
-            figsize=(9, 7),
-            subplot_kw={"projection": ccrs.Robinson()},
-            layout="constrained",
-        )
 
-    ax1, im1 = plot(
-        posterior_expectation,
+    _, im1 = plot(
+        true_model,
         ax=ax1,
         coasts=True,
         cmap="seismic",
         symmetric=True,
         colorbar=True,
         colorbar_kwargs={
-            "label": "Expectation Value",
+            "label": "True model",
             "orientation": "horizontal",
             "shrink": 0.8,
         },
@@ -443,12 +443,42 @@ def main():
         transform=ccrs.PlateCarree(),
         zorder=5,
     )
-    ax1.set_title("Posterior Expectation", fontsize=14, fontweight="bold")
+    ax1.set_title("True model", fontsize=14, fontweight="bold")
+
+    _, im2 = plot(
+        posterior_expectation,
+        ax=ax2,
+        coasts=True,
+        cmap="seismic",
+        symmetric=True,
+        colorbar=True,
+        colorbar_kwargs={
+            "label": "Posterior expectation",
+            "orientation": "horizontal",
+            "shrink": 0.8,
+        },
+    )
+
+    vmin2, vmax2 = im2.get_clim()
+    ax2.scatter(
+        lons,
+        lats,
+        c=data,
+        cmap="seismic",
+        vmin=vmin2,
+        vmax=vmax2,
+        edgecolors="black",
+        linewidths=0.5,
+        s=8,
+        transform=ccrs.PlateCarree(),
+        zorder=5,
+    )
+    ax2.set_title("Posterior Expectation", fontsize=14, fontweight="bold")
 
     if args.std_samples > 0:
-        ax2, im2 = plot(
+        _, im3 = plot(
             posterior_std,
-            ax=ax2,
+            ax=ax3,
             coasts=True,
             cmap="viridis",
             colorbar=True,
@@ -459,7 +489,7 @@ def main():
             },
         )
 
-        ax2.scatter(
+        ax3.scatter(
             lons,
             lats,
             color="white",
@@ -470,7 +500,7 @@ def main():
             transform=ccrs.PlateCarree(),
             zorder=5,
         )
-        ax2.set_title(
+        ax3.set_title(
             f"Posterior Pointwise STD (N={args.std_samples})",
             fontsize=14,
             fontweight="bold",
