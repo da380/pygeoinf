@@ -13,7 +13,7 @@ utilities built on `cartopy` for professional-quality geospatial visualization.
 """
 
 from __future__ import annotations
-from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING, Union
 
 import math
 import matplotlib.pyplot as plt
@@ -742,6 +742,65 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             return vec * self.radius**2
 
         return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
+
+    def random_domain_points(
+        self, n: int, /, *, keep_ocean: bool = True, resolution: str = "110m"
+    ) -> List[Tuple[float, float]]:
+        """
+        Generates a list of random points strictly bounded to either the land or the ocean.
+
+        This uses Cartopy's Natural Earth geometries and Shapely's spatial indexing
+        to perform ultra-fast rejection sampling.
+
+        Args:
+            n: The exact number of points to generate.
+            keep_ocean: If True, returns only ocean points. If False, returns only land points.
+            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
+
+        Returns:
+            A list of (latitude, longitude) tuples in degrees.
+        """
+        import cartopy.io.shapereader as shpreader
+        import shapely.geometry as sgeom
+        from shapely.prepared import prep
+
+        # 1. Fetch and prep the land geometry
+        shpfilename = shpreader.natural_earth(
+            resolution=resolution, category="physical", name="land"
+        )
+        reader = shpreader.Reader(shpfilename)
+        combined_land = sgeom.MultiPolygon(list(reader.geometries()))
+        prepared_land = prep(combined_land)
+
+        valid_points = []
+
+        # Earth is ~71% ocean and ~29% land. We over-generate our batches
+        # to ensure we hit our target 'n' in as few loop iterations as possible.
+        over_generate_factor = 1.5 if keep_ocean else 3.5
+
+        while len(valid_points) < n:
+            needed = n - len(valid_points)
+            batch_size = max(10, int(needed * over_generate_factor))
+
+            # Generate a raw batch using the standard sphere method
+            batch = self.random_points(batch_size)
+
+            for lat, lon in batch:
+                # Wrap [0, 360] to [-180, 180] strictly for Shapely's geometry bounds
+                wrapped_lon = (lon + 180) % 360 - 180
+                point = sgeom.Point(wrapped_lon, lat)
+
+                is_on_land = prepared_land.contains(point)
+
+                if keep_ocean and not is_on_land:
+                    valid_points.append((lat, lon))
+                elif not keep_ocean and is_on_land:
+                    valid_points.append((lat, lon))
+
+                if len(valid_points) == n:
+                    break
+
+        return valid_points
 
     # ------------------------------------------------------ #
     #                      Private methods                   #
@@ -1543,6 +1602,16 @@ class Sobolev(SymmetricSobolevSpace):
         events = sample_earthquakes(n_points, min_magnitude=min_magnitude)
         return [(lat, lon) for lat, lon, depth in events]
 
+    def random_domain_points(
+        self, n: int, /, *, keep_ocean: bool = True, resolution: str = "110m"
+    ) -> List[Tuple[float, float]]:
+        """
+        Generates a list of random points strictly bounded to either the land or the ocean.
+        """
+        return self.underlying_space.random_domain_points(
+            n, keep_ocean=keep_ocean, resolution=resolution
+        )
+
 
 # -------------------------------------------------- #
 #             Associated plotting methods            #
@@ -1693,6 +1762,127 @@ def plot(
         fig.colorbar(im, ax=ax, **cb_opts)
 
     return ax, im
+
+
+def plot_points(
+    points: List[Tuple[float, float]],
+    /,
+    *,
+    data: Optional[Union[List[float], np.ndarray]] = None,
+    ax: Optional[GeoAxes] = None,
+    projection: Optional[Projection] = None,
+    cmap: str = "RdBu",
+    color: str = "red",
+    s: float = 20,
+    marker: str = "o",
+    edgecolors: str = "none",
+    zorder: int = 5,
+    coasts: bool = False,
+    rivers: bool = False,
+    borders: bool = False,
+    map_extent: Optional[List[float]] = None,
+    gridlines: bool = True,
+    symmetric: bool = False,
+    colorbar: bool = False,
+    colorbar_kwargs: Optional[dict] = None,
+    **kwargs,
+) -> Tuple[GeoAxes, Any]:
+    """
+    Plots discrete observation points (e.g., tide gauges or altimetry tracks) on a map.
+
+    Args:
+        points: A list of (latitude, longitude) tuples in degrees.
+        data: Optional array of values to color the points by.
+        ax: An existing Cartopy GeoAxes object. If None, creates a new one.
+        projection: A cartopy projection instance if creating a new axes.
+        cmap: The colormap to use if `data` is provided.
+        color: The fixed color to use if `data` is NOT provided.
+        s: The marker size.
+        marker: The marker style (e.g., 'o', '*', '^').
+        edgecolors: The color of the marker edges.
+        zorder: The drawing order (higher means drawn on top of other elements).
+        coasts: If True, overlays high-resolution coastlines. Defaults to False.
+        rivers: If True, overlays major river systems. Defaults to False.
+        borders: If True, overlays international country borders. Defaults to False.
+        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view.
+        gridlines: If True, draws latitude and longitude gridlines with labels.
+        symmetric: If True, dynamically centers the color scale symmetrically around zero.
+        colorbar: If True and `data` is provided, attaches a colorbar.
+        colorbar_kwargs: Formatting options for the colorbar.
+        **kwargs: Additional keyword arguments passed to `ax.scatter`.
+
+    Returns:
+        A tuple `(ax, sc)` containing the GeoAxes and the PathCollection artist.
+    """
+    if ax is None:
+        fig, ax = create_map_figure(projection=projection)
+        ax.set_global()
+    else:
+        fig = ax.get_figure()
+
+    if map_extent is not None:
+        ax.set_extent(map_extent, crs=ccrs.PlateCarree())
+
+    # Apply high zorder to features so they aren't buried by dense scatter points
+    if coasts:
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.8, zorder=10)
+    if rivers:
+        ax.add_feature(cfeature.RIVERS, linewidth=0.8, zorder=10)
+    if borders:
+        ax.add_feature(cfeature.BORDERS, linewidth=0.8, zorder=10)
+
+    # Extract gridline intervals safely before passing kwargs to scatter
+    lat_interval = kwargs.pop("lat_interval", 30)
+    lon_interval = kwargs.pop("lon_interval", 30)
+
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
+
+    # Handle colormapping or fixed colors
+    if data is not None:
+        c = data
+        kwargs.setdefault("cmap", cmap)
+        if symmetric:
+            data_max = 1.2 * np.nanmax(np.abs(data))
+            kwargs.setdefault("vmin", -data_max)
+            kwargs.setdefault("vmax", data_max)
+    else:
+        c = color
+
+    sc = ax.scatter(
+        lons,
+        lats,
+        c=c,
+        s=s,
+        marker=marker,
+        edgecolors=edgecolors,
+        zorder=zorder,
+        transform=ccrs.PlateCarree(),
+        **kwargs,
+    )
+
+    if gridlines:
+        gl = ax.gridlines(
+            linestyle="--",
+            draw_labels=True,
+            dms=True,
+            x_inline=False,
+            y_inline=False,
+            zorder=10,
+        )
+        gl.xlocator = mticker.MultipleLocator(lon_interval)
+        gl.ylocator = mticker.MultipleLocator(lat_interval)
+        gl.xformatter = LongitudeFormatter()
+        gl.yformatter = LatitudeFormatter()
+
+    if colorbar and data is not None and fig:
+        cb_opts = colorbar_kwargs or {}
+        cb_opts.setdefault("orientation", "horizontal")
+        cb_opts.setdefault("shrink", 0.7)
+        cb_opts.setdefault("pad", 0.05)
+        fig.colorbar(sc, ax=ax, **cb_opts)
+
+    return ax, sc
 
 
 def plot_geodesic(
