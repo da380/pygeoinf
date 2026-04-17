@@ -90,38 +90,7 @@ You can run the interactive tutorials directly in Google Colab to get started wi
 | Tutorial 9 - Direct sums | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/tutorial9.ipynb) |
 | Tutorial 10 - Symmetric spaces | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/da380/pygeoinf/blob/main/docs/source/tutorials/tutorial10.ipynb) |
 
-## Dependencies
 
-* Python >=3.12
-* NumPy >=1.26.0
-* SciPy >=1.16.1
-* Matplotlib >=3.0.0
-* PyQt6 >=6.0.0
-* joblib ^1.5.2
-
-### Optional (`sphere` group)
-
-* pyshtools >=4.0.0
-* Cartopy ^0.23.0
-* threadpoolctl ^3.6.0
-* numba ^0.63.1
-* ipympl ^0.10.0
-
-## Recent Updates
-
-`pygeoinf` is under active development. Recent updates have expanded its capabilities to handle massive, constrained, and coupled geophysical datasets:
-
-* **Advanced Linear Solvers & Preconditioning:** The library now includes a robust suite of matrix-free iterative solvers, including MINRES, LSQR, BiCGStab, and Flexible Conjugate Gradient (FCG). These are backed by a flexible preconditioning framework supporting Jacobi and spectral (low-rank) methods.
-* **Joint Inversions & Block Operators:** You can now construct complex, coupled inverse problems using `HilbertSpaceDirectSum`, `BlockLinearOperator`, and `ColumnLinearOperator`. This is specifically designed for joint inversions where a single model is constrained by disparate data types.
-* **Geometric Subspaces and Constraints:** We have introduced a Constructive Solid Geometry (CSG) approach to abstract Hilbert spaces. Users can now seamlessly define affine subspaces, hyper-ellipsoids, and convex subsets to enforce strict prior constraints or project unconstrained posteriors. 
-* **Advanced Posterior Visualisation:** The plotting module has been expanded to include professional-grade corner plots (`plot_corner_distributions`) for visualising joint posterior distributions, as well as dual-axis 1D marginal distributions. 
-
-## Future Plans
-
-Future development will focus on the following areas:
-
-* **Non-linear Bayesian Inference**: We plan to develop methods for non-linear Bayesian problems, including techniques for linearizing the problem around the maximum a posteriori (MAP) solution to estimate posterior uncertainty. This will also involve constructing efficient proposal distributions for Markov chain Monte Carlo (MCMC) sampling methods.
-* **New Geophysical Hilbert Spaces**: We will be adding more `HilbertSpace` implementations for specific geophysical applications. A key focus will be on creating spaces for functions defined within a spherical annulus (spherical shell), which is crucial for problems in global seismology and mantle tomography.
 
 ## Contributing
 

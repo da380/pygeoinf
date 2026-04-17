@@ -7,14 +7,14 @@ import pygeoinf as inf
 # ==================================================================== #
 
 # Choose from: "Sphere", "Torus", "Plane", "Circle", "Line"
-GEOMETRY = "Sphere"
+GEOMETRY = "Plane"
 DISK_MODEL = False  # True for a top-hat anomaly, False for random field
 
 order = 2
 scale = 0.2
 prior_scale = 0.1
-n_sources = 10
-n_receivers = 10
+n_sources = 3
+n_receivers = 30
 
 # ==================================================================== #
 #                       GEOMETRY INITIALIZATION                        #
