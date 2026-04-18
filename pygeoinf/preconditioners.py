@@ -10,7 +10,8 @@ import scipy.sparse.linalg as splinalg
 
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
-from .random_matrix import random_diagonal
+from .low_rank import random_diagonal, LowRankEig
+
 
 if TYPE_CHECKING:
     from .hilbert_space import Vector
@@ -130,8 +131,9 @@ class SpectralPreconditioningMethod(LinearSolver):
         """
         space = operator.domain
 
-        # Use randomized eigendecomposition with full parameter control
-        U, S = operator.random_eig(
+        # Use randomized eigendecomposition via the new LowRankEig class
+        eig_approx = LowRankEig.from_randomized(
+            operator,
             self._rank,
             method=self._method,
             max_rank=self._max_rank,
@@ -142,7 +144,8 @@ class SpectralPreconditioningMethod(LinearSolver):
             n_jobs=self._n_jobs,
         )
 
-        s_vals = S.extract_diagonal()
+        U = eig_approx.u_factor
+        s_vals = eig_approx.eigenvalues
 
         # Heuristic: If damping is not provided, use the smallest resolved
         # eigenvalue as a proxy for the unresolved spectral tail.

@@ -2,16 +2,6 @@
 Unified imports for the package.
 """
 
-from .random_matrix import (
-    fixed_rank_random_range,
-    variable_rank_random_range,
-    random_range,
-    random_svd,
-    random_eig,
-    random_cholesky,
-    random_diagonal,
-)
-
 from .hilbert_space import (
     HilbertSpace,
     DualHilbertSpace,
@@ -136,17 +126,11 @@ from .datasets import (
     sample_earthquakes,
 )
 
+from .low_rank import LowRankSVD, LowRankCholesky, LowRankEig
+
 from .config import DATADIR
 
 __all__ = [
-    # random_matrix
-    "fixed_rank_random_range",
-    "variable_rank_random_range",
-    "random_range",
-    "random_svd",
-    "random_eig",
-    "random_cholesky",
-    "random_diagonal",
     # hilbert_space
     "HilbertSpace",
     "DualHilbertSpace",
@@ -250,4 +234,8 @@ __all__ = [
     "sample_earthquakes",
     # congif
     "DATADIR",
+    # low_rank
+    "LowRankSVD",
+    "LowRankEig",
+    "LowRankCholesky",
 ]

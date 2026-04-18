@@ -1,39 +1,27 @@
-import numpy as np
 import matplotlib.pyplot as plt
 
 # Import the core framework
 import pygeoinf as inf
-from pygeoinf.symmetric_space.circle import Lebesgue, plot, Sobolev
+from pygeoinf.symmetric_space.circle import plot, Sobolev
 
 # Import our new matrix-free module directly to avoid __init__ clashes
-from pygeoinf import random_operators as ro
 
 
 if __name__ == "__main__":
     # ==========================================
     # 1. Setup the Function Space and Operator
     # ==========================================
-    kmax = 128
+    kmax = 256
     radius = 1.0
 
     print("Initializing space and operator...")
-    domain = Sobolev(kmax, 2, 0.1, radius=radius)
+    domain = Sobolev(kmax, 2, 0.01, radius=radius)
 
     # A symmetric, positive-definite smoothing operator
-    A = domain.invariant_automorphism(lambda k: (1 + 0.001 * k * k) ** -2)
+    A = domain.invariant_automorphism(lambda k: (1 + 0.001 * k * k) ** -1.0)
 
     # A structured prior measure to draw test vectors from
-    measure = domain.heat_kernel_gaussian_measure(0.01)
-
-    # ==========================================
-    # 2. Abstract Randomized Range Finding
-    # ==========================================
-    target_rank = 5
-    print(f"\nEstimating abstract range (target rank: {target_rank})...")
-
-    # We use the unified 'random_range' wrapper from our new module
-    q_basis = ro.random_range(A, measure, target_rank, method="variable", power=0)
-    print(f"Captured {len(q_basis)} basis vectors.")
+    measure = domain.heat_kernel_gaussian_measure(0.001)
 
     # ==========================================
     # 3. Test the Factorizations
@@ -41,13 +29,13 @@ if __name__ == "__main__":
     print("\nComputing abstract factorizations...")
 
     # SVD
-    A_svd = ro.LowRankSVD.from_randomized(A, measure, 10)
+    A_svd = inf.LowRankSVD.from_randomized(A, 10, max_rank=50, measure=measure)
 
     # Eigendecomposition (Valid because A is self-adjoint)
-    A_eig = ro.LowRankEig.from_randomized(A, measure, 10)
+    A_eig = inf.LowRankEig.from_randomized(A, 10, max_rank=50, measure=measure)
 
     # Cholesky (Valid because A is positive-definite)
-    A_chol = ro.LowRankCholesky.from_randomized(A, measure, 10)
+    A_chol = inf.LowRankCholesky.from_randomized(A, 10, max_rank=50, measure=measure)
 
     # ==========================================
     # 4. Visual Verification
@@ -74,25 +62,26 @@ if __name__ == "__main__":
     print(f"  Cholesky Error: {err_chol:.2e}")
 
     # Plotting to visually confirm they all sit perfectly on top of one another
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+
+    plot(domain, u_test, ax=ax1, label="u", color="black", linewidth=3)
 
     # Plot true continuous application with a thick line
-    plot(domain, y_true, ax=ax, label="True A(u)", color="black", linewidth=3)
+    plot(domain, y_true, ax=ax2, label="True A(u)", color="black", linewidth=3)
 
     # Plot approximations with different dashed styles
-    plot(domain, y_svd, ax=ax, label="SVD Approx", linestyle="--", color="tab:blue")
-    plot(domain, y_eig, ax=ax, label="Eig Approx", linestyle="-.", color="tab:orange")
+    plot(domain, y_svd, ax=ax2, label="SVD Approx", linestyle="--", color="tab:blue")
+    plot(domain, y_eig, ax=ax2, label="Eig Approx", linestyle="-.", color="tab:orange")
     plot(
         domain,
         y_chol,
-        ax=ax,
+        ax=ax2,
         label="Chol Approx",
         linestyle=":",
         color="tab:green",
         linewidth=2,
     )
 
-    ax.set_title("Verification of Abstract Randomized Factorizations")
-    ax.legend()
+    ax2.legend()
     plt.tight_layout()
     plt.show()
