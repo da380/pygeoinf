@@ -126,7 +126,7 @@ from .datasets import (
     sample_earthquakes,
 )
 
-from .low_rank import LowRankSVD, LowRankCholesky, LowRankEig
+from .low_rank import LowRankSVD, LowRankCholesky, LowRankEig, white_noise_measure
 
 from .config import DATADIR
 
@@ -238,4 +238,5 @@ __all__ = [
     "LowRankSVD",
     "LowRankEig",
     "LowRankCholesky",
+    "white_noise_measure",
 ]

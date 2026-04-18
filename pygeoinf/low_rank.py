@@ -20,13 +20,29 @@ import scipy.linalg
 from scipy.linalg import qr
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 
-from .hilbert_space import Vector, EuclideanSpace
+from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .gaussian_measure import GaussianMeasure
 from .parallel import parallel_mat_mat
 
 # A type for objects that act like matrices
 MatrixLike = Union[np.ndarray, ScipyLinOp]
+
+
+def white_noise_measure(domain: HilbertSpace) -> GaussianMeasure:
+    """
+    Creates a formal N(0, I) "white noise" measure on the given domain.
+
+    WARNING: Mathematically, the identity operator is not trace-class in
+    infinite dimensions, meaning this does not define a valid Radon measure
+    on the Hilbert space. It is a cylinder measure.
+
+    In this library, it is used strictly as a numerical tool to generate
+    isotropic test vectors for randomized algorithms, ensuring that the
+    sampling perfectly respects the domain's inner product (e.g., mass matrices)
+    without biasing the range approximation.
+    """
+    return GaussianMeasure.from_standard_deviation(domain, 1.0)
 
 
 class LowRankSVD(LinearOperator):
