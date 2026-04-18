@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pygeoinf"
-version = "1.7.0"
+version = "1.7.1"
 description = "A package for solving geophysical inference and inverse problems"
 authors = ["David Al-Attar, Dan Heathcote, Adrian Mag"]
 readme = "README.md"
@@ -8,19 +8,18 @@ license = "BSD-3-Clause"
 
 [tool.poetry.dependencies]
 python = ">=3.12"
-numpy = ">=1.26.0"
-scipy = ">=1.16.1"
-matplotlib = ">=3.0.0"
-pyqt6 = ">=6.0.0"
-joblib = "^1.5.2"
-
-# Define optional dependencies WITH versions
-pyshtools = { version = ">=4.0.0", optional = true }
-Cartopy = { version = "^0.23.0", optional = true }
+numpy = ">=2.4.4"
+scipy = ">=1.17.1"
+matplotlib = ">=3.10.8"
+pyqt6 = ">=6.11.0"
+joblib = "^1.5.3"
 threadpoolctl = "^3.6.0"
-numba = "^0.63.1"
+numba = "^0.65.0"
 ipympl = "^0.10.0"
-pre-commit = "^4.5.1"
+
+# Optional dependencies for 'sphere' extra
+pyshtools = { version = ">=4.14.1", optional = true }
+Cartopy = { version = "^0.25.0", optional = true }
 
 [tool.poetry.extras]
 sphere = ["pyshtools", "Cartopy"]
@@ -36,14 +35,12 @@ jupyter = "^1.1.1"
 furo = "^2025.7.19"
 sphinx = "<8.2"
 nbsphinx = "^0.9.7"
-pyshtools = ">=4.0.0"
-Cartopy = "^0.23.0"
 ruff = "^0.5.5"
+pre-commit = "^4.5.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
 
 # --- Added Ruff Configuration ---
 [tool.ruff]
@@ -52,7 +49,7 @@ build-backend = "poetry.core.masonry.api"
 # For any file in the "tests/" directory, ignore the lambda assignment warning (E731).
 "tests/*" = ["E731", "E741"]
 
-# For the sphere.py file, where 'l' is a common variable name for spherical
+# For the sphere files, where 'l' is a common variable name for spherical
 # harmonic degree, ignore the ambiguous variable name warning (E741).
 "pygeoinf/symmetric_space/sphere.py" = ["E741"]
 "pygeoinf/symmetric_space/sh_tools.py" = ["E741"]

@@ -28,7 +28,7 @@ jobs:
         poetry config virtualenvs.create false
 
     - name: Install dependencies
-      run: poetry install --with dev
+      run: poetry install --with dev --all-extras
 
     - name: Lint with ruff
       run: poetry run ruff check .
