@@ -49,6 +49,7 @@ from .linear_solvers import (
 )
 from .hilbert_space import Vector, EuclideanSpace
 from .affine_operators import AffineOperator
+from .low_rank import LowRankSVD, LowRankEig
 
 
 class LinearBayesianInversion(LinearInversion):
@@ -658,10 +659,12 @@ class LinearBayesianInversion(LinearInversion):
             H_local = P @ core_normal_op @ P_star
 
             actual_rank = min(rank, block_size)
-            evecs_op, evals_op = H_local.random_eig(actual_rank, method="fixed")
+            eig_approx = LowRankEig.from_randomized(
+                H_local, actual_rank, method="fixed"
+            )
 
-            V = evecs_op.matrix(dense=True, galerkin=True)
-            Lambda = evals_op.matrix(dense=True).diagonal()
+            V = eig_approx.u_factor.matrix(dense=True, galerkin=True)
+            Lambda = eig_approx.eigenvalues
             M_local_array = (V * Lambda) @ V.T
 
             I_local, J_local = np.meshgrid(
@@ -942,8 +945,7 @@ class LinearBayesianInversion(LinearInversion):
         if forward_rank is not None:
             f_kwargs = forward_kwargs or {}
             original_A = self.forward_problem.forward_operator
-            L, D, R = original_A.random_svd(forward_rank, **f_kwargs)
-            A_tilde = L @ D @ R
+            A_tilde = LowRankSVD.from_randomized(original_A, forward_rank, **f_kwargs)
 
         if prior_rank is not None:
             p_kwargs = prior_kwargs or {}

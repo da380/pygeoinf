@@ -883,24 +883,24 @@ class GaussianMeasure:
             - 'variable': (Default) Progressively samples to find the rank needed
                           to meet tolerance `rtol`, stopping at `max_rank`.
             - 'fixed': Returns a basis with exactly `size_estimate` columns.
-            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
-                    method='fixed'. Defaults to min(m, n).
+            max_rank: For 'variable' method, a hard limit on the rank.
             power: Number of power iterations to improve accuracy.
-            rtol: Relative tolerance for the 'variable' method. Ignored if
-                method='fixed'.
-            block_size: Number of new vectors to sample per iteration in 'variable'
-                        method. Ignored if method='fixed'.
+            rtol: Relative tolerance for the 'variable' method.
+            block_size: Number of new vectors to sample per iteration.
             parallel: Whether to use parallel matrix multiplication.
             n_jobs: Number of jobs for parallelism.
 
         Returns:
             GaussianMeasure: The new, low-rank Gaussian measure.
-
-        Notes:
-            Parallel implemention only currently possible with fixed-rank decompositions.
         """
-        covariance_factor = self.covariance.random_cholesky(
+        # Local import to prevent circular dependency with low_rank.py
+        from .low_rank import LowRankCholesky
+
+        # We pass measure=None to probe the operator with component-based white noise N(0, I)
+        lr_cholesky = LowRankCholesky.from_randomized(
+            self.covariance,
             size_estimate,
+            measure=None,
             method=method,
             max_rank=max_rank,
             power=power,
@@ -910,8 +910,9 @@ class GaussianMeasure:
             n_jobs=n_jobs,
         )
 
+        # LowRankCholesky provides the L factor we need for the new measure
         return GaussianMeasure(
-            covariance_factor=covariance_factor,
+            covariance_factor=lr_cholesky.l_factor,
             expectation=self._expectation,
         )
 

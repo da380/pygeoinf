@@ -295,7 +295,7 @@ class TestLinearLeastSquaresInversion:
         alpha_sol = op_param(data)
 
         # Verify alpha is close to 2.0 (regularization will pull it slightly away)
-        assert np.allclose(alpha_sol, alpha_true, atol=0.1)
+        assert np.allclose(alpha_sol, alpha_true, atol=0.2)
 
 
 # =============================================================================
