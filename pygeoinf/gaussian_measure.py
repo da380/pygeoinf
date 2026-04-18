@@ -1207,7 +1207,7 @@ class GaussianMeasure:
     def _sample_from_factor(self) -> Vector:
         """Default sampling method when a covariance factor is provided."""
         covariance_factor = self.covariance_factor
-        w = np.random.randn(covariance_factor.domain.dim)
+        w = covariance_factor.domain.random()
         value = covariance_factor(w)
         if self.has_zero_expectation:
             return value
