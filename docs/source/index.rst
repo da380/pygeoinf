@@ -36,7 +36,6 @@ Key Features
    :caption: User Guide
    :hidden:
 
-   tutorials
 
 .. toctree::
    :maxdepth: 4
