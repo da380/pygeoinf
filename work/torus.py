@@ -8,7 +8,7 @@ from pygeoinf.symmetric_space.torus import (
 
 X = Sobolev(128, 2, 0.1)
 
-paths = X.random_source_receiver_paths(10, 10)
+paths = X.random_source_receiver_paths(20, 20)
 A = X.path_average_operator(paths)
 
 

@@ -29,10 +29,19 @@ if __name__ == "__main__":
     print("\nComputing abstract factorizations...")
 
     # SVD
-    A_svd1 = inf.LowRankSVD.from_randomized(A, 10, measure=measure, max_rank=50)
-    A_svd2 = inf.LowRankSVD.from_randomized(A, 10, measure=None, max_rank=50)
+    A_svd1 = inf.LowRankSVD.from_randomized(
+        A, 10, measure=measure, max_rank=100, parallel=True, n_jobs=4
+    )
+    A_svd2 = inf.LowRankSVD.from_randomized(
+        A, 10, measure=None, max_rank=100, parallel=True, n_jobs=4
+    )
     A_svd3 = inf.LowRankSVD.from_randomized(
-        A, 10, measure=inf.white_noise_measure(domain), max_rank=50
+        A,
+        10,
+        measure=inf.white_noise_measure(domain),
+        max_rank=100,
+        parallel=True,
+        n_jobs=4,
     )
 
     print(A_svd1.rank)
