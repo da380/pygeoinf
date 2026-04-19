@@ -34,7 +34,6 @@ snakeviz = "^2.2.2"
 jupyter = "^1.1.1"
 furo = "^2025.7.19"
 sphinx = "<8.2"
-nbsphinx = "^0.9.7"
 ruff = "^0.5.5"
 pre-commit = "^4.5.1"
 

@@ -2253,26 +2253,6 @@ docs = ["myst-parser", "pydata-sphinx-theme", "sphinx", "sphinxcontrib-github-al
 test = ["pep440", "pre-commit", "pytest", "testpath"]
 
 [[package]]
-name = "nbsphinx"
-version = "0.9.8"
-description = "Jupyter Notebook Tools for Sphinx"
-optional = false
-python-versions = ">=3.8"
-groups = ["dev"]
-files = [
-    {file = "nbsphinx-0.9.8-py3-none-any.whl", hash = "sha256:92d95ee91784e56bc633b60b767a6b6f23a0445f891e24641ce3c3f004759ccf"},
-    {file = "nbsphinx-0.9.8.tar.gz", hash = "sha256:d0765908399a8ee2b57be7ae881cf2ea58d66db3af7bbf33e6eb48f83bea5495"},
-]
-
-[package.dependencies]
-docutils = ">=0.18.1"
-jinja2 = "*"
-nbconvert = ">=5.3,<5.4 || >5.4"
-nbformat = "*"
-sphinx = ">=1.8,<8.2.0 || >8.2.0,<8.2.1 || >8.2.1"
-traitlets = ">=5"
-
-[[package]]
 name = "nest-asyncio"
 version = "1.6.0"
 description = "Patch asyncio to allow nested event loops"
@@ -4415,4 +4395,4 @@ sphere = ["Cartopy", "pyshtools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "f8f6236a721c0171b3b1bb0aa5db3417b61b06f2c33920c486dc78f3b7449a28"
+content-hash = "13d31a800c3162fc41e9b62a7923a9994a132e227c42b0bbaec2def5cc525f2a"
