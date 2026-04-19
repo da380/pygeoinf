@@ -245,7 +245,8 @@ class GaussianMeasure:
         values = np.sqrt(eigenvalues)
         D = diags([values], [0])
         # Use pseudo-inverse for singular matrices
-        Di = diags([np.reciprocal(values, where=(values != 0))], [0])
+        out_array = np.zeros_like(values, dtype=float)
+        Di = diags([np.reciprocal(values, out=out_array, where=(values != 0))], [0])
         L = U @ D
         Li = Di @ U.T
 

@@ -22,7 +22,7 @@ jobs:
         poetry config virtualenvs.create false
 
     - name: Install dependencies
-      run: poetry install
+      run: poetry install --with dev --all-extras
 
     - name: Build package
       run: poetry build

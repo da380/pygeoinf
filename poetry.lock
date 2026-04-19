@@ -4415,4 +4415,4 @@ sphere = ["Cartopy", "pyshtools"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "2bb966b5e7733c96645652a1efeedb2d31ca2bbdfa23f6763b2f61fc510577ce"
+content-hash = "f8f6236a721c0171b3b1bb0aa5db3417b61b06f2c33920c486dc78f3b7449a28"

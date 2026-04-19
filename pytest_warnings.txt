@@ -1,0 +1,48 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
+rootdir: /home/david/dev/pygeoinf
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-6.3.0
+collected 494 items
+
+tests/symmetric_space/test_circle_lebesgue.py ........                   [  1%]
+tests/symmetric_space/test_circle_plot.py ...                            [  2%]
+tests/symmetric_space/test_circle_sobolev.py ...........                 [  4%]
+tests/symmetric_space/test_invariant_objects.py ..........               [  6%]
+tests/symmetric_space/test_line_lebesgue.py ........                     [  8%]
+tests/symmetric_space/test_line_plot.py ...                              [  8%]
+tests/symmetric_space/test_line_sobolev.py ..........                    [ 10%]
+tests/symmetric_space/test_plane_lebesgue.py ........                    [ 12%]
+tests/symmetric_space/test_plane_plot.py .....                           [ 13%]
+tests/symmetric_space/test_plane_sobolev.py ...........                  [ 15%]
+tests/symmetric_space/test_sphere_lebesgue.py ..........                 [ 17%]
+tests/symmetric_space/test_sphere_plot.py .......                        [ 19%]
+tests/symmetric_space/test_sphere_sobolev.py ...................         [ 22%]
+tests/symmetric_space/test_torus_lebesgue.py .........                   [ 24%]
+tests/symmetric_space/test_torus_sobolev.py ...............              [ 27%]
+tests/test_affine_operators.py .....                                     [ 28%]
+tests/test_auxiliary.py ...................                              [ 32%]
+tests/test_direct_sum.py .........................                       [ 37%]
+tests/test_euclidean.py .......                                          [ 39%]
+tests/test_euclidean_nonlinear_operators.py ..                           [ 39%]
+tests/test_forward_problem.py ........                                   [ 41%]
+tests/test_gaussian_measure.py ....................                      [ 45%]
+tests/test_inversion.py ..............                                   [ 47%]
+tests/test_linear_bayesian.py ......................                     [ 52%]
+tests/test_linear_forms.py ............................................. [ 61%]
+.........                                                                [ 63%]
+tests/test_linear_operators.py ..............................            [ 69%]
+tests/test_linear_optimisation.py ..........................             [ 74%]
+tests/test_linear_solvers.py .......................                     [ 79%]
+tests/test_low_rank.py ....................                              [ 83%]
+tests/test_mass_weighted.py ...                                          [ 84%]
+tests/test_nonlinear_forms.py ................                           [ 87%]
+tests/test_nonlinear_optimisation.py ....x.                              [ 88%]
+tests/test_parallelism.py ....                                           [ 89%]
+tests/test_plot.py ..........................                            [ 94%]
+tests/test_preconditioners.py ............                               [ 96%]
+tests/test_subsets.py ........                                           [ 98%]
+tests/test_subspaces.py ....                                             [ 99%]
+tests/test_torus_plot.py ...                                             [100%]
+
+======================= 493 passed, 1 xfailed in 13.40s ========================

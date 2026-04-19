@@ -8,9 +8,9 @@ license = "BSD-3-Clause"
 
 [tool.poetry.dependencies]
 python = ">=3.12"
-numpy = ">=2.4.4"
-scipy = ">=1.17.1"
-matplotlib = ">=3.10.8"
+numpy = ">=2.0.0"
+scipy = ">=1.13.0"
+matplotlib = ">=3.9.0"
 pyqt6 = ">=6.11.0"
 joblib = "^1.5.3"
 threadpoolctl = "^3.6.0"
