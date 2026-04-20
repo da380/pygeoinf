@@ -13,12 +13,14 @@ utilities built on `cartopy` for professional-quality geospatial visualization.
 """
 
 from __future__ import annotations
-from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING, Union
 
 import math
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+
+from joblib import Parallel, delayed
 
 from scipy.spatial import cKDTree
 
@@ -39,6 +41,8 @@ except ImportError:
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
+
+from pygeoinf.datasets import load_gsn_stations
 
 
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
@@ -334,6 +338,47 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
 
         return powers
 
+    @staticmethod
+    def iris_stations(n_stations: int = None, include_names: bool = False):
+        """
+        Convenience method to retrieve a globally distributed set of
+        Global Seismograph Network (GSN) stations from IRIS.
+
+        Args:
+            n_stations: The number of random stations to return. If None,
+                        returns the entire available network (~177 stations).
+            include_names: If True, returns (Name, Latitude, Longitude).
+                           If False, returns (Latitude, Longitude) tuples.
+
+        Returns:
+            A list of tuples representing the station coordinates in degrees.
+        """
+        from pygeoinf.datasets import load_gsn_stations
+
+        return load_gsn_stations(n_stations=n_stations, include_names=include_names)
+
+    @staticmethod
+    def random_earthquakes(n_points: int, min_magnitude: float = 5.0):
+        """
+        Returns a random sample of real, sensible earthquake locations.
+
+        This provides a highly clustered, non-uniform spatial distribution
+        along tectonic boundaries, perfect for testing robust spatial operators.
+
+        Args:
+            n_points: The exact number of locations to return.
+            min_magnitude: The minimum magnitude threshold for the catalog.
+
+        Returns:
+            A list of (Latitude, Longitude) tuples in degrees.
+        """
+        from pygeoinf.datasets import sample_earthquakes
+
+        # The FDSN API returns (lat, lon, depth). We strip the depth
+        # since we are operating on the 2D surface of the sphere.
+        events = sample_earthquakes(n_points, min_magnitude=min_magnitude)
+        return [(lat, lon) for lat, lon, depth in events]
+
     # ------------------------------------------------------ #
     #           Methods for SymmetricHilbertSpace            #
     # ------------------------------------------------------ #
@@ -434,7 +479,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def pairs_within_distance(
         self, points: List[Tuple[float, float]], max_distance: float
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-
         # 1. Convert all (lat, lon) points to 3D Cartesian vectors
         vecs = (
             np.array([self._to_vector(lat, lon) for lat, lon in points]) * self.radius
@@ -504,7 +548,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def invariant_covariance_function(
         self, spectral_variances: np.ndarray
     ) -> Callable[[np.ndarray], np.ndarray]:
-
         degree_variances = np.zeros(self.lmax + 1)
         for l in range(self.lmax + 1):
             idx = self.index_to_integer((l, 0))
@@ -699,6 +742,65 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             return vec * self.radius**2
 
         return LinearOperator(domain, self, mapping, adjoint_mapping=adjoint_mapping)
+
+    def random_domain_points(
+        self, n: int, /, *, keep_ocean: bool = True, resolution: str = "110m"
+    ) -> List[Tuple[float, float]]:
+        """
+        Generates a list of random points strictly bounded to either the land or the ocean.
+
+        This uses Cartopy's Natural Earth geometries and Shapely's spatial indexing
+        to perform ultra-fast rejection sampling.
+
+        Args:
+            n: The exact number of points to generate.
+            keep_ocean: If True, returns only ocean points. If False, returns only land points.
+            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
+
+        Returns:
+            A list of (latitude, longitude) tuples in degrees.
+        """
+        import cartopy.io.shapereader as shpreader
+        import shapely.geometry as sgeom
+        from shapely.prepared import prep
+
+        # 1. Fetch and prep the land geometry
+        shpfilename = shpreader.natural_earth(
+            resolution=resolution, category="physical", name="land"
+        )
+        reader = shpreader.Reader(shpfilename)
+        combined_land = sgeom.MultiPolygon(list(reader.geometries()))
+        prepared_land = prep(combined_land)
+
+        valid_points = []
+
+        # Earth is ~71% ocean and ~29% land. We over-generate our batches
+        # to ensure we hit our target 'n' in as few loop iterations as possible.
+        over_generate_factor = 1.5 if keep_ocean else 3.5
+
+        while len(valid_points) < n:
+            needed = n - len(valid_points)
+            batch_size = max(10, int(needed * over_generate_factor))
+
+            # Generate a raw batch using the standard sphere method
+            batch = self.random_points(batch_size)
+
+            for lat, lon in batch:
+                # Wrap [0, 360] to [-180, 180] strictly for Shapely's geometry bounds
+                wrapped_lon = (lon + 180) % 360 - 180
+                point = sgeom.Point(wrapped_lon, lat)
+
+                is_on_land = prepared_land.contains(point)
+
+                if keep_ocean and not is_on_land:
+                    valid_points.append((lat, lon))
+                elif not keep_ocean and is_on_land:
+                    valid_points.append((lat, lon))
+
+                if len(valid_points) == n:
+                    break
+
+        return valid_points
 
     # ------------------------------------------------------ #
     #                      Private methods                   #
@@ -1168,6 +1270,348 @@ class Sobolev(SymmetricSobolevSpace):
 
         return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
 
+    def point_evaluation_operator(
+        self,
+        points: List[Tuple[float, float]],
+        /,
+        *,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Args:
+            points: A list of (latitude, longitude) tuples.
+            matrix_free: If True, evaluates the operator on-the-fly to save memory.
+            parallel: If True, distributes the matrix-free evaluations across CPU cores.
+            n_jobs: Number of parallel jobs. -1 uses all available cores.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        lats = [p[0] for p in points]
+        lons = [p[1] for p in points]
+        codomain = EuclideanSpace(len(points))
+
+        # Heuristic chunking: Target ~4 chunks per worker to balance load and overhead
+        n_points = len(points)
+        num_chunks = min(n_points, abs(n_jobs) * 4 if n_jobs > 0 else 16)
+        chunks = np.array_split(range(n_points), num_chunks)
+
+        def mapping(u: sh.SHGrid) -> np.ndarray:
+            coeffs = self.to_coefficients(u)
+
+            if not parallel:
+                raw_vals = coeffs.expand(lat=lats, lon=lons, degrees=True)
+                return np.array(raw_vals, dtype=float).flatten()
+
+            def compute_fwd_chunk(indices):
+                chunk_lats = [lats[i] for i in indices]
+                chunk_lons = [lons[i] for i in indices]
+                raw = coeffs.expand(lat=chunk_lats, lon=chunk_lons, degrees=True)
+                return np.array(raw, dtype=float).flatten()
+
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(compute_fwd_chunk)(chunk) for chunk in chunks if len(chunk) > 0
+            )
+            return np.concatenate(results)
+
+        def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
+            from pygeoinf.linear_forms import LinearForm
+
+            if not parallel:
+                total_components = np.zeros(self.dim)
+                for i, pt in enumerate(points):
+                    if y[i] != 0.0:
+                        total_components += y[i] * self.dirac(pt).components
+                return self.from_dual(LinearForm(self, components=total_components))
+
+            def compute_adj_chunk(indices):
+                local_comps = np.zeros(self.dim)
+                for i in indices:
+                    if y[i] != 0.0:
+                        local_comps += y[i] * self.dirac(points[i]).components
+                return local_comps
+
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(compute_adj_chunk)(chunk) for chunk in chunks if len(chunk) > 0
+            )
+            total_components = sum(results)
+            return self.from_dual(LinearForm(self, components=total_components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def path_average_operator(
+        self,
+        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+        /,
+        *,
+        n_points: Optional[int] = None,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        lazy_quadrature: bool = False,
+    ) -> LinearOperator:
+        """
+        Constructs a tomographic operator mapping a function field to its
+        line integrals along a set of geodesic paths.
+
+        Args:
+            paths: A list of start and end point pairs defining the geodesics.
+            n_points: The number of quadrature points per path.
+            matrix_free: If True, evaluates the integrals on-the-fly to save memory.
+            parallel: If True, distributes the matrix-free evaluations across CPU cores.
+            n_jobs: Number of parallel jobs. -1 uses all available cores.
+            lazy_quadrature: If True, computes quadrature points on-the-fly per chunk
+                to prevent memory blowouts when evaluating massive numbers of paths.
+        """
+        if not matrix_free:
+            return super().path_average_operator(paths, n_points=n_points)
+
+        n_paths = len(paths)
+        codomain = EuclideanSpace(n_paths)
+
+        # Determine chunking strategy (aim for reasonable sized blocks)
+        num_chunks = min(n_paths, abs(n_jobs) * 4 if n_jobs > 0 else 16)
+        chunks = np.array_split(range(n_paths), num_chunks)
+
+        # Helper to dynamically get quadrature points for a single path
+        def get_quad(p1, p2):
+            if n_points is None:
+                _, temp_weights = self.geodesic_quadrature(p1, p2, n_points=2)
+                arc_length = np.sum(temp_weights)
+                pts_count = int(np.ceil((arc_length / self.scale) * 2.0))
+                pts_count = max(2, pts_count)
+            else:
+                pts_count = n_points
+            return self.geodesic_quadrature(p1, p2, pts_count)
+
+        if not lazy_quadrature:
+            # =========================================================
+            # MODE 1: PRECOMPUTE ALL (Fastest, High Memory)
+            # =========================================================
+            def compute_quad_chunk(indices):
+                chunk_pts, chunk_wts = [], []
+                for i in indices:
+                    pts, wts = get_quad(*paths[i])
+                    chunk_pts.append(pts)
+                    chunk_wts.append(wts)
+                return chunk_pts, chunk_wts
+
+            if parallel:
+                quad_results = Parallel(n_jobs=n_jobs)(
+                    delayed(compute_quad_chunk)(chunk)
+                    for chunk in chunks
+                    if len(chunk) > 0
+                )
+                all_quad_points, all_quad_weights = [], []
+                for c_pts, c_wts in quad_results:
+                    all_quad_points.extend(c_pts)
+                    all_quad_weights.extend(c_wts)
+            else:
+                all_quad_points, all_quad_weights = compute_quad_chunk(range(n_paths))
+
+            flat_lats, flat_lons, path_slices = [], [], []
+            idx = 0
+            for pts in all_quad_points:
+                pts_count = len(pts)
+                for pt in pts:
+                    flat_lats.append(pt[0])
+                    flat_lons.append(pt[1])
+                path_slices.append((idx, idx + pts_count))
+                idx += pts_count
+
+            def mapping(u: sh.SHGrid) -> np.ndarray:
+                coeffs = self.to_coefficients(u)
+                if not parallel:
+                    raw = coeffs.expand(lat=flat_lats, lon=flat_lons, degrees=True)
+                    flat = np.array(raw, dtype=float).flatten()
+                    res = np.zeros(n_paths)
+                    for i, (start, end) in enumerate(path_slices):
+                        res[i] = np.sum(flat[start:end] * all_quad_weights[i])
+                    return res
+
+                def compute_fwd_chunk(indices):
+                    local_lats, local_lons, local_wts, local_slices = [], [], [], []
+                    local_idx = 0
+                    for i in indices:
+                        pts, wts = all_quad_points[i], all_quad_weights[i]
+                        for pt in pts:
+                            local_lats.append(pt[0])
+                            local_lons.append(pt[1])
+                        c_len = len(pts)
+                        local_slices.append((local_idx, local_idx + c_len))
+                        local_wts.append(wts)
+                        local_idx += c_len
+                    raw = coeffs.expand(lat=local_lats, lon=local_lons, degrees=True)
+                    flat = np.array(raw, dtype=float).flatten()
+                    res = np.zeros(len(indices))
+                    for k, (start, end) in enumerate(local_slices):
+                        res[k] = np.sum(flat[start:end] * local_wts[k])
+                    return res
+
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(compute_fwd_chunk)(chunk)
+                    for chunk in chunks
+                    if len(chunk) > 0
+                )
+                return np.concatenate(results)
+
+            def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
+                from pygeoinf.linear_forms import LinearForm
+
+                if not parallel:
+                    total_components = np.zeros(self.dim)
+                    for i in range(n_paths):
+                        if y[i] != 0.0:
+                            path_comps = np.zeros(self.dim)
+                            for pt, w in zip(all_quad_points[i], all_quad_weights[i]):
+                                path_comps += w * self.dirac(pt).components
+                            total_components += y[i] * path_comps
+                    return self.from_dual(LinearForm(self, components=total_components))
+
+                def compute_adj_chunk(indices):
+                    local_comps = np.zeros(self.dim)
+                    for i in indices:
+                        if y[i] != 0.0:
+                            path_comps = np.zeros(self.dim)
+                            for pt, w in zip(all_quad_points[i], all_quad_weights[i]):
+                                path_comps += w * self.dirac(pt).components
+                            local_comps += y[i] * path_comps
+                    return local_comps
+
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(compute_adj_chunk)(chunk)
+                    for chunk in chunks
+                    if len(chunk) > 0
+                )
+                return self.from_dual(LinearForm(self, components=sum(results)))
+
+        else:
+            # =========================================================
+            # MODE 2: LAZY EVALUATION (Slightly slower, Low Memory)
+            # =========================================================
+            def mapping(u: sh.SHGrid) -> np.ndarray:
+                coeffs = self.to_coefficients(u)
+
+                def compute_lazy_fwd_chunk(indices):
+                    local_lats, local_lons, local_wts, local_slices = [], [], [], []
+                    local_idx = 0
+                    # 1. Compute geometry dynamically for this chunk
+                    for i in indices:
+                        pts, wts = get_quad(*paths[i])
+                        for pt in pts:
+                            local_lats.append(pt[0])
+                            local_lons.append(pt[1])
+                        c_len = len(pts)
+                        local_slices.append((local_idx, local_idx + c_len))
+                        local_wts.append(wts)
+                        local_idx += c_len
+
+                    # 2. Vectorized pyshtools evaluation just for this chunk's points
+                    raw = coeffs.expand(lat=local_lats, lon=local_lons, degrees=True)
+                    flat = np.array(raw, dtype=float).flatten()
+
+                    # 3. Sum up the line integrals
+                    res = np.zeros(len(indices))
+                    for k, (start, end) in enumerate(local_slices):
+                        res[k] = np.sum(flat[start:end] * local_wts[k])
+                    return res
+
+                if parallel:
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_lazy_fwd_chunk)(chunk)
+                        for chunk in chunks
+                        if len(chunk) > 0
+                    )
+                    return np.concatenate(results)
+                else:
+                    return np.concatenate(
+                        [compute_lazy_fwd_chunk(c) for c in chunks if len(c) > 0]
+                    )
+
+            def adjoint_mapping(y: np.ndarray) -> sh.SHGrid:
+                from pygeoinf.linear_forms import LinearForm
+
+                def compute_lazy_adj_chunk(indices):
+                    local_comps = np.zeros(self.dim)
+                    for i in indices:
+                        if y[i] != 0.0:
+                            pts, wts = get_quad(*paths[i])
+                            path_comps = np.zeros(self.dim)
+                            for pt, w in zip(pts, wts):
+                                path_comps += w * self.dirac(pt).components
+                            local_comps += y[i] * path_comps
+                    return local_comps
+
+                if parallel:
+                    results = Parallel(n_jobs=n_jobs)(
+                        delayed(compute_lazy_adj_chunk)(chunk)
+                        for chunk in chunks
+                        if len(chunk) > 0
+                    )
+                    total_components = sum(results)
+                else:
+                    total_components = sum(
+                        [compute_lazy_adj_chunk(c) for c in chunks if len(c) > 0]
+                    )
+
+                return self.from_dual(LinearForm(self, components=total_components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    @staticmethod
+    def iris_stations(n_stations: int = None, include_names: bool = False):
+        """
+        Convenience method to retrieve a globally distributed set of
+        Global Seismograph Network (GSN) stations from IRIS.
+
+        Args:
+            n_stations: The number of random stations to return. If None,
+                        returns the entire available network (~177 stations).
+            include_names: If True, returns (Name, Latitude, Longitude).
+                           If False, returns (Latitude, Longitude) tuples.
+
+        Returns:
+            A list of tuples representing the station coordinates in degrees.
+        """
+
+        return load_gsn_stations(n_stations=n_stations, include_names=include_names)
+
+    @staticmethod
+    def random_earthquakes(n_points: int, min_magnitude: float = 5.0):
+        """
+        Returns a random sample of real, sensible earthquake locations.
+
+        This provides a highly clustered, non-uniform spatial distribution
+        along tectonic boundaries, perfect for testing robust spatial operators.
+
+        Args:
+            n_points: The exact number of locations to return.
+            min_magnitude: The minimum magnitude threshold for the catalog.
+
+        Returns:
+            A list of (Latitude, Longitude) tuples in degrees.
+        """
+        from pygeoinf.datasets import sample_earthquakes
+
+        # The FDSN API returns (lat, lon, depth). We strip the depth
+        # since we are operating on the 2D surface of the sphere.
+        events = sample_earthquakes(n_points, min_magnitude=min_magnitude)
+        return [(lat, lon) for lat, lon, depth in events]
+
+    def random_domain_points(
+        self, n: int, /, *, keep_ocean: bool = True, resolution: str = "110m"
+    ) -> List[Tuple[float, float]]:
+        """
+        Generates a list of random points strictly bounded to either the land or the ocean.
+        """
+        return self.underlying_space.random_domain_points(
+            n, keep_ocean=keep_ocean, resolution=resolution
+        )
+
 
 # -------------------------------------------------- #
 #             Associated plotting methods            #
@@ -1318,6 +1762,127 @@ def plot(
         fig.colorbar(im, ax=ax, **cb_opts)
 
     return ax, im
+
+
+def plot_points(
+    points: List[Tuple[float, float]],
+    /,
+    *,
+    data: Optional[Union[List[float], np.ndarray]] = None,
+    ax: Optional[GeoAxes] = None,
+    projection: Optional[Projection] = None,
+    cmap: str = "RdBu",
+    color: str = "red",
+    s: float = 20,
+    marker: str = "o",
+    edgecolors: str = "none",
+    zorder: int = 5,
+    coasts: bool = False,
+    rivers: bool = False,
+    borders: bool = False,
+    map_extent: Optional[List[float]] = None,
+    gridlines: bool = True,
+    symmetric: bool = False,
+    colorbar: bool = False,
+    colorbar_kwargs: Optional[dict] = None,
+    **kwargs,
+) -> Tuple[GeoAxes, Any]:
+    """
+    Plots discrete observation points (e.g., tide gauges or altimetry tracks) on a map.
+
+    Args:
+        points: A list of (latitude, longitude) tuples in degrees.
+        data: Optional array of values to color the points by.
+        ax: An existing Cartopy GeoAxes object. If None, creates a new one.
+        projection: A cartopy projection instance if creating a new axes.
+        cmap: The colormap to use if `data` is provided.
+        color: The fixed color to use if `data` is NOT provided.
+        s: The marker size.
+        marker: The marker style (e.g., 'o', '*', '^').
+        edgecolors: The color of the marker edges.
+        zorder: The drawing order (higher means drawn on top of other elements).
+        coasts: If True, overlays high-resolution coastlines. Defaults to False.
+        rivers: If True, overlays major river systems. Defaults to False.
+        borders: If True, overlays international country borders. Defaults to False.
+        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view.
+        gridlines: If True, draws latitude and longitude gridlines with labels.
+        symmetric: If True, dynamically centers the color scale symmetrically around zero.
+        colorbar: If True and `data` is provided, attaches a colorbar.
+        colorbar_kwargs: Formatting options for the colorbar.
+        **kwargs: Additional keyword arguments passed to `ax.scatter`.
+
+    Returns:
+        A tuple `(ax, sc)` containing the GeoAxes and the PathCollection artist.
+    """
+    if ax is None:
+        fig, ax = create_map_figure(projection=projection)
+        ax.set_global()
+    else:
+        fig = ax.get_figure()
+
+    if map_extent is not None:
+        ax.set_extent(map_extent, crs=ccrs.PlateCarree())
+
+    # Apply high zorder to features so they aren't buried by dense scatter points
+    if coasts:
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.8, zorder=10)
+    if rivers:
+        ax.add_feature(cfeature.RIVERS, linewidth=0.8, zorder=10)
+    if borders:
+        ax.add_feature(cfeature.BORDERS, linewidth=0.8, zorder=10)
+
+    # Extract gridline intervals safely before passing kwargs to scatter
+    lat_interval = kwargs.pop("lat_interval", 30)
+    lon_interval = kwargs.pop("lon_interval", 30)
+
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
+
+    # Handle colormapping or fixed colors
+    if data is not None:
+        c = data
+        kwargs.setdefault("cmap", cmap)
+        if symmetric:
+            data_max = 1.2 * np.nanmax(np.abs(data))
+            kwargs.setdefault("vmin", -data_max)
+            kwargs.setdefault("vmax", data_max)
+    else:
+        c = color
+
+    sc = ax.scatter(
+        lons,
+        lats,
+        c=c,
+        s=s,
+        marker=marker,
+        edgecolors=edgecolors,
+        zorder=zorder,
+        transform=ccrs.PlateCarree(),
+        **kwargs,
+    )
+
+    if gridlines:
+        gl = ax.gridlines(
+            linestyle="--",
+            draw_labels=True,
+            dms=True,
+            x_inline=False,
+            y_inline=False,
+            zorder=10,
+        )
+        gl.xlocator = mticker.MultipleLocator(lon_interval)
+        gl.ylocator = mticker.MultipleLocator(lat_interval)
+        gl.xformatter = LongitudeFormatter()
+        gl.yformatter = LatitudeFormatter()
+
+    if colorbar and data is not None and fig:
+        cb_opts = colorbar_kwargs or {}
+        cb_opts.setdefault("orientation", "horizontal")
+        cb_opts.setdefault("shrink", 0.7)
+        cb_opts.setdefault("pad", 0.05)
+        fig.colorbar(sc, ax=ax, **cb_opts)
+
+    return ax, sc
 
 
 def plot_geodesic(

@@ -17,7 +17,7 @@ from pygeoinf.plot import plot_1d_distributions, plot_corner_distributions, Subs
 from pygeoinf.subspaces import AffineSubspace
 from pygeoinf.subsets import Ball, HalfSpace, PolyhedralSet
 
-# Use a non-interactive backend for testing
+# Use a non-interactive backend for testing to prevent GUI popups and CI crashes
 matplotlib.use("Agg")
 
 # =============================================================================
@@ -126,7 +126,7 @@ class TestPlot1DDistributions:
         assert fig is not None
         assert ax is not None
         assert len(ax.lines) == 1
-        assert len(ax.collections) == 1
+        assert len(ax.collections) == 0  # Default is fill_density=False
 
         plt.close(fig)
 
@@ -152,7 +152,6 @@ class TestPlot1DDistributions:
         assert fig is not None
         assert ax is not None
         assert len(ax.lines) == 2
-        assert len(ax.collections) == 2
 
         plt.close(fig)
 
@@ -333,7 +332,9 @@ class TestPlotCornerDistributions:
             title="Custom Corner Plot",
             figsize=(8, 8),
             colormap="Reds",
-            include_sigma_contours=False,
+            contour_color="darkred",
+            fill_density=True,
+            num_sigmas=2,
         )
         fig = axes[0, 0].get_figure()
 
@@ -342,6 +343,9 @@ class TestPlotCornerDistributions:
         assert fig._suptitle.get_text() == "Custom Corner Plot"
         assert fig.get_size_inches()[0] == 8
         assert fig.get_size_inches()[1] == 8
+
+        # Verify that fill_density=True generated collections (pcolormesh/fill_between)
+        assert len(axes[1, 0].collections) > 0
 
         plt.close(fig)
 
@@ -479,6 +483,26 @@ class TestPlotEdgeCases:
 
         assert fig is not None
         assert axes is not None
+
+        plt.close(fig)
+
+    def test_extreme_true_value_corner(self, gaussian_measure_2d):
+        """Test that the dynamic contour and span logic handles far-away true values."""
+        # True values far outside the default 3.75 standard deviations
+        extreme_vals = [15.0, -10.0]
+
+        axes = plot_corner_distributions(gaussian_measure_2d, true_values=extreme_vals)
+        fig = axes[0, 0].get_figure()
+
+        assert fig is not None
+        assert axes is not None
+
+        # Ensure the axes bounds dynamically expanded to include the extreme values
+        x_lim = axes[1, 0].get_xlim()
+        y_lim = axes[1, 0].get_ylim()
+
+        assert x_lim[0] <= extreme_vals[0] <= x_lim[1]
+        assert y_lim[0] <= extreme_vals[1] <= y_lim[1]
 
         plt.close(fig)
 

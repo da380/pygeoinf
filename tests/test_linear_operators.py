@@ -328,6 +328,38 @@ class TestOperatorFactories:
         # 5. Run the comprehensive automated algebraic checks
         op1.check(n_checks=3, op2=op2)
 
+    def test_with_dense_matrix(self):
+        """Tests the with_dense_matrix utility for freezing operators."""
+        domain = inf.EuclideanSpace(3)
+        codomain = inf.EuclideanSpace(2)
+
+        M = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+
+        # Create a purely matrix-free operator
+        scipy_op = ScipyLinOp((2, 3), matvec=lambda x: M @ x, rmatvec=lambda y: M.T @ y)
+        free_op = inf.LinearOperator.from_matrix(
+            domain, codomain, scipy_op, galerkin=False
+        )
+
+        # Ensure it is NOT initially dense
+        assert not isinstance(free_op, inf.DenseMatrixLinearOperator)
+
+        # Freeze the operator into a dense matrix representation
+        dense_op = free_op.with_dense_matrix(galerkin=False)
+
+        # Verify the cast and the data
+        assert isinstance(dense_op, inf.DenseMatrixLinearOperator)
+        assert not dense_op.is_galerkin
+        assert np.allclose(dense_op.matrix(dense=True, galerkin=False), M)
+
+        # Verify that direct component access (a feature of DenseMatrixLinearOperator) works
+        assert dense_op[0, 1] == 2.0
+
+        # Verify it respects the galerkin flag
+        dense_op_galerkin = free_op.with_dense_matrix(galerkin=True)
+        assert isinstance(dense_op_galerkin, inf.DenseMatrixLinearOperator)
+        assert dense_op_galerkin.is_galerkin
+
 
 class TestMatrixRepresentationLogic:
     """

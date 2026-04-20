@@ -32,12 +32,6 @@ from joblib import Parallel, delayed
 # from .operators import Operator
 from .nonlinear_operators import NonLinearOperator
 
-from .random_matrix import (
-    random_range,
-    random_svd as rm_svd,
-    random_cholesky as rm_chol,
-    random_eig as rm_eig,
-)
 
 from .parallel import parallel_compute_dense_matrix_from_scipy_op
 
@@ -788,237 +782,29 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
 
         return diagonals_array, offsets
 
-    def random_svd(
+    def with_dense_matrix(
         self,
-        size_estimate: int,
         /,
         *,
         galerkin: bool = False,
-        method: str = "variable",
-        max_rank: int = None,
-        power: int = 2,
-        rtol: float = 1e-4,
-        block_size: int = 10,
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> Tuple[
-        DenseMatrixLinearOperator,
-        DiagonalSparseMatrixLinearOperator,
-        DenseMatrixLinearOperator,
-    ]:
+    ) -> "DenseMatrixLinearOperator":
         """
-        Computes an approximate SVD using a randomized algorithm.
+        Returns a new operator equivalent to the existing one, but with its
+        matrix representation computed and stored internally in dense form.
 
         Args:
-            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
-                       method, this is the initial rank to sample.
-            galerkin (bool): If True, use the Galerkin representation.
-            method ({'variable', 'fixed'}): The algorithm to use.
-            - 'variable': (Default) Progressively samples to find the rank needed
-                          to meet tolerance `rtol`, stopping at `max_rank`.
-            - 'fixed': Returns a basis with exactly `size_estimate` columns.
-            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
-                    method='fixed'. Defaults to min(m, n).
-            power: Number of power iterations to improve accuracy.
-            rtol: Relative tolerance for the 'variable' method. Ignored if
-                method='fixed'.
-            block_size: Number of new vectors to sample per iteration in 'variable'
-                        method. Ignored if method='fixed'.
-            parallel: Whether to use parallel matrix multiplication.
-            n_jobs: Number of jobs for parallelism.
+            galerkin: If True, the Galerkin representation is used. Default is False.
+            parallel: If True, computes the dense matrix in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
 
         Returns:
-            left (DenseMatrixLinearOperator): The left singular vector matrix.
-            singular_values (DiagonalSparseMatrixLinearOperator): The singular values.
-            right (DenseMatrixLinearOperator): The right singular vector matrix.
-
-        Notes:
-            The right factor is in transposed form. This means the original
-            operator can be approximated as:
-            A = left @ singular_values @ right
-        """
-        from .hilbert_space import EuclideanSpace
-
-        matrix = self.matrix(galerkin=galerkin)
-        m, n = matrix.shape
-        k = min(m, n)
-
-        qr_factor = random_range(
-            matrix,
-            size_estimate if size_estimate < k else k,
-            method=method,
-            max_rank=max_rank,
-            power=power,
-            rtol=rtol,
-            block_size=block_size,
-            parallel=parallel,
-            n_jobs=n_jobs,
-        )
-
-        left_factor_mat, singular_values, right_factor_transposed = rm_svd(
-            matrix, qr_factor
-        )
-
-        euclidean = EuclideanSpace(qr_factor.shape[1])
-        diagonal = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            euclidean, euclidean, singular_values
-        )
-
-        if galerkin:
-            right = LinearOperator.from_matrix(
-                self.domain, euclidean, right_factor_transposed, galerkin=False
-            )
-            left = LinearOperator.from_matrix(
-                euclidean, self.codomain, left_factor_mat, galerkin=True
-            )
-        else:
-            right = LinearOperator.from_matrix(
-                self.domain, euclidean, right_factor_transposed, galerkin=False
-            )
-            left = LinearOperator.from_matrix(
-                euclidean, self.codomain, left_factor_mat, galerkin=False
-            )
-
-        return left, diagonal, right
-
-    def random_eig(
-        self,
-        size_estimate: int,
-        /,
-        *,
-        method: str = "variable",
-        max_rank: int = None,
-        power: int = 2,
-        rtol: float = 1e-4,
-        block_size: int = 10,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> Tuple[DenseMatrixLinearOperator, DiagonalSparseMatrixLinearOperator]:
-        """
-        Computes an approximate eigen-decomposition using a randomized algorithm.
-
-        Args:
-            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
-                       method, this is the initial rank to sample.
-            method ({'variable', 'fixed'}): The algorithm to use.
-            - 'variable': (Default) Progressively samples to find the rank needed
-                          to meet tolerance `rtol`, stopping at `max_rank`.
-            - 'fixed': Returns a basis with exactly `size_estimate` columns.
-            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
-                    method='fixed'. Defaults to min(m, n).
-            power: Number of power iterations to improve accuracy.
-            rtol: Relative tolerance for the 'variable' method. Ignored if
-                method='fixed'.
-            block_size: Number of new vectors to sample per iteration in 'variable'
-                        method. Ignored if method='fixed'.
-            parallel: Whether to use parallel matrix multiplication.
-            n_jobs: Number of jobs for parallelism.
-
-        Returns:
-            expansion (DenseMatrixLinearOperator): Mapping from coefficients in eigen-basis to vectors.
-            eigenvaluevalues (DiagonalSparseMatrixLinearOperator): The eigenvalues values.
-
-        """
-        from .hilbert_space import EuclideanSpace
-
-        assert self.is_automorphism
-        matrix = self.matrix(galerkin=True)
-        m, n = matrix.shape
-        k = min(m, n)
-
-        qr_factor = random_range(
-            matrix,
-            size_estimate if size_estimate < k else k,
-            method=method,
-            max_rank=max_rank,
-            power=power,
-            rtol=rtol,
-            block_size=block_size,
-            parallel=parallel,
-            n_jobs=n_jobs,
-        )
-
-        eigenvectors, eigenvalues = rm_eig(matrix, qr_factor)
-        euclidean = EuclideanSpace(qr_factor.shape[1])
-        diagonal = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            euclidean, euclidean, eigenvalues
-        )
-
-        expansion = LinearOperator.from_matrix(
-            euclidean, self.domain, eigenvectors, galerkin=True
-        )
-
-        return expansion, diagonal
-
-    def random_cholesky(
-        self,
-        size_estimate: int,
-        /,
-        *,
-        method: str = "variable",
-        max_rank: int = None,
-        power: int = 2,
-        rtol: float = 1e-4,
-        block_size: int = 10,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> DenseMatrixLinearOperator:
-        """
-        Computes an approximate Cholesky decomposition for a positive-definite
-        self-adjoint operator using a randomized algorithm.
-
-        Args:
-            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
-                       method, this is the initial rank to sample.
-            method ({'variable', 'fixed'}): The algorithm to use.
-            - 'variable': (Default) Progressively samples to find the rank needed
-                          to meet tolerance `rtol`, stopping at `max_rank`.
-            - 'fixed': Returns a basis with exactly `size_estimate` columns.
-            max_rank: For 'variable' method, a hard limit on the rank. Ignored if
-                    method='fixed'. Defaults to min(m, n).
-            power: Number of power iterations to improve accuracy.
-            rtol: Relative tolerance for the 'variable' method. Ignored if
-                method='fixed'.
-            block_size: Number of new vectors to sample per iteration in 'variable'
-                        method. Ignored if method='fixed'.
-            parallel: Whether to use parallel matrix multiplication.
-            n_jobs: Number of jobs for parallelism.
-
-        Returns:
-            factor (DenseMatrixLinearOperator): A linear operator from a Euclidean space
-                into the domain of the operator.
-
-        Notes:
-            The original operator can be approximated as:
-                A = factor @ factor.adjoint
+            A DenseMatrixLinearOperator instance.
         """
 
-        from .hilbert_space import EuclideanSpace
-
-        assert self.is_automorphism
-        matrix = self.matrix(galerkin=True)
-        m, n = matrix.shape
-        k = min(m, n)
-
-        qr_factor = random_range(
-            matrix,
-            size_estimate if size_estimate < k else k,
-            method=method,
-            max_rank=max_rank,
-            power=power,
-            rtol=rtol,
-            block_size=block_size,
-            parallel=parallel,
-            n_jobs=n_jobs,
-        )
-
-        cholesky_factor = rm_chol(matrix, qr_factor)
-
-        return LinearOperator.from_matrix(
-            EuclideanSpace(qr_factor.shape[1]),
-            self.domain,
-            cholesky_factor,
-            galerkin=True,
+        return DenseMatrixLinearOperator.from_linear_operator(
+            self, galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
         )
 
     def _mapping_impl(self, x: Any) -> Any:
@@ -1045,7 +831,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     def _compute_dense_matrix(
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
-
         # Optimization: If the codomain is smaller than the domain, it is cheaper
         # to compute the matrix of the adjoint/dual (which has fewer columns)
         # and transpose the result.
@@ -1188,7 +973,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             return NotImplemented
 
         if isinstance(other, LinearOperator):
-
             domain = self.domain
             codomain = self.codomain
 
@@ -1284,34 +1068,41 @@ class MatrixLinearOperator(LinearOperator):
         self._galerkin = galerkin
 
         if galerkin:
-
-            def mapping(x: Any) -> Any:
-                cx = domain.to_components(x)
-                cyp = matrix @ cx
-                yp = codomain.dual.from_components(cyp)
-                return codomain.from_dual(yp)
-
-            def adjoint_mapping(y: Any) -> Any:
-                cy = codomain.to_components(y)
-                cxp = matrix.T @ cy
-                xp = domain.dual.from_components(cxp)
-                return domain.from_dual(xp)
-
-            super().__init__(domain, codomain, mapping, adjoint_mapping=adjoint_mapping)
-
+            super().__init__(
+                domain,
+                codomain,
+                self._mapping_galerkin,
+                adjoint_mapping=self._adjoint_mapping_galerkin,
+            )
         else:
+            super().__init__(
+                domain,
+                codomain,
+                self._mapping_standard,
+                dual_mapping=self._dual_mapping_standard,
+            )
 
-            def mapping(x: Any) -> Any:
-                cx = domain.to_components(x)
-                cy = matrix @ cx
-                return codomain.from_components(cy)
+    def _mapping_galerkin(self, x: Any) -> Any:
+        cx = self.domain.to_components(x)
+        cyp = self._matrix @ cx
+        yp = self.codomain.dual.from_components(cyp)
+        return self.codomain.from_dual(yp)
 
-            def dual_mapping(yp: Any) -> Any:
-                cyp = codomain.dual.to_components(yp)
-                cxp = matrix.T @ cyp
-                return domain.dual.from_components(cxp)
+    def _adjoint_mapping_galerkin(self, y: Any) -> Any:
+        cy = self.codomain.to_components(y)
+        cxp = self._matrix.T @ cy
+        xp = self.domain.dual.from_components(cxp)
+        return self.domain.from_dual(xp)
 
-            super().__init__(domain, codomain, mapping, dual_mapping=dual_mapping)
+    def _mapping_standard(self, x: Any) -> Any:
+        cx = self.domain.to_components(x)
+        cy = self._matrix @ cx
+        return self.codomain.from_components(cy)
+
+    def _dual_mapping_standard(self, yp: Any) -> Any:
+        cyp = self.codomain.dual.to_components(yp)
+        cxp = self._matrix.T @ cyp
+        return self.domain.dual.from_components(cxp)
 
     @property
     def is_dense(self) -> bool:
@@ -1739,7 +1530,7 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
                 "Cannot take the square root of an operator with negative entries."
             )
 
-        return self.apply_function(lambda x: np.sqrt(x))
+        return self.apply_function(np.sqrt)
 
     def apply_function(
         self, func: Union[str, Callable[[np.ndarray], np.ndarray]]

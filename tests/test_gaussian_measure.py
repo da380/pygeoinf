@@ -10,6 +10,8 @@ from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.affine_operators import AffineOperator
 
+from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
+
 # =============================================================================
 # Parametrized Fixtures
 # =============================================================================
@@ -304,3 +306,91 @@ class TestGaussianMeasure:
             ValueError, match="Measures must be defined on the same domain"
         ):
             measure.kl_divergence(other_measure)
+
+
+class TestDeflatedPointwiseVariance:
+    """
+    Tests for the deflated_pointwise_variance and deflated_pointwise_std methods
+    on GaussianMeasure.
+    """
+
+    def test_not_implemented_for_non_module(self, measure: GaussianMeasure):
+        """Verifies that Euclidean spaces properly raise a NotImplementedError."""
+        # The default measure fixture uses EuclideanSpace
+        with pytest.raises(NotImplementedError, match="requires vector multiplication"):
+            measure.deflated_pointwise_variance(1, size_estimate=10)
+
+        with pytest.raises(NotImplementedError, match="requires vector multiplication"):
+            measure.deflated_pointwise_std(1, size_estimate=10)
+
+    def test_deflated_pointwise_variance_exactness(self):
+        """Tests that the deflated variance converges to the exact theoretical variance."""
+        # FIX: Passed kmax, order, and scale positionally
+        space = CircleSobolev(8, 1.0, 0.1, radius=1.0)
+        measure = space.heat_kernel_gaussian_measure(0.5)
+
+        # 1. Get the exact scalar variance from the invariant measure
+        exact_var = measure.directional_variance(
+            space.dirac_representation(space.random_point())
+        )
+
+        # 2. Test Full-Rank Deterministic (Should be exactly equal)
+        full_rank_field = measure.deflated_pointwise_variance(16, size_estimate=0)
+        assert np.allclose(full_rank_field, exact_var)
+
+        # 3. Test Mixed Deflation (Should be statistically close)
+        mixed_field = measure.deflated_pointwise_variance(
+            4, size_estimate=5000, method="fixed", max_samples=5000
+        )
+        assert np.allclose(mixed_field, exact_var, rtol=0.05, atol=0.05)
+
+    def test_deflated_pointwise_variance_pure_hutchinson(self):
+        """Tests that rank=0 relies purely on Hutchinson's estimator."""
+        # FIX: Passed kmax, order, and scale positionally
+        space = CircleSobolev(6, 1.0, 0.1, radius=1.0)
+        measure = space.heat_kernel_gaussian_measure(0.3)
+
+        exact_var = measure.directional_variance(
+            space.dirac_representation(space.random_point())
+        )
+
+        # Rank 0, High samples
+        hutchinson_field = measure.deflated_pointwise_variance(
+            0, size_estimate=5000, method="fixed", max_samples=5000
+        )
+
+        assert np.allclose(hutchinson_field, exact_var, rtol=0.1, atol=0.1)
+
+    def test_deflated_pointwise_variance_variable_convergence(self):
+        """Tests that the progressive 'variable' method correctly terminates."""
+        # FIX: Passed kmax, order, and scale positionally
+        space = CircleSobolev(6, 1.0, 0.1, radius=1.0)
+        measure = space.heat_kernel_gaussian_measure(0.3)
+
+        # It should exit early before hitting max_samples
+        var_field = measure.deflated_pointwise_variance(
+            2,
+            size_estimate=10,
+            method="variable",
+            max_samples=2000,
+            rtol=1e-2,
+            block_size=20,
+        )
+
+        assert space.is_element(var_field)
+        assert np.all(var_field > 0.0)
+
+    def test_deflated_pointwise_std(self):
+        """Tests that the std method successfully returns the square root."""
+        space = CircleSobolev(4, 1.0, 0.1, radius=1.0)
+        measure = space.heat_kernel_gaussian_measure(0.2)
+
+        # Compute both DETERMINISTICALLY so the stochastic noise doesn't fail the equality check
+        var_field = measure.deflated_pointwise_variance(16, size_estimate=0)
+        std_field = measure.deflated_pointwise_std(16, size_estimate=0)
+
+        assert space.is_element(std_field)
+
+        # Verify std = sqrt(var) using the HilbertModule's pointwise vector_sqrt
+        expected_std_field = space.vector_sqrt(var_field)
+        assert np.allclose(std_field, expected_std_field)

@@ -8,11 +8,12 @@ from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
-from pygeoinf.linear_solvers import CholeskySolver
+from pygeoinf.linear_solvers import CholeskySolver, ResidualTrackingCallback
 from pygeoinf.linear_bayesian import (
     LinearBayesianInversion,
 )
 from pygeoinf.affine_operators import AffineOperator
+from pygeoinf.linear_operators import DenseMatrixLinearOperator
 
 # =============================================================================
 # Fixtures for the General Test Problem (5D -> 3D)
@@ -523,3 +524,283 @@ class TestSparseLocalizedPreconditioner:
 
         # 4. Verify the output is a valid element of the data space
         assert forward_problem.data_space.is_element(result)
+
+
+# =============================================================================
+# New Tests for Woodbury Surrogate Preconditioner
+# =============================================================================
+
+
+class TestWoodburyPreconditioner:
+    """Tests for the Woodbury matrix identity preconditioner."""
+
+    def test_woodbury_exact_equivalence(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the Woodbury preconditioner exactly matches the inverse
+        of the dense data-space normal operator.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # 1. Compute the Woodbury preconditioner (with 0 regularization for exact match)
+        woodbury_precon = inversion.woodbury_data_preconditioner(regularization=0.0)
+
+        # 2. Extract exact dense matrices
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        # 3. Calculate exact inverse of normal operator: (A Q A^T + R)^-1
+        exact_normal_matrix = A @ Q @ A.T + R
+        exact_inverse_matrix = np.linalg.inv(exact_normal_matrix)
+
+        # 4. Extract dense matrix from the Woodbury operator
+        woodbury_matrix = woodbury_precon.matrix(dense=True)
+
+        # 5. Compare
+        assert np.allclose(woodbury_matrix, exact_inverse_matrix, atol=1e-8)
+
+    def test_surrogate_woodbury_chaining(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the surrogate wrapper correctly chains the surrogate
+        inversion and the Woodbury preconditioner extraction.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # Create an arbitrary "alternate" forward operator (e.g., scaled by 0.5)
+        alt_A = 0.5 * forward_problem.forward_operator
+
+        # 1. Generate via the chained method
+        chained_precon = inversion.surrogate_woodbury_preconditioner(
+            alternate_forward_operator=alt_A, regularization=0.0
+        )
+
+        # 2. Generate manually
+        manual_surrogate = inversion.surrogate_inversion(
+            alternate_forward_operator=alt_A
+        )
+        manual_precon = manual_surrogate.woodbury_data_preconditioner(
+            regularization=0.0
+        )
+
+        # 3. Compare matrices
+        assert np.allclose(
+            chained_precon.matrix(dense=True), manual_precon.matrix(dense=True)
+        )
+
+    def test_woodbury_requires_data_error(self, forward_problem: LinearForwardProblem):
+        """
+        Verifies that the Woodbury identity fails safely if no data error measure is set.
+        """
+        # Create an inversion without a data error measure
+        fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
+        prior = GaussianMeasure.from_standard_deviation(fp_no_noise.model_space, 1.0)
+        inversion = LinearBayesianInversion(fp_no_noise, prior)
+
+        with pytest.raises(ValueError, match="Data error measure must be set"):
+            inversion.woodbury_data_preconditioner()
+
+
+# =============================================================================
+# New Tests for Normal Residual Callbacks
+# =============================================================================
+
+
+class TestNormalResidualCallback:
+    """Tests for the normal residual callback generator."""
+
+    def test_rhs_shifting_logic(
+        self, forward_problem: LinearForwardProblem, data: np.ndarray
+    ):
+        """
+        Verifies that the right-hand side of the normal equations correctly
+        shifts the observed data by the prior and error expectations.
+        """
+        data_space = forward_problem.data_space
+        model_space = forward_problem.model_space
+        A = forward_problem.forward_operator
+
+        # Setup non-zero expectations
+        mu_u = model_space.random()
+        mu_e = data_space.random()
+
+        prior = GaussianMeasure.from_standard_deviation(
+            model_space, 1.0, expectation=mu_u
+        )
+
+        noisy_fp = LinearForwardProblem(
+            A,
+            data_error_measure=GaussianMeasure.from_standard_deviation(
+                data_space, 1.0, expectation=mu_e
+            ),
+        )
+
+        inversion = LinearBayesianInversion(noisy_fp, prior, formalism="data_space")
+
+        # 1. Compute RHS via the library
+        rhs = inversion.get_normal_equations_rhs(data)
+
+        # 2. Compute RHS manually: v = d - A(mu_u) - mu_e
+        manual_rhs = data_space.subtract(data, A(mu_u))
+        manual_rhs = data_space.subtract(manual_rhs, mu_e)
+
+        # 3. Compare
+        assert np.allclose(
+            data_space.to_components(rhs), data_space.to_components(manual_rhs)
+        )
+
+    def test_callback_generation(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the callback generator wires the correct operator and RHS
+        into the ResidualTrackingCallback.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        callback = inversion.normal_residual_callback(data, print_progress=False)
+
+        assert isinstance(callback, ResidualTrackingCallback)
+
+        # Verify the operator inside the callback is the inversion's normal operator
+        expected_normal_matrix = inversion.normal_operator.matrix(dense=True)
+        callback_normal_matrix = callback.operator.matrix(dense=True)
+
+        assert np.allclose(callback_normal_matrix, expected_normal_matrix)
+
+        # Verify the target 'y' vector in the callback is the unshifted data
+        # (since expectations are zero in the standard fixtures)
+        assert np.allclose(
+            forward_problem.data_space.to_components(callback.y),
+            forward_problem.data_space.to_components(data),
+        )
+
+
+class TestBayesianParameterizedInversion:
+    """
+    Tests the parameterized surrogate generation for the Bayesian class,
+    focusing on prior push-forward and dense matrix freezing.
+    """
+
+    def test_parameterized_auto_prior_push_forward(
+        self, forward_problem, model_prior_measure
+    ):
+        """
+        Verifies that the original prior is correctly projected onto the
+        parameter space using the adjoint of the parameterization mapping.
+        """
+        # 1. Setup inversion
+        inv = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        # 2. Define parameterization: Euclidean(5) -> ModelSpace(50)
+        param_space = EuclideanSpace(5)
+        # Use a random matrix to represent the mapping M
+        M_mat = np.random.randn(forward_problem.model_space.dim, param_space.dim)
+        M = LinearOperator.from_matrix(param_space, forward_problem.model_space, M_mat)
+
+        # 3. Create surrogate without providing an explicit prior
+        # This triggers: Q_param = M* @ Q_original @ M
+        surrogate = inv.parameterized_inversion(M)
+
+        # 4. Verify class and domain
+        assert isinstance(surrogate, LinearBayesianInversion)
+        assert surrogate.model_space == param_space
+        assert surrogate.model_prior_measure.domain == param_space
+
+        # 5. Verify the math of the pushed-forward covariance: C_m = M* Q M
+        Q_mat = model_prior_measure.covariance.matrix(dense=True)
+        # Note: M.adjoint matrix is M_mat.T
+        expected_pushed_cov = M_mat.T @ Q_mat @ M_mat
+        actual_pushed_cov = surrogate.model_prior_measure.covariance.matrix(dense=True)
+
+        assert np.allclose(actual_pushed_cov, expected_pushed_cov)
+
+    def test_parameterized_dense_freeze(self, forward_problem, model_prior_measure):
+        """
+        Verifies that the dense=True flag correctly squashes the operator,
+        prior, and noise measure into dense matrix objects.
+        """
+        inv = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        param_space = EuclideanSpace(2)
+        M_mat = np.random.randn(forward_problem.model_space.dim, param_space.dim)
+        M = LinearOperator.from_matrix(param_space, forward_problem.model_space, M_mat)
+
+        # Generate the dense surrogate
+        surrogate = inv.parameterized_inversion(M, dense=True)
+
+        # Verify all core probabilistic components are now DenseMatrixLinearOperators
+        # This ensures downstream solvers use fast BLAS/LAPACK routines.
+        assert isinstance(
+            surrogate.forward_problem.forward_operator, DenseMatrixLinearOperator
+        )
+        assert isinstance(
+            surrogate.forward_problem.data_error_measure.covariance,
+            DenseMatrixLinearOperator,
+        )
+        assert isinstance(
+            surrogate.model_prior_measure.covariance, DenseMatrixLinearOperator
+        )
+
+    def test_parameterized_formalism_preservation(
+        self, forward_problem, model_prior_measure
+    ):
+        """Ensures surrogate preserves the parent inversion's formalism."""
+        # Parent is model_space
+        inv = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="model_space"
+        )
+
+        M = inv.model_space.identity_operator()
+        surrogate = inv.parameterized_inversion(M)
+
+        assert surrogate.formalism == "model_space"
+
+    def test_with_formalism(self, forward_problem, model_prior_measure):
+        """Tests that with_formalism returns a valid new instance."""
+        inv_data = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        inv_model = inv_data.with_formalism("model_space")
+
+        assert isinstance(inv_model, LinearBayesianInversion)
+        assert inv_model.formalism == "model_space"
+        assert inv_model is not inv_data
+        assert inv_data.formalism == "data_space"  # Original remains unchanged
+
+    def test_parameterized_formalism_override_auto_densifies(
+        self, forward_problem, model_prior_measure
+    ):
+        """
+        Tests that overriding the formalism to 'model_space' during parameterization
+        automatically triggers the densification of the prior measure.
+        """
+        # Start in data_space
+        inv = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        param_space = EuclideanSpace(2)
+        M = LinearOperator.from_matrix(
+            param_space, forward_problem.model_space, np.random.randn(50, 2)
+        )
+
+        # Parameterize and switch to model_space
+        surrogate = inv.parameterized_inversion(M, formalism="model_space")
+
+        assert surrogate.formalism == "model_space"
+        # The prior must be a DenseMatrixLinearOperator to support inverse covariance
+        assert isinstance(
+            surrogate.model_prior_measure.covariance, DenseMatrixLinearOperator
+        )

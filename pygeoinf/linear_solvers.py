@@ -20,7 +20,7 @@ Key Classes
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any, List
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
@@ -28,7 +28,7 @@ from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve, eigh
 from scipy.sparse.linalg import gmres, bicgstab, cg, bicg
 
 from .linear_operators import LinearOperator
-from .hilbert_space import Vector
+from .hilbert_space import Vector, HilbertSpace
 
 
 class LinearSolver(ABC):
@@ -407,6 +407,9 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         self._iterations = 0
         user_callback = self._solver_kwargs.get("callback", None)
 
+        if hasattr(user_callback, "reset") and callable(user_callback.reset):
+            user_callback.reset()
+
         def iteration_counter(*args):
             self._iterations += 1
             if user_callback is not None:
@@ -421,6 +424,9 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         cxp, _ = self._solver_func(
             matrix, cy, x0=cx0, M=matrix_preconditioner, **solver_kwargs
         )
+
+        if hasattr(user_callback, "finalize") and callable(user_callback.finalize):
+            user_callback.finalize()
 
         if self._galerkin:
             xp = codomain.dual.from_components(cxp)
@@ -497,6 +503,10 @@ class CGSolver(IterativeLinearSolver):
         x0: Optional[Vector],
     ) -> Vector:
         self._iterations = 0
+
+        if hasattr(self._callback, "reset") and callable(self._callback.reset):
+            self._callback.reset()
+
         domain = operator.domain
         x = domain.zero if x0 is None else domain.copy(x0)
 
@@ -516,7 +526,6 @@ class CGSolver(IterativeLinearSolver):
         num = domain.inner_product(r, z)
 
         for k in range(maxiter):
-
             if domain.squared_norm(r) <= tol_sq:
                 self._iterations = k + 1
                 break
@@ -545,6 +554,9 @@ class CGSolver(IterativeLinearSolver):
 
         else:
             self._iterations = maxiter
+
+        if hasattr(self._callback, "finalize") and callable(self._callback.finalize):
+            self._callback.finalize()
 
         return x
 
@@ -844,7 +856,6 @@ class LSQRSolver(IterativeLinearSolver):
         )
 
         for k in range(maxiter):
-
             Av = operator(v)
             codomain.ax(-alfa, u)
             codomain.axpy(1.0, Av, u)
@@ -954,7 +965,6 @@ class FCGSolver(IterativeLinearSolver):
         maxiter = self._maxiter if self._maxiter is not None else 2 * space.dim
 
         for k in range(maxiter):
-
             ap = operator(p)
             pap = space.inner_product(p, ap)
 
@@ -979,3 +989,98 @@ class FCGSolver(IterativeLinearSolver):
             self._iterations = maxiter
 
         return x
+
+
+class ProgressCallback:
+    """
+    A simple callback that prints the solver's iteration count.
+    """
+
+    def __init__(self, message: str = "Iteration: "):
+        self.iteration = 0
+        self.message = message
+
+    def reset(self) -> None:
+        """Resets the state for a new solve."""
+        self.iteration = 0
+
+    def finalize(self) -> None:
+        """Called at the end of a solve to clean up the console output."""
+        print()
+
+    def __call__(self, xk: Any) -> None:
+        self.iteration += 1
+        print(f"{self.message}{self.iteration}", end="\r")
+
+
+class SolutionTrackingCallback(ProgressCallback):
+    """
+    A callback that tracks the solution vector at each iteration.
+
+    Useful for visualizing the convergence path of the solver or
+    calculating diagnostics post-hoc without slowing down the inversion.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        message: str = "Iteration: ",
+        print_progress: bool = True,
+    ):
+        super().__init__(message)
+        self.print_progress = print_progress
+        self.history: List[Any] = []
+        self.domain = domain
+
+    def __call__(self, xk: Any) -> None:
+        self.iteration += 1
+        # Copy the state to prevent overwriting if the solver mutates xk in-place
+        self.history.append(self.domain.copy(xk))
+
+        if self.print_progress:
+            print(f"{self.message}{self.iteration}", end="\r")
+
+
+class ResidualTrackingCallback(ProgressCallback):
+    """
+    A callback that computes and tracks the exact residual norm ||y - A(x)||.
+
+    Warning: This evaluates the forward operator once per iteration. For very
+    large problems, this may introduce computational overhead.
+    """
+
+    def __init__(
+        self,
+        operator: LinearOperator,
+        y: Vector,
+        print_progress: bool = True,
+        message: str = "Iteration: {iter} | Residual: {res:.3e}",
+    ):
+        super().__init__("")
+        self.operator = operator
+        self.y = y
+        self.print_progress = print_progress
+        self.custom_message = message
+        self.residuals: List[float] = []
+
+    def __call__(self, xk: Any) -> None:
+        self.iteration += 1
+
+        # Safely handle both SciPy NumPy arrays and pygeoinf Vectors
+        domain = self.operator.domain
+        if isinstance(xk, np.ndarray):
+            x_vec = domain.from_components(xk)
+        else:
+            x_vec = xk
+
+        # Compute the exact residual: r = y - A(x)
+        Ax = self.operator(x_vec)
+        r = self.operator.codomain.subtract(self.y, Ax)
+        res_norm = self.operator.codomain.norm(r)
+
+        self.residuals.append(res_norm)
+
+        if self.print_progress:
+            print(
+                self.custom_message.format(iter=self.iteration, res=res_norm), end="\r"
+            )

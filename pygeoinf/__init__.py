@@ -2,16 +2,6 @@
 Unified imports for the package.
 """
 
-from .random_matrix import (
-    fixed_rank_random_range,
-    variable_rank_random_range,
-    random_range,
-    random_svd,
-    random_eig,
-    random_cholesky,
-    random_diagonal,
-)
-
 from .hilbert_space import (
     HilbertSpace,
     DualHilbertSpace,
@@ -72,6 +62,9 @@ from .linear_solvers import (
     MinResSolver,
     BICGStabSolver,
     FCGSolver,
+    ProgressCallback,
+    SolutionTrackingCallback,
+    ResidualTrackingCallback,
 )
 
 from .preconditioners import (
@@ -149,15 +142,18 @@ from .backus_gilbert import DualMasterCostFunction
 
 from .utils import configure_threading
 
+from .datasets import (
+    load_gsn_stations,
+    download_usgs_earthquakes,
+    download_gsn_stations,
+    sample_earthquakes,
+)
+
+from .low_rank import LowRankSVD, LowRankCholesky, LowRankEig, white_noise_measure
+
+from .config import DATADIR
+
 __all__ = [
-    # random_matrix
-    "fixed_rank_random_range",
-    "variable_rank_random_range",
-    "random_range",
-    "random_svd",
-    "random_eig",
-    "random_cholesky",
-    "random_diagonal",
     # hilbert_space
     "HilbertSpace",
     "DualHilbertSpace",
@@ -204,6 +200,9 @@ __all__ = [
     "MinResSolver",
     "BICGStabSolver",
     "FCGSolver",
+    "ProgressCallback",
+    "SolutionTrackingCallback",
+    "ResidualTrackingCallback",
     # preconditioners
     "IdentityPreconditioningMethod",
     "JacobiPreconditioningMethod",
@@ -265,4 +264,16 @@ __all__ = [
     "DualMasterCostFunction",
     # utils
     "configure_threading",
+    # datasets
+    "load_gsn_stations",
+    "download_gsn_stations",
+    "download_usgs_earthquakes",
+    "sample_earthquakes",
+    # congif
+    "DATADIR",
+    # low_rank
+    "LowRankSVD",
+    "LowRankEig",
+    "LowRankCholesky",
+    "white_noise_measure",
 ]

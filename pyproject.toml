@@ -8,21 +8,23 @@ license = "BSD-3-Clause"
 
 [tool.poetry.dependencies]
 python = ">=3.12"
-numpy = ">=1.26.0"
-scipy = ">=1.16.1"
-matplotlib = ">=3.0.0"
-pyqt6 = ">=6.0.0"
-joblib = "^1.5.2"
+numpy = ">=2.0.0"
+scipy = ">=1.13.0"
+matplotlib = ">=3.9.0"
+pyqt6 = ">=6.11.0"
+joblib = "^1.5.3"
+threadpoolctl = "^3.6.0"
+numba = "^0.65.0"
+ipympl = "^0.10.0"
 
-# Define optional dependencies WITH versions
-pyshtools = { version = ">=4.0.0", optional = true }
-Cartopy = { version = "^0.23.0", optional = true }
+# Optional dependencies for 'sphere' extra
+pyshtools = { version = ">=4.14.1", optional = true }
+Cartopy = { version = "^0.25.0", optional = true }
+
+# Optional dependencies for convex-analysis extras
 osqp = { version = ">=1.0.0", optional = true }
 clarabel = { version = ">=0.9.0", optional = true }
 plotly = { version = ">=5.0.0", optional = true }
-threadpoolctl = "^3.6.0"
-numba = "^0.63.1"
-ipympl = "^0.10.0"
 
 [tool.poetry.extras]
 sphere = ["pyshtools", "Cartopy"]
@@ -62,4 +64,6 @@ build-backend = "poetry.core.masonry.api"
 "pygeoinf/symmetric_space/sphere.py" = ["E741"]
 "pygeoinf/symmetric_space/sh_tools.py" = ["E741"]
 "pygeoinf/symmetric_space/wigner.py" = ["E741"]
+"pygeoinf/symmetric_space_new/sphere.py" = ["E741"]
+"pygeoinf/symmetric_space_new/sh_tools.py" = ["E741"]
 "pygeoinf/rough_work/*" = ["E741"]

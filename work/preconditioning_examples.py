@@ -29,6 +29,7 @@ Available Preconditioning Strategies:
                           and interpolates it. Can optionally apply a Gaspari-Cohn taper
                           to guarantee positive definiteness.
     - sparse:             Based on a sparse approximation of the normal operator.
+    - woodbury            Based on the model-space normal operator.
 
 Command-Line Arguments:
 
@@ -67,26 +68,18 @@ Command-Line Arguments:
 
     [Plotting Parameters]
     --std-samples        (int)   Number of samples to use for plotting pointwise STD. If 0, only Expectation is plotted.
-
-Usage Examples:
-    Run with default settings (block preconditioner):
-        python ex14.py
-
-    Run with distance-localized preconditioner and correlated noise:
-        python ex14.py --precond distance-localized --loc-apply-taper --noise-type correlated
-
-    Run the full help menu to see all options:
-        python ex14.py --help
 """
 
 import argparse
 import numpy as np
+import scipy.stats as stats
 import matplotlib.pyplot as plt
 from cartopy import crs as ccrs
 import pygeoinf as inf
 from pygeoinf.symmetric_space.sphere import (
     Sobolev,
     plot,
+    plot_points,
 )
 
 
@@ -125,7 +118,6 @@ def setup_problem_components(
 
 
 def main():
-
     parser = argparse.ArgumentParser(
         description="Bayesian inversion with stacked surrogate preconditioning.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -153,6 +145,10 @@ def main():
         type=int,
         default=32,
         help="Truncation degree for the spatial surrogate problem",
+    )
+
+    grid_group.add_argument(
+        "--ocean-points", action="store_true", help="Use only points within the oceans"
     )
 
     # --- Statistical Parameters ---
@@ -196,6 +192,7 @@ def main():
             "distance-localized",
             "none",
             "sparse",
+            "woodbury",
         ],
         default="none",
         help="Type of preconditioner to apply",
@@ -244,6 +241,19 @@ def main():
         help="Number of samples to use for plotting pointwise STD. If 0, only Expectation is plotted.",
     )
 
+    plot_group.add_argument(
+        "--power-degree",
+        type=int,
+        default=-1,
+        help="Spherical harmonic degree to plot power distribution. Set to -1 to disable.",
+    )
+
+    plot_group.add_argument(
+        "--plot-corner",
+        action="store_true",
+        help="Display corner plot for chosen degree coefficients",
+    )
+
     args = parser.parse_args()
 
     # For reproducibility
@@ -255,9 +265,11 @@ def main():
     print("Setting up grid and data spaces...")
     base_space = Sobolev(args.base_degree, args.sobolev_order, args.prior_scale)
 
-    observation_points = base_space.random_points(args.n_data)
-    lats = [lat for lat, _ in observation_points]
-    lons = [lon for _, lon in observation_points]
+    observation_points = (
+        base_space.random_domain_points(args.n_data)
+        if args.ocean_points
+        else base_space.random_points(args.n_data)
+    )
 
     # ==========================================
     # 1. Exact Problem Components
@@ -312,7 +324,7 @@ def main():
                     observation_points,
                     args.prior_scale,
                     args.prior_std,
-                    args.noise_scale_factor * args.prior_scale,
+                    0.0,
                     args.noise_amplitude_factor * args.prior_std,
                 )
             )
@@ -364,6 +376,10 @@ def main():
                 args.sparse_threshold, max_nnz=max_nnz, incomplete=True
             )(surrogate_normal_operator)
 
+        elif args.precond == "woodbury":
+            print("Forming model-space preconditioner")
+            preconditioner = surrogate_inv.woodbury_data_preconditioner()
+
         elif args.precond == "distance-localized":
             print("Building distance-localized sparse matrix...")
             max_distance = args.threshold * args.prior_scale
@@ -388,62 +404,90 @@ def main():
     posterior_expectation = model_posterior_measure.expectation
     print(f"Number of CG iterations = {solver.iterations}")
 
+    # ==========================================
     # --- Modernized Plotting Section ---
+    # ==========================================
 
-    if args.std_samples > 0:
-        print(f"Sampling pointwise STD with {args.std_samples} samples...")
-        posterior_std = model_posterior_measure.sample_pointwise_std(args.std_samples)
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=(16, 12),
+        subplot_kw={"projection": ccrs.Robinson()},
+        layout="constrained",
+    )
+    ax1, ax2 = axes[0]
+    ax3, ax4 = axes[1]
 
-        fig, (ax1, ax2) = plt.subplots(
-            1,
-            2,
-            figsize=(16, 7),
-            subplot_kw={"projection": ccrs.Robinson()},
-            layout="constrained",
-        )
-    else:
-        fig, ax1 = plt.subplots(
-            1,
-            1,
-            figsize=(9, 7),
-            subplot_kw={"projection": ccrs.Robinson()},
-            layout="constrained",
-        )
+    # Calculate global max for symmetric color scaling across True, Data, and Posterior
+    # Calculate global max for symmetric color scaling across True, Data, and Posterior
+    shared_vmax = 1.2 * max(np.nanmax(np.abs(true_model.data)), np.nanmax(np.abs(data)))
 
-    ax1, im1 = plot(
-        posterior_expectation,
+    # --- Plot 1: True Continuous Field (No Points) ---
+    plot(
+        true_model,
         ax=ax1,
         coasts=True,
         cmap="seismic",
-        symmetric=True,
+        vmin=-shared_vmax,
+        vmax=shared_vmax,
         colorbar=True,
         colorbar_kwargs={
-            "label": "Expectation Value",
+            "label": "True Model",
             "orientation": "horizontal",
             "shrink": 0.8,
         },
     )
+    ax1.set_title("True Model (Continuous)", fontsize=14, fontweight="bold")
 
-    vmin1, vmax1 = im1.get_clim()
-    ax1.scatter(
-        lons,
-        lats,
-        c=data,
+    # --- Plot 2: Observed Data Points ---
+    ax2.set_global()
+    plot_points(
+        observation_points,
+        data=data,
+        ax=ax2,
         cmap="seismic",
-        vmin=vmin1,
-        vmax=vmax1,
-        edgecolors="black",
+        vmin=-shared_vmax,
+        vmax=shared_vmax,
+        edgecolors="none",
         linewidths=0.5,
-        s=25,
-        transform=ccrs.PlateCarree(),
+        s=10,
         zorder=5,
+        coasts=True,
+        gridlines=True,
+        colorbar=True,
+        colorbar_kwargs={
+            "label": "Observed Data",
+            "orientation": "horizontal",
+            "shrink": 0.8,
+        },
     )
-    ax1.set_title("Posterior Expectation", fontsize=14, fontweight="bold")
+    ax2.set_title("Observed Data Points", fontsize=14, fontweight="bold")
 
+    # --- Plot 3: Posterior Expectation (No Points) ---
+    plot(
+        posterior_expectation,
+        ax=ax3,
+        coasts=True,
+        cmap="seismic",
+        vmin=-shared_vmax,
+        vmax=shared_vmax,
+        colorbar=True,
+        colorbar_kwargs={
+            "label": "Posterior Expectation",
+            "orientation": "horizontal",
+            "shrink": 0.8,
+        },
+    )
+    ax3.set_title("Posterior Expectation", fontsize=14, fontweight="bold")
+
+    # --- Plot 4: Posterior STD ---
     if args.std_samples > 0:
-        ax2, im2 = plot(
+        print(f"Sampling pointwise STD with {args.std_samples} samples...")
+        posterior_std = model_posterior_measure.sample_pointwise_std(args.std_samples)
+
+        plot(
             posterior_std,
-            ax=ax2,
+            ax=ax4,
             coasts=True,
             cmap="viridis",
             colorbar=True,
@@ -453,23 +497,100 @@ def main():
                 "shrink": 0.8,
             },
         )
-
-        ax2.scatter(
-            lons,
-            lats,
-            color="white",
-            edgecolors="black",
-            marker="o",
-            linewidths=0.5,
-            s=20,
-            transform=ccrs.PlateCarree(),
-            zorder=5,
-        )
-        ax2.set_title(
+        ax4.set_title(
             f"Posterior Pointwise STD (N={args.std_samples})",
             fontsize=14,
             fontweight="bold",
         )
+    else:
+        # Hide the 4th quadrant if STD wasn't computed
+        ax4.set_visible(False)
+
+    # ==========================================
+    # --- Corner Plot & Power PDF Section ---
+    # ==========================================
+    if args.power_degree >= 0:
+        deg = args.power_degree
+        print(f"Generating corner plot and Power PDF for degree {deg} coefficients...")
+
+        # Isolate the specific degree using lmin and lmax
+        mapping_op = model_space.to_coefficient_operator(deg, lmin=deg)
+
+        prior_deg = model_prior_measure.affine_mapping(
+            operator=mapping_op
+        ).with_dense_covariance()
+        posterior_deg = model_posterior_measure.affine_mapping(
+            operator=mapping_op
+        ).with_dense_covariance()
+        true_deg = mapping_op(true_model)
+
+        # Dynamically generate labels matching pyshtools ordering: 0, 1...l, -1...-l
+        labels_deg = [rf"$C_{{{deg},0}}$"]
+        for m in range(1, deg + 1):
+            labels_deg.append(rf"$C_{{{deg},{m}}}$")
+        for m in range(1, deg + 1):
+            labels_deg.append(rf"$C_{{{deg},{-m}}}$")
+
+        if args.plot_corner:
+            inf.plot_corner_distributions(
+                posterior_deg,
+                prior_measure=prior_deg,
+                true_values=true_deg,
+                labels=labels_deg,
+                title=f"Posterior Distribution: Degree {deg} Coefficients",
+            )
+
+        # 2. Compute and Plot the PDF of the Spectral Power
+        print(f"Sampling measures for degree {deg} power spectrum...")
+        n_power_samples = 10000
+
+        prior_samps = prior_deg.samples(n_power_samples)
+        post_samps = posterior_deg.samples(n_power_samples)
+
+        # Calculate the average power per coefficient at this degree: sum(C^2) / (2l + 1)
+        norm_factor = 1.0 / (2 * deg + 1)
+        prior_power = np.array([np.sum(v**2) * norm_factor for v in prior_samps])
+        post_power = np.array([np.sum(v**2) * norm_factor for v in post_samps])
+        true_power = np.sum(true_deg**2) * norm_factor
+
+        fig_power, ax_power = plt.subplots(figsize=(8, 5), layout="constrained")
+
+        # Generate smooth continuous PDFs using a Gaussian Kernel Density Estimate
+        kde_prior = stats.gaussian_kde(prior_power)
+        kde_post = stats.gaussian_kde(post_power)
+
+        # Determine a clean x-axis range covering both distributions
+        min_p = min(np.min(prior_power), np.min(post_power), true_power)
+        max_p = max(np.max(prior_power), np.max(post_power), true_power)
+        pad = 0.2 * (max_p - min_p) if max_p > min_p else 0.1
+        x_vals = np.linspace(max(0, min_p - pad), max_p + pad, 500)
+
+        # Plot Prior
+        ax_power.fill_between(
+            x_vals, kde_prior(x_vals), alpha=0.2, color="gray", label="Prior"
+        )
+        ax_power.plot(x_vals, kde_prior(x_vals), color="gray", linestyle="--")
+
+        # Plot Posterior
+        ax_power.fill_between(
+            x_vals, kde_post(x_vals), alpha=0.4, color="blue", label="Posterior"
+        )
+        ax_power.plot(x_vals, kde_post(x_vals), color="blue", linewidth=2)
+
+        # Overlay True Power
+        ax_power.axvline(
+            true_power, color="red", linestyle="-", linewidth=2, label="True Power"
+        )
+
+        ax_power.set_title(
+            rf"Spectral Power Density (Degree $l={deg}$)",
+            fontsize=14,
+            fontweight="bold",
+        )
+        ax_power.set_xlabel("Average Power per Coefficient", fontsize=12)
+        ax_power.set_ylabel("Probability Density", fontsize=12)
+        ax_power.grid(True, linestyle=":", alpha=0.6)
+        ax_power.legend(fontsize=11)
 
     plt.show()
 
