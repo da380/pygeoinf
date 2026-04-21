@@ -124,6 +124,8 @@ from .plot import (
 from .convex_optimisation import (
     SubgradientDescent,
     ProximalBundleMethod,
+    PrimalKKTSolver,
+    KKTResult,
 )
 
 from .convex_analysis import (
@@ -250,6 +252,8 @@ __all__ = [
     # convex_optimisation
     "SubgradientDescent",
     "ProximalBundleMethod",
+    "PrimalKKTSolver",
+    "KKTResult",
     # convex_analysis
     "SupportFunction",
     "BallSupportFunction",

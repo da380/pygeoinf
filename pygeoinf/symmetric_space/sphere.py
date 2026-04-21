@@ -1945,6 +1945,9 @@ def plot_geodesic_network(
     kwargs.setdefault("linewidth", 0.8)
     kwargs.setdefault("alpha", 0.5)
 
+    src_style = kwargs.pop("source_kwargs", {})
+    rec_style = kwargs.pop("receiver_kwargs", {})
+
     for p1, p2 in paths:
         plot_geodesic(p1, p2, ax=ax, **kwargs)
 
@@ -1954,7 +1957,7 @@ def plot_geodesic_network(
     src_lats, src_lons = zip(*sources)
     rec_lats, rec_lons = zip(*receivers)
 
-    src_style = kwargs.pop("source_kwargs", {})
+
     src_style.setdefault("marker", "*")
     src_style.setdefault("color", "gold")
     src_style.setdefault("s", 150)

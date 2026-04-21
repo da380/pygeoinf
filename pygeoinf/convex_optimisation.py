@@ -1492,6 +1492,33 @@ def solve_support_values(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# KKT Primal Solver result
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class KKTResult:
+    """Result from :class:`PrimalKKTSolver`.
+
+    Attributes:
+        m: Optimal primal model vector $u^*$ in the model space.
+        multipliers: KKT multipliers $(\\lambda^*, \\mu^*)$.  $\\lambda^*$
+            enforces the model prior constraint and $\\mu^*$ enforces the
+            data-fit constraint.  Both are non-negative.
+        converged: ``True`` if the root-finder converged to the required
+            tolerance.
+        num_iterations: Number of function evaluations used by the
+            root-finder (or 1 for the closed-form branch).
+    """
+
+    m: "Vector"
+    multipliers: "tuple[float, float]"
+    converged: bool
+    num_iterations: int
+
+
+# ---------------------------------------------------------------------------
 # Chambolle-Pock primal-dual algorithm
 # ---------------------------------------------------------------------------
 
@@ -2202,4 +2229,428 @@ class SmoothedLBFGSSolver:
             num_serious_steps=0,
             function_values=function_values,
             iterates=None,
+        )
+
+
+# ---------------------------------------------------------------------------
+# PrimalKKTSolver
+# ---------------------------------------------------------------------------
+
+
+class PrimalKKTSolver:
+    r"""Solve the primal feasibility form via closed-form KKT + Woodbury identity.
+
+    Solves
+
+    .. math::
+
+        h_U(q) = \max_{u \in B} \langle c, u \rangle
+                 \quad\text{s.t.}\quad \|Gu - \tilde{d}\|_{A_V} \leq r
+
+    where $c = T^* q$ and the feasible set $(B, V, G, \tilde{d})$ is **fixed**,
+    by finding the KKT multipliers $(\lambda^*, \mu^*) \geq 0$ satisfying
+
+    .. math::
+
+        (\lambda A_B + \mu G^T A_V G)\, u^* = c + \lambda A_B u_0 + \mu G^T A_V \tilde{d}
+
+    via the Woodbury matrix identity and a small 2-variable root-finding step.
+
+    Two branches:
+
+    1. **Prior-only** (data constraint inactive): compute the support point of
+       $B$ in direction $c$.  If it satisfies the data constraint, return it
+       immediately.
+    2. **Both active**: use :func:`scipy.optimize.fsolve` with residuals
+       $\rho_1 = \|u^* - u_0\|_{A_B}^2 - \eta^2$ and
+       $\rho_2 = \|Gu^* - \tilde{d}\|_{A_V}^2 - r^2$, starting from the
+       cached warm-start multipliers $(\lambda_{\rm prev}, \mu_{\rm prev})$.
+
+    The $M \times M$ Woodbury system uses a dense Cholesky factorisation when
+    $M \leq$ ``dense_threshold``, and iterative CG otherwise.
+
+    Supports both :class:`~pygeoinf.convex_analysis.BallSupportFunction` and
+    :class:`~pygeoinf.convex_analysis.EllipsoidSupportFunction` for $B$ and $V$.
+
+    Args:
+        B: Model prior support function.  The set $B$ lives in model space.
+        V: Data error support function (centered at origin), so the data
+            constraint is $\|Gu - \tilde{d}\|_{A_V} \leq r$.
+        G: Forward operator mapping model space to data space.
+        d_tilde: Observed data vector in the data space.
+        dense_threshold: If $M \leq$ this value, the Woodbury $M \times M$
+            system is solved with dense Cholesky; otherwise iterative CG
+            is used.
+        fsolve_tol: Convergence tolerance passed to ``scipy.optimize.fsolve``.
+        fsolve_maxfev: Maximum function evaluations for ``fsolve``.
+    """
+
+    def __init__(
+        self,
+        B: "SupportFunction",
+        V: "SupportFunction",
+        G: "LinearOperator",
+        d_tilde: "Vector",
+        /,
+        *,
+        dense_threshold: int = 1000,
+        fsolve_tol: float = 1e-10,
+        fsolve_maxfev: int = 200,
+    ) -> None:
+        from scipy.linalg import cho_factor, cho_solve  # noqa: F401 (verify availability)
+
+        self._B = B
+        self._V = V
+        self._G = G
+        self._d_tilde = d_tilde
+        self._dense_threshold = dense_threshold
+        self._fsolve_tol = fsolve_tol
+        self._fsolve_maxfev = fsolve_maxfev
+
+        self._model_space = B.primal_domain
+        self._data_space = G.codomain
+        N = self._model_space.dim
+        M = self._data_space.dim
+        self._N = N
+        self._M = M
+
+        # --- Extract prior B geometry -----------------------------------------
+        if isinstance(B, BallSupportFunction):
+            self._prior_is_ball = True
+            self._u0_comps = self._model_space.to_components(B._center)
+            self._eta = float(B._radius)
+            self._A_B_mat = None       # identity
+            self._A_B_inv_mat = None   # identity
+        elif isinstance(B, EllipsoidSupportFunction):
+            if B._A_inv is None:
+                raise ValueError(
+                    "EllipsoidSupportFunction B must supply inverse_operator "
+                    "(A^{-1}) to be used as a PrimalKKTSolver prior."
+                )
+            self._prior_is_ball = False
+            self._u0_comps = self._model_space.to_components(B._center)
+            self._eta = float(B._radius)
+            basis_N = np.eye(N)
+            self._A_B_mat = np.column_stack([
+                self._model_space.to_components(
+                    B._A(self._model_space.from_components(basis_N[:, j]))
+                )
+                for j in range(N)
+            ])
+            self._A_B_inv_mat = np.column_stack([
+                self._model_space.to_components(
+                    B._A_inv(self._model_space.from_components(basis_N[:, j]))
+                )
+                for j in range(N)
+            ])
+        else:
+            raise TypeError(
+                f"B must be BallSupportFunction or EllipsoidSupportFunction, "
+                f"got {type(B).__name__}"
+            )
+
+        # --- Extract data V geometry ------------------------------------------
+        if isinstance(V, BallSupportFunction):
+            self._data_is_ball = True
+            self._r = float(V._radius)
+            self._A_V_mat = None      # identity
+            self._A_V_inv_mat = None  # identity
+        elif isinstance(V, EllipsoidSupportFunction):
+            if V._A_inv is None:
+                raise ValueError(
+                    "EllipsoidSupportFunction V must supply inverse_operator "
+                    "(A^{-1}) to be used as a PrimalKKTSolver data set."
+                )
+            self._data_is_ball = False
+            self._r = float(V._radius)
+            basis_M = np.eye(M)
+            self._A_V_mat = np.column_stack([
+                self._data_space.to_components(
+                    V._A(self._data_space.from_components(basis_M[:, j]))
+                )
+                for j in range(M)
+            ])
+            self._A_V_inv_mat = np.column_stack([
+                self._data_space.to_components(
+                    V._A_inv(self._data_space.from_components(basis_M[:, j]))
+                )
+                for j in range(M)
+            ])
+        else:
+            raise TypeError(
+                f"V must be BallSupportFunction or EllipsoidSupportFunction, "
+                f"got {type(V).__name__}"
+            )
+
+        # --- Precompute forward operator matrix and derived quantities --------
+        self._G_mat = G.matrix(dense=True, galerkin=True)   # shape (M, N)
+        self._d_comps = self._data_space.to_components(d_tilde)
+
+        # A_B @ u0  (N-vector): the λ rhs contribution, precomputed
+        if self._prior_is_ball:
+            self._A_B_u0 = self._u0_comps.copy()
+        else:
+            self._A_B_u0 = self._A_B_mat @ self._u0_comps
+
+        # G^T A_V d̃  (N-vector): the μ rhs contribution, precomputed
+        if self._data_is_ball:
+            self._GT_AV_d = self._G_mat.T @ self._d_comps
+        else:
+            self._GT_AV_d = self._G_mat.T @ (self._A_V_mat @ self._d_comps)
+
+        # P = G A_B^{-1} G^T  (M × M): used in Woodbury M×M system.
+        # Only precomputed for the dense path (M ≤ dense_threshold).
+        self._dense = M <= dense_threshold
+        if self._dense:
+            if self._prior_is_ball:
+                self._P_mat = self._G_mat @ self._G_mat.T
+            else:
+                self._P_mat = self._G_mat @ self._A_B_inv_mat @ self._G_mat.T
+        else:
+            self._P_mat = None
+
+        # Warm-start KKT multipliers (updated after each Branch-2 solve)
+        self._lambda_prev: float = 1.0
+        self._mu_prev: float = 0.0
+
+    def _woodbury_solve(
+        self, lam: float, mu: float, c_comps: np.ndarray
+    ) -> np.ndarray:
+        r"""Return $u^*(\lambda,\mu)$ via the Woodbury matrix identity.
+
+        Solves
+
+        .. math::
+
+            (\lambda A_B + \mu G^T A_V G)\, u^* =
+                c + \lambda A_B u_0 + \mu G^T A_V \tilde{d}
+
+        using
+
+        .. math::
+
+            (\lambda A_B + \mu G^T A_V G)^{-1} =
+                \frac{1}{\lambda} A_B^{-1}
+                - \frac{1}{\lambda^2} A_B^{-1} G^T
+                  K(\lambda,\mu)^{-1}
+                  G A_B^{-1}
+
+        where $K = \tfrac{1}{\mu} A_V^{-1} + \tfrac{1}{\lambda} P$
+        and $P = G A_B^{-1} G^T$ ($M \times M$, symmetric PD).
+
+        Args:
+            lam: KKT multiplier $\lambda > 0$ (prior ball constraint).
+            mu: KKT multiplier $\mu \geq 0$ (data constraint).
+            c_comps: Direction in model-space component coordinates.
+
+        Returns:
+            numpy array of shape ``(N,)`` with $u^*$ components.
+        """
+        from scipy.linalg import cho_factor, cho_solve
+        from scipy.sparse.linalg import LinearOperator as ScipyLinOp, cg
+
+        rhs = c_comps + lam * self._A_B_u0 + mu * self._GT_AV_d  # shape (N,)
+
+        # w = A_B^{-1} rhs
+        w = rhs if self._prior_is_ball else self._A_B_inv_mat @ rhs
+
+        # Special case μ = 0: skip Woodbury correction
+        if mu == 0.0:
+            return w / lam
+
+        # p = G w  (M-vector; = G A_B^{-1} rhs)
+        p = self._G_mat @ w
+
+        # Solve K z = p  where K = (1/μ) A_V^{-1} + (1/λ) P  (symmetric PD)
+        inv_lam = 1.0 / lam
+        inv_mu = 1.0 / mu
+
+        if self._dense:
+            I_M = np.eye(self._M)
+            AV_inv = I_M if self._data_is_ball else self._A_V_inv_mat
+            K = inv_mu * AV_inv + inv_lam * self._P_mat
+            cho, low = cho_factor(K)
+            z = cho_solve((cho, low), p)
+        else:
+            # CG path: apply K matrix-free, no explicit P precomputed
+            G_mat = self._G_mat
+            A_B_inv_mat = self._A_B_inv_mat  # None means identity
+            A_V_inv_mat = self._A_V_inv_mat  # None means identity
+
+            def _matvec(x: np.ndarray) -> np.ndarray:
+                # (1/μ) A_V^{-1} x
+                t1 = inv_mu * x if A_V_inv_mat is None else inv_mu * (A_V_inv_mat @ x)
+                # (1/λ) G A_B^{-1} G^T x
+                Gtx = G_mat.T @ x
+                ABinv_Gtx = Gtx if A_B_inv_mat is None else A_B_inv_mat @ Gtx
+                t2 = inv_lam * (G_mat @ ABinv_Gtx)
+                return t1 + t2
+
+            K_op = ScipyLinOp((self._M, self._M), matvec=_matvec)
+            z, _info = cg(K_op, p, atol=1e-12, rtol=1e-12)
+
+        # Woodbury correction: (1/λ²) A_B^{-1} G^T z
+        GTz = self._G_mat.T @ z
+        correction = GTz if self._prior_is_ball else self._A_B_inv_mat @ GTz
+
+        return w / lam - correction / (lam * lam)
+
+    def _residuals(
+        self, lam: float, mu: float, c_comps: np.ndarray
+    ) -> "tuple[float, float]":
+        r"""Compute KKT residuals $(\rho_1, \rho_2)$ at $(\lambda, \mu)$.
+
+        .. math::
+
+            \rho_1 = \|u^*(\lambda,\mu) - u_0\|_{A_B}^2 - \eta^2
+
+            \rho_2 = \|G u^*(\lambda,\mu) - \tilde{d}\|_{A_V}^2 - r^2
+
+        Args:
+            lam: Prior-ball KKT multiplier $\lambda > 0$.
+            mu: Data KKT multiplier $\mu \geq 0$.
+            c_comps: Direction in model-space component coordinates.
+
+        Returns:
+            ``(rho1, rho2)`` scalar residuals.
+        """
+        u = self._woodbury_solve(lam, mu, c_comps)
+
+        diff_u = u - self._u0_comps
+        if self._prior_is_ball:
+            rho1 = float(np.dot(diff_u, diff_u)) - self._eta ** 2
+        else:
+            rho1 = float(diff_u @ (self._A_B_mat @ diff_u)) - self._eta ** 2
+
+        res_data = self._G_mat @ u - self._d_comps
+        if self._data_is_ball:
+            rho2 = float(np.dot(res_data, res_data)) - self._r ** 2
+        else:
+            rho2 = float(res_data @ (self._A_V_mat @ res_data)) - self._r ** 2
+
+        return rho1, rho2
+
+    def solve(self, c: "Vector") -> KKTResult:
+        r"""Solve for the support point $u^*$ maximising $\langle c, u \rangle$.
+
+        Two branches:
+
+        1. Compute the support point $u_{\rm ball}$ of $B$ in direction $c$.
+           If $\|G u_{\rm ball} - \tilde{d}\|_{A_V} \leq r$ (data constraint
+           inactive), return $u_{\rm ball}$ immediately.
+
+        2. Otherwise both constraints are active.  Solve the 2×2 root-finding
+           problem
+           $\rho(\lambda, \mu) = 0$ via ``scipy.optimize.fsolve``, warm-started
+           at $(\lambda_{\rm prev}, \mu_{\rm prev})$.
+
+        After a Branch-2 solve the warm-start state
+        ``(_lambda_prev, _mu_prev)`` is updated.
+
+        Args:
+            c: Linear objective in model space (typically $c = T^* q$).
+
+        Returns:
+            :class:`KKTResult` containing the optimal model vector $u^*$,
+            KKT multipliers, convergence flag, and iteration count.
+        """
+        from scipy.optimize import fsolve
+
+        c_comps = self._model_space.to_components(c)
+
+        # ------------------------------------------------------------------
+        # Branch 1: prior-only (data constraint not active)
+        # ------------------------------------------------------------------
+        _, u_ball = self._B.value_and_support_point(c)
+        if u_ball is None:
+            u_ball = self._B.support_point(c)
+
+        if u_ball is not None:
+            u_ball_comps = self._model_space.to_components(u_ball)
+            res_data = self._G_mat @ u_ball_comps - self._d_comps
+            if self._data_is_ball:
+                data_sq = float(np.dot(res_data, res_data))
+            else:
+                data_sq = float(res_data @ (self._A_V_mat @ res_data))
+
+            if data_sq <= self._r ** 2 * (1.0 + 1e-9):
+                # Compute λ* from the active prior constraint
+                if self._prior_is_ball:
+                    c_norm = float(np.linalg.norm(c_comps))
+                    lam_star = c_norm / self._eta if c_norm > 1e-14 else 1.0
+                else:
+                    ABinv_c = self._A_B_inv_mat @ c_comps
+                    c_norm_AB = float(np.sqrt(max(np.dot(c_comps, ABinv_c), 0.0)))
+                    lam_star = c_norm_AB / self._eta if c_norm_AB > 1e-14 else 1.0
+                return KKTResult(
+                    m=u_ball,
+                    multipliers=(lam_star, 0.0),
+                    converged=True,
+                    num_iterations=1,
+                )
+
+        # ------------------------------------------------------------------
+        # Branch 2: both constraints active — 2D fsolve in log space
+        # ------------------------------------------------------------------
+        # Physics-based initial λ: for μ=0, λ* = ‖c‖_{A_B^{-1}} / η
+        if self._prior_is_ball:
+            c_norm_AB = float(np.linalg.norm(c_comps))
+        else:
+            ABinv_c = self._A_B_inv_mat @ c_comps
+            c_norm_AB = float(np.sqrt(max(np.dot(c_comps, ABinv_c), 0.0)))
+        lam_phys = max(c_norm_AB / self._eta, 1e-4)
+
+        # Warm-start: prefer warm-start λ if close, else use physics-based
+        lam0 = self._lambda_prev if self._lambda_prev > 1e-4 else lam_phys
+        mu0 = max(self._mu_prev, 0.5)   # ensure μ > 0 for log-space init
+
+        def _residual_log(log_x: np.ndarray) -> np.ndarray:
+            lam = float(np.exp(log_x[0]))
+            mu = float(np.exp(log_x[1]))
+            r1, r2 = self._residuals(lam, mu, c_comps)
+            return np.array([r1, r2])
+
+        x0_log = np.array([np.log(lam0), np.log(mu0)])
+        sol, info, ier, _mesg = fsolve(
+            _residual_log,
+            x0_log,
+            full_output=True,
+            xtol=self._fsolve_tol,
+            maxfev=self._fsolve_maxfev,
+        )
+
+        if ier != 1:
+            # Fallback: try physics-based guess then a few alternatives
+            fallback_guesses = [
+                (lam_phys, 0.5),
+                (lam_phys, 2.0),
+                (0.5 * lam_phys, 1.0),
+            ]
+            for alt_lam, alt_mu in fallback_guesses:
+                alt_x0 = np.array([np.log(max(alt_lam, 1e-4)),
+                                    np.log(max(alt_mu, 1e-4))])
+                alt_sol, alt_info, alt_ier, _ = fsolve(
+                    _residual_log, alt_x0, full_output=True,
+                    xtol=self._fsolve_tol, maxfev=self._fsolve_maxfev,
+                )
+                if alt_ier == 1:
+                    sol, info, ier = alt_sol, alt_info, alt_ier
+                    break
+
+        lam_sol = float(np.exp(sol[0]))
+        mu_sol = float(np.exp(sol[1]))
+        converged = ier == 1
+
+        u_star_comps = self._woodbury_solve(lam_sol, mu_sol, c_comps)
+        u_star = self._model_space.from_components(u_star_comps)
+
+        # Update warm start for next direction
+        self._lambda_prev = lam_sol
+        self._mu_prev = mu_sol
+
+        return KKTResult(
+            m=u_star,
+            multipliers=(lam_sol, mu_sol),
+            converged=converged,
+            num_iterations=int(info["nfev"]),
         )
