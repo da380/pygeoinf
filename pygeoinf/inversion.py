@@ -192,6 +192,45 @@ class LinearInversion(Inversion):
         target_formalism = formalism or self.formalism
         return type(self)(new_fp, formalism=target_formalism)
 
+    def data_reduced_inversion(
+        self,
+        reduction_operator: LinearOperator,
+        /,
+        *,
+        reduced_data_error_measure: Optional[GaussianMeasure] = None,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        formalism: Optional[Literal["model_space", "data_space"]] = None,
+    ) -> LinearInversion:
+        """
+        Constructs a surrogate of the linear inversion using a reduced data space.
+
+        Args:
+            reduction_operator: A LinearOperator mapping from the current
+                data space to the new, reduced data space.
+            reduced_data_error_measure: An optional data error measure defined on
+                the reduced data space.
+            dense: If True, computes and stores operators as dense matrices.
+            parallel: If True, computes the dense matrices in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+            formalism: An optional override for the formalism of the new inversion.
+
+        Returns:
+            A new instance of the concrete inversion class operating on the
+            reduced data space.
+        """
+        new_fp = self.forward_problem.data_reduced_problem(
+            reduction_operator,
+            reduced_data_error_measure=reduced_data_error_measure,
+            dense=dense,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        target_formalism = formalism or self.formalism
+        return type(self)(new_fp, formalism=target_formalism)
+
 
 class Inference(Inversion):
     """

@@ -40,6 +40,7 @@ from .linear_operators import LinearOperator
 from .linear_solvers import LinearSolver, IterativeLinearSolver
 from .hilbert_space import Vector
 from .subspaces import AffineSubspace
+from .gaussian_measure import GaussianMeasure
 
 
 class LinearLeastSquaresInversion(LinearInversion):
@@ -381,6 +382,53 @@ class LinearLeastSquaresInversion(LinearInversion):
 
         return (1.0 / damping) * (R_inv - term2)
 
+    def woodbury_model_preconditioner(
+        self,
+        damping: float,
+        solver: LinearSolver,
+        /,
+    ) -> LinearOperator:
+        """
+        Constructs a model-space preconditioner using the Woodbury matrix identity.
+
+        Model Space Normal Operator: N_m = A* R^-1 A + damping * I
+        Woodbury Identity: N_m^-1 = (1/damping) * [I - A* (damping * R + A A*)^-1 A]
+
+        Note:
+            This formulation does not require evaluating the explicit inverse of
+            the noise covariance (R).
+
+        Args:
+            damping: The Tikhonov regularization parameter.
+            solver: The LinearSolver used to invert the inner Woodbury operator (N_d).
+
+        Returns:
+            A LinearOperator representing the Woodbury-approximated inverse.
+        """
+        if damping <= 0:
+            raise ValueError(
+                "Damping must be strictly positive for the Woodbury identity."
+            )
+
+        A = self.forward_problem.forward_operator
+        Id = self.model_space.identity_operator()
+
+        if not self.forward_problem.data_error_measure_set:
+            raise ValueError(
+                "Data error measure must be set for the Woodbury identity."
+            )
+        R = self.forward_problem.data_error_measure.covariance
+
+        # 1. Assemble the inner data-space operator (N_d)
+        N_d = damping * R + A @ A.adjoint
+
+        # 2. Invert the inner operator
+        N_d_inv = solver(N_d)
+
+        # 3. Assemble and return the preconditioner
+        term2 = A.adjoint @ N_d_inv @ A
+        return (1.0 / damping) * (Id - term2)
+
     # =========================================================================
     # Surrogates & Parameterization
     # =========================================================================
@@ -390,7 +438,7 @@ class LinearLeastSquaresInversion(LinearInversion):
         /,
         *,
         alternate_forward_operator: Optional[LinearOperator] = None,
-        alternate_data_error_measure=None,  # Accepts GaussianMeasure
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
     ) -> LinearLeastSquaresInversion:
         """
         Constructs a surrogate least-squares inversion problem using simplified physics
@@ -413,14 +461,40 @@ class LinearLeastSquaresInversion(LinearInversion):
             surrogate_forward_problem, formalism=self.formalism
         )
 
-    def surrogate_woodbury_preconditioner(
+    def data_reduced_inversion(
+        self,
+        reduction_operator: LinearOperator,
+        /,
+        *,
+        reduced_data_error_measure: Optional[GaussianMeasure] = None,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        formalism: Optional[Literal["model_space", "data_space"]] = None,
+    ) -> LinearLeastSquaresInversion:
+        """
+        Constructs a surrogate of the least-squares inversion using a reduced data space.
+        """
+        target_formalism = formalism or self.formalism
+
+        new_fp = self.forward_problem.data_reduced_problem(
+            reduction_operator,
+            reduced_data_error_measure=reduced_data_error_measure,
+            dense=dense,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        return type(self)(new_fp, formalism=target_formalism)
+
+    def surrogate_woodbury_data_preconditioner(
         self,
         damping: float,
         solver: LinearSolver,
         /,
         *,
         alternate_forward_operator: Optional[LinearOperator] = None,
-        alternate_data_error_measure=None,
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
         noise_solver: Optional[LinearSolver] = None,
     ) -> LinearOperator:
         """
@@ -449,6 +523,25 @@ class LinearLeastSquaresInversion(LinearInversion):
         return surrogate_inv.woodbury_data_preconditioner(
             damping, solver, noise_solver=noise_solver
         )
+
+    def surrogate_woodbury_model_preconditioner(
+        self,
+        damping: float,
+        solver: LinearSolver,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
+    ) -> LinearOperator:
+        """
+        Builds a model-space preconditioner by applying the Woodbury matrix identity
+        to a simplified surrogate inverse problem.
+        """
+        surrogate_inv = self.surrogate_inversion(
+            alternate_forward_operator=alternate_forward_operator,
+            alternate_data_error_measure=alternate_data_error_measure,
+        )
+        return surrogate_inv.woodbury_model_preconditioner(damping, solver)
 
 
 class ConstrainedLinearLeastSquaresInversion(LinearInversion):
@@ -652,6 +745,32 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         )
 
         return type(self)(new_fp, new_S, formalism=target_formalism)
+
+    def data_reduced_inversion(
+        self,
+        reduction_operator: LinearOperator,
+        /,
+        *,
+        reduced_data_error_measure: Optional[GaussianMeasure] = None,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        formalism: Optional[Literal["model_space", "data_space"]] = None,
+    ) -> ConstrainedLinearLeastSquaresInversion:
+        """
+        Constructs a surrogate of the constrained linear inversion using a reduced data space.
+        """
+        target_formalism = formalism or self.formalism
+
+        new_fp = self.forward_problem.data_reduced_problem(
+            reduction_operator,
+            reduced_data_error_measure=reduced_data_error_measure,
+            dense=dense,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        return type(self)(new_fp, self._constraint, formalism=target_formalism)
 
 
 class LinearMinimumNormInversion(LinearInversion):
@@ -1183,3 +1302,29 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
         )
 
         return type(self)(new_fp, new_S, formalism=target_formalism)
+
+    def data_reduced_inversion(
+        self,
+        reduction_operator: LinearOperator,
+        /,
+        *,
+        reduced_data_error_measure: Optional[GaussianMeasure] = None,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        formalism: Optional[Literal["model_space", "data_space"]] = None,
+    ) -> ConstrainedLinearMinimumNormInversion:
+        """
+        Constructs a surrogate of the constrained linear inversion using a reduced data space.
+        """
+        target_formalism = formalism or self.formalism
+
+        new_fp = self.forward_problem.data_reduced_problem(
+            reduction_operator,
+            reduced_data_error_measure=reduced_data_error_measure,
+            dense=dense,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        return type(self)(new_fp, self._constraint, formalism=target_formalism)

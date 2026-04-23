@@ -286,3 +286,56 @@ class TestParameterizedInversions:
 
         assert isinstance(surrogate, LinearLeastSquaresInversion)
         assert surrogate.formalism == "data_space"
+
+
+class TestDataReducedInversions:
+    """
+    Tests the data reduction surrogate generation for concrete inversion classes.
+    """
+
+    def test_bayesian_reduction_auto_prior_and_noise(
+        self, forward_problem_with_inv_cov
+    ):
+        """Tests the automatic pass-throughs in Bayesian data reduction."""
+        # 1. Setup a standard Bayesian inversion
+        prior = GaussianMeasure.from_standard_deviation(
+            forward_problem_with_inv_cov.model_space, 1.0
+        )
+        inv = LinearBayesianInversion(forward_problem_with_inv_cov, prior)
+
+        # 2. Define a reduction mapping R^2 (Data Space) -> R^1
+        reduced_space = EuclideanSpace(1)
+        S_mat = np.random.randn(1, inv.data_space.dim)
+        S = LinearOperator.from_matrix(inv.data_space, reduced_space, S_mat)
+
+        # 3. Create surrogate without providing explicit noise
+        surrogate = inv.data_reduced_inversion(S)
+
+        assert isinstance(surrogate, LinearBayesianInversion)
+        assert surrogate.data_space == reduced_space
+
+        # The prior should be passed through entirely unmodified
+        assert surrogate.model_prior_measure is inv.model_prior_measure
+
+    def test_least_squares_reduction_inheritance(self, forward_problem_no_error):
+        """Tests that LinearLeastSquaresInversion correctly inherits and uses the base method."""
+        inv = LinearLeastSquaresInversion(
+            forward_problem_no_error, formalism="model_space"
+        )
+
+        S = inv.data_space.identity_operator()
+        surrogate = inv.data_reduced_inversion(S)
+
+        assert isinstance(surrogate, LinearLeastSquaresInversion)
+        assert surrogate.formalism == "model_space"
+
+    def test_reduction_formalism_override(self, forward_problem_no_error):
+        """Tests that data_reduced_inversion correctly accepts a formalism override."""
+        inv = ConcreteLinearInversion(forward_problem_no_error, formalism="model_space")
+        S = inv.data_space.identity_operator()
+
+        # Override to data_space
+        surrogate = inv.data_reduced_inversion(S, formalism="data_space")
+
+        assert surrogate.formalism == "data_space"
+        assert inv.formalism == "model_space"

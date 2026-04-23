@@ -83,23 +83,6 @@ from pygeoinf.symmetric_space.sphere import (
 )
 
 
-class ExactVariancePreconditioner(inf.LinearSolver):
-    """
-    Instantly returns a diagonal preconditioner using a known constant variance.
-    This bypasses expensive diagonal extraction when the variance is known analytically.
-    """
-
-    def __init__(self, variance: float):
-        self.variance = variance
-
-    def __call__(self, operator: inf.LinearOperator) -> inf.LinearOperator:
-        domain = operator.domain
-        inv_diag = np.full(domain.dim, 1.0 / self.variance)
-        return inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            domain, domain, inv_diag, galerkin=True
-        )
-
-
 def setup_problem_components(
     base_space: Sobolev,
     degree: int,
@@ -186,7 +169,7 @@ def main():
     noise_group.add_argument(
         "--noise-amplitude-factor",
         type=float,
-        default=0.1,
+        default=0.3,
         help="Relative amplitude of the noise",
     )
     noise_group.add_argument(
@@ -228,7 +211,7 @@ def main():
     precond_group.add_argument(
         "--threshold",
         type=float,
-        default=10.0,
+        default=4.0,
         help="Relative distance used in forming blocks or calculating max sparse distance",
     )
     precond_group.add_argument(
@@ -434,7 +417,7 @@ def main():
     # ==========================================
     print("Solving linear system...")
 
-    solver = inf.CGSolver(callback=inf.ProgressCallback())
+    solver = inf.CGSolver(callback=bayesian_inversion.normal_residual_callback(data))
     model_posterior_measure = bayesian_inversion.model_posterior_measure(
         data, solver, preconditioner=preconditioner
     )
