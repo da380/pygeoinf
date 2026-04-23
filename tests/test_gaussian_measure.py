@@ -382,8 +382,10 @@ class TestGaussianMeasure:
         Tests that threshold=0.0 recovers the original dense matrix (stored in
         a sparse format) and provides an exact SuperLU inverse.
         """
-        # All arguments passed explicitly as keywords
-        sparse_measure = measure.with_sparse_approximation(threshold=0.0)
+        # Added regularization_fraction=0.0 to recover the exact inverse
+        sparse_measure = measure.with_sparse_approximation(
+            threshold=0.0, regularization_fraction=0.0
+        )
 
         assert sparse_measure.inverse_covariance_set
 
@@ -415,7 +417,9 @@ class TestGaussianMeasure:
         measure = GaussianMeasure.from_covariance_matrix(space, cov_mat)
 
         # A high threshold (e.g. 0.95) should drop all off-diagonals
-        sparse_measure = measure.with_sparse_approximation(threshold=0.95)
+        sparse_measure = measure.with_sparse_approximation(
+            threshold=0.95, regularization_fraction=0.0
+        )
         sparse_cov = sparse_measure.covariance.matrix(dense=True, galerkin=True)
 
         # The result should be strictly diagonal
@@ -441,7 +445,9 @@ class TestGaussianMeasure:
         measure = GaussianMeasure.from_covariance_matrix(space, cov_mat)
 
         # Keep only the diagonal and the 1 largest off-diagonal per column
-        sparse_measure = measure.with_sparse_approximation(threshold=0.0, max_nnz=2)
+        sparse_measure = measure.with_sparse_approximation(
+            threshold=0.0, max_nnz=2, regularization_fraction=0.0
+        )
         sparse_cov = sparse_measure.covariance.matrix(dense=True, galerkin=True)
 
         # Verify the matrix is actually sparser than the original
@@ -450,23 +456,6 @@ class TestGaussianMeasure:
         # Check the exact inverse is still properly bound to the truncated matrix
         inv_cov = sparse_measure.inverse_covariance.matrix(dense=True, galerkin=True)
         assert np.allclose(inv_cov @ sparse_cov, np.eye(dim), atol=1e-7)
-
-    def test_with_sparse_approximation_parallel(self, measure: GaussianMeasure):
-        """
-        Tests that parallel extraction yields the exact same assembled
-        sparse matrix as the serial implementation.
-        """
-        measure_serial = measure.with_sparse_approximation(
-            threshold=0.5, parallel=False
-        )
-        measure_parallel = measure.with_sparse_approximation(
-            threshold=0.5, parallel=True, n_jobs=2
-        )
-
-        cov_serial = measure_serial.covariance.matrix(dense=True, galerkin=True)
-        cov_parallel = measure_parallel.covariance.matrix(dense=True, galerkin=True)
-
-        assert np.allclose(cov_serial, cov_parallel)
 
     def test_with_sparse_approximation_stochastic_diag(self, space: HilbertSpace):
         """
@@ -486,7 +475,7 @@ class TestGaussianMeasure:
 
         # Test with a low-rank SVD + Hutchinson trace estimator instead of exact extraction
         sparse_measure = measure.with_sparse_approximation(
-            threshold=0.1, diag_rank=1, diag_samples=5
+            threshold=0.1, diag_rank=1, diag_samples=5, regularization_fraction=0.0
         )
 
         assert sparse_measure.inverse_covariance_set
@@ -496,6 +485,23 @@ class TestGaussianMeasure:
 
         # Verify the SuperLU inverse is mathematically sound despite the stochastic scaling
         assert np.allclose(inv_cov @ sparse_cov, np.eye(dim), atol=1e-7)
+
+    def test_with_sparse_approximation_parallel(self, measure: GaussianMeasure):
+        """
+        Tests that parallel extraction yields the exact same assembled
+        sparse matrix as the serial implementation.
+        """
+        measure_serial = measure.with_sparse_approximation(
+            threshold=0.5, parallel=False
+        )
+        measure_parallel = measure.with_sparse_approximation(
+            threshold=0.5, parallel=True, n_jobs=2
+        )
+
+        cov_serial = measure_serial.covariance.matrix(dense=True, galerkin=True)
+        cov_parallel = measure_parallel.covariance.matrix(dense=True, galerkin=True)
+
+        assert np.allclose(cov_serial, cov_parallel)
 
 
 class TestDeflatedPointwiseVariance:
