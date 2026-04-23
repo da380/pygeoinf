@@ -321,23 +321,38 @@ class LinearLeastSquaresInversion(LinearInversion):
     def woodbury_data_preconditioner(
         self,
         damping: float,
+        solver: LinearSolver,
         /,
         *,
-        parallel: bool = False,
-        n_jobs: int = -1,
+        noise_solver: Optional[LinearSolver] = None,
     ) -> LinearOperator:
         """
         Constructs a data-space preconditioner using the Woodbury matrix identity.
 
         Data Space Normal Operator: N_d = A A* + damping * R
         Woodbury Identity: N_d^-1 = (1/damping) * [R^-1 - R^-1 A (A* R^-1 A + damping * I)^-1 A* R^-1]
+
+        Note:
+            This method assumes the noise measure (R) either already has a
+            well-defined inverse covariance, or is well-conditioned enough
+            to be inverted by the provided solver. If it is an unbounded
+            operator on a function space, use `R.with_regularized_inverse()`
+            before passing it to the inversion.
+
+        Args:
+            damping: The Tikhonov regularization parameter.
+            solver: The LinearSolver used to invert the inner Woodbury operator (N_m).
+            noise_solver: An optional solver used to explicitly invert the data
+                          error covariance (R) if its inverse is not already set.
+                          Defaults to `solver` if not provided.
+
+        Returns:
+            A LinearOperator representing the Woodbury-approximated inverse.
         """
         if damping <= 0:
             raise ValueError(
                 "Damping must be strictly positive for the Woodbury identity."
             )
-
-        from .linear_solvers import LUSolver
 
         A = self.forward_problem.forward_operator
 
@@ -351,16 +366,15 @@ class LinearLeastSquaresInversion(LinearInversion):
         if R.inverse_covariance_set:
             R_inv = R.inverse_covariance
         else:
-            r_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
+            r_solver = noise_solver if noise_solver is not None else solver
             R_inv = r_solver(R.covariance)
 
         # 2. Form the model-space normal operator: N_m = A* R^-1 A + damping * I
         identity = self.model_space.identity_operator()
         N_m = A.adjoint @ R_inv @ A + damping * identity
 
-        # 3. Exactly invert the small model-space operator
-        nm_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
-        N_m_inv = nm_solver(N_m)
+        # 3. Invert the small model-space operator
+        N_m_inv = solver(N_m)
 
         # 4. Assemble the Woodbury identity
         term2 = R_inv @ A @ N_m_inv @ A.adjoint @ R_inv
@@ -402,23 +416,38 @@ class LinearLeastSquaresInversion(LinearInversion):
     def surrogate_woodbury_preconditioner(
         self,
         damping: float,
+        solver: LinearSolver,
         /,
         *,
         alternate_forward_operator: Optional[LinearOperator] = None,
         alternate_data_error_measure=None,
-        parallel: bool = False,
-        n_jobs: int = -1,
+        noise_solver: Optional[LinearSolver] = None,
     ) -> LinearOperator:
         """
         Builds a data-space preconditioner by applying the Woodbury matrix identity
         to a simplified surrogate inverse problem.
+
+        Note:
+            Ensure that any alternate measures provided have well-defined inverse
+            covariances, or use `.with_regularized_inverse()` on them before
+            passing them to this method.
+
+        Args:
+            damping: The Tikhonov regularization parameter.
+            solver: The LinearSolver used to invert the inner Woodbury operator.
+            alternate_forward_operator: An optional simplified forward operator.
+            alternate_data_error_measure: An optional simplified data error measure.
+            noise_solver: Optional solver for the noise covariance.
+
+        Returns:
+            A LinearOperator representing the Woodbury-approximated inverse.
         """
         surrogate_inv = self.surrogate_inversion(
             alternate_forward_operator=alternate_forward_operator,
             alternate_data_error_measure=alternate_data_error_measure,
         )
         return surrogate_inv.woodbury_data_preconditioner(
-            damping, parallel=parallel, n_jobs=n_jobs
+            damping, solver, noise_solver=noise_solver
         )
 
 

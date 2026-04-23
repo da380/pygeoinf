@@ -307,6 +307,76 @@ class TestGaussianMeasure:
         ):
             measure.kl_divergence(other_measure)
 
+    def test_with_regularized_inverse_zero_damping(self, measure: GaussianMeasure):
+        """
+        Tests that calling with_regularized_inverse with 0.0 damping leaves
+        the covariance unchanged and correctly assigns the inverse.
+        """
+        from pygeoinf.linear_solvers import CholeskySolver
+
+        # We use a direct solver for easy verification
+        solver = CholeskySolver(galerkin=True)
+
+        # Call with 0.0 damping
+        reg_measure = measure.with_regularized_inverse(solver, damping=0.0)
+
+        assert reg_measure.inverse_covariance_set
+
+        # Covariance should be identical to the original
+        orig_cov = measure.covariance.matrix(dense=True, galerkin=True)
+        reg_cov = reg_measure.covariance.matrix(dense=True, galerkin=True)
+        assert np.allclose(orig_cov, reg_cov)
+
+        # Inverse should be mathematically correct: C_inv @ C = I
+        inv_cov = reg_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        identity = np.eye(measure.domain.dim)
+        assert np.allclose(inv_cov @ reg_cov, identity, atol=1e-7)
+
+    def test_with_regularized_inverse_positive_damping(self, measure: GaussianMeasure):
+        """
+        Tests that calling with_regularized_inverse with positive damping
+        correctly shifts the covariance, computes the inverse, and injects
+        white noise into the sampler so the statistics remain consistent.
+        """
+        from pygeoinf.linear_solvers import CholeskySolver
+
+        solver = CholeskySolver(galerkin=True)
+        damping = 0.5
+
+        # Call with positive damping
+        reg_measure = measure.with_regularized_inverse(solver, damping=damping)
+
+        assert reg_measure.inverse_covariance_set
+
+        # 1. Covariance should be shifted by damping * I
+        orig_cov = measure.covariance.matrix(dense=True, galerkin=True)
+        expected_reg_cov = orig_cov + damping * np.eye(measure.domain.dim)
+        actual_reg_cov = reg_measure.covariance.matrix(dense=True, galerkin=True)
+
+        assert np.allclose(actual_reg_cov, expected_reg_cov)
+
+        # 2. Inverse should be correct for the shifted covariance: C_inv @ C_reg = I
+        inv_cov = reg_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        identity = np.eye(measure.domain.dim)
+        assert np.allclose(inv_cov @ actual_reg_cov, identity, atol=1e-7)
+
+        # 3. Verify sampling statistics reflect the injected white noise
+        if not reg_measure.sample_set:
+            pytest.skip("Sampling is not implemented for this measure.")
+
+        n_samples = 5000
+        samples = reg_measure.samples(n_samples)
+        sample_components = np.array([measure.domain.to_components(s) for s in samples])
+
+        # Mean should remain the exact same as the original measure
+        sample_mean = np.mean(sample_components, axis=0)
+        expected_mean = measure.domain.to_components(measure.expectation)
+        assert np.allclose(sample_mean, expected_mean, atol=0.1)
+
+        # Sample covariance should match the heavily shifted covariance
+        sample_covariance = np.cov(sample_components.T)
+        assert np.allclose(sample_covariance, expected_reg_cov, atol=0.15)
+
 
 class TestDeflatedPointwiseVariance:
     """

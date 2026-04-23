@@ -13,7 +13,7 @@ DISK_MODEL = False  # True for a top-hat anomaly, False for random field
 order = 2
 scale = 0.2
 prior_scale = 0.1
-n_sources = 3
+n_sources = 10
 n_receivers = 30
 
 # ==================================================================== #
@@ -21,7 +21,11 @@ n_receivers = 30
 # ==================================================================== #
 
 if GEOMETRY == "Torus":
-    from pygeoinf.symmetric_space.torus import Sobolev, plot, plot_geodesic_network
+    from pygeoinf.symmetric_space.torus import (
+        Sobolev,
+        plot,
+        plot_geodesic_network,
+    )
 
     model_space = Sobolev.from_heat_kernel_prior(
         prior_scale,
@@ -123,14 +127,20 @@ inverse_problem = inf.LinearBayesianInversion(forward_problem, model_prior)
 
 
 surrogate_space = model_space.with_degree(model_space.degree // 4)
+raw_surrogate_prior = surrogate_space.point_value_scaled_heat_kernel_gaussian_measure(
+    prior_scale
+)
+woodbury_solver = inf.LUSolver()
+damped_surrogate_prior = raw_surrogate_prior.with_regularized_inverse(
+    woodbury_solver, damping=1e-6
+)
 precon = inverse_problem.surrogate_inversion(
     alternate_forward_operator=surrogate_space.path_average_operator(paths),
-    alternate_prior_measure=surrogate_space.point_value_scaled_heat_kernel_gaussian_measure(
-        prior_scale
-    ),
-).woodbury_data_preconditioner()
+    alternate_prior_measure=damped_surrogate_prior,
+).woodbury_data_preconditioner(woodbury_solver)
 
 solver = inf.CGMatrixSolver()
+
 model_posterior = inverse_problem.model_posterior_measure(
     data, solver, preconditioner=precon
 )

@@ -36,6 +36,7 @@ from .linear_operators import (
     LinearOperator,
     DiagonalSparseMatrixLinearOperator,
 )
+from .linear_solvers import LinearSolver, IterativeLinearSolver
 
 from .affine_operators import AffineOperator
 
@@ -728,6 +729,73 @@ class GaussianMeasure:
         )
 
         return measure
+
+    def with_regularized_inverse(
+        self,
+        solver: LinearSolver,
+        /,
+        *,
+        damping: float = 0.0,
+        preconditioner: Optional[LinearOperator] = None,
+    ) -> GaussianMeasure:
+        """
+        Returns a new GaussianMeasure with a well-defined precision operator
+        (inverse covariance) computed via Tikhonov regularization.
+
+        Args:
+            solver: The LinearSolver used to invert the regularized covariance.
+            damping: The Tikhonov regularization parameter (alpha) added to the diagonal.
+                     Defaults to 0.0.
+            preconditioner: An optional preconditioner for iterative solvers.
+
+        Returns:
+            A new GaussianMeasure equipped with an inverse covariance.
+
+        Raises:
+            ValueError: If the damping is negative.
+
+        Notes:
+            This method is only well-defined for measures on finite-dimensional
+            spaces due to the trace-class condition.
+        """
+
+        if damping < 0.0:
+            raise ValueError("Damping must be non-negative")
+
+        if damping == 0.0 and self.inverse_covariance_set:
+            return self
+
+        if damping > 0.0:
+            identity = self.domain.identity_operator()
+            regularized_covariance = self.covariance + damping * identity
+        else:
+            regularized_covariance = self.covariance
+
+        if isinstance(solver, IterativeLinearSolver):
+            inverse_covariance = solver(
+                regularized_covariance, preconditioner=preconditioner
+            )
+        else:
+            inverse_covariance = solver(regularized_covariance)
+
+        if self.sample_set and damping > 0.0:
+            std_dev = np.sqrt(damping)
+            noise_measure = GaussianMeasure.from_standard_deviation(
+                self.domain, std_dev
+            )
+
+            def new_sample() -> Vector:
+                return self.domain.add(self.sample(), noise_measure.sample())
+
+        else:
+            new_sample = self._sample if self.sample_set else None
+
+        return GaussianMeasure(
+            covariance=regularized_covariance,
+            expectation=self._expectation,
+            sample=new_sample,
+            inverse_covariance=inverse_covariance,
+        )
 
     def affine_mapping(
         self,

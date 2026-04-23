@@ -8,7 +8,7 @@ from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
-from pygeoinf.linear_solvers import CholeskySolver, ResidualTrackingCallback
+from pygeoinf.linear_solvers import CholeskySolver, LUSolver, ResidualTrackingCallback
 from pygeoinf.subspaces import AffineSubspace, LinearSubspace
 from pygeoinf.affine_operators import AffineOperator
 from pygeoinf.linear_optimisation import (
@@ -151,10 +151,11 @@ class TestLinearLeastSquaresInversion:
         of the dense data-space least-squares normal operator.
         """
         damping = 0.5
+        solver = LUSolver(galerkin=False)
         inversion = LinearLeastSquaresInversion(forward_problem)
 
         # 1. Compute the Woodbury preconditioner
-        woodbury_precon = inversion.woodbury_data_preconditioner(damping)
+        woodbury_precon = inversion.woodbury_data_preconditioner(damping, solver)
 
         # 2. Extract exact dense matrices
         A = forward_problem.forward_operator.matrix(dense=True)
@@ -176,6 +177,7 @@ class TestLinearLeastSquaresInversion:
         least-squares inversion and the Woodbury preconditioner extraction.
         """
         damping = 0.1
+        solver = LUSolver(galerkin=False)
         inversion = LinearLeastSquaresInversion(forward_problem)
 
         # Create an arbitrary "alternate" forward operator (e.g., scaled by 0.5)
@@ -183,14 +185,14 @@ class TestLinearLeastSquaresInversion:
 
         # 1. Generate via the chained method
         chained_precon = inversion.surrogate_woodbury_preconditioner(
-            damping, alternate_forward_operator=alt_A
+            damping, solver, alternate_forward_operator=alt_A
         )
 
         # 2. Generate manually
         manual_surrogate = inversion.surrogate_inversion(
             alternate_forward_operator=alt_A
         )
-        manual_precon = manual_surrogate.woodbury_data_preconditioner(damping)
+        manual_precon = manual_surrogate.woodbury_data_preconditioner(damping, solver)
 
         # 3. Compare matrices
         assert np.allclose(
@@ -204,9 +206,10 @@ class TestLinearLeastSquaresInversion:
         # Create an inversion without a data error measure
         fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
         inversion = LinearLeastSquaresInversion(fp_no_noise)
+        solver = LUSolver(galerkin=False)
 
         with pytest.raises(ValueError, match="Data error measure must be set"):
-            inversion.woodbury_data_preconditioner(0.1)
+            inversion.woodbury_data_preconditioner(0.1, solver)
 
     def test_normal_residual_callback(
         self, forward_problem: LinearForwardProblem, synthetic_data: np.ndarray
@@ -784,7 +787,7 @@ class TestConstrainedLinearMinimumNormInversion:
         """
         domain = EuclideanSpace(5)
 
-        # FIX: We use a std dev of 2.0. If it were 1.0, the minimum possible
+        # We use a std dev of 2.0. If it were 1.0, the minimum possible
         # chi-squared for a mean-shift of 2.0 would be 20.0, which is higher
         # than the 95% critical value (~11.07), making the discrepancy principle
         # mathematically impossible and exploding the analytical derivative!
