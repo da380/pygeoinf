@@ -378,26 +378,31 @@ def main():
 
         elif args.precond == "woodbury":
             print("Forming model-space preconditioner")
-            woodbury_solver = inf.CholeskySolver(galerkin=True)
+            woodbury_solver = inf.EigenSolver(galerkin=True)
 
-            noise_std = args.noise_amplitude_factor * args.prior_std
+            # noise_std = args.noise_amplitude_factor * args.prior_std
+            # surrogate_noise_diag = inf.GaussianMeasure.from_standard_deviation(
+            #    surrogate_fwd_op.codomain, noise_std
+            # )
 
-            surrogate_noise_diag = inf.GaussianMeasure.from_standard_deviation(
-                surrogate_fwd_op.codomain, noise_std
-            )
-
-            damped_surrogate_prior = surrogate_prior.with_regularized_inverse(
-                woodbury_solver, damping=1.0e-6
+            sparse_surrogate_noise = surrogate_noise.with_sparse_approximation(
+                diag_rank=10, diag_samples=10
             )
 
             damped_surrogate_inv = surrogate_inv.surrogate_inversion(
-                alternate_prior_measure=damped_surrogate_prior,
-                alternate_data_error_measure=surrogate_noise_diag,
+                alternate_prior_measure=surrogate_prior,
+                alternate_data_error_measure=sparse_surrogate_noise,
             )
 
             preconditioner = damped_surrogate_inv.woodbury_data_preconditioner(
                 woodbury_solver
             )
+
+            alpha = 0.1
+
+            preconditioner = (
+                1 - alpha
+            ) * preconditioner + alpha * sparse_surrogate_noise.inverse_covariance
 
         elif args.precond == "distance-localized":
             print("Building distance-localized sparse matrix...")
@@ -417,7 +422,10 @@ def main():
     # ==========================================
     print("Solving linear system...")
 
-    solver = inf.CGSolver(callback=bayesian_inversion.normal_residual_callback(data))
+    solver = inf.CGSolver(
+        callback=bayesian_inversion.normal_residual_callback(data),
+        rtol=0.01 * args.noise_amplitude_factor,
+    )
     model_posterior_measure = bayesian_inversion.model_posterior_measure(
         data, solver, preconditioner=preconditioner
     )
