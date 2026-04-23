@@ -28,14 +28,19 @@ from scipy.linalg import cholesky, cho_solve
 from scipy.linalg import eigh
 from scipy.sparse import diags
 from scipy.stats import multivariate_normal
+import scipy.sparse as sps
+import scipy.sparse.linalg as spla
 from joblib import Parallel, delayed
+
 
 from .hilbert_space import EuclideanSpace, HilbertModule, Vector
 
 from .linear_operators import (
     LinearOperator,
     DiagonalSparseMatrixLinearOperator,
+    SparseMatrixLinearOperator,
 )
+from .linear_solvers import LinearSolver, IterativeLinearSolver
 
 from .affine_operators import AffineOperator
 
@@ -728,6 +733,204 @@ class GaussianMeasure:
         )
 
         return measure
+
+    def with_sparse_approximation(
+        self,
+        *,
+        threshold: float = 1e-3,
+        max_nnz: Optional[int] = None,
+        diag_rank: int = 0,
+        diag_samples: int = 0,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> GaussianMeasure:
+        """
+        Creates an approximately equivalent measure with a sparse covariance matrix
+        and an exactly factorized sparse inverse, built matrix-free.
+
+        Note:
+            This sparsified measure is intended strictly as a high-performance
+            computational surrogate for linear algebra (e.g., preconditioning).
+            Because the sparse approximation alters the true physical correlations,
+            sampling from this measure is explicitly disabled (`sample_set=False`)
+            to prevent the generation of statistically inconsistent models. Always
+            draw samples from your original, dense physics measure.
+
+        Args:
+            threshold: The relative correlation threshold below which elements are zeroed.
+            max_nnz: The maximum number of non-zeros to retain per column.
+            diag_rank: Rank of deterministic SVD deflation for the diagonal estimate.
+            diag_samples: Number of stochastic Hutchinson samples for the diagonal estimate.
+                          If both are 0, uses exact O(N) diagonal extraction.
+            parallel: If True, evaluates the operator columns in parallel.
+            n_jobs: Number of CPU cores to use.
+
+        Returns:
+            A new GaussianMeasure with sparse properties.
+        """
+        from .low_rank import deflated_diagonal
+
+        dim = self.domain.dim
+
+        if diag_rank == 0 and diag_samples == 0:
+            diag_vars = self.covariance.extract_diagonal(
+                galerkin=True, parallel=parallel, n_jobs=n_jobs
+            )
+        else:
+            diag_vars = deflated_diagonal(
+                self.covariance,
+                diag_rank,
+                diag_samples,
+                galerkin=True,
+                parallel=parallel,
+                n_jobs=n_jobs,
+            )
+
+        safe_diag = np.where(np.abs(diag_vars) < 1e-14, 1.0, np.abs(diag_vars))
+
+        scipy_op = self.covariance.matrix(galerkin=True)
+
+        def _process_column(j: int):
+            e_j = np.zeros(dim)
+            e_j[j] = 1.0
+
+            col_vals = scipy_op @ e_j
+
+            correlations = np.abs(col_vals) / np.sqrt(safe_diag * safe_diag[j])
+
+            valid_indices = np.where(correlations >= threshold)[0]
+
+            if max_nnz is not None and len(valid_indices) > max_nnz:
+                k = max_nnz - 1
+                if k > 0:
+                    corr_masked = correlations.copy()
+                    corr_masked[j] = -1.0
+                    top_k_indices = np.argpartition(corr_masked, -k)[-k:]
+                    rows = np.append(top_k_indices, j)
+                else:
+                    rows = np.array([j])
+            else:
+                if j not in valid_indices:
+                    rows = np.append(valid_indices, j)
+                else:
+                    rows = valid_indices
+
+            vals = col_vals[rows]
+            return rows.tolist(), [j] * len(rows), vals.tolist()
+
+        if parallel:
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(_process_column)(j) for j in range(dim)
+            )
+        else:
+            results = [_process_column(j) for j in range(dim)]
+
+        I_global, J_global, V_local = [], [], []
+        for rows, cols, vals in results:
+            I_global.extend(rows)
+            J_global.extend(cols)
+            V_local.extend(vals)
+
+        sparse_cov_matrix = sps.coo_matrix(
+            (V_local, (I_global, J_global)), shape=(dim, dim)
+        ).tocsc()
+
+        sparse_cov_matrix = 0.5 * (sparse_cov_matrix + sparse_cov_matrix.T)
+
+        sparse_cov_op = SparseMatrixLinearOperator.from_matrix(
+            self.covariance.domain,
+            self.covariance.codomain,
+            sparse_cov_matrix,
+            galerkin=True,
+        )
+
+        lu_factor = spla.splu(sparse_cov_matrix)
+
+        def apply_precision(x: Vector) -> Vector:
+            cx = self.covariance.codomain.to_dual(x)
+            cx_comp = self.covariance.codomain.dual.to_components(cx)
+            cy_comp = lu_factor.solve(cx_comp)
+            return self.covariance.domain.from_components(cy_comp)
+
+        sparse_inv_op = LinearOperator(
+            self.covariance.codomain,
+            self.covariance.domain,
+            apply_precision,
+            adjoint_mapping=apply_precision,
+        )
+
+        return GaussianMeasure(
+            covariance=sparse_cov_op,
+            inverse_covariance=sparse_inv_op,
+            expectation=self._expectation,
+        )
+
+    def with_regularized_inverse(
+        self,
+        solver: LinearSolver,
+        /,
+        *,
+        damping: float = 0.0,
+        preconditioner: Optional[LinearOperator] = None,
+    ) -> GaussianMeasure:
+        """
+        Returns a new GaussianMeasure with a well-defined precision operator
+        (inverse covariance) computed via Tikhonov regularization.
+
+        Args:
+            solver: The LinearSolver used to invert the regularized covariance.
+            damping: The Tikhonov regularization parameter (alpha) added to the diagonal.
+                     Defaults to 0.0.
+            preconditioner: An optional preconditioner for iterative solvers.
+
+        Returns:
+            A new GaussianMeasure equipped with an inverse covariance.
+
+        Raises:
+            ValueError: If the damping is negative.
+
+        Notes:
+            This method is only well-defined for measures on finite-dimensional
+            spaces due to the trace-class condition.
+        """
+
+        if damping < 0.0:
+            raise ValueError("Damping must be non-negative")
+
+        if damping == 0.0 and self.inverse_covariance_set:
+            return self
+
+        if damping > 0.0:
+            identity = self.domain.identity_operator()
+            regularized_covariance = self.covariance + damping * identity
+        else:
+            regularized_covariance = self.covariance
+
+        if isinstance(solver, IterativeLinearSolver):
+            inverse_covariance = solver(
+                regularized_covariance, preconditioner=preconditioner
+            )
+        else:
+            inverse_covariance = solver(regularized_covariance)
+
+        if self.sample_set and damping > 0.0:
+            std_dev = np.sqrt(damping)
+            noise_measure = GaussianMeasure.from_standard_deviation(
+                self.domain, std_dev
+            )
+
+            def new_sample() -> Vector:
+                return self.domain.add(self.sample(), noise_measure.sample())
+
+        else:
+            new_sample = self._sample if self.sample_set else None
+
+        return GaussianMeasure(
+            covariance=regularized_covariance,
+            expectation=self._expectation,
+            sample=new_sample,
+            inverse_covariance=inverse_covariance,
+        )
 
     def affine_mapping(
         self,

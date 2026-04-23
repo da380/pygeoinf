@@ -1391,7 +1391,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         max_distance: float,
         /,
         *,
-        data_error_measure: Optional[GaussianMeasure],
+        data_error_measure: Optional[GaussianMeasure] = None,
         apply_taper: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,

@@ -66,24 +66,9 @@ class LUSolver(DirectLinearSolver):
     def __init__(
         self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
     ) -> None:
-        """
-        Args:
-            galerkin (bool): If True, the Galerkin matrix representation is used.
-            parallel (bool): If True, parallel computation is used.
-            n_jobs (int): Number of parallel jobs.
-        """
         super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
-        """
-        Computes the inverse of a LinearOperator.
-
-        Args:
-            operator (LinearOperator): The operator to be inverted.
-
-        Returns:
-            LinearOperator: A new operator representing the inverse.
-        """
         assert operator.is_square
 
         matrix = operator.matrix(
@@ -94,52 +79,54 @@ class LUSolver(DirectLinearSolver):
         )
         factor = lu_factor(matrix, overwrite_a=True)
 
-        def matvec(cy: np.ndarray) -> np.ndarray:
-            return lu_solve(factor, cy, 0)
+        def apply_inv(c: np.ndarray) -> np.ndarray:
+            return lu_solve(factor, c, 0)
 
-        def rmatvec(cx: np.ndarray) -> np.ndarray:
-            return lu_solve(factor, cx, 1)
+        def apply_inv_adj(c: np.ndarray) -> np.ndarray:
+            return lu_solve(factor, c, 1)
 
-        inverse_matrix = ScipyLinOp(
-            (operator.domain.dim, operator.codomain.dim),
-            matvec=matvec,
-            rmatvec=rmatvec,
-        )
+        if self._galerkin:
+            # The inverse of a Galerkin matrix maps Dual -> Primal
+            def mapping(y: Vector) -> Vector:
+                yp = operator.codomain.to_dual(y)
+                cyp = operator.codomain.dual.to_components(yp)
+                cx = apply_inv(cyp)
+                return operator.domain.from_components(cx)
 
-        return LinearOperator.from_matrix(
-            operator.codomain, operator.domain, inverse_matrix, galerkin=self._galerkin
-        )
+            def adjoint_mapping(x: Vector) -> Vector:
+                xp = operator.domain.to_dual(x)
+                cxp = operator.domain.dual.to_components(xp)
+                cy = apply_inv_adj(cxp)
+                return operator.codomain.from_components(cy)
+
+            return LinearOperator(
+                operator.codomain,
+                operator.domain,
+                mapping,
+                adjoint_mapping=adjoint_mapping,
+            )
+        else:
+            inverse_matrix = ScipyLinOp(
+                (operator.domain.dim, operator.codomain.dim),
+                matvec=apply_inv,
+                rmatvec=apply_inv_adj,
+            )
+            return LinearOperator.from_matrix(
+                operator.codomain, operator.domain, inverse_matrix, galerkin=False
+            )
 
 
 class CholeskySolver(DirectLinearSolver):
     """
     A direct linear solver based on Cholesky decomposition.
-
-    It is assumed that the operator is self-adjoint and its matrix
-    representation is positive-definite.
     """
 
     def __init__(
         self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
     ) -> None:
-        """
-        Args:
-            galerkin (bool): If True, the Galerkin matrix representation is used.
-            parallel (bool): If True, parallel computation is used.
-            n_jobs (int): Number of parallel jobs.
-        """
         super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
-        """
-        Computes the inverse of a self-adjoint LinearOperator.
-
-        Args:
-            operator (LinearOperator): The self-adjoint operator to be inverted.
-
-        Returns:
-            LinearOperator: A new operator representing the inverse.
-        """
         assert operator.is_automorphism
 
         matrix = operator.matrix(
@@ -150,26 +137,34 @@ class CholeskySolver(DirectLinearSolver):
         )
         factor = cho_factor(matrix, overwrite_a=False)
 
-        def matvec(cy: np.ndarray) -> np.ndarray:
-            return cho_solve(factor, cy)
+        def solve_galerkin(c: np.ndarray) -> np.ndarray:
+            return cho_solve(factor, c)
 
-        inverse_matrix = ScipyLinOp(
-            (operator.domain.dim, operator.codomain.dim), matvec=matvec, rmatvec=matvec
-        )
+        if self._galerkin:
 
-        return LinearOperator.from_matrix(
-            operator.domain, operator.domain, inverse_matrix, galerkin=self._galerkin
-        )
+            def mapping(y: Vector) -> Vector:
+                yp = operator.domain.to_dual(y)
+                cyp = operator.domain.dual.to_components(yp)
+                cx = solve_galerkin(cyp)
+                return operator.domain.from_components(cx)
+
+            return LinearOperator(
+                operator.domain, operator.domain, mapping, adjoint_mapping=mapping
+            )
+        else:
+            inverse_matrix = ScipyLinOp(
+                (operator.domain.dim, operator.domain.dim),
+                matvec=solve_galerkin,
+                rmatvec=solve_galerkin,
+            )
+            return LinearOperator.from_matrix(
+                operator.domain, operator.domain, inverse_matrix, galerkin=False
+            )
 
 
 class EigenSolver(DirectLinearSolver):
     """
     A direct linear solver based on the eigendecomposition of a symmetric operator.
-
-    This solver is robust for symmetric operators that may be singular or
-    numerically ill-conditioned. In such cases, it computes a pseudo-inverse by
-    regularizing the eigenvalues, treating those close to zero (relative to the largest
-    eigenvalue) as exactly zero.
     """
 
     def __init__(
@@ -181,22 +176,10 @@ class EigenSolver(DirectLinearSolver):
         n_jobs: int = -1,
         rtol: float = 1e-12,
     ) -> None:
-        """
-        Args:
-            galerkin (bool): If True, the Galerkin matrix representation is used.
-            parallel (bool): If True, parallel computation is used.
-            n_jobs (int): Number of parallel jobs.
-            rtol (float): Relative tolerance for treating eigenvalues as zero.
-                An eigenvalue `s` is treated as zero if
-                `abs(s) < rtol * max(abs(eigenvalues))`.
-        """
         super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
         self._rtol = rtol
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
-        """
-        Computes the pseudo-inverse of a self-adjoint LinearOperator.
-        """
         assert operator.is_automorphism
 
         matrix = operator.matrix(
@@ -209,10 +192,7 @@ class EigenSolver(DirectLinearSolver):
         eigenvalues, eigenvectors = eigh(matrix)
 
         max_abs_eigenvalue = np.max(np.abs(eigenvalues))
-        if max_abs_eigenvalue > 0:
-            threshold = self._rtol * max_abs_eigenvalue
-        else:
-            threshold = 0
+        threshold = self._rtol * max_abs_eigenvalue if max_abs_eigenvalue > 0 else 0
 
         inv_eigenvalues = np.where(
             np.abs(eigenvalues) > threshold,
@@ -220,18 +200,31 @@ class EigenSolver(DirectLinearSolver):
             0.0,
         )
 
-        def matvec(cy: np.ndarray) -> np.ndarray:
+        def solve_galerkin(cy: np.ndarray) -> np.ndarray:
             z = eigenvectors.T @ cy
             w = inv_eigenvalues * z
             return eigenvectors @ w
 
-        inverse_matrix = ScipyLinOp(
-            (operator.domain.dim, operator.codomain.dim), matvec=matvec, rmatvec=matvec
-        )
+        if self._galerkin:
 
-        return LinearOperator.from_matrix(
-            operator.domain, operator.domain, inverse_matrix, galerkin=self._galerkin
-        )
+            def mapping(y: Vector) -> Vector:
+                yp = operator.domain.to_dual(y)
+                cyp = operator.domain.dual.to_components(yp)
+                cx = solve_galerkin(cyp)
+                return operator.domain.from_components(cx)
+
+            return LinearOperator(
+                operator.domain, operator.domain, mapping, adjoint_mapping=mapping
+            )
+        else:
+            inverse_matrix = ScipyLinOp(
+                (operator.domain.dim, operator.domain.dim),
+                matvec=solve_galerkin,
+                rmatvec=solve_galerkin,
+            )
+            return LinearOperator.from_matrix(
+                operator.domain, operator.domain, inverse_matrix, galerkin=False
+            )
 
 
 class IterativeLinearSolver(LinearSolver):

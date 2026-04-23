@@ -307,6 +307,196 @@ class TestGaussianMeasure:
         ):
             measure.kl_divergence(other_measure)
 
+    def test_with_regularized_inverse_zero_damping(self, measure: GaussianMeasure):
+        """
+        Tests that calling with_regularized_inverse with 0.0 damping leaves
+        the covariance unchanged and correctly assigns the inverse.
+        """
+        from pygeoinf.linear_solvers import CholeskySolver
+
+        # We use a direct solver for easy verification
+        solver = CholeskySolver(galerkin=True)
+
+        # Call with 0.0 damping
+        reg_measure = measure.with_regularized_inverse(solver, damping=0.0)
+
+        assert reg_measure.inverse_covariance_set
+
+        # Covariance should be identical to the original
+        orig_cov = measure.covariance.matrix(dense=True, galerkin=True)
+        reg_cov = reg_measure.covariance.matrix(dense=True, galerkin=True)
+        assert np.allclose(orig_cov, reg_cov)
+
+        # Inverse should be mathematically correct: C_inv @ C = I
+        inv_cov = reg_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        identity = np.eye(measure.domain.dim)
+        assert np.allclose(inv_cov @ reg_cov, identity, atol=1e-7)
+
+    def test_with_regularized_inverse_positive_damping(self, measure: GaussianMeasure):
+        """
+        Tests that calling with_regularized_inverse with positive damping
+        correctly shifts the covariance, computes the inverse, and injects
+        white noise into the sampler so the statistics remain consistent.
+        """
+        from pygeoinf.linear_solvers import CholeskySolver
+
+        solver = CholeskySolver(galerkin=True)
+        damping = 0.5
+
+        # Call with positive damping
+        reg_measure = measure.with_regularized_inverse(solver, damping=damping)
+
+        assert reg_measure.inverse_covariance_set
+
+        # 1. Covariance should be shifted by damping * I
+        orig_cov = measure.covariance.matrix(dense=True, galerkin=True)
+        expected_reg_cov = orig_cov + damping * np.eye(measure.domain.dim)
+        actual_reg_cov = reg_measure.covariance.matrix(dense=True, galerkin=True)
+
+        assert np.allclose(actual_reg_cov, expected_reg_cov)
+
+        # 2. Inverse should be correct for the shifted covariance: C_inv @ C_reg = I
+        inv_cov = reg_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        identity = np.eye(measure.domain.dim)
+        assert np.allclose(inv_cov @ actual_reg_cov, identity, atol=1e-7)
+
+        # 3. Verify sampling statistics reflect the injected white noise
+        if not reg_measure.sample_set:
+            pytest.skip("Sampling is not implemented for this measure.")
+
+        n_samples = 5000
+        samples = reg_measure.samples(n_samples)
+        sample_components = np.array([measure.domain.to_components(s) for s in samples])
+
+        # Mean should remain the exact same as the original measure
+        sample_mean = np.mean(sample_components, axis=0)
+        expected_mean = measure.domain.to_components(measure.expectation)
+        assert np.allclose(sample_mean, expected_mean, atol=0.1)
+
+        # Sample covariance should match the heavily shifted covariance
+        sample_covariance = np.cov(sample_components.T)
+        assert np.allclose(sample_covariance, expected_reg_cov, atol=0.15)
+
+    def test_with_sparse_approximation_exactness(self, measure: GaussianMeasure):
+        """
+        Tests that threshold=0.0 recovers the original dense matrix (stored in
+        a sparse format) and provides an exact SuperLU inverse.
+        """
+        # All arguments passed explicitly as keywords
+        sparse_measure = measure.with_sparse_approximation(threshold=0.0)
+
+        assert sparse_measure.inverse_covariance_set
+
+        # Check expectation is preserved exactly
+        assert np.allclose(
+            measure.domain.to_components(sparse_measure.expectation),
+            measure.domain.to_components(measure.expectation),
+        )
+
+        # Check covariance is identical
+        orig_cov = measure.covariance.matrix(dense=True, galerkin=True)
+        sparse_cov = sparse_measure.covariance.matrix(dense=True, galerkin=True)
+        assert np.allclose(orig_cov, sparse_cov)
+
+        # Check inverse is mathematically correct: C_inv @ C = I
+        inv_cov = sparse_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        identity = np.eye(measure.domain.dim)
+        assert np.allclose(inv_cov @ sparse_cov, identity, atol=1e-7)
+
+    def test_with_sparse_approximation_thresholding(self, space: HilbertSpace):
+        """
+        Tests that a high threshold accurately strips weakly correlated
+        off-diagonal elements, successfully diagonalizing the matrix.
+        """
+        dim = space.dim
+        # Create a dense matrix with 1.0 on diag and 0.5 on off-diags
+        A = np.ones((dim, dim)) * 0.5 + np.eye(dim) * 0.5
+        cov_mat = A @ A.T
+        measure = GaussianMeasure.from_covariance_matrix(space, cov_mat)
+
+        # A high threshold (e.g. 0.95) should drop all off-diagonals
+        sparse_measure = measure.with_sparse_approximation(threshold=0.95)
+        sparse_cov = sparse_measure.covariance.matrix(dense=True, galerkin=True)
+
+        # The result should be strictly diagonal
+        diag_only = np.diag(np.diag(cov_mat))
+        assert np.allclose(sparse_cov, diag_only)
+
+        # Ensure the sparse LU inverse works on the diagonalized matrix
+        inv_cov = sparse_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        assert np.allclose(inv_cov @ sparse_cov, np.eye(dim), atol=1e-7)
+
+    def test_with_sparse_approximation_max_nnz(self, space: HilbertSpace):
+        """
+        Tests that max_nnz correctly limits the non-zeros per column,
+        prioritizing the largest correlations and maintaining a valid inverse.
+        """
+        dim = space.dim
+        if dim < 4:
+            pytest.skip("Need at least 4 dimensions to test max_nnz truncation.")
+
+        # Dense matrix with varying off-diagonal magnitudes
+        cov_mat = np.random.rand(dim, dim)
+        cov_mat = cov_mat @ cov_mat.T + np.eye(dim)
+        measure = GaussianMeasure.from_covariance_matrix(space, cov_mat)
+
+        # Keep only the diagonal and the 1 largest off-diagonal per column
+        sparse_measure = measure.with_sparse_approximation(threshold=0.0, max_nnz=2)
+        sparse_cov = sparse_measure.covariance.matrix(dense=True, galerkin=True)
+
+        # Verify the matrix is actually sparser than the original
+        assert np.count_nonzero(sparse_cov) < (dim * dim)
+
+        # Check the exact inverse is still properly bound to the truncated matrix
+        inv_cov = sparse_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        assert np.allclose(inv_cov @ sparse_cov, np.eye(dim), atol=1e-7)
+
+    def test_with_sparse_approximation_parallel(self, measure: GaussianMeasure):
+        """
+        Tests that parallel extraction yields the exact same assembled
+        sparse matrix as the serial implementation.
+        """
+        measure_serial = measure.with_sparse_approximation(
+            threshold=0.5, parallel=False
+        )
+        measure_parallel = measure.with_sparse_approximation(
+            threshold=0.5, parallel=True, n_jobs=2
+        )
+
+        cov_serial = measure_serial.covariance.matrix(dense=True, galerkin=True)
+        cov_parallel = measure_parallel.covariance.matrix(dense=True, galerkin=True)
+
+        assert np.allclose(cov_serial, cov_parallel)
+
+    def test_with_sparse_approximation_stochastic_diag(self, space: HilbertSpace):
+        """
+        Tests that using the stochastic deflated diagonal estimation
+        (diag_rank > 0, diag_samples > 0) executes correctly and yields a
+        valid sparse approximation.
+        """
+        dim = space.dim
+        if dim < 4:
+            pytest.skip(
+                "Need higher dimensions to test stochastic rank deflation safely."
+            )
+
+        A = np.random.rand(dim, dim)
+        cov_mat = A @ A.T + np.eye(dim) * 0.1
+        measure = GaussianMeasure.from_covariance_matrix(space, cov_mat)
+
+        # Test with a low-rank SVD + Hutchinson trace estimator instead of exact extraction
+        sparse_measure = measure.with_sparse_approximation(
+            threshold=0.1, diag_rank=1, diag_samples=5
+        )
+
+        assert sparse_measure.inverse_covariance_set
+
+        sparse_cov = sparse_measure.covariance.matrix(dense=True, galerkin=True)
+        inv_cov = sparse_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+
+        # Verify the SuperLU inverse is mathematically sound despite the stochastic scaling
+        assert np.allclose(inv_cov @ sparse_cov, np.eye(dim), atol=1e-7)
+
 
 class TestDeflatedPointwiseVariance:
     """

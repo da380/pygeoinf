@@ -169,7 +169,7 @@ def main():
     noise_group.add_argument(
         "--noise-amplitude-factor",
         type=float,
-        default=0.1,
+        default=0.3,
         help="Relative amplitude of the noise",
     )
     noise_group.add_argument(
@@ -211,7 +211,7 @@ def main():
     precond_group.add_argument(
         "--threshold",
         type=float,
-        default=10.0,
+        default=4.0,
         help="Relative distance used in forming blocks or calculating max sparse distance",
     )
     precond_group.add_argument(
@@ -324,7 +324,7 @@ def main():
                     observation_points,
                     args.prior_scale,
                     args.prior_std,
-                    0.0,
+                    args.noise_scale_factor * args.prior_scale,
                     args.noise_amplitude_factor * args.prior_std,
                 )
             )
@@ -378,7 +378,26 @@ def main():
 
         elif args.precond == "woodbury":
             print("Forming model-space preconditioner")
-            preconditioner = surrogate_inv.woodbury_data_preconditioner()
+            woodbury_solver = inf.CholeskySolver(galerkin=True)
+
+            noise_std = args.noise_amplitude_factor * args.prior_std
+
+            surrogate_noise_diag = inf.GaussianMeasure.from_standard_deviation(
+                surrogate_fwd_op.codomain, noise_std
+            )
+
+            damped_surrogate_prior = surrogate_prior.with_regularized_inverse(
+                woodbury_solver, damping=1.0e-6
+            )
+
+            damped_surrogate_inv = surrogate_inv.surrogate_inversion(
+                alternate_prior_measure=damped_surrogate_prior,
+                alternate_data_error_measure=surrogate_noise_diag,
+            )
+
+            preconditioner = damped_surrogate_inv.woodbury_data_preconditioner(
+                woodbury_solver
+            )
 
         elif args.precond == "distance-localized":
             print("Building distance-localized sparse matrix...")
@@ -397,7 +416,8 @@ def main():
     # 5. Bayesian Inversion & Plotting
     # ==========================================
     print("Solving linear system...")
-    solver = inf.CGSolver()
+
+    solver = inf.CGSolver(callback=bayesian_inversion.normal_residual_callback(data))
     model_posterior_measure = bayesian_inversion.model_posterior_measure(
         data, solver, preconditioner=preconditioner
     )
@@ -408,7 +428,7 @@ def main():
     # --- Modernized Plotting Section ---
     # ==========================================
 
-    fig, axes = plt.subplots(
+    _, axes = plt.subplots(
         2,
         2,
         figsize=(16, 12),

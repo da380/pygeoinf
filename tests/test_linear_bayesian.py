@@ -8,7 +8,7 @@ from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
-from pygeoinf.linear_solvers import CholeskySolver, ResidualTrackingCallback
+from pygeoinf.linear_solvers import CholeskySolver, LUSolver, ResidualTrackingCallback
 from pygeoinf.linear_bayesian import (
     LinearBayesianInversion,
 )
@@ -544,9 +544,10 @@ class TestWoodburyPreconditioner:
         of the dense data-space normal operator.
         """
         inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+        solver = LUSolver(galerkin=False)
 
-        # 1. Compute the Woodbury preconditioner (with 0 regularization for exact match)
-        woodbury_precon = inversion.woodbury_data_preconditioner(regularization=0.0)
+        # 1. Compute the Woodbury preconditioner
+        woodbury_precon = inversion.woodbury_data_preconditioner(solver)
 
         # 2. Extract exact dense matrices
         A = forward_problem.forward_operator.matrix(dense=True)
@@ -576,19 +577,18 @@ class TestWoodburyPreconditioner:
 
         # Create an arbitrary "alternate" forward operator (e.g., scaled by 0.5)
         alt_A = 0.5 * forward_problem.forward_operator
+        solver = LUSolver(galerkin=False)
 
         # 1. Generate via the chained method
-        chained_precon = inversion.surrogate_woodbury_preconditioner(
-            alternate_forward_operator=alt_A, regularization=0.0
+        chained_precon = inversion.surrogate_woodbury_data_preconditioner(
+            solver, alternate_forward_operator=alt_A
         )
 
         # 2. Generate manually
         manual_surrogate = inversion.surrogate_inversion(
             alternate_forward_operator=alt_A
         )
-        manual_precon = manual_surrogate.woodbury_data_preconditioner(
-            regularization=0.0
-        )
+        manual_precon = manual_surrogate.woodbury_data_preconditioner(solver)
 
         # 3. Compare matrices
         assert np.allclose(
@@ -603,9 +603,10 @@ class TestWoodburyPreconditioner:
         fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
         prior = GaussianMeasure.from_standard_deviation(fp_no_noise.model_space, 1.0)
         inversion = LinearBayesianInversion(fp_no_noise, prior)
+        solver = LUSolver(galerkin=False)
 
         with pytest.raises(ValueError, match="Data error measure must be set"):
-            inversion.woodbury_data_preconditioner()
+            inversion.woodbury_data_preconditioner(solver)
 
 
 # =============================================================================
@@ -804,3 +805,83 @@ class TestBayesianParameterizedInversion:
         assert isinstance(
             surrogate.model_prior_measure.covariance, DenseMatrixLinearOperator
         )
+
+
+class TestWoodburyModelPreconditioner:
+    """Tests for the model-space Woodbury matrix identity preconditioner."""
+
+    def test_woodbury_model_exact_equivalence(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the model-space Woodbury preconditioner exactly matches
+        the inverse of the dense model-space normal operator.
+        """
+        inversion = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="model_space"
+        )
+        solver = LUSolver(galerkin=False)
+
+        # 1. Compute the Woodbury model-space preconditioner
+        woodbury_precon = inversion.woodbury_model_preconditioner(solver)
+
+        # 2. Extract exact dense matrices
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        Q_inv = np.linalg.inv(Q)
+        R_inv = np.linalg.inv(R)
+
+        # 3. Calculate exact inverse of model-space normal operator: (Q^-1 + A^T R^-1 A)^-1
+        exact_normal_matrix = Q_inv + A.T @ R_inv @ A
+        exact_inverse_matrix = np.linalg.inv(exact_normal_matrix)
+
+        # 4. Extract dense matrix from the Woodbury operator
+        woodbury_matrix = woodbury_precon.matrix(dense=True)
+
+        # 5. Compare
+        assert np.allclose(woodbury_matrix, exact_inverse_matrix, atol=1e-8)
+
+    def test_surrogate_woodbury_model_chaining(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the surrogate wrapper correctly chains the surrogate
+        inversion and the model-space Woodbury preconditioner extraction.
+        """
+        inversion = LinearBayesianInversion(forward_problem, model_prior_measure)
+
+        alt_A = 0.5 * forward_problem.forward_operator
+        solver = LUSolver(galerkin=False)
+
+        chained_precon = inversion.surrogate_woodbury_model_preconditioner(
+            solver, alternate_forward_operator=alt_A
+        )
+
+        manual_surrogate = inversion.surrogate_inversion(
+            alternate_forward_operator=alt_A
+        )
+        manual_precon = manual_surrogate.woodbury_model_preconditioner(solver)
+
+        assert np.allclose(
+            chained_precon.matrix(dense=True), manual_precon.matrix(dense=True)
+        )
+
+    def test_woodbury_model_requires_data_error(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Verifies that the model-space Woodbury identity fails safely if no data error measure is set.
+        """
+        fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
+        prior = GaussianMeasure.from_standard_deviation(fp_no_noise.model_space, 1.0)
+        inversion = LinearBayesianInversion(fp_no_noise, prior)
+        solver = LUSolver(galerkin=False)
+
+        with pytest.raises(ValueError, match="Data error measure must be set"):
+            inversion.woodbury_model_preconditioner(solver)

@@ -717,20 +717,37 @@ class LinearBayesianInversion(LinearInversion):
 
     def woodbury_data_preconditioner(
         self,
+        solver: LinearSolver,
         /,
         *,
-        regularization: float = 1e-6,
-        parallel: bool = False,
-        n_jobs: int = -1,
+        prior_solver: Optional[LinearSolver] = None,
+        noise_solver: Optional[LinearSolver] = None,
     ) -> LinearOperator:
         """
         Constructs a data-space preconditioner using the Woodbury matrix identity.
 
         Data Space Normal Operator: N_d = A Q A* + R
         Woodbury Identity: N_d^-1 = R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1
-        """
-        from .linear_solvers import LUSolver
 
+        Note:
+            This method assumes the prior (Q) and noise (R) measures either already
+            have well-defined inverse covariances, or are well-conditioned enough
+            to be inverted by the provided solvers. If your prior is an unbounded
+            operator on a function space, use `Q.with_regularized_inverse()`
+            before passing it to the inversion.
+
+        Args:
+            solver: The LinearSolver used to invert the inner Woodbury operator (N_m).
+            prior_solver: An optional solver used to explicitly invert the prior
+                          covariance (Q) if its inverse is not already set.
+                          Defaults to `solver` if not provided.
+            noise_solver: An optional solver used to explicitly invert the data
+                          error covariance (R) if its inverse is not already set.
+                          Defaults to `solver` if not provided.
+
+        Returns:
+            A LinearOperator representing the Woodbury-approximated inverse.
+        """
         A = self.forward_problem.forward_operator
         Q = self.model_prior_measure
 
@@ -740,36 +757,66 @@ class LinearBayesianInversion(LinearInversion):
             )
         R = self.forward_problem.data_error_measure
 
+        # 1. Invert the noise covariance R
         if R.inverse_covariance_set:
             R_inv = R.inverse_covariance
         else:
-            r_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
+            r_solver = noise_solver if noise_solver is not None else solver
             R_inv = r_solver(R.covariance)
 
+        # 2. Invert the prior covariance Q
         if Q.inverse_covariance_set:
             Q_inv = Q.inverse_covariance
         else:
-            Q_mat = Q.covariance.matrix(
-                dense=True, galerkin=False, parallel=parallel, n_jobs=n_jobs
-            )
+            q_solver = prior_solver if prior_solver is not None else solver
+            Q_inv = q_solver(Q.covariance)
 
-            reg_val = regularization * np.max(np.abs(np.diag(Q_mat)))
-            if reg_val == 0.0:
-                reg_val = regularization
-            Q_mat += reg_val * np.eye(Q.domain.dim)
-
-            Q_reg_op = LinearOperator.from_matrix(
-                Q.domain, Q.domain, Q_mat, galerkin=False
-            )
-            q_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
-            Q_inv = q_solver(Q_reg_op)
-
+        # 3. Assemble and invert the inner Woodbury operator (N_m)
         N_m = Q_inv + A.adjoint @ R_inv @ A
+        N_m_inv = solver(N_m)
 
-        nm_solver = LUSolver(galerkin=False, parallel=parallel, n_jobs=n_jobs)
-        N_m_inv = nm_solver(N_m)
-
+        # 4. Return the assembled preconditioner
         return R_inv - R_inv @ A @ N_m_inv @ A.adjoint @ R_inv
+
+    def woodbury_model_preconditioner(
+        self,
+        solver: LinearSolver,
+        /,
+    ) -> LinearOperator:
+        """
+        Constructs a model-space preconditioner using the Woodbury matrix identity.
+
+        Model Space Normal Operator: N_m = Q^-1 + A* R^-1 A
+        Woodbury Identity: N_m^-1 = Q - Q A* (R + A Q A*)^-1 A Q
+
+        Note:
+            Unlike the data-space Woodbury identity, this formulation does not
+            require evaluating the explicit inverses of the prior (Q) or noise (R)
+            covariances, making it highly robust for unbounded or complex measures.
+
+        Args:
+            solver: The LinearSolver used to invert the inner Woodbury operator (N_d).
+
+        Returns:
+            A LinearOperator representing the Woodbury-approximated inverse.
+        """
+        A = self.forward_problem.forward_operator
+        Q = self.model_prior_measure.covariance
+
+        if not self.forward_problem.data_error_measure_set:
+            raise ValueError(
+                "Data error measure must be set for the Woodbury identity."
+            )
+        R = self.forward_problem.data_error_measure.covariance
+
+        # 1. Assemble the inner data-space operator (N_d)
+        N_d = R + A @ Q @ A.adjoint
+
+        # 2. Invert the inner operator
+        N_d_inv = solver(N_d)
+
+        # 3. Assemble and return the preconditioner
+        return Q - Q @ A.adjoint @ N_d_inv @ A @ Q
 
     # =========================================================================
     # Surrogates & Parameterization
@@ -869,16 +916,16 @@ class LinearBayesianInversion(LinearInversion):
         )
         return solver(surrogate_inv.normal_operator)
 
-    def surrogate_woodbury_preconditioner(
+    def surrogate_woodbury_data_preconditioner(
         self,
+        solver: LinearSolver,
         /,
         *,
         alternate_forward_operator: Optional[LinearOperator] = None,
         alternate_prior_measure: Optional[GaussianMeasure] = None,
         alternate_data_error_measure: Optional[GaussianMeasure] = None,
-        regularization: float = 1e-6,
-        parallel: bool = False,
-        n_jobs: int = -1,
+        prior_solver: Optional[LinearSolver] = None,
+        noise_solver: Optional[LinearSolver] = None,
     ) -> LinearOperator:
         """
         Builds a data-space preconditioner by applying the Woodbury matrix identity
@@ -887,13 +934,18 @@ class LinearBayesianInversion(LinearInversion):
         This method chains the construction of the surrogate model with the
         extraction of the Woodbury inverse in one step.
 
+        Note:
+            Ensure that any alternate measures provided have well-defined inverse
+            covariances, or use `.with_regularized_inverse()` on them before
+            passing them to this method.
+
         Args:
+            solver: The LinearSolver used to invert the inner Woodbury operator.
             alternate_forward_operator: An optional simplified forward operator.
             alternate_prior_measure: An optional simplified prior measure.
             alternate_data_error_measure: An optional simplified data error measure.
-            regularization: Tikhonov factor for prior regularization.
-            parallel: If True, dense matrix calculations are done in parallel.
-            n_jobs: Number of parallel jobs.
+            prior_solver: Optional solver for the prior covariance.
+            noise_solver: Optional solver for the noise covariance.
 
         Returns:
             A LinearOperator representing the Woodbury-approximated inverse.
@@ -904,8 +956,37 @@ class LinearBayesianInversion(LinearInversion):
             alternate_data_error_measure=alternate_data_error_measure,
         )
         return surrogate_inv.woodbury_data_preconditioner(
-            regularization=regularization, parallel=parallel, n_jobs=n_jobs
+            solver, prior_solver=prior_solver, noise_solver=noise_solver
         )
+
+    def surrogate_woodbury_model_preconditioner(
+        self,
+        solver: LinearSolver,
+        /,
+        *,
+        alternate_forward_operator: Optional[LinearOperator] = None,
+        alternate_prior_measure: Optional[GaussianMeasure] = None,
+        alternate_data_error_measure: Optional[GaussianMeasure] = None,
+    ) -> LinearOperator:
+        """
+        Builds a model-space preconditioner by applying the Woodbury matrix identity
+        to a simplified surrogate inverse problem.
+
+        Args:
+            solver: The LinearSolver used to invert the inner Woodbury operator.
+            alternate_forward_operator: An optional simplified forward operator.
+            alternate_prior_measure: An optional simplified prior measure.
+            alternate_data_error_measure: An optional simplified data error measure.
+
+        Returns:
+            A LinearOperator representing the Woodbury-approximated inverse.
+        """
+        surrogate_inv = self.surrogate_inversion(
+            alternate_forward_operator=alternate_forward_operator,
+            alternate_prior_measure=alternate_prior_measure,
+            alternate_data_error_measure=alternate_data_error_measure,
+        )
+        return surrogate_inv.woodbury_model_preconditioner(solver)
 
     def low_rank_surrogate(
         self,
@@ -1020,6 +1101,51 @@ class LinearBayesianInversion(LinearInversion):
         )
 
         new_prior = parameter_prior
+        if dense or target_formalism == "model_space":
+            new_prior = new_prior.with_dense_covariance(
+                parallel=parallel, n_jobs=n_jobs
+            )
+
+        return type(self)(new_fp, new_prior, formalism=target_formalism)
+
+    def data_reduced_inversion(
+        self,
+        reduction_operator: LinearOperator,
+        /,
+        *,
+        reduced_data_error_measure: Optional[GaussianMeasure] = None,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        formalism: Optional[Literal["model_space", "data_space"]] = None,
+    ) -> LinearBayesianInversion:
+        """
+        Constructs a surrogate of the Bayesian inversion using a reduced data space.
+
+        Args:
+            reduction_operator: A LinearOperator mapping from the current
+                data space to the new, reduced data space.
+            reduced_data_error_measure: An optional data error measure defined on
+                the reduced data space.
+            dense: If True, computes and stores operators as dense matrices.
+            parallel: If True, computes the dense matrices in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+            formalism: An optional override for the formalism of the new inversion.
+
+        Returns:
+            A new LinearBayesianInversion instance operating on the reduced data space.
+        """
+        target_formalism = formalism or self.formalism
+
+        new_fp = self.forward_problem.data_reduced_problem(
+            reduction_operator,
+            reduced_data_error_measure=reduced_data_error_measure,
+            dense=dense,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        new_prior = self.model_prior_measure
         if dense or target_formalism == "model_space":
             new_prior = new_prior.with_dense_covariance(
                 parallel=parallel, n_jobs=n_jobs

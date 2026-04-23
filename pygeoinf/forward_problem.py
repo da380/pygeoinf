@@ -362,11 +362,9 @@ class LinearForwardProblem(ForwardProblem):
 
         new_op = self.forward_operator @ parameterization
 
-        # 1. Densify the forward operator
         if dense:
             new_op = new_op.with_dense_matrix(parallel=parallel, n_jobs=n_jobs)
 
-        # 2. Densify the data error measure (if it exists)
         new_error_measure = self._data_error_measure
         if new_error_measure is not None and dense:
             new_error_measure = new_error_measure.with_dense_covariance(
@@ -374,3 +372,61 @@ class LinearForwardProblem(ForwardProblem):
             )
 
         return LinearForwardProblem(new_op, data_error_measure=new_error_measure)
+
+    def data_reduced_problem(
+        self,
+        reduction_operator: LinearOperator,
+        /,
+        *,
+        reduced_data_error_measure: Optional[GaussianMeasure] = None,
+        dense: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> "LinearForwardProblem":
+        """
+        Creates a new forward problem by applying a reduction (or sketching)
+        operator to the data space.
+
+        Args:
+            reduction_operator: A LinearOperator mapping from the current
+                data space to the new reduced data space.
+            reduced_data_error_measure: An optional data error measure on the
+                reduced data space. If not provided, the original data error
+                measure is pushed forward automatically.
+            dense: If True, computes and stores operators as dense matrices.
+            parallel: If True, computes the dense matrices in parallel.
+            n_jobs: Number of CPU cores to use. -1 means all available.
+
+        Returns:
+            A new LinearForwardProblem operating in the reduced data space.
+        """
+        if reduction_operator.domain != self.data_space:
+            raise ValueError(
+                "The domain of the reduction operator must match "
+                "the data space of the forward problem."
+            )
+
+        new_op = reduction_operator @ self.forward_operator
+        if dense:
+            new_op = new_op.with_dense_matrix(parallel=parallel, n_jobs=n_jobs)
+
+        if reduced_data_error_measure is not None:
+            if reduced_data_error_measure.domain != reduction_operator.codomain:
+                raise ValueError(
+                    "The domain of the reduced data error measure must match "
+                    "the codomain of the reduction operator."
+                )
+            new_error_measure = reduced_data_error_measure
+        else:
+            new_error_measure = self._data_error_measure
+            if new_error_measure is not None:
+                new_error_measure = new_error_measure.affine_mapping(
+                    operator=reduction_operator
+                )
+
+        if new_error_measure is not None and dense:
+            new_error_measure = new_error_measure.with_dense_covariance(
+                parallel=parallel, n_jobs=n_jobs
+            )
+
+        return type(self)(new_op, data_error_measure=new_error_measure)
