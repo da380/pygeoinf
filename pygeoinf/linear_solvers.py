@@ -56,6 +56,46 @@ class DirectLinearSolver(LinearSolver):
         self._parallel: bool = parallel
         self._n_jobs: int = n_jobs
 
+    def _build_inverse_operator(
+        self,
+        operator: LinearOperator,
+        solve_func: Callable[[np.ndarray], np.ndarray],
+        solve_adj_func: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    ) -> LinearOperator:
+        """Helper to wrap array-based solve functions into a LinearOperator."""
+        if solve_adj_func is None:
+            solve_adj_func = solve_func
+
+        if self._galerkin:
+
+            def mapping(y: Vector) -> Vector:
+                yp = operator.codomain.to_dual(y)
+                cyp = operator.codomain.dual.to_components(yp)
+                cx = solve_func(cyp)
+                return operator.domain.from_components(cx)
+
+            def adjoint_mapping(x: Vector) -> Vector:
+                xp = operator.domain.to_dual(x)
+                cxp = operator.domain.dual.to_components(xp)
+                cy = solve_adj_func(cxp)
+                return operator.codomain.from_components(cy)
+
+            return LinearOperator(
+                operator.codomain,
+                operator.domain,
+                mapping,
+                adjoint_mapping=adjoint_mapping,
+            )
+        else:
+            inverse_matrix = ScipyLinOp(
+                (operator.domain.dim, operator.codomain.dim),
+                matvec=solve_func,
+                rmatvec=solve_adj_func,
+            )
+            return LinearOperator.from_matrix(
+                operator.codomain, operator.domain, inverse_matrix, galerkin=False
+            )
+
 
 class LUSolver(DirectLinearSolver):
     """
@@ -85,35 +125,7 @@ class LUSolver(DirectLinearSolver):
         def apply_inv_adj(c: np.ndarray) -> np.ndarray:
             return lu_solve(factor, c, 1)
 
-        if self._galerkin:
-            # The inverse of a Galerkin matrix maps Dual -> Primal
-            def mapping(y: Vector) -> Vector:
-                yp = operator.codomain.to_dual(y)
-                cyp = operator.codomain.dual.to_components(yp)
-                cx = apply_inv(cyp)
-                return operator.domain.from_components(cx)
-
-            def adjoint_mapping(x: Vector) -> Vector:
-                xp = operator.domain.to_dual(x)
-                cxp = operator.domain.dual.to_components(xp)
-                cy = apply_inv_adj(cxp)
-                return operator.codomain.from_components(cy)
-
-            return LinearOperator(
-                operator.codomain,
-                operator.domain,
-                mapping,
-                adjoint_mapping=adjoint_mapping,
-            )
-        else:
-            inverse_matrix = ScipyLinOp(
-                (operator.domain.dim, operator.codomain.dim),
-                matvec=apply_inv,
-                rmatvec=apply_inv_adj,
-            )
-            return LinearOperator.from_matrix(
-                operator.codomain, operator.domain, inverse_matrix, galerkin=False
-            )
+        return self._build_inverse_operator(operator, apply_inv, apply_inv_adj)
 
 
 class CholeskySolver(DirectLinearSolver):
@@ -140,26 +152,7 @@ class CholeskySolver(DirectLinearSolver):
         def solve_galerkin(c: np.ndarray) -> np.ndarray:
             return cho_solve(factor, c)
 
-        if self._galerkin:
-
-            def mapping(y: Vector) -> Vector:
-                yp = operator.domain.to_dual(y)
-                cyp = operator.domain.dual.to_components(yp)
-                cx = solve_galerkin(cyp)
-                return operator.domain.from_components(cx)
-
-            return LinearOperator(
-                operator.domain, operator.domain, mapping, adjoint_mapping=mapping
-            )
-        else:
-            inverse_matrix = ScipyLinOp(
-                (operator.domain.dim, operator.domain.dim),
-                matvec=solve_galerkin,
-                rmatvec=solve_galerkin,
-            )
-            return LinearOperator.from_matrix(
-                operator.domain, operator.domain, inverse_matrix, galerkin=False
-            )
+        return self._build_inverse_operator(operator, solve_galerkin)
 
 
 class EigenSolver(DirectLinearSolver):
@@ -190,7 +183,6 @@ class EigenSolver(DirectLinearSolver):
         )
 
         eigenvalues, eigenvectors = eigh(matrix)
-
         max_abs_eigenvalue = np.max(np.abs(eigenvalues))
         threshold = self._rtol * max_abs_eigenvalue if max_abs_eigenvalue > 0 else 0
 
@@ -205,26 +197,7 @@ class EigenSolver(DirectLinearSolver):
             w = inv_eigenvalues * z
             return eigenvectors @ w
 
-        if self._galerkin:
-
-            def mapping(y: Vector) -> Vector:
-                yp = operator.domain.to_dual(y)
-                cyp = operator.domain.dual.to_components(yp)
-                cx = solve_galerkin(cyp)
-                return operator.domain.from_components(cx)
-
-            return LinearOperator(
-                operator.domain, operator.domain, mapping, adjoint_mapping=mapping
-            )
-        else:
-            inverse_matrix = ScipyLinOp(
-                (operator.domain.dim, operator.domain.dim),
-                matvec=solve_galerkin,
-                rmatvec=solve_galerkin,
-            )
-            return LinearOperator.from_matrix(
-                operator.domain, operator.domain, inverse_matrix, galerkin=False
-            )
+        return self._build_inverse_operator(operator, solve_galerkin)
 
 
 class IterativeLinearSolver(LinearSolver):
@@ -384,8 +357,8 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         x0: Optional[Vector],
     ) -> Vector:
         self._iterations = 0
-        domain = operator.codomain
-        codomain = operator.domain
+        op_domain = operator.domain
+        op_codomain = operator.codomain
 
         matrix = operator.matrix(galerkin=self._galerkin)
         matrix_preconditioner = (
@@ -394,8 +367,13 @@ class ScipyIterativeSolver(IterativeLinearSolver):
             else preconditioner.matrix(galerkin=self._galerkin)
         )
 
-        cy = domain.to_components(y)
-        cx0 = None if x0 is None else domain.to_components(x0)
+        if self._galerkin:
+            yp = op_codomain.to_dual(y)
+            rhs = op_codomain.dual.to_components(yp)
+        else:
+            rhs = op_codomain.to_components(y)
+
+        cx0 = None if x0 is None else op_domain.to_components(x0)
 
         self._iterations = 0
         user_callback = self._solver_kwargs.get("callback", None)
@@ -414,18 +392,14 @@ class ScipyIterativeSolver(IterativeLinearSolver):
         if self._solver_func is gmres:
             solver_kwargs.setdefault("callback_type", "pr_norm")
 
-        cxp, _ = self._solver_func(
-            matrix, cy, x0=cx0, M=matrix_preconditioner, **solver_kwargs
+        cx, _ = self._solver_func(
+            matrix, rhs, x0=cx0, M=matrix_preconditioner, **solver_kwargs
         )
 
         if hasattr(user_callback, "finalize") and callable(user_callback.finalize):
             user_callback.finalize()
 
-        if self._galerkin:
-            xp = codomain.dual.from_components(cxp)
-            return codomain.from_dual(xp)
-        else:
-            return codomain.from_components(cxp)
+        return op_domain.from_components(cx)
 
 
 def CGMatrixSolver(galerkin: bool = False, **kwargs) -> ScipyIterativeSolver:
