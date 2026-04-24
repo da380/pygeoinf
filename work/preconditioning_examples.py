@@ -91,6 +91,9 @@ def setup_problem_components(
     prior_std: float,
     noise_scale: float,
     noise_std: float,
+    /,
+    *,
+    surrogate=False,
 ):
     """
     Helper function to generate the space, forward operator,  prior measure,
@@ -110,9 +113,13 @@ def setup_problem_components(
             noise_scale,
             std=noise_std,
         )
+
         data_error_measure = spatial_noise_measure.affine_mapping(
-            operator=forward_operator
+            operator=forward_operator,
         )
+
+        if surrogate:
+            data_error_measure = data_error_measure.with_sparse_approximation()
 
     return space, forward_operator, prior_measure, data_error_measure
 
@@ -326,6 +333,7 @@ def main():
                     args.prior_std,
                     args.noise_scale_factor * args.prior_scale,
                     args.noise_amplitude_factor * args.prior_std,
+                    surrogate=True,
                 )
             )
 
@@ -380,29 +388,18 @@ def main():
             print("Forming model-space preconditioner")
             woodbury_solver = inf.EigenSolver(galerkin=True)
 
-            # noise_std = args.noise_amplitude_factor * args.prior_std
-            # surrogate_noise_diag = inf.GaussianMeasure.from_standard_deviation(
-            #    surrogate_fwd_op.codomain, noise_std
-            # )
-
-            sparse_surrogate_noise = surrogate_noise.with_sparse_approximation(
-                diag_rank=10, diag_samples=10
-            )
-
-            damped_surrogate_inv = surrogate_inv.surrogate_inversion(
+            surrogate_inv = surrogate_inv.surrogate_inversion(
                 alternate_prior_measure=surrogate_prior,
-                alternate_data_error_measure=sparse_surrogate_noise,
+                alternate_data_error_measure=surrogate_noise,
             )
 
-            preconditioner = damped_surrogate_inv.woodbury_data_preconditioner(
-                woodbury_solver
-            )
+            preconditioner = surrogate_inv.woodbury_data_preconditioner(woodbury_solver)
 
             alpha = 0.1
 
             preconditioner = (
                 1 - alpha
-            ) * preconditioner + alpha * sparse_surrogate_noise.inverse_covariance
+            ) * preconditioner + alpha * surrogate_noise.inverse_covariance
 
         elif args.precond == "distance-localized":
             print("Building distance-localized sparse matrix...")

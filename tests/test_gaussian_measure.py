@@ -9,6 +9,8 @@ from pygeoinf.hilbert_space import EuclideanSpace, HilbertSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.affine_operators import AffineOperator
+from pygeoinf.linear_solvers import MinResSolver, CholeskySolver
+
 
 from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
 
@@ -312,7 +314,6 @@ class TestGaussianMeasure:
         Tests that calling with_regularized_inverse with 0.0 damping leaves
         the covariance unchanged and correctly assigns the inverse.
         """
-        from pygeoinf.linear_solvers import CholeskySolver
 
         # We use a direct solver for easy verification
         solver = CholeskySolver(galerkin=True)
@@ -338,7 +339,6 @@ class TestGaussianMeasure:
         correctly shifts the covariance, computes the inverse, and injects
         white noise into the sampler so the statistics remain consistent.
         """
-        from pygeoinf.linear_solvers import CholeskySolver
 
         solver = CholeskySolver(galerkin=True)
         damping = 0.5
@@ -502,6 +502,92 @@ class TestGaussianMeasure:
         cov_parallel = measure_parallel.covariance.matrix(dense=True, galerkin=True)
 
         assert np.allclose(cov_serial, cov_parallel)
+
+    def test_affine_mapping_kkt_inverse_covariance(self, measure: GaussianMeasure):
+        """
+        Tests the automatic saddle-point (KKT) construction of the inverse
+        covariance when pushing forward a measure under an affine mapping.
+        """
+
+        dim_in = measure.domain.dim
+        dim_out = max(1, dim_in // 2)
+        target_space = EuclideanSpace(dim_out)
+
+        # 1. Create a non-square forward operator P
+        P_matrix = np.random.randn(dim_out, dim_in)
+        P = LinearOperator.from_matrix(
+            measure.domain, target_space, P_matrix, galerkin=True
+        )
+
+        # 2. Push forward WITH an iterative solver to trigger the KKT logic
+        # and the default block-diagonal preconditioner.
+        solver = MinResSolver(rtol=1e-10)
+        transformed_measure = measure.affine_mapping(operator=P, inverse_solver=solver)
+
+        # 3. Verify the inverse covariance was successfully attached
+        assert transformed_measure.inverse_covariance_set
+
+        # 4. Mathematically verify C_inv @ C = I
+        C_new = transformed_measure.covariance.matrix(dense=True, galerkin=True)
+        E_actual = transformed_measure.inverse_covariance.matrix(
+            dense=True, galerkin=True
+        )
+
+        identity = np.eye(dim_out)
+        assert np.allclose(E_actual @ C_new, identity, atol=1e-5)
+
+    def test_affine_mapping_kkt_inverse_missing_prior_precision(
+        self, space: HilbertSpace
+    ):
+        """
+        Tests that requesting a KKT inverse fails gracefully if the prior
+        measure does not possess an inverse covariance operator.
+        """
+
+        # 1. Create a measure from samples (which doesn't set inverse_covariance)
+        samples = [space.random() for _ in range(5)]
+        prior_measure = GaussianMeasure.from_samples(space, samples)
+        assert not prior_measure.inverse_covariance_set
+
+        # 2. Try to map it with an inverse_solver
+        solver = MinResSolver()
+        identity_op = space.identity_operator()
+
+        # 3. Verify it raises the correct error
+        with pytest.raises(
+            ValueError, match="the prior measure lacks an inverse covariance"
+        ):
+            prior_measure.affine_mapping(operator=identity_op, inverse_solver=solver)
+
+    def test_affine_mapping_translation_preserves_factors(
+        self, measure: GaussianMeasure
+    ):
+        """
+        Tests that a pure translation bypasses the linear algebra and perfectly
+        preserves any pre-computed covariance factors and inverses.
+        """
+
+        # 1. Force the measure to compute its inverse and factors
+        solver = CholeskySolver(galerkin=True)
+        dense_measure = measure.with_dense_covariance()
+        prior = dense_measure.with_regularized_inverse(solver, damping=0.1)
+
+        assert prior.inverse_covariance_set
+
+        # 2. Apply a pure translation
+        translation = prior.domain.random()
+        shifted_measure = prior.affine_mapping(translation=translation)
+
+        # 3. Verify the fast-path preserved the exact same objects in memory
+        assert shifted_measure.inverse_covariance_set
+        assert shifted_measure.inverse_covariance is prior.inverse_covariance
+
+        # 4. Verify the expectation actually shifted
+        expected_mean = prior.domain.add(prior.expectation, translation)
+        assert np.allclose(
+            prior.domain.to_components(shifted_measure.expectation),
+            prior.domain.to_components(expected_mean),
+        )
 
 
 class TestDeflatedPointwiseVariance:
