@@ -5,6 +5,9 @@ Tests for the invariant operators and measures on symmetric spaces.
 import pytest
 import numpy as np
 
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.linear_solvers import MinResSolver
+
 from pygeoinf.symmetric_space.circle import Lebesgue
 from pygeoinf.symmetric_space import (
     InvariantLinearAutomorphism,
@@ -12,6 +15,7 @@ from pygeoinf.symmetric_space import (
 )
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.linear_operators import LinearOperator
+
 
 
 @pytest.fixture
@@ -164,3 +168,39 @@ class TestInvariantGaussianMeasure:
         kl_slow = measure_p.kl_divergence(measure_q_base)
 
         assert np.isclose(kl_fast, kl_slow, rtol=1e-8)
+
+    def test_affine_mapping_kkt_spectral_preconditioner(self, space: Lebesgue):
+        """
+        Tests that pushing an invariant measure forward with a generic operator
+        and an inverse solver successfully triggers the spectrally-optimized
+        KKT preconditioner (Water-filling + Jacobi Schur) and resolves the exact inverse.
+        """
+
+        # 1. Create a highly ill-conditioned prior measure (e.g., heat kernel)
+        measure = space.heat_kernel_gaussian_measure(0.1)
+
+        # 2. Create a generic forward operator to a smaller Euclidean space
+        dim_out = max(1, space.dim // 2)
+        target_space = EuclideanSpace(dim_out)
+        P_matrix = np.random.randn(dim_out, space.dim)
+        op_gen = LinearOperator.from_matrix(
+            space, target_space, P_matrix, galerkin=True
+        )
+
+        # 3. Push forward with MINRES. Because 'op_gen' is generic, this drops
+        # down to the base class but injects our smart invariant preconditioner first.
+        solver = MinResSolver(rtol=1e-10)
+        transformed_measure = measure.affine_mapping(
+            operator=op_gen, inverse_solver=solver
+        )
+
+        # 4. Verify type fallback and KKT success
+        assert type(transformed_measure) is GaussianMeasure
+        assert transformed_measure.inverse_covariance_set
+
+        # 5. Verify mathematical exactness: C_inv @ C = I
+        C = transformed_measure.covariance.matrix(dense=True, galerkin=True)
+        C_inv = transformed_measure.inverse_covariance.matrix(dense=True, galerkin=True)
+        identity = np.eye(dim_out)
+
+        assert np.allclose(C_inv @ C, identity, atol=1e-5)

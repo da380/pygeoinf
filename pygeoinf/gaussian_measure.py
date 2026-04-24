@@ -41,13 +41,12 @@ from .linear_operators import (
     SparseMatrixLinearOperator,
 )
 
+
 from .linear_solvers import IterativeLinearSolver, LinearSolver
 
 from .affine_operators import AffineOperator
 
-from .direct_sum import (
-    BlockDiagonalLinearOperator,
-)
+from .direct_sum import BlockDiagonalLinearOperator, BlockLinearOperator
 
 
 # This block is only processed by type checkers, not at runtime.
@@ -233,14 +232,12 @@ class GaussianMeasure:
             max_eig = np.max(np.abs(eigenvalues))
             min_eig = np.min(eigenvalues)
 
-            # Check if the most negative eigenvalue is outside the tolerance
             if min_eig < -rtol * max_eig:
                 raise ValueError(
                     "Covariance matrix has significantly negative eigenvalues, "
                     "indicating it is not positive semi-definite."
                 )
             else:
-                # If negative eigenvalues are within tolerance, warn and correct
                 warnings.warn(
                     "Covariance matrix has small negative eigenvalues due to "
                     "numerical error. Clipping them to zero.",
@@ -250,7 +247,7 @@ class GaussianMeasure:
 
         values = np.sqrt(eigenvalues)
         D = diags([values], [0])
-        # Use pseudo-inverse for singular matrices
+
         out_array = np.zeros_like(values, dtype=float)
         Di = diags([np.reciprocal(values, out=out_array, where=(values != 0))], [0])
         L = U @ D
@@ -323,7 +320,7 @@ class GaussianMeasure:
         Args:
             measures (list): A list of `GaussianMeasure` objects.
         """
-        # Optimize expectation aggregation
+
         if all(measure.has_zero_expectation for measure in measures):
             expectation = None
         else:
@@ -490,10 +487,8 @@ class GaussianMeasure:
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
 
-        # Draw samples
         samples = self.samples(n, parallel=parallel, n_jobs=n_jobs)
 
-        # Compute variance using vector arithmetic
         variance = self.domain.zero
 
         if self.has_zero_expectation:
@@ -543,7 +538,6 @@ class GaussianMeasure:
         """
         Estimates the pointwise variance using a deflated Hutchinson's method.
         """
-        from .hilbert_space import HilbertModule
 
         if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
@@ -588,7 +582,6 @@ class GaussianMeasure:
 
         num_samples = min(size_estimate, max_samples)
 
-        # Ensure Rademacher noise generates true white noise in the Hilbert space metric
         if hasattr(space, "squared_norms"):
             inv_norms = 1.0 / np.sqrt(space.squared_norms)
         else:
@@ -603,7 +596,6 @@ class GaussianMeasure:
             """Helper to draw a block of samples and return their spatial sum."""
 
             def _single_sample():
-                # Scale components by 1 / ||e_i|| so Cov(z) = Identity
                 c_z = np.random.choice([-1.0, 1.0], size=space.dim) * inv_norms
                 z = space.from_components(c_z)
                 R_z = residual_cov(z)
@@ -621,7 +613,6 @@ class GaussianMeasure:
                     space.axpy(1.0, _single_sample(), block_sum)
             return block_sum
 
-        # Initial batch
         residual_sum = _compute_sample_sum(num_samples)
         residual_est = (
             space.multiply(1.0 / num_samples, residual_sum)
@@ -629,7 +620,6 @@ class GaussianMeasure:
             else space.zero
         )
 
-        # Progressive sampling
         if method == "variable" and num_samples < max_samples:
             while num_samples < max_samples:
                 old_est = space.copy(residual_est)
@@ -637,12 +627,10 @@ class GaussianMeasure:
                 samples_to_add = min(block_size, max_samples - num_samples)
                 new_sum = _compute_sample_sum(samples_to_add)
 
-                # Update running average
                 space.axpy(1.0, new_sum, residual_sum)
                 total_samples = num_samples + samples_to_add
                 residual_est = space.multiply(1.0 / total_samples, residual_sum)
 
-                # Check convergence using the Hilbert space norm
                 norm_new = space.norm(residual_est)
                 if norm_new > 0:
                     diff = space.subtract(residual_est, old_est)
@@ -692,7 +680,6 @@ class GaussianMeasure:
         """
         # The variance method already checks if the domain is a HilbertModule,
         # but we check it here too just to give a clear error message specifically for std.
-        from .hilbert_space import HilbertModule
 
         if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
@@ -723,12 +710,10 @@ class GaussianMeasure:
             dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
         )
 
-        # Build the full measure with its dense factors (L and L^-1)
         measure = GaussianMeasure.from_covariance_matrix(
             self.domain, covariance_matrix, expectation=self._expectation
         )
 
-        # Explicitly overwrite the lazy L @ L* composition with the strict dense operator
         measure._covariance = LinearOperator.self_adjoint_from_matrix(
             self.domain, covariance_matrix
         )
@@ -971,6 +956,8 @@ class GaussianMeasure:
         operator: LinearOperator = None,
         translation: Vector = None,
         affine_operator: AffineOperator = None,
+        inverse_solver: LinearSolver = None,
+        inverse_preconditioner: LinearOperator = None,
     ) -> GaussianMeasure:
         """
         Transforms the measure under an affine map `y = A(x) + b`.
@@ -979,22 +966,53 @@ class GaussianMeasure:
         measure, `x ~ N(μ, C)`, this method computes the new Gaussian measure
         for the transformed variable `y`.
 
-        The new measure will have:
-        - Expectation: `μ_y = A @ μ + b`
-        - Covariance: `C_y = A @ C @ A*`
-
         Args:
             operator: The linear operator `A` in the transformation.
                 Defaults to the identity.
             translation: The translation vector `b`. Defaults to zero.
             affine_operator: An `AffineOperator` instance representing the map.
                 If provided, `operator` and `translation` must not be used.
+            inverse_solver: An optional LinearSolver (e.g., MinResSolver). If provided,
+                and the current measure has an inverse covariance, the new measure will
+                be equipped with an exact inverse covariance operator derived via a
+                saddle-point (KKT) formulation.
+            inverse_preconditioner: An optional preconditioner for the KKT system.
+                If using an iterative solver and none is provided, a mathematically
+                optimal block-diagonal default will be built.
 
         Returns:
             The transformed `GaussianMeasure`.
         """
 
-        # 1. Handle argument exclusivity and extract the operator/translation
+        #  Pure Translation.
+        if operator is None and affine_operator is None:
+            if translation is None:
+                return self
+
+            new_expectation = (
+                translation
+                if self.has_zero_expectation
+                else self.domain.add(self.expectation, translation)
+            )
+
+            if self.sample_set:
+
+                def new_sample() -> Vector:
+                    return self.domain.add(self.sample(), translation)
+
+            else:
+                new_sample = None
+
+            return GaussianMeasure(
+                covariance=self._covariance,
+                covariance_factor=self._covariance_factor,
+                expectation=new_expectation,
+                sample=new_sample,
+                inverse_covariance=self._inverse_covariance,
+                inverse_covariance_factor=self._inverse_covariance_factor,
+            )
+
+        # General case.
         if affine_operator is not None:
             if operator is not None or translation is not None:
                 raise ValueError(
@@ -1007,14 +1025,10 @@ class GaussianMeasure:
             _operator = (
                 operator if operator is not None else self.domain.identity_operator()
             )
-            # We delay applying codomain.zero unless required by math
             _translation = translation
 
-        # Expectation bypass
         if self.has_zero_expectation:
-            new_expectation = (
-                _translation  # Remains None (zero) if _translation is None
-            )
+            new_expectation = _translation
         else:
             mapped_exp = _operator(self.expectation)
             if _translation is None:
@@ -1024,11 +1038,52 @@ class GaussianMeasure:
 
         if self.covariance_factor_set:
             new_covariance_factor = _operator @ self.covariance_factor
+            new_covariance = None
+        else:
+            new_covariance_factor = None
+            new_covariance = _operator @ self.covariance @ _operator.adjoint
+
+        new_inverse_covariance = None
+
+        if inverse_solver is not None:
+            if not self.inverse_covariance_set:
+                raise ValueError(
+                    "Cannot construct KKT inverse: the prior measure lacks an inverse covariance."
+                )
+
+            top_row = [self.inverse_covariance, _operator.adjoint]
+            bottom_row = [_operator, _operator.codomain.zero_operator()]
+            B = BlockLinearOperator([top_row, bottom_row])
+
+            if inverse_preconditioner is None and isinstance(
+                inverse_solver, IterativeLinearSolver
+            ):
+                schur_op = (
+                    new_covariance
+                    if new_covariance is not None
+                    else (new_covariance_factor @ new_covariance_factor.adjoint)
+                )
+
+                bottom_right_block = self._build_jacobi_schur_block(_operator, schur_op)
+
+                inverse_preconditioner = BlockDiagonalLinearOperator(
+                    [self.covariance, bottom_right_block]
+                )
+
+            B_inv = inverse_solver(B, preconditioner=inverse_preconditioner)
+
+            proj = B_inv.codomain.subspace_projection(1)
+            incl = B_inv.domain.subspace_inclusion(1)
+
+            new_inverse_covariance = -1.0 * (proj @ B_inv @ incl)
+
+        if new_covariance_factor is not None:
             return GaussianMeasure(
-                covariance_factor=new_covariance_factor, expectation=new_expectation
+                covariance_factor=new_covariance_factor,
+                expectation=new_expectation,
+                inverse_covariance=new_inverse_covariance,
             )
         else:
-            new_covariance = _operator @ self.covariance @ _operator.adjoint
 
             def new_sample() -> Vector:
                 mapped_sample = _operator(self.sample())
@@ -1040,6 +1095,7 @@ class GaussianMeasure:
                 covariance=new_covariance,
                 expectation=new_expectation,
                 sample=new_sample if self.sample_set else None,
+                inverse_covariance=new_inverse_covariance,
             )
 
     def as_multivariate_normal(
@@ -1448,3 +1504,35 @@ class GaussianMeasure:
         if self.has_zero_expectation:
             return value
         return self.domain.add(value, self.expectation)
+
+    def _build_jacobi_schur_block(
+        self, operator: LinearOperator, schur_op: LinearOperator
+    ) -> LinearOperator:
+        """
+        Builds the inverse Jacobi (diagonal) approximation of the Schur complement
+        for use in KKT preconditioners.
+        """
+        try:
+            n_data = operator.codomain.dim
+
+            if n_data <= 200:
+                schur_diag = schur_op.extract_diagonal(galerkin=True)
+            else:
+                from .low_rank import deflated_diagonal
+
+                schur_diag = deflated_diagonal(
+                    schur_op, rank=10, size_estimate=40, method="fixed", galerkin=True
+                )
+
+            max_var = np.max(schur_diag)
+            safe_diag = np.maximum(schur_diag, max_var * 1e-12)
+
+            inv_safe_diag = 1.0 / safe_diag
+
+            from .linear_operators import DiagonalSparseMatrixLinearOperator
+
+            return DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+                operator.codomain, operator.codomain, inv_safe_diag, galerkin=True
+            )
+        except Exception:
+            return operator.codomain.identity_operator()
