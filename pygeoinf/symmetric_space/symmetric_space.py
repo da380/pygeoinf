@@ -1041,6 +1041,21 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         # Safety floor
         return max(degree, min_degree)
 
+    def l2_products_operator(self, weighting_functions: List[Any]) -> LinearOperator:
+        """
+        Creates an operator that computes a vector of L2 inner products.
+
+        The action on a function 'u' returns a vector 'd' where d_i = <u, w_i>_L2.
+
+        Args:
+            weighting_functions: A list of vectors representing the weighting kernels.
+
+        Returns:
+            LinearOperator: A mapping from this space to EuclideanSpace(len(weighting_functions)).
+        """
+
+        return LinearOperator.from_vectors(self, weighting_functions)
+
 
 class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
     """
@@ -1580,6 +1595,25 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             target_degree
         )
         return LinearOperator.from_formal_adjoint(self, codomain, lebesgue_inclusion)
+
+    def l2_products_operator(self, weighting_functions: List[Any]) -> LinearOperator:
+        """
+        Creates an operator that computes a vector of L2 inner products.
+
+        The action on a function 'u' returns a vector 'd' where d_i = <u, w_i>_L2.
+
+        Args:
+            weighting_functions: A list of vectors representing the weighting kernels.
+
+        Returns:
+            LinearOperator: A mapping from this space to EuclideanSpace(len(weighting_functions)).
+        """
+
+        l2_operator = self.underlying_space.l2_products_operator(weighting_functions)
+
+        return LinearOperator.from_formal_adjoint(
+            self, l2_operator.codomain, l2_operator
+        )
 
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #
