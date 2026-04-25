@@ -270,3 +270,64 @@ class TestLinearForwardProblem:
         bad_param_op = LinearOperator.from_matrix(param_space, param_space, np.eye(2))
         with pytest.raises(ValueError, match="codomain of the parameterization"):
             forward_problem.parameterized_problem(bad_param_op)
+
+    def test_data_reduced_problem(
+        self,
+        forward_problem: LinearForwardProblem,
+        data_space: EuclideanSpace,
+    ):
+        """Tests the data_reduced_problem method, including error measure push-forward."""
+        from pygeoinf.linear_operators import DenseMatrixLinearOperator
+
+        # 1. Create a smaller aggregated data space and a reduction operator
+        reduced_space = EuclideanSpace(dim=1)
+        # Mapping from Data Space (2D) to Reduced Space (1D)
+        reduction_matrix = np.random.randn(reduced_space.dim, data_space.dim)
+        reduction_op = LinearOperator.from_matrix(
+            data_space, reduced_space, reduction_matrix
+        )
+
+        # 2. Test standard data reduction (dense=False) with automatic push-forward
+        reduced_fp = forward_problem.data_reduced_problem(reduction_op)
+
+        # The new data space should be the reduced space
+        assert reduced_fp.data_space == reduced_space
+        # The model space should remain unchanged
+        assert reduced_fp.model_space == forward_problem.model_space
+
+        # Verify the new forward operator matrix is exactly S @ A
+        A_mat = forward_problem.forward_operator.matrix(dense=True)
+        expected_matrix = reduction_matrix @ A_mat
+        assert np.allclose(
+            reduced_fp.forward_operator.matrix(dense=True), expected_matrix
+        )
+
+        # Verify the pushed-forward noise covariance is S @ R @ S.T
+        R_mat = forward_problem.data_error_measure.covariance.matrix(dense=True)
+        expected_R_reduced = reduction_matrix @ R_mat @ reduction_matrix.T
+        assert np.allclose(
+            reduced_fp.data_error_measure.covariance.matrix(dense=True),
+            expected_R_reduced,
+        )
+
+        # 3. Test explicit reduced error measure injection
+        explicit_noise = GaussianMeasure.from_standard_deviation(reduced_space, 0.5)
+        explicit_fp = forward_problem.data_reduced_problem(
+            reduction_op, reduced_data_error_measure=explicit_noise
+        )
+        assert explicit_fp.data_error_measure is explicit_noise
+
+        # 4. Test dense reduction (dense=True)
+        dense_fp = forward_problem.data_reduced_problem(reduction_op, dense=True)
+
+        assert isinstance(dense_fp.forward_operator, DenseMatrixLinearOperator)
+        assert isinstance(
+            dense_fp.data_error_measure.covariance, DenseMatrixLinearOperator
+        )
+
+        # Verify the domain mismatch safety check
+        bad_reduction_op = LinearOperator.from_matrix(
+            reduced_space, reduced_space, np.eye(1)
+        )
+        with pytest.raises(ValueError, match="domain of the reduction operator"):
+            forward_problem.data_reduced_problem(bad_reduction_op)

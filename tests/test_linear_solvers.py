@@ -4,8 +4,18 @@ Tests for the linear_solvers module.
 
 import pytest
 import numpy as np
-from pygeoinf.hilbert_space import EuclideanSpace
-from pygeoinf.linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
+from pygeoinf.hilbert_space import (
+    HilbertSpace,
+    EuclideanSpace,
+    MassWeightedHilbertSpace,
+)
+
+
+from pygeoinf.linear_operators import (
+    LinearOperator,
+    DiagonalSparseMatrixLinearOperator,
+    DenseMatrixLinearOperator,
+)
 from pygeoinf.linear_solvers import (
     LUSolver,
     CholeskySolver,
@@ -21,19 +31,43 @@ from pygeoinf.linear_solvers import (
 )
 from pygeoinf.preconditioners import IterativePreconditioningMethod
 
+
 # =============================================================================
 # Fixtures for the Test Problem
 # =============================================================================
 
 
-@pytest.fixture
-def space() -> EuclideanSpace:
-    """Provides a simple 10D Euclidean space for the tests."""
-    return EuclideanSpace(dim=10)
+@pytest.fixture(params=["euclidean", "mass_weighted"])
+def space(request) -> HilbertSpace:
+    """
+    Provides different Hilbert spaces for tests.
+    Parameterizing this fixture ensures all solvers correctly handle the
+    distinction between primal and dual vectors (which Euclidean spaces mask).
+    """
+    dim = 10
+    base_space = EuclideanSpace(dim=dim)
+
+    if request.param == "euclidean":
+        return base_space
+
+    elif request.param == "mass_weighted":
+        # Create a non-trivial mass matrix (e.g., diagonal with values 1 to 10)
+        mass_matrix = np.diag(np.arange(1, dim + 1, dtype=float))
+        inv_mass_matrix = np.diag(1.0 / np.arange(1, dim + 1, dtype=float))
+
+        # Mass operators must be self-adjoint and defined on the underlying base space
+        mass_op = DenseMatrixLinearOperator(
+            base_space, base_space, mass_matrix, galerkin=True
+        )
+        inv_mass_op = DenseMatrixLinearOperator(
+            base_space, base_space, inv_mass_matrix, galerkin=True
+        )
+
+        return MassWeightedHilbertSpace(base_space, mass_op, inv_mass_op)
 
 
 @pytest.fixture
-def spd_operator(space: EuclideanSpace) -> LinearOperator:
+def spd_operator(space: HilbertSpace) -> LinearOperator:
     """
     Provides a well-conditioned, invertible, symmetric positive-definite
     linear operator for the tests.
@@ -44,7 +78,7 @@ def spd_operator(space: EuclideanSpace) -> LinearOperator:
 
 
 @pytest.fixture
-def semi_definite_operator(space: EuclideanSpace) -> LinearOperator:
+def semi_definite_operator(space: HilbertSpace) -> LinearOperator:
     """Provides a symmetric positive SEMI-definite operator (singular)."""
     rank = space.dim - 2
     matrix = np.random.randn(space.dim, rank)
@@ -53,7 +87,7 @@ def semi_definite_operator(space: EuclideanSpace) -> LinearOperator:
 
 
 @pytest.fixture
-def non_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
+def non_symmetric_operator(space: HilbertSpace) -> LinearOperator:
     """
     Provides a well-conditioned, invertible, non-symmetric operator.
     This fixture is constructed to ensure the matrix is not ill-conditioned,
@@ -72,7 +106,7 @@ def non_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
 
 
 @pytest.fixture
-def action_defined_operator(space: EuclideanSpace, spd_operator) -> LinearOperator:
+def action_defined_operator(space: HilbertSpace, spd_operator) -> LinearOperator:
     """Provides a matrix-free operator defined only by its action."""
     # We can use the spd_operator's action and adjoint for this
     return LinearOperator(
@@ -81,7 +115,7 @@ def action_defined_operator(space: EuclideanSpace, spd_operator) -> LinearOperat
 
 
 @pytest.fixture
-def indefinite_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
+def indefinite_symmetric_operator(space: HilbertSpace) -> LinearOperator:
     """
     Provides a symmetric INDEFINITE operator.
     Constructed by having both positive and negative eigenvalues.
@@ -98,7 +132,7 @@ def indefinite_symmetric_operator(space: EuclideanSpace) -> LinearOperator:
 
 
 @pytest.fixture
-def x(space: EuclideanSpace) -> np.ndarray:
+def x(space: HilbertSpace) -> np.ndarray:
     """Provides a random vector from the space."""
     return space.random()
 

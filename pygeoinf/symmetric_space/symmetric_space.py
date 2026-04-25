@@ -30,6 +30,11 @@ from pygeoinf.linear_operators import LinearOperator, DiagonalSparseMatrixLinear
 from pygeoinf.linear_forms import LinearForm
 from pygeoinf.gaussian_measure import GaussianMeasure
 
+from pygeoinf.affine_operators import AffineOperator
+
+from pygeoinf.linear_solvers import IterativeLinearSolver, LinearSolver
+from pygeoinf.direct_sum import BlockDiagonalLinearOperator
+
 # Alias for the index for the eigenvalues or eigenfunctions
 Index: TypeAlias = int | tuple[int, ...]
 
@@ -365,50 +370,86 @@ class InvariantGaussianMeasure(GaussianMeasure):
     # ------------------------------------------------------#
 
     def affine_mapping(
-        self, /, *, operator: LinearOperator = None, translation: Vector = None
+        self,
+        /,
+        *,
+        operator: LinearOperator = None,
+        translation: Vector = None,
+        affine_operator: AffineOperator = None,
+        inverse_solver: LinearSolver = None,
+        inverse_preconditioner: LinearOperator = None,
     ) -> GaussianMeasure:
         """
         Transforms the measure under an affine map `y = A(x) + b`.
 
         If the operator A is an `InvariantLinearAutomorphism` (or None), the
-        resulting measure remains invariant. This method intercepts that case
-        to return a new, highly optimized `InvariantGaussianMeasure`.
+        resulting measure remains invariant. If it is a generic operator and
+        an inverse solve is requested, a spectrally-regularized preconditioner
+        is automatically built.
         """
 
-        if operator is None:
-            if self.has_zero_expectation:
-                new_expectation = translation
-            else:
-                new_expectation = (
+        if operator is None and affine_operator is None:
+            new_expectation = (
+                translation
+                if self.has_zero_expectation
+                else (
                     self.domain.add(self.expectation, translation)
-                    if translation is not None
+                    if translation
                     else self.expectation
                 )
-
+            )
             return InvariantGaussianMeasure(
                 self.domain, self.spectral_variances, expectation=new_expectation
             )
 
-        if isinstance(operator, InvariantLinearAutomorphism):
-            new_covariance = self.covariance @ operator @ operator
+        _op = affine_operator.linear_part if affine_operator else operator
 
+        if isinstance(_op, InvariantLinearAutomorphism):
+            new_covariance = self.covariance @ _op @ _op
             if self.has_zero_expectation:
-                new_expectation = translation
-            else:
-                mapped_exp = operator(self.expectation)
                 new_expectation = (
-                    self._domain.add(mapped_exp, translation)
-                    if translation is not None
-                    else mapped_exp
+                    translation
+                    if affine_operator is None
+                    else affine_operator.translation_part
+                )
+            else:
+                mapped_exp = _op(self.expectation)
+                _trans = (
+                    affine_operator.translation_part if affine_operator else translation
+                )
+                new_expectation = (
+                    self.domain.add(mapped_exp, _trans) if _trans else mapped_exp
                 )
 
             return InvariantGaussianMeasure(
-                self._domain,
-                new_covariance.eigenvalues,
-                expectation=new_expectation,
+                self.domain, new_covariance.eigenvalues, expectation=new_expectation
             )
 
-        return super().affine_mapping(operator=operator, translation=translation)
+        if inverse_solver is not None and inverse_preconditioner is None:
+
+            if isinstance(inverse_solver, IterativeLinearSolver):
+                # A. Top-Left Block: "Water-filling" spectral regularization
+                max_var = np.max(self.spectral_variances)
+                threshold = max_var * 1e-8
+                reg_variances = np.maximum(self.spectral_variances, threshold)
+                reg_cov = InvariantLinearAutomorphism(self.domain, reg_variances)
+
+                # B. Bottom-Right Block: Delegate Jacobi Schur logic to the base class
+                new_covariance = _op @ self.covariance @ _op.adjoint
+                bottom_right_block = self._build_jacobi_schur_block(_op, new_covariance)
+
+                inverse_preconditioner = BlockDiagonalLinearOperator(
+                    [reg_cov, bottom_right_block]
+                )
+
+        # 3. Defer to the base class with the injected smart preconditioner
+        return super().affine_mapping(
+            operator=operator,
+            translation=translation,
+            affine_operator=affine_operator,
+            inverse_solver=inverse_solver,
+            inverse_preconditioner=inverse_preconditioner,
+        )
 
     def __neg__(self) -> InvariantGaussianMeasure:
         """Returns the measure with a negated expectation. Covariance is unchanged."""
@@ -1391,7 +1432,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
         max_distance: float,
         /,
         *,
-        data_error_measure: Optional[GaussianMeasure],
+        data_error_measure: Optional[GaussianMeasure] = None,
         apply_taper: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,

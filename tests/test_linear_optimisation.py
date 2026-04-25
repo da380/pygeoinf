@@ -8,7 +8,7 @@ from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.forward_problem import LinearForwardProblem
-from pygeoinf.linear_solvers import CholeskySolver, ResidualTrackingCallback
+from pygeoinf.linear_solvers import CholeskySolver, LUSolver, ResidualTrackingCallback
 from pygeoinf.subspaces import AffineSubspace, LinearSubspace
 from pygeoinf.affine_operators import AffineOperator
 from pygeoinf.linear_optimisation import (
@@ -151,10 +151,11 @@ class TestLinearLeastSquaresInversion:
         of the dense data-space least-squares normal operator.
         """
         damping = 0.5
+        solver = LUSolver(galerkin=False)
         inversion = LinearLeastSquaresInversion(forward_problem)
 
         # 1. Compute the Woodbury preconditioner
-        woodbury_precon = inversion.woodbury_data_preconditioner(damping)
+        woodbury_precon = inversion.woodbury_data_preconditioner(damping, solver)
 
         # 2. Extract exact dense matrices
         A = forward_problem.forward_operator.matrix(dense=True)
@@ -176,21 +177,22 @@ class TestLinearLeastSquaresInversion:
         least-squares inversion and the Woodbury preconditioner extraction.
         """
         damping = 0.1
+        solver = LUSolver(galerkin=False)
         inversion = LinearLeastSquaresInversion(forward_problem)
 
         # Create an arbitrary "alternate" forward operator (e.g., scaled by 0.5)
         alt_A = 0.5 * forward_problem.forward_operator
 
         # 1. Generate via the chained method
-        chained_precon = inversion.surrogate_woodbury_preconditioner(
-            damping, alternate_forward_operator=alt_A
+        chained_precon = inversion.surrogate_woodbury_data_preconditioner(
+            damping, solver, alternate_forward_operator=alt_A
         )
 
         # 2. Generate manually
         manual_surrogate = inversion.surrogate_inversion(
             alternate_forward_operator=alt_A
         )
-        manual_precon = manual_surrogate.woodbury_data_preconditioner(damping)
+        manual_precon = manual_surrogate.woodbury_data_preconditioner(damping, solver)
 
         # 3. Compare matrices
         assert np.allclose(
@@ -204,9 +206,10 @@ class TestLinearLeastSquaresInversion:
         # Create an inversion without a data error measure
         fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
         inversion = LinearLeastSquaresInversion(fp_no_noise)
+        solver = LUSolver(galerkin=False)
 
         with pytest.raises(ValueError, match="Data error measure must be set"):
-            inversion.woodbury_data_preconditioner(0.1)
+            inversion.woodbury_data_preconditioner(0.1, solver)
 
     def test_normal_residual_callback(
         self, forward_problem: LinearForwardProblem, synthetic_data: np.ndarray
@@ -296,6 +299,79 @@ class TestLinearLeastSquaresInversion:
 
         # Verify alpha is close to 2.0 (regularization will pull it slightly away)
         assert np.allclose(alpha_sol, alpha_true, atol=0.2)
+
+    def test_woodbury_model_exact_equivalence(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Verifies that the model-space Woodbury preconditioner exactly matches
+        the inverse of the dense model-space least-squares normal operator.
+        """
+        damping = 0.5
+        solver = LUSolver(galerkin=False)
+        inversion = LinearLeastSquaresInversion(
+            forward_problem, formalism="model_space"
+        )
+
+        # 1. Compute the model-space Woodbury preconditioner
+        woodbury_precon = inversion.woodbury_model_preconditioner(damping, solver)
+
+        # 2. Extract exact dense matrices
+        A = forward_problem.forward_operator.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+        R_inv = np.linalg.inv(R)
+
+        # 3. Calculate exact inverse of model-space normal operator: (A^T R^-1 A + damping * I)^-1
+        exact_normal_matrix = A.T @ R_inv @ A + damping * np.eye(A.shape[1])
+        exact_inverse_matrix = np.linalg.inv(exact_normal_matrix)
+
+        # 4. Extract dense matrix from the Woodbury operator
+        woodbury_matrix = woodbury_precon.matrix(dense=True)
+
+        # 5. Compare
+        assert np.allclose(woodbury_matrix, exact_inverse_matrix, atol=1e-8)
+
+    def test_surrogate_woodbury_model_chaining(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Verifies that the surrogate wrapper correctly chains the surrogate
+        least-squares inversion and the model-space Woodbury preconditioner extraction.
+        """
+        damping = 0.1
+        solver = LUSolver(galerkin=False)
+        inversion = LinearLeastSquaresInversion(forward_problem)
+
+        alt_A = 0.5 * forward_problem.forward_operator
+
+        # 1. Generate via the chained method
+        chained_precon = inversion.surrogate_woodbury_model_preconditioner(
+            damping, solver, alternate_forward_operator=alt_A
+        )
+
+        # 2. Generate manually
+        manual_surrogate = inversion.surrogate_inversion(
+            alternate_forward_operator=alt_A
+        )
+        manual_precon = manual_surrogate.woodbury_model_preconditioner(damping, solver)
+
+        # 3. Compare matrices
+        assert np.allclose(
+            chained_precon.matrix(dense=True), manual_precon.matrix(dense=True)
+        )
+
+    def test_woodbury_model_requires_data_error(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Verifies that the model-space Woodbury identity fails safely if no data error measure is set.
+        """
+        fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
+        inversion = LinearLeastSquaresInversion(fp_no_noise)
+        solver = LUSolver(galerkin=False)
+
+        with pytest.raises(ValueError, match="Data error measure must be set"):
+            inversion.woodbury_model_preconditioner(0.1, solver)
 
 
 # =============================================================================
@@ -784,7 +860,7 @@ class TestConstrainedLinearMinimumNormInversion:
         """
         domain = EuclideanSpace(5)
 
-        # FIX: We use a std dev of 2.0. If it were 1.0, the minimum possible
+        # We use a std dev of 2.0. If it were 1.0, the minimum possible
         # chi-squared for a mean-shift of 2.0 would be 20.0, which is higher
         # than the 95% critical value (~11.07), making the discrepancy principle
         # mathematically impossible and exploding the analytical derivative!
@@ -967,3 +1043,75 @@ class TestFormalismSwapping:
 
         assert surrogate.formalism == "model_space"
         assert surrogate.model_space == param_space
+
+
+# =============================================================================
+# Tests for Data Reduction Parameterization API
+# =============================================================================
+
+
+class TestDataReducedOptimisation:
+    """
+    Tests the data reduction surrogate generation across concrete optimisation classes.
+    """
+
+    def test_least_squares_data_reduction(self, forward_problem: LinearForwardProblem):
+        """Tests data reduction for standard least-squares inversion."""
+        lsq = LinearLeastSquaresInversion(forward_problem, formalism="model_space")
+
+        reduced_space = EuclideanSpace(dim=1)
+        reduction_matrix = np.random.randn(
+            reduced_space.dim, forward_problem.data_space.dim
+        )
+        reduction_op = LinearOperator.from_matrix(
+            forward_problem.data_space, reduced_space, reduction_matrix
+        )
+
+        surrogate = lsq.data_reduced_inversion(reduction_op, dense=True)
+
+        assert isinstance(surrogate, LinearLeastSquaresInversion)
+        assert surrogate.formalism == "model_space"
+        assert surrogate.data_space == reduced_space
+
+        from pygeoinf.linear_operators import DenseMatrixLinearOperator
+
+        assert isinstance(
+            surrogate.forward_problem.forward_operator, DenseMatrixLinearOperator
+        )
+
+    def test_constrained_least_squares_data_reduction(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """Tests that affine constraints are preserved during data space reduction."""
+        domain = forward_problem.model_space
+        codomain = EuclideanSpace(1)
+        B = LinearOperator.from_matrix(domain, codomain, np.ones((1, domain.dim)))
+        w = codomain.from_components(np.array([1.0]))
+        constraint = AffineSubspace.from_linear_equation(B, w)
+
+        inversion = ConstrainedLinearLeastSquaresInversion(forward_problem, constraint)
+
+        reduced_space = EuclideanSpace(dim=1)
+        S = LinearOperator.from_matrix(
+            forward_problem.data_space,
+            reduced_space,
+            np.ones((1, forward_problem.data_space.dim)),
+        )
+
+        surrogate = inversion.data_reduced_inversion(S)
+
+        assert isinstance(surrogate, ConstrainedLinearLeastSquaresInversion)
+        assert surrogate.data_space == reduced_space
+        # Verify the constraint object is passed through exactly as-is
+        assert surrogate._constraint is constraint
+
+    def test_minimum_norm_data_reduction(self, forward_problem: LinearForwardProblem):
+        """Tests that Minimum Norm inversions inherit and construct data reductions properly."""
+        inversion = LinearMinimumNormInversion(forward_problem, formalism="data_space")
+
+        S = forward_problem.data_space.identity_operator()
+        surrogate = inversion.data_reduced_inversion(S)
+
+        assert isinstance(surrogate, LinearMinimumNormInversion)
+        assert surrogate.formalism == "data_space"
+        assert surrogate.data_space == forward_problem.data_space

@@ -91,6 +91,9 @@ def setup_problem_components(
     prior_std: float,
     noise_scale: float,
     noise_std: float,
+    /,
+    *,
+    surrogate=False,
 ):
     """
     Helper function to generate the space, forward operator,  prior measure,
@@ -110,9 +113,13 @@ def setup_problem_components(
             noise_scale,
             std=noise_std,
         )
+
         data_error_measure = spatial_noise_measure.affine_mapping(
-            operator=forward_operator
+            operator=forward_operator,
         )
+
+        if surrogate:
+            data_error_measure = data_error_measure.with_sparse_approximation()
 
     return space, forward_operator, prior_measure, data_error_measure
 
@@ -169,7 +176,7 @@ def main():
     noise_group.add_argument(
         "--noise-amplitude-factor",
         type=float,
-        default=0.1,
+        default=0.3,
         help="Relative amplitude of the noise",
     )
     noise_group.add_argument(
@@ -211,7 +218,7 @@ def main():
     precond_group.add_argument(
         "--threshold",
         type=float,
-        default=10.0,
+        default=4.0,
         help="Relative distance used in forming blocks or calculating max sparse distance",
     )
     precond_group.add_argument(
@@ -324,8 +331,9 @@ def main():
                     observation_points,
                     args.prior_scale,
                     args.prior_std,
-                    0.0,
+                    args.noise_scale_factor * args.prior_scale,
                     args.noise_amplitude_factor * args.prior_std,
+                    surrogate=True,
                 )
             )
 
@@ -378,7 +386,20 @@ def main():
 
         elif args.precond == "woodbury":
             print("Forming model-space preconditioner")
-            preconditioner = surrogate_inv.woodbury_data_preconditioner()
+            woodbury_solver = inf.EigenSolver(galerkin=True)
+
+            surrogate_inv = surrogate_inv.surrogate_inversion(
+                alternate_prior_measure=surrogate_prior,
+                alternate_data_error_measure=surrogate_noise,
+            )
+
+            preconditioner = surrogate_inv.woodbury_data_preconditioner(woodbury_solver)
+
+            alpha = 0.1
+
+            preconditioner = (
+                1 - alpha
+            ) * preconditioner + alpha * surrogate_noise.inverse_covariance
 
         elif args.precond == "distance-localized":
             print("Building distance-localized sparse matrix...")
@@ -397,7 +418,11 @@ def main():
     # 5. Bayesian Inversion & Plotting
     # ==========================================
     print("Solving linear system...")
-    solver = inf.CGSolver()
+
+    solver = inf.CGSolver(
+        callback=bayesian_inversion.normal_residual_callback(data),
+        rtol=0.01 * args.noise_amplitude_factor,
+    )
     model_posterior_measure = bayesian_inversion.model_posterior_measure(
         data, solver, preconditioner=preconditioner
     )
@@ -408,7 +433,7 @@ def main():
     # --- Modernized Plotting Section ---
     # ==========================================
 
-    fig, axes = plt.subplots(
+    _, axes = plt.subplots(
         2,
         2,
         figsize=(16, 12),
