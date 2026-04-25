@@ -55,7 +55,6 @@ from pygeoinf.backus_gilbert import DualMasterCostFunction
 from pygeoinf.convex_analysis import BallSupportFunction
 from pygeoinf.convex_optimisation import (
     ProximalBundleMethod,
-    LevelBundleMethod,
     SmoothedLBFGSSolver,
     ChambollePockSolver,
     PrimalKKTSolver,
@@ -73,33 +72,25 @@ DATA_DIM_CONFIGS = [
     (2,  5),   # dim=10
     (5,  10),  # dim=50
     (10, 10),  # dim=100
-    (20, 25),  # dim=500
+    (20, 10),  # dim=200
 ]
 
-SOLVER_NAMES = ["ProximalBundle", "LevelBundle", "SmoothedLBFGS", "ChambollePock", "PrimalKKT"]
+SOLVER_NAMES = ["ProximalBundle", "SmoothedLBFGS", "ChambollePock", "PrimalKKT"]
 
-# Configs to skip (solver, data_dim) — too slow to run in practice.
-# The run loop will insert a DNF entry automatically so the figure stays complete.
-SKIP_CONFIGS: frozenset = frozenset([
-    ("LevelBundle", 100),
-    ("LevelBundle", 500),
-])
+# Configs to skip — not used in this run (only 4 fast solvers)
+SKIP_CONFIGS: frozenset = frozenset()
 
-# Estimated solve time (seconds) for DNF configs, for use in figure annotation.
-DNF_ESTIMATED_TIMES: dict = {
-    ("LevelBundle", 100): 14400.0,  # ~4h extrapolated from n^2.8 scaling
-    ("LevelBundle", 500): float(14400.0 * (500 / 100) ** 2.8),  # ~15d extrapolated from n^2.8 scaling
-}
+# Estimated solve times for DNF configs — not used in this run
+DNF_ESTIMATED_TIMES: dict = {}
+
 SOLVER_COLORS = {
     "ProximalBundle": "tab:blue",
-    "LevelBundle":    "tab:orange",
     "SmoothedLBFGS":  "tab:green",
     "ChambollePock":  "tab:purple",
     "PrimalKKT":      "tab:red",
 }
 SOLVER_MARKERS = {
     "ProximalBundle": "o",
-    "LevelBundle":    "s",
     "SmoothedLBFGS":  "^",
     "ChambollePock":  "D",
     "PrimalKKT":      "P",
@@ -288,8 +279,6 @@ def run_one(
 
     if solver_name == "ProximalBundle":
         upper, lower = solve_with_proximal_bundle(cost, basis_dirs, neg_basis, data_space)
-    elif solver_name == "LevelBundle":
-        upper, lower = solve_with_level_bundle(cost, basis_dirs, neg_basis, data_space)
     elif solver_name == "SmoothedLBFGS":
         upper, lower = solve_with_smoothed_lbfgs(cost, basis_dirs, neg_basis, data_space)
     elif solver_name == "ChambollePock":

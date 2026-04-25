@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.hilbert_space import EuclideanSpace, MassWeightedHilbertSpace
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf.convex_analysis import BallSupportFunction, EllipsoidSupportFunction
 from pygeoinf.convex_optimisation import (
@@ -94,6 +94,54 @@ def _make_tight_fixture(seed: int = 0, n_model: int = 6, n_data: int = 4):
         prior_radius=1.0, data_radius=0.1,
         c=c, c_comps=c_comps,
     )
+
+
+def _make_mass_weighted_tight_fixture(
+    seed: int = 123, n_model: int = 5, n_data: int = 3
+):
+    """Tight feasible fixture on a non-Euclidean Hilbert space.
+
+    This reproduces the case where primal components and dual components differ,
+    which is the regression surface for the PrimalKKTSolver KKT RHS.
+    """
+    rng = np.random.default_rng(seed)
+    base_ms = EuclideanSpace(n_model)
+    ds = EuclideanSpace(n_data)
+
+    mass_diag = 1.0 + rng.uniform(0.2, 2.0, size=n_model)
+    mass_op = LinearOperator.self_adjoint_from_matrix(base_ms, np.diag(mass_diag))
+    inv_mass_op = LinearOperator.self_adjoint_from_matrix(
+        base_ms, np.diag(1.0 / mass_diag)
+    )
+    ms = MassWeightedHilbertSpace(base_ms, mass_op, inv_mass_op)
+
+    G_base_mat = rng.standard_normal((n_data, n_model))
+    G_base = LinearOperator.from_matrix(base_ms, ds, G_base_mat)
+    G = LinearOperator.from_formal_adjoint(ms, ds, G_base)
+
+    d_tilde = ds.zero
+    d_tilde_comps = np.zeros(n_data)
+
+    B = BallSupportFunction(ms, ms.zero, 1.0)
+    V = BallSupportFunction(ds, ds.zero, 0.15)
+
+    for _ in range(20):
+        c_comps = rng.standard_normal(n_model)
+        c = ms.from_components(c_comps)
+        u_ball = B.support_point(c)
+        residual = np.linalg.norm(ds.to_components(G(u_ball)) - d_tilde_comps)
+        if residual > 1.2 * V._radius:
+            return dict(
+                ms=ms,
+                ds=ds,
+                G=G,
+                d_tilde=d_tilde,
+                B=B,
+                V=V,
+                c=c,
+            )
+
+    raise RuntimeError("Could not generate a both-active mass-weighted fixture")
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +286,26 @@ class TestSupportValueAgreement:
             err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}"
         )
 
+    def test_mass_weighted_ball_agreement(self):
+        """Non-Euclidean ball prior should still match ChambollePock."""
+        fx = _make_mass_weighted_tight_fixture()
+        kkt_solver = PrimalKKTSolver(fx["B"], fx["V"], fx["G"], fx["d_tilde"])
+        cp_solver = ChambollePockSolver(
+            fx["B"], fx["V"], fx["G"], fx["d_tilde"],
+            max_iterations=5000, tolerance=1e-5,
+        )
+
+        kkt_result = kkt_solver.solve(fx["c"])
+        cp_result = cp_solver.solve(fx["c"])
+
+        kkt_val = fx["ms"].inner_product(fx["c"], kkt_result.m)
+        cp_val = fx["ms"].inner_product(fx["c"], cp_result.m)
+
+        np.testing.assert_allclose(
+            kkt_val, cp_val, rtol=1e-4, atol=1e-5,
+            err_msg=f"KKT val={kkt_val:.6f} vs CP val={cp_val:.6f}"
+        )
+
 
 class TestWarmStart:
     """Warm-start multipliers (_lambda_prev, _mu_prev) should be updated."""
@@ -260,6 +328,7 @@ class TestWarmStart:
         assert changed, (
             f"Warm-start state unchanged: λ={solver._lambda_prev}, μ={solver._mu_prev}"
         )
+        assert solver._has_warm_start is True
 
     def test_initial_warm_start_values(self):
         """Initial warm-start should be positive λ, zero μ (unconstrained start)."""
@@ -267,6 +336,7 @@ class TestWarmStart:
         solver = PrimalKKTSolver(fx["B"], fx["V"], fx["G"], fx["d_tilde"])
         assert solver._lambda_prev > 0, "_lambda_prev should be positive at init"
         assert solver._mu_prev == 0.0, "_mu_prev should be 0 at init"
+        assert solver._has_warm_start is False
 
 
 class TestEllipsoidPrior:

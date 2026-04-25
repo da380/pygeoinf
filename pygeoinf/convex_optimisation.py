@@ -2319,8 +2319,32 @@ class PrimalKKTSolver:
             self._prior_is_ball = True
             self._u0_comps = self._model_space.to_components(B._center)
             self._eta = float(B._radius)
-            self._A_B_mat = None       # identity
-            self._A_B_inv_mat = None   # identity
+            self._A_B_mat = None
+            self._A_B_inv_mat = None
+            self._A_B_diag = None
+            self._A_B_inv_diag = None
+
+            # Ball priors use the model-space metric as A_B.  We exploit
+            # diagonal metrics when available (e.g. Sobolev spaces) and fall
+            # back to the explicit mass matrix for dense weighted spaces.
+            if hasattr(self._model_space, "squared_norms"):
+                self._A_B_diag = np.asarray(
+                    self._model_space.squared_norms, dtype=float
+                ).copy()
+                self._A_B_inv_diag = 1.0 / self._A_B_diag
+            elif (
+                hasattr(self._model_space, "mass_operator")
+                and hasattr(self._model_space, "inverse_mass_operator")
+            ):
+                self._A_B_mat = self._model_space.mass_operator.matrix(
+                    dense=True, galerkin=True
+                )
+                self._A_B_inv_mat = self._model_space.inverse_mass_operator.matrix(
+                    dense=True, galerkin=True
+                )
+            else:
+                self._A_B_diag = np.ones(N)
+                self._A_B_inv_diag = np.ones(N)
         elif isinstance(B, EllipsoidSupportFunction):
             if B._A_inv is None:
                 raise ValueError(
@@ -2330,6 +2354,8 @@ class PrimalKKTSolver:
             self._prior_is_ball = False
             self._u0_comps = self._model_space.to_components(B._center)
             self._eta = float(B._radius)
+            self._A_B_diag = None
+            self._A_B_inv_diag = None
             basis_N = np.eye(N)
             self._A_B_mat = np.column_stack([
                 self._model_space.to_components(
@@ -2388,7 +2414,10 @@ class PrimalKKTSolver:
 
         # A_B @ u0  (N-vector): the λ rhs contribution, precomputed
         if self._prior_is_ball:
-            self._A_B_u0 = self._u0_comps.copy()
+            if self._A_B_diag is not None:
+                self._A_B_u0 = self._A_B_diag * self._u0_comps
+            else:
+                self._A_B_u0 = self._A_B_mat @ self._u0_comps
         else:
             self._A_B_u0 = self._A_B_mat @ self._u0_comps
 
@@ -2403,7 +2432,12 @@ class PrimalKKTSolver:
         self._dense = M <= dense_threshold
         if self._dense:
             if self._prior_is_ball:
-                self._P_mat = self._G_mat @ self._G_mat.T
+                if self._A_B_inv_diag is not None:
+                    self._P_mat = self._G_mat @ (
+                        self._A_B_inv_diag[:, None] * self._G_mat.T
+                    )
+                else:
+                    self._P_mat = self._G_mat @ self._A_B_inv_mat @ self._G_mat.T
             else:
                 self._P_mat = self._G_mat @ self._A_B_inv_mat @ self._G_mat.T
         else:
@@ -2412,9 +2446,10 @@ class PrimalKKTSolver:
         # Warm-start KKT multipliers (updated after each Branch-2 solve)
         self._lambda_prev: float = 1.0
         self._mu_prev: float = 0.0
+        self._has_warm_start: bool = False
 
     def _woodbury_solve(
-        self, lam: float, mu: float, c_comps: np.ndarray
+        self, lam: float, mu: float, c_dual_comps: np.ndarray
     ) -> np.ndarray:
         r"""Return $u^*(\lambda,\mu)$ via the Woodbury matrix identity.
 
@@ -2441,7 +2476,7 @@ class PrimalKKTSolver:
         Args:
             lam: KKT multiplier $\lambda > 0$ (prior ball constraint).
             mu: KKT multiplier $\mu \geq 0$ (data constraint).
-            c_comps: Direction in model-space component coordinates.
+            c_dual_comps: Objective direction in model-space dual components.
 
         Returns:
             numpy array of shape ``(N,)`` with $u^*$ components.
@@ -2449,10 +2484,16 @@ class PrimalKKTSolver:
         from scipy.linalg import cho_factor, cho_solve
         from scipy.sparse.linalg import LinearOperator as ScipyLinOp, cg
 
-        rhs = c_comps + lam * self._A_B_u0 + mu * self._GT_AV_d  # shape (N,)
+        rhs = c_dual_comps + lam * self._A_B_u0 + mu * self._GT_AV_d  # shape (N,)
 
         # w = A_B^{-1} rhs
-        w = rhs if self._prior_is_ball else self._A_B_inv_mat @ rhs
+        if self._prior_is_ball:
+            if self._A_B_inv_diag is not None:
+                w = self._A_B_inv_diag * rhs
+            else:
+                w = self._A_B_inv_mat @ rhs
+        else:
+            w = self._A_B_inv_mat @ rhs
 
         # Special case μ = 0: skip Woodbury correction
         if mu == 0.0:
@@ -2482,7 +2523,13 @@ class PrimalKKTSolver:
                 t1 = inv_mu * x if A_V_inv_mat is None else inv_mu * (A_V_inv_mat @ x)
                 # (1/λ) G A_B^{-1} G^T x
                 Gtx = G_mat.T @ x
-                ABinv_Gtx = Gtx if A_B_inv_mat is None else A_B_inv_mat @ Gtx
+                if self._prior_is_ball:
+                    if self._A_B_inv_diag is not None:
+                        ABinv_Gtx = self._A_B_inv_diag * Gtx
+                    else:
+                        ABinv_Gtx = self._A_B_inv_mat @ Gtx
+                else:
+                    ABinv_Gtx = Gtx if A_B_inv_mat is None else A_B_inv_mat @ Gtx
                 t2 = inv_lam * (G_mat @ ABinv_Gtx)
                 return t1 + t2
 
@@ -2491,12 +2538,18 @@ class PrimalKKTSolver:
 
         # Woodbury correction: (1/λ²) A_B^{-1} G^T z
         GTz = self._G_mat.T @ z
-        correction = GTz if self._prior_is_ball else self._A_B_inv_mat @ GTz
+        if self._prior_is_ball:
+            if self._A_B_inv_diag is not None:
+                correction = self._A_B_inv_diag * GTz
+            else:
+                correction = self._A_B_inv_mat @ GTz
+        else:
+            correction = self._A_B_inv_mat @ GTz
 
         return w / lam - correction / (lam * lam)
 
     def _residuals(
-        self, lam: float, mu: float, c_comps: np.ndarray
+        self, lam: float, mu: float, c_dual_comps: np.ndarray
     ) -> "tuple[float, float]":
         r"""Compute KKT residuals $(\rho_1, \rho_2)$ at $(\lambda, \mu)$.
 
@@ -2509,16 +2562,19 @@ class PrimalKKTSolver:
         Args:
             lam: Prior-ball KKT multiplier $\lambda > 0$.
             mu: Data KKT multiplier $\mu \geq 0$.
-            c_comps: Direction in model-space component coordinates.
+            c_dual_comps: Objective direction in model-space dual components.
 
         Returns:
             ``(rho1, rho2)`` scalar residuals.
         """
-        u = self._woodbury_solve(lam, mu, c_comps)
+        u = self._woodbury_solve(lam, mu, c_dual_comps)
 
         diff_u = u - self._u0_comps
         if self._prior_is_ball:
-            rho1 = float(np.dot(diff_u, diff_u)) - self._eta ** 2
+            if self._A_B_diag is not None:
+                rho1 = float(np.dot(diff_u, self._A_B_diag * diff_u)) - self._eta ** 2
+            else:
+                rho1 = float(diff_u @ (self._A_B_mat @ diff_u)) - self._eta ** 2
         else:
             rho1 = float(diff_u @ (self._A_B_mat @ diff_u)) - self._eta ** 2
 
@@ -2557,6 +2613,9 @@ class PrimalKKTSolver:
         from scipy.optimize import fsolve
 
         c_comps = self._model_space.to_components(c)
+        c_dual_comps = self._model_space.dual.to_components(
+            self._model_space.to_dual(c)
+        )
 
         # ------------------------------------------------------------------
         # Branch 1: prior-only (data constraint not active)
@@ -2576,11 +2635,13 @@ class PrimalKKTSolver:
             if data_sq <= self._r ** 2 * (1.0 + 1e-9):
                 # Compute λ* from the active prior constraint
                 if self._prior_is_ball:
-                    c_norm = float(np.linalg.norm(c_comps))
+                    c_norm = float(self._model_space.norm(c))
                     lam_star = c_norm / self._eta if c_norm > 1e-14 else 1.0
                 else:
                     ABinv_c = self._A_B_inv_mat @ c_comps
-                    c_norm_AB = float(np.sqrt(max(np.dot(c_comps, ABinv_c), 0.0)))
+                    c_norm_AB = float(
+                        np.sqrt(max(np.dot(c_dual_comps, ABinv_c), 0.0))
+                    )
                     lam_star = c_norm_AB / self._eta if c_norm_AB > 1e-14 else 1.0
                 return KKTResult(
                     m=u_ball,
@@ -2594,20 +2655,46 @@ class PrimalKKTSolver:
         # ------------------------------------------------------------------
         # Physics-based initial λ: for μ=0, λ* = ‖c‖_{A_B^{-1}} / η
         if self._prior_is_ball:
-            c_norm_AB = float(np.linalg.norm(c_comps))
+            if self._A_B_inv_diag is not None:
+                c_norm_AB = float(
+                    np.sqrt(
+                        max(
+                            np.dot(
+                                c_dual_comps,
+                                self._A_B_inv_diag * c_dual_comps,
+                            ),
+                            0.0,
+                        )
+                    )
+                )
+            else:
+                c_norm_AB = float(
+                    np.sqrt(max(np.dot(c_dual_comps, self._A_B_inv_mat @ c_dual_comps), 0.0))
+                )
         else:
             ABinv_c = self._A_B_inv_mat @ c_comps
-            c_norm_AB = float(np.sqrt(max(np.dot(c_comps, ABinv_c), 0.0)))
+            c_norm_AB = float(np.sqrt(max(np.dot(c_dual_comps, ABinv_c), 0.0)))
         lam_phys = max(c_norm_AB / self._eta, 1e-4)
 
-        # Warm-start: prefer warm-start λ if close, else use physics-based
-        lam0 = self._lambda_prev if self._lambda_prev > 1e-4 else lam_phys
-        mu0 = max(self._mu_prev, 0.5)   # ensure μ > 0 for log-space init
+        # Warm-start only after a previous both-active solve has converged.
+        # The placeholder init state (λ=1, μ=0) is not a meaningful seed.
+        if self._has_warm_start and self._lambda_prev > 1e-4:
+            lam0 = self._lambda_prev
+        else:
+            lam0 = lam_phys
+
+        # Small initial μ: data constraint often barely active; large μ overshoots.
+        if self._has_warm_start and self._mu_prev > 1e-8:
+            mu0 = self._mu_prev
+        else:
+            mu0 = 1e-3
 
         def _residual_log(log_x: np.ndarray) -> np.ndarray:
-            lam = float(np.exp(log_x[0]))
-            mu = float(np.exp(log_x[1]))
-            r1, r2 = self._residuals(lam, mu, c_comps)
+            # Clamp to avoid overflow: exp(25) ≈ 7e10 is a safe upper bound
+            log_x_safe = np.clip(log_x, -30.0, 25.0)
+            lam = float(np.exp(log_x_safe[0]))
+            mu = float(np.exp(log_x_safe[1]))
+            r1, r2 = self._residuals(lam, mu, c_dual_comps)
             return np.array([r1, r2])
 
         x0_log = np.array([np.log(lam0), np.log(mu0)])
@@ -2620,15 +2707,19 @@ class PrimalKKTSolver:
         )
 
         if ier != 1:
-            # Fallback: try physics-based guess then a few alternatives
+            # Fallback: try small-mu guesses first (data barely active),
+            # then larger values if needed
             fallback_guesses = [
+                (lam_phys, 1e-3),
+                (lam_phys, 1e-2),
                 (lam_phys, 0.5),
                 (lam_phys, 2.0),
+                (0.5 * lam_phys, 1e-2),
                 (0.5 * lam_phys, 1.0),
             ]
             for alt_lam, alt_mu in fallback_guesses:
                 alt_x0 = np.array([np.log(max(alt_lam, 1e-4)),
-                                    np.log(max(alt_mu, 1e-4))])
+                                    np.log(max(alt_mu, 1e-8))])
                 alt_sol, alt_info, alt_ier, _ = fsolve(
                     _residual_log, alt_x0, full_output=True,
                     xtol=self._fsolve_tol, maxfev=self._fsolve_maxfev,
@@ -2637,16 +2728,19 @@ class PrimalKKTSolver:
                     sol, info, ier = alt_sol, alt_info, alt_ier
                     break
 
-        lam_sol = float(np.exp(sol[0]))
-        mu_sol = float(np.exp(sol[1]))
+        # Clamp to avoid overflow before exp (same range as _residual_log)
+        sol_safe = np.clip(sol, -30.0, 25.0)
+        lam_sol = float(np.exp(sol_safe[0]))
+        mu_sol = float(np.exp(sol_safe[1]))
         converged = ier == 1
 
-        u_star_comps = self._woodbury_solve(lam_sol, mu_sol, c_comps)
+        u_star_comps = self._woodbury_solve(lam_sol, mu_sol, c_dual_comps)
         u_star = self._model_space.from_components(u_star_comps)
 
         # Update warm start for next direction
         self._lambda_prev = lam_sol
         self._mu_prev = mu_sol
+        self._has_warm_start = converged
 
         return KKTResult(
             m=u_star,
