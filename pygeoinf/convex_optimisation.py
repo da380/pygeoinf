@@ -2160,7 +2160,7 @@ class SmoothedLBFGSSolver:
         tolerance: float = 1e-6,
         max_iter_per_level: int = 500,
     ) -> None:
-        self._cost = cost
+        self._oracle = cost
         self._epsilon0 = float(epsilon0)
         self._n_levels = int(n_levels)
         self._tolerance = float(tolerance)
@@ -2176,7 +2176,7 @@ class SmoothedLBFGSSolver:
             :class:`BundleResult` with ``gap`` and ``f_low`` set to
             ``np.nan`` (no subgradient-based lower bound is maintained).
         """
-        cost = self._cost
+        cost = self._oracle
         domain = cost.domain
         lam_current = lam0
         total_iters = 0
@@ -2738,6 +2738,385 @@ class PrimalKKTSolver:
         u_star = self._model_space.from_components(u_star_comps)
 
         # Update warm start for next direction
+        self._lambda_prev = lam_sol
+        self._mu_prev = mu_sol
+        self._has_warm_start = converged
+
+        return KKTResult(
+            m=u_star,
+            multipliers=(lam_sol, mu_sol),
+            converged=converged,
+            num_iterations=int(info["nfev"]),
+        )
+
+
+# ---------------------------------------------------------------------------
+# PrimalKKTSolverBasisFree
+# ---------------------------------------------------------------------------
+
+
+class PrimalKKTSolverBasisFree:
+    r"""Basis-free primal KKT solver via Woodbury identity.
+
+    Identical in purpose to :class:`PrimalKKTSolver` but operates on abstract
+    Hilbert-space vectors throughout: the model space $H$ is **never**
+    discretised.  Only the data space $D$ (which is explicitly
+    finite-dimensional) is discretised — and only inside
+    :meth:`_woodbury_solve`, which builds the $M \times M$ Woodbury system.
+
+    The Woodbury reduction:
+
+    .. math::
+
+        u^*(\lambda,\mu) =
+            \frac{1}{\lambda} A_B^{-1} r_H
+            - \frac{1}{\lambda} A_B^{-1} G^* K^{-1} G A_B^{-1} r_H
+
+    where
+
+    .. math::
+
+        r_H = c + \lambda A_B u_0 + \mu G^* A_V \tilde{d}, \qquad
+        K   = \tfrac{1}{\mu} A_V^{-1} + \tfrac{1}{\lambda} G A_B^{-1} G^*
+
+    The $M \times M$ matrix $P = G A_B^{-1} G^*$ is precomputed once via
+    ``.matrix(dense=True)`` which probes the **data space** only.  No
+    model-space ``to_components`` or ``from_components`` is ever called.
+
+    **Ball/ball simplification** ($A_B = I_H$, $A_V = I_D$):
+
+    .. math::
+
+        r_H = c + \lambda u_0 + \mu G^* \tilde{d}, \qquad
+        P   = G G^*, \qquad
+        K   = \tfrac{1}{\mu} I_D + \tfrac{1}{\lambda} G G^*
+
+    so the only M×M solve is $K z = G w$ and no model-space matrix is
+    ever formed.
+
+    Supports :class:`~pygeoinf.convex_analysis.BallSupportFunction` and
+    :class:`~pygeoinf.convex_analysis.EllipsoidSupportFunction` for both $B$
+    and $V$ (four combinations).
+
+    Args:
+        B: Model prior support function.
+        V: Data error support function (ball or ellipsoid, centered at origin).
+        G: Forward operator $G : H \to D$.
+        d_tilde: Observed data vector in $D$.
+        fsolve_tol: Tolerance for ``scipy.optimize.fsolve``.
+        fsolve_maxfev: Maximum function evaluations for ``fsolve``.
+    """
+
+    def __init__(
+        self,
+        B: "SupportFunction",
+        V: "SupportFunction",
+        G: "LinearOperator",
+        d_tilde: "Vector",
+        /,
+        *,
+        fsolve_tol: float = 1e-10,
+        fsolve_maxfev: int = 200,
+    ) -> None:
+        # --- Validate B ---
+        if isinstance(B, BallSupportFunction):
+            self._prior_is_ball = True
+            self._A_B_op = B.primal_domain.identity_operator()
+            self._A_B_inv_op = B.primal_domain.identity_operator()
+        elif isinstance(B, EllipsoidSupportFunction):
+            if B._A_inv is None:
+                raise ValueError(
+                    "EllipsoidSupportFunction B must supply inverse_operator "
+                    "(A^{-1}) to be used as a PrimalKKTSolverBasisFree prior."
+                )
+            self._prior_is_ball = False
+            self._A_B_op = B._A
+            self._A_B_inv_op = B._A_inv
+        else:
+            raise TypeError(
+                f"B must be BallSupportFunction or EllipsoidSupportFunction, "
+                f"got {type(B).__name__}"
+            )
+
+        # --- Validate V ---
+        if isinstance(V, BallSupportFunction):
+            self._data_is_ball = True
+            self._A_V_op = V.primal_domain.identity_operator()
+        elif isinstance(V, EllipsoidSupportFunction):
+            if V._A_inv is None:
+                raise ValueError(
+                    "EllipsoidSupportFunction V must supply inverse_operator "
+                    "(A^{-1}) to be used as a PrimalKKTSolverBasisFree data set."
+                )
+            self._data_is_ball = False
+            self._A_V_op = V._A
+        else:
+            raise TypeError(
+                f"V must be BallSupportFunction or EllipsoidSupportFunction, "
+                f"got {type(V).__name__}"
+            )
+
+        self._B = B
+        self._V = V
+        self._G = G
+        self._d_tilde = d_tilde
+        self._fsolve_tol = fsolve_tol
+        self._fsolve_maxfev = fsolve_maxfev
+
+        self._model_space = B.primal_domain
+        self._data_space = G.codomain
+        M = self._data_space.dim
+        self._M = M
+        self._eta = float(B._radius)
+        self._r = float(V._radius)
+        self._u0 = B._center
+
+        # --- G_adj_AV operator (G.adjoint ∘ A_V : D → H) ---
+        # For ball V: A_V = I_D, so G_adj_AV = G.adjoint
+        # For ellipsoid V: G_adj_AV = G.adjoint @ V._A  (LinearOperator composition)
+        if self._data_is_ball:
+            self._G_adj_AV = G.adjoint
+        else:
+            self._G_adj_AV = G.adjoint @ V._A
+
+        # --- Precomputed H-vectors ---
+        self._A_B_u0 = self._A_B_op(self._u0)       # H-vector
+        self._G_adj_AV_d = self._G_adj_AV(d_tilde)  # H-vector
+
+        # --- A_V^{-1} matrix (M×M, data space only) ---
+        if self._data_is_ball:
+            self._AV_inv_mat = np.eye(M)
+        else:
+            self._AV_inv_mat = V._A_inv.matrix(dense=True)
+
+        # --- P_mat = G A_B^{-1} G* (M×M, data space probing only!) ---
+        if self._prior_is_ball:
+            self._P_mat = (G @ G.adjoint).matrix(dense=True)
+        else:
+            self._P_mat = (G @ B._A_inv @ G.adjoint).matrix(dense=True)
+
+        # --- Warm-start state ---
+        self._lambda_prev: float = 1.0
+        self._mu_prev: float = 0.0
+        self._has_warm_start: bool = False
+
+    def _woodbury_solve(self, lam: float, mu: float, c: "Vector") -> "Vector":
+        r"""Return $u^*(\lambda, \mu)$ entirely in abstract Hilbert-space vectors.
+
+        Solves
+
+        .. math::
+
+            (\lambda A_B + \mu G^* A_V G)\, u^* =
+                c + \lambda A_B u_0 + \mu G^* A_V \tilde{d}
+
+        using the Woodbury identity.  The only data-space discretisation is the
+        $M \times M$ Cholesky solve for $K z = G w$.
+
+        Args:
+            lam: KKT multiplier $\lambda > 0$.
+            mu:  KKT multiplier $\mu \geq 0$.
+            c:   Objective direction (primal $H$-vector).
+
+        Returns:
+            $u^*$ as an abstract $H$-vector.
+        """
+        from scipy.linalg import cho_factor, cho_solve
+
+        ms = self._model_space
+        ds = self._data_space
+
+        # rhs = c + λ A_B(u0) + μ G_adj_AV(d̃)   [abstract H]
+        rhs_H = ms.add(
+            c,
+            ms.add(
+                ms.multiply(lam, self._A_B_u0),
+                ms.multiply(mu, self._G_adj_AV_d),
+            ),
+        )
+
+        # w = (1/λ) A_B_inv(rhs)   [abstract H]
+        w_H = ms.multiply(1.0 / lam, self._A_B_inv_op(rhs_H))
+
+        if mu == 0.0:
+            return w_H
+
+        # p = G(w)   [data-space vector]
+        p_D = self._G(w_H)
+        p_comps = ds.to_components(p_D)
+
+        # K = (1/μ) A_V^{-1} + (1/λ) P_mat   [M×M]
+        K_mat = (1.0 / mu) * self._AV_inv_mat + (1.0 / lam) * self._P_mat
+        cho_decomp = cho_factor(K_mat)
+        z_comps = cho_solve(cho_decomp, p_comps)
+        z_D = ds.from_components(z_comps)
+
+        # correction = (1/λ) A_B_inv(G*(z))   [abstract H]
+        # NOTE: uses G.adjoint (plain adjoint), NOT G_adj_AV
+        correction_H = ms.multiply(
+            1.0 / lam, self._A_B_inv_op(self._G.adjoint(z_D))
+        )
+
+        return ms.subtract(w_H, correction_H)
+
+    def _residuals(
+        self, lam: float, mu: float, c: "Vector"
+    ) -> "tuple[float, float]":
+        r"""KKT residuals $(\rho_1, \rho_2)$ at $(\lambda, \mu)$.
+
+        .. math::
+
+            \rho_1 = \langle A_B(u^* - u_0),\, u^* - u_0 \rangle_H - \eta^2
+
+            \rho_2 = \langle A_V(G u^* - \tilde{d}),\, G u^* - \tilde{d} \rangle_D
+                     - r^2
+
+        Args:
+            lam: $\lambda > 0$.
+            mu:  $\mu \geq 0$.
+            c:   Objective direction.
+
+        Returns:
+            ``(rho1, rho2)`` floats.
+        """
+        ms = self._model_space
+        ds = self._data_space
+
+        u = self._woodbury_solve(lam, mu, c)
+
+        diff_u = ms.subtract(u, self._u0)
+        # For ball B: A_B_op = identity, so <diff_u, diff_u>_H = ||u* - u0||_H^2
+        # For ellipsoid B: <A_B(diff_u), diff_u>_H
+        rho1 = float(ms.inner_product(self._A_B_op(diff_u), diff_u)) - self._eta ** 2
+
+        res_d = ds.subtract(self._G(u), self._d_tilde)
+        rho2 = float(ds.inner_product(self._A_V_op(res_d), res_d)) - self._r ** 2
+
+        return rho1, rho2
+
+    def solve(self, c: "Vector") -> KKTResult:
+        r"""Solve for $u^*$ maximising $\langle c, u \rangle$ over the feasible set.
+
+        Uses the same two-branch strategy as :class:`PrimalKKTSolver`:
+
+        1. Compute the support point $u_{\rm ball}$ of $B$ in direction $c$.
+           If the data constraint is satisfied, return immediately.
+        2. Otherwise both constraints are active; solve the $2 \times 2$
+           root-finding problem in log-space via ``scipy.optimize.fsolve``,
+           warm-started from $(\lambda_{\rm prev}, \mu_{\rm prev})$.
+
+        The model space is **never** discretised during this method.
+
+        Args:
+            c: Linear objective in model space $H$.
+
+        Returns:
+            :class:`KKTResult` with the optimal model vector $u^*$,
+            KKT multipliers, convergence flag, and iteration count.
+        """
+        from scipy.optimize import fsolve
+
+        ms = self._model_space
+        ds = self._data_space
+
+        # ------------------------------------------------------------------
+        # Branch 1: prior-only (data constraint not active)
+        # ------------------------------------------------------------------
+        _, u_ball = self._B.value_and_support_point(c)
+        if u_ball is None:
+            u_ball = self._B.support_point(c)
+
+        if u_ball is not None:
+            res_data = ds.subtract(self._G(u_ball), self._d_tilde)
+            data_sq = float(ds.inner_product(self._A_V_op(res_data), res_data))
+
+            if data_sq <= self._r ** 2 * (1.0 + 1e-9):
+                # Compute λ* from the active prior constraint
+                if self._prior_is_ball:
+                    c_norm = float(ms.norm(c))
+                    lam_star = c_norm / self._eta if c_norm > 1e-14 else 1.0
+                else:
+                    c_norm_AB = float(
+                        np.sqrt(max(float(ms.inner_product(self._B._A_inv(c), c)), 0.0))
+                    )
+                    lam_star = c_norm_AB / self._eta if c_norm_AB > 1e-14 else 1.0
+                return KKTResult(
+                    m=u_ball,
+                    multipliers=(lam_star, 0.0),
+                    converged=True,
+                    num_iterations=1,
+                )
+
+        # ------------------------------------------------------------------
+        # Branch 2: both constraints active — 2D fsolve in log space
+        # ------------------------------------------------------------------
+        if self._prior_is_ball:
+            c_norm = float(ms.norm(c))
+            lam_phys = max(c_norm / self._eta, 1e-4)
+        else:
+            c_norm_AB = float(
+                np.sqrt(max(float(ms.inner_product(self._B._A_inv(c), c)), 0.0))
+            )
+            lam_phys = max(c_norm_AB / self._eta, 1e-4)
+
+        if self._has_warm_start and self._lambda_prev > 1e-4:
+            lam0 = self._lambda_prev
+        else:
+            lam0 = lam_phys
+
+        if self._has_warm_start and self._mu_prev > 1e-8:
+            mu0 = self._mu_prev
+        else:
+            mu0 = 1e-3
+
+        def _residual_log(log_x: np.ndarray) -> np.ndarray:
+            log_x_safe = np.clip(log_x, -30.0, 25.0)
+            lam = float(np.exp(log_x_safe[0]))
+            mu = float(np.exp(log_x_safe[1]))
+            r1, r2 = self._residuals(lam, mu, c)
+            return np.array([r1, r2])
+
+        x0_log = np.array([np.log(lam0), np.log(mu0)])
+        sol, info, ier, _mesg = fsolve(
+            _residual_log,
+            x0_log,
+            full_output=True,
+            xtol=self._fsolve_tol,
+            maxfev=self._fsolve_maxfev,
+        )
+
+        if ier != 1:
+            fallback_guesses = [
+                (lam_phys, 1e-3),
+                (lam_phys, 1e-2),
+                (lam_phys, 0.5),
+                (lam_phys, 2.0),
+                (0.5 * lam_phys, 1e-2),
+                (0.5 * lam_phys, 1.0),
+            ]
+            for alt_lam, alt_mu in fallback_guesses:
+                alt_x0 = np.array([
+                    np.log(max(alt_lam, 1e-4)),
+                    np.log(max(alt_mu, 1e-8)),
+                ])
+                alt_sol, alt_info, alt_ier, _ = fsolve(
+                    _residual_log,
+                    alt_x0,
+                    full_output=True,
+                    xtol=self._fsolve_tol,
+                    maxfev=self._fsolve_maxfev,
+                )
+                if alt_ier == 1:
+                    sol, info, ier = alt_sol, alt_info, alt_ier
+                    break
+
+        sol_safe = np.clip(sol, -30.0, 25.0)
+        lam_sol = float(np.exp(sol_safe[0]))
+        mu_sol = float(np.exp(sol_safe[1]))
+        converged = ier == 1
+
+        u_star = self._woodbury_solve(lam_sol, mu_sol, c)
+
         self._lambda_prev = lam_sol
         self._mu_prev = mu_sol
         self._has_warm_start = converged

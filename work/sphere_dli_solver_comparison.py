@@ -28,11 +28,17 @@ from __future__ import annotations
 import os
 import sys
 import time
+from typing import Any
 from pathlib import Path
 
 import matplotlib
 if not os.environ.get("DISPLAY"):
     matplotlib.use("Agg")
+
+# Keep BLAS/OpenMP thread usage explicit for reproducible timing on europa.
+DEFAULT_NUM_THREADS = int(os.environ.get("DLI_NUM_THREADS", "12"))
+for _env_name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_env_name, str(DEFAULT_NUM_THREADS))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -44,7 +50,6 @@ if str(_WORK_DIR) not in sys.path:
 from sphere_dli_example import (
     DEFAULT_TARGET_LATLON,
     SIGMA_NOISE,
-    PRIOR_SCALE,
     build_cap_property_operator,
     build_forward_operator,
     build_model_space,
@@ -58,6 +63,7 @@ from pygeoinf.convex_optimisation import (
     SmoothedLBFGSSolver,
     ChambollePockSolver,
     PrimalKKTSolver,
+    PrimalKKTSolverBasisFree,
     best_available_qp_solver,
     solve_support_values,
     solve_primal_feasibility,
@@ -68,32 +74,60 @@ from pygeoinf.convex_optimisation import (
 # ---------------------------------------------------------------------------
 
 # (n_sources, n_receivers) → data_dim = n_sources * n_receivers
-DATA_DIM_CONFIGS = [
+_DEFAULT_DIM_CONFIGS: list[tuple[int, int]] = [
     (2,  5),   # dim=10
     (5,  10),  # dim=50
     (10, 10),  # dim=100
     (20, 10),  # dim=200
 ]
 
-SOLVER_NAMES = ["ProximalBundle", "SmoothedLBFGS", "ChambollePock", "PrimalKKT"]
+# Extended factorizations for high-dimensional scaling studies.
+_EXTENDED_DIM_CONFIGS: dict[int, tuple[int, int]] = {
+    1000:    (100,  10),
+    2000:    (200,  10),
+    5000:    (500,  10),
+    10000:   (100, 100),
+    100000:  (1000, 100),
+}
 
-# Configs to skip — not used in this run (only 4 fast solvers)
-SKIP_CONFIGS: frozenset = frozenset()
+# Optional env-var override: DLI_DATA_DIMS=10,50,100,200,1000,10000
+_dims_env = os.environ.get("DLI_DATA_DIMS", "")
+if _dims_env.strip():
+    _all_configs: dict[int, tuple[int, int]] = {ns * nr: (ns, nr) for ns, nr in _DEFAULT_DIM_CONFIGS}
+    _all_configs.update(_EXTENDED_DIM_CONFIGS)
+    DATA_DIM_CONFIGS: list[tuple[int, int]] = [
+        _all_configs[int(d)] for d in _dims_env.split(",") if int(d) in _all_configs
+    ]
+else:
+    DATA_DIM_CONFIGS = _DEFAULT_DIM_CONFIGS
 
-# Estimated solve times for DNF configs — not used in this run
+SOLVER_NAMES = ["ProximalBundle", "SmoothedLBFGS", "ChambollePock", "PrimalKKT", "PrimalKKTBasisFree"]
+
+# PrimalKKT (non-BasisFree) forms an N_d×N_d matrix — skip at large dims to avoid OOM.
+# Override threshold via PRIMAL_KKT_MAX_DIM env var (default: skip above 5000).
+_PRIMAL_KKT_MAX_DIM = int(os.environ.get("PRIMAL_KKT_MAX_DIM", "5000"))
+SKIP_CONFIGS: frozenset = frozenset(
+    ("PrimalKKT", ns * nr)
+    for ns, nr in DATA_DIM_CONFIGS
+    if ns * nr > _PRIMAL_KKT_MAX_DIM
+)
+
+# Estimated solve times for DNF configs (used for open-triangle markers in figure).
 DNF_ESTIMATED_TIMES: dict = {}
 
 SOLVER_COLORS = {
-    "ProximalBundle": "tab:blue",
-    "SmoothedLBFGS":  "tab:green",
-    "ChambollePock":  "tab:purple",
-    "PrimalKKT":      "tab:red",
+    "ProximalBundle":    "tab:blue",
+    "SmoothedLBFGS":     "tab:green",
+    "ChambollePock":     "tab:purple",
+    "PrimalKKT":         "tab:red",
+    "PrimalKKTBasisFree": "tab:orange",
 }
 SOLVER_MARKERS = {
-    "ProximalBundle": "o",
-    "SmoothedLBFGS":  "^",
-    "ChambollePock":  "D",
-    "PrimalKKT":      "P",
+    "ProximalBundle":    "o",
+    "SmoothedLBFGS":     "^",
+    "ChambollePock":     "D",
+    "PrimalKKT":         "P",
+    "PrimalKKTBasisFree": "s",
 }
 
 LMAX = 64
@@ -102,6 +136,8 @@ N_CAP = 40
 SEED = 42
 MAX_ITER = 200
 TOL = 1e-4
+N_REPEATS = int(os.environ.get("DLI_NUM_REPEATS", "5"))
+SUPPORT_N_JOBS = int(os.environ.get("DLI_SUPPORT_N_JOBS", "1"))
 
 FIG_DIR = Path(__file__).parent / "figures"
 FIG_DIR.mkdir(exist_ok=True)
@@ -177,8 +213,12 @@ def solve_with_proximal_bundle(cost, basis_dirs, neg_basis, data_space):
         cost, tolerance=TOL, max_iterations=MAX_ITER, qp_solver=qp,
     )
     lambda0 = data_space.zero
-    upper_vals, _, _ = solve_support_values(cost, basis_dirs,  solver, lambda0, n_jobs=-1)
-    lower_neg,  _, _ = solve_support_values(cost, neg_basis,   solver, lambda0, n_jobs=-1)
+    upper_vals, _, _ = solve_support_values(
+        cost, basis_dirs, solver, lambda0, n_jobs=SUPPORT_N_JOBS
+    )
+    lower_neg, _, _ = solve_support_values(
+        cost, neg_basis, solver, lambda0, n_jobs=SUPPORT_N_JOBS
+    )
     return np.asarray(upper_vals), -np.asarray(lower_neg)
 
 
@@ -193,8 +233,12 @@ def solve_with_level_bundle(cost, basis_dirs, neg_basis, data_space):
         cost, tolerance=TOL, max_iterations=MAX_ITER, qp_solver=qp, alpha=0.5,
     )
     lambda0 = data_space.zero
-    upper_vals, _, _ = solve_support_values(cost, basis_dirs, solver, lambda0, n_jobs=-1)
-    lower_neg,  _, _ = solve_support_values(cost, neg_basis,  solver, lambda0, n_jobs=-1)
+    upper_vals, _, _ = solve_support_values(
+        cost, basis_dirs, solver, lambda0, n_jobs=SUPPORT_N_JOBS
+    )
+    lower_neg, _, _ = solve_support_values(
+        cost, neg_basis, solver, lambda0, n_jobs=SUPPORT_N_JOBS
+    )
     return np.asarray(upper_vals), -np.asarray(lower_neg)
 
 
@@ -204,8 +248,12 @@ def solve_with_smoothed_lbfgs(cost, basis_dirs, neg_basis, data_space):
         cost, epsilon0=1e-2, n_levels=5, tolerance=TOL, max_iter_per_level=MAX_ITER,
     )
     lambda0 = data_space.zero
-    upper_vals, _, _ = solve_support_values(cost, basis_dirs, solver, lambda0, n_jobs=-1)
-    lower_neg,  _, _ = solve_support_values(cost, neg_basis,  solver, lambda0, n_jobs=-1)
+    upper_vals, _, _ = solve_support_values(
+        cost, basis_dirs, solver, lambda0, n_jobs=SUPPORT_N_JOBS
+    )
+    lower_neg, _, _ = solve_support_values(
+        cost, neg_basis, solver, lambda0, n_jobs=SUPPORT_N_JOBS
+    )
     return np.asarray(upper_vals), -np.asarray(lower_neg)
 
 
@@ -255,6 +303,35 @@ def solve_with_primal_kkt(
     return np.asarray(upper_vals), -np.asarray(lower_neg)
 
 
+def solve_with_primal_kkt_basis_free(
+    cost, basis_dirs, neg_basis, model_ball, data_ball, forward_operator, data_vector
+):
+    """Run PrimalKKTSolverBasisFree — model space never discretised."""
+    model_space = cost._model_space
+    T = cost._T
+    data_space = forward_operator.codomain
+
+    d_tilde_vec = data_space.from_components(np.asarray(data_vector, dtype=float))
+    kkt_solver = PrimalKKTSolverBasisFree(
+        model_ball,
+        data_ball,
+        forward_operator,
+        d_tilde_vec,
+    )
+
+    def _solve_direction(qs):
+        vals = []
+        for q in qs:
+            c = T.adjoint(q)
+            result = kkt_solver.solve(c)
+            vals.append(model_space.inner_product(c, result.m))
+        return np.array(vals)
+
+    upper_vals = _solve_direction(basis_dirs)
+    lower_neg  = _solve_direction(neg_basis)
+    return np.asarray(upper_vals), -np.asarray(lower_neg)
+
+
 def run_one(
     solver_name: str,
     model_space,
@@ -262,7 +339,7 @@ def run_one(
     truth_model,
     forward_operator,
     data_vector,
-) -> dict:
+) -> dict[str, Any]:
     """Run a single (solver, dim) timing measurement."""
     data_dim = forward_operator.codomain.dim
     print(f"    [{solver_name}]  data_dim={data_dim}")
@@ -291,6 +368,11 @@ def run_one(
             cost, basis_dirs, neg_basis, model_ball, data_ball,
             forward_operator, data_vector,
         )
+    elif solver_name == "PrimalKKTBasisFree":
+        upper, lower = solve_with_primal_kkt_basis_free(
+            cost, basis_dirs, neg_basis, model_ball, data_ball,
+            forward_operator, data_vector,
+        )
     else:
         raise ValueError(f"Unknown solver: {solver_name}")
 
@@ -310,6 +392,53 @@ def run_one(
     }
 
 
+def run_one_repeated(
+    solver_name: str,
+    model_space,
+    property_operator,
+    truth_model,
+    forward_operator,
+    data_vector,
+    *,
+    n_repeats: int,
+) -> dict[str, Any]:
+    """Run repeated timing for one (solver, dim) case and aggregate statistics."""
+    per_run: list[dict[str, Any]] = []
+    for rep in range(n_repeats):
+        print(f"      repeat {rep + 1}/{n_repeats}")
+        sys.stdout.flush()
+        per_run.append(
+            run_one(
+                solver_name,
+                model_space,
+                property_operator,
+                truth_model,
+                forward_operator,
+                data_vector,
+            )
+        )
+
+    times = np.array([r["solve_time"] for r in per_run], dtype=float)
+    uppers = np.array([r["upper"] for r in per_run], dtype=float)
+    lowers = np.array([r["lower"] for r in per_run], dtype=float)
+
+    return {
+        "solver":         solver_name,
+        "data_dim":       int(forward_operator.codomain.dim),
+        "n_repeats":      int(n_repeats),
+        "solve_time_mean": float(np.mean(times)),
+        "solve_time_std":  float(np.std(times, ddof=1)) if n_repeats > 1 else 0.0,
+        "solve_times":    times,
+        "upper":          np.mean(uppers, axis=0),
+        "lower":          np.mean(lowers, axis=0),
+        "upper_std":      np.std(uppers, axis=0, ddof=1) if n_repeats > 1 else np.zeros_like(uppers[0]),
+        "lower_std":      np.std(lowers, axis=0, ddof=1) if n_repeats > 1 else np.zeros_like(lowers[0]),
+        "true_values":    per_run[0]["true_values"],
+        "prior_lower":    per_run[0]["prior_lower"],
+        "prior_upper":    per_run[0]["prior_upper"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Progressive figure
 # ---------------------------------------------------------------------------
@@ -317,15 +446,15 @@ def run_one(
 def plot_progress(results: list[dict]) -> None:
     """Rebuild and save the comparison figure from all completed results.
 
-    Completed runs (solve_time > 0) are plotted normally.  DNF entries
-    (solve_time == np.nan) are shown as upward-pointing open triangles at
+    Completed runs (solve_time_mean > 0) are plotted with mean ± std bars.
+    DNF entries (solve_time_mean == np.nan) are shown as upward-pointing open triangles at
     the estimated time value stored in ``DNF_ESTIMATED_TIMES``.
     """
     if not results:
         return
 
-    all_dims     = sorted({r["data_dim"] for r in results})
-    all_solvers  = SOLVER_NAMES  # maintain order
+    all_dims = sorted({r["data_dim"] for r in results})
+    all_solvers = SOLVER_NAMES  # maintain order
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
@@ -337,23 +466,28 @@ def plot_progress(results: list[dict]) -> None:
             continue
         rows_sorted = sorted(rows, key=lambda r: r["data_dim"])
         # Split into finished and DNF entries
-        finished = [r for r in rows_sorted if not np.isnan(r["solve_time"])]
-        dnf      = [r for r in rows_sorted if  np.isnan(r["solve_time"])]
+        finished = [r for r in rows_sorted if not np.isnan(r["solve_time_mean"])]
+        dnf = [r for r in rows_sorted if np.isnan(r["solve_time_mean"])]
 
-        xs = [r["data_dim"]   for r in finished]
-        ys = [r["solve_time"] for r in finished]
-        if xs:
-            ax.loglog(
-                xs, ys,
+        xs = np.array([r["data_dim"] for r in finished], dtype=float)
+        ys = np.array([r["solve_time_mean"] for r in finished], dtype=float)
+        yerr = np.array([r["solve_time_std"] for r in finished], dtype=float)
+        if xs.size > 0:
+            yerr = np.minimum(yerr, np.maximum(ys * 0.99, 1e-12))
+            ax.errorbar(
+                xs,
+                ys,
+                yerr=yerr,
                 color=SOLVER_COLORS[sname],
                 marker=SOLVER_MARKERS[sname],
                 linestyle="-",
                 markersize=8,
                 linewidth=1.5,
                 label=sname,
+                capsize=3,
             )
             ax.annotate(
-                f"{ys[-1]:.0f}s",
+                f"{ys[-1]:.1f}s +/- {yerr[-1]:.1f}s",
                 (xs[-1], ys[-1]),
                 textcoords="offset points",
                 xytext=(6, 2),
@@ -379,7 +513,7 @@ def plot_progress(results: list[dict]) -> None:
             if finished:
                 ax.loglog(
                     [finished[-1]["data_dim"], r["data_dim"]],
-                    [finished[-1]["solve_time"], est_time],
+                    [finished[-1]["solve_time_mean"], est_time],
                     color=SOLVER_COLORS[sname], linestyle="--",
                     linewidth=1.0, alpha=0.5,
                 )
@@ -389,6 +523,9 @@ def plot_progress(results: list[dict]) -> None:
                 textcoords="offset points", xytext=(6, -14),
                 fontsize=7, color=SOLVER_COLORS[sname],
             )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
 
     # Reference slopes anchored at dim=10, time=10s
     _xlim = np.array([7, max(150.0, max(all_dims) * 1.15)])
@@ -416,7 +553,7 @@ def plot_progress(results: list[dict]) -> None:
             continue
         rows_sorted = sorted(rows, key=lambda r: r["data_dim"])
         # Only plot finished runs in bound-width panel
-        rows_sorted = [r for r in rows_sorted if not np.isnan(r["solve_time"])]
+        rows_sorted = [r for r in rows_sorted if not np.isnan(r["solve_time_mean"])]
         if not rows_sorted:
             continue
         xs = np.array([r["data_dim"] for r in rows_sorted])
@@ -458,7 +595,7 @@ def plot_progress(results: list[dict]) -> None:
     total = len(DATA_DIM_CONFIGS) * len(SOLVER_NAMES)
     fig.suptitle(
         f"Solver comparison  (lmax={LMAX}, n_target={N_TARGET}, seed={SEED})"
-        f"  —  {completed}/{total} runs complete",
+        f"  —  {completed}/{total} cases complete, repeats={N_REPEATS}",
         fontsize=11,
     )
     fig.tight_layout()
@@ -479,9 +616,14 @@ def save_partial(results: list[dict]) -> None:
         PARTIAL_SAVE,
         solvers    = np.array([r["solver"]      for r in results]),
         data_dims  = np.array([r["data_dim"]     for r in results]),
-        solve_times= np.array([r["solve_time"]   for r in results]),
+        n_repeats  = np.array([r["n_repeats"] for r in results]),
+        solve_time_mean = np.array([r["solve_time_mean"] for r in results]),
+        solve_time_std  = np.array([r["solve_time_std"] for r in results]),
+        solve_times = np.array([r["solve_times"] for r in results]),
         upper      = np.array([r["upper"]        for r in results]),
         lower      = np.array([r["lower"]        for r in results]),
+        upper_std  = np.array([r["upper_std"]    for r in results]),
+        lower_std  = np.array([r["lower_std"]    for r in results]),
         true_values= np.array([r["true_values"]  for r in results]),
         prior_lower= np.array([r["prior_lower"]  for r in results]),
         prior_upper= np.array([r["prior_upper"]  for r in results]),
@@ -500,7 +642,16 @@ def main() -> None:
     print(f"Solvers:   {SOLVER_NAMES}")
     print(f"lmax={LMAX}, n_target={N_TARGET}, seed={SEED}")
     print(f"max_iter={MAX_ITER}, tol={TOL}")
+    print(f"repeats={N_REPEATS}, support_n_jobs={SUPPORT_N_JOBS}, threads={DEFAULT_NUM_THREADS}")
     sys.stdout.flush()
+
+    try:
+        from threadpoolctl import threadpool_limits
+
+        threadpool_limits(DEFAULT_NUM_THREADS)
+    except Exception:
+        print("Warning: threadpoolctl not available; relying on env thread settings only.")
+        sys.stdout.flush()
 
     # ---- Shared setup -------------------------------------------------------
     print("\nBuilding model space and shared operators...")
@@ -518,7 +669,6 @@ def main() -> None:
 
     # Truth model at baseline dim (fixed for fair comparison)
     ref_fwd, _ = build_forward_operator(model_space, n_sources=5, n_receivers=10, seed=SEED)
-    from sphere_dli_example import generate_synthetic_data
     truth_model, _ = generate_synthetic_data(model_space, ref_fwd, sigma_noise=SIGMA_NOISE, seed=SEED)
     print(f"  Truth model ready  ({time.time()-t0:.1f}s total setup)")
     sys.stdout.flush()
@@ -543,20 +693,32 @@ def main() -> None:
     if PARTIAL_SAVE.exists():
         try:
             d = np.load(PARTIAL_SAVE, allow_pickle=True)
-            for solver_name, dim, t, up, lo, tv, pl, pu in zip(
-                d["solvers"], d["data_dims"], d["solve_times"],
-                d["upper"], d["lower"], d["true_values"],
-                d["prior_lower"], d["prior_upper"],
+            has_new_format = "solve_time_mean" in d and "solve_time_std" in d
+            if not has_new_format:
+                raise ValueError(
+                    "Partial save has legacy format (single-run timings). "
+                    "Delete solver_partial.npz for repeated-run benchmark."
+                )
+            for solver_name, dim, nrep, t_mean, t_std, ts, up, lo, up_std, lo_std, tv, pl, pu in zip(
+                d["solvers"], d["data_dims"], d["n_repeats"],
+                d["solve_time_mean"], d["solve_time_std"], d["solve_times"],
+                d["upper"], d["lower"], d["upper_std"], d["lower_std"],
+                d["true_values"], d["prior_lower"], d["prior_upper"],
             ):
                 results.append({
-                    "solver":      str(solver_name),
-                    "data_dim":    int(dim),
-                    "solve_time":  float(t),
-                    "upper":       np.asarray(up),
-                    "lower":       np.asarray(lo),
-                    "true_values": np.asarray(tv),
-                    "prior_lower": np.asarray(pl),
-                    "prior_upper": np.asarray(pu),
+                    "solver":          str(solver_name),
+                    "data_dim":        int(dim),
+                    "n_repeats":       int(nrep),
+                    "solve_time_mean": float(t_mean),
+                    "solve_time_std":  float(t_std),
+                    "solve_times":     np.asarray(ts),
+                    "upper":           np.asarray(up),
+                    "lower":           np.asarray(lo),
+                    "upper_std":       np.asarray(up_std),
+                    "lower_std":       np.asarray(lo_std),
+                    "true_values":     np.asarray(tv),
+                    "prior_lower":     np.asarray(pl),
+                    "prior_upper":     np.asarray(pu),
                 })
                 completed_keys.add((str(solver_name), int(dim)))
             print(f"  Resuming: loaded {len(results)} completed runs from {PARTIAL_SAVE}")
@@ -586,30 +748,36 @@ def main() -> None:
                 sys.stdout.flush()
                 # Insert a NaN-time DNF entry so the figure can show the marker
                 results.append({
-                    "solver":       solver_name,
-                    "data_dim":     dim,
-                    "solve_time":   float("nan"),
-                    "upper":        np.full(N_TARGET, float("nan")),
-                    "lower":        np.full(N_TARGET, float("nan")),
-                    "true_values":  np.full(N_TARGET, float("nan")),
-                    "prior_lower":  np.full(N_TARGET, float("nan")),
-                    "prior_upper":  np.full(N_TARGET, float("nan")),
+                    "solver":          solver_name,
+                    "data_dim":        dim,
+                    "n_repeats":       N_REPEATS,
+                    "solve_time_mean": float("nan"),
+                    "solve_time_std":  float("nan"),
+                    "solve_times":     np.full(N_REPEATS, float("nan")),
+                    "upper":           np.full(N_TARGET, float("nan")),
+                    "lower":           np.full(N_TARGET, float("nan")),
+                    "upper_std":       np.full(N_TARGET, float("nan")),
+                    "lower_std":       np.full(N_TARGET, float("nan")),
+                    "true_values":     np.full(N_TARGET, float("nan")),
+                    "prior_lower":     np.full(N_TARGET, float("nan")),
+                    "prior_upper":     np.full(N_TARGET, float("nan")),
                 })
                 completed_keys.add((solver_name, dim))
                 save_partial(results)
-                plot_progress([r for r in results if not (np.isnan(r["solve_time"])
+                plot_progress([r for r in results if not (np.isnan(r["solve_time_mean"])
                                and (r["solver"], r["data_dim"]) not in DNF_ESTIMATED_TIMES)])
                 continue
             print(f"\n  --- {solver_name} (dim={dim}) ---")
             sys.stdout.flush()
             try:
-                result = run_one(
+                result = run_one_repeated(
                     solver_name,
                     model_space,
                     property_operator,
                     truth_model,
                     fwd_ops[dim],
                     data_vecs[dim],
+                    n_repeats=N_REPEATS,
                 )
                 results.append(result)
             except Exception as exc:
@@ -617,14 +785,19 @@ def main() -> None:
                 sys.stdout.flush()
                 # Record failure so the figure still shows other solvers
                 results.append({
-                    "solver":       solver_name,
-                    "data_dim":     dim,
-                    "solve_time":   float("nan"),
-                    "upper":        np.full(N_TARGET, float("nan")),
-                    "lower":        np.full(N_TARGET, float("nan")),
-                    "true_values":  np.full(N_TARGET, float("nan")),
-                    "prior_lower":  np.full(N_TARGET, float("nan")),
-                    "prior_upper":  np.full(N_TARGET, float("nan")),
+                    "solver":          solver_name,
+                    "data_dim":        dim,
+                    "n_repeats":       N_REPEATS,
+                    "solve_time_mean": float("nan"),
+                    "solve_time_std":  float("nan"),
+                    "solve_times":     np.full(N_REPEATS, float("nan")),
+                    "upper":           np.full(N_TARGET, float("nan")),
+                    "lower":           np.full(N_TARGET, float("nan")),
+                    "upper_std":       np.full(N_TARGET, float("nan")),
+                    "lower_std":       np.full(N_TARGET, float("nan")),
+                    "true_values":     np.full(N_TARGET, float("nan")),
+                    "prior_lower":     np.full(N_TARGET, float("nan")),
+                    "prior_upper":     np.full(N_TARGET, float("nan")),
                 })
 
             # Save and redraw after every single data point
@@ -641,7 +814,7 @@ def main() -> None:
 
     # Summary table
     print("\n" + "="*60)
-    print("SUMMARY — solve times (s)")
+    print("SUMMARY — solve times (mean ± std, s)")
     print("="*60)
     header = f"  {'solver':<18}" + "".join(f"  dim={d:>4}" for d in [ns*nr for ns,nr in DATA_DIM_CONFIGS])
     print(header)
@@ -650,8 +823,12 @@ def main() -> None:
         for n_src, n_rec in DATA_DIM_CONFIGS:
             dim = n_src * n_rec
             match = [r for r in results if r["solver"] == sname and r["data_dim"] == dim]
-            t = match[0]["solve_time"] if match else float("nan")
-            row += f"  {t:>8.1f}s" if not np.isnan(t) else "       NaN"
+            if match and not np.isnan(match[0]["solve_time_mean"]):
+                t_mean = match[0]["solve_time_mean"]
+                t_std = match[0]["solve_time_std"]
+                row += f"  {t_mean:>6.1f}±{t_std:<4.1f}"
+            else:
+                row += "       NaN"
         print(row)
     sys.stdout.flush()
 
