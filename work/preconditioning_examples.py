@@ -420,7 +420,6 @@ def main():
     print("Solving linear system...")
 
     solver = inf.CGSolver(
-        callback=bayesian_inversion.normal_residual_callback(data),
         rtol=0.01 * args.noise_amplitude_factor,
     )
     model_posterior_measure = bayesian_inversion.model_posterior_measure(
@@ -444,7 +443,6 @@ def main():
     ax3, ax4 = axes[1]
 
     # Calculate global max for symmetric color scaling across True, Data, and Posterior
-    # Calculate global max for symmetric color scaling across True, Data, and Posterior
     shared_vmax = 1.2 * max(np.nanmax(np.abs(true_model.data)), np.nanmax(np.abs(data)))
 
     # --- Plot 1: True Continuous Field (No Points) ---
@@ -462,7 +460,7 @@ def main():
             "shrink": 0.8,
         },
     )
-    ax1.set_title("True Model (Continuous)", fontsize=14, fontweight="bold")
+    ax1.set_title("True Model", fontsize=14, fontweight="bold")
 
     # --- Plot 2: Observed Data Points ---
     ax2.set_global()
@@ -528,8 +526,23 @@ def main():
             fontweight="bold",
         )
     else:
-        # Hide the 4th quadrant if STD wasn't computed
-        ax4.set_visible(False)
+        plot(
+            true_model - posterior_expectation,
+            ax=ax4,
+            coasts=True,
+            cmap="seismic",
+            colorbar=True,
+            colorbar_kwargs={
+                "label": "Truth minus posterior",
+                "orientation": "horizontal",
+                "shrink": 0.8,
+            },
+        )
+        ax4.set_title(
+            "True model minus posterior expectation",
+            fontsize=14,
+            fontweight="bold",
+        )
 
     # ==========================================
     # --- Corner Plot & Power PDF Section ---

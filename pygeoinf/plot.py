@@ -22,6 +22,7 @@ def plot_1d_distributions(
     *,
     prior_measures: Optional[Union[MeasureType, List[MeasureType]]] = None,
     true_value: Optional[float] = None,
+    show_true_value_in_legend: bool = False,
     ax: Optional[Axes] = None,
     xlabel: str = "Property Value",
     title: str = "Prior and Posterior Probability Distributions",
@@ -200,13 +201,13 @@ def plot_1d_distributions(
 
     # Plot true value if provided
     if true_value is not None:
-        ax1.axvline(
-            true_value,
-            color="black",
-            linestyle="-",
-            lw=2,
-            label=f"True Value: {true_value:.5f}",
+
+        label_text = (
+            f"True Value: {true_value:.5f}"
+            if show_true_value_in_legend
+            else "True Value"
         )
+        ax1.axvline(true_value, color="black", linestyle="-", lw=2, label=label_text)
 
     # Create combined legend
     handles1, labels1 = ax1.get_legend_handles_labels()
@@ -232,6 +233,7 @@ def plot_corner_distributions(
     *,
     prior_measure: Optional[GaussianMeasure] = None,
     true_values: Optional[Union[List[float], np.ndarray]] = None,
+    show_true_value_in_legend: bool = False,
     labels: Optional[List[str]] = None,
     title: str = "Joint Posterior Distribution",
     figsize: Optional[tuple] = None,
@@ -383,11 +385,18 @@ def plot_corner_distributions(
 
                 if true_values is not None:
                     true_val = true_values[i]
+
+                    label_text = (
+                        f"True: {true_val:.2f}"
+                        if show_true_value_in_legend
+                        else "True Value"
+                    )
+
                     ax.axvline(
                         true_val,
                         color="black",
                         linestyle="-",
-                        label=f"True: {true_val:.2f}",
+                        label=label_text,
                     )
 
                 ax.set_xlim(mu - i_disp * sigma, mu + i_disp * sigma)
