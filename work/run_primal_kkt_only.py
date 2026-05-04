@@ -30,6 +30,7 @@ from sphere_dli_solver_comparison import (
     PARTIAL_SAVE,
     LMAX,
     N_CAP,
+    N_REPEATS,
     SEED,
     solve_with_primal_kkt,
     save_partial,
@@ -59,29 +60,34 @@ completed_keys: set[tuple[str, int]] = set()
 if PARTIAL_SAVE.exists():
     d = np.load(PARTIAL_SAVE, allow_pickle=True)
     skipped = 0
-    for solver_name, dim, t, up, lo, tv, pl, pu in zip(
-        d["solvers"], d["data_dims"], d["solve_times"],
-        d["upper"], d["lower"], d["true_values"],
-        d["prior_lower"], d["prior_upper"],
+    for solver_name, dim, nrep, t_mean, t_std, ts, up, lo, up_std, lo_std, tv, pl, pu in zip(
+        d["solvers"], d["data_dims"], d["n_repeats"],
+        d["solve_time_mean"], d["solve_time_std"], d["solve_times"],
+        d["upper"], d["lower"], d["upper_std"], d["lower_std"],
+        d["true_values"], d["prior_lower"], d["prior_upper"],
     ):
         sname = str(solver_name)
-        # Drop ALL PrimalKKT entries (buggy bounds from previous run);
-        # they will be recomputed with the corrected Gram matrix
+        # Drop entries that will be recomputed with the current PrimalKKT.
         if sname == "PrimalKKT":
             skipped += 1
             continue
         results.append({
-            "solver":      sname,
-            "data_dim":    int(dim),
-            "solve_time":  float(t),
-            "upper":       np.asarray(up),
-            "lower":       np.asarray(lo),
-            "true_values": np.asarray(tv),
-            "prior_lower": np.asarray(pl),
-            "prior_upper": np.asarray(pu),
+            "solver":          sname,
+            "data_dim":        int(dim),
+            "n_repeats":       int(nrep),
+            "solve_time_mean": float(t_mean),
+            "solve_time_std":  float(t_std),
+            "solve_times":     np.asarray(ts, dtype=float),
+            "upper":           np.asarray(up),
+            "lower":           np.asarray(lo),
+            "upper_std":       np.asarray(up_std),
+            "lower_std":       np.asarray(lo_std),
+            "true_values":     np.asarray(tv),
+            "prior_lower":     np.asarray(pl),
+            "prior_upper":     np.asarray(pu),
         })
         completed_keys.add((sname, int(dim)))
-    print(f"Loaded {len(results)} existing results from {PARTIAL_SAVE} (dropped {skipped} failed PrimalKKT entries)")
+    print(f"Loaded {len(results)} existing results from {PARTIAL_SAVE} (dropped {skipped} PrimalKKT entries)")
 else:
     print("No partial save found — starting fresh.")
 
@@ -139,33 +145,55 @@ for n_src, n_rec in DATA_DIM_CONFIGS:
 
     t0 = time.time()
     try:
-        upper, lower = solve_with_primal_kkt(
-            cost, basis_dirs, neg_basis, model_ball, data_ball,
-            fwd_ops[dim], data_vecs[dim],
-        )
+        per_run_times = []
+        per_run_upper = []
+        per_run_lower = []
+        for rep in range(N_REPEATS):
+            rep_t0 = time.time()
+            upper, lower = solve_with_primal_kkt(
+                cost, basis_dirs, neg_basis, model_ball, data_ball,
+                fwd_ops[dim], data_vecs[dim],
+            )
+            per_run_times.append(time.time() - rep_t0)
+            per_run_upper.append(np.asarray(upper, dtype=float))
+            per_run_lower.append(np.asarray(lower, dtype=float))
+
+        times = np.asarray(per_run_times, dtype=float)
+        uppers = np.asarray(per_run_upper, dtype=float)
+        lowers = np.asarray(per_run_lower, dtype=float)
         elapsed = time.time() - t0
-        print(f"    → {elapsed:.2f}s   bounds: [{lower[0]:.3f}, {upper[0]:.3f}]")
+        print(f"    → {times.mean():.2f}s ± {times.std(ddof=1) if N_REPEATS > 1 else 0.0:.2f}s   bounds: [{lowers.mean(axis=0)[0]:.3f}, {uppers.mean(axis=0)[0]:.3f}]")
         results.append({
-            "solver":      "PrimalKKT",
-            "data_dim":    dim,
-            "solve_time":  elapsed,
-            "upper":       upper,
-            "lower":       lower,
-            "true_values": true_values,
-            "prior_lower": -prior_bounds,
-            "prior_upper":  prior_bounds,
+            "solver":          "PrimalKKT",
+            "data_dim":        dim,
+            "n_repeats":       int(N_REPEATS),
+            "solve_time_mean": float(times.mean()),
+            "solve_time_std":  float(times.std(ddof=1)) if N_REPEATS > 1 else 0.0,
+            "solve_times":     times,
+            "upper":           uppers.mean(axis=0),
+            "lower":           lowers.mean(axis=0),
+            "upper_std":       uppers.std(axis=0, ddof=1) if N_REPEATS > 1 else np.zeros_like(uppers[0]),
+            "lower_std":       lowers.std(axis=0, ddof=1) if N_REPEATS > 1 else np.zeros_like(lowers[0]),
+            "true_values":     true_values,
+            "prior_lower":     -prior_bounds,
+            "prior_upper":      prior_bounds,
         })
     except Exception as exc:
         print(f"    ERROR: {exc}")
         results.append({
-            "solver":       "PrimalKKT",
-            "data_dim":     dim,
-            "solve_time":   float("nan"),
-            "upper":        np.full(N_TARGET, float("nan")),
-            "lower":        np.full(N_TARGET, float("nan")),
-            "true_values":  true_values,
-            "prior_lower":  np.full(N_TARGET, float("nan")),
-            "prior_upper":  np.full(N_TARGET, float("nan")),
+            "solver":          "PrimalKKT",
+            "data_dim":        dim,
+            "n_repeats":       int(N_REPEATS),
+            "solve_time_mean": float("nan"),
+            "solve_time_std":  float("nan"),
+            "solve_times":     np.full(N_REPEATS, float("nan")),
+            "upper":           np.full(N_TARGET, float("nan")),
+            "lower":           np.full(N_TARGET, float("nan")),
+            "upper_std":       np.full(N_TARGET, float("nan")),
+            "lower_std":       np.full(N_TARGET, float("nan")),
+            "true_values":     true_values,
+            "prior_lower":     np.full(N_TARGET, float("nan")),
+            "prior_upper":     np.full(N_TARGET, float("nan")),
         })
 
     completed_keys.add(key)

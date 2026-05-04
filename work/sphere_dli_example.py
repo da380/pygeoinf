@@ -6,7 +6,7 @@ Phase-velocity perturbation DLI on the two-sphere using:
 - Great-circle path integrals normalised to true path averages
 - Spherical-cap averaging target properties
 - Norm-ball support functions for the model prior and data-confidence set
-- DualMasterCostFunction + ProximalBundleMethod for the DLI solve
+- PrimalKKTSolver for the DLI solve
 
 Entry points:
   run_example(...)  — builds and solves the full problem, returns a result dict.
@@ -230,8 +230,9 @@ def solve_dli(
     """Solve deterministic linear inference bounds for the target properties.
 
     Builds zero-centered norm balls for the model prior set and the data-error
-    set, then minimises the dual master cost for each property basis direction
-    and its negation to obtain upper and lower admissible bounds.
+    set, then solves primal KKT systems in a basis-free way for each property
+    basis direction and its negation to obtain upper and lower admissible
+    bounds.
 
     Args:
         model_space: Sobolev space on the sphere.
@@ -242,20 +243,15 @@ def solve_dli(
         sigma_noise: Noise scale used to size the data-confidence ball.
         prior_radius_multiplier: Multiplier applied to ``||truth_model||`` to set
             the prior-ball radius.
-        max_iter: Maximum proximal bundle iterations per support-value solve.
-        tol: Bundle-method stopping tolerance.
+        max_iter: Unused compatibility argument retained for API stability.
+        tol: Unused compatibility argument retained for API stability.
 
     Returns:
         Dictionary with ``lower``, ``upper``, and ``true_values`` arrays, each of
         shape ``(property_operator.codomain.dim,)``.
     """
-    from pygeoinf.backus_gilbert import DualMasterCostFunction
     from pygeoinf.convex_analysis import BallSupportFunction
-    from pygeoinf.convex_optimisation import (
-        ProximalBundleMethod,
-        best_available_qp_solver,
-        solve_support_values,
-    )
+    from pygeoinf.convex_optimisation import PrimalKKTSolver
 
     data_space = forward_operator.codomain
     property_space = property_operator.codomain
@@ -270,35 +266,24 @@ def solve_dli(
     negative_basis_directions = [property_space.multiply(-1.0, q) for q in basis_directions]
 
     observed_data = np.asarray(data_vector, dtype=float)
-    cost = DualMasterCostFunction(
-        data_space,
-        property_space,
-        model_space,
-        forward_operator,
-        property_operator,
+    d_tilde = data_space.from_components(observed_data)
+    kkt_solver = PrimalKKTSolver(
         model_ball,
         data_ball,
-        observed_data,
-        basis_directions[0],
-    )
-    solver = ProximalBundleMethod(
-        cost,
-        tolerance=tol,
-        max_iterations=max_iter,
-        qp_solver=best_available_qp_solver(),
+        forward_operator,
+        d_tilde,
     )
 
-    lambda0 = data_space.zero
-    upper_values, _, _ = solve_support_values(
-        cost, basis_directions, solver, lambda0, n_jobs=-1
-    )
-    lower_negated_values, _, _ = solve_support_values(
-        cost,
-        negative_basis_directions,
-        solver,
-        lambda0,
-        n_jobs=-1,
-    )
+    def _solve_directional_values(q_list: list[np.ndarray]) -> np.ndarray:
+        vals = []
+        for q in q_list:
+            c = property_operator.adjoint(q)
+            result = kkt_solver.solve(c)
+            vals.append(model_space.inner_product(c, result.m))
+        return np.asarray(vals, dtype=float)
+
+    upper_values = _solve_directional_values(basis_directions)
+    lower_negated_values = _solve_directional_values(negative_basis_directions)
 
     lower = -np.asarray(lower_negated_values, dtype=float)
     upper = np.asarray(upper_values, dtype=float)

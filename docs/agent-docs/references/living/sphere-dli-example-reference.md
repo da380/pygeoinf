@@ -46,7 +46,8 @@ Internal helpers: `_latlon_to_unit_xyz`, `_unit_xyz_to_latlon`, `_sample_cap_poi
   Returns `{'lower': ndarray, 'upper': ndarray, 'true_values': ndarray}`.
   Prior ball: `BallSupportFunction(model_space, model_space.zero, 3*||truth||)`.
   Data ball: `BallSupportFunction(data_space, data_space.zero, 3*sigma_noise*sqrt(n_paths))`.
-  Solver: `DualMasterCostFunction` + `ProximalBundleMethod` + `solve_support_values` for ±eᵢ directions.
+  Solver: `PrimalKKTSolver`; each support direction `q` is solved via
+  `kkt_solver.solve(property_operator.adjoint(q))` for both ±eᵢ directions.
 
 ### Phase 4 — orchestrator and visualisation
 

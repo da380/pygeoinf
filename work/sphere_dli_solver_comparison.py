@@ -63,7 +63,6 @@ from pygeoinf.convex_optimisation import (
     SmoothedLBFGSSolver,
     ChambollePockSolver,
     PrimalKKTSolver,
-    PrimalKKTSolverBasisFree,
     best_available_qp_solver,
     solve_support_values,
     solve_primal_feasibility,
@@ -83,6 +82,7 @@ _DEFAULT_DIM_CONFIGS: list[tuple[int, int]] = [
 
 # Extended factorizations for high-dimensional scaling studies.
 _EXTENDED_DIM_CONFIGS: dict[int, tuple[int, int]] = {
+    500:     (25,   20),
     1000:    (100,  10),
     2000:    (200,  10),
     5000:    (500,  10),
@@ -101,16 +101,12 @@ if _dims_env.strip():
 else:
     DATA_DIM_CONFIGS = _DEFAULT_DIM_CONFIGS
 
-SOLVER_NAMES = ["ProximalBundle", "SmoothedLBFGS", "ChambollePock", "PrimalKKT", "PrimalKKTBasisFree"]
+SOLVER_NAMES = ["ProximalBundle", "SmoothedLBFGS", "ChambollePock", "PrimalKKT"]
 
-# PrimalKKT (non-BasisFree) forms an N_d×N_d matrix — skip at large dims to avoid OOM.
-# Override threshold via PRIMAL_KKT_MAX_DIM env var (default: skip above 5000).
+# Keep compatibility with older CLI flows that set PRIMAL_KKT_MAX_DIM.
+# With basis-free PrimalKKT, we do not skip based on data dimension.
 _PRIMAL_KKT_MAX_DIM = int(os.environ.get("PRIMAL_KKT_MAX_DIM", "5000"))
-SKIP_CONFIGS: frozenset = frozenset(
-    ("PrimalKKT", ns * nr)
-    for ns, nr in DATA_DIM_CONFIGS
-    if ns * nr > _PRIMAL_KKT_MAX_DIM
-)
+SKIP_CONFIGS: frozenset = frozenset()
 
 # Estimated solve times for DNF configs (used for open-triangle markers in figure).
 DNF_ESTIMATED_TIMES: dict = {}
@@ -120,14 +116,12 @@ SOLVER_COLORS = {
     "SmoothedLBFGS":     "tab:green",
     "ChambollePock":     "tab:purple",
     "PrimalKKT":         "tab:red",
-    "PrimalKKTBasisFree": "tab:orange",
 }
 SOLVER_MARKERS = {
     "ProximalBundle":    "o",
     "SmoothedLBFGS":     "^",
     "ChambollePock":     "D",
     "PrimalKKT":         "P",
-    "PrimalKKTBasisFree": "s",
 }
 
 LMAX = 64
@@ -277,42 +271,13 @@ def solve_with_chambolle_pock(
 def solve_with_primal_kkt(
     cost, basis_dirs, neg_basis, model_ball, data_ball, forward_operator, data_vector
 ):
-    """Run PrimalKKTSolver via direct KKT + Woodbury on each direction."""
+    """Run PrimalKKTSolver without discretising the model space."""
     model_space = cost._model_space
     T = cost._T
     data_space = forward_operator.codomain
 
     d_tilde_vec = data_space.from_components(np.asarray(data_vector, dtype=float))
     kkt_solver = PrimalKKTSolver(
-        model_ball,
-        data_ball,
-        forward_operator,
-        d_tilde_vec,
-    )
-
-    def _solve_direction(qs):
-        vals = []
-        for q in qs:
-            c = T.adjoint(q)
-            result = kkt_solver.solve(c)
-            vals.append(model_space.inner_product(c, result.m))
-        return np.array(vals)
-
-    upper_vals = _solve_direction(basis_dirs)
-    lower_neg  = _solve_direction(neg_basis)
-    return np.asarray(upper_vals), -np.asarray(lower_neg)
-
-
-def solve_with_primal_kkt_basis_free(
-    cost, basis_dirs, neg_basis, model_ball, data_ball, forward_operator, data_vector
-):
-    """Run PrimalKKTSolverBasisFree — model space never discretised."""
-    model_space = cost._model_space
-    T = cost._T
-    data_space = forward_operator.codomain
-
-    d_tilde_vec = data_space.from_components(np.asarray(data_vector, dtype=float))
-    kkt_solver = PrimalKKTSolverBasisFree(
         model_ball,
         data_ball,
         forward_operator,
@@ -365,11 +330,6 @@ def run_one(
         )
     elif solver_name == "PrimalKKT":
         upper, lower = solve_with_primal_kkt(
-            cost, basis_dirs, neg_basis, model_ball, data_ball,
-            forward_operator, data_vector,
-        )
-    elif solver_name == "PrimalKKTBasisFree":
-        upper, lower = solve_with_primal_kkt_basis_free(
             cost, basis_dirs, neg_basis, model_ball, data_ball,
             forward_operator, data_vector,
         )
@@ -612,6 +572,12 @@ def plot_progress(results: list[dict]) -> None:
 def save_partial(results: list[dict]) -> None:
     if not results:
         return
+    # Keep per-case timing traces as object dtype so checkpoints remain
+    # serializable even if repeat counts differ across runs.
+    solve_times_obj = np.empty(len(results), dtype=object)
+    for i, r in enumerate(results):
+        solve_times_obj[i] = np.asarray(r["solve_times"], dtype=float)
+
     np.savez(
         PARTIAL_SAVE,
         solvers    = np.array([r["solver"]      for r in results]),
@@ -619,7 +585,7 @@ def save_partial(results: list[dict]) -> None:
         n_repeats  = np.array([r["n_repeats"] for r in results]),
         solve_time_mean = np.array([r["solve_time_mean"] for r in results]),
         solve_time_std  = np.array([r["solve_time_std"] for r in results]),
-        solve_times = np.array([r["solve_times"] for r in results]),
+        solve_times = solve_times_obj,
         upper      = np.array([r["upper"]        for r in results]),
         lower      = np.array([r["lower"]        for r in results]),
         upper_std  = np.array([r["upper_std"]    for r in results]),
@@ -705,6 +671,12 @@ def main() -> None:
                 d["upper"], d["lower"], d["upper_std"], d["lower_std"],
                 d["true_values"], d["prior_lower"], d["prior_upper"],
             ):
+                if int(nrep) != N_REPEATS:
+                    raise ValueError(
+                        "Partial save repeat count mismatch "
+                        f"(found {int(nrep)}, current {N_REPEATS}). "
+                        "Delete solver_partial.npz or rerun with matching DLI_NUM_REPEATS."
+                    )
                 results.append({
                     "solver":          str(solver_name),
                     "data_dim":        int(dim),

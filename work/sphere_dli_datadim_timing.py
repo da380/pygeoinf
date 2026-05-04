@@ -210,7 +210,7 @@ def plot_results(results: list[dict]) -> None:
     fig1, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     ax = axes[0]
-    ax.loglog(data_dims, solve_times, "o-", color="tab:blue",  label="Solve (DLI bundle)")
+    ax.loglog(data_dims, solve_times, "o-", color="tab:blue",  label="Solve (DLI PrimalKKT)")
     ax.loglog(data_dims, build_times, "s--", color="tab:orange", label="Build fwd operator")
     ax.loglog(data_dims, total_times, "^:",  color="tab:grey",  label="Total")
     # Reference power-law slopes
