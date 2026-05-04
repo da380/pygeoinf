@@ -55,41 +55,8 @@ class HilbertSpaceDirectSum(HilbertSpace):
 
     @property
     def dim(self) -> int:
-        """Returns the finite representation dimension of the direct sum.
-
-        This is the sum of the component representation dimensions. Basis-free
-        subspaces may contribute zero here even when they model an
-        infinite-dimensional function space.
-        """
+        """Returns the dimension of the direct sum space."""
         return self._dim
-
-    @property
-    def zero(self) -> List[Any]:
-        """Returns the zero vector componentwise.
-
-        This avoids routing through from_components, which is not available
-        for basis-free subspaces such as Lebesgue(dim=0, basis=None).
-        """
-        return [space.zero for space in self._spaces]
-
-    def inner_product(self, xs: List[Any], ys: List[Any]) -> float:
-        """Compute the direct-sum inner product componentwise.
-
-        This bypasses the component-array/Riesz-map path so direct sums of
-        basis-free subspaces remain usable in operator-theoretic workflows.
-        """
-        if len(xs) != self.number_of_subspaces or len(ys) != self.number_of_subspaces:
-            raise ValueError("Input lists have incorrect number of vectors.")
-        return float(
-            sum(
-                space.inner_product(x, y)
-                for space, x, y in zip(self._spaces, xs, ys)
-            )
-        )
-
-    def random(self) -> List[Any]:
-        """Returns a random direct-sum vector componentwise."""
-        return [space.random() for space in self._spaces]
 
     def to_components(self, xs: List[Any]) -> np.ndarray:
         cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
@@ -129,10 +96,9 @@ class HilbertSpaceDirectSum(HilbertSpace):
         for space, x in zip(self._spaces, xs):
             space.ax(a, x)
 
-    def axpy(self, a: float, xs: List[Any], ys: List[Any]) -> List[Any]:
+    def axpy(self, a: float, xs: List[Any], ys: List[Any]) -> None:
         for space, x, y in zip(self._spaces, xs, ys):
             space.axpy(a, x, y)
-        return ys
 
     def copy(self, xs: List[Any]) -> List[Any]:
         return [space.copy(x) for space, x in zip(self._spaces, xs)]

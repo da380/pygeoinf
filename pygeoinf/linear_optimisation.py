@@ -937,11 +937,9 @@ class LinearMinimumNormInversion(LinearInversion):
                     else:
                         damping_upper = damping
 
-                    # Bug fix: use damping_upper as the scale, not
-                    # (lower + upper). When lower→0 the old criterion
-                    # collapses to rtol*upper, making the threshold
-                    # proportionally tiny and causing maxiter exhaustion.
-                    if damping_upper - damping_lower < atol + rtol * damping_upper:
+                    if damping_upper - damping_lower < atol + rtol * (
+                        damping_lower + damping_upper
+                    ):
                         return model, damping
 
                     sys_sol0 = sys_sol
