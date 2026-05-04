@@ -146,7 +146,7 @@ def test_warm_start_vs_cold_start_agreement():
 
 def test_parallel_agrees_with_sequential():
     """Parallel (n_jobs=2) results should agree with sequential (atol=1e-2)."""
-    joblib = pytest.importorskip("joblib")  # skip if not installed
+    pytest.importorskip("joblib")  # skip if not installed
 
     cost, lambda0 = _make_cost_and_lambda0()
     solver_seq = _make_solver(cost)

@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from pygeoinf.convex_optimisation import SciPyQPSolver, QPResult, best_available_qp_solver
+from pygeoinf.convex_optimisation import SciPyQPSolver, best_available_qp_solver
 
 np.random.seed(42)
 
@@ -24,7 +24,7 @@ def test_scipy_qp_known_solution():
 
 
 def test_osqp_qp_known_solution():
-    osqp = pytest.importorskip('osqp')
+    pytest.importorskip('osqp')
     from pygeoinf.convex_optimisation import OSQPQPSolver
     solver = OSQPQPSolver()
     result = solver.solve(P, q, A, l, u)
@@ -33,7 +33,7 @@ def test_osqp_qp_known_solution():
 
 
 def test_clarabel_qp_known_solution():
-    clarabel = pytest.importorskip('clarabel')
+    pytest.importorskip('clarabel')
     from pygeoinf.convex_optimisation import ClarabelQPSolver
     solver = ClarabelQPSolver()
     result = solver.solve(P, q, A, l, u)
@@ -42,7 +42,7 @@ def test_clarabel_qp_known_solution():
 
 
 def test_osqp_warm_start():
-    osqp = pytest.importorskip('osqp')
+    pytest.importorskip('osqp')
     from pygeoinf.convex_optimisation import OSQPQPSolver
     solver = OSQPQPSolver()
     r1 = solver.solve(P, q, A, l, u)

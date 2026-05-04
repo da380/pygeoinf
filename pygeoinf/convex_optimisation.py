@@ -19,6 +19,8 @@ from .convex_analysis import BallSupportFunction, EllipsoidSupportFunction
 
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
+    from .convex_analysis import SupportFunction
+    from .linear_operators import LinearOperator
 
 
 @dataclass
@@ -1313,19 +1315,10 @@ class LevelBundleMethod:
                     )
 
             # ------------------------------------------------------------------
-            # Step 3: compute level.
-            # ------------------------------------------------------------------
-            if f_low > -np.inf:
-                f_lev = self._alpha * f_low + (1.0 - self._alpha) * f_up
-            else:
-                f_lev = f_up  # no lower bound yet: use f_up (relaxed level)
-
-            # ------------------------------------------------------------------
-            # Step 4: solve the level QP with infeasibility recovery.
+            # Step 3: solve the level QP with infeasibility recovery.
             # ------------------------------------------------------------------
             lam_next: Optional["Vector"] = None
             alpha_try = self._alpha
-            qp_status = "not attempted"
 
             for attempt in range(3):
                 if f_low > -np.inf:
@@ -1337,7 +1330,6 @@ class LevelBundleMethod:
                 qp_res = self._solve_level_master(
                     bundle, lam_hat, f_lev_try, domain, lam_hat_c, t_warm=t_warm
                 )
-                qp_status = qp_res.status
                 if qp_res.status == "solved":
                     lam_next = domain.from_components(qp_res.x[:d])
                     break
@@ -1603,7 +1595,6 @@ class ChambollePockSolver:
         max_iterations: int = 1000,
         tolerance: float = 1e-6,
     ) -> None:
-        from .convex_analysis import SupportFunction as _SF
         self._B = B
         self._V = V
         self._G = G

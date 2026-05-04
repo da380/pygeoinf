@@ -54,10 +54,17 @@ build-backend = "poetry.core.masonry.api"
 
 # --- Added Ruff Configuration ---
 [tool.ruff]
+exclude = ["work"]
 
 [tool.ruff.lint.per-file-ignores]
 # For any file in the "tests/" directory, ignore the lambda assignment warning (E731).
 "tests/*" = ["E731", "E741"]
+
+# test_subsets.py has matplotlib imports mid-file due to backend setup (matplotlib.use("Agg"))
+"tests/test_subsets.py" = ["E731", "E741", "E402"]
+
+# convex_optimisation.py uses `l` as the standard QP lower-bound parameter name (OSQP convention)
+"pygeoinf/convex_optimisation.py" = ["E741"]
 
 # For the sphere.py file, where 'l' is a common variable name for spherical
 # harmonic degree, ignore the ambiguous variable name warning (E741).

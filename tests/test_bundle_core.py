@@ -9,9 +9,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-np.random.seed(42)
-
 from pygeoinf.hilbert_space import EuclideanSpace
+
+np.random.seed(42)
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +23,6 @@ def test_cut_fields():
     """Cut stores all fields correctly."""
     from pygeoinf.convex_optimisation import Cut
 
-    space = EuclideanSpace(2)
     x = np.array([1.0, 2.0])
     g = np.array([0.5, -1.0])
     cut = Cut(x=x, f=3.7, g=g, iteration=5)
@@ -43,7 +42,6 @@ def test_bundle_add_and_len():
     """Adding 3 cuts gives __len__ == 3."""
     from pygeoinf.convex_optimisation import Bundle, Cut
 
-    space = EuclideanSpace(2)
     bundle = Bundle()
     for i in range(3):
         x = np.array([float(i), 0.0])
@@ -198,7 +196,6 @@ def test_bundle_result_fields():
     """BundleResult can be constructed and fields are accessible."""
     from pygeoinf.convex_optimisation import BundleResult
 
-    space = EuclideanSpace(2)
     x = np.array([1.0, 2.0])
     result = BundleResult(
         x_best=x,

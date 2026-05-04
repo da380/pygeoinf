@@ -11,7 +11,6 @@ Covers:
 """
 
 import numpy as np
-import pytest
 
 from pygeoinf.hilbert_space import EuclideanSpace
 from pygeoinf.linear_operators import LinearOperator
