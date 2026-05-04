@@ -14,6 +14,7 @@ __pycache__/
 
 # Coverage reports
 .coverage
+.coverage.*
 htmlcov/
 
 # Sphinx documentation build output
