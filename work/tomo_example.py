@@ -72,7 +72,7 @@ elif GEOMETRY == "Circle":
     model_space = Sobolev.from_heat_kernel_prior(
         prior_scale, order, scale, radius=1.0, power_of_two=True, min_degree=32
     )
-    plot_geodesic_network = None  # 1D doesn't use the network plotter
+    plot_geodesic_network = None
 
 elif GEOMETRY == "Line":
     from pygeoinf.symmetric_space.line import Sobolev, plot
