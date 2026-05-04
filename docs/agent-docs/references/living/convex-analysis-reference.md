@@ -83,6 +83,10 @@ The module introduces support-function primitives for closed convex sets in a Hi
 
 - [pyproject.toml](/home/adrian/PhD/Inferences/pygeoinf/pyproject.toml)
   - Adds optional extras for `osqp`, `clarabel`, and `plotly`.
+  - Keeps the dev-group `Cartopy` constraint aligned with the `sphere` extra so
+    `poetry install --with dev --all-extras` resolves cleanly in CI.
+  - Caps `pyqt6` below 6.10 because the current package index does not provide
+    installable `PyQt6-Qt6` artifacts for the newer 6.10+/6.11 line used by Poetry.
   - Should not reference excluded paths such as `symmetric_space_new`.
 
 ## File Map
