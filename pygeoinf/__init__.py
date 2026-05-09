@@ -90,7 +90,6 @@ from .linear_bayesian import (
     LinearBayesianInversion,
 )
 
-
 from .nonlinear_optimisation import (
     ScipyUnconstrainedOptimiser,
 )
@@ -115,7 +114,33 @@ from .subsets import (
     Sphere,
 )
 
-from .plot import plot_1d_distributions, plot_corner_distributions
+from .plot import (
+    plot_1d_distributions,
+    plot_corner_distributions,
+    SubspaceSlicePlotter,
+    plot_slice,
+)
+
+from .convex_optimisation import (
+    SubgradientDescent,
+    ProximalBundleMethod,
+    PrimalKKTSolver,
+    KKTResult,
+)
+
+from .convex_analysis import (
+    SupportFunction,
+    BallSupportFunction,
+    EllipsoidSupportFunction,
+    HalfSpaceSupportFunction,
+    CallableSupportFunction,
+    PointSupportFunction,
+    LinearImageSupportFunction,
+    MinkowskiSumSupportFunction,
+    ScaledSupportFunction,
+)
+
+from .backus_gilbert import DualMasterCostFunction
 
 from .utils import configure_threading
 
@@ -198,9 +223,6 @@ __all__ = [
     "ConstrainedLinearMinimumNormInversion",
     # linear_bayesian
     "LinearBayesianInversion",
-    "ConstrainedLinearBayesianInversion",
-    # backus_gilbert
-    "HyperEllipsoid",
     # nonlinear_optimisation
     "ScipyUnconstrainedOptimiser",
     # Subspaces
@@ -225,6 +247,25 @@ __all__ = [
     # plot
     "plot_1d_distributions",
     "plot_corner_distributions",
+    "SubspaceSlicePlotter",
+    "plot_slice",
+    # convex_optimisation
+    "SubgradientDescent",
+    "ProximalBundleMethod",
+    "PrimalKKTSolver",
+    "KKTResult",
+    # convex_analysis
+    "SupportFunction",
+    "BallSupportFunction",
+    "EllipsoidSupportFunction",
+    "HalfSpaceSupportFunction",
+    "CallableSupportFunction",
+    "PointSupportFunction",
+    "LinearImageSupportFunction",
+    "MinkowskiSumSupportFunction",
+    "ScaledSupportFunction",
+    # backus_gilbert
+    "DualMasterCostFunction",
     # utils
     "configure_threading",
     # datasets

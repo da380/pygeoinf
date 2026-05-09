@@ -322,7 +322,6 @@ class TestSerialization:
             operator.codomain.to_components(operator(x)),
             unpickled_op.codomain.to_components(unpickled_op(x)),
         )
-
         # Verify adjoint mapping execution
         y = operator.codomain.random()
         assert_allclose(
@@ -380,3 +379,4 @@ class TestSerialization:
             operator.codomain.to_components(operator(x)),
             unpickled_op.codomain.to_components(unpickled_op(x)),
         )
+
