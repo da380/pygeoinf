@@ -2,7 +2,7 @@
 
 ## Scope
 
-This reference covers [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py), the convex-analysis public surface in [pygeoinf/__init__.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/__init__.py), the slice-plotting helpers in [pygeoinf/plot.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/plot.py), and their direct tests in [tests/test_support_function_constructors.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_constructors.py), [tests/test_support_function_algebra.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_algebra.py), [tests/test_plot.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_plot.py), [tests/test_subsets.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_subsets.py), and [tests/test_halfspaces.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_halfspaces.py).
+This reference covers [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py), the convex-analysis public surface in [pygeoinf/__init__.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/__init__.py), the slice-plotting helpers in [pygeoinf/plot.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/plot.py), the Gaussian credible-subset bridge in [pygeoinf/gaussian_measure.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/gaussian_measure.py), the finite-dimensional tutorial notebook [tutorials/gaussian_measure_to_sets_demo.ipynb](/home/adrian/PhD/Inferences/pygeoinf/tutorials/gaussian_measure_to_sets_demo.ipynb), and their direct tests in [tests/test_support_function_constructors.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_constructors.py), [tests/test_support_function_algebra.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_algebra.py), [tests/test_gaussian_measure_credible_set.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_gaussian_measure_credible_set.py), [tests/test_plot.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_plot.py), [tests/test_subsets.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_subsets.py), and [tests/test_halfspaces.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_halfspaces.py).
 
 The module introduces support-function primitives for closed convex sets in a Hilbert space, plus algebraic combinators for linear images, Minkowski sums, and nonnegative scaling.
 
@@ -33,7 +33,8 @@ The module introduces support-function primitives for closed convex sets in a Hi
   - Provides fused value/support-point computation that reuses a single norm evaluation.
 - `EllipsoidSupportFunction`
   - Support function of an ellipsoid defined by a center, radius, and SPD shape operator.
-  - Evaluation requires `A^{-1/2}`; support-point recovery requires `A^{-1}`.
+  - Evaluation uses `A^{-1/2}` when supplied, or falls back to `A^{-1}` via `sqrt(<q, A^{-1}q>)`.
+  - Support-point recovery requires `A^{-1}`.
   - Handles small negative quadratic forms by clamping numerical noise to zero.
 - `CallableSupportFunction`
   - Wraps user-supplied evaluation and optional support-point callbacks.
@@ -73,6 +74,21 @@ The module introduces support-function primitives for closed convex sets in a Hi
   - Functional entry point that wraps `SubspaceSlicePlotter` and returns `(figure, axes, payload)`.
   - Serves as the implementation target for `Subset.plot()` delegation tests.
 
+## Gaussian Credible Subsets
+
+- `GaussianMeasure.credible_set(probability, geometry="ellipsoid", rank=None, open_set=False)`
+  - Converts a finite-dimensional/truncated Gaussian probability into a chi-square radius `sqrt(chi2.ppf(probability, rank))`.
+  - Domains with no positive finite `dim` (for example basis-free function spaces) must pass an explicit effective `rank`.
+  - `geometry="ellipsoid"` returns a `subsets.Ellipsoid` in the measure domain with shape operator equal to the inverse covariance and inverse operator equal to the covariance.
+  - `geometry="cameron_martin"`/`"ball"` returns the equivalent `subsets.Ball` in a `MassWeightedHilbertSpace` whose mass operator is the inverse covariance.
+  - Intended bridge from Bayesian Gaussian priors to set-theoretic DLI constraints; exact for finite-dimensional full-rank measures and interpreted as finite-rank/truncated in infinite-dimensional theory.
+
+## Tutorial Notebook
+
+- [tutorials/gaussian_measure_to_sets_demo.ipynb](/home/adrian/PhD/Inferences/pygeoinf/tutorials/gaussian_measure_to_sets_demo.ipynb)
+  - Beginner-oriented finite-dimensional demo: builds a 2D `GaussianMeasure`, constructs a probability-calibrated `Ellipsoid` and equivalent Cameron-Martin `Ball`, plots the returned subset directly via `.plot()`, estimates their probabilities by Monte Carlo, compares against the exact chi-squared calibration, and ends with an optional affine-pushforward section.
+  - Focuses only on sets induced directly by the Gaussian measure itself and keeps the main workflow on the `pygeoinf` API surface rather than manual geometry reconstruction.
+
 ## Public Exports
 
 - [pygeoinf/__init__.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/__init__.py)
@@ -93,6 +109,12 @@ The module introduces support-function primitives for closed convex sets in a Hi
 
 - [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py)
   - All support-function classes and algebraic combinators.
+- [pygeoinf/gaussian_measure.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/gaussian_measure.py)
+  - `credible_set()` bridge from Gaussian measures to `Ellipsoid`/Cameron-Martin `Ball` subsets.
+- [tutorials/gaussian_measure_to_sets_demo.ipynb](/home/adrian/PhD/Inferences/pygeoinf/tutorials/gaussian_measure_to_sets_demo.ipynb)
+  - Runnable notebook demonstration of the finite-dimensional Gaussian-to-credible-sets workflow, now centered on the simplest beginner path: `GaussianMeasure.from_covariance_matrix(...)`, `credible_set(...)`, `samples(...)`, and subset `.plot()`.
+- [tests/test_gaussian_measure_credible_set.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_gaussian_measure_credible_set.py)
+  - Chi-square radius, ellipsoid membership/support, Cameron-Martin ball, rank override, and validation tests for `GaussianMeasure.credible_set()`.
 - [tests/test_support_function_constructors.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_constructors.py)
   - Constructor, evaluation, support-point, and error-path coverage for the base and concrete support-function types.
 - [tests/test_support_function_algebra.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_support_function_algebra.py)

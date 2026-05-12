@@ -549,7 +549,7 @@ class TestSubspaceSlicePlotter2D:
             return AffineSubspace.from_tangent_basis(domain_2d, [e1, e2])
 
     def test_subspace_slice_plotter_ball_2d(self, domain_2d, subspace_2d):
-        """SubspaceSlicePlotter renders a 2D ball slice without error."""
+        """SubspaceSlicePlotter renders a 2D ball slice via the exact quadratic path."""
         center = np.zeros(2)
         ball = Ball(domain_2d, center, radius=0.5, open_set=False)
 
@@ -560,14 +560,12 @@ class TestSubspaceSlicePlotter2D:
 
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
-        # payload is the boolean membership mask for oracle-based (Ball) path
+        # Exact quadratic path returns boundary points (N, 2), not a boolean mask
         assert isinstance(payload, np.ndarray)
-        assert payload.shape == (10, 10)
-        assert payload.dtype == bool
-        # The grid point closest to the origin must lie inside the ball (radius=0.5)
-        grid_coords = np.linspace(-1.0, 1.0, 10)
-        i0 = int(np.argmin(np.abs(grid_coords)))
-        assert payload[i0, i0]
+        assert payload.ndim == 2 and payload.shape[1] == 2
+        # All boundary points must be at distance ≈ 0.5 from the ball centre
+        dists = np.linalg.norm(payload, axis=1)
+        np.testing.assert_allclose(dists, 0.5, rtol=1e-6)
 
         plt.close(fig)
 
@@ -619,7 +617,7 @@ class TestPlotSliceWrapper:
         assert pygeoinf.plot_slice is pygeoinf.plot.plot_slice
 
     def test_plot_slice_ball_2d_returns_figure(self):
-        """plot_slice on a 2D Ball returns (fig, ax, payload) matching SubspaceSlicePlotter.plot."""
+        """plot_slice on a 2D Ball returns (fig, ax, payload) via the exact quadratic path."""
         domain = EuclideanSpace(dim=2)
         e1 = np.array([1.0, 0.0])
         e2 = np.array([0.0, 1.0])
@@ -635,9 +633,10 @@ class TestPlotSliceWrapper:
 
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
+        # Exact quadratic path returns boundary points (N, 2), not a boolean mask
         assert isinstance(payload, np.ndarray)
-        assert payload.shape == (10, 10)
-        assert payload.dtype == bool
+        assert payload.ndim == 2 and payload.shape[1] == 2
+        assert payload.shape[0] > 0
 
         plt.close(fig)
 
@@ -671,7 +670,7 @@ class TestPlotSliceWrapper:
         plt.close(fig)
 
     def test_plot_slice_ball_1d_returns_mask(self):
-        """plot_slice on a 1D subspace of a 2D domain returns (fig, ax, mask)."""
+        """plot_slice on a 1D subspace of a 2D domain returns (fig, ax, interval) via exact path."""
         domain = EuclideanSpace(dim=2)
         e1 = np.array([1.0, 0.0])
         with warnings.catch_warnings():
@@ -686,10 +685,12 @@ class TestPlotSliceWrapper:
 
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
+        # Exact quadratic path returns [lo, hi] interval endpoints, not a boolean mask
         assert isinstance(payload, np.ndarray)
-        assert payload.shape == (20,)
-        assert payload.dtype == bool
-        assert payload.any()  # Points near origin lie inside the ball
+        assert payload.shape == (2,)
+        lo, hi = payload
+        assert lo < hi
+        assert lo >= -0.5 - 1e-10 and hi <= 0.5 + 1e-10  # within ball radius
 
         plt.close(fig)
 
@@ -733,7 +734,7 @@ class TestSubsetPlotEntryPoint:
         assert callable(getattr(ball, "plot", None))
 
     def test_ball_plot_with_explicit_subspace(self):
-        """Ball.plot() with explicit on_subspace returns (fig, ax, payload) tuple."""
+        """Ball.plot() with explicit on_subspace returns (fig, ax, payload) via exact path."""
         domain = EuclideanSpace(dim=2)
         e1 = np.array([1.0, 0.0])
         e2 = np.array([0.0, 1.0])
@@ -748,7 +749,8 @@ class TestSubsetPlotEntryPoint:
         assert len(result) == 3
         fig, ax, payload = result
         assert isinstance(fig, matplotlib.figure.Figure)
-        assert payload.shape == (10, 10)
+        # Exact quadratic path returns boundary points (N, 2), not a boolean mask
+        assert payload.ndim == 2 and payload.shape[1] == 2
         plt.close(fig)
 
     def test_ball_plot_auto_default_2d(self):
@@ -757,7 +759,8 @@ class TestSubsetPlotEntryPoint:
         ball = Ball(domain, np.zeros(2), radius=0.5, open_set=False)
         fig, ax, payload = ball.plot(show_plot=False, grid_size=8)
         assert isinstance(fig, matplotlib.figure.Figure)
-        assert payload.shape == (8, 8)
+        # Exact quadratic path returns boundary points (N, 2), not a boolean mask
+        assert payload.ndim == 2 and payload.shape[1] == 2
         plt.close(fig)
 
     def test_ball_plot_requires_subspace_for_3d(self):
@@ -795,7 +798,7 @@ class TestPlotSlice3D:
         return Ball(domain_3d, np.zeros(3), radius=0.5, open_set=False)
 
     def test_plot_slice_ball_3d_backend(self, ball_3d, subspace_3d):
-        """plot_slice succeeds for a 3D Ball using the Matplotlib mplot3d backend."""
+        """plot_slice succeeds for a 3D Ball via exact quadratic path (Matplotlib)."""
         fig, ax, payload = plot_slice(
             ball_3d,
             subspace_3d,
@@ -805,11 +808,10 @@ class TestPlotSlice3D:
             backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
+        # Exact quadratic path returns surface points (N_pts, 3), not a boolean voxel mask
         assert isinstance(payload, np.ndarray)
-        assert payload.shape == (5, 5, 5)
-        assert payload.dtype == bool
-        # The ball (r=0.5) must contain at least the grid point nearest the origin
-        assert payload.any(), "No voxels inside ball — membership oracle may be broken"
+        assert payload.ndim == 2 and payload.shape[1] == 3
+        assert payload.shape[0] > 0
         plt.close(fig)
 
     def test_plot_slice_3d_returns_figure_like(self, ball_3d, subspace_3d):
@@ -831,7 +833,7 @@ class TestPlotSlice3D:
         plt.close(fig)
 
     def test_plot_slice_ball_3d_mask_center(self, ball_3d, subspace_3d):
-        """Center of the Ball must lie inside the mask for a unit-centered grid."""
+        """Surface points of 3D Ball exact slice must lie on the sphere of the correct radius."""
         fig, ax, payload = plot_slice(
             ball_3d,
             subspace_3d,
@@ -840,47 +842,46 @@ class TestPlotSlice3D:
             show_plot=False,
             backend="matplotlib",
         )
-        # grid_size=5 → linspace(-1, 1, 5) → [-1., -0.5,  0.,  0.5,  1.]
-        # index 2 is the point at 0.0 in each dimension → origin is in ball
-        assert payload[2, 2, 2], "Origin (0,0,0) should be inside ball of radius 0.5"
+        # All surface points must lie at distance ≈ 0.5 from the origin (ball center)
+        dists = np.linalg.norm(payload, axis=1)
+        np.testing.assert_allclose(
+            dists, 0.5, rtol=1e-6,
+            err_msg="Exact 3D ball surface points should all be at distance r=0.5 from center",
+        )
         plt.close(fig)
 
     def test_subspace_slice_plotter_3d_direct(self, ball_3d, subspace_3d):
-        """SubspaceSlicePlotter.plot() works directly for a 3D Ball."""
+        """SubspaceSlicePlotter.plot() works directly for a 3D Ball via exact path."""
         plotter = SubspaceSlicePlotter(ball_3d, subspace_3d, grid_size=5)
         fig, ax, payload = plotter.plot(
             bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0), show_plot=False,
             backend="matplotlib",
         )
         assert isinstance(fig, matplotlib.figure.Figure)
-        assert payload.shape == (5, 5, 5)
+        # Exact quadratic path returns surface points (N, 3)
+        assert payload.ndim == 2 and payload.shape[1] == 3
         plt.close(fig)
 
     def test_plot_slice_3d_mask_uses_param_coords(self, ball_3d, subspace_3d):
-        """mask[i,j,k] must correspond to (u[i], v[j], w[k]) in parameter space.
+        """Exact 3D ball surface points must all lie at the correct radius.
 
-        Uses a non-symmetric grid so index order can be distinguished:
-        u in [-0.6, 0.6], v in [-0.3, 0.3], w in [0.0, 0.0] (degenerate axis)
-        would fail if axes were swapped.  Checks that only the u-axis 'centre'
-        index puts the point inside the unit ball.
+        The exact quadratic path renders the boundary surface, not a voxel mask.
+        Verify that every surface point is at distance r=0.5 from the ball center.
         """
-        # Grid: 3 points per axis
-        # u: [-0.6, 0.0, 0.6],  v: [-0.3, 0.0, 0.3],  w: [-0.1, 0.0, 0.1]
-        # With indexing='ij': mask[i,j,k] = membership at (u[i], v[j], w[k])
-        # Origin (u=0,v=0,w=0) -> index (1,1,1) for all 3-point grids
         fig, ax, payload = plot_slice(
             ball_3d,
             subspace_3d,
-            bounds=(-0.6, 0.6, -0.3, 0.3, -0.1, 0.1),
-            grid_size=3,
+            bounds=(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+            grid_size=5,  # grid_size is ignored for exact path
             show_plot=False,
             backend="matplotlib",
         )
-        assert payload.shape == (3, 3, 3), f"Expected (3,3,3), got {payload.shape}"
-        # (0,0,0) with dist sqrt(0.36+0.09+0.01) ≈ 0.66 > 0.5 — outside
-        assert not payload[0, 0, 0], "Corner point should be outside ball"
-        # (1,1,1) is the origin — inside ball of radius 0.5
-        assert payload[1, 1, 1], "Origin must be inside ball of radius 0.5"
+        assert payload.ndim == 2 and payload.shape[1] == 3, (
+            f"Expected surface points (N, 3), got {payload.shape}"
+        )
+        dists = np.linalg.norm(payload, axis=1)
+        np.testing.assert_allclose(dists, 0.5, rtol=1e-6,
+            err_msg="All 3D ball surface points must be at distance r=0.5 from center")
         plt.close(fig)
 
     def test_plot_slice_polyhedral_3d_exact_path(self, domain_3d, subspace_3d):
@@ -1112,7 +1113,7 @@ class TestPlotSlice3DPlotlyBackend:
         plt.close(fig)
 
     def test_plot_slice_3d_plotly_returns_figure(self, ball_3d, subspace_3d):
-        """backend='plotly' returns a Plotly figure for 3D ball (sampled path)."""
+        """backend='plotly' returns a Plotly figure for 3D ball via exact quadratic path."""
         go = pytest.importorskip("plotly.graph_objects")
 
         fig, ax_or_none, payload = plot_slice(
@@ -1127,18 +1128,13 @@ class TestPlotSlice3DPlotlyBackend:
             f"backend='plotly' must return go.Figure, got {type(fig)}"
         )
         assert ax_or_none is None, "ax must be None for Plotly figures"
+        # Exact quadratic path returns surface points (N, 3), not a boolean voxel mask
         assert isinstance(payload, np.ndarray)
-        assert payload.shape == (5, 5, 5)
-        assert payload.dtype == bool
-        # Sampled 3D path renders as an Isosurface trace.
+        assert payload.ndim == 2 and payload.shape[1] == 3
+        # Exact 3D path renders as a Surface trace (not Isosurface)
         assert len(fig.data) >= 1, "Plotly figure must contain at least one trace"
-        assert isinstance(fig.data[0], go.Isosurface), (
-            f"Sampled 3D path must use go.Isosurface trace, got {type(fig.data[0])}"
-        )
-        assert fig.data[0].isomin < 0.5 < fig.data[0].isomax
-        assert fig.data[0].isomax - fig.data[0].isomin < 0.01, (
-            "Plotly sampled 3D path must render a narrow band around the 0.5 "
-            "membership boundary so the isosurface is visible for boolean masks"
+        assert isinstance(fig.data[0], go.Surface), (
+            f"Exact 3D quadratic path must use go.Surface trace, got {type(fig.data[0])}"
         )
 
     def test_plot_slice_polyhedral_3d_plotly_exact_path(self, box_3d, subspace_3d):

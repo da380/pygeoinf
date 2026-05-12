@@ -42,7 +42,7 @@ Run as a script::
 from __future__ import annotations
 
 import random
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Literal
 
 import numpy as np
 
@@ -69,6 +69,9 @@ DEFAULT_TARGET_LATLON = [
     (49.0, -123.0),   # Cap 5 — near Vancouver
     (70.0, 150.0),    # Cap 6 — northern Siberia
 ]
+
+CAP_OPERATOR_METHODS = ("quadrature", "exact", "monte_carlo")
+CapOperatorMethod = Literal["quadrature", "exact", "monte_carlo"]
 
 
 def build_model_space(min_degree: int = 64) -> Sobolev:
@@ -174,25 +177,50 @@ def build_cap_property_operator(
     cap_radius_rad: float = 0.15,
     n_cap: int = 40,
     seed: int = 42,
-    exact: bool = True,
+    method: CapOperatorMethod = "exact",
+    exact: bool | None = None,
 ) -> LinearOperator:
     """Build a spherical-cap averaging operator on the Sobolev model space.
 
-    By default, each property is the exact spherical-cap average functional
-    assembled from analytical spherical-harmonic cap coefficients. Set
-    ``exact=False`` to retain the previous empirical Monte Carlo average of
-    ``n_cap`` Dirac functionals sampled uniformly inside each cap.
+    By default, each property is assembled from the sphere's deterministic
+    geodesic-ball quadrature rule using ``n_cap`` points. Set ``method="exact"``
+    to use the analytical spherical-harmonic cap average, or
+    ``method="monte_carlo"`` to retain the empirical random cap average.
+
+    The legacy ``exact`` flag is still accepted for compatibility:
+    ``exact=True`` selects ``method="exact"`` and ``exact=False`` selects
+    ``method="monte_carlo"``.
     """
+    resolved_method = method
+    if exact is not None:
+        legacy_method: CapOperatorMethod = "exact" if exact else "monte_carlo"
+        if method != "quadrature" and method != legacy_method:
+            raise ValueError("Conflicting target-operator method and exact flag.")
+        resolved_method = legacy_method
+    if resolved_method not in CAP_OPERATOR_METHODS:
+        raise ValueError(
+            "method must be one of 'quadrature', 'exact', or 'monte_carlo'."
+        )
+
     rng = np.random.default_rng(seed)
     forms: list[LinearForm] = []
     target_points = list(target_latlon_list)
+    cap_radius = model_space.radius * cap_radius_rad
 
     for centre in target_points:
-        if exact:
+        if resolved_method == "quadrature":
             forms.append(
                 model_space.geodesic_ball_average(
                     centre,
-                    model_space.radius * cap_radius_rad,
+                    cap_radius,
+                    n_points=n_cap,
+                )
+            )
+        elif resolved_method == "exact":
+            forms.append(
+                model_space.geodesic_ball_average(
+                    centre,
+                    cap_radius,
                 )
             )
         else:
@@ -407,7 +435,8 @@ def run_example(
     sigma_noise: float = SIGMA_NOISE,
     seed: int = 42,
     normalize_by_arclength: bool = True,
-    exact_cap_average: bool = True,
+    target_operator_method: CapOperatorMethod = "exact",
+    exact_cap_average: bool | None = None,
 ) -> dict:
     """Run the full sphere-DLI example and return the assembled results.
 
@@ -416,16 +445,20 @@ def run_example(
         n_sources: Number of earthquake source points.
         n_receivers: Number of receiver stations.
         n_target: Number of target spherical-cap properties.
-        n_cap: Number of Dirac samples per spherical cap when
-            ``exact_cap_average=False``.
+        n_cap: Number of cap quadrature points, or Monte Carlo samples when
+            ``target_operator_method='monte_carlo'``.
         sigma_noise: Data-noise standard deviation.
         seed: Global random seed used for geometry and data generation.
         normalize_by_arclength: Controls whether forward rows are divided by
             path length. True gives reference-weighted path averages; False
             gives raw reference-weighted path integrals.
-        exact_cap_average: If true, use exact spherical-harmonic cap-average
-            functionals for target properties. If false, use the empirical
-            Monte Carlo cap average retained for backwards comparison.
+        target_operator_method: Target-cap assembly method. ``'quadrature'``
+            uses the deterministic spherical-cap quadrature rule, ``'exact'``
+            uses the analytical spherical-harmonic cap average, and
+            ``'monte_carlo'`` uses the retained empirical random sampler.
+        exact_cap_average: Legacy compatibility flag. ``True`` selects
+            ``target_operator_method='exact'`` and ``False`` selects
+            ``target_operator_method='monte_carlo'``.
 
     Returns:
         Dictionary containing DLI bounds together with the model space, forward
@@ -440,6 +473,7 @@ def run_example(
         target_latlon,
         n_cap=n_cap,
         seed=seed,
+        method=target_operator_method,
         exact=exact_cap_average,
     )
     forward_operator, paths = build_forward_operator(
@@ -474,6 +508,11 @@ def run_example(
         "paths": paths,
         "target_latlon": target_latlon,
         "normalize_by_arclength": normalize_by_arclength,
+        "target_operator_method": (
+            ("exact" if exact_cap_average else "monte_carlo")
+            if exact_cap_average is not None
+            else target_operator_method
+        ),
     }
 
 

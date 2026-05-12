@@ -15,7 +15,7 @@ from typing import Union, List, Optional, Tuple, Any, TYPE_CHECKING
 
 from .gaussian_measure import GaussianMeasure
 from .hilbert_space import EuclideanSpace
-from .subsets import Subset, PolyhedralSet
+from .subsets import Subset, PolyhedralSet, Ball, Ellipsoid
 
 if TYPE_CHECKING:
     from .subspaces import AffineSubspace
@@ -961,6 +961,17 @@ class SubspaceSlicePlotter:
                 backend=effective_backend,
             )
 
+        # Fast path: exact quadratic slice of Ball and Ellipsoid.
+        if isinstance(self.subset, (Ball, Ellipsoid)):
+            return self._plot_quadratic_exact(
+                parsed_bounds,
+                cmap=cmap,
+                color=color,
+                show_plot=show_plot,
+                ax=ax,
+                backend=effective_backend,
+            )
+
         # Generate parameter grid
         param_grid = self._generate_param_grid(parsed_bounds)
 
@@ -980,6 +991,397 @@ class SubspaceSlicePlotter:
                                               show_plot)
             return self._render_3d(param_grid, mask, parsed_bounds, cmap,
                                    show_plot, ax)
+
+    # ===========================
+    # Quadratic (Ball / Ellipsoid) Fast Path
+    # ===========================
+
+    def _compute_quadratic_slice(self) -> dict:
+        r"""Pull a Ball or Ellipsoid back to slice-parameter coordinates.
+
+        For a set $\{x : \langle A(x-c),\, x-c \rangle \le r^2 \}$ and a
+        slice $x = x_0 + V u$ (columns of $V$ are the tangent basis):
+
+        .. math::
+
+            u^\top M\, u + 2 b^\top u + \gamma - r^2 \le 0
+
+        where
+
+        * $M_{ij} = \langle A v_i,\, v_j \rangle$ (pulled-back metric;
+          $A = I$ for a Ball),
+        * $b_i     = \langle A d_0,\, v_i \rangle$ with $d_0 = x_0 - c$,
+        * $\gamma  = \langle A d_0,\, d_0 \rangle$.
+
+        Completing the square gives the equivalent ellipsoid in slice coords:
+
+        .. math::
+
+            (u - u_c)^\top M\, (u - u_c) \le \rho^2
+
+        with $u_c = -M^{-1} b$ and $\rho^2 = r^2 - \gamma + b^\top M^{-1} b$.
+
+        Returns:
+            dict with keys:
+                ``u_c``    – center in parameter space, shape (k,).
+                ``rho_sq`` – effective radius squared (float).
+                ``M``      – pulled-back metric matrix, shape (k, k).
+
+        Raises:
+            ValueError: If the slice is empty (``rho_sq < 0``).
+        """
+        subset = self.subset
+        H = self.domain
+        V = self.tangent_basis          # list of k ambient vectors
+        x0 = self.translation
+        k = self.dimension
+
+        c = subset.center
+        r = subset.radius
+
+        # d0 = x0 - c  (offset of slice origin from ellipsoid center)
+        d0 = H.subtract(x0, c)
+
+        if isinstance(subset, Ball):
+            # Metric A = identity:  A v = v,  ⟨Av, w⟩ = ⟨v, w⟩
+            M = np.array(
+                [[H.inner_product(V[i], V[j]) for j in range(k)] for i in range(k)],
+                dtype=float,
+            )
+            b = np.array([H.inner_product(d0, V[i]) for i in range(k)], dtype=float)
+            gamma = H.inner_product(d0, d0)
+        else:
+            # isinstance(subset, Ellipsoid)
+            A = subset.operator
+            Ad0 = A(d0)
+            AV = [A(V[i]) for i in range(k)]
+            M = np.array(
+                [[H.inner_product(AV[i], V[j]) for j in range(k)] for i in range(k)],
+                dtype=float,
+            )
+            b = np.array([H.inner_product(Ad0, V[i]) for i in range(k)], dtype=float)
+            gamma = H.inner_product(Ad0, d0)
+
+        # Complete the square: rho^2 = r^2 - gamma + b^T M^{-1} b
+        try:
+            M_inv_b = np.linalg.solve(M, b)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                f"Pulled-back metric M is singular for the {type(subset).__name__} slice; "
+                "cannot compute exact quadratic slice."
+            ) from exc
+
+        rho_sq = float(r**2 - gamma + float(b @ M_inv_b))
+        u_c = -M_inv_b
+
+        if rho_sq < -1e-12 * max(1.0, r**2):
+            raise ValueError(
+                f"Slice of {type(subset).__name__} is empty "
+                f"(rho^2 = {rho_sq:.6g} < 0); the slice plane does not "
+                "intersect the set."
+            )
+        # Numerical noise: clamp tiny negatives to zero (tangent slice)
+        rho_sq = max(rho_sq, 0.0)
+
+        return {"u_c": u_c, "rho_sq": rho_sq, "M": M}
+
+    def _plot_quadratic_exact(
+        self,
+        bounds: tuple,
+        *,
+        cmap: str,
+        color: str,
+        show_plot: bool,
+        ax,
+        backend: str,
+    ) -> tuple:
+        """Dispatch the exact quadratic-slice renderer by dimension."""
+        info = self._compute_quadratic_slice()
+        u_c = info["u_c"]
+        rho_sq = info["rho_sq"]
+        M = info["M"]
+
+        if self.dimension == 1:
+            return self._render_1d_quadratic_exact(u_c, rho_sq, M, bounds, color, show_plot, ax)
+        elif self.dimension == 2:
+            return self._render_2d_quadratic_exact(u_c, rho_sq, M, bounds, cmap, color, show_plot, ax)
+        elif self.dimension == 3:
+            return self._render_3d_quadratic_exact(u_c, rho_sq, M, bounds, cmap, show_plot, ax, backend)
+        else:
+            raise ValueError(f"Unsupported slice dimension {self.dimension} for exact quadratic rendering.")
+
+    def _render_1d_quadratic_exact(
+        self,
+        u_c: np.ndarray,
+        rho_sq: float,
+        M: np.ndarray,
+        bounds: tuple,
+        color: str,
+        show_plot: bool,
+        ax,
+    ) -> tuple:
+        r"""Render a 1D exact quadratic slice as a clipped interval bar.
+
+        The slice is $(u_c - \rho/\sqrt{M}, \; u_c + \rho/\sqrt{M})$ intersected
+        with the plot bounds.  Here $M$ is a $1\times1$ positive scalar (the
+        pulled-back metric).
+
+        Returns:
+            (fig, ax, payload) where payload = np.array([lo, hi]).
+        """
+        rho = float(np.sqrt(max(rho_sq, 0.0)))
+        m_scalar = float(M[0, 0])
+        if m_scalar <= 0:
+            raise ValueError(
+                "Pulled-back 1D metric is non-positive; cannot compute interval half-length."
+            )
+        half_len = rho / np.sqrt(m_scalar)
+        uc_scalar = float(u_c[0])
+        u_min, u_max = bounds
+        lo = max(uc_scalar - half_len, float(u_min))
+        hi = min(uc_scalar + half_len, float(u_max))
+        if lo > hi:
+            raise ValueError(
+                f"Exact 1D quadratic slice is empty within the plot bounds "
+                f"[{u_min}, {u_max}]."
+            )
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 2))
+        else:
+            fig = ax.figure
+
+        try:
+            height_data = self._pixel_to_data_height(ax, self.bar_pixel_height)
+        except Exception:
+            fig.canvas.draw()
+            height_data = self._pixel_to_data_height(ax, self.bar_pixel_height)
+
+        ax.barh(
+            0,
+            hi - lo,
+            left=lo,
+            height=height_data,
+            color=color,
+            alpha=self.alpha,
+            edgecolor="black",
+            linewidth=1.5,
+        )
+        ax.set_xlim(u_min, u_max)
+        ax.set_ylim(-0.5, 0.5)
+        ax.set_xlabel("Line Parameter (Local Coord 1)")
+        ax.set_title(f"1D Slice (Exact): {self.subset.__class__.__name__}")
+        ax.set_yticks([])
+        ax.grid(True, alpha=0.3, axis="x")
+
+        if show_plot:
+            plt.show()
+
+        return fig, ax, np.array([lo, hi], dtype=float)
+
+    def _render_2d_quadratic_exact(
+        self,
+        u_c: np.ndarray,
+        rho_sq: float,
+        M: np.ndarray,
+        bounds: tuple,
+        cmap: str,
+        color: str,
+        show_plot: bool,
+        ax,
+        fill: bool = True,
+        n_boundary_pts: int = 360,
+    ) -> tuple:
+        r"""Render an exact 2D quadratic slice as a boundary curve and optional fill.
+
+        The slice in parameter space is the ellipse
+        $\{u : (u - u_c)^\top M(u - u_c) \le \rho^2\}$.  We trace its
+        boundary by sweeping $\theta \in [0, 2\pi)$ and mapping from the
+        unit circle through $M^{-1/2}$ (via Cholesky of $M$):
+
+        .. math::
+
+            u(\theta) = u_c + L^{-\top} \rho (\cos\theta,\, \sin\theta)^\top
+
+        where $M = L L^\top$.
+
+        Args:
+            u_c: Ellipse center in param coords, shape (2,).
+            rho_sq: Radius squared of the pulled-back ellipse.
+            M: 2x2 pulled-back metric (SPD).
+            bounds: (u_min, u_max, v_min, v_max).
+            cmap: Matplotlib colormap name (used for fill).
+            color: Fallback color for boundary / fill.
+            show_plot: Whether to call plt.show().
+            ax: Optional existing Axes.
+            fill: If True (default), draw a filled polygon in addition to the boundary.
+            n_boundary_pts: Number of points on the boundary curve.
+
+        Returns:
+            (fig, ax, boundary_pts) where boundary_pts has shape (n_boundary_pts, 2).
+        """
+        rho = float(np.sqrt(max(rho_sq, 0.0)))
+
+        # Cholesky factorize M = L L^T; L^{-T} maps circle → ellipse
+        try:
+            L = np.linalg.cholesky(M)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                f"Pulled-back metric M is not positive definite for the 2D quadratic slice "
+                f"of {self.subset.__class__.__name__}: {exc}"
+            ) from exc
+
+        theta = np.linspace(0.0, 2.0 * np.pi, n_boundary_pts, endpoint=False)
+        circle = rho * np.column_stack([np.cos(theta), np.sin(theta)])  # (N, 2)
+
+        # u(θ) = u_c + L^{-T} * circle[θ]  (one solve per point)
+        # Solve L^T z = circle[θ]^T for all θ at once (numpy broadcasting)
+        boundary = np.linalg.solve(L.T, circle.T).T + u_c  # (N, 2)
+
+        # Build figure
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(6, 6))
+        else:
+            fig = ax.figure
+
+        facecolor = plt.get_cmap(cmap)(0.5)
+        if fill:
+            from matplotlib.patches import Polygon as MplPolygon
+            patch = MplPolygon(
+                boundary,
+                closed=True,
+                facecolor=facecolor,
+                edgecolor="k",
+                linewidth=1.2,
+                alpha=self.alpha,
+            )
+            ax.add_patch(patch)
+        else:
+            ax.plot(
+                np.append(boundary[:, 0], boundary[0, 0]),
+                np.append(boundary[:, 1], boundary[0, 1]),
+                color=color,
+                linewidth=1.5,
+            )
+
+        u_min, u_max, v_min, v_max = bounds
+        ax.set_xlim(u_min, u_max)
+        ax.set_ylim(v_min, v_max)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("Local Param 1")
+        ax.set_ylabel("Local Param 2")
+        ax.set_title(f"2D Slice (Exact): {self.subset.__class__.__name__}")
+
+        if show_plot:
+            plt.show()
+
+        return fig, ax, boundary
+
+    def _render_3d_quadratic_exact(
+        self,
+        u_c: np.ndarray,
+        rho_sq: float,
+        M: np.ndarray,
+        bounds: tuple,
+        cmap: str,
+        show_plot: bool,
+        ax,
+        backend: str,
+        n_theta: int = 40,
+        n_phi: int = 20,
+    ) -> tuple:
+        r"""Render an exact 3D quadratic slice as a surface mesh.
+
+        Parameterises the ellipsoidal surface in slice coords using spherical
+        angles $(\theta, \phi)$ mapped through the Cholesky factor of $M$:
+
+        .. math::
+
+            u(\theta,\phi) = u_c + L^{-\top}\, \rho\,(\sin\phi\cos\theta,\,
+            \sin\phi\sin\theta,\, \cos\phi)^\top.
+
+        Args:
+            n_theta: Longitudinal sample count.
+            n_phi: Latitudinal sample count.
+
+        Returns:
+            (fig, ax3, surface_pts) where surface_pts has shape (n_theta*n_phi, 3).
+        """
+        rho = float(np.sqrt(max(rho_sq, 0.0)))
+
+        try:
+            L = np.linalg.cholesky(M)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                f"Pulled-back metric M is not positive definite for the 3D quadratic slice "
+                f"of {self.subset.__class__.__name__}: {exc}"
+            ) from exc
+
+        theta = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
+        phi = np.linspace(0.0, np.pi, n_phi)
+        TH, PH = np.meshgrid(theta, phi)
+
+        sphere = rho * np.column_stack([
+            np.sin(PH).ravel() * np.cos(TH).ravel(),
+            np.sin(PH).ravel() * np.sin(TH).ravel(),
+            np.cos(PH).ravel(),
+        ])  # (n_theta*n_phi, 3)
+
+        # Map unit sphere through L^{-T}
+        surface_pts = np.linalg.solve(L.T, sphere.T).T + u_c  # (N, 3)
+
+        facecolor = plt.get_cmap(cmap)(0.5)
+
+        if backend == "plotly":
+            try:
+                import plotly.graph_objects as go
+            except ImportError as e:
+                raise ImportError(
+                    "Plotly is required for backend='plotly'. Install with: pip install plotly"
+                ) from e
+            X = surface_pts[:, 0].reshape(n_phi, n_theta)
+            Y = surface_pts[:, 1].reshape(n_phi, n_theta)
+            Z = surface_pts[:, 2].reshape(n_phi, n_theta)
+            fig_plotly = go.Figure(data=[go.Surface(x=X, y=Y, z=Z, opacity=self.alpha)])
+            u_min, u_max, v_min, v_max, w_min, w_max = bounds
+            fig_plotly.update_layout(
+                scene=dict(
+                    xaxis=dict(range=[u_min, u_max]),
+                    yaxis=dict(range=[v_min, v_max]),
+                    zaxis=dict(range=[w_min, w_max]),
+                )
+            )
+            if show_plot:
+                fig_plotly.show()
+            return fig_plotly, None, surface_pts
+
+        # Matplotlib 3D
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        if ax is None:
+            fig = plt.figure(figsize=(7, 6))
+            ax3 = fig.add_subplot(111, projection="3d")
+        else:
+            fig = ax.figure
+            ax3 = ax
+
+        X = surface_pts[:, 0].reshape(n_phi, n_theta)
+        Y = surface_pts[:, 1].reshape(n_phi, n_theta)
+        Z = surface_pts[:, 2].reshape(n_phi, n_theta)
+        ax3.plot_surface(X, Y, Z, alpha=self.alpha, color=facecolor, edgecolor="none")
+
+        u_min, u_max, v_min, v_max, w_min, w_max = bounds
+        ax3.set_xlim(u_min, u_max)
+        ax3.set_ylim(v_min, v_max)
+        ax3.set_zlim(w_min, w_max)
+        ax3.set_xlabel("Local Param 1")
+        ax3.set_ylabel("Local Param 2")
+        ax3.set_zlabel("Local Param 3")
+        ax3.set_title(f"3D Slice (Exact): {self.subset.__class__.__name__}")
+
+        if show_plot:
+            plt.show()
+
+        return fig, ax3, surface_pts
 
     # ===========================
     # Polyhedral Fast Path

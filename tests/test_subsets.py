@@ -171,7 +171,7 @@ class TestSubsetPlotEntryPoint:
         return EuclideanSpace(3)
 
     def test_ball_plot_delegates_to_plot_slice(self, domain_2d):
-        """Ball.plot() with explicit on_subspace returns (fig, ax, payload) like plot_slice()."""
+        """Ball.plot() with explicit on_subspace returns (fig, ax, payload) via exact path."""
         e1 = np.array([1.0, 0.0])
         e2 = np.array([0.0, 1.0])
         with warnings.catch_warnings():
@@ -186,8 +186,8 @@ class TestSubsetPlotEntryPoint:
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
         assert isinstance(payload, np.ndarray)
-        assert payload.shape == (10, 10)
-        assert payload.dtype == bool
+        # Exact quadratic path returns boundary points (N, 2), not a boolean mask
+        assert payload.ndim == 2 and payload.shape[1] == 2
         plt.close(fig)
 
     def test_subset_plot_requires_subspace_or_builds_default(self, domain_2d, domain_3d):
@@ -205,7 +205,7 @@ class TestSubsetPlotEntryPoint:
             ball_3d.plot(show_plot=False)
 
     def test_subset_plot_preserves_kwargs(self, domain_2d):
-        """grid_size and bounds kwargs are forwarded through to plot_slice."""
+        """bounds kwargs are forwarded through to plot_slice; grid_size is ignored for exact path."""
         e1 = np.array([1.0, 0.0])
         e2 = np.array([0.0, 1.0])
         with warnings.catch_warnings():
@@ -214,14 +214,14 @@ class TestSubsetPlotEntryPoint:
 
         ball = Ball(domain_2d, np.zeros(2), radius=0.5, open_set=False)
 
-        # grid_size=7 forwarded: oracle-path payload shape is (grid_size, grid_size)
+        # Exact path returns boundary points (N, 2) regardless of grid_size
         fig, ax, payload = ball.plot(
             subspace,
             bounds=(-1.0, 1.0, -1.0, 1.0),
             grid_size=7,
             show_plot=False,
         )
-        assert payload.shape == (7, 7)
+        assert payload.ndim == 2 and payload.shape[1] == 2
         plt.close(fig)
 
     def test_ball_1d_default_subspace_no_warning(self, domain_1d):
@@ -239,8 +239,10 @@ class TestSubsetPlotEntryPoint:
         assert isinstance(fig, matplotlib.figure.Figure)
         assert isinstance(ax, matplotlib.axes.Axes)
         assert isinstance(payload, np.ndarray)
-        assert payload.ndim == 1
-        assert len(payload) == 11
+        # Exact quadratic path returns [lo, hi] interval endpoints
+        assert payload.shape == (2,)
+        lo, hi = payload
+        assert lo < hi
         plt.close(fig)
 
     def test_plot_delegates_to_plot_slice_function(self, domain_2d):

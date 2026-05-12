@@ -34,8 +34,8 @@ All functions are import-safe; no expensive computation runs at module load time
   `Sobolev.from_heat_kernel_prior(PRIOR_SCALE, ORDER, SCALE, power_of_two=True, min_degree=min_degree)`.
 - `reference_phase_velocity(point) -> float`
   Smooth positive synthetic reference phase velocity `c_0(lat, lon)` with mild large-scale latitude/longitude variation.
-- `build_cap_property_operator(model_space, target_latlon_list=DEFAULT_TARGET_LATLON, cap_radius_rad=0.15, n_cap=40, seed=42, exact=True) -> LinearOperator`
-  Rows are exact spherical-cap averages by default, assembled via `model_space.geodesic_ball_average(centre, model_space.radius * cap_radius_rad)`. Set `exact=False` to retain the previous empirical Monte Carlo average of `n_cap` random `dirac` components inside each cap.
+- `build_cap_property_operator(model_space, target_latlon_list=DEFAULT_TARGET_LATLON, cap_radius_rad=0.15, n_cap=40, seed=42, method="quadrature", exact=None) -> LinearOperator`
+  Rows use deterministic spherical-cap quadrature by default, assembled via `model_space.geodesic_ball_average(centre, model_space.radius * cap_radius_rad, n_points=n_cap)`. Set `method="exact"` for the analytical spherical-harmonic cap average or `method="monte_carlo"` for the retained random `dirac` average. The legacy `exact` flag is still accepted as a compatibility alias for the old exact/Monte Carlo split.
 
 Internal helpers: `_latlon_to_unit_xyz`, `_unit_xyz_to_latlon`, `_sample_cap_points`, `_weighted_geodesic_integral_form`.
 
@@ -43,7 +43,8 @@ Core cap-integral additions:
 - `SymmetricHilbertSpace.geodesic_ball_quadrature(...)` is an additive hook for geometry-specific volume quadrature; the default raises `NotImplementedError`.
 - `SymmetricHilbertSpace.geodesic_ball_integral(...)` and `geodesic_ball_average(...)` assemble linear forms from a geodesic-ball quadrature rule when one exists.
 - `SymmetricSobolevSpace.geodesic_ball_integral(...)` delegates to the underlying Lebesgue space and wraps the resulting components on the Sobolev domain.
-- `sphere.Lebesgue.spherical_cap_integral(...)` / `spherical_cap_average(...)` use `pyshtools.SHCoeffs.from_cap` to compute exact spherical-harmonic cap coefficients. `sphere.Lebesgue.geodesic_ball_integral(...)` maps geodesic radius to angular cap radius and uses this exact implementation.
+- `sphere.Lebesgue.geodesic_ball_quadrature(...)` now provides a deterministic spherical-cap quadrature rule: Gauss-Legendre in the polar variable `u = cos(gamma)` and uniform azimuthal rings with weights that sum to the physical cap area.
+- `sphere.Lebesgue.spherical_cap_integral(...)` / `spherical_cap_average(...)` use `pyshtools.SHCoeffs.from_cap` to compute exact spherical-harmonic cap coefficients. `sphere.Lebesgue.geodesic_ball_integral(...)` still uses that exact implementation when `n_points` is omitted, and switches to the quadrature rule when `n_points` is supplied.
 
 ### Phase 2 — forward operator and synthetic data
 
@@ -63,7 +64,7 @@ Core cap-integral additions:
 
 ### Phase 4 — orchestrator and visualisation
 
-- `run_example(*, min_degree=32, n_sources=N_SOURCES, n_receivers=N_RECEIVERS, n_target=N_TARGET, n_cap=40, sigma_noise=SIGMA_NOISE, seed=42, exact_cap_average=True) -> dict`
+- `run_example(*, min_degree=32, n_sources=N_SOURCES, n_receivers=N_RECEIVERS, n_target=N_TARGET, n_cap=40, sigma_noise=SIGMA_NOISE, seed=42, target_operator_method="quadrature", exact_cap_average=None) -> dict`
   Runs the full pipeline; returns the bounds dict plus all intermediate objects.
 - `plot_results(result) -> None`
   Three figures: cartopy ray-network map, true-field colour map, horizontal interval bar chart.
@@ -83,7 +84,7 @@ Core cap-integral additions:
 ## Implementation notes
 
 - `LinearForm` lives in `pygeoinf.linear_forms` on this branch (not `pygeoinf.hilbert_space`).
-- Cap properties use exact spherical-harmonic cap averages by default. The previous `np.random.default_rng(seed)` 3-D rejection sampler is retained for `build_cap_property_operator(..., exact=False)`.
+- Cap properties use deterministic spherical-cap quadrature by default. Exact spherical-harmonic cap averages remain available through `build_cap_property_operator(..., method="exact")`, and the previous `np.random.default_rng(seed)` 3-D rejection sampler is retained for `method="monte_carlo"` or the legacy `exact=False` alias.
 - `iris_stations` / `random_earthquakes` use stdlib `random`; the script saves/restores state.
 - `prior.sample()` uses legacy global numpy RNG; the script saves/restores numpy state.
 - `model_space.project_function(lambda _: c)` is the canonical way to make a constant field.
@@ -99,7 +100,8 @@ Core cap-integral additions:
 | `test_model_space_builds` | 1 | `dim > 0`, `order == 1.5` |
 | `test_cap_property_operator_shape` | 1 | codomain and matrix shape |
 | `test_cap_property_operator_constant_field` | 1 | constant field → constant caps (rtol/atol 1e-3) |
-| `test_cap_property_operator_exact_default_is_deterministic` | 1 | exact default cap operator is independent of old `n_cap` / `seed` sampling controls |
+| `test_cap_property_operator_quadrature_default_is_seed_deterministic` | 1 | default cap operator is deterministic in `seed` |
+| `test_cap_property_operator_exact_mode_is_n_cap_independent` | 1 | exact mode still ignores quadrature/sample controls |
 | `test_forward_operator_shape` | 2 | domain, codomain, path count |
 | `test_forward_operator_finite` | 2 | finite output on random model |
 | `test_forward_operator_constant_field_is_reference_weighted_path_average` | 2 | constant field → ray-average of `1 / c_0` (weighting regression) |

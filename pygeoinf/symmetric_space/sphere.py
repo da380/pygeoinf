@@ -477,6 +477,60 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
 
         return points, scaled_weights
 
+    def geodesic_ball_quadrature(
+        self, center: Tuple[float, float], radius: float, n_points: int
+    ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
+        r"""Return a deterministic quadrature rule for a spherical cap.
+
+        The rule uses Gauss-Legendre nodes in the polar variable
+        $u = \cos(\gamma)$ and a uniform trapezoidal rule in azimuth on each
+        radial ring. The weights include the sphere area element, so their sum
+        equals the physical cap area.
+        """
+        if n_points <= 0:
+            raise ValueError("Geodesic-ball quadrature requires at least one point.")
+        if radius < 0.0 or radius > np.pi * self.radius:
+            raise ValueError(
+                "Geodesic-ball radius on the sphere must lie in [0, pi * radius]."
+            )
+        if radius <= 0.0:
+            return [center] * n_points, np.zeros(n_points)
+
+        angular_radius = radius / self.radius
+        cos_alpha = np.cos(angular_radius)
+        n_radial = min(n_points, max(1, int(np.sqrt(n_points))))
+        radial_nodes, radial_weights = np.polynomial.legendre.leggauss(n_radial)
+        interval_half_width = 0.5 * (1.0 - cos_alpha)
+        u_nodes = interval_half_width * (radial_nodes + 1.0) + cos_alpha
+        u_weights = interval_half_width * radial_weights
+        ring_radii = np.sqrt(np.clip(1.0 - u_nodes**2, 0.0, None))
+        ring_counts = self._distribute_ring_point_counts(n_points, ring_radii)
+
+        center_vector = self._to_vector(*center)
+        tangent_1, tangent_2 = self._tangent_frame(center_vector)
+
+        points: List[Tuple[float, float]] = []
+        weights: List[float] = []
+
+        for u_value, u_weight, ring_radius, ring_count in zip(
+            u_nodes, u_weights, ring_radii, ring_counts
+        ):
+            azimuths = 2.0 * np.pi * np.arange(ring_count, dtype=float) / ring_count
+            ring_vectors = (
+                u_value * center_vector[None, :]
+                + ring_radius
+                * (
+                    np.cos(azimuths)[:, None] * tangent_1[None, :]
+                    + np.sin(azimuths)[:, None] * tangent_2[None, :]
+                )
+            )
+            ring_vectors /= np.linalg.norm(ring_vectors, axis=1, keepdims=True)
+            points.extend(self._to_latlon(vec) for vec in ring_vectors)
+            point_weight = self.radius**2 * (2.0 * np.pi * u_weight / ring_count)
+            weights.extend([point_weight] * ring_count)
+
+        return points, np.asarray(weights)
+
     def spherical_cap_integral(
         self,
         center: Tuple[float, float],
@@ -565,6 +619,14 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         ``geodesic_distance``. On a sphere this corresponds to a spherical cap
         with angular radius ``radius / self.radius``.
         """
+        if n_points is not None:
+            return super().geodesic_ball_integral(
+                center,
+                radius,
+                n_points=n_points,
+                normalize=normalize,
+            )
+
         angular_radius = radius / self.radius
         return self.spherical_cap_integral(
             center,
@@ -932,6 +994,49 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         lat_rad = np.arcsin(vec[2])
         lon_rad = np.arctan2(vec[1], vec[0])
         return (np.degrees(lat_rad), np.degrees(lon_rad))
+
+    @staticmethod
+    def _tangent_frame(center_vector: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Return an orthonormal basis for the tangent plane at ``center_vector``."""
+        if abs(center_vector[2]) < 0.9:
+            reference = np.array([0.0, 0.0, 1.0])
+        else:
+            reference = np.array([1.0, 0.0, 0.0])
+
+        tangent_1 = np.cross(reference, center_vector)
+        tangent_1 /= np.linalg.norm(tangent_1)
+        tangent_2 = np.cross(center_vector, tangent_1)
+        tangent_2 /= np.linalg.norm(tangent_2)
+        return tangent_1, tangent_2
+
+    @staticmethod
+    def _distribute_ring_point_counts(total_points: int, ring_weights: np.ndarray) -> np.ndarray:
+        """Distribute an exact point budget across azimuthal rings."""
+        if total_points <= 0:
+            raise ValueError("Total quadrature point count must be positive.")
+
+        n_rings = ring_weights.size
+        counts = np.ones(n_rings, dtype=int)
+        remaining = total_points - n_rings
+        if remaining <= 0:
+            return counts
+
+        positive_weights = np.clip(np.asarray(ring_weights, dtype=float), 0.0, None)
+        if np.all(positive_weights == 0.0):
+            counts[:remaining] += 1
+            return counts
+
+        scaled = remaining * positive_weights / positive_weights.sum()
+        increments = np.floor(scaled).astype(int)
+        counts += increments
+
+        leftover = remaining - int(increments.sum())
+        if leftover > 0:
+            remainders = scaled - increments
+            order = np.argsort(-remainders)
+            counts[order[:leftover]] += 1
+
+        return counts
 
 
 class Sobolev(SymmetricSobolevSpace):

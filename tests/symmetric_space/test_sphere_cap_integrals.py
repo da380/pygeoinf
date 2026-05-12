@@ -94,6 +94,15 @@ def test_sobolev_geodesic_ball_average_returns_domain_linear_form():
     np.testing.assert_allclose(cap_average(constant), 2.5, rtol=1e-10, atol=1e-10)
 
 
+def test_sobolev_geodesic_ball_average_with_quadrature_preserves_constants():
+    """Quadrature-driven cap averages should preserve constant fields exactly."""
+    space = Sobolev(8, 1.5, 0.2, radius=1.0, grid="DH")
+    cap_average = space.geodesic_ball_average((25.0, 40.0), 0.7, n_points=24)
+    constant = space.project_function(lambda _: -1.75)
+
+    np.testing.assert_allclose(cap_average(constant), -1.75, rtol=1e-12, atol=1e-12)
+
+
 def test_spherical_cap_integral_rejects_invalid_radius():
     r"""Spherical-cap angular radii must lie in $[0, \pi]$."""
     space = Lebesgue(4, radius=1.0, grid="DH")

@@ -48,7 +48,7 @@ def test_cap_property_operator_constant_field():
     assert_allclose(cap_values, np.ones(len(DEFAULT_TARGET_LATLON)), rtol=1e-3, atol=1e-3)
 
 
-def test_cap_property_operator_exact_default_is_deterministic():
+def test_cap_property_operator_quadrature_default_is_seed_deterministic():
     from sphere_dli_example import build_cap_property_operator, build_model_space
 
     model_space = build_model_space(min_degree=16)
@@ -63,8 +63,35 @@ def test_cap_property_operator_exact_default_is_deterministic():
     operator_b = build_cap_property_operator(
         model_space,
         target_latlon,
+        n_cap=5,
+        seed=99,
+    )
+    test_field = model_space.from_components(
+        np.linspace(-0.5, 0.5, model_space.dim, dtype=float)
+    )
+
+    assert_allclose(operator_a(test_field), operator_b(test_field), rtol=0.0, atol=1e-12)
+
+
+def test_cap_property_operator_exact_mode_is_n_cap_independent():
+    from sphere_dli_example import build_cap_property_operator, build_model_space
+
+    model_space = build_model_space(min_degree=16)
+    target_latlon = [(90.0, 0.0), (20.0, 40.0)]
+
+    operator_a = build_cap_property_operator(
+        model_space,
+        target_latlon,
+        n_cap=5,
+        seed=1,
+        method="exact",
+    )
+    operator_b = build_cap_property_operator(
+        model_space,
+        target_latlon,
         n_cap=30,
         seed=99,
+        method="exact",
     )
     test_field = model_space.from_components(
         np.linspace(-0.5, 0.5, model_space.dim, dtype=float)

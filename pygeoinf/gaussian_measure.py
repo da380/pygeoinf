@@ -27,13 +27,19 @@ import numpy as np
 from scipy.linalg import cholesky, cho_solve
 from scipy.linalg import eigh
 from scipy.sparse import diags
-from scipy.stats import multivariate_normal
+from scipy.stats import chi2, multivariate_normal
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
 from joblib import Parallel, delayed
 
 
-from .hilbert_space import EuclideanSpace, HilbertModule, Vector
+from .hilbert_space import (
+    EuclideanSpace,
+    HilbertModule,
+    MassWeightedHilbertModule,
+    MassWeightedHilbertSpace,
+    Vector,
+)
 
 from .linear_operators import (
     LinearOperator,
@@ -418,6 +424,102 @@ class GaussianMeasure:
     def sample_set(self) -> bool:
         """True if a method for drawing samples is available."""
         return self._sample is not None
+
+    def credible_set(
+        self,
+        probability: float,
+        /,
+        *,
+        geometry: str = "ellipsoid",
+        rank: Optional[int] = None,
+        open_set: bool = False,
+    ):
+        r"""Return a probability-calibrated Gaussian credible subset.
+
+        For a finite-dimensional Gaussian measure $N(m, C)$, this method
+        converts a probability $p$ into the chi-square radius
+
+        $$
+        r_p = \sqrt{F_{\chi^2_k}^{-1}(p)},
+        $$
+
+        where $k$ is the rank parameter, defaulting to ``self.domain.dim``.
+        The default ``geometry="ellipsoid"`` returns the Mahalanobis ellipsoid
+
+        $$
+        \{x : \langle C^{-1}(x-m), x-m\rangle \le r_p^2\}.
+        $$
+
+        The alternative ``geometry="cameron_martin"`` returns the equivalent
+        ball in the induced Cameron-Martin geometry whose mass operator is
+        $C^{-1}$.
+
+        Args:
+            probability: Credible probability $p$, strictly between 0 and 1.
+            geometry: Either ``"ellipsoid"`` for a subset of the measure domain
+                or ``"cameron_martin"``/``"ball"`` for the equivalent norm ball
+                in the induced Cameron-Martin space.
+            rank: Degrees of freedom for the chi-square calibration. Defaults
+                to the finite dimension of the measure domain.
+            open_set: If true, return the open version of the set.
+
+        Returns:
+            A :class:`pygeoinf.subsets.Ellipsoid` or
+            :class:`pygeoinf.subsets.Ball`.
+
+        Notes:
+            The chi-square calibration is exact for finite-dimensional,
+            full-rank Gaussian measures. In infinite-dimensional theory this
+            should be interpreted as a finite-rank or spectrally truncated set;
+            the unregularized Cameron-Martin ellipsoid has zero Gaussian mass
+            in the genuinely infinite-dimensional infinite-rank case.
+        """
+        if not 0.0 < probability < 1.0:
+            raise ValueError("Probability must lie strictly between 0 and 1.")
+
+        if rank is None and self.domain.dim < 1:
+            raise ValueError(
+                "Rank must be provided for domains without a positive finite "
+                "dimension, such as basis-free function spaces."
+            )
+
+        effective_rank = self.domain.dim if rank is None else rank
+        if not isinstance(effective_rank, int) or effective_rank < 1:
+            raise ValueError("Rank must be a positive integer.")
+
+        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
+        geometry_key = geometry.lower().replace("-", "_")
+
+        if geometry_key in {"ellipsoid", "domain", "mahalanobis"}:
+            from .subsets import Ellipsoid
+
+            return Ellipsoid(
+                self.domain,
+                self.expectation,
+                radius,
+                self.inverse_covariance,
+                open_set=open_set,
+                inverse_operator=self.covariance,
+            )
+
+        if geometry_key in {"cameron_martin", "cm", "ball", "norm_ball"}:
+            from .subsets import Ball
+
+            induced_domain_type = (
+                MassWeightedHilbertModule
+                if isinstance(self.domain, HilbertModule)
+                else MassWeightedHilbertSpace
+            )
+            induced_domain = induced_domain_type(
+                self.domain, self.inverse_covariance, self.covariance
+            )
+            return Ball(
+                induced_domain, self.expectation, radius, open_set=open_set
+            )
+
+        raise ValueError(
+            "Geometry must be 'ellipsoid' or 'cameron_martin'/'ball'."
+        )
 
     # ---------------------------------------- #
     #               Public methods             #
