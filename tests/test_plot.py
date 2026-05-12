@@ -923,10 +923,26 @@ class TestPlotSlice3D:
         )
         plt.close(fig)
 
-    def test_3d_large_grid_warns(self, ball_3d, subspace_3d):
-        """SubspaceSlicePlotter must emit UserWarning when grid_size > 30 for 3D."""
-        with pytest.warns(UserWarning, match=r"3D sampled rendering"):
+    def test_3d_large_grid_warns(self, domain_3d, subspace_3d):
+        """SubspaceSlicePlotter must emit UserWarning when grid_size > 30 for 3D sampled sets.
+
+        Ball/Ellipsoid bypass sampling (exact path) and must NOT trigger this warning.
+        Generic sets (HalfSpace) do use sampling and must warn.
+        """
+        # Ball uses exact path: no warning expected
+        ball_3d = Ball(domain_3d, np.zeros(3), radius=0.5, open_set=False)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             SubspaceSlicePlotter(ball_3d, subspace_3d, grid_size=31)
+        grid_warns = [w for w in caught if issubclass(w.category, UserWarning)
+                      and "3D sampled rendering" in str(w.message)]
+        assert grid_warns == [], "Ball (exact path) must not trigger 3D sampling warning"
+
+        # HalfSpace uses sampled path: warning expected
+        normal = np.array([1.0, 0.0, 0.0])
+        half_space = HalfSpace(domain_3d, normal, 0.5, inequality_type="<=")
+        with pytest.warns(UserWarning, match=r"3D sampled rendering"):
+            SubspaceSlicePlotter(half_space, subspace_3d, grid_size=31)
         plt.close("all")
 
 

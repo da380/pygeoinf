@@ -241,10 +241,18 @@ class SubspaceSlicePlotter:
     """
     Plotter for visualizing subsets sliced along 1D, 2D, or 3D affine subspaces.
 
-    **Fully implemented for 1D, 2D, and 3D subspaces** via two rendering paths:
+    **Fully implemented for 1D, 2D, and 3D subspaces** via three rendering paths:
 
     - ``PolyhedralSet`` → exact affine slice via ``scipy.spatial.HalfspaceIntersection``
-      + convex hull; payload is vertex array (exact for all three dimensions).
+      + convex hull; payload is vertex array ``(n_vertices, n_dims)``.
+    - ``Ball`` / ``Ellipsoid`` → exact quadratic slice via Cholesky-factored
+      pullback metric; **no grid sampling is performed**:
+
+      - 1D slice: ``payload`` is ``np.array([lo, hi])`` — the two interval endpoints.
+      - 2D slice: ``payload`` is boundary points, shape ``(N, 2)`` (``N ≈ 360``).
+      - 3D slice: ``payload`` is surface points, shape ``(N_pts, 3)``.
+
+      An empty or degenerate slice raises ``ValueError`` explicitly.
     - All other sets → raster oracle sampling on a ``grid_size^n`` grid; payload is
       boolean membership mask.  For 3D, the mask is rendered as filled voxels using
       Matplotlib's ``mpl_toolkits.mplot3d`` backend (``Axes3D.voxels()``).
@@ -328,9 +336,11 @@ class SubspaceSlicePlotter:
 
         # Warn about 3D sampling cost: grid_size³ membership oracle calls.
         # At grid_size=200 that is 8 million calls — almost always unintended.
-        # PolyhedralSet bypasses sampling entirely, so skip the warning for it.
+        # PolyhedralSet, Ball, and Ellipsoid bypass sampling entirely via exact
+        # paths, so skip the warning for those types.
         _3D_GRID_WARN_THRESHOLD = 30
-        if self.dimension == 3 and grid_size > _3D_GRID_WARN_THRESHOLD and not isinstance(subset, PolyhedralSet):
+        _uses_exact_path = isinstance(subset, (PolyhedralSet, Ball, Ellipsoid))
+        if self.dimension == 3 and grid_size > _3D_GRID_WARN_THRESHOLD and not _uses_exact_path:
             import warnings as _warnings
             _warnings.warn(
                 f"3D sampled rendering will evaluate {grid_size**3:,} membership oracle "
@@ -928,10 +938,16 @@ class SubspaceSlicePlotter:
             When the Plotly backend is used *fig* is a
             ``plotly.graph_objects.Figure`` and *ax* is ``None``.
 
-            *payload* semantics are independent of backend:
+            *payload* semantics depend on the rendering path:
 
-            - Sampled path (non-``PolyhedralSet``): boolean membership mask.
-            - Exact path (``PolyhedralSet``): vertex array in parameter coords.
+            - ``PolyhedralSet`` (exact affine path): vertex array in parameter
+              coords, shape ``(n_vertices, n_dims)``.
+            - ``Ball`` / ``Ellipsoid`` (exact quadratic path): interval endpoints
+              ``[lo, hi]`` for 1D; boundary points ``(N, 2)`` for 2D; surface
+              points ``(N_pts, 3)`` for 3D.  Empty slices raise ``ValueError``.
+            - All other sets (sampled path): boolean membership mask, shape
+              ``(grid_size,)`` in 1D, ``(grid_size, grid_size)`` in 2D, or
+              ``(grid_size, grid_size, grid_size)`` in 3D.
 
         Raises:
             ValueError: If ``ax`` is not ``None`` when ``backend='plotly'``.
