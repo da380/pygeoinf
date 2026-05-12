@@ -1,9 +1,11 @@
-"""Sphere DLI Example.
+r"""Sphere DLI Example.
 
-Phase-velocity perturbation DLI on the two-sphere using:
+Relative phase-velocity perturbation ($\delta \ln c$) DLI on the two-sphere using:
 - Sobolev model space (order 1.5, pyshtools spherical-harmonic backend)
 - Real IRIS GSN stations and randomly sampled USGS earthquakes
-- Great-circle path integrals normalised to true path averages
+- A smooth synthetic reference phase-velocity field $c_0(x)$
+- Great-circle path integrals weighted by $1 / c_0(x)$
+    (or arc-length-normalised weighted path averages)
 - Spherical-cap averaging target properties
 - Norm-ball support functions for the model prior and data-confidence set
 - PrimalKKTSolver for the DLI solve
@@ -11,6 +13,24 @@ Phase-velocity perturbation DLI on the two-sphere using:
 Entry points:
   run_example(...)  — builds and solves the full problem, returns a result dict.
   plot_results(...) — produces three diagnostic figures from the result dict.
+
+Forward map note:
+    The physically motivated linearised phase-delay/travel-time model is a
+    reference-velocity-weighted path integral along each ray, i.e. each row is
+    of the form
+
+        d_i = \int_{\gamma_i} m(x) / c_0(x) ds
+
+    where ``m`` is the perturbation field, ``c_0`` is the reference phase
+    velocity, and ``\gamma_i`` is a geodesic path.
+
+    For numerical comparability across different path lengths, this script can
+    alternatively use arc-length-normalised rows
+
+        d_i = (1 / L_i) \int_{\gamma_i} m(x) / c_0(x) ds,
+
+    where ``L_i`` is path length. This rescales each row only; it does not
+    change the underlying geometric sensitivity pattern along each path.
 
 Run as a script::
 
@@ -22,7 +42,7 @@ Run as a script::
 from __future__ import annotations
 
 import random
-from typing import Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 
@@ -34,6 +54,9 @@ from pygeoinf.symmetric_space.sphere import Sobolev
 ORDER = 1.5
 SCALE = 0.1
 PRIOR_SCALE = 0.05
+REFERENCE_VELOCITY_BASE = 1.0
+REFERENCE_VELOCITY_LATITUDE_PERTURBATION = 0.12
+REFERENCE_VELOCITY_LONGITUDE_PERTURBATION = 0.08
 N_TARGET = 6
 N_SOURCES = 5
 N_RECEIVERS = 10
@@ -57,6 +80,54 @@ def build_model_space(min_degree: int = 64) -> Sobolev:
         power_of_two=True,
         min_degree=min_degree,
     )
+
+
+def reference_phase_velocity(point: tuple[float, float]) -> float:
+    """Return a smooth positive synthetic reference phase-velocity field.
+
+    The example uses a dimensionless background field with mild large-scale
+    latitudinal and longitudinal variation so the linearized travel-time
+    operator can apply the required ``1 / c_0`` weighting along each ray.
+    """
+    lat, lon = point
+    lat_rad = np.radians(lat)
+    lon_rad = np.radians(lon)
+    return (
+        REFERENCE_VELOCITY_BASE
+        + REFERENCE_VELOCITY_LATITUDE_PERTURBATION * np.sin(lat_rad) ** 2
+        + REFERENCE_VELOCITY_LONGITUDE_PERTURBATION
+        * np.cos(lat_rad) ** 2
+        * np.cos(2.0 * lon_rad)
+    )
+
+
+def _weighted_geodesic_integral_form(
+    model_space: Sobolev,
+    point_1: tuple[float, float],
+    point_2: tuple[float, float],
+    *,
+    reference_velocity: Callable[[tuple[float, float]], float],
+    normalize_by_arclength: bool,
+) -> LinearForm:
+    """Build a geodesic linear form weighted by the inverse reference speed."""
+    _, trial_weights = model_space.geodesic_quadrature(point_1, point_2, n_points=2)
+    trial_arc_length = float(np.sum(trial_weights))
+    n_points = max(2, int(np.ceil((trial_arc_length / model_space.scale) * 2.0)))
+
+    points, weights = model_space.geodesic_quadrature(point_1, point_2, n_points=n_points)
+    arc_length = float(np.sum(weights))
+
+    components = np.zeros(model_space.dim)
+    for point, weight in zip(points, weights):
+        ref_velocity = float(reference_velocity(point))
+        if ref_velocity <= 0.0:
+            raise ValueError("Reference velocity must stay strictly positive along every ray.")
+        components += (weight / ref_velocity) * model_space.dirac(point).components
+
+    if normalize_by_arclength and arc_length >= 1e-10:
+        components /= arc_length
+
+    return LinearForm(model_space, components=components)
 
 
 def _latlon_to_unit_xyz(centre_latlon: tuple[float, float]) -> np.ndarray:
@@ -103,24 +174,34 @@ def build_cap_property_operator(
     cap_radius_rad: float = 0.15,
     n_cap: int = 40,
     seed: int = 42,
+    exact: bool = True,
 ) -> LinearOperator:
     """Build a spherical-cap averaging operator on the Sobolev model space.
 
-    Each property is the empirical average of `n_cap` Dirac functionals sampled
-    uniformly inside a spherical cap of radius `cap_radius_rad` centered on the
-    corresponding target location.
+    By default, each property is the exact spherical-cap average functional
+    assembled from analytical spherical-harmonic cap coefficients. Set
+    ``exact=False`` to retain the previous empirical Monte Carlo average of
+    ``n_cap`` Dirac functionals sampled uniformly inside each cap.
     """
     rng = np.random.default_rng(seed)
     forms: list[LinearForm] = []
     target_points = list(target_latlon_list)
 
     for centre in target_points:
-        sample_points = _sample_cap_points(centre, cap_radius_rad, n_cap, rng)
-        components = np.mean(
-            np.stack([model_space.dirac(point).components for point in sample_points]),
-            axis=0,
-        )
-        forms.append(LinearForm(model_space, components=components))
+        if exact:
+            forms.append(
+                model_space.geodesic_ball_average(
+                    centre,
+                    model_space.radius * cap_radius_rad,
+                )
+            )
+        else:
+            sample_points = _sample_cap_points(centre, cap_radius_rad, n_cap, rng)
+            components = np.mean(
+                np.stack([model_space.dirac(point).components for point in sample_points]),
+                axis=0,
+            )
+            forms.append(LinearForm(model_space, components=components))
 
     return LinearOperator.from_linear_forms(forms)
 
@@ -131,21 +212,30 @@ def build_forward_operator(
     n_sources: int = N_SOURCES,
     n_receivers: int = N_RECEIVERS,
     seed: int = 0,
+    normalize_by_arclength: bool = True,
+    reference_velocity: Callable[[tuple[float, float]], float] = reference_phase_velocity,
 ) -> tuple[LinearOperator, list[tuple[tuple[float, float], tuple[float, float]]]]:
-    """Build a normalized path-average forward operator on the sphere.
+    """Build a reference-weighted path-integral forward operator on the sphere.
 
     Uses real IRIS station positions and randomly sampled USGS earthquakes.
-    Each geodesic integral is divided by the arc length of the ray path so that
-    the operator returns true path averages rather than raw integrals.
+    Each row integrates the perturbation field against ``1 / c_0`` along a
+    geodesic ray. If ``normalize_by_arclength`` is true (default), each row is
+    divided by path length to return weighted path averages instead of raw
+    integrals.
 
     Args:
         model_space: Sobolev space on the sphere.
         n_sources: Number of earthquake source points.
         n_receivers: Number of receiver stations.
         seed: Random seed for reproducible geometry selection.
+        normalize_by_arclength: If true, use
+            ``(1 / L_i) * integral_{gamma_i} m / c_0 ds`` per path. If false,
+            use raw ``integral_{gamma_i} m / c_0 ds`` rows.
+        reference_velocity: Smooth positive reference phase velocity ``c_0``
+            sampled along each geodesic.
 
     Returns:
-        The normalized forward operator together with the source-receiver paths
+        The assembled forward operator together with the source-receiver paths
         used to assemble it.
     """
     random_state = random.getstate()
@@ -163,13 +253,15 @@ def build_forward_operator(
 
     forms: list[LinearForm] = []
     for point_1, point_2 in paths:
-        raw_form = model_space.geodesic_integral(point_1, point_2)
-        arc_length = model_space.geodesic_distance(point_1, point_2)
-        if arc_length < 1e-10:
-            normalized_components = raw_form.components.copy()
-        else:
-            normalized_components = raw_form.components / arc_length
-        forms.append(LinearForm(model_space, components=normalized_components))
+        forms.append(
+            _weighted_geodesic_integral_form(
+                model_space,
+                point_1,
+                point_2,
+                reference_velocity=reference_velocity,
+                normalize_by_arclength=normalize_by_arclength,
+            )
+        )
 
     return LinearOperator.from_linear_forms(forms), paths
 
@@ -190,7 +282,8 @@ def generate_synthetic_data(
 
     Args:
         model_space: Sobolev space on the sphere.
-        forward_operator: Path-average operator built by ``build_forward_operator``.
+        forward_operator: Reference-weighted path-average operator built by
+            ``build_forward_operator``.
         sigma_noise: Observation noise standard deviation.
         seed: RNG seed for reproducibility.
 
@@ -236,7 +329,8 @@ def solve_dli(
 
     Args:
         model_space: Sobolev space on the sphere.
-        forward_operator: Normalized path-average forward operator.
+        forward_operator: Reference-weighted normalized path-average forward
+            operator.
         property_operator: Spherical-cap property operator.
         truth_model: True model used to report the true property values.
         data_vector: Observed data in the forward-operator codomain.
@@ -312,6 +406,8 @@ def run_example(
     n_cap: int = 40,
     sigma_noise: float = SIGMA_NOISE,
     seed: int = 42,
+    normalize_by_arclength: bool = True,
+    exact_cap_average: bool = True,
 ) -> dict:
     """Run the full sphere-DLI example and return the assembled results.
 
@@ -320,9 +416,16 @@ def run_example(
         n_sources: Number of earthquake source points.
         n_receivers: Number of receiver stations.
         n_target: Number of target spherical-cap properties.
-        n_cap: Number of Dirac samples per spherical cap.
+        n_cap: Number of Dirac samples per spherical cap when
+            ``exact_cap_average=False``.
         sigma_noise: Data-noise standard deviation.
         seed: Global random seed used for geometry and data generation.
+        normalize_by_arclength: Controls whether forward rows are divided by
+            path length. True gives reference-weighted path averages; False
+            gives raw reference-weighted path integrals.
+        exact_cap_average: If true, use exact spherical-harmonic cap-average
+            functionals for target properties. If false, use the empirical
+            Monte Carlo cap average retained for backwards comparison.
 
     Returns:
         Dictionary containing DLI bounds together with the model space, forward
@@ -337,12 +440,14 @@ def run_example(
         target_latlon,
         n_cap=n_cap,
         seed=seed,
+        exact=exact_cap_average,
     )
     forward_operator, paths = build_forward_operator(
         model_space,
         n_sources=n_sources,
         n_receivers=n_receivers,
         seed=seed,
+        normalize_by_arclength=normalize_by_arclength,
     )
     truth_model, data_vector = generate_synthetic_data(
         model_space,
@@ -368,6 +473,7 @@ def run_example(
         "data_vector": data_vector,
         "paths": paths,
         "target_latlon": target_latlon,
+        "normalize_by_arclength": normalize_by_arclength,
     }
 
 
@@ -382,7 +488,6 @@ def _plot_target_caps(
     Cartopy's ``Geodetic`` CRS so the outline follows the sphere.
     """
     import cartopy.crs as ccrs
-    import matplotlib.patches as mpatches
 
     cap_deg = np.degrees(cap_radius_rad)
     for index, (lat, lon) in enumerate(target_latlon):
@@ -396,15 +501,17 @@ def _plot_target_caps(
             lats,
             transform=ccrs.PlateCarree(),
             color="tab:orange",
-            linewidth=1.5,
+            linewidth=0.8,
             alpha=0.8,
+            antialiased=True,
+            solid_capstyle="round",
+            solid_joinstyle="round",
         )
         ax.text(
             lon,
             lat,
             str(index + 1),
             transform=ccrs.PlateCarree(),
-            fontsize=8,
             ha="center",
             va="center",
             color="tab:orange",
@@ -432,64 +539,98 @@ def plot_results(result: dict) -> None:
     fig_dir = Path(__file__).parent / "figures"
     fig_dir.mkdir(exist_ok=True)
 
-    fig1, ax1 = create_map_figure(figsize=(10, 5.5))
-    ax1.set_global()
-    ax1.coastlines(linewidth=0.8)
-    plot_geodesic_network(
-        paths,
-        ax=ax1,
-        alpha=0.08,
-        linewidth=0.7,
-        source_kwargs={"marker": "*", "color": "gold", "s": 140, "edgecolor": "black"},
-        receiver_kwargs={"marker": "^", "color": "tab:blue", "s": 55, "edgecolor": "white"},
-    )
-    _plot_target_caps(ax1, target_latlon)
-    fig1.suptitle("Ray network: stations, epicentres, great-circle paths, and target caps")
-    fig1.savefig(fig_dir / "fig1_ray_network.png", dpi=150, bbox_inches="tight")
+    # ------------------------------------------------------------------
+    # Two-column paper style
+    # Full text width ~6.9 in, single column ~3.35 in.
+    # Font sizes (8 pt labels, 7 pt ticks) match ~10 pt body text at
+    # typical journal print size.
+    # ------------------------------------------------------------------
+    TWO_COL_W = 6.9   # inches
+    ONE_COL_W = 3.35  # inches
+    _PAPER_RC = {
+        "font.size": 8,
+        "axes.titlesize": 8,
+        "axes.labelsize": 8,
+        "xtick.labelsize": 7,
+        "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+        "axes.linewidth": 0.6,
+        "xtick.major.width": 0.5,
+        "ytick.major.width": 0.5,
+        "xtick.major.size": 3,
+        "ytick.major.size": 3,
+        "lines.linewidth": 0.8,
+    }
 
-    fig2, ax2 = create_map_figure(figsize=(10, 5.5))
-    ax2.set_global()
-    plot(
-        truth_model,
-        ax=ax2,
-        coasts=True,
-        colorbar=True,
-        symmetric=True,
-        colorbar_kwargs={"label": "Phase-velocity perturbation (km/s)"},
-    )
-    _plot_target_caps(ax2, target_latlon)
-    ax2.set_title("True phase-velocity perturbation field with target caps")
-    fig2.savefig(fig_dir / "fig2_truth_model.png", dpi=150, bbox_inches="tight")
+    with plt.rc_context(_PAPER_RC):
+        fig1, ax1 = create_map_figure(figsize=(TWO_COL_W, 3.8))
+        ax1.set_global()
+        ax1.coastlines(linewidth=0.5)
+        plot_geodesic_network(
+            paths,
+            ax=ax1,
+            alpha=0.08,
+            linewidth=0.5,
+            antialiased=True,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+            source_kwargs={"marker": "*", "color": "gold", "s": 25, "edgecolor": "black"},
+            receiver_kwargs={"marker": "^", "color": "tab:blue", "s": 15, "edgecolor": "white"},
+        )
+        _plot_target_caps(ax1, target_latlon)
+        fig1.suptitle("Ray network: stations, epicentres, great-circle paths, and target caps")
+        fig1.savefig(fig_dir / "fig1_ray_network.png", dpi=300, bbox_inches="tight")
 
-    n_properties = len(lower)
-    fig3, ax3 = plt.subplots(figsize=(7, max(3.0, 0.7 * n_properties + 1.0)))
-    y = np.arange(n_properties)
-    ax3.barh(
-        y,
-        prior_upper - prior_lower,
-        left=prior_lower,
-        height=0.55,
-        alpha=0.2,
-        color="tab:grey",
-        label="Prior bounds",
-    )
-    ax3.barh(
-        y,
-        upper - lower,
-        left=lower,
-        height=0.55,
-        alpha=0.5,
-        color="tab:blue",
-        label="DLI admissible interval",
-    )
-    ax3.scatter(true_values, y, color="red", zorder=5, label="True value")
-    ax3.set_yticks(y)
-    ax3.set_yticklabels([f"Cap {index + 1}" for index in range(n_properties)])
-    ax3.set_xlabel("Phase-velocity perturbation (km/s)")
-    ax3.set_title("DLI admissible bounds")
-    ax3.legend()
-    fig3.tight_layout()
-    fig3.savefig(fig_dir / "fig3_dli_bounds.png", dpi=150, bbox_inches="tight")
+        fig2, ax2 = create_map_figure(figsize=(TWO_COL_W, 3.8))
+        ax2.set_global()
+        plot(
+            truth_model,
+            ax=ax2,
+            coasts=True,
+            colorbar=True,
+            symmetric=True,
+            colorbar_kwargs={"label": "Relative phase-velocity perturbation ($\\delta \\ln c$)"},
+        )
+        _plot_target_caps(ax2, target_latlon)
+        ax2.set_title("True relative phase-velocity perturbation field ($\\delta \\ln c$)")
+        fig2.savefig(fig_dir / "fig2_truth_model.png", dpi=300, bbox_inches="tight")
+
+        n_properties = len(lower)
+        fig3, ax3 = plt.subplots(
+            figsize=(ONE_COL_W, max(2.5, 0.45 * n_properties + 0.9))
+        )
+        y = np.arange(n_properties)
+        ax3.barh(
+            y,
+            prior_upper - prior_lower,
+            left=prior_lower,
+            height=0.55,
+            alpha=0.2,
+            color="tab:grey",
+            label="Prior bounds",
+        )
+        ax3.barh(
+            y,
+            upper - lower,
+            left=lower,
+            height=0.55,
+            alpha=0.5,
+            color="tab:blue",
+            label="DLI admissible interval",
+        )
+        ax3.scatter(true_values, y, color="red", s=15, zorder=5, label="True value")
+        ax3.set_yticks(y)
+        ax3.set_yticklabels([f"Cap {index + 1}" for index in range(n_properties)])
+        ax3.set_xlabel("Relative phase-velocity perturbation ($\\delta \\ln c$)")
+        ax3.set_title("DLI admissible bounds")
+        ax3.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.18),
+            ncol=3,
+            frameon=True,
+        )
+        fig3.tight_layout()
+        fig3.savefig(fig_dir / "fig3_dli_bounds.png", dpi=300, bbox_inches="tight")
 
     print(f"\nFigures saved to: {fig_dir}")
     plt.show()
@@ -505,7 +646,7 @@ if __name__ == "__main__":
 
     result = run_example()
 
-    print("\nDLI Results:")
+    print("\nDLI Results (relative perturbation, $\\delta \\ln c$):")
     for index, (lower, upper, true_value) in enumerate(
         zip(result["lower"], result["upper"], result["true_values"])
     ):

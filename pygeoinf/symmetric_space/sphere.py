@@ -40,6 +40,7 @@ except ImportError:
 
 
 from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.linear_forms import LinearForm
 from pygeoinf.linear_operators import LinearOperator
 
 from pygeoinf.datasets import load_gsn_stations
@@ -475,6 +476,101 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             points.append(self._to_latlon(v_interp))
 
         return points, scaled_weights
+
+    def spherical_cap_integral(
+        self,
+        center: Tuple[float, float],
+        angular_radius: float,
+        /,
+        *,
+        normalize: bool = False,
+    ) -> LinearForm:
+        r"""Return the exact spherical-cap integral functional.
+
+        The returned form represents
+        $\int_C u(x)\,dS(x)$, where ``C`` is the spherical cap centered at
+        ``center`` with angular radius ``angular_radius``. If ``normalize`` is
+        true, the returned form represents the cap average
+        $|C|^{-1}\int_C u(x)\,dS(x)$.
+
+        The implementation uses ``pyshtools.SHCoeffs.from_cap`` to compute the
+        spherical-harmonic coefficients of the cap indicator exactly in the
+        truncated basis. The pyshtools cap is normalized to global average one,
+        so it is rescaled to either the physical cap indicator or normalized
+        cap average.
+
+        Args:
+            center: ``(latitude, longitude)`` cap center in degrees.
+            angular_radius: Cap radius in radians on the unit sphere.
+            normalize: If true, return the cap average instead of the raw
+                surface integral.
+        """
+        if angular_radius < 0.0 or angular_radius > np.pi:
+            raise ValueError(
+                "Spherical cap angular radius must lie in [0, pi]."
+            )
+
+        cap_area_unit_sphere = 2.0 * np.pi * (1.0 - np.cos(angular_radius))
+        if cap_area_unit_sphere <= 0.0:
+            if normalize:
+                raise ValueError("Cannot normalize a zero-area spherical cap.")
+            return LinearForm(self, components=np.zeros(self.dim))
+
+        cap_coefficients = sh.SHCoeffs.from_cap(
+            np.degrees(angular_radius),
+            self.lmax,
+            clat=center[0],
+            clon=center[1],
+            normalization=self.normalization,
+            csphase=self.csphase,
+            kind="real",
+            degrees=True,
+        )
+        components = self._coefficient_to_component(cap_coefficients)
+
+        if normalize:
+            components = components / (4.0 * np.pi)
+        else:
+            components = (
+                components
+                * self.radius**2
+                * cap_area_unit_sphere
+                / (4.0 * np.pi)
+            )
+
+        return LinearForm(self, components=components)
+
+    def spherical_cap_average(
+        self, center: Tuple[float, float], angular_radius: float, /
+    ) -> LinearForm:
+        r"""Return the exact average functional over a spherical cap."""
+        return self.spherical_cap_integral(
+            center,
+            angular_radius,
+            normalize=True,
+        )
+
+    def geodesic_ball_integral(
+        self,
+        center: Tuple[float, float],
+        radius: float,
+        /,
+        *,
+        n_points: Optional[int] = None,
+        normalize: bool = False,
+    ) -> LinearForm:
+        r"""Return the exact integral over a geodesic ball on the sphere.
+
+        The geodesic radius is given in the same physical units as
+        ``geodesic_distance``. On a sphere this corresponds to a spherical cap
+        with angular radius ``radius / self.radius``.
+        """
+        angular_radius = radius / self.radius
+        return self.spherical_cap_integral(
+            center,
+            angular_radius,
+            normalize=normalize,
+        )
 
     def pairs_within_distance(
         self, points: List[Tuple[float, float]], max_distance: float
@@ -1945,6 +2041,20 @@ def plot_geodesic_network(
     kwargs.setdefault("linewidth", 0.8)
     kwargs.setdefault("alpha", 0.5)
 
+    src_style = kwargs.pop("source_kwargs", {})
+    src_style.setdefault("marker", "*")
+    src_style.setdefault("color", "gold")
+    src_style.setdefault("s", 150)
+    src_style.setdefault("edgecolor", "black")
+    src_style.setdefault("zorder", 5)
+
+    rec_style = kwargs.pop("receiver_kwargs", {})
+    rec_style.setdefault("marker", "o")
+    rec_style.setdefault("color", "red")
+    rec_style.setdefault("s", 50)
+    rec_style.setdefault("edgecolor", "white")
+    rec_style.setdefault("zorder", 5)
+
     for p1, p2 in paths:
         plot_geodesic(p1, p2, ax=ax, **kwargs)
 
@@ -1953,21 +2063,6 @@ def plot_geodesic_network(
 
     src_lats, src_lons = zip(*sources)
     rec_lats, rec_lons = zip(*receivers)
-
-    src_style = kwargs.pop("source_kwargs", {})
-    src_style.setdefault("marker", "*")
-    src_style.setdefault("color", "gold")
-    src_style.setdefault("s", 150)
-    src_style.setdefault("edgecolor", "black")
-    src_style.setdefault("zorder", 5)
-    ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
-
-    rec_style = kwargs.pop("receiver_kwargs", {})
-    rec_style.setdefault("marker", "o")
-    rec_style.setdefault("color", "red")
-    rec_style.setdefault("s", 50)
-    rec_style.setdefault("edgecolor", "white")
-    rec_style.setdefault("zorder", 5)
     ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
 
     return ax
