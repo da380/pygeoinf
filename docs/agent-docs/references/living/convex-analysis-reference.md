@@ -76,12 +76,26 @@ The module introduces support-function primitives for closed convex sets in a Hi
 
 ## Gaussian Credible Subsets
 
-- `GaussianMeasure.credible_set(probability, geometry="ellipsoid", rank=None, open_set=False)`
-  - Converts a finite-dimensional/truncated Gaussian probability into a chi-square radius `sqrt(chi2.ppf(probability, rank))`.
-  - Domains with no positive finite `dim` (for example basis-free function spaces) must pass an explicit effective `rank`.
-  - `geometry="ellipsoid"` returns a `subsets.Ellipsoid` in the measure domain with shape operator equal to the inverse covariance and inverse operator equal to the covariance.
-  - `geometry="cameron_martin"`/`"ball"` returns the equivalent `subsets.Ball` in a `MassWeightedHilbertSpace` whose mass operator is the inverse covariance.
-  - Intended bridge from Bayesian Gaussian priors to set-theoretic DLI constraints; exact for finite-dimensional full-rank measures and interpreted as finite-rank/truncated in infinite-dimensional theory.
+- `GaussianMeasure.credible_set(probability, geometry="ellipsoid", rank=None, open_set=False, *, theta=None, spectrum=None, spectrum_size=None, radius_method=None, quantile_method="imhof", fractional_apply="lanczos", n_samples=5000, n_lanczos=50, spectrum_low_rank_kwargs=None, rng=None)`
+  - Bridges a Gaussian probability to a calibrated convex subset in the measure domain.
+  - **Finite-dimensional / chi-square calibration** (default, `geometry in {"ellipsoid", "cameron_martin", "ball"}`):
+    - Converts the probability into a chi-square radius `sqrt(chi2.ppf(probability, rank))`.
+    - Domains with no positive finite `dim` (for example basis-free function spaces) must pass an explicit effective `rank`.
+    - `geometry="ellipsoid"` returns a `subsets.Ellipsoid` whose shape operator is the inverse covariance.
+    - `geometry="cameron_martin"`/`"ball"` returns the equivalent `subsets.Ball` in a `MassWeightedHilbertSpace` whose mass operator is the inverse covariance.
+  - **Function-space ambient ball** (`geometry="ambient_ball"`/`"ambient"`):
+    - Returns a `subsets.Ball` in the ambient measure domain calibrated against `||X - m||^2 ~ sum_j lambda_j Z_j^2` (weighted chi-square).
+    - `radius_method="spectral"` uses `weighted_chi2_quantile` over a supplied spectrum; `radius_method="sampling"` draws `n_samples` Monte Carlo radii.
+    - `radius_method` defaults to `"spectral"` when `spectrum` is provided, else `"sampling"` when the measure supports `sample()`, else raises `ValueError`.
+    - `spectrum` may be an `np.ndarray`, a `LowRankEig`, or a callable `f(k) -> first-k eigenvalues`; `spectrum_size` controls truncation.
+    - Convenience wrapper: `GaussianMeasure.ambient_ball(probability, **kwargs)`.
+  - **Weakened ellipsoid** (`geometry="weakened_ellipsoid"`/`"fractional"`):
+    - Returns an `Ellipsoid` with shape operator $C^{-\theta}$ for $\theta \in [0, 1]$ interpolating between the ambient ball ($\theta = 0$) and the Cameron–Martin ellipsoid ($\theta = 1$).
+    - Radius is calibrated against the weakened weighted chi-square $\sum_j \lambda_j^{1-\theta} Z_j^2$.
+    - `fractional_apply="lanczos"` builds the gauge operator via matrix-free Krylov (see `apply_matrix_function`); `"low_rank_eig"` materialises a `LowRankEig` factorisation.
+    - Emits `UserWarning` when the truncated trace $\sum_j \lambda_j^{1-\theta}$ is near the Cameron–Martin boundary.
+    - Convenience wrapper: `GaussianMeasure.weakened_ellipsoid(probability, *, theta, **kwargs)`.
+  - Backend modules: [pygeoinf/quadratic_form_quantile.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/quadratic_form_quantile.py) (Imhof/Wood–Saddlepoint/MC quantiles), [pygeoinf/spectral_operator.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/spectral_operator.py) (`SpectralFractionalOperator`), [pygeoinf/matrix_function.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/matrix_function.py) (Lanczos `apply_matrix_function`).
 
 ## Tutorial Notebook
 
@@ -110,7 +124,22 @@ The module introduces support-function primitives for closed convex sets in a Hi
 - [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py)
   - All support-function classes and algebraic combinators.
 - [pygeoinf/gaussian_measure.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/gaussian_measure.py)
-  - `credible_set()` bridge from Gaussian measures to `Ellipsoid`/Cameron-Martin `Ball` subsets.
+  - `credible_set()` bridge from Gaussian measures to `Ellipsoid`/Cameron-Martin `Ball` subsets, plus function-space `ambient_ball` and `weakened_ellipsoid` modes.
+- [pygeoinf/quadratic_form_quantile.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/quadratic_form_quantile.py)
+  - Weighted chi-square CDF/quantile (`weighted_chi2_cdf`, `weighted_chi2_quantile`) via Imhof, Wood–Satterthwaite, saddlepoint, and Monte Carlo backends.
+  - `_imhof_cdf` uses adaptive truncation: the integration upper-bound `U` is found by binary search on `log(U) + 0.25·Σlog(1+w_j²U²) ≥ log(1/(π·rtol))`. For N=50 decaying-spectrum weights this gives U~640 vs the old single-weight heuristic 16/w_min~400 000 — ~625× smaller grid and ~100× faster.
+- [pygeoinf/spectral_operator.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/spectral_operator.py)
+  - `SpectralFractionalOperator` and `fractional_operators_from_eig`; finite-rank fractional power of a covariance.
+- [pygeoinf/matrix_function.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/matrix_function.py)
+  - Lanczos tridiagonalisation and `apply_matrix_function(op, v, func, k, reorth="full")` for matrix-free $f(C) v$.
+- [tests/test_quadratic_form_quantile.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_quadratic_form_quantile.py)
+  - Weighted chi-square quantile/CDF tests across Imhof/WS/saddlepoint/MC.
+- [tests/test_spectral_operator.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_spectral_operator.py)
+  - `SpectralFractionalOperator` round-trips, adjoint, diagonal parity.
+- [tests/test_matrix_function.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_matrix_function.py)
+  - Lanczos accuracy, convergence, and reorthogonalisation parity.
+- [intervalinf/tests/spaces/test_lebesgue_hardening.py](/home/adrian/PhD/Inferences/intervalinf/tests/spaces/test_lebesgue_hardening.py)
+  - End-to-end basis-free integration tests on `Lebesgue` with `InverseLaplacian` and `BesselSobolevInverse` covariances.
 - [tutorials/gaussian_measure_to_sets_demo.ipynb](/home/adrian/PhD/Inferences/pygeoinf/tutorials/gaussian_measure_to_sets_demo.ipynb)
   - Runnable notebook demonstration of the finite-dimensional Gaussian-to-credible-sets workflow, now centered on the simplest beginner path: `GaussianMeasure.from_covariance_matrix(...)`, `credible_set(...)`, `samples(...)`, and subset `.plot()`.
 - [tests/test_gaussian_measure_credible_set.py](/home/adrian/PhD/Inferences/pygeoinf/tests/test_gaussian_measure_credible_set.py)
@@ -136,4 +165,5 @@ The module introduces support-function primitives for closed convex sets in a Hi
 
 - Support-function constructor and algebra tests add 102 passing tests combined.
 - Half-space tests should run without skip guards once [pygeoinf/convex_analysis.py](/home/adrian/PhD/Inferences/pygeoinf/pygeoinf/convex_analysis.py) is present.
-- Full-suite baseline after the Phase 5 visualisation/public-surface port: 624 passed, 1 xfailed, 6 warnings.
+- Function-space hardening adds 98 new tests in pygeoinf (Phases 1–4) + 6 end-to-end tests in intervalinf (Phase 5). pygeoinf suite runs in ~10s; intervalinf hardening suite in ~11s.
+- Full-suite baseline after Phase 6 (all hardening phases complete): 98 hardening tests passing in pygeoinf; 6 basis-free integration tests passing in intervalinf.
