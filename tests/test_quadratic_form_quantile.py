@@ -148,3 +148,80 @@ def test_negative_weights_rejected():
 def test_unknown_method_rejected():
     with pytest.raises(ValueError, match="Unknown method"):
         weighted_chi2_quantile(np.ones(2), 0.5, method="bogus")
+
+
+# ---------------------------------------------------------------------------
+# Auto-mode tests
+# ---------------------------------------------------------------------------
+
+
+def test_auto_select_method_isotropic_uses_saddlepoint():
+    """Isotropic spectrum (nu_eff = k) uses saddlepoint for tol=0.01."""
+    from pygeoinf.quadratic_form_quantile import _auto_select_method
+
+    # 100 equal weights → nu_eff = 100 > 0.3/0.01 = 30
+    w = np.ones(100)
+    assert _auto_select_method(w, tol=1e-2) == "saddlepoint"
+
+
+def test_auto_select_method_anisotropic_uses_imhof():
+    """Anisotropic spectrum (nu_eff ≈ 2.5) uses Imhof for tol=0.01."""
+    from pygeoinf.quadratic_form_quantile import _auto_select_method
+
+    # 1/(j*pi)^2 spectrum → nu_eff ≈ 2.5
+    w = 1.0 / (np.arange(1, 201) * np.pi) ** 2
+    assert _auto_select_method(w, tol=1e-2) == "imhof"
+
+
+def test_auto_select_method_loose_tol_uses_saddlepoint():
+    """Even mildly anisotropic spectrum uses saddlepoint for loose tol."""
+    from pygeoinf.quadratic_form_quantile import _auto_select_method
+
+    # nu_eff ≈ 2.5; with tol=0.5 the saddlepoint threshold 0.3/0.5=0.6 is satisfied
+    w = 1.0 / (np.arange(1, 201) * np.pi) ** 2
+    assert _auto_select_method(w, tol=0.5) == "saddlepoint"
+
+
+@pytest.mark.parametrize("k", [1, 10, 100])
+@pytest.mark.parametrize("p", [0.1, 0.5, 0.95])
+def test_auto_mode_equal_weights_matches_chi2(k, p):
+    """Auto mode on equal weights recovers the chi-square quantile."""
+    weights = np.ones(k)
+    expected = chi2.ppf(p, df=k)
+    got = weighted_chi2_quantile(weights, p)  # default method="auto"
+    assert_allclose(got, expected, rtol=1e-4)
+
+
+def test_auto_mode_default_is_auto():
+    """Calling without method= uses auto mode (doesn't raise, returns float)."""
+    w = np.array([2.0, 1.0, 0.5])
+    result = weighted_chi2_quantile(w, 0.9)
+    assert isinstance(result, float)
+    assert result > 0.0
+
+
+def test_auto_cdf_default_is_auto():
+    """weighted_chi2_cdf without method= uses auto mode."""
+    w = np.array([2.0, 1.0, 0.5])
+    q = weighted_chi2_quantile(w, 0.9, method="imhof")
+    p = weighted_chi2_cdf(w, q)  # default method="auto"
+    assert_allclose(p, 0.9, atol=1e-4)
+
+
+def test_auto_mode_anisotropic_agrees_with_imhof():
+    """Auto mode on anisotropic spectrum (selects Imhof) matches explicit Imhof."""
+    # nu_eff ≈ 2.5 → auto selects Imhof → results should be identical
+    w = 1.0 / (np.arange(1, 51) * np.pi) ** 2
+    for p in (0.5, 0.9, 0.99):
+        q_auto = weighted_chi2_quantile(w, p)
+        q_imhof = weighted_chi2_quantile(w, p, method="imhof")
+        assert_allclose(q_auto, q_imhof, rtol=1e-12)
+
+
+def test_auto_mode_tol_explicit_method_independence():
+    """Passing tol= is harmless when an explicit method is specified."""
+    w = np.array([3.0, 1.0, 0.5])
+    q1 = weighted_chi2_quantile(w, 0.8, method="imhof", tol=1e-6)
+    q2 = weighted_chi2_quantile(w, 0.8, method="imhof", tol=0.5)
+    assert_allclose(q1, q2, rtol=1e-12)
+

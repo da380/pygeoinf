@@ -483,7 +483,8 @@ class GaussianMeasure:
         spectrum=None,
         spectrum_size: Optional[int] = None,
         radius_method: str = "auto",
-        quantile_method: str = "imhof",
+        quantile_method: str = "auto",
+        quantile_tol: float = 1e-2,
         fractional_apply: str = "auto",
         n_samples: int = 10_000,
         n_lanczos: int = 50,
@@ -539,8 +540,15 @@ class GaussianMeasure:
                 or ``None``.
             radius_method: ``"auto"`` (default), ``"spectral"``, or
                 ``"sampling"``.
-            quantile_method: Weighted-chi-square quantile method; see
+            quantile_method: Weighted-chi-square quantile method; one of
+                ``"auto"`` (default), ``"imhof"``, ``"ws"``,
+                ``"saddlepoint"``, ``"mc"``. With ``"auto"`` the method
+                is selected automatically based on spectrum isotropy and
+                ``quantile_tol``. See
                 :mod:`pygeoinf.quadratic_form_quantile`.
+            quantile_tol: Desired relative accuracy of the weighted-chi-square
+                quantile when ``quantile_method="auto"`` (default ``1e-2``).
+                Ignored when an explicit method is specified.
             fractional_apply: How to apply $C^{-\theta/2}$ for the
                 weakened ellipsoid. One of ``"auto"``, ``"lanczos"``,
                 ``"low_rank_eig"``.
@@ -578,6 +586,7 @@ class GaussianMeasure:
                 spectrum_size=spectrum_size,
                 radius_method=radius_method,
                 quantile_method=quantile_method,
+                quantile_tol=quantile_tol,
                 n_samples=n_samples,
                 spectrum_low_rank_kwargs=spectrum_low_rank_kwargs,
                 rng=rng,
@@ -602,6 +611,7 @@ class GaussianMeasure:
                 spectrum_size=spectrum_size,
                 radius_method=radius_method,
                 quantile_method=quantile_method,
+                quantile_tol=quantile_tol,
                 fractional_apply=fractional_apply,
                 n_samples=n_samples,
                 n_lanczos=n_lanczos,
@@ -777,6 +787,7 @@ class GaussianMeasure:
         spectrum_size: Optional[int],
         radius_method: str,
         quantile_method: str,
+        quantile_tol: float,
         n_samples: int,
         spectrum_low_rank_kwargs: Optional[dict],
         rng: Optional[np.random.Generator],
@@ -793,7 +804,7 @@ class GaussianMeasure:
                 spectrum, spectrum_size, spectrum_low_rank_kwargs, rng
             )
             r_p_sq = weighted_chi2_quantile(
-                eigvals, probability, method=quantile_method
+                eigvals, probability, method=quantile_method, tol=quantile_tol
             )
         else:
             def gauge_squared(d):
@@ -816,6 +827,7 @@ class GaussianMeasure:
         spectrum_size: Optional[int],
         radius_method: str,
         quantile_method: str,
+        quantile_tol: float,
         fractional_apply: str,
         n_samples: int,
         n_lanczos: int,
@@ -864,7 +876,7 @@ class GaussianMeasure:
             weights = np.power(eigvals, 1.0 - theta)
             self._maybe_warn_trace_borderline(weights, theta, eigvals.size)
             r_p_sq = weighted_chi2_quantile(
-                weights, probability, method=quantile_method
+                weights, probability, method=quantile_method, tol=quantile_tol
             )
         else:
 

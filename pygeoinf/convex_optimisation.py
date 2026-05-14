@@ -857,7 +857,7 @@ class ProximalBundleMethod:
 
         Args:
             bundle: Current bundle of cuts.
-            lam_hat: Stability centre $\hat{λ}$.
+            lam_hat: Stability centre $\\hat{λ}$.
             rho: Proximal weight.
             domain: Hilbert space of the decision variable.
             x0_comps: Warm-start components for the QP solver.
@@ -1127,7 +1127,7 @@ class LevelBundleMethod:
 
         Args:
             bundle: Current bundle of cuts.
-            lam_hat: Stability centre $\hat{λ}$.
+            lam_hat: Stability centre $\\hat{λ}$.
             domain: Hilbert space of the decision variable.
             lam_hat_c: Component array of the stability centre.
 
@@ -1181,7 +1181,7 @@ class LevelBundleMethod:
 
         Args:
             bundle: Current bundle of cuts.
-            lam_hat: Stability centre $\hat{λ}$.
+            lam_hat: Stability centre $\\hat{λ}$.
             f_lev: Level value; upper bound on $t$.
             domain: Hilbert space of the decision variable.
             lam_hat_c: Component array of the stability centre.

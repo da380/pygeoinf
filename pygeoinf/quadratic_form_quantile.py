@@ -20,13 +20,22 @@ weighted_chi2_quantile : invert the CDF for given probability $p$.
 
 Both accept a ``method`` argument selecting between
 
-* ``"imhof"`` (default): Imhof's numerical inversion of the
-  characteristic function. Exact to quadrature tolerance.
+* ``"auto"`` (default): Automatically selects between ``"saddlepoint"``
+  and ``"imhof"`` based on spectrum isotropy (effective degrees of
+  freedom $\\nu_{\\text{eff}} = (\\sum w)^2 / \\sum w^2$) and the caller's
+  requested relative tolerance ``tol``. Saddlepoint is used when its
+  expected error is well below ``tol``; Imhof is used otherwise.
+* ``"imhof"``: Imhof's numerical inversion of the characteristic
+  function. Exact to quadrature tolerance.
 * ``"ws"``: Welch--Satterthwaite moment-match to a scaled $\\chi^2_\\nu$.
   Closed form; exact when all weights are equal; degrades with anisotropy.
 * ``"saddlepoint"``: Lugannani--Rice saddlepoint approximation. Excellent
   in deep tails.
 * ``"mc"``: Monte Carlo empirical quantile / CDF. Unbiased reference.
+
+The ``tol`` parameter (default ``1e-2``) sets the desired relative accuracy
+of the result and is used **only** by ``"auto"`` mode to pick a method.
+When an explicit method is specified, ``tol`` is ignored.
 """
 
 from __future__ import annotations
@@ -38,7 +47,7 @@ import scipy.optimize
 import scipy.stats
 
 
-_VALID_METHODS = ("imhof", "ws", "saddlepoint", "mc")
+_VALID_METHODS = ("auto", "imhof", "ws", "saddlepoint", "mc")
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +59,8 @@ def weighted_chi2_cdf(
     weights: np.ndarray,
     t: Union[float, np.ndarray],
     *,
-    method: str = "imhof",
+    method: str = "auto",
+    tol: float = 1e-2,
     rtol: float = 1e-8,
     n_samples: int = 100_000,
     rng: Optional[np.random.Generator] = None,
@@ -61,7 +71,12 @@ def weighted_chi2_cdf(
         weights: Non-negative weights $w_j$. Length-zero or all-zero arrays
             are treated as the degenerate point mass at 0.
         t: Threshold(s); scalar or array. Returns matching shape.
-        method: One of {"imhof", "ws", "saddlepoint", "mc"}.
+        method: One of {"auto", "imhof", "ws", "saddlepoint", "mc"}.
+            ``"auto"`` selects saddlepoint or Imhof based on spectrum
+            isotropy and ``tol``.
+        tol: Desired relative accuracy of the result. Used only when
+            ``method="auto"`` to decide whether saddlepoint is accurate
+            enough or Imhof is required. Ignored for explicit methods.
         rtol: Relative quadrature tolerance for Imhof's integral.
         n_samples: Sample count for Monte Carlo. Ignored by other methods.
         rng: Optional NumPy generator for Monte Carlo. Defaults to
@@ -87,6 +102,9 @@ def weighted_chi2_cdf(
         out = np.where(t_arr >= 0.0, 1.0, 0.0)
         return float(out[0]) if scalar else out
 
+    if method == "auto":
+        method = _auto_select_method(w, tol)
+
     if method == "imhof":
         out = np.array([_imhof_cdf(w, float(ti), rtol=rtol) for ti in t_arr])
     elif method == "ws":
@@ -105,7 +123,8 @@ def weighted_chi2_quantile(
     weights: np.ndarray,
     probability: float,
     *,
-    method: str = "imhof",
+    method: str = "auto",
+    tol: float = 1e-2,
     rtol: float = 1e-6,
     n_samples: int = 100_000,
     rng: Optional[np.random.Generator] = None,
@@ -115,8 +134,15 @@ def weighted_chi2_quantile(
     Args:
         weights: Non-negative weights $w_j$.
         probability: Target probability, strictly between 0 and 1.
-        method: One of {"imhof", "ws", "saddlepoint", "mc"}.
-        rtol: Relative tolerance for root-finding (Imhof, saddlepoint).
+        method: One of {"auto", "imhof", "ws", "saddlepoint", "mc"}.
+            ``"auto"`` (default) selects between saddlepoint and Imhof
+            based on spectrum isotropy and ``tol``: saddlepoint is used
+            when its expected error (empirically $\\approx 0.1/\\nu_{\\text{eff}}$
+            with $\\nu_{\\text{eff}} = (\\sum w)^2/\\sum w^2$) is comfortably
+            below ``tol``; Imhof is used otherwise.
+        tol: Desired relative accuracy of the result. Used only when
+            ``method="auto"``; ignored for explicit method choices.
+        rtol: Relative tolerance for CDF root-finding (Imhof, saddlepoint).
         n_samples: Sample count for Monte Carlo.
         rng: Optional NumPy generator for Monte Carlo.
 
@@ -136,6 +162,9 @@ def weighted_chi2_quantile(
 
     if w.size == 0 or np.all(w == 0.0):
         return 0.0
+
+    if method == "auto":
+        method = _auto_select_method(w, tol)
 
     if method == "ws":
         return float(_ws_quantile(w, probability))
@@ -171,6 +200,48 @@ def _validate_weights(weights: np.ndarray) -> np.ndarray:
     if np.any(w < 0.0):
         raise ValueError("weights must be non-negative.")
     return w
+
+
+# ---------------------------------------------------------------------------
+# Auto method selection
+# ---------------------------------------------------------------------------
+
+
+def _auto_select_method(weights: np.ndarray, tol: float) -> str:
+    """Select quantile/CDF method based on spectrum isotropy and tolerance.
+
+    Uses the effective degrees of freedom
+    $\\nu_{\\text{eff}} = (\\sum_j w_j)^2 / \\sum_j w_j^2$ as a proxy for
+    how isotropic the weight spectrum is.  Empirical calibration on
+    Laplacian spectra gives a conservative upper bound on the saddlepoint
+    relative error:
+
+    .. math::
+        \\varepsilon_{\\mathrm{sp}} \\approx \\frac{0.1}{\\nu_{\\text{eff}}}
+
+    A 3x safety factor is applied before trusting the saddlepoint result.
+    Imhof's method (exact to quadrature tolerance) is used as the fallback.
+
+    Rule-of-thumb thresholds for ``tol``:
+
+    * ``tol = 0.05`` (5 %): saddlepoint for $\\nu_{\\text{eff}} > 6$
+    * ``tol = 0.01`` (1 %): saddlepoint for $\\nu_{\\text{eff}} > 30$
+    * ``tol = 0.001`` (0.1 %): saddlepoint for $\\nu_{\\text{eff}} > 300$
+
+    Args:
+        weights: Validated non-negative weight vector.
+        tol: Desired relative accuracy of the result.
+
+    Returns:
+        ``"saddlepoint"`` if the approximation is expected to meet ``tol``,
+        ``"imhof"`` otherwise.
+    """
+    s1 = float(np.sum(weights))
+    s2 = float(np.sum(weights ** 2))
+    nu_eff = s1 * s1 / s2 if s2 > 0.0 else 1.0
+    # Conservative: 3x safety factor on the empirical error model.
+    sp_expected_error = 0.1 / max(nu_eff, 1e-10)
+    return "saddlepoint" if sp_expected_error * 3.0 < tol else "imhof"
 
 
 # ---------------------------------------------------------------------------
