@@ -425,6 +425,52 @@ class GaussianMeasure:
         """True if a method for drawing samples is available."""
         return self._sample is not None
 
+    def _sampling_radius(
+        self,
+        probability: float,
+        gauge_squared,
+        *,
+        n_samples: int = 10_000,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        r"""Empirical $p$-quantile of $R(X)^2$ over Monte Carlo draws.
+
+        For internal use by :meth:`credible_set` when ``radius_method =
+        "sampling"``. Draws ``n_samples`` independent samples
+        $X^{(i)} \sim \mu$, evaluates the gauge squared
+        $R(X^{(i)} - m_0)^2$, and returns the empirical $p$-quantile.
+
+        Args:
+            probability: Target probability in $(0, 1)$.
+            gauge_squared: A callable mapping a centered vector $X - m_0$
+                in the model space to the non-negative scalar $R(\cdot)^2$.
+            n_samples: Number of Monte Carlo draws.
+            parallel: Whether to draw samples in parallel.
+            n_jobs: Number of cores when ``parallel=True``.
+
+        Returns:
+            The empirical $p$-quantile of $R(X)^2$ as a float.
+
+        Raises:
+            ValueError: if the measure cannot draw samples or the
+                probability is out of range.
+        """
+        if not 0.0 < probability < 1.0:
+            raise ValueError("probability must lie strictly between 0 and 1.")
+        if not self.sample_set:
+            raise ValueError(
+                "Sampling-based radius requires a measure equipped with a "
+                "sample method."
+            )
+        samples = self.samples(n_samples, parallel=parallel, n_jobs=n_jobs)
+        mean = self.expectation
+        gauge_sq_values = np.empty(n_samples, dtype=float)
+        for i, x in enumerate(samples):
+            diff = self.domain.subtract(x, mean)
+            gauge_sq_values[i] = float(gauge_squared(diff))
+        return float(np.quantile(gauge_sq_values, probability))
+
     def credible_set(
         self,
         probability: float,
@@ -433,93 +479,470 @@ class GaussianMeasure:
         geometry: str = "ellipsoid",
         rank: Optional[int] = None,
         open_set: bool = False,
+        theta: Optional[float] = None,
+        spectrum=None,
+        spectrum_size: Optional[int] = None,
+        radius_method: str = "auto",
+        quantile_method: str = "imhof",
+        fractional_apply: str = "auto",
+        n_samples: int = 10_000,
+        n_lanczos: int = 50,
+        spectrum_low_rank_kwargs: Optional[dict] = None,
+        rng: Optional[np.random.Generator] = None,
     ):
         r"""Return a probability-calibrated Gaussian credible subset.
 
-        For a finite-dimensional Gaussian measure $N(m, C)$, this method
-        converts a probability $p$ into the chi-square radius
+        Five geometries are supported:
 
-        $$
-        r_p = \sqrt{F_{\chi^2_k}^{-1}(p)},
-        $$
+        ``"ellipsoid"`` / ``"mahalanobis"`` / ``"domain"``
+            The classical Mahalanobis ellipsoid
+            $\{x : \langle C^{-1}(x-m), x-m\rangle \le r_p^2\}$ with
+            $r_p^2 = \chi^2_k(p)$ where $k$ is ``rank`` or
+            ``self.domain.dim``.
 
-        where $k$ is the rank parameter, defaulting to ``self.domain.dim``.
-        The default ``geometry="ellipsoid"`` returns the Mahalanobis ellipsoid
+        ``"cameron_martin"`` / ``"cm"`` / ``"ball"`` / ``"norm_ball"``
+            The same set expressed as a unit ball in the Cameron-Martin
+            geometry whose mass operator is $C^{-1}$.
 
-        $$
-        \{x : \langle C^{-1}(x-m), x-m\rangle \le r_p^2\}.
-        $$
+        ``"ambient_ball"`` / ``"ambient"``
+            **New (function-space mode).** The ambient norm ball
+            $\{m : \|m - m_0\|_H \le r_p\}$ whose radius solves
+            $\mathbb{P}(\sum_j \lambda_j Z_j^2 \le r_p^2) = p$ where
+            $\{\lambda_j\}$ is the covariance spectrum.
 
-        The alternative ``geometry="cameron_martin"`` returns the equivalent
-        ball in the induced Cameron-Martin geometry whose mass operator is
-        $C^{-1}$.
+        ``"weakened_ellipsoid"`` / ``"fractional"``
+            **New (function-space mode).** Requires ``theta`` in
+            $(0, 1)$. The weakened-covariance ellipsoid
+            $\{m : \|C^{-\theta/2}(m-m_0)\|_H \le r_p\}$ with radius
+            satisfying $\mathbb{P}(\sum_j \lambda_j^{1-\theta} Z_j^2 \le
+            r_p^2) = p$.
+
+        See ``docs/agent-docs/theory/function-space-hardening.md`` for the
+        mathematical derivations.
 
         Args:
             probability: Credible probability $p$, strictly between 0 and 1.
-            geometry: Either ``"ellipsoid"`` for a subset of the measure domain
-                or ``"cameron_martin"``/``"ball"`` for the equivalent norm ball
-                in the induced Cameron-Martin space.
-            rank: Degrees of freedom for the chi-square calibration. Defaults
-                to the finite dimension of the measure domain.
+            geometry: Selects the ball/ellipsoid family (see above).
+            rank: Chi-square degrees of freedom (legacy modes only).
             open_set: If true, return the open version of the set.
+            theta: Fractional exponent in $(0, 1)$, required for
+                ``"weakened_ellipsoid"``. The bound case $\theta = 1$ is
+                the Cameron-Martin norm and is not admissible in genuine
+                infinite-dim; use the legacy ``"cameron_martin"`` mode for
+                that.
+            spectrum: Covariance spectrum specification. One of:
+                a 1-D ``np.ndarray`` of eigenvalues; a
+                :class:`pygeoinf.low_rank.LowRankEig` instance; a
+                callable ``f(k)`` returning the first $k$ eigenvalues;
+                or ``None`` to compute a randomized eigendecomposition.
+            spectrum_size: Truncation length when ``spectrum`` is callable
+                or ``None``.
+            radius_method: ``"auto"`` (default), ``"spectral"``, or
+                ``"sampling"``.
+            quantile_method: Weighted-chi-square quantile method; see
+                :mod:`pygeoinf.quadratic_form_quantile`.
+            fractional_apply: How to apply $C^{-\theta/2}$ for the
+                weakened ellipsoid. One of ``"auto"``, ``"lanczos"``,
+                ``"low_rank_eig"``.
+            n_samples: Monte Carlo sample count for sampling radius.
+            n_lanczos: Krylov dimension for Lanczos matrix-function apply.
+            spectrum_low_rank_kwargs: Extra kwargs forwarded to
+                ``LowRankEig.from_randomized`` when ``spectrum`` is None.
+            rng: Optional NumPy generator for Monte Carlo paths.
 
         Returns:
             A :class:`pygeoinf.subsets.Ellipsoid` or
             :class:`pygeoinf.subsets.Ball`.
-
-        Notes:
-            The chi-square calibration is exact for finite-dimensional,
-            full-rank Gaussian measures. In infinite-dimensional theory this
-            should be interpreted as a finite-rank or spectrally truncated set;
-            the unregularized Cameron-Martin ellipsoid has zero Gaussian mass
-            in the genuinely infinite-dimensional infinite-rank case.
         """
         if not 0.0 < probability < 1.0:
             raise ValueError("Probability must lie strictly between 0 and 1.")
 
-        if rank is None and self.domain.dim < 1:
-            raise ValueError(
-                "Rank must be provided for domains without a positive finite "
-                "dimension, such as basis-free function spaces."
-            )
-
-        effective_rank = self.domain.dim if rank is None else rank
-        if not isinstance(effective_rank, int) or effective_rank < 1:
-            raise ValueError("Rank must be a positive integer.")
-
-        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
         geometry_key = geometry.lower().replace("-", "_")
 
+        # ---- Legacy paths (unchanged) -----------------------------------
         if geometry_key in {"ellipsoid", "domain", "mahalanobis"}:
-            from .subsets import Ellipsoid
-
-            return Ellipsoid(
-                self.domain,
-                self.expectation,
-                radius,
-                self.inverse_covariance,
-                open_set=open_set,
-                inverse_operator=self.covariance,
+            return self._credible_set_chi2_ellipsoid(
+                probability, rank=rank, open_set=open_set
             )
-
         if geometry_key in {"cameron_martin", "cm", "ball", "norm_ball"}:
-            from .subsets import Ball
+            return self._credible_set_chi2_cameron_martin(
+                probability, rank=rank, open_set=open_set
+            )
 
-            induced_domain_type = (
-                MassWeightedHilbertModule
-                if isinstance(self.domain, HilbertModule)
-                else MassWeightedHilbertSpace
+        # ---- New spectrum-aware paths -----------------------------------
+        if geometry_key in {"ambient_ball", "ambient", "h_ball"}:
+            return self._credible_set_ambient_ball(
+                probability,
+                open_set=open_set,
+                spectrum=spectrum,
+                spectrum_size=spectrum_size,
+                radius_method=radius_method,
+                quantile_method=quantile_method,
+                n_samples=n_samples,
+                spectrum_low_rank_kwargs=spectrum_low_rank_kwargs,
+                rng=rng,
             )
-            induced_domain = induced_domain_type(
-                self.domain, self.inverse_covariance, self.covariance
-            )
-            return Ball(
-                induced_domain, self.expectation, radius, open_set=open_set
+        if geometry_key in {"weakened_ellipsoid", "fractional"}:
+            if theta is None:
+                raise ValueError(
+                    "theta is required for geometry='weakened_ellipsoid'."
+                )
+            if not 0.0 < theta < 1.0:
+                raise ValueError(
+                    "theta must lie strictly in (0, 1); the boundary "
+                    "theta=1 is the Cameron-Martin norm — use "
+                    "geometry='cameron_martin' for the finite-rank "
+                    "chi-square version."
+                )
+            return self._credible_set_weakened_ellipsoid(
+                probability,
+                theta=theta,
+                open_set=open_set,
+                spectrum=spectrum,
+                spectrum_size=spectrum_size,
+                radius_method=radius_method,
+                quantile_method=quantile_method,
+                fractional_apply=fractional_apply,
+                n_samples=n_samples,
+                n_lanczos=n_lanczos,
+                spectrum_low_rank_kwargs=spectrum_low_rank_kwargs,
+                rng=rng,
             )
 
         raise ValueError(
-            "Geometry must be 'ellipsoid' or 'cameron_martin'/'ball'."
+            "Geometry must be one of 'ellipsoid', 'cameron_martin', "
+            "'ambient_ball', or 'weakened_ellipsoid'."
         )
+
+    # ------------------------------------------------------------------ #
+    # Convenience wrappers
+    # ------------------------------------------------------------------ #
+
+    def ambient_ball(self, probability: float, /, **kwargs):
+        """Shortcut for ``credible_set(..., geometry='ambient_ball', ...)``."""
+        kwargs.setdefault("geometry", "ambient_ball")
+        return self.credible_set(probability, **kwargs)
+
+    def weakened_ellipsoid(
+        self, probability: float, /, *, theta: float, **kwargs
+    ):
+        """Shortcut for the weakened-covariance ellipsoid mode."""
+        kwargs.setdefault("geometry", "weakened_ellipsoid")
+        kwargs["theta"] = theta
+        return self.credible_set(probability, **kwargs)
+
+    # ------------------------------------------------------------------ #
+    # Legacy chi-square implementations (factored out for readability)
+    # ------------------------------------------------------------------ #
+
+    def _credible_set_chi2_ellipsoid(
+        self,
+        probability: float,
+        *,
+        rank: Optional[int],
+        open_set: bool,
+    ):
+        effective_rank = self._resolve_rank(rank)
+        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
+        from .subsets import Ellipsoid
+
+        return Ellipsoid(
+            self.domain,
+            self.expectation,
+            radius,
+            self.inverse_covariance,
+            open_set=open_set,
+            inverse_operator=self.covariance,
+        )
+
+    def _credible_set_chi2_cameron_martin(
+        self,
+        probability: float,
+        *,
+        rank: Optional[int],
+        open_set: bool,
+    ):
+        effective_rank = self._resolve_rank(rank)
+        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
+        from .subsets import Ball
+
+        induced_domain_type = (
+            MassWeightedHilbertModule
+            if isinstance(self.domain, HilbertModule)
+            else MassWeightedHilbertSpace
+        )
+        induced_domain = induced_domain_type(
+            self.domain, self.inverse_covariance, self.covariance
+        )
+        return Ball(
+            induced_domain, self.expectation, radius, open_set=open_set
+        )
+
+    def _resolve_rank(self, rank: Optional[int]) -> int:
+        if rank is None and self.domain.dim < 1:
+            raise ValueError(
+                "Rank must be provided for domains without a positive "
+                "finite dimension, such as basis-free function spaces."
+            )
+        effective_rank = self.domain.dim if rank is None else rank
+        if not isinstance(effective_rank, int) or effective_rank < 1:
+            raise ValueError("Rank must be a positive integer.")
+        return effective_rank
+
+    # ------------------------------------------------------------------ #
+    # Spectrum-aware paths
+    # ------------------------------------------------------------------ #
+
+    def _resolve_spectrum(
+        self,
+        spectrum,
+        spectrum_size: Optional[int],
+        spectrum_low_rank_kwargs: Optional[dict],
+        rng: Optional[np.random.Generator],
+    ):
+        """Return ``(eigenvalues, eig_or_None)``.
+
+        Resolves the four ``spectrum`` input forms (array, ``LowRankEig``,
+        callable, ``None``) to a concrete spectrum and (when available)
+        the originating ``LowRankEig`` for eigenvector access.
+        """
+        from .low_rank import LowRankEig
+
+        if spectrum is None:
+            if spectrum_size is None or spectrum_size < 1:
+                raise ValueError(
+                    "spectrum_size (>=1) is required when spectrum is None."
+                )
+            kwargs = dict(spectrum_low_rank_kwargs or {})
+            eig = LowRankEig.from_randomized(
+                self.covariance,
+                spectrum_size,
+                measure=self,
+                **kwargs,
+            )
+            return np.asarray(eig.eigenvalues, dtype=float), eig
+
+        if isinstance(spectrum, LowRankEig):
+            return np.asarray(spectrum.eigenvalues, dtype=float), spectrum
+
+        if callable(spectrum):
+            if spectrum_size is None or spectrum_size < 1:
+                raise ValueError(
+                    "spectrum_size (>=1) is required when spectrum is a "
+                    "callable."
+                )
+            eigvals = np.asarray(spectrum(spectrum_size), dtype=float).ravel()
+            return eigvals, None
+
+        eigvals = np.asarray(spectrum, dtype=float).ravel()
+        if eigvals.ndim != 1:
+            raise ValueError(
+                "spectrum array must be 1-D; got shape "
+                f"{eigvals.shape}."
+            )
+        return eigvals, None
+
+    def _resolve_radius_method(
+        self, radius_method: str, has_spectrum: bool
+    ) -> str:
+        if radius_method == "spectral":
+            return "spectral"
+        if radius_method == "sampling":
+            if not self.sample_set:
+                raise ValueError(
+                    "radius_method='sampling' requires a sampling-equipped "
+                    "Gaussian measure."
+                )
+            return "sampling"
+        if radius_method == "auto":
+            if has_spectrum:
+                return "spectral"
+            if self.sample_set:
+                return "sampling"
+            raise ValueError(
+                "Cannot resolve a radius for this measure: pass a spectrum "
+                "or set radius_method='sampling' on a sampling-equipped "
+                "measure."
+            )
+        raise ValueError(
+            "radius_method must be 'auto', 'spectral', or 'sampling'."
+        )
+
+    def _credible_set_ambient_ball(
+        self,
+        probability: float,
+        *,
+        open_set: bool,
+        spectrum,
+        spectrum_size: Optional[int],
+        radius_method: str,
+        quantile_method: str,
+        n_samples: int,
+        spectrum_low_rank_kwargs: Optional[dict],
+        rng: Optional[np.random.Generator],
+    ):
+        from .subsets import Ball
+        from .quadratic_form_quantile import weighted_chi2_quantile
+
+        method = self._resolve_radius_method(
+            radius_method, has_spectrum=(spectrum is not None)
+        )
+
+        if method == "spectral":
+            eigvals, _ = self._resolve_spectrum(
+                spectrum, spectrum_size, spectrum_low_rank_kwargs, rng
+            )
+            r_p_sq = weighted_chi2_quantile(
+                eigvals, probability, method=quantile_method
+            )
+        else:
+            def gauge_squared(d):
+                return float(self.domain.squared_norm(d))
+
+            r_p_sq = self._sampling_radius(
+                probability, gauge_squared, n_samples=n_samples
+            )
+
+        r_p = float(np.sqrt(max(r_p_sq, 0.0)))
+        return Ball(self.domain, self.expectation, r_p, open_set=open_set)
+
+    def _credible_set_weakened_ellipsoid(
+        self,
+        probability: float,
+        *,
+        theta: float,
+        open_set: bool,
+        spectrum,
+        spectrum_size: Optional[int],
+        radius_method: str,
+        quantile_method: str,
+        fractional_apply: str,
+        n_samples: int,
+        n_lanczos: int,
+        spectrum_low_rank_kwargs: Optional[dict],
+        rng: Optional[np.random.Generator],
+    ):
+        from .low_rank import LowRankEig
+        from .quadratic_form_quantile import weighted_chi2_quantile
+        from .subsets import Ellipsoid
+
+        method = self._resolve_radius_method(
+            radius_method, has_spectrum=(spectrum is not None)
+        )
+
+        # Resolve fractional_apply backend.
+        if fractional_apply not in ("auto", "lanczos", "low_rank_eig"):
+            raise ValueError(
+                "fractional_apply must be 'auto', 'lanczos', or 'low_rank_eig'."
+            )
+        if fractional_apply == "auto":
+            if isinstance(spectrum, LowRankEig) or spectrum is None:
+                backend = "low_rank_eig"
+            else:
+                backend = "lanczos"
+        else:
+            backend = fractional_apply
+
+        eigvals: Optional[np.ndarray] = None
+        eig_obj: Optional[LowRankEig] = None
+        if method == "spectral" or backend == "low_rank_eig":
+            eigvals, eig_obj = self._resolve_spectrum(
+                spectrum, spectrum_size, spectrum_low_rank_kwargs, rng
+            )
+
+        # Build the metric operator A = C^{-theta} plus inverse/sqrt-inverse.
+        A, A_inv, A_inv_sqrt = self._build_fractional_operators(
+            theta=theta,
+            backend=backend,
+            eig_obj=eig_obj,
+            n_lanczos=n_lanczos,
+        )
+
+        # Radius computation.
+        if method == "spectral":
+            assert eigvals is not None
+            weights = np.power(eigvals, 1.0 - theta)
+            self._maybe_warn_trace_borderline(weights, theta, eigvals.size)
+            r_p_sq = weighted_chi2_quantile(
+                weights, probability, method=quantile_method
+            )
+        else:
+
+            def gauge_squared(d):
+                return float(self.domain.inner_product(A(d), d))
+
+            r_p_sq = self._sampling_radius(
+                probability, gauge_squared, n_samples=n_samples
+            )
+
+        r_p = float(np.sqrt(max(r_p_sq, 0.0)))
+        return Ellipsoid(
+            self.domain,
+            self.expectation,
+            r_p,
+            A,
+            open_set=open_set,
+            inverse_operator=A_inv,
+            inverse_sqrt_operator=A_inv_sqrt,
+        )
+
+    def _build_fractional_operators(
+        self,
+        *,
+        theta: float,
+        backend: str,
+        eig_obj,
+        n_lanczos: int,
+    ) -> Tuple[LinearOperator, LinearOperator, LinearOperator]:
+        if backend == "low_rank_eig":
+            if eig_obj is None:
+                raise ValueError(
+                    "fractional_apply='low_rank_eig' requires a "
+                    "LowRankEig spectrum or spectrum=None (so it can be "
+                    "computed); got an array/callable. Pass "
+                    "fractional_apply='lanczos' instead."
+                )
+            from .spectral_operator import fractional_operators_from_eig
+
+            return fractional_operators_from_eig(eig_obj, theta)
+
+        # Lanczos backend.
+        from .matrix_function import apply_matrix_function
+
+        cov = self.covariance
+
+        def make(power: float) -> LinearOperator:
+            def mapping(v):
+                return apply_matrix_function(
+                    cov, v, lambda x: np.power(x, power), n_lanczos
+                )
+
+            return LinearOperator.self_adjoint(cov.domain, mapping)
+
+        return make(-theta), make(theta), make(0.5 * theta)
+
+    def _maybe_warn_trace_borderline(
+        self,
+        weights: np.ndarray,
+        theta: float,
+        n: int,
+    ) -> None:
+        """Warn when the (1-theta)-trace condition is numerically borderline."""
+        if n < 20:
+            return
+        tail_share = float(np.sum(weights[n // 2 :])) / max(
+            float(np.sum(weights)), 1e-300
+        )
+        if tail_share > 0.3:
+            warnings.warn(
+                f"The (1-theta) trace tail of the resolved spectrum is "
+                f"{tail_share:.2f} of the total at theta={theta:.3f}; the "
+                "trace-class condition may be numerically borderline. "
+                "Increase spectrum_size or reduce theta to improve "
+                "reliability.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     # ---------------------------------------- #
     #               Public methods             #

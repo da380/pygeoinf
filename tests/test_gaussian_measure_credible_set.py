@@ -12,6 +12,7 @@ from pygeoinf.hilbert_space import (
     MassWeightedHilbertSpace,
 )
 from pygeoinf.linear_forms import LinearForm
+from pygeoinf.low_rank import LowRankEig
 from pygeoinf.subsets import Ball, Ellipsoid
 
 
@@ -172,3 +173,220 @@ def test_credible_set_requires_precision_operator():
 
     with pytest.raises(AttributeError, match="Inverse covariance"):
         measure.credible_set(0.8)
+
+
+# ---------------------------------------------------------------------------
+# Function-space modes (ambient_ball, weakened_ellipsoid)
+# ---------------------------------------------------------------------------
+
+
+def test_ambient_ball_equal_spectrum_matches_chi2():
+    """ambient_ball with eigvals = (sigma^2)*ones matches sigma^2 * chi2_k."""
+    space = EuclideanSpace(5)
+    sigma2 = 4.0
+    measure = GaussianMeasure.from_standard_deviation(space, np.sqrt(sigma2))
+    eigvals = np.full(space.dim, sigma2)
+
+    p = 0.9
+    ball = measure.credible_set(
+        p, geometry="ambient_ball", spectrum=eigvals
+    )
+    expected_radius = np.sqrt(sigma2 * chi2.ppf(p, df=space.dim))
+    assert isinstance(ball, Ball)
+    assert_allclose(ball.radius, expected_radius, rtol=1e-8)
+
+
+def test_ambient_ball_anisotropic_matches_mc():
+    """Spectral ambient_ball radius matches Monte Carlo over ||X - m||^2."""
+    space = EuclideanSpace(3)
+    cov_matrix = np.diag([4.0, 1.0, 0.25])
+    measure = GaussianMeasure.from_covariance_matrix(space, cov_matrix)
+
+    eigvals = np.diag(cov_matrix)
+    p = 0.9
+    ball_spectral = measure.credible_set(
+        p, geometry="ambient_ball", spectrum=eigvals
+    )
+
+    # Monte Carlo: draw and quantile.
+    rng = np.random.default_rng(7)
+    samples = measure.samples(20_000)
+    norms_sq = np.array([float(np.dot(x, x)) for x in samples])
+    expected_r = float(np.sqrt(np.quantile(norms_sq, p)))
+
+    assert_allclose(ball_spectral.radius, expected_r, rtol=3e-2)
+
+
+def test_ambient_ball_sampling_path():
+    """Sampling-based radius agrees with the spectral computation."""
+    space = EuclideanSpace(3)
+    cov_matrix = np.diag([4.0, 1.0, 0.25])
+    measure = GaussianMeasure.from_covariance_matrix(space, cov_matrix)
+
+    eigvals = np.diag(cov_matrix)
+    p = 0.85
+    ball_spectral = measure.credible_set(
+        p, geometry="ambient_ball", spectrum=eigvals
+    )
+    ball_sampling = measure.credible_set(
+        p,
+        geometry="ambient_ball",
+        radius_method="sampling",
+        n_samples=20_000,
+    )
+    assert_allclose(ball_spectral.radius, ball_sampling.radius, rtol=5e-2)
+
+
+def test_weakened_ellipsoid_requires_theta():
+    space = EuclideanSpace(3)
+    measure = GaussianMeasure.from_standard_deviation(space, 1.0)
+    with pytest.raises(ValueError, match="theta is required"):
+        measure.credible_set(
+            0.8,
+            geometry="weakened_ellipsoid",
+            spectrum=np.ones(space.dim),
+        )
+
+
+@pytest.mark.parametrize("theta", [-0.1, 0.0, 1.0, 1.1])
+def test_weakened_ellipsoid_rejects_invalid_theta(theta):
+    space = EuclideanSpace(3)
+    measure = GaussianMeasure.from_standard_deviation(space, 1.0)
+    with pytest.raises(ValueError, match="theta"):
+        measure.credible_set(
+            0.8,
+            geometry="weakened_ellipsoid",
+            theta=theta,
+            spectrum=np.ones(space.dim),
+        )
+
+
+def test_weakened_ellipsoid_returns_ellipsoid_on_finite_space():
+    """For finite-rank Euclidean spaces, weakened ellipsoid is constructible."""
+    space = EuclideanSpace(4)
+    cov_matrix = np.diag([4.0, 2.0, 1.0, 0.5])
+    measure = GaussianMeasure.from_covariance_matrix(space, cov_matrix)
+
+    eig = LowRankEig.from_randomized(
+        measure.covariance, space.dim, measure=measure, method="fixed"
+    )
+    p = 0.85
+    theta = 0.5
+    ell = measure.credible_set(
+        p,
+        geometry="weakened_ellipsoid",
+        theta=theta,
+        spectrum=eig,
+    )
+    assert isinstance(ell, Ellipsoid)
+    assert ell.radius > 0
+
+
+def test_weakened_ellipsoid_spectral_vs_lanczos():
+    """Spectral and Lanczos backends agree on the radius and gauge action."""
+    space = EuclideanSpace(4)
+    rng = np.random.default_rng(13)
+    A = rng.standard_normal((space.dim, space.dim))
+    cov_matrix = A.T @ A + 0.5 * np.eye(space.dim)
+    measure = GaussianMeasure.from_covariance_matrix(space, cov_matrix)
+
+    # Use the same LowRankEig spectrum on both paths so the only difference
+    # is how C^{-theta} is applied to vectors.
+    eig = LowRankEig.from_randomized(
+        measure.covariance, space.dim, measure=measure, method="fixed"
+    )
+    p = 0.85
+    theta = 0.4
+
+    ell_spectral = measure.credible_set(
+        p,
+        geometry="weakened_ellipsoid",
+        theta=theta,
+        spectrum=eig,
+        fractional_apply="low_rank_eig",
+    )
+    ell_lanczos = measure.credible_set(
+        p,
+        geometry="weakened_ellipsoid",
+        theta=theta,
+        spectrum=eig.eigenvalues,
+        fractional_apply="lanczos",
+        n_lanczos=space.dim,
+    )
+    # Same eigenvalues, same weights, same quantile method -> identical r_p.
+    assert_allclose(ell_spectral.radius, ell_lanczos.radius, rtol=1e-8)
+
+    # Gauge action on a test vector: at k = n Lanczos is exact, so both
+    # operators should agree on every vector.
+    test_v = rng.standard_normal(space.dim)
+    qf_spectral = float(np.dot(test_v, ell_spectral.operator(test_v)))
+    qf_lanczos = float(np.dot(test_v, ell_lanczos.operator(test_v)))
+    assert_allclose(qf_spectral, qf_lanczos, rtol=1e-6, atol=1e-9)
+
+
+def test_ambient_ball_no_spectrum_no_sampling_raises():
+    """credible_set on non-sampling measure with no spectrum raises."""
+    space = EuclideanSpace(3)
+    covariance = space.identity_operator()
+    measure = GaussianMeasure(covariance=covariance)  # no sampler
+    with pytest.raises(ValueError, match="spectrum"):
+        measure.credible_set(0.8, geometry="ambient_ball")
+
+
+def test_ambient_ball_convenience_wrapper():
+    space = EuclideanSpace(3)
+    measure = GaussianMeasure.from_standard_deviation(space, 2.0)
+    ball = measure.ambient_ball(0.9, spectrum=np.full(space.dim, 4.0))
+    assert isinstance(ball, Ball)
+    expected_radius = np.sqrt(4.0 * chi2.ppf(0.9, df=space.dim))
+    assert_allclose(ball.radius, expected_radius, rtol=1e-8)
+
+
+def test_weakened_ellipsoid_convenience_wrapper():
+    space = EuclideanSpace(4)
+    cov_matrix = np.diag([4.0, 2.0, 1.0, 0.5])
+    measure = GaussianMeasure.from_covariance_matrix(space, cov_matrix)
+    eig = LowRankEig.from_randomized(
+        measure.covariance, space.dim, measure=measure, method="fixed"
+    )
+    ell = measure.weakened_ellipsoid(0.85, theta=0.5, spectrum=eig)
+    assert isinstance(ell, Ellipsoid)
+
+
+def test_credible_set_empirical_coverage():
+    """Empirical mass inside the set should be near probability."""
+    space = EuclideanSpace(5)
+    cov_matrix = np.diag([4.0, 2.0, 1.0, 0.5, 0.25])
+    measure = GaussianMeasure.from_covariance_matrix(space, cov_matrix)
+
+    eigvals = np.diag(cov_matrix)
+    p = 0.9
+    ball = measure.credible_set(
+        p, geometry="ambient_ball", spectrum=eigvals
+    )
+
+    rng = np.random.default_rng(21)
+    n = 5000
+    samples = measure.samples(n)
+    inside = sum(1 for x in samples if ball.is_element(x, rtol=1e-12))
+    p_hat = inside / n
+    # Binomial 3-sigma tolerance.
+    sigma = np.sqrt(p * (1 - p) / n)
+    assert abs(p_hat - p) < 3 * sigma
+
+
+def test_imhof_method_selectable():
+    """quantile_method='ws' returns a slightly different radius than imhof."""
+    space = EuclideanSpace(3)
+    cov_matrix = np.diag([4.0, 1.0, 0.5])
+    measure = GaussianMeasure.from_covariance_matrix(space, cov_matrix)
+
+    eigvals = np.diag(cov_matrix)
+    ball_imhof = measure.credible_set(
+        0.9, geometry="ambient_ball", spectrum=eigvals, quantile_method="imhof"
+    )
+    ball_ws = measure.credible_set(
+        0.9, geometry="ambient_ball", spectrum=eigvals, quantile_method="ws"
+    )
+    # WS approximation: within ~10% on this moderately anisotropic spectrum.
+    assert abs(ball_imhof.radius - ball_ws.radius) / ball_imhof.radius < 0.1
