@@ -227,14 +227,28 @@ def _imhof_cdf(weights: np.ndarray, t: float, *, rtol: float = 1e-8) -> float:
 
     mean = float(np.sum(weights))
 
-    # Truncation point. For u much larger than 1/min(positive w_j) all
-    # arctans saturate and the integrand decays as 1/u^{1+n/2}. We pick U
-    # large enough that the tail contribution is well below the requested
-    # tolerance, and at least many oscillation periods of 2pi/t.
-    w_min_pos = float(np.min(positive)) if positive.size > 0 else 1.0
-    U_saturation = 16.0 / w_min_pos
+    # Truncation point.  We need U large enough that the integrand tail
+    # integral is below rtol.  The amplitude bound is
+    #
+    #   |integrand(u)| <= 1 / (u * rho(u)),
+    #   rho(u) = prod_j (1 + w_j^2 u^2)^{1/4}
+    #
+    # so the condition 1/(pi * U * rho(U)) < rtol is sufficient.
+    #
+    # Single-weight heuristic (16/w_min) massively overestimates U when N is
+    # large: rho grows as a *product* over all weights, so U only needs to
+    # reach the point where the product exceeds 1/(pi * rtol * U).  For an
+    # N=50 decaying spectrum this is ~600 instead of ~400 000.  We find U by
+    # doubling from an initial guess of 4/w_max until the condition is met.
     U_oscillation = 64.0 * np.pi / max(t, 1e-6)
-    U = max(U_saturation, U_oscillation, 200.0)
+    _target = np.log(1.0 / (np.pi * max(rtol, 1e-300)))
+    _U = max(4.0 / float(np.max(positive)), 1.0)
+    for _ in range(80):
+        _log_rho = 0.25 * float(np.sum(np.log1p((positive * _U) ** 2)))
+        if np.log(max(_U, 1e-300)) + _log_rho >= _target:
+            break
+        _U *= 2.0
+    U = max(_U, U_oscillation, 1.0)
 
     # Step size: at least 32 points per oscillation period 2pi/t.
     h_base = 2.0 * np.pi / max(t, 1e-6) / 32.0
