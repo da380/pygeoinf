@@ -78,6 +78,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """
         return self._circle_space
 
+    @property
+    def gaussian_curvature(self) -> float:
+        return 0.0
+
     @classmethod
     def from_covariance(
         cls,

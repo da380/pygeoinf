@@ -130,6 +130,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def inverse_fft_factor(self) -> float:
         return self._inverse_fft_factor
 
+    @property
+    def gaussian_curvature(self) -> float:
+        return 0.0
+
     def points(self) -> Tuple[np.ndarray, np.ndarray]:
         x = np.arange(2 * self.kmax) * np.pi / self.kmax
         y = np.arange(2 * self.kmax) * np.pi / self.kmax

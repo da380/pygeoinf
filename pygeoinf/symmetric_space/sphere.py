@@ -24,6 +24,10 @@ from joblib import Parallel, delayed
 
 from scipy.spatial import cKDTree
 
+import cartopy.io.shapereader as shpreader
+import shapely.geometry as sgeom
+from shapely.prepared import prep
+
 
 try:
     import pyshtools as sh
@@ -279,6 +283,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Returns the pyshtools grid type.
         """
         return self.grid if self._sampling == 1 else "DH2"
+
+    @property
+    def gaussian_curvature(self) -> float:
+        return 1.0 / (self.radius**2)
 
     # ------------------------------------------------------ #
     #                    Public methods                      #
@@ -760,9 +768,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Returns:
             A list of (latitude, longitude) tuples in degrees.
         """
-        import cartopy.io.shapereader as shpreader
-        import shapely.geometry as sgeom
-        from shapely.prepared import prep
 
         # 1. Fetch and prep the land geometry
         shpfilename = shpreader.natural_earth(
@@ -801,6 +806,50 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
                     break
 
         return valid_points
+
+    def domain_mask(
+        self, /, *, keep_ocean: bool = False, resolution: str = "110m"
+    ) -> "sh.SHGrid":
+        """
+        Generates a spatial mask that equals 1.0 in the specified domain
+        and 0.0 outside of it.
+
+        Args:
+            keep_ocean: If True, the mask is 1.0 on the ocean and 0.0 on land.
+                        If False, the mask is 1.0 on land and 0.0 on the ocean.
+            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
+
+        Returns:
+            An SHGrid object representing the mask.
+        """
+
+        # 1. Fetch and prep the land geometry
+        shpfilename = shpreader.natural_earth(
+            resolution=resolution, category="physical", name="land"
+        )
+        reader = shpreader.Reader(shpfilename)
+        combined_land = sgeom.MultiPolygon(list(reader.geometries()))
+
+        # 'prep' makes point-in-polygon queries significantly faster
+        prepared_land = prep(combined_land)
+
+        # 2. Define the indicator function
+        def mask_func(point: Tuple[float, float]) -> float:
+            lat, lon = point
+
+            # Wrap [0, 360] to [-180, 180] strictly for Shapely's geometry bounds
+            wrapped_lon = (lon + 180) % 360 - 180
+            p = sgeom.Point(wrapped_lon, lat)
+
+            is_on_land = prepared_land.contains(p)
+
+            if keep_ocean:
+                return 0.0 if is_on_land else 1.0
+            else:
+                return 1.0 if is_on_land else 0.0
+
+        # 3. Project the indicator function onto the space's SHGrid
+        return self.project_function(mask_func)
 
     # ------------------------------------------------------ #
     #                      Private methods                   #
@@ -1612,6 +1661,29 @@ class Sobolev(SymmetricSobolevSpace):
             n, keep_ocean=keep_ocean, resolution=resolution
         )
 
+    def domain_mask(
+        self, /, *, keep_ocean: bool = False, resolution: str = "110m"
+    ) -> "sh.SHGrid":
+        """
+        Generates a spatial mask that equals 1.0 in the specified domain
+        and 0.0 outside of it.
+
+        Args:
+            keep_ocean: If True, the mask is 1.0 on the ocean and 0.0 on land.
+                        If False, the mask is 1.0 on land and 0.0 on the ocean.
+            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
+
+        Returns:
+            An SHGrid object representing the mask.
+        """
+        return self.underlying_space.domain_mask(
+            keep_ocean=keep_ocean, resolution=resolution
+        )
+
+
+# -------------------------------------------------- #
+#             Associated plotting methods            #
+# -------------------------------------------------- #
 
 # -------------------------------------------------- #
 #             Associated plotting methods            #
@@ -1625,14 +1697,6 @@ def create_map_figure(
 ) -> Tuple[plt.Figure, GeoAxes]:
     """
     Creates a modern Matplotlib Figure and Cartopy GeoAxes optimized for maps.
-
-    Args:
-        figsize: A tuple of (width, height) in inches.
-        projection: A `cartopy.crs` projection instance. Defaults to PlateCarree.
-        **kwargs: Additional keyword arguments passed to `plt.subplots()`.
-
-    Returns:
-        A tuple `(fig, ax)` containing the Matplotlib Figure and Cartopy GeoAxes.
     """
     if projection is None:
         projection = ccrs.PlateCarree()
@@ -1659,6 +1723,7 @@ def plot(
     borders: bool = False,
     map_extent: Optional[List[float]] = None,
     gridlines: bool = True,
+    gridlines_kwargs: Optional[dict] = None,
     symmetric: bool = False,
     contour_lines: bool = False,
     contour_lines_kwargs: Optional[dict] = None,
@@ -1681,6 +1746,7 @@ def plot(
         borders: If True, overlays international country borders. Defaults to False.
         map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view.
         gridlines: If True, draws latitude and longitude gridlines with labels.
+        gridlines_kwargs: Formatting options for the Cartopy Gridliner.
         symmetric: If True, dynamically centers the color scale symmetrically around zero.
         contour_lines: If True, overlays solid contour lines on top of the base plot.
         contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`.
@@ -1691,9 +1757,13 @@ def plot(
 
     Returns:
         A tuple `(ax, im)` containing the GeoAxes and the rendered image artist.
+
+        *Customization Note*: To keep the return signature clean, auxiliary Matplotlib
+        objects are attached dynamically to the returned objects:
+        - `im.colorbar`: Access the generated `matplotlib.colorbar.Colorbar` (if requested).
+        - `ax.gridliner`: Access the generated `cartopy.mpl.gridliner.Gridliner` (if requested).
     """
     if ax is None:
-        # Safely generate a new canvas using the modernized helper
         fig, ax = create_map_figure(projection=projection)
     else:
         fig = ax.get_figure()
@@ -1709,10 +1779,6 @@ def plot(
         ax.add_feature(cfeature.RIVERS, linewidth=0.8)
     if borders:
         ax.add_feature(cfeature.BORDERS, linewidth=0.8)
-
-    # Pop gridline intervals safely BEFORE passing kwargs to plot functions
-    lat_interval = kwargs.pop("lat_interval", 30)
-    lon_interval = kwargs.pop("lon_interval", 30)
 
     kwargs.setdefault("cmap", cmap)
     if symmetric:
@@ -1746,20 +1812,32 @@ def plot(
         )
 
     if gridlines:
-        gl = ax.gridlines(
-            linestyle="--", draw_labels=True, dms=True, x_inline=False, y_inline=False
-        )
+        gl_opts = gridlines_kwargs or {}
+        lat_interval = gl_opts.pop("lat_interval", 30)
+        lon_interval = gl_opts.pop("lon_interval", 30)
+
+        gl_opts.setdefault("linestyle", "--")
+        gl_opts.setdefault("draw_labels", True)
+        gl_opts.setdefault("dms", True)
+        gl_opts.setdefault("x_inline", False)
+        gl_opts.setdefault("y_inline", False)
+
+        gl = ax.gridlines(**gl_opts)
         gl.xlocator = mticker.MultipleLocator(lon_interval)
         gl.ylocator = mticker.MultipleLocator(lat_interval)
         gl.xformatter = LongitudeFormatter()
         gl.yformatter = LatitudeFormatter()
+
+        ax.gridliner = gl  # Attach attribute for downstream customization
 
     if colorbar and fig:
         cb_opts = colorbar_kwargs or {}
         cb_opts.setdefault("orientation", "horizontal")
         cb_opts.setdefault("shrink", 0.7)
         cb_opts.setdefault("pad", 0.05)
-        fig.colorbar(im, ax=ax, **cb_opts)
+
+        cb = fig.colorbar(im, ax=ax, **cb_opts)
+        im.colorbar = cb  # Attach attribute for downstream customization
 
     return ax, im
 
@@ -1782,6 +1860,7 @@ def plot_points(
     borders: bool = False,
     map_extent: Optional[List[float]] = None,
     gridlines: bool = True,
+    gridlines_kwargs: Optional[dict] = None,
     symmetric: bool = False,
     colorbar: bool = False,
     colorbar_kwargs: Optional[dict] = None,
@@ -1806,6 +1885,7 @@ def plot_points(
         borders: If True, overlays international country borders. Defaults to False.
         map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view.
         gridlines: If True, draws latitude and longitude gridlines with labels.
+        gridlines_kwargs: Formatting options for the Cartopy Gridliner.
         symmetric: If True, dynamically centers the color scale symmetrically around zero.
         colorbar: If True and `data` is provided, attaches a colorbar.
         colorbar_kwargs: Formatting options for the colorbar.
@@ -1813,6 +1893,11 @@ def plot_points(
 
     Returns:
         A tuple `(ax, sc)` containing the GeoAxes and the PathCollection artist.
+
+        *Customization Note*: To keep the return signature clean, auxiliary Matplotlib
+        objects are attached dynamically to the returned objects:
+        - `sc.colorbar`: Access the generated `matplotlib.colorbar.Colorbar` (if requested).
+        - `ax.gridliner`: Access the generated `cartopy.mpl.gridliner.Gridliner` (if requested).
     """
     if ax is None:
         fig, ax = create_map_figure(projection=projection)
@@ -1830,10 +1915,6 @@ def plot_points(
         ax.add_feature(cfeature.RIVERS, linewidth=0.8, zorder=10)
     if borders:
         ax.add_feature(cfeature.BORDERS, linewidth=0.8, zorder=10)
-
-    # Extract gridline intervals safely before passing kwargs to scatter
-    lat_interval = kwargs.pop("lat_interval", 30)
-    lon_interval = kwargs.pop("lon_interval", 30)
 
     lats = [p[0] for p in points]
     lons = [p[1] for p in points]
@@ -1862,25 +1943,33 @@ def plot_points(
     )
 
     if gridlines:
-        gl = ax.gridlines(
-            linestyle="--",
-            draw_labels=True,
-            dms=True,
-            x_inline=False,
-            y_inline=False,
-            zorder=10,
-        )
+        gl_opts = gridlines_kwargs or {}
+        lat_interval = gl_opts.pop("lat_interval", 30)
+        lon_interval = gl_opts.pop("lon_interval", 30)
+
+        gl_opts.setdefault("linestyle", "--")
+        gl_opts.setdefault("draw_labels", True)
+        gl_opts.setdefault("dms", True)
+        gl_opts.setdefault("x_inline", False)
+        gl_opts.setdefault("y_inline", False)
+        gl_opts.setdefault("zorder", 10)
+
+        gl = ax.gridlines(**gl_opts)
         gl.xlocator = mticker.MultipleLocator(lon_interval)
         gl.ylocator = mticker.MultipleLocator(lat_interval)
         gl.xformatter = LongitudeFormatter()
         gl.yformatter = LatitudeFormatter()
+
+        ax.gridliner = gl  # Attach attribute for downstream customization
 
     if colorbar and data is not None and fig:
         cb_opts = colorbar_kwargs or {}
         cb_opts.setdefault("orientation", "horizontal")
         cb_opts.setdefault("shrink", 0.7)
         cb_opts.setdefault("pad", 0.05)
-        fig.colorbar(sc, ax=ax, **cb_opts)
+
+        cb = fig.colorbar(sc, ax=ax, **cb_opts)
+        sc.colorbar = cb  # Attach attribute for downstream customization
 
     return ax, sc
 
