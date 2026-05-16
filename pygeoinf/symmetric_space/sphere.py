@@ -24,6 +24,10 @@ from joblib import Parallel, delayed
 
 from scipy.spatial import cKDTree
 
+import cartopy.io.shapereader as shpreader
+import shapely.geometry as sgeom
+from shapely.prepared import prep
+
 
 try:
     import pyshtools as sh
@@ -279,6 +283,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Returns the pyshtools grid type.
         """
         return self.grid if self._sampling == 1 else "DH2"
+
+    @property
+    def gaussian_curvature(self) -> float:
+        return 1.0 / (self.radius**2)
 
     # ------------------------------------------------------ #
     #                    Public methods                      #
@@ -760,9 +768,6 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Returns:
             A list of (latitude, longitude) tuples in degrees.
         """
-        import cartopy.io.shapereader as shpreader
-        import shapely.geometry as sgeom
-        from shapely.prepared import prep
 
         # 1. Fetch and prep the land geometry
         shpfilename = shpreader.natural_earth(
@@ -801,6 +806,50 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
                     break
 
         return valid_points
+
+    def domain_mask(
+        self, /, *, keep_ocean: bool = False, resolution: str = "110m"
+    ) -> "sh.SHGrid":
+        """
+        Generates a spatial mask that equals 1.0 in the specified domain
+        and 0.0 outside of it.
+
+        Args:
+            keep_ocean: If True, the mask is 1.0 on the ocean and 0.0 on land.
+                        If False, the mask is 1.0 on land and 0.0 on the ocean.
+            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
+
+        Returns:
+            An SHGrid object representing the mask.
+        """
+
+        # 1. Fetch and prep the land geometry
+        shpfilename = shpreader.natural_earth(
+            resolution=resolution, category="physical", name="land"
+        )
+        reader = shpreader.Reader(shpfilename)
+        combined_land = sgeom.MultiPolygon(list(reader.geometries()))
+
+        # 'prep' makes point-in-polygon queries significantly faster
+        prepared_land = prep(combined_land)
+
+        # 2. Define the indicator function
+        def mask_func(point: Tuple[float, float]) -> float:
+            lat, lon = point
+
+            # Wrap [0, 360] to [-180, 180] strictly for Shapely's geometry bounds
+            wrapped_lon = (lon + 180) % 360 - 180
+            p = sgeom.Point(wrapped_lon, lat)
+
+            is_on_land = prepared_land.contains(p)
+
+            if keep_ocean:
+                return 0.0 if is_on_land else 1.0
+            else:
+                return 1.0 if is_on_land else 0.0
+
+        # 3. Project the indicator function onto the space's SHGrid
+        return self.project_function(mask_func)
 
     # ------------------------------------------------------ #
     #                      Private methods                   #
@@ -1610,6 +1659,25 @@ class Sobolev(SymmetricSobolevSpace):
         """
         return self.underlying_space.random_domain_points(
             n, keep_ocean=keep_ocean, resolution=resolution
+        )
+
+    def domain_mask(
+        self, /, *, keep_ocean: bool = False, resolution: str = "110m"
+    ) -> "sh.SHGrid":
+        """
+        Generates a spatial mask that equals 1.0 in the specified domain
+        and 0.0 outside of it.
+
+        Args:
+            keep_ocean: If True, the mask is 1.0 on the ocean and 0.0 on land.
+                        If False, the mask is 1.0 on land and 0.0 on the ocean.
+            resolution: The Cartopy shapefile resolution ('110m', '50m', or '10m').
+
+        Returns:
+            An SHGrid object representing the mask.
+        """
+        return self.underlying_space.domain_mask(
+            keep_ocean=keep_ocean, resolution=resolution
         )
 
 

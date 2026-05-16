@@ -201,6 +201,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """
         return self._inverse_fft_factor
 
+    @property
+    def gaussian_curvature(self) -> float:
+        return 0.0
+
     # ---------------------------------------------- #
     #                 Public methods                 #
     # -----------------------------------------------#
