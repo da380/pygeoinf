@@ -21,8 +21,8 @@ if __name__ == "__main__":
     # Create base uniform rigidity
     D_base = X.project_function(lambda _: D0)
 
-    # Stiffen continents by a factor of 11 using the domain mask
-    D_raw = D_base * (1.0 + 4 * X.domain_mask())
+    # Stiffen continents by some factor
+    D_raw = D_base * (1.0 + 3 * X.domain_mask())
 
     # Smooth the sharp coastlines using a heat kernel to prevent Gibbs ringing
     S = X.heat_kernel_gaussian_measure(0.05).covariance
@@ -32,9 +32,9 @@ if __name__ == "__main__":
     A = X.thin_elastic_shell_operator(D, nu, rho_g)
     P = X.invariant_automorphism(lambda k: 1 / (D0 * k**2 + rho_g))
 
-    print("4. Generating Random Geological Load...")
-    # Use a smoothed random field to represent seamounts, ice sheets, etc.
-    mu = X.heat_kernel_gaussian_measure(0.1)
+    print("4. Generating Random  Load...")
+    # Use a smoothed random field
+    mu = X.heat_kernel_gaussian_measure(0.05)
     u = mu.sample()
 
     print("5. Solving the Flexure Equations...")
@@ -48,23 +48,51 @@ if __name__ == "__main__":
     print("6. Plotting Results...")
 
     # Plot 1: Rigidity map (D)
-    ax, im = sph.plot(D, colorbar=True, cmap="viridis")
-    ax.set_title("Smoothed Flexural Rigidity ($D$)")
+    # We pass in high-level gridline intervals, but style the fonts via the attached object
+    ax, im = sph.plot(
+        D,
+        colorbar=True,
+        cmap="viridis",
+        gridlines=True,
+        gridlines_kwargs={"lat_interval": 45, "lon_interval": 60},
+        coasts=True,  # Let's see the continents!
+    )
+    ax.set_title("Smoothed Flexural Rigidity ($D$)", pad=15)
+
+    # --- SHOWCASING NEW FUNCTIONALITY ---
+    # Intercept the attached colorbar to adjust labels and ticks
+    im.colorbar.set_label("Rigidity Value (normalized)", fontsize=12, fontweight="bold")
+    im.colorbar.ax.tick_params(labelsize=10, color="gray")
+
+    # Intercept the attached gridliner to style the latitude/longitude text
+    ax.gridliner.xlabel_style = {"size": 10, "color": "gray", "weight": "bold"}
+    ax.gridliner.ylabel_style = {"size": 10, "color": "gray", "weight": "bold"}
 
     # Plot 2: Load (u)
-    ax, im = sph.plot(u, colorbar=True, symmetric=True, cmap="RdBu_r")
-    ax.set_title("Load ($q$)")
+    ax, im = sph.plot(u, colorbar=True, symmetric=True, cmap="RdBu_r", coasts=True)
+    ax.set_title("Load ($q$)", pad=15)
+    im.colorbar.set_label("Load Amplitude", fontsize=10)
 
     # Plot 3: Baseline Flexure (Uniform Oceanic)
-    ax, im = sph.plot(v0, colorbar=True, symmetric=True, cmap="RdBu_r")
-    ax.set_title("Flexure (Uniform Oceanic Rigidity)")
+    ax, im = sph.plot(v0, colorbar=True, symmetric=True, cmap="RdBu_r", coasts=True)
+    ax.set_title("Flexure (Uniform Oceanic Rigidity)", pad=15)
+    im.colorbar.set_label("Deflection", fontsize=10)
 
     # Plot 4: True Flexure (Variable Rigidity)
-    ax, im = sph.plot(v, colorbar=True, symmetric=True, cmap="RdBu_r")
-    ax.set_title("True Flexure (Variable Continental Rigidity)")
+    ax, im = sph.plot(v, colorbar=True, symmetric=True, cmap="RdBu_r", coasts=True)
+    ax.set_title("True Flexure (Variable Continental Rigidity)", pad=15)
+    im.colorbar.set_label("Deflection", fontsize=10)
 
     # Plot 5: Residual / Continent effect
-    ax, im = sph.plot(v - v0, colorbar=True, symmetric=True, cmap="PRGn")
-    ax.set_title("Effect of Continents ($v_{true} - v_{uniform}$)")
+    ax, im = sph.plot(
+        v - v0, colorbar=True, symmetric=True, cmap="PRGn", gridlines=True, coasts=True
+    )
+    ax.set_title("Effect of Continents ($v_{true} - v_{uniform}$)", pad=15)
+
+    # --- SHOWCASING NEW FUNCTIONALITY ---
+    im.colorbar.set_label("Deflection Difference", fontsize=12)
+    # We can apply completely different styling to the gridlines on this specific plot
+    ax.gridliner.xlabel_style = {"color": "darkgreen", "style": "italic"}
+    ax.gridliner.ylabel_style = {"color": "darkgreen", "style": "italic"}
 
     plt.show()
