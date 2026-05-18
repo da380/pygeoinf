@@ -81,6 +81,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """Returns the isomorphic space of functions on the extended Torus."""
         return self._torus_space
 
+    @property
+    def gaussian_curvature(self) -> float:
+        return 0.0
+
     # ---------------------------------------------- #
     #                   Factories                    #
     # -----------------------------------------------#

@@ -649,9 +649,25 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """
         return (self.integer_to_index(i) for i in range(self.dim))
 
+    @property
+    def laplacian(self) -> InvariantLinearAutomorphism:
+        """
+        Returns the Laplacian, Δ, as an operator on the space.
+        Note that this is an unbounded operator and it should be
+        used with care.
+        """
+        return self.invariant_automorphism(lambda k: k)
+
     # ------------------------------------------------------------#
     #                      Abstract methods                       #
     # ------------------------------------------------------------#
+
+    @property
+    @abstractmethod
+    def gaussian_curvature(self) -> float:
+        """
+        Returns the Gaussian curvature (K) of the symmetric manifold.
+        """
 
     @abstractmethod
     def index_to_integer(self, k: Index) -> int:
@@ -824,6 +840,15 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     @abstractmethod
     def representative_index(self, degree: int) -> Index:
         """Returns a valid eigenfunction index for the given degree."""
+
+    @abstractmethod
+    def project_function(self, f: Callable[Point, Value]) -> Vector:
+        """
+        Returns an element of the space by projecting a given function.
+
+        Args:
+            f: A function that takes a point and returns a value.
+        """
 
     # ------------------------------------------------------------#
     #                        Public methods                       #
@@ -1141,8 +1166,75 @@ class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
     vector_sqrt
     """
 
+    def gradient_dot_product(self, f: Any, g: Any) -> Any:
+        """
+        Computes the pointwise dot product of the surface gradients of two fields.
+        """
+        L = self.laplacian
 
-class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
+        fg = self.vector_multiply(f, g)
+        f_Lg = self.vector_multiply(f, L(g))
+        g_Lf = self.vector_multiply(g, L(f))
+
+        result = L(fg)
+        self.axpy(-1.0, f_Lg, result)
+        self.axpy(-1.0, g_Lf, result)
+
+        self.ax(0.5, result)
+
+        return result
+
+    def thin_elastic_shell_operator(
+        self, D: Any, nu: Any, rho_g: Any
+    ) -> LinearOperator:
+        """
+        Constructs the generalized 4th-order variable-coefficient flexure operator
+        for a thin elastic shell on this specific Riemannian manifold.
+        """
+        L = self.laplacian
+        K = self.gaussian_curvature
+
+        if isinstance(nu, (float, int)):
+            D_eff = self.multiply(1.0 - nu, D)
+        else:
+            one_vec = self.project_function(lambda _: 1.0)
+            one_minus_nu = self.subtract(one_vec, nu)
+            D_eff = self.vector_multiply(D, one_minus_nu)
+
+        delta_D_eff = L(D_eff)
+
+        def apply_operator(w: Any) -> Any:
+            delta_w = L(w)
+
+            D_delta_w = self.vector_multiply(D, delta_w)
+            principal_term = L(D_delta_w)
+
+            grad_Deff_w = self.gradient_dot_product(D_eff, w)
+
+            poisson_penalty = self.multiply(0.5, L(grad_Deff_w))
+
+            term2_base = self.gradient_dot_product(delta_D_eff, w)
+            self.axpy(-0.5, term2_base, poisson_penalty)
+
+            term3_base = self.gradient_dot_product(D_eff, delta_w)
+            self.axpy(-0.5, term3_base, poisson_penalty)
+
+            self.axpy(-K, grad_Deff_w, poisson_penalty)
+
+            result = principal_term
+            self.axpy(-1.0, poisson_penalty, result)
+            if isinstance(rho_g, (float, int)):
+                self.axpy(float(rho_g), w, result)
+            else:
+                restoring_force = self.vector_multiply(rho_g, w)
+                self.axpy(1.0, restoring_force, result)
+
+            return result
+
+        return LinearOperator.self_adjoint(self, apply_operator)
+
+
+class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgueSpace):
     """
     The Sobolev space Hˢ constructed over a symmetric Lebesgue space.
 
@@ -1689,9 +1781,24 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, SymmetricHilbertSpace):
             self, l2_operator.codomain, l2_operator
         )
 
+    def thin_elastic_shell_operator(
+        self, D: Any, nu: Any, rho_g: Any
+    ) -> LinearOperator:
+        """
+        Constructs the generalized 4th-order variable-coefficient flexure operator
+        for a thin elastic shell on this specific Riemannian manifold.
+        """
+        l2_operator = self.underlying_space.thin_elastic_shell_operator(D, nu, rho_g)
+
+        return LinearOperator.from_formally_self_adjoint(self, l2_operator)
+
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #
     # ------------------------------------------------------- #
+
+    @property
+    def gaussian_curvature(self) -> float:
+        return self.underlying_space.gaussian_curvature
 
     def index_to_integer(self, k: Index) -> int:
         return self.underlying_space.index_to_integer(k)
