@@ -302,7 +302,7 @@ class BallSupportFunction(SupportFunction):
 
 
 class EllipsoidSupportFunction(SupportFunction):
-    """
+    r"""
     Support function of an ellipsoid E(c, r, A) defined by:
 
         E = {x : ⟨A(x-c), (x-c)⟩ ≤ r²}   with A SPD
@@ -315,12 +315,15 @@ class EllipsoidSupportFunction(SupportFunction):
         center: The center c of the ellipsoid.
         radius: The radius r.
         shape_operator: The SPD operator A.
-        inverse_operator: A^{-1}. Required for computing h(q) and support_point.
-        inverse_sqrt_operator: A^{-1/2}. Required for computing h(q).
+        inverse_operator: A^{-1}. Required for support_point and sufficient
+            for computing h(q) through $\sqrt{\langle q, A^{-1}q\rangle}$.
+        inverse_sqrt_operator: A^{-1/2}. Optional direct square-root inverse
+            used for computing h(q).
 
     Note:
-        If inverse operators are not provided, the support function cannot be
-        evaluated and support_point will return None.
+        If neither inverse operator is provided, the support function cannot be
+        evaluated. If ``inverse_operator`` is omitted, support_point returns
+        None.
     """
 
     def __init__(
@@ -340,17 +343,23 @@ class EllipsoidSupportFunction(SupportFunction):
         self._A_inv_sqrt = inverse_sqrt_operator
 
     def _mapping(self, q: "Vector") -> float:
-        if self._A_inv_sqrt is None:
+        if self._A_inv_sqrt is None and self._A_inv is None:
             raise ValueError(
-                "inverse_sqrt_operator must be provided to evaluate the support function. "
-                "Pass A^{-1/2} when constructing EllipsoidSupportFunction."
+                "inverse_sqrt_operator or inverse_operator must be provided "
+                "to evaluate the support function."
             )
 
         H = self.primal_domain
         center_term = H.inner_product(q, self._center)
-        # Compute ||A^{-1/2} q||
-        w = self._A_inv_sqrt(q)
-        shape_norm = H.norm(w)
+        if self._A_inv_sqrt is not None:
+            w = self._A_inv_sqrt(q)
+            shape_norm = H.norm(w)
+        else:
+            A_inv_q = self._A_inv(q)
+            shape_norm_squared = H.inner_product(q, A_inv_q)
+            if shape_norm_squared < 0:
+                shape_norm_squared = 0.0
+            shape_norm = shape_norm_squared**0.5
         return center_term + self._radius * shape_norm
 
     def support_point(self, q: "Vector") -> Optional["Vector"]:
@@ -391,7 +400,8 @@ class EllipsoidSupportFunction(SupportFunction):
 
         .. math::
 
-            h(q) = \langle q, c \rangle + r\,\sqrt{\langle q,\, A^{-1} q \rangle}
+            h(q) = \langle q, c \rangle
+                + r\,\sqrt{\langle q,\, A^{-1} q \rangle}
 
         and the support point
 
