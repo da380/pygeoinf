@@ -104,6 +104,8 @@ The module introduces support-function primitives for closed convex sets in a Hi
 - [tutorials/gaussian_measure_to_sets_demo.ipynb](/home/adrian/PhD/Inferences/pygeoinf/tutorials/gaussian_measure_to_sets_demo.ipynb)
   - Beginner-oriented finite-dimensional demo: builds a 2D `GaussianMeasure`, constructs a probability-calibrated `Ellipsoid` and equivalent Cameron-Martin `Ball`, plots the returned subset directly via `.plot()`, estimates their probabilities by Monte Carlo, compares against the exact chi-squared calibration, and ends with an optional affine-pushforward section.
   - Focuses only on sets induced directly by the Gaussian measure itself and keeps the main workflow on the `pygeoinf` API surface rather than manual geometry reconstruction.
+- [work/post_merge_demo.ipynb](/home/adrian/PhD/Inferences/pygeoinf/work/post_merge_demo.ipynb)
+  - Developer-facing post-merge showcase notebook for PR #132 additions. Section B now uses a periodic line `Lebesgue` space with a heat-kernel prior and explicit `spectral_variances`, giving a continuum-faithful function-space example while keeping `ambient_ball` and `weakened_ellipsoid` on the fast spectral calibration path.
 
 ## Public Exports
 

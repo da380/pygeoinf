@@ -111,3 +111,5 @@ Core cap-integral additions:
 | `test_truth_inside_bounds` | 3 | truth inside interval (near-zero noise) |
 | `test_end_to_end_tiny` | 4 | full pipeline smoke test |
 | `test_script_importable` | 4 | import-safe, has `run_example`, `solve_dli`, `plot_results` |
+
+See also: `geodesic-integration-reference.md` for the rationale behind the cap / ball integration API, its relationship to `l2_products_operator(...)`, and why the region-functional additions are not redundant with the older path and pairing primitives.
