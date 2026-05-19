@@ -42,6 +42,7 @@ approx = PolyhedralApproximation(
 - `add_directions(directions)` — Solve and cache bounds for explicit direction set
 - `as_polyhedral_set()` — Return current approximation as PolyhedralSet for visualization
 - `plot(dims=[i, j], **kwargs)` — Plot 2D slice via plot_slice with fast scipy.spatial.HalfspaceIntersection
+- `plot_3d(dims=[i, j, k], **kwargs)` — Plot 3D slice via plot_slice (matplotlib or plotly backend)
 
 **Dual-Solver Support:**
 
