@@ -72,6 +72,11 @@ class HilbertSpaceDirectSum(HilbertSpace):
             i = j
         return xs
 
+    @property
+    def zero(self) -> List[Any]:
+        """The zero element: each subspace contributes its own zero."""
+        return [space.zero for space in self._spaces]
+
     def to_dual(self, xs: List[Any]) -> LinearForm:
         if len(xs) != self.number_of_subspaces:
             raise ValueError("Input list has incorrect number of vectors.")
