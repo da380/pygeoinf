@@ -344,6 +344,45 @@ class PolyhedralApproximation:
             self.as_polyhedral_set(), on_subspace=subspace, **kwargs
         )
 
+    def plot_3d(self, dims=None, **kwargs):
+        """Plot a 3D slice of the polyhedral approximation.
+
+        Constructs an :class:`~pygeoinf.subspaces.AffineSubspace` from three
+        property-space coordinate indices and delegates to
+        :func:`~pygeoinf.plot.plot_slice`, which uses the fast exact
+        ``scipy.spatial.HalfspaceIntersection`` path for
+        :class:`~pygeoinf.subsets.PolyhedralSet`.
+
+        Args:
+            dims: Triple of integer property indices to use as the slice axes,
+                e.g. ``[0, 1, 2]`` for the first three properties. Defaults to
+                ``[0, 1, 2]``.
+            **kwargs: Forwarded to :func:`~pygeoinf.plot.plot_slice` (e.g.
+                ``bounds``, ``alpha``, ``show_plot``, ``backend``).
+
+        Returns:
+            ``(fig, ax, payload)`` from :func:`~pygeoinf.plot.plot_slice`.
+        """
+        from .plot import plot_slice
+        from .subspaces import AffineSubspace
+
+        if dims is None:
+            dims = [0, 1, 2]
+        if len(dims) != 3:
+            raise ValueError("dims must be a triple of property indices.")
+
+        n = self._property_space.dim
+        e_i = self._property_space.from_components(np.eye(n)[dims[0]])
+        e_j = self._property_space.from_components(np.eye(n)[dims[1]])
+        e_k = self._property_space.from_components(np.eye(n)[dims[2]])
+        subspace = AffineSubspace.from_tangent_basis(
+            self._property_space, [e_i, e_j, e_k]
+        )
+
+        return plot_slice(
+            self.as_polyhedral_set(), on_subspace=subspace, **kwargs
+        )
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
