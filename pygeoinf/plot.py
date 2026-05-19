@@ -1372,7 +1372,6 @@ class SubspaceSlicePlotter:
             return fig_plotly, None, surface_pts
 
         # Matplotlib 3D
-        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
         if ax is None:
             fig = plt.figure(figsize=(7, 6))
             ax3 = fig.add_subplot(111, projection="3d")
