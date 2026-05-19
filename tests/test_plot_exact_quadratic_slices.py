@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import pygeoinf as inf
-from pygeoinf.plot import SubspaceSlicePlotter, plot_slice
+from pygeoinf.plot import plot_slice
 from pygeoinf.subsets import Ball, Ellipsoid
 from pygeoinf.subspaces import AffineSubspace
 

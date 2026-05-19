@@ -209,7 +209,6 @@ def test_ambient_ball_anisotropic_matches_mc():
     )
 
     # Monte Carlo: draw and quantile.
-    rng = np.random.default_rng(7)
     samples = measure.samples(20_000)
     norms_sq = np.array([float(np.dot(x, x)) for x in samples])
     expected_r = float(np.sqrt(np.quantile(norms_sq, p)))
@@ -365,7 +364,6 @@ def test_credible_set_empirical_coverage():
         p, geometry="ambient_ball", spectrum=eigvals
     )
 
-    rng = np.random.default_rng(21)
     n = 5000
     samples = measure.samples(n)
     inside = sum(1 for x in samples if ball.is_element(x, rtol=1e-12))
