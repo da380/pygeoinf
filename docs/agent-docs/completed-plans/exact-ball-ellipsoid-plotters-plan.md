@@ -1,3 +1,9 @@
+## Plan Complete: Exact Ball and Ellipsoid Plotters
+
+**Status:** All 4 phases complete. 25 tests passing in `tests/test_plot_exact_quadratic_slices.py`. Exact quadratic path implemented in `pygeoinf/plot.py` for both `Ball` and `Ellipsoid` in 1D, 2D, and 3D slices.
+
+---
+
 ## Plan: Exact Ball and Ellipsoid Plotters
 
 Add exact slice rendering for `Ball` and `Ellipsoid` subsets in `pygeoinf` so they no longer fall back to rasterized membership sampling on 1D, 2D, and 3D affine slices. The implementation will extend the existing `SubspaceSlicePlotter` fast-path architecture in `pygeoinf/plot.py` by pulling quadratic sets back to slice coordinates, rendering the resulting interval / ellipse / ellipsoid directly, and preserving sampled fallback only for degenerate or unsupported cases.

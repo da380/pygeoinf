@@ -1,3 +1,9 @@
+## Plan Complete: Basis-Free PrimalKKTSolver (Superseded)
+
+**Status:** Superseded and fully realised by `undiscretized-primal-kkt-solver-plan.md`. The existing `PrimalKKTSolver` in `convex_optimisation.py` IS the basis-free implementation — it was rewritten rather than added alongside the original. See `completed-plans/undiscretized-primal-kkt-solver-complete.md` for the full implementation record.
+
+---
+
 ## Plan: Basis-Free PrimalKKTSolver
 
 Refactor `PrimalKKTSolver` so the **model space is touched only through abstract Hilbert / operator API** (`inner_product`, `to_dual`, `from_dual`, operator `@`, `.adjoint`) — no `to_components` / `from_components` / dense `.matrix()` calls on the model side. The 2-D `fsolve` over `(λ, μ)` is unchanged; only the inner KKT solve and norm evaluations are rewritten basis-free. Tested end-to-end on `intervalinf` (Lebesgue + SOLA) where the model space genuinely has no canonical basis.
