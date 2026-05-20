@@ -2257,6 +2257,7 @@ def plot_geodesic_network(
 
     src_lats, src_lons = zip(*sources)
     rec_lats, rec_lons = zip(*receivers)
+    ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
     ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
 
     return ax

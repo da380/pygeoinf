@@ -1394,48 +1394,75 @@ def solve_support_values(
     cost,
     qs,
     solver,
-    lambda0,
+    lambda0=None,
     *,
     warm_start: bool = True,
     n_jobs: int = 1,
 ):
     """Compute support function values for multiple directions.
 
-    Solves the dual master minimisation for each direction q_i in qs,
-    optionally warm-starting from the previous direction's solution.
+    Unified solver that works with both bundle methods
+    (DualMasterCostFunction + ProximalBundleMethod) and the direct primal
+    solver (PrimalKKTSolver built via :meth:`PrimalKKTSolver.from_cost`).
 
-    The support function of a set U evaluated at direction q is:
+    In both cases ``cost`` is the :class:`~pygeoinf.backus_gilbert.DualMasterCostFunction`
+    that defines the problem; ``solver`` is the implementation that solves it.
+    The property operator T is always read from the cost, so the API is
+    symmetric regardless of solver type.
 
-        h_U(q) = min_{lambda} f(q, lambda)
+    The support function evaluated at direction q is:
 
-    where f(q, ·) is the dual master cost with direction q.
+        h_U(q) = min_{lambda} phi(lambda; q)          [bundle method]
+        h_U(q) = <c, u*>  where c = T* q              [primal KKT]
 
     Args:
-        cost: DualMasterCostFunction instance with a ``set_direction`` method.
-        qs: Directions to evaluate; either a list of Vectors or an
+        cost: :class:`~pygeoinf.backus_gilbert.DualMasterCostFunction`
+            defining the inference problem.
+        qs: Directions to evaluate; a list of property-space Vectors or an
             ``np.ndarray`` of shape ``(p, prop_dim)``.
-        solver: Bundle method solver (ProximalBundleMethod or
-            LevelBundleMethod).
-        lambda0: Initial lambda for the first direction (a Vector in the
-            data space).
-        warm_start: If ``True`` (default), each direction starts from the
-            previous direction's optimal lambda.  If ``False``, always start
-            from ``lambda0``.
-        n_jobs: Number of parallel jobs.  ``1`` = fully sequential (warm
-            starting works).  ``>1`` = joblib Parallel (warm-starting across
-            workers is disabled; each worker starts from ``lambda0``).
+        solver: Either a bundle-method solver (ProximalBundleMethod or
+            LevelBundleMethod) or a :class:`PrimalKKTSolver` built via
+            :meth:`PrimalKKTSolver.from_cost`.
+        lambda0: (Bundle only) Initial data-space vector for the first
+            direction. Ignored when solver is a PrimalKKTSolver.
+        warm_start: (Bundle only) If ``True`` (default), each direction
+            warm-starts from the previous optimal lambda. Ignored for
+            PrimalKKTSolver.
+        n_jobs: Number of parallel jobs. ``1`` = fully sequential.
+            ``>1`` = joblib Parallel (warm-starting disabled for bundle).
 
     Returns:
-        values: ``np.ndarray`` of shape ``(p,)``, support values
-            $h_U(q_i)$ for each direction.
-        lambdas: ``list`` of length ``p``, optimal lambda for each
-            direction.
-        diagnostics: ``list`` of :class:`BundleResult` for each direction.
+        values: ``np.ndarray`` of shape ``(p,)``, support values h_U(q_i).
+        lambdas: ``list`` of length ``p``:
+            - Bundle: optimal lambda (x_best) for each direction.
+            - PrimalKKT: KKT multiplier lambda (multipliers[0]).
+        diagnostics: ``list`` of BundleResult or KKTResult per direction.
 
     Raises:
+        ValueError: If solver is PrimalKKTSolver but was not built via
+            ``from_cost`` (i.e. T is not stored).
         ImportError: If ``n_jobs > 1`` and ``joblib`` is not installed
-            (falls back to sequential with a warning instead of raising).
+            (falls back to sequential with a warning).
     """
+    if type(solver).__name__ == "PrimalKKTSolver":
+        if solver._T is None:
+            raise ValueError(
+                "PrimalKKTSolver must be constructed via PrimalKKTSolver.from_cost(cost) "
+                "to be used with solve_support_values."
+            )
+        return _solve_support_values_primal_kkt(solver, qs, n_jobs=n_jobs)
+    else:
+        if lambda0 is None:
+            raise ValueError(
+                "lambda0 is required for bundle-method solvers."
+            )
+        return _solve_support_values_bundle(
+            cost, qs, solver, lambda0, warm_start=warm_start, n_jobs=n_jobs
+        )
+
+
+def _solve_support_values_bundle(cost, qs, solver, lambda0, *, warm_start, n_jobs):
+    """Bundle-method implementation used by solve_support_values."""
     if n_jobs > 1:
         try:
             import copy
@@ -1443,8 +1470,6 @@ def solve_support_values(
 
             def _solve_one(cost_copy, q, solver_copy, lam0):
                 cost_copy.set_direction(q)
-                # Ensure the solver uses cost_copy (not its own deep-copied
-                # internal oracle, which would not have the updated direction).
                 solver_copy._oracle = cost_copy
                 result = solver_copy.solve(lam0)
                 return result.f_best, result.x_best, result
@@ -1465,9 +1490,7 @@ def solve_support_values(
                 RuntimeWarning,
                 stacklevel=2,
             )
-            # fall through to sequential below
 
-    # Sequential implementation (also used as joblib fallback).
     lam_current = lambda0
     values_list = []
     lambdas = []
@@ -1480,6 +1503,48 @@ def solve_support_values(
         diagnostics.append(result)
         if warm_start:
             lam_current = result.x_best
+    return np.array(values_list), lambdas, diagnostics
+
+
+def _solve_support_values_primal_kkt(solver, qs, *, n_jobs):
+    """PrimalKKTSolver implementation used by solve_support_values."""
+    T = solver._T
+    model_space = solver._model_space
+
+    if n_jobs > 1:
+        try:
+            from joblib import Parallel, delayed
+
+            def _solve_one(solver_inst, q):
+                c = T.adjoint(q)
+                result = solver_inst.solve(c)
+                h_val = float(model_space.inner_product(c, result.m))
+                return h_val, result.multipliers[0], result
+
+            results_raw = Parallel(n_jobs=n_jobs)(
+                delayed(_solve_one)(solver, q) for q in qs
+            )
+            values_list, lambdas, diagnostics = zip(*results_raw)
+            return np.array(values_list), list(lambdas), list(diagnostics)
+
+        except ImportError:
+            import warnings
+            warnings.warn(
+                "joblib is not installed; falling back to sequential execution.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+    values_list = []
+    lambdas = []
+    diagnostics = []
+    for q in qs:
+        c = T.adjoint(q)
+        result = solver.solve(c)
+        h_val = float(model_space.inner_product(c, result.m))
+        values_list.append(h_val)
+        lambdas.append(result.multipliers[0])
+        diagnostics.append(result)
     return np.array(values_list), lambdas, diagnostics
 
 
@@ -2371,6 +2436,45 @@ class PrimalKKTSolver:
         self._lambda_prev: float = 1.0
         self._mu_prev: float = 0.0
         self._has_warm_start: bool = False
+        # Property operator T, set via from_cost for use in solve_support_values
+        self._T: "LinearOperator | None" = None
+
+    @classmethod
+    def from_cost(cls, cost, /, *, fsolve_tol: float = 1e-10, fsolve_maxfev: int = 200):
+        """Construct a PrimalKKTSolver from a DualMasterCostFunction.
+
+        Extracts the model prior B, data error V, forward operator G, and
+        observed data d̃ from the cost function and stores the property
+        operator T so that :func:`solve_support_values` can convert
+        property-space directions q to model-space directions c = T*q.
+
+        Args:
+            cost: A :class:`~pygeoinf.backus_gilbert.DualMasterCostFunction`.
+            fsolve_tol: Tolerance for ``scipy.optimize.fsolve``.
+            fsolve_maxfev: Maximum function evaluations for ``fsolve``.
+
+        Returns:
+            A :class:`PrimalKKTSolver` instance with T stored internally.
+
+        Raises:
+            TypeError: If ``cost`` is not a DualMasterCostFunction.
+            ValueError: If the cost's prior or data sets are not
+                BallSupportFunction or EllipsoidSupportFunction.
+        """
+        if type(cost).__name__ != "DualMasterCostFunction":
+            raise TypeError(
+                f"cost must be a DualMasterCostFunction, got {type(cost).__name__}"
+            )
+        instance = cls(
+            cost._model_prior_support,
+            cost._data_error_support,
+            cost._G,
+            cost._observed_data,
+            fsolve_tol=fsolve_tol,
+            fsolve_maxfev=fsolve_maxfev,
+        )
+        instance._T = cost._T
+        return instance
 
     def _woodbury_solve(self, lam: float, mu: float, c: "Vector") -> "Vector":
         r"""Return $u^*(\lambda, \mu)$ entirely in abstract Hilbert-space vectors.

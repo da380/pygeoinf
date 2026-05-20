@@ -2,11 +2,15 @@
 Tests for solve_support_values in convex_optimisation.py.
 
 Covers:
-- Single-direction call
-- Multiple directions sequential
-- Warm-start vs cold-start agreement
-- Parallel agrees with sequential (requires joblib)
-- Return types
+- Single-direction call (bundle)
+- Multiple directions sequential (bundle)
+- Warm-start vs cold-start agreement (bundle)
+- Parallel agrees with sequential (bundle, requires joblib)
+- Return types (bundle)
+- PrimalKKT single-direction call
+- PrimalKKT multiple directions agree with bundle
+- PrimalKKT parallel agrees with sequential
+- PrimalKKT raises when not built via from_cost
 """
 
 import numpy as np
@@ -18,7 +22,9 @@ from pygeoinf.convex_analysis import BallSupportFunction
 from pygeoinf.backus_gilbert import DualMasterCostFunction
 from pygeoinf.convex_optimisation import (
     ProximalBundleMethod,
+    PrimalKKTSolver,
     BundleResult,
+    KKTResult,
     solve_support_values,
 )
 
@@ -180,3 +186,86 @@ def test_returns_correct_types():
     assert all(isinstance(d, BundleResult) for d in diagnostics), (
         "Each diagnostic should be a BundleResult"
     )
+
+
+# ---------------------------------------------------------------------------
+# PrimalKKT tests
+# ---------------------------------------------------------------------------
+
+def test_primal_kkt_single_direction():
+    """solve_support_values with PrimalKKTSolver returns array of shape (1,)."""
+    cost, _ = _make_cost_and_lambda0()
+    solver = PrimalKKTSolver.from_cost(cost)
+
+    qs = [np.array([1.0, 0.0])]
+    values, lambdas, diagnostics = solve_support_values(cost, qs, solver)
+
+    assert values.shape == (1,)
+    assert np.isfinite(values[0])
+    assert isinstance(lambdas[0], float)
+    assert isinstance(diagnostics[0], KKTResult)
+
+
+def test_primal_kkt_multiple_directions():
+    """PrimalKKT returns finite values for all directions."""
+    cost, _ = _make_cost_and_lambda0()
+    solver = PrimalKKTSolver.from_cost(cost)
+
+    values, lambdas, diagnostics = solve_support_values(cost, _DIRECTIONS, solver)
+
+    assert values.shape == (3,)
+    assert all(np.isfinite(v) for v in values)
+    assert len(lambdas) == 3
+    assert all(isinstance(d, KKTResult) for d in diagnostics)
+
+
+def test_primal_kkt_agrees_with_bundle():
+    """PrimalKKT and bundle method produce consistent support values (atol=0.1)."""
+    cost, lambda0 = _make_cost_and_lambda0()
+    bundle_solver = _make_solver(cost)
+    kkt_solver = PrimalKKTSolver.from_cost(cost)
+
+    vals_bundle, _, _ = solve_support_values(cost, _DIRECTIONS, bundle_solver, lambda0)
+    vals_kkt, _, _ = solve_support_values(cost, _DIRECTIONS, kkt_solver)
+
+    np.testing.assert_allclose(
+        vals_kkt, vals_bundle, atol=0.1,
+        err_msg="PrimalKKT and bundle values should agree"
+    )
+
+
+def test_primal_kkt_parallel_agrees_with_sequential():
+    """PrimalKKT parallel (n_jobs=2) agrees with sequential (atol=1e-6)."""
+    pytest.importorskip("joblib")
+
+    cost, _ = _make_cost_and_lambda0()
+    solver = PrimalKKTSolver.from_cost(cost)
+
+    vals_seq, _, _ = solve_support_values(cost, _DIRECTIONS, solver, n_jobs=1)
+    vals_par, _, _ = solve_support_values(cost, _DIRECTIONS, solver, n_jobs=2)
+
+    np.testing.assert_allclose(
+        vals_par, vals_seq, atol=1e-6,
+        err_msg="PrimalKKT parallel and sequential values should be identical"
+    )
+
+
+def test_primal_kkt_raises_without_from_cost():
+    """PrimalKKTSolver built without from_cost raises ValueError."""
+    cost, _ = _make_cost_and_lambda0()
+
+    rng = np.random.default_rng(0)
+    n_data, n_model = 4, 5
+    data_space = EuclideanSpace(n_data)
+    model_space = EuclideanSpace(n_model)
+    G = LinearOperator.from_matrix(
+        model_space, data_space, rng.standard_normal((n_data, n_model))
+    )
+    B = BallSupportFunction(model_space, model_space.zero, 1.0)
+    V = BallSupportFunction(data_space, data_space.zero, 0.5)
+    d_tilde = data_space.zero
+
+    raw_solver = PrimalKKTSolver(B, V, G, d_tilde)
+
+    with pytest.raises(ValueError, match="from_cost"):
+        solve_support_values(cost, _DIRECTIONS, raw_solver)

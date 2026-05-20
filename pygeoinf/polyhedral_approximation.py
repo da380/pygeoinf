@@ -45,11 +45,7 @@ from __future__ import annotations
 import numpy as np
 
 from .subsets import HalfSpace, PolyhedralSet
-
-
-def _is_primal_kkt_solver(solver) -> bool:
-    """Check if solver is a PrimalKKTSolver."""
-    return type(solver).__name__ == "PrimalKKTSolver"
+from .convex_optimisation import solve_support_values
 
 
 class DirectionSampler:
@@ -192,19 +188,20 @@ class PolyhedralApproximation:
         cost_function: A :class:`~pygeoinf.backus_gilbert.DualMasterCostFunction`
             instance. Its direction is updated in place via ``set_direction``
             before each solve.
-        solver: An optimization routine with a ``solve(x0)`` method that
-            returns a result object with an ``f_best`` attribute (e.g.
-            :class:`~pygeoinf.convex_optimisation.ProximalBundleMethod` or
-            :class:`~pygeoinf.convex_optimisation.SubgradientDescent`). The
-            solver's oracle must be the same object as ``cost_function``.
+        solver: Either a bundle-method solver (ProximalBundleMethod) whose
+            oracle is ``cost_function``, or a
+            :class:`~pygeoinf.convex_optimisation.PrimalKKTSolver` built via
+            :meth:`~pygeoinf.convex_optimisation.PrimalKKTSolver.from_cost`.
+        n_jobs: Number of parallel jobs passed to
+            :func:`~pygeoinf.convex_optimisation.solve_support_values`.
+            ``1`` = sequential; ``-1`` = use all available cores.
     """
 
-    def __init__(self, property_space, cost_function, solver, property_operator=None) -> None:
+    def __init__(self, property_space, cost_function, solver, n_jobs: int = 1) -> None:
         self._property_space = property_space
         self._cost = cost_function
         self._solver = solver
-        self._property_operator = property_operator  # for PrimalKKTSolver
-        self._is_primal_kkt = _is_primal_kkt_solver(solver)
+        self._n_jobs = n_jobs
         # Maps tuple(rounded unit direction) -> h_U(q) value
         self._cache: dict[tuple, float] = {}
 
@@ -259,7 +256,9 @@ class PolyhedralApproximation:
 
         Directions are normalized to unit length. Near-duplicates (within
         a rounded 12-decimal-place tolerance) of already-cached directions
-        are skipped without re-solving.
+        are skipped without re-solving. New directions are batch-solved via
+        :func:`~pygeoinf.convex_optimisation.solve_support_values`,
+        using ``n_jobs`` parallel workers.
 
         Args:
             directions: Array of shape ``(n, dim)`` or ``(dim,)`` containing
@@ -271,11 +270,28 @@ class PolyhedralApproximation:
             raise ValueError("Direction array contains a zero vector.")
         directions = directions / norms
 
+        new_q_vecs = []
+        new_keys = []
         for q_vec in directions:
             key = tuple(np.round(q_vec, 12))
-            if key in self._cache:
-                continue
-            self._cache[key] = self._solve_bound(q_vec)
+            if key not in self._cache:
+                new_q_vecs.append(q_vec)
+                new_keys.append(key)
+
+        if not new_q_vecs:
+            return
+
+        new_qs = [
+            self._property_space.from_components(q_vec) for q_vec in new_q_vecs
+        ]
+        is_bundle = type(self._solver).__name__ != "PrimalKKTSolver"
+        lambda0 = self._cost.domain.zero if is_bundle else None
+        values, _, _ = solve_support_values(
+            self._cost, new_qs, self._solver, lambda0, n_jobs=self._n_jobs
+        )
+
+        for key, h_val in zip(new_keys, values):
+            self._cache[key] = float(h_val)
 
     def as_polyhedral_set(self) -> PolyhedralSet:
         """Return the current approximation as a :class:`~pygeoinf.subsets.PolyhedralSet`.
@@ -383,33 +399,3 @@ class PolyhedralApproximation:
             self.as_polyhedral_set(), on_subspace=subspace, **kwargs
         )
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _solve_bound(self, q_vec: np.ndarray) -> float:
-        """Solve for h_U(q) using either PrimalKKTSolver or bundle method.
-
-        Args:
-            q_vec: Unit vector in property space (numpy array).
-
-        Returns:
-            The support value $h_U(q) = \\inf_\\lambda \\varphi(\\lambda; q)$.
-        """
-        q = self._property_space.from_components(q_vec)
-
-        if self._is_primal_kkt:
-            # PrimalKKTSolver: solve the primal problem directly
-            # c = T^* q in model space
-            # h_U(q) = max_u <c, u> subject to feasible set = <c, u*>
-            c = self._property_operator.adjoint(q)
-            result = self._solver.solve(c)
-            model_space = self._property_operator.domain
-            h_val = float(model_space.inner_product(c, result.m))
-            return h_val
-        else:
-            # DualMasterCostFunction + bundle method
-            self._cost.set_direction(q)
-            x0 = self._cost.domain.zero
-            result = self._solver.solve(x0)
-            return float(result.f_best)

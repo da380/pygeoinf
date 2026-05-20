@@ -131,7 +131,7 @@ def test_forward_operator_constant_field_is_reference_weighted_path_average():
     This verifies that the forward operator now implements the remaining
     inverse-reference-velocity factor required by the linearized physics.
     """
-    from sphere_dli_example import build_forward_operator, build_model_space, reference_phase_velocity
+    from sphere_dli_example import OMEGA, build_forward_operator, build_model_space, reference_phase_velocity
 
     model_space = build_model_space()
     forward_operator, paths = build_forward_operator(model_space, n_sources=2, n_receivers=3, seed=0)
@@ -148,7 +148,8 @@ def test_forward_operator_constant_field_is_reference_weighted_path_average():
         points, weights = model_space.geodesic_quadrature(point_1, point_2, n_points=n_points)
         arc_length = float(np.sum(weights))
         expected.append(
-            c
+            -OMEGA
+            * c
             * np.sum(
                 [weight / reference_phase_velocity(point) for point, weight in zip(points, weights)]
             )
