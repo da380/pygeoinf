@@ -49,6 +49,7 @@ approx = PolyhedralApproximation(
 The class detects solver type at construction via `_is_primal_kkt_solver()`:
 
 - **PrimalKKTSolver** (fast, direct): Given c = T*q, solves primal KKT system directly returning optimal u*. Bound h_U(q) = <c, u*>. No iteration, basis-free.
+    The two-multiplier KKT solve uses `fsolve` with alternate starting guesses, and now falls back to a scaled `least_squares` solve only when those root-finding attempts fail. For ball priors, the Woodbury matrix `P = G G*` is formed from dense factors when available. If the model space exposes a diagonal inverse mass operator and the data space is Euclidean, the solver uses the direct mass-weighted formula `P = G R_H^{-1} G^T`; otherwise it falls back to dense `G` and `G*` factors. For ball-prior/ball-data problems, it precomputes the eigendecomposition of `P` and reuses it for all Woodbury solves, avoiding repeated dense Cholesky factorizations inside the nonlinear KKT root solve. Set `PYGEOINF_KKT_SETUP_THREADS` to temporarily raise BLAS threads for dense setup products/eigendecompositions while keeping per-direction solves independently controlled. Avoid `PYGEOINF_KKT_PARALLEL_BACKEND=threading` for this path on europa; process workers are safer.
 - **DualMasterCostFunction + bundle** (iterative): Sets direction q, minimizes φ(λ; q) over data space λ, returns f_best as bound.
 
 **Deduplication:** Directions normalized to unit length; cached by 12-decimal rounding tuple to skip near-duplicates.

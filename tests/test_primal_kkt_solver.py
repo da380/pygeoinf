@@ -143,6 +143,45 @@ def _make_mass_weighted_tight_fixture(
     raise RuntimeError("Could not generate a both-active mass-weighted fixture")
 
 
+def test_primal_kkt_ball_prior_gram_matrix_uses_mass_weighted_riesz_inverse():
+    """The ball-prior Gram matrix must include the model-space Riesz inverse."""
+    fx = _make_mass_weighted_tight_fixture()
+    solver = PrimalKKTSolver(fx["B"], fx["V"], fx["G"], fx["d_tilde"])
+
+    G_mat = np.asarray(fx["G"].matrix(dense=True), dtype=float)
+    inverse_mass_diagonal = fx["ms"].inverse_mass_operator.extract_diagonal(
+        galerkin=False
+    )
+    expected = (G_mat * inverse_mass_diagonal[np.newaxis, :]) @ G_mat.T
+
+    np.testing.assert_allclose(solver._P_mat, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_primal_kkt_ball_ball_spectral_woodbury_matches_cholesky_path():
+    """The spectral ball/ball Woodbury solve must match dense Cholesky."""
+    fx = _make_mass_weighted_tight_fixture()
+    solver = PrimalKKTSolver(fx["B"], fx["V"], fx["G"], fx["d_tilde"])
+
+    lam = 1.7
+    mu = 0.4
+    spectral_solution = solver._woodbury_solve(lam, mu, fx["c"])
+
+    eigvals = solver._P_eigvals
+    eigvecs = solver._P_eigvecs
+    solver._P_eigvals = None
+    solver._P_eigvecs = None
+    cholesky_solution = solver._woodbury_solve(lam, mu, fx["c"])
+    solver._P_eigvals = eigvals
+    solver._P_eigvecs = eigvecs
+
+    np.testing.assert_allclose(
+        fx["ms"].to_components(spectral_solution),
+        fx["ms"].to_components(cholesky_solution),
+        rtol=1e-11,
+        atol=1e-11,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------

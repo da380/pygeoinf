@@ -6,14 +6,68 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 from numpy.testing import assert_allclose
 
 from pygeoinf.hilbert_space import EuclideanSpace
 
 
-WORK_DIR = Path(__file__).resolve().parents[1] / "work"
-if str(WORK_DIR) not in sys.path:
-    sys.path.insert(0, str(WORK_DIR))
+SPHERE_DLI_DIR = Path(__file__).resolve().parents[2] / "sphere_dli_paper"
+if str(SPHERE_DLI_DIR) not in sys.path:
+    sys.path.insert(0, str(SPHERE_DLI_DIR))
+
+
+def test_gaussian_noise_ball_radius_matches_chi_square_quantile():
+    from sphere_dli_example import gaussian_noise_ball_radius
+
+    radius = gaussian_noise_ball_radius(0.001, 100, 0.9973002039367398)
+
+    assert_allclose(radius, 0.011993572212187787, rtol=0.0, atol=1e-15)
+
+
+def test_gaussian_noise_ball_radius_validates_arguments():
+    from sphere_dli_example import gaussian_noise_ball_radius
+
+    with pytest.raises(ValueError, match="sigma_noise"):
+        gaussian_noise_ball_radius(-1.0, 100, 0.99)
+    with pytest.raises(ValueError, match="data_dim"):
+        gaussian_noise_ball_radius(1.0, 0, 0.99)
+    with pytest.raises(ValueError, match="confidence"):
+        gaussian_noise_ball_radius(1.0, 100, 1.0)
+
+
+def test_generate_synthetic_data_does_not_clip_gaussian_noise(monkeypatch):
+    from sphere_dli_example import generate_synthetic_data
+
+    class FakeRng:
+        def integers(self, *_args, **_kwargs):
+            return 1
+
+        def normal(self, loc, scale, size):
+            return np.array([-4.0, 0.0, 3.5]) * scale + loc
+
+    class FakePrior:
+        def sample(self):
+            return object()
+
+    class FakeModelSpace:
+        def point_value_scaled_heat_kernel_gaussian_measure(self, _scale):
+            return FakePrior()
+
+    class FakeForwardOperator:
+        def __call__(self, _model):
+            return np.zeros(3)
+
+    monkeypatch.setattr(np.random, "default_rng", lambda _seed: FakeRng())
+
+    _truth, data = generate_synthetic_data(
+        FakeModelSpace(),
+        FakeForwardOperator(),
+        sigma_noise=0.02,
+        seed=7,
+    )
+
+    assert np.max(np.abs(data)) > 3.0 * 0.02
 
 
 def test_model_space_builds():
@@ -48,7 +102,7 @@ def test_cap_property_operator_constant_field():
     assert_allclose(cap_values, np.ones(len(DEFAULT_TARGET_LATLON)), rtol=1e-3, atol=1e-3)
 
 
-def test_cap_property_operator_quadrature_default_is_seed_deterministic():
+def test_cap_property_operator_exact_default_is_seed_deterministic():
     from sphere_dli_example import build_cap_property_operator, build_model_space
 
     model_space = build_model_space(min_degree=16)

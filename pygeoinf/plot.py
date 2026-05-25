@@ -2,6 +2,8 @@
 Plotting module for pygeoinf measures and distributions.
 """
 
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 from matplotlib.axes import Axes

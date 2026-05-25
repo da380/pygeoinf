@@ -238,17 +238,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         for i, form in enumerate(forms):
             matrix[i, :] = form.components
 
-        def mapping(x: Any) -> np.ndarray:
-            cx = domain.to_components(x)
-            cy = matrix @ cx
-            return cy
-
-        def dual_mapping(yp: Any) -> Any:
-            cyp = codomain.dual.to_components(yp)
-            cxp = matrix.T @ cyp
-            return domain.dual.from_components(cxp)
-
-        return LinearOperator(domain, codomain, mapping, dual_mapping=dual_mapping)
+        return LinearOperator.from_matrix(domain, codomain, matrix)
 
     @staticmethod
     def from_linear_form(form: "LinearForm") -> "LinearOperator":

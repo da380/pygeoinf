@@ -9,13 +9,14 @@ that can provide a subgradient oracle via form.subgradient(x).
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Optional, List, Tuple, TYPE_CHECKING, runtime_checkable, Protocol
 
 import numpy as np
 from scipy.optimize import minimize
 
 from .nonlinear_forms import NonLinearForm
-from .convex_analysis import BallSupportFunction, EllipsoidSupportFunction
+from .convex_analysis import BallSupportFunction, EllipsoidSupportFunction, PointSupportFunction
 
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
@@ -1398,6 +1399,7 @@ def solve_support_values(
     *,
     warm_start: bool = True,
     n_jobs: int = 1,
+    verbose: bool = False,
 ):
     """Compute support function values for multiple directions.
 
@@ -1450,7 +1452,7 @@ def solve_support_values(
                 "PrimalKKTSolver must be constructed via PrimalKKTSolver.from_cost(cost) "
                 "to be used with solve_support_values."
             )
-        return _solve_support_values_primal_kkt(solver, qs, n_jobs=n_jobs)
+        return _solve_support_values_primal_kkt(solver, qs, n_jobs=n_jobs, verbose=verbose)
     else:
         if lambda0 is None:
             raise ValueError(
@@ -1506,25 +1508,69 @@ def _solve_support_values_bundle(cost, qs, solver, lambda0, *, warm_start, n_job
     return np.array(values_list), lambdas, diagnostics
 
 
-def _solve_support_values_primal_kkt(solver, qs, *, n_jobs):
+def _solve_support_values_primal_kkt(solver, qs, *, n_jobs, verbose=False):
     """PrimalKKTSolver implementation used by solve_support_values."""
+    import time
     T = solver._T
     model_space = solver._model_space
+    n_total = len(qs)
 
     if n_jobs > 1:
         try:
+            import copy
             from joblib import Parallel, delayed
 
-            def _solve_one(solver_inst, q):
-                c = T.adjoint(q)
+            def _solve_one(solver_inst, q, T_op, model_space_inst, idx):
+                t0 = time.perf_counter()
+                c = T_op.adjoint(q)
                 result = solver_inst.solve(c)
-                h_val = float(model_space.inner_product(c, result.m))
-                return h_val, result.multipliers[0], result
+                h_val = float(model_space_inst.inner_product(c, result.m))
+                return idx, h_val, result.multipliers[0], result, time.perf_counter() - t0
 
-            results_raw = Parallel(n_jobs=n_jobs)(
-                delayed(_solve_one)(solver, q) for q in qs
+            backend = os.environ.get("PYGEOINF_KKT_PARALLEL_BACKEND")
+            use_shared_solver = (
+                backend == "threading"
+                and getattr(solver, "_warm_start_disabled", False)
             )
-            values_list, lambdas, diagnostics = zip(*results_raw)
+
+            def _solver_for_task():
+                if use_shared_solver:
+                    return solver
+                return copy.deepcopy(solver)
+
+            parallel_kwargs = {
+                "n_jobs": n_jobs,
+                "return_as": "generator_unordered",
+            }
+            if backend:
+                parallel_kwargs["backend"] = backend
+
+            gen = Parallel(**parallel_kwargs)(
+                delayed(_solve_one)(_solver_for_task(), q, T, model_space, i)
+                for i, q in enumerate(qs)
+            )
+
+            results_by_idx = {}
+            t_start = time.perf_counter()
+            done = 0
+            for idx, h_val, lam, diag, elapsed_one in gen:
+                results_by_idx[idx] = (h_val, lam, diag)
+                done += 1
+                if verbose:
+                    wall = time.perf_counter() - t_start
+                    avg = wall / done
+                    eta = avg * (n_total - done)
+                    converged = "✓" if diag.converged else "✗"
+                    print(
+                        f"  [{done:2d}/{n_total}] dir {idx+1:2d}  "
+                        f"h={h_val:+.4f}  {converged}  "
+                        f"solve {elapsed_one:.1f}s  "
+                        f"wall {wall:.0f}s  ETA {eta:.0f}s",
+                        flush=True,
+                    )
+
+            ordered = [results_by_idx[i] for i in range(n_total)]
+            values_list, lambdas, diagnostics = zip(*ordered)
             return np.array(values_list), list(lambdas), list(diagnostics)
 
         except ImportError:
@@ -2376,7 +2422,13 @@ class PrimalKKTSolver:
             )
 
         # --- Validate V ---
-        if isinstance(V, BallSupportFunction):
+        if isinstance(V, PointSupportFunction):
+            # Equality data constraint: G u = d̃  (V = {0}, r = 0)
+            self._equality_data = True
+            self._data_is_ball = True   # A_V = I (unused in equality path)
+            self._A_V_op = V.primal_domain.identity_operator()
+        elif isinstance(V, BallSupportFunction):
+            self._equality_data = False
             self._data_is_ball = True
             self._A_V_op = V.primal_domain.identity_operator()
         elif isinstance(V, EllipsoidSupportFunction):
@@ -2385,12 +2437,13 @@ class PrimalKKTSolver:
                     "EllipsoidSupportFunction V must supply inverse_operator "
                     "(A^{-1}) to be used as a PrimalKKTSolver data set."
                 )
+            self._equality_data = False
             self._data_is_ball = False
             self._A_V_op = V._A
         else:
             raise TypeError(
-                f"V must be BallSupportFunction or EllipsoidSupportFunction, "
-                f"got {type(V).__name__}"
+                f"V must be BallSupportFunction, EllipsoidSupportFunction, or "
+                f"PointSupportFunction, got {type(V).__name__}"
             )
 
         self._B = B
@@ -2405,22 +2458,22 @@ class PrimalKKTSolver:
         M = self._data_space.dim
         self._M = M
         self._eta = float(B._radius)
-        self._r = float(V._radius)
+        self._r = 0.0 if self._equality_data else float(V._radius)
         self._u0 = B._center
 
         # --- G_adj_AV operator (G.adjoint ∘ A_V : D → H) ---
-        # For ball V: A_V = I_D, so G_adj_AV = G.adjoint
-        # For ellipsoid V: G_adj_AV = G.adjoint @ V._A  (LinearOperator composition)
+        # For ball/point V: A_V = I_D, so G_adj_AV = G.adjoint
+        # For ellipsoid V: G_adj_AV = G.adjoint @ V._A
         if self._data_is_ball:
             self._G_adj_AV = G.adjoint
         else:
             self._G_adj_AV = G.adjoint @ V._A
 
-        # --- Precomputed H-vectors ---
+        # --- Precomputed H-vectors (used in inequality path) ---
         self._A_B_u0 = self._A_B_op(self._u0)       # H-vector
         self._G_adj_AV_d = self._G_adj_AV(d_tilde)  # H-vector
 
-        # --- A_V^{-1} matrix (M×M, data space only) ---
+        # --- A_V^{-1} matrix (M×M, unused in equality path) ---
         if self._data_is_ball:
             self._AV_inv_mat = np.eye(M)
         else:
@@ -2428,16 +2481,108 @@ class PrimalKKTSolver:
 
         # --- P_mat = G A_B^{-1} G* (M×M, data space probing only!) ---
         if self._prior_is_ball:
-            self._P_mat = (G @ G.adjoint).matrix(dense=True)
+            try:
+                self._P_mat = self._ball_prior_gram_matrix(G)
+            except (AttributeError, TypeError, ValueError, NotImplementedError):
+                self._P_mat = (G @ G.adjoint).matrix(dense=True)
         else:
             self._P_mat = (G @ B._A_inv @ G.adjoint).matrix(dense=True)
 
-        # --- Warm-start state ---
+        self._P_eigvals: np.ndarray | None = None
+        self._P_eigvecs: np.ndarray | None = None
+        if self._prior_is_ball and self._data_is_ball and not self._equality_data:
+            self._precompute_ball_ball_spectrum()
+
+        # --- Equality-constraint precomputation ---
+        if self._equality_data:
+            self._precompute_equality_data()
+
+        # --- Warm-start state (inequality path only) ---
         self._lambda_prev: float = 1.0
         self._mu_prev: float = 0.0
         self._has_warm_start: bool = False
+        self._warm_start_disabled: bool = False
         # Property operator T, set via from_cost for use in solve_support_values
         self._T: "LinearOperator | None" = None
+
+    @staticmethod
+    def _matmul_with_optional_setup_threads(
+        left: np.ndarray,
+        right: np.ndarray,
+    ) -> np.ndarray:
+        setup_threads = int(os.environ.get("PYGEOINF_KKT_SETUP_THREADS", "0"))
+        if setup_threads <= 0:
+            return left @ right
+
+        try:
+            from threadpoolctl import threadpool_limits
+        except ImportError:
+            return left @ right
+
+        with threadpool_limits(limits=setup_threads, user_api="blas"):
+            return left @ right
+
+    @staticmethod
+    def _eigh_with_optional_setup_threads(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        setup_threads = int(os.environ.get("PYGEOINF_KKT_SETUP_THREADS", "0"))
+        if setup_threads <= 0:
+            return np.linalg.eigh(matrix)
+
+        try:
+            from threadpoolctl import threadpool_limits
+        except ImportError:
+            return np.linalg.eigh(matrix)
+
+        with threadpool_limits(limits=setup_threads, user_api="blas"):
+            return np.linalg.eigh(matrix)
+
+    @staticmethod
+    def _ball_prior_gram_matrix(G: "LinearOperator") -> np.ndarray:
+        r"""Build $P = G G^*$ for a Hilbert-ball prior.
+
+        If the data space is Euclidean and the model space exposes a diagonal
+        inverse mass operator, the adjoint matrix is
+        $R_H^{-1} G^T$.  In that common Sobolev/mass-weighted case we can form
+        $G R_H^{-1} G^T$ directly from the stored forward matrix and avoid
+        materializing ``G.adjoint.matrix(dense=True)`` column by column.
+        """
+        G_mat = np.asarray(G.matrix(dense=True), dtype=float)
+
+        try:
+            from .hilbert_space import EuclideanSpace
+
+            inverse_mass_operator = G.domain.inverse_mass_operator
+            inverse_mass_diagonal = np.asarray(
+                inverse_mass_operator.extract_diagonal(galerkin=False),
+                dtype=float,
+            )
+            data_is_euclidean = isinstance(G.codomain, EuclideanSpace)
+        except (AttributeError, TypeError, ValueError, NotImplementedError):
+            data_is_euclidean = False
+            inverse_mass_diagonal = None
+
+        if (
+            data_is_euclidean
+            and inverse_mass_diagonal is not None
+            and inverse_mass_diagonal.shape == (G.domain.dim,)
+        ):
+            weighted_G = G_mat * inverse_mass_diagonal[np.newaxis, :]
+            return PrimalKKTSolver._matmul_with_optional_setup_threads(
+                weighted_G,
+                G_mat.T,
+            )
+
+        G_adj_mat = np.asarray(G.adjoint.matrix(dense=True), dtype=float)
+        return PrimalKKTSolver._matmul_with_optional_setup_threads(
+            G_mat,
+            G_adj_mat,
+        )
+
+    def _precompute_ball_ball_spectrum(self) -> None:
+        P_sym = 0.5 * (self._P_mat + self._P_mat.T)
+        eigvals, eigvecs = self._eigh_with_optional_setup_threads(P_sym)
+        self._P_eigvals = np.maximum(eigvals, 0.0)
+        self._P_eigvecs = eigvecs
 
     @classmethod
     def from_cost(cls, cost, /, *, fsolve_tol: float = 1e-10, fsolve_maxfev: int = 200):
@@ -2475,6 +2620,154 @@ class PrimalKKTSolver:
         )
         instance._T = cost._T
         return instance
+
+    def disable_warm_start(self) -> None:
+        """Reset warm-start state to ensure fresh solves from default initial guesses.
+
+        Useful for benchmarking or when reproducibility across sequential/parallel
+        is required. After calling this, each solve() starts with default initial
+        guesses (lam_phys, 1e-3) rather than previous solution. Warm-start is
+        permanently disabled until a new solver is created.
+        """
+        self._lambda_prev = 1.0
+        self._mu_prev = 0.0
+        self._has_warm_start = False
+        self._warm_start_disabled = True
+
+    def _precompute_equality_data(self) -> None:
+        r"""Precompute the data-mismatch correction $a_H$ for the equality path.
+
+        With $V = \{0\}$ the data constraint is $G u = \tilde{d}$
+        (equality).  Any feasible $u$ can be written as
+
+        .. math::
+
+            u = u_0 + a_H + n_H / \lambda
+
+        where $a_H$ is the minimum-$A_B$-norm correction that shifts $u_0$
+        onto the hyperplane $\{G u = \tilde{d}\}$:
+
+        .. math::
+
+            a_H = A_B^{-1} G^* P^{-1}(\tilde{d} - G u_0),
+            \qquad P = G A_B^{-1} G^*.
+
+        and $n_H / \lambda$ is the direction that maximises $\langle c, u \rangle$
+        subject to the prior constraint (computed per solve in
+        :meth:`_solve_equality`).
+        """
+        from scipy.linalg import cho_factor, cho_solve
+
+        ms = self._model_space
+        ds = self._data_space
+
+        Gu0_D = self._G(self._u0)
+        rhs_D = ds.subtract(self._d_tilde, Gu0_D)
+        rhs_comps = np.asarray(ds.to_components(rhs_D), dtype=float)
+
+        cho_P = cho_factor(self._P_mat + 1e-14 * np.eye(self._M))
+        z_comps = cho_solve(cho_P, rhs_comps)
+        z_D = ds.from_components(z_comps)
+
+        Gstar_z = self._G.adjoint(z_D)
+        self._a_H = self._A_B_inv_op(Gstar_z)
+        self._a_H_sq = float(ms.inner_product(self._A_B_op(self._a_H), self._a_H))
+
+    def _solve_equality(self, c: "Vector") -> "KKTResult":
+        r"""Solve the equality-constrained support problem analytically.
+
+        Computes
+
+        .. math::
+
+            h_U(q) = \sup_{u}\ \langle c,\, u \rangle
+            \quad \text{s.t.} \quad
+            \|u - u_0\|_B \le \eta,\quad G u = \tilde{d}
+
+        in closed form via a 1-D quadratic in $t = 1/\lambda$.
+
+        **Decomposition.**  Every feasible $u$ satisfies
+
+        .. math::
+
+            u - u_0 = \frac{n_H}{\lambda} + a_H
+
+        where $a_H = A_B^{-1} G^* P^{-1}(\tilde{d} - G u_0)$ (precomputed)
+        and $n_H = A_B^{-1}(c - G^* P^{-1} G A_B^{-1} c)$ is the
+        null-space projection of $c$ (computed here).  Substituting into
+        the prior constraint $\|u - u_0\|_{A_B}^2 = \eta^2$ yields
+
+        .. math::
+
+            \|n_H\|_{A_B}^2\, t^2
+            + 2\langle n_H,\, a_H\rangle_{A_B}\, t
+            + \bigl(\|a_H\|_{A_B}^2 - \eta^2\bigr) = 0,
+            \quad t = 1/\lambda.
+
+        The larger positive root $t^*$ maximises $\langle c, u \rangle$
+        because the objective is $\langle c, u_0\rangle
+        + \|n_H\|_{A_B}^2 \cdot t + \langle c, a_H\rangle$
+        and $\|n_H\|_{A_B}^2 \ge 0$.
+
+        Returns:
+            :class:`KKTResult` with ``converged=True`` when the quadratic
+            has a non-negative discriminant.  ``multipliers[1]`` is
+            ``float("inf")`` to signal that the data multiplier is not a
+            scalar (it is an $M$-dimensional vector in the equality case).
+        """
+        from scipy.linalg import cho_factor, cho_solve
+
+        ms = self._model_space
+        ds = self._data_space
+        EPS = 1e-12
+
+        # n_H = A_B⁻¹(c - G* P⁻¹ G A_B⁻¹ c)  [null-space component of c]
+        w_H = self._A_B_inv_op(c)
+        p_comps = np.asarray(ds.to_components(self._G(w_H)), dtype=float)
+        cho_P = cho_factor(self._P_mat + 1e-14 * np.eye(self._M))
+        q_comps = cho_solve(cho_P, p_comps)
+        q_D = ds.from_components(q_comps)
+        n_H = ms.subtract(w_H, self._A_B_inv_op(self._G.adjoint(q_D)))
+
+        n_sq  = float(ms.inner_product(self._A_B_op(n_H), n_H))
+        dot_na = float(ms.inner_product(self._A_B_op(n_H), self._a_H))
+        a_sq  = self._a_H_sq
+
+        # Prior-inactive branch: c entirely in range(G*) → u uniquely determined
+        if n_sq < EPS * max(a_sq, 1.0):
+            u_star = ms.add(self._u0, self._a_H)
+            feasible = a_sq <= self._eta ** 2 * (1.0 + EPS)
+            return KKTResult(
+                m=u_star,
+                multipliers=(0.0, float("inf")),
+                converged=feasible,
+                num_iterations=1,
+            )
+
+        # Quadratic: n_sq * t² + 2*dot_na * t + (a_sq - η²) = 0
+        disc = dot_na ** 2 - n_sq * (a_sq - self._eta ** 2)
+        if disc < 0.0:
+            # Numerically infeasible (data and prior incompatible)
+            u_star = ms.add(self._u0, self._a_H)
+            return KKTResult(
+                m=u_star,
+                multipliers=(0.0, float("inf")),
+                converged=False,
+                num_iterations=1,
+            )
+
+        t_star = (-dot_na + np.sqrt(disc)) / n_sq
+        lam_star = 1.0 / t_star if t_star > EPS else float("inf")
+        u_star = ms.add(
+            self._u0,
+            ms.add(ms.multiply(t_star, n_H), self._a_H),
+        )
+        return KKTResult(
+            m=u_star,
+            multipliers=(lam_star, float("inf")),
+            converged=True,
+            num_iterations=1,
+        )
 
     def _woodbury_solve(self, lam: float, mu: float, c: "Vector") -> "Vector":
         r"""Return $u^*(\lambda, \mu)$ entirely in abstract Hilbert-space vectors.
@@ -2521,10 +2814,15 @@ class PrimalKKTSolver:
         p_D = self._G(w_H)
         p_comps = ds.to_components(p_D)
 
-        # K = (1/μ) A_V^{-1} + (1/λ) P_mat   [M×M]
-        K_mat = (1.0 / mu) * self._AV_inv_mat + (1.0 / lam) * self._P_mat
-        cho_decomp = cho_factor(K_mat)
-        z_comps = cho_solve(cho_decomp, p_comps)
+        if self._P_eigvals is not None and self._P_eigvecs is not None:
+            qt_p = self._P_eigvecs.T @ p_comps
+            denom = (1.0 / mu) + (1.0 / lam) * self._P_eigvals
+            z_comps = self._P_eigvecs @ (qt_p / denom)
+        else:
+            # K = (1/μ) A_V^{-1} + (1/λ) P_mat   [M×M]
+            K_mat = (1.0 / mu) * self._AV_inv_mat + (1.0 / lam) * self._P_mat
+            cho_decomp = cho_factor(K_mat)
+            z_comps = cho_solve(cho_decomp, p_comps)
         z_D = ds.from_components(z_comps)
 
         # correction = (1/λ) A_B_inv(G*(z))   [abstract H]
@@ -2590,6 +2888,12 @@ class PrimalKKTSolver:
             :class:`KKTResult` with the optimal model vector $u^*$,
             KKT multipliers, convergence flag, and iteration count.
         """
+        # ------------------------------------------------------------------
+        # Equality-data branch (V = {0}): closed-form 1-D quadratic solve
+        # ------------------------------------------------------------------
+        if self._equality_data:
+            return self._solve_equality(c)
+
         from scipy.optimize import fsolve
 
         ms = self._model_space
@@ -2635,12 +2939,12 @@ class PrimalKKTSolver:
             )
             lam_phys = max(c_norm_AB / self._eta, 1e-4)
 
-        if self._has_warm_start and self._lambda_prev > 1e-4:
+        if self._has_warm_start and not self._warm_start_disabled and self._lambda_prev > 1e-4:
             lam0 = self._lambda_prev
         else:
             lam0 = lam_phys
 
-        if self._has_warm_start and self._mu_prev > 1e-8:
+        if self._has_warm_start and not self._warm_start_disabled and self._mu_prev > 1e-8:
             mu0 = self._mu_prev
         else:
             mu0 = 1e-3
@@ -2686,6 +2990,34 @@ class PrimalKKTSolver:
                     sol, info, ier = alt_sol, alt_info, alt_ier
                     break
 
+        if ier != 1:
+            from scipy.optimize import least_squares
+
+            prior_residual_scale = max(self._eta ** 2, 1e-30)
+            data_residual_scale = max(self._r ** 2, 1e-30)
+
+            def _residual_log_scaled(log_x: np.ndarray) -> np.ndarray:
+                log_x_safe = np.clip(log_x, -30.0, 25.0)
+                lam = float(np.exp(log_x_safe[0]))
+                mu = float(np.exp(log_x_safe[1]))
+                r1, r2 = self._residuals(lam, mu, c)
+                return np.array([r1 / prior_residual_scale, r2 / data_residual_scale])
+
+            ls_result = least_squares(
+                _residual_log_scaled,
+                np.clip(sol, -30.0, 25.0),
+                bounds=([-30.0, -30.0], [25.0, 25.0]),
+                xtol=self._fsolve_tol,
+                ftol=self._fsolve_tol,
+                gtol=self._fsolve_tol,
+                max_nfev=self._fsolve_maxfev,
+            )
+            scaled_residual = _residual_log_scaled(ls_result.x)
+            if ls_result.success and np.linalg.norm(scaled_residual, ord=np.inf) <= 1e-6:
+                sol = ls_result.x
+                info = {"nfev": ls_result.nfev}
+                ier = 1
+
         sol_safe = np.clip(sol, -30.0, 25.0)
         lam_sol = float(np.exp(sol_safe[0]))
         mu_sol = float(np.exp(sol_safe[1]))
@@ -2693,9 +3025,10 @@ class PrimalKKTSolver:
 
         u_star = self._woodbury_solve(lam_sol, mu_sol, c)
 
-        self._lambda_prev = lam_sol
-        self._mu_prev = mu_sol
-        self._has_warm_start = converged
+        if not self._warm_start_disabled:
+            self._lambda_prev = lam_sol
+            self._mu_prev = mu_sol
+            self._has_warm_start = converged
 
         return KKTResult(
             m=u_star,

@@ -126,8 +126,12 @@ def download_usgs_earthquakes(
 
     if min_magnitude is not None:
         params["minmagnitude"] = min_magnitude
-    if start_time is not None:
-        params["starttime"] = start_time
+    # Default to a 20-year window so the catalog is rich enough for any
+    # reasonable n_events request, even at high magnitude thresholds.
+    if start_time is None:
+        from datetime import datetime, timedelta
+        start_time = (datetime.utcnow() - timedelta(days=365 * 20)).strftime("%Y-%m-%d")
+    params["starttime"] = start_time
     if end_time is not None:
         params["endtime"] = end_time
     if min_depth is not None:

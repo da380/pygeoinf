@@ -4,7 +4,7 @@
 
 ## Scope
 
-- Work script: `pygeoinf/work/sphere_dli_example.py`
+- Paper script: `sphere_dli_paper/sphere_dli_example.py`
 - Benchmark script: `pygeoinf/work/sphere_cap_monte_carlo_benchmark.py`
 - Test file: `pygeoinf/tests/test_sphere_dli_example.py`
 - Related core API: `pygeoinf/pygeoinf/symmetric_space/symmetric_space.py` and `pygeoinf/pygeoinf/symmetric_space/sphere.py`
@@ -21,7 +21,8 @@ End-to-end example and test bench for the norm-ball-specialised DLI solver descr
 - `SCALE = 0.1` — characteristic length scale in radians (~5.7°)
 - `PRIOR_SCALE = 0.05` — prior energy scale for the heat-kernel Gaussian measure
 - `REFERENCE_VELOCITY_BASE = 1.0`, `REFERENCE_VELOCITY_LATITUDE_PERTURBATION = 0.12`, `REFERENCE_VELOCITY_LONGITUDE_PERTURBATION = 0.08` — smooth positive synthetic background field parameters for `c_0`
-- `N_TARGET = 6`, `N_SOURCES = 5`, `N_RECEIVERS = 10`, `SIGMA_NOISE = 0.02`
+- `N_TARGET = 6`, `N_SOURCES = 300`, `N_RECEIVERS = 30`, `SIGMA_NOISE = 0.001`
+- `DEFAULT_NOISE_CONFIDENCE = 0.9973002039367398` — default confidence level used to turn an iid Gaussian noise model into a Euclidean data-confidence ball.
 - `DEFAULT_TARGET_LATLON`: six (lat°, lon°) target locations spread over the sphere
 
 ## Public API
@@ -34,8 +35,8 @@ All functions are import-safe; no expensive computation runs at module load time
   `Sobolev.from_heat_kernel_prior(PRIOR_SCALE, ORDER, SCALE, power_of_two=True, min_degree=min_degree)`.
 - `reference_phase_velocity(point) -> float`
   Smooth positive synthetic reference phase velocity `c_0(lat, lon)` with mild large-scale latitude/longitude variation.
-- `build_cap_property_operator(model_space, target_latlon_list=DEFAULT_TARGET_LATLON, cap_radius_rad=0.15, n_cap=40, seed=42, method="quadrature", exact=None) -> LinearOperator`
-  Rows use deterministic spherical-cap quadrature by default, assembled via `model_space.geodesic_ball_average(centre, model_space.radius * cap_radius_rad, n_points=n_cap)`. Set `method="exact"` for the analytical spherical-harmonic cap average or `method="monte_carlo"` for the retained random `dirac` average. The legacy `exact` flag is still accepted as a compatibility alias for the old exact/Monte Carlo split.
+- `build_cap_property_operator(model_space, target_latlon_list=DEFAULT_TARGET_LATLON, cap_radius_rad=0.15, n_cap=40, seed=42, method="exact", exact=None) -> LinearOperator`
+  Rows use the analytical spherical-harmonic cap average by default. Set `method="quadrature"` for deterministic spherical-cap quadrature via `model_space.geodesic_ball_average(centre, model_space.radius * cap_radius_rad, n_points=n_cap)`, or `method="monte_carlo"` for the retained random `dirac` average. The legacy `exact` flag is still accepted as a compatibility alias for the old exact/Monte Carlo split and overrides the method value.
 
 Internal helpers: `_latlon_to_unit_xyz`, `_unit_xyz_to_latlon`, `_sample_cap_points`, `_weighted_geodesic_integral_form`.
 
@@ -48,23 +49,29 @@ Core cap-integral additions:
 
 ### Phase 2 — forward operator and synthetic data
 
-- `build_forward_operator(model_space, *, n_sources=N_SOURCES, n_receivers=N_RECEIVERS, seed=0, normalize_by_arclength=True, reference_velocity=reference_phase_velocity) -> (LinearOperator, paths)`
+- `build_forward_operator(model_space, *, n_sources=N_SOURCES, n_receivers=N_RECEIVERS, seed=0, paths=None, normalize_by_arclength=True, reference_velocity=reference_phase_velocity, omega=OMEGA) -> (LinearOperator, paths)`
   Fetches real IRIS GSN stations and random USGS earthquakes (≥ M6.5). Builds a reference-weighted operator by sampling `1 / c_0` along each geodesic quadrature rule and accumulating `weight / c_0(point) * dirac(point)` components. If `normalize_by_arclength=True`, divides each row by total arc length so rows are reference-weighted path averages rather than raw integrals.
 - `generate_synthetic_data(model_space, forward_operator, *, sigma_noise=SIGMA_NOISE, seed=42) -> (truth_model, data_vector)`
-  Samples truth from the heat-kernel prior, adds Gaussian noise clipped to ±3σ.
+  Samples truth from the heat-kernel prior and adds an unclipped iid Gaussian noise vector with component standard deviation `sigma_noise`.
+- `gaussian_noise_ball_radius(sigma_noise, data_dim, confidence=DEFAULT_NOISE_CONFIDENCE) -> float`
+  Returns `sigma_noise * sqrt(chi2.ppf(confidence, data_dim))`, the radius of the Euclidean ball that contains an iid Gaussian noise vector with probability `confidence`.
 
 ### Phase 3 — DLI solve
 
-- `solve_dli(model_space, forward_operator, property_operator, truth_model, data_vector, *, sigma_noise=SIGMA_NOISE, prior_radius_multiplier=3.0, max_iter=300, tol=1e-5) -> dict`
+- `solve_dli(model_space, forward_operator, property_operator, truth_model, data_vector, *, sigma_noise=SIGMA_NOISE, noise_confidence=DEFAULT_NOISE_CONFIDENCE, prior_radius_multiplier=3.0, fsolve_tol=1e-10, fsolve_maxfev=1000, n_jobs=DLI_N_JOBS, use_warm_start=False) -> dict`
   Returns `{'lower': ndarray, 'upper': ndarray, 'true_values': ndarray}`.
   Prior ball: `BallSupportFunction(model_space, model_space.zero, 3*||truth||)`.
-  Data ball: `BallSupportFunction(data_space, data_space.zero, 3*sigma_noise*sqrt(n_paths))`.
+  Data ball: `BallSupportFunction(data_space, data_space.zero, gaussian_noise_ball_radius(sigma_noise, n_paths, noise_confidence))`.
   Solver: `PrimalKKTSolver`; each support direction `q` is solved via
   `kkt_solver.solve(property_operator.adjoint(q))` for both ±eᵢ directions.
+  For large paper runs, use explicit process workers rather than joblib threading;
+  `n_jobs=4` keeps the dense `N_d=9000` KKT state below europa memory pressure.
+  On europa, set `JOBLIB_TEMP_FOLDER=/disks/data/PhD/Inferences/.joblib_tmp`
+  so process-worker memmaps do not fill the default temp filesystem.
 
 ### Phase 4 — orchestrator and visualisation
 
-- `run_example(*, min_degree=32, n_sources=N_SOURCES, n_receivers=N_RECEIVERS, n_target=N_TARGET, n_cap=40, sigma_noise=SIGMA_NOISE, seed=42, target_operator_method="quadrature", exact_cap_average=None) -> dict`
+- `run_example(*, min_degree=32, n_sources=N_SOURCES, n_receivers=N_RECEIVERS, n_target=N_TARGET, n_cap=40, sigma_noise=SIGMA_NOISE, noise_confidence=DEFAULT_NOISE_CONFIDENCE, seed=42, target_operator_method="exact", exact_cap_average=None, n_jobs=DLI_N_JOBS, fsolve_tol=1e-10, fsolve_maxfev=1000, use_warm_start=False) -> dict`
   Runs the full pipeline; returns the bounds dict plus all intermediate objects.
 - `plot_results(result) -> None`
   Three figures: cartopy ray-network map, true-field colour map, horizontal interval bar chart.
@@ -84,23 +91,27 @@ Core cap-integral additions:
 ## Implementation notes
 
 - `LinearForm` lives in `pygeoinf.linear_forms` on this branch (not `pygeoinf.hilbert_space`).
-- Cap properties use deterministic spherical-cap quadrature by default. Exact spherical-harmonic cap averages remain available through `build_cap_property_operator(..., method="exact")`, and the previous `np.random.default_rng(seed)` 3-D rejection sampler is retained for `method="monte_carlo"` or the legacy `exact=False` alias.
+- `LinearOperator.from_linear_forms(...)` returns a dense matrix-backed operator, so path and cap operators assembled from explicit linear-form components expose their stored matrix directly instead of reconstructing it column by column.
+- Cap properties use exact spherical-harmonic cap averages by default. Deterministic quadrature remains available through `build_cap_property_operator(..., method="quadrature")`, and the previous `np.random.default_rng(seed)` 3-D rejection sampler is retained for `method="monte_carlo"` or the legacy `exact=False` alias.
 - `iris_stations` / `random_earthquakes` use stdlib `random`; the script saves/restores state.
 - `prior.sample()` uses legacy global numpy RNG; the script saves/restores numpy state.
 - `model_space.project_function(lambda _: c)` is the canonical way to make a constant field.
 
-## Tests (13 DLI tests + 5 cap-integral tests, all passing)
+## Tests (17 DLI tests + 5 cap-integral tests, all passing)
 
-`pygeoinf/tests/test_sphere_dli_example.py` prepends `pygeoinf/work` to `sys.path`.
+`pygeoinf/tests/test_sphere_dli_example.py` prepends `sphere_dli_paper` to `sys.path`.
 
 `pygeoinf/tests/symmetric_space/test_sphere_cap_integrals.py` validates exact spherical-cap integrals against analytic formulas for area, first moments, second moments, zonal harmonics, non-zonal zeros, physical radius scaling, Sobolev-domain wrapping, and invalid-radius errors.
 
 | Test | Phase | What it checks |
 |------|-------|----------------|
+| `test_gaussian_noise_ball_radius_matches_chi_square_quantile` | 2 | Gaussian-confidence radius matches the chi-square quantile formula |
+| `test_gaussian_noise_ball_radius_validates_arguments` | 2 | radius helper rejects invalid sigma, dimension, and confidence values |
+| `test_generate_synthetic_data_does_not_clip_gaussian_noise` | 2 | synthetic iid Gaussian noise is not clipped componentwise |
 | `test_model_space_builds` | 1 | `dim > 0`, `order == 1.5` |
 | `test_cap_property_operator_shape` | 1 | codomain and matrix shape |
 | `test_cap_property_operator_constant_field` | 1 | constant field → constant caps (rtol/atol 1e-3) |
-| `test_cap_property_operator_quadrature_default_is_seed_deterministic` | 1 | default cap operator is deterministic in `seed` |
+| `test_cap_property_operator_exact_default_is_seed_deterministic` | 1 | default exact cap operator is deterministic in `seed` |
 | `test_cap_property_operator_exact_mode_is_n_cap_independent` | 1 | exact mode still ignores quadrature/sample controls |
 | `test_forward_operator_shape` | 2 | domain, codomain, path count |
 | `test_forward_operator_finite` | 2 | finite output on random model |
