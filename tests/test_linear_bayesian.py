@@ -885,3 +885,132 @@ class TestWoodburyModelPreconditioner:
 
         with pytest.raises(ValueError, match="Data error measure must be set"):
             inversion.woodbury_model_preconditioner(solver)
+
+
+# =============================================================================
+# New Tests for Evidence & Diagnostics
+# =============================================================================
+
+
+class TestMahalanobisEvidenceTerm:
+    """Tests for the data-dependent Mahalanobis term of the Bayesian Evidence."""
+
+    def test_mahalanobis_exact_dense(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the matrix-free Mahalanobis term exactly matches
+        the dense analytical calculation for a zero-mean problem.
+        """
+        solver = CholeskySolver(galerkin=True)
+        inversion = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        # 1. Compute via the matrix-free method
+        actual_mahalanobis = inversion.mahalanobis_evidence_term(data, solver)
+
+        # 2. Compute exact dense normal matrix and inverse
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        # Cd = A Q A^T + R
+        exact_normal_matrix = A @ Q @ A.T + R
+        exact_inverse_matrix = np.linalg.inv(exact_normal_matrix)
+
+        # 3. Misfit = d^T Cd^-1 d
+        expected_mahalanobis = data.T @ exact_inverse_matrix @ data
+
+        assert np.isclose(actual_mahalanobis, expected_mahalanobis)
+
+    def test_mahalanobis_non_zero_mean(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that shifting by the prior and noise expectations is handled correctly.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        # Setup non-zero expectations
+        mu_u = forward_problem.model_space.random()
+        mu_e = forward_problem.data_space.random()
+
+        prior_nonzero = GaussianMeasure(
+            covariance=model_prior_measure.covariance, expectation=mu_u
+        )
+        fp_nonzero = LinearForwardProblem(
+            forward_problem.forward_operator,
+            data_error_measure=GaussianMeasure(
+                covariance=forward_problem.data_error_measure.covariance,
+                expectation=mu_e,
+            ),
+        )
+
+        inversion = LinearBayesianInversion(
+            fp_nonzero, prior_nonzero, formalism="data_space"
+        )
+
+        # 1. Compute via the matrix-free method
+        actual_mahalanobis = inversion.mahalanobis_evidence_term(data, solver)
+
+        # 2. Compute exact dense representation
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        exact_normal_matrix = A @ Q @ A.T + R
+        exact_inverse_matrix = np.linalg.inv(exact_normal_matrix)
+
+        # v = d - A mu_u - mu_e
+        v_data = data - (A @ mu_u) - mu_e
+        expected_mahalanobis = v_data.T @ exact_inverse_matrix @ v_data
+
+        assert np.isclose(actual_mahalanobis, expected_mahalanobis)
+
+    def test_formalism_equivalence(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Tests that both the 'data_space' and Woodbury 'model_space' formalisms
+        produce the exact same Mahalanobis scalar.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        # 1. Compute using data_space
+        inv_data = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+        mahalanobis_data = inv_data.mahalanobis_evidence_term(data, solver)
+
+        # 2. Compute using model_space
+        inv_model = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="model_space"
+        )
+        mahalanobis_model = inv_model.mahalanobis_evidence_term(data, solver)
+
+        assert np.isclose(mahalanobis_data, mahalanobis_model)
+
+    def test_mahalanobis_requires_data_error(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Verifies that the method fails safely if no data error measure is set.
+        """
+        fp_no_noise = LinearForwardProblem(forward_problem.forward_operator)
+        prior = GaussianMeasure.from_standard_deviation(fp_no_noise.model_space, 1.0)
+        inversion = LinearBayesianInversion(fp_no_noise, prior)
+        solver = LUSolver(galerkin=False)
+        dummy_data = fp_no_noise.data_space.zero
+
+        with pytest.raises(ValueError, match="Data error measure must be set"):
+            inversion.mahalanobis_evidence_term(dummy_data, solver)

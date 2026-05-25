@@ -1,0 +1,44 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
+rootdir: /home/david/dev/pygeoinf
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-6.3.0
+collected 947 items / 914 deselected / 33 selected
+
+tests/test_inversion.py ...                                              [  9%]
+tests/test_linear_bayesian.py .............................F             [100%]
+
+=================================== FAILURES ===================================
+______ TestMahalanobisEvidenceTerm.test_model_space_requires_noise_solver ______
+
+self = <tests.test_linear_bayesian.TestMahalanobisEvidenceTerm object at 0x781942dedeb0>
+forward_problem = <pygeoinf.forward_problem.LinearForwardProblem object at 0x781942ba6540>
+model_prior_measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x781942ba7c80>
+data = array([ 0.1092408 ,  1.51871723,  1.83322618, -0.34832251,  0.44402586,
+       -0.92805495,  1.33213172, -0.61782605, ...577279,  0.88786671, -0.84980502, -0.52441546,
+       -0.07228026, -0.13551408, -0.49623682,  0.45217809,  0.11677966])
+
+    def test_model_space_requires_noise_solver(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the model_space formalism raises an error if R lacks an inverse
+        and no noise_solver is provided.
+        """
+        solver = CholeskySolver(galerkin=True)
+        inversion = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="model_space"
+        )
+    
+        # The fixture's data error measure doesn't have a pre-computed inverse,
+        # so omitting noise_solver should trigger the trap.
+>       with pytest.raises(ValueError, match="A noise_solver must be provided"):
+E       Failed: DID NOT RAISE <class 'ValueError'>
+
+tests/test_linear_bayesian.py:1038: Failed
+=========================== short test summary info ============================
+FAILED tests/test_linear_bayesian.py::TestMahalanobisEvidenceTerm::test_model_space_requires_noise_solver
+================= 1 failed, 32 passed, 914 deselected in 1.54s =================
