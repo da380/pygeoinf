@@ -742,6 +742,80 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             weights: Integration weights scaled by the line element.
         """
 
+    def geodesic_ball_quadrature(
+        self, center: Any, radius: float, n_points: int
+    ) -> Tuple[List[Any], np.ndarray]:
+        r"""Return quadrature points and weights for a geodesic ball.
+
+        Subclasses may implement geometry-specific quadrature rules. The
+        weights should include the manifold volume element so that
+        ``sum_i weights[i] * f(points[i])`` approximates
+        $\int_{B(center, radius)} f(x)\,dV(x)$.
+        """
+        raise NotImplementedError(
+            "Geodesic-ball quadrature is not implemented for this symmetric space."
+        )
+
+    def geodesic_ball_integral(
+        self,
+        center: Any,
+        radius: float,
+        /,
+        *,
+        n_points: Optional[int] = None,
+        normalize: bool = False,
+    ) -> LinearForm:
+        r"""Return a linear form for a geodesic-ball integral.
+
+        The returned form represents
+        $\int_{B(center, radius)} u(x)\,dV(x)$. If ``normalize`` is true, it
+        represents the average over the geodesic ball instead.
+
+        Subclasses with exact spectral formulas can override this method.
+        Otherwise, a subclass-provided ``geodesic_ball_quadrature`` rule is used.
+
+        Args:
+            center: Center point of the geodesic ball.
+            radius: Geodesic radius in the manifold's distance units.
+            n_points: Number of quadrature points requested from
+                ``geodesic_ball_quadrature``.
+            normalize: If true, divide by the quadrature measure of the ball.
+        """
+        if n_points is None:
+            raise NotImplementedError(
+                "Automatic geodesic-ball quadrature density is not available. "
+                "Pass n_points or use a space with an exact implementation."
+            )
+
+        points, weights = self.geodesic_ball_quadrature(center, radius, n_points)
+        measure = float(np.sum(weights))
+        components = np.zeros(self.dim)
+        for point, weight in zip(points, weights):
+            components += weight * np.asarray(self.laplacian_eigenvectors_at_point(point))
+
+        if normalize:
+            if measure <= 0.0:
+                raise ValueError("Cannot normalize a zero-measure geodesic ball.")
+            components /= measure
+
+        return LinearForm(self, components=components)
+
+    def geodesic_ball_average(
+        self,
+        center: Any,
+        radius: float,
+        /,
+        *,
+        n_points: Optional[int] = None,
+    ) -> LinearForm:
+        r"""Return a linear form for the average over a geodesic ball."""
+        return self.geodesic_ball_integral(
+            center,
+            radius,
+            n_points=n_points,
+            normalize=True,
+        )
+
     @abstractmethod
     def with_degree(self, degree: Degree) -> SymmetricHilbertSpace:
         """Returns a new instance of the space with a modified truncation degree."""
@@ -1754,6 +1828,37 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
         self, p1: Any, p2: Any, n_points: int
     ) -> Tuple[List[Any], np.ndarray]:
         return self.underlying_space.geodesic_quadrature(p1, p2, n_points)
+
+    def geodesic_ball_quadrature(
+        self, center: Any, radius: float, n_points: int
+    ) -> Tuple[List[Any], np.ndarray]:
+        return self.underlying_space.geodesic_ball_quadrature(center, radius, n_points)
+
+    def geodesic_ball_integral(
+        self,
+        center: Any,
+        radius: float,
+        /,
+        *,
+        n_points: Optional[int] = None,
+        normalize: bool = False,
+    ) -> LinearForm:
+        try:
+            underlying_form = self.underlying_space.geodesic_ball_integral(
+                center,
+                radius,
+                n_points=n_points,
+                normalize=normalize,
+            )
+        except NotImplementedError:
+            return super().geodesic_ball_integral(
+                center,
+                radius,
+                n_points=n_points,
+                normalize=normalize,
+            )
+
+        return LinearForm(self, components=underlying_form.components.copy())
 
     def pairs_within_distance(
         self, points: List[Point], max_distance: float

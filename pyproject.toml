@@ -57,6 +57,11 @@ build-backend = "poetry.core.masonry.api"
 exclude = ["work"]
 
 [tool.ruff.lint.per-file-ignores]
+# Tutorials use a Colab bootstrap pattern: setup_env() is loaded via exec() before
+# imports, making F821 (undefined setup_env) and E402 (imports after exec) false
+# positives. F401 is suppressed because notebook cells share scope across execution.
+"tutorials/*.ipynb" = ["E402", "F821", "F401", "F541", "E731"]
+
 # For any file in the "tests/" directory, ignore the lambda assignment warning (E731).
 "tests/*" = ["E731", "E741"]
 

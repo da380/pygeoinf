@@ -48,6 +48,58 @@ def test_cap_property_operator_constant_field():
     assert_allclose(cap_values, np.ones(len(DEFAULT_TARGET_LATLON)), rtol=1e-3, atol=1e-3)
 
 
+def test_cap_property_operator_quadrature_default_is_seed_deterministic():
+    from sphere_dli_example import build_cap_property_operator, build_model_space
+
+    model_space = build_model_space(min_degree=16)
+    target_latlon = [(90.0, 0.0), (20.0, 40.0)]
+
+    operator_a = build_cap_property_operator(
+        model_space,
+        target_latlon,
+        n_cap=5,
+        seed=1,
+    )
+    operator_b = build_cap_property_operator(
+        model_space,
+        target_latlon,
+        n_cap=5,
+        seed=99,
+    )
+    test_field = model_space.from_components(
+        np.linspace(-0.5, 0.5, model_space.dim, dtype=float)
+    )
+
+    assert_allclose(operator_a(test_field), operator_b(test_field), rtol=0.0, atol=1e-12)
+
+
+def test_cap_property_operator_exact_mode_is_n_cap_independent():
+    from sphere_dli_example import build_cap_property_operator, build_model_space
+
+    model_space = build_model_space(min_degree=16)
+    target_latlon = [(90.0, 0.0), (20.0, 40.0)]
+
+    operator_a = build_cap_property_operator(
+        model_space,
+        target_latlon,
+        n_cap=5,
+        seed=1,
+        method="exact",
+    )
+    operator_b = build_cap_property_operator(
+        model_space,
+        target_latlon,
+        n_cap=30,
+        seed=99,
+        method="exact",
+    )
+    test_field = model_space.from_components(
+        np.linspace(-0.5, 0.5, model_space.dim, dtype=float)
+    )
+
+    assert_allclose(operator_a(test_field), operator_b(test_field), rtol=0.0, atol=1e-12)
+
+
 def test_forward_operator_shape():
     from sphere_dli_example import N_RECEIVERS, N_SOURCES, build_forward_operator, build_model_space
 
@@ -73,21 +125,39 @@ def test_forward_operator_finite():
     assert np.all(np.isfinite(mapped))
 
 
-def test_forward_operator_constant_field_is_path_average():
-    """Applying the forward operator to a constant-value field must return
-    the constant on every path, verifying that each row is normalised to a
-    true path average rather than a raw arc-length integral."""
-    from sphere_dli_example import build_forward_operator, build_model_space
+def test_forward_operator_constant_field_is_reference_weighted_path_average():
+    """A constant perturbation field should map to the ray-average of ``1 / c_0``.
+
+    This verifies that the forward operator now implements the remaining
+    inverse-reference-velocity factor required by the linearized physics.
+    """
+    from sphere_dli_example import build_forward_operator, build_model_space, reference_phase_velocity
 
     model_space = build_model_space()
-    forward_operator, _ = build_forward_operator(model_space)
-    # A constant field f(x) = c; the path average of a constant is c.
+    forward_operator, paths = build_forward_operator(model_space, n_sources=2, n_receivers=3, seed=0)
     c = 2.5
     constant_field = model_space.project_function(lambda _: c)
 
-    path_averages = np.asarray(forward_operator(constant_field), dtype=float)
+    weighted_path_averages = np.asarray(forward_operator(constant_field), dtype=float)
 
-    assert_allclose(path_averages, c * np.ones(forward_operator.codomain.dim), rtol=1e-3, atol=1e-3)
+    expected = []
+    for point_1, point_2 in paths:
+        _, trial_weights = model_space.geodesic_quadrature(point_1, point_2, n_points=2)
+        trial_arc_length = float(np.sum(trial_weights))
+        n_points = max(2, int(np.ceil((trial_arc_length / model_space.scale) * 2.0)))
+        points, weights = model_space.geodesic_quadrature(point_1, point_2, n_points=n_points)
+        arc_length = float(np.sum(weights))
+        expected.append(
+            c
+            * np.sum(
+                [weight / reference_phase_velocity(point) for point, weight in zip(points, weights)]
+            )
+            / arc_length
+        )
+    expected = np.asarray(expected, dtype=float)
+
+    assert_allclose(weighted_path_averages, expected, rtol=1e-3, atol=1e-3)
+    assert np.ptp(weighted_path_averages) > 1e-3
 
 
 def test_synthetic_data_shape():
