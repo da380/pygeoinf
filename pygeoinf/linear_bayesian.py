@@ -674,8 +674,6 @@ class LinearBayesianInversion(LinearInversion):
         # Form the self-adjoint operator: H = L* A* R^-1 A L
         H = L.adjoint @ A.adjoint @ R_inv @ A @ L
 
-        from .low_rank import LowRankEig
-
         eig_approx = LowRankEig.from_randomized(
             H,
             size_estimate=rank,
@@ -733,7 +731,6 @@ class LinearBayesianInversion(LinearInversion):
         Returns:
             The estimated log marginal likelihood as a float.
         """
-        import numpy as np
 
         mahalanobis = self.mahalanobis_evidence_term(
             data, solver, preconditioner=preconditioner
