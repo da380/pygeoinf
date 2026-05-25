@@ -1294,6 +1294,13 @@ class SparseMatrixLinearOperator(MatrixLinearOperator):
         super().__init__(domain, codomain, matrix, galerkin=galerkin)
         self._matrix = self._matrix.asformat("csr")
 
+    @property
+    def sparse_array(self) -> sp.sparray:
+        """
+        Provides public read-only access to the underlying SciPy sparse array.
+        """
+        return self._matrix
+
     def __getitem__(self, key):
         """Provides direct component access using SciPy's sparse indexing."""
         return self._matrix[key]
