@@ -12,7 +12,7 @@ is provided, they fall back to highly optimized, component-based matrix-free alg
 """
 
 from __future__ import annotations
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 import warnings
 
 import numpy as np
@@ -319,6 +319,22 @@ class LowRankEig(LinearOperator):
         )
 
         return cls(u_op, d_op)
+
+    def apply_function(
+        self, func: Callable[[np.ndarray], np.ndarray], *, regularization: float = 0.0
+    ) -> LowRankEig:
+        """
+        Applies a function to the spectrum of the operator.
+        Returns a new LowRankEig representing f(A).
+        """
+
+        def safe_func(x: np.ndarray) -> np.ndarray:
+            return func(x + regularization)
+
+        new_d_op = self.d_factor.apply_function(safe_func)
+
+        # Return a new LowRankEig with the updated diagonal
+        return LowRankEig(self.u_factor, new_d_op)
 
 
 class LowRankCholesky(LinearOperator):

@@ -1557,8 +1557,8 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
                 "defined here for strictly diagonal operators."
             )
 
-        if isinstance(func, str):
-            return self.__getattr__(func)()
+        # if isinstance(func, str):
+        #    return self.__getattr__(func)()
 
         try:
             new_data = func(self._matrix.data)

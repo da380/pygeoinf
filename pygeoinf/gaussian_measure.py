@@ -45,6 +45,7 @@ from .linear_operators import (
     LinearOperator,
     DiagonalSparseMatrixLinearOperator,
     SparseMatrixLinearOperator,
+    DenseMatrixLinearOperator,
 )
 
 
@@ -83,6 +84,7 @@ class GaussianMeasure:
         sample: Callable[[], Vector] = None,
         inverse_covariance: LinearOperator = None,
         inverse_covariance_factor: LinearOperator = None,
+        log_det_covariance: Optional[float] = None,
     ) -> None:
         """
          Initializes the GaussianMeasure.
@@ -137,8 +139,13 @@ class GaussianMeasure:
         else:
             self._inverse_covariance = None
 
-        # Store exactly what is passed (None implies a zero expectation)
         self._expectation: Optional[Vector] = expectation
+
+        self._log_det_covariance: Optional[float] = log_det_covariance
+
+    # ---------------------------------------- #
+    #                Constructors              #
+    # ---------------------------------------- #
 
     @staticmethod
     def from_standard_deviation(
@@ -162,15 +169,15 @@ class GaussianMeasure:
         inverse_covariance_factor = (
             1 / standard_deviation
         ) * domain.identity_operator()
+        log_det = (
+            2.0 * domain.dim * np.log(standard_deviation) if domain.dim > 0 else None
+        )
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
+            log_det_covariance=log_det,
         )
-
-    # ---------------------------------------- #
-    #                Constructors              #
-    # ---------------------------------------- #
 
     @staticmethod
     def from_standard_deviations(
@@ -200,10 +207,12 @@ class GaussianMeasure:
         covariance_factor = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
             euclidean, domain, standard_deviations
         )
+        log_det = 2.0 * float(np.sum(np.log(standard_deviations)))
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=covariance_factor.inverse,
             expectation=expectation,
+            log_det_covariance=log_det,
         )
 
     @staticmethod
@@ -265,11 +274,14 @@ class GaussianMeasure:
         inverse_covariance_factor = LinearOperator.from_matrix(
             domain, EuclideanSpace(domain.dim), Li, galerkin=False
         )
+        safe_eigenvalues = np.where(eigenvalues > 0, eigenvalues, 1e-300)
+        log_det = float(np.sum(np.log(safe_eigenvalues)))
 
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
+            log_det_covariance=log_det,
         )
 
     @staticmethod
@@ -593,9 +605,7 @@ class GaussianMeasure:
             )
         if geometry_key in {"weakened_ellipsoid", "fractional"}:
             if theta is None:
-                raise ValueError(
-                    "theta is required for geometry='weakened_ellipsoid'."
-                )
+                raise ValueError("theta is required for geometry='weakened_ellipsoid'.")
             if not 0.0 < theta < 1.0:
                 raise ValueError(
                     "theta must lie strictly in (0, 1); the boundary "
@@ -633,9 +643,7 @@ class GaussianMeasure:
         kwargs.setdefault("geometry", "ambient_ball")
         return self.credible_set(probability, **kwargs)
 
-    def weakened_ellipsoid(
-        self, probability: float, /, *, theta: float, **kwargs
-    ):
+    def weakened_ellipsoid(self, probability: float, /, *, theta: float, **kwargs):
         """Shortcut for the weakened-covariance ellipsoid mode."""
         kwargs.setdefault("geometry", "weakened_ellipsoid")
         kwargs["theta"] = theta
@@ -684,9 +692,7 @@ class GaussianMeasure:
         induced_domain = induced_domain_type(
             self.domain, self.inverse_covariance, self.covariance
         )
-        return Ball(
-            induced_domain, self.expectation, radius, open_set=open_set
-        )
+        return Ball(induced_domain, self.expectation, radius, open_set=open_set)
 
     def _resolve_rank(self, rank: Optional[int]) -> int:
         if rank is None and self.domain.dim < 1:
@@ -738,8 +744,7 @@ class GaussianMeasure:
         if callable(spectrum):
             if spectrum_size is None or spectrum_size < 1:
                 raise ValueError(
-                    "spectrum_size (>=1) is required when spectrum is a "
-                    "callable."
+                    "spectrum_size (>=1) is required when spectrum is a " "callable."
                 )
             eigvals = np.asarray(spectrum(spectrum_size), dtype=float).ravel()
             return eigvals, None
@@ -747,14 +752,11 @@ class GaussianMeasure:
         eigvals = np.asarray(spectrum, dtype=float).ravel()
         if eigvals.ndim != 1:
             raise ValueError(
-                "spectrum array must be 1-D; got shape "
-                f"{eigvals.shape}."
+                "spectrum array must be 1-D; got shape " f"{eigvals.shape}."
             )
         return eigvals, None
 
-    def _resolve_radius_method(
-        self, radius_method: str, has_spectrum: bool
-    ) -> str:
+    def _resolve_radius_method(self, radius_method: str, has_spectrum: bool) -> str:
         if radius_method == "spectral":
             return "spectral"
         if radius_method == "sampling":
@@ -774,9 +776,7 @@ class GaussianMeasure:
                 "or set radius_method='sampling' on a sampling-equipped "
                 "measure."
             )
-        raise ValueError(
-            "radius_method must be 'auto', 'spectral', or 'sampling'."
-        )
+        raise ValueError("radius_method must be 'auto', 'spectral', or 'sampling'.")
 
     def _credible_set_ambient_ball(
         self,
@@ -807,6 +807,7 @@ class GaussianMeasure:
                 eigvals, probability, method=quantile_method, tol=quantile_tol
             )
         else:
+
             def gauge_squared(d):
                 return float(self.domain.squared_norm(d))
 
@@ -1912,6 +1913,41 @@ class GaussianMeasure:
         # 5. Assemble the KL divergence
         kl_div = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
         return float(kl_div)
+
+    def log_det_covariance(self) -> float:
+        """
+        Returns the log determinant of the covariance operator.
+
+        If the measure was constructed from explicit parameters (like a standard
+        deviation or dense matrix), this returns the exact cached value.
+        Otherwise, it attempts to compute it from the operator's matrix form.
+        """
+        if self._log_det_covariance is not None:
+            return self._log_det_covariance
+
+        # Fallback: Attempt to extract it from specific matrix types
+        cov = self.covariance
+        if isinstance(cov, DiagonalSparseMatrixLinearOperator):
+            return float(np.sum(np.log(cov.extract_diagonal(galerkin=True))))
+
+        if isinstance(cov, DenseMatrixLinearOperator):
+            sign, log_det = np.linalg.slogdet(cov.matrix(dense=True, galerkin=True))
+            if sign <= 0:
+                raise ValueError("Dense covariance matrix is not positive definite.")
+            return float(log_det)
+
+        if isinstance(cov, SparseMatrixLinearOperator):
+            if not cov.is_galerkin:
+                raise ValueError(
+                    "Sparse covariance must be initialized with galerkin=True."
+                )
+            lu_factor = spla.splu(cov.sparse_array.tocsc())
+            return float(np.sum(np.log(np.abs(lu_factor.U.diagonal()))))
+
+        raise NotImplementedError(
+            "Log determinant is not pre-computed and cannot be automatically "
+            "extracted from this generic covariance operator type."
+        )
 
     # ---------------------------------------- #
     #               Special methods            #
