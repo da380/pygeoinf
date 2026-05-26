@@ -524,13 +524,9 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             u_nodes, u_weights, ring_radii, ring_counts
         ):
             azimuths = 2.0 * np.pi * np.arange(ring_count, dtype=float) / ring_count
-            ring_vectors = (
-                u_value * center_vector[None, :]
-                + ring_radius
-                * (
-                    np.cos(azimuths)[:, None] * tangent_1[None, :]
-                    + np.sin(azimuths)[:, None] * tangent_2[None, :]
-                )
+            ring_vectors = u_value * center_vector[None, :] + ring_radius * (
+                np.cos(azimuths)[:, None] * tangent_1[None, :]
+                + np.sin(azimuths)[:, None] * tangent_2[None, :]
             )
             ring_vectors /= np.linalg.norm(ring_vectors, axis=1, keepdims=True)
             points.extend(self._to_latlon(vec) for vec in ring_vectors)
@@ -568,9 +564,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
                 surface integral.
         """
         if angular_radius < 0.0 or angular_radius > np.pi:
-            raise ValueError(
-                "Spherical cap angular radius must lie in [0, pi]."
-            )
+            raise ValueError("Spherical cap angular radius must lie in [0, pi].")
 
         cap_area_unit_sphere = 2.0 * np.pi * (1.0 - np.cos(angular_radius))
         if cap_area_unit_sphere <= 0.0:
@@ -594,10 +588,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             components = components / (4.0 * np.pi)
         else:
             components = (
-                components
-                * self.radius**2
-                * cap_area_unit_sphere
-                / (4.0 * np.pi)
+                components * self.radius**2 * cap_area_unit_sphere / (4.0 * np.pi)
             )
 
         return LinearForm(self, components=components)
@@ -1059,7 +1050,9 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return tangent_1, tangent_2
 
     @staticmethod
-    def _distribute_ring_point_counts(total_points: int, ring_weights: np.ndarray) -> np.ndarray:
+    def _distribute_ring_point_counts(
+        total_points: int, ring_weights: np.ndarray
+    ) -> np.ndarray:
         """Distribute an exact point budget across azimuthal rings."""
         if total_points <= 0:
             raise ValueError("Total quadrature point count must be positive.")
@@ -2212,15 +2205,24 @@ def plot_geodesic_network(
     paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
     /,
     *,
-    ax: Optional[GeoAxes] = None,
+    ax: Optional["GeoAxes"] = None,
+    plot_sources: bool = True,
+    plot_receivers: bool = True,
+    source_kwargs: Optional[dict] = None,
+    receiver_kwargs: Optional[dict] = None,
     **kwargs,
-) -> GeoAxes:
+) -> "GeoAxes":
     """
     Plots a network of intersecting geodesic paths onto a Cartopy map.
 
     Args:
-        paths: A list of point pairs defining the network.
+        paths: A list of point pairs defining the network. Each pair is
+               ((source_lat, source_lon), (receiver_lat, receiver_lon)).
         ax: An existing Cartopy GeoAxes object. If None, creates a new global view.
+        plot_sources: If True, plots the source points.
+        plot_receivers: If True, plots the receiver points.
+        source_kwargs: Styling arguments for the source scatter points.
+        receiver_kwargs: Styling arguments for the receiver scatter points.
         **kwargs: Default styling arguments applied to the geodesic lines.
 
     Returns:
@@ -2231,32 +2233,40 @@ def plot_geodesic_network(
         ax.set_global()
         ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
 
+    # Line styling defaults
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 0.8)
     kwargs.setdefault("alpha", 0.5)
 
-    src_style = kwargs.pop("source_kwargs", {})
-    src_style.setdefault("marker", "*")
-    src_style.setdefault("color", "gold")
-    src_style.setdefault("s", 150)
-    src_style.setdefault("edgecolor", "black")
-    src_style.setdefault("zorder", 5)
-
-    rec_style = kwargs.pop("receiver_kwargs", {})
-    rec_style.setdefault("marker", "o")
-    rec_style.setdefault("color", "red")
-    rec_style.setdefault("s", 50)
-    rec_style.setdefault("edgecolor", "white")
-    rec_style.setdefault("zorder", 5)
-
+    # Plot the paths
     for p1, p2 in paths:
         plot_geodesic(p1, p2, ax=ax, **kwargs)
 
-    sources = list(set([tuple(p[0]) for p in paths]))
-    receivers = list(set([tuple(p[1]) for p in paths]))
+    # Plot the nodes
+    if plot_sources or plot_receivers:
+        sources = list(set([tuple(p[0]) for p in paths]))
+        receivers = list(set([tuple(p[1]) for p in paths]))
 
-    src_lats, src_lons = zip(*sources)
-    rec_lats, rec_lons = zip(*receivers)
-    ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
+        if plot_sources and sources:
+            src_lats, src_lons = zip(*sources)
+            src_style = source_kwargs.copy() if source_kwargs else {}
+            src_style.setdefault("marker", "*")
+            src_style.setdefault("color", "gold")
+            src_style.setdefault("s", 150)
+            src_style.setdefault("edgecolor", "black")
+            src_style.setdefault("zorder", 5)
+
+            ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
+
+        if plot_receivers and receivers:
+            rec_lats, rec_lons = zip(*receivers)
+            rec_style = receiver_kwargs.copy() if receiver_kwargs else {}
+            rec_style.setdefault("marker", "o")
+            rec_style.setdefault("color", "red")
+            rec_style.setdefault("s", 50)
+            rec_style.setdefault("edgecolor", "white")
+            rec_style.setdefault("zorder", 5)
+
+            ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
 
     return ax
