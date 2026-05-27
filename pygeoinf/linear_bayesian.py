@@ -38,10 +38,14 @@ import numpy as np
 import scipy.sparse as sps
 import scipy.sparse.linalg as splinalg
 
+
 from .inversion import LinearInversion
 from .gaussian_measure import GaussianMeasure
 from .forward_problem import LinearForwardProblem
-from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
+from .linear_operators import (
+    LinearOperator,
+    DiagonalSparseMatrixLinearOperator,
+)
 from .linear_solvers import (
     LinearSolver,
     IterativeLinearSolver,
@@ -486,6 +490,73 @@ class LinearBayesianInversion(LinearInversion):
             print_progress=print_progress,
             message=message,
         )
+
+    # =========================================================================
+    # Evidence & Diagnostics
+    # =========================================================================
+
+    def mahalanobis_evidence_term(
+        self,
+        data: Vector,
+        solver: LinearSolver,
+        /,
+        *,
+        preconditioner: Optional[LinearOperator] = None,
+    ) -> float:
+        """
+        Computes the data-dependent Mahalanobis term of the log-evidence.
+
+        This value is equal to the unnormalized log-posterior evaluated at the
+        posterior expectation. It captures the optimal fit to the data, balanced
+        by the prior penalty.
+
+        Args:
+            data: The observed data vector.
+            solver: The LinearSolver used to invert the normal operator.
+            preconditioner: An optional preconditioner for iterative solvers.
+
+        Returns:
+            The Mahalanobis distance as a float.
+        """
+
+        if not self.forward_problem.data_error_measure_set:
+            raise ValueError("Data error measure must be set.")
+
+        data_space = self.data_space
+        model_space = self.model_space
+        A = self.forward_problem.forward_operator
+        Q_measure = self.model_prior_measure
+        R_measure = self.forward_problem.data_error_measure
+
+        # 1. Compute the raw data residual shifted by prior/noise expectations
+        v_data = data_space.copy(data)
+        if not Q_measure.has_zero_expectation:
+            v_data = data_space.subtract(v_data, A(Q_measure.expectation))
+        if not R_measure.has_zero_expectation:
+            v_data = data_space.subtract(v_data, R_measure.expectation)
+
+        # 2. Solve the normal equations
+        normal_op = self.normal_operator
+        rhs = self.get_normal_equations_rhs(data)
+
+        if isinstance(solver, IterativeLinearSolver):
+            w = solver.solve_linear_system(normal_op, preconditioner, rhs, None)
+        else:
+            w = solver(normal_op)(rhs)
+
+        # 3. Extract the Mahalanobis distance based on formalism
+        if self.formalism == "data_space":
+            # Misfit = <v_data, (A Q A* + R)^-1 v_data>
+            mahalanobis_term = data_space.inner_product(v_data, w)
+        else:
+            # Woodbury optimization for model_space.
+            R_inv = R_measure.inverse_covariance
+
+            misfit_base = data_space.inner_product(v_data, R_inv(v_data))
+            misfit_reduction = model_space.inner_product(rhs, w)
+            mahalanobis_term = misfit_base - misfit_reduction
+
+        return float(mahalanobis_term)
 
     # =========================================================================
     # Preconditioners

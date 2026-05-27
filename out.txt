@@ -1,0 +1,303 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
+rootdir: /home/david/dev/pygeoinf
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-6.3.0
+collected 948 items / 914 deselected / 34 selected
+
+tests/test_inversion.py ...                                              [  8%]
+tests/test_linear_bayesian.py .............................FF            [100%]
+
+=================================== FAILURES ===================================
+___________ TestLogMarginalLikelihood.test_log_det_operator_dispatch ___________
+
+self = <tests.test_linear_bayesian.TestLogMarginalLikelihood object at 0x7bbd99be8cb0>
+forward_problem = <pygeoinf.forward_problem.LinearForwardProblem object at 0x7bbd99941d60>
+model_prior_measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x7bbd99943350>
+
+    def test_log_det_operator_dispatch(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the log-determinant calculation correctly dispatches
+        to the optimized routines for Diagonal, Dense, and Sparse matrices,
+        and handles manual overrides for generic matrix-free operators.
+        """
+        solver = CholeskySolver(galerkin=True)
+    
+        # 1. Calculate Exact Dense Log-Determinant
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R_exact = forward_problem.data_error_measure.covariance.matrix(dense=True)
+    
+        Sigma_d = A @ Q @ A.T + R_exact
+        sign, exact_log_det = np.linalg.slogdet(Sigma_d)
+        assert sign > 0
+    
+        rank_exact = forward_problem.data_space.dim
+    
+        from pygeoinf.linear_operators import DiagonalSparseMatrixLinearOperator
+    
+        # --- A. Diagonal Operator ---
+        # We explicitly wrap the exact diagonal to ensure it dispatches to the Diagonal routine
+        R_diag_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            forward_problem.data_space,
+            forward_problem.data_space,
+            np.diag(R_exact),
+            galerkin=True,
+        )
+        fp_diag = LinearForwardProblem(
+            forward_problem.forward_operator,
+            data_error_measure=GaussianMeasure(covariance=R_diag_op),
+        )
+        inv_diag = LinearBayesianInversion(
+            fp_diag, model_prior_measure, formalism="data_space"
+        )
+>       log_det_diag = inv_diag.log_det_evidence_term(rank=rank_exact, power=1)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_linear_bayesian.py:1073: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <pygeoinf.linear_bayesian.LinearBayesianInversion object at 0x7bbd99963a10>
+
+    def log_det_evidence_term(
+        self,
+        /,
+        *,
+        noise_solver: Optional[LinearSolver] = None,
+        log_det_noise_cov: Optional[float] = None,
+        rank: int = 50,
+        randomized_method: str = "variable",
+        max_rank: Optional[int] = None,
+        power: int = 2,
+        rtol: float = 1e-3,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Estimates the log-determinant of the data-space covariance matrix.
+    
+        This calculates ln det(A Q A* + R), representing the "Occam's Razor"
+        complexity penalty of the Bayesian Evidence. It uses Sylvester's
+        determinant identity and a randomized low-rank eigendecomposition to
+        efficiently evaluate the term without dense data-space matrices.
+    
+        Args:
+            noise_solver: Optional solver to invert the data error covariance (R) if
+                          its inverse is not already set.
+            log_det_noise_cov: The pre-computed log determinant of the noise covariance.
+                               Required if R is a generic matrix-free operator.
+            rank: The target rank for the randomized eigendecomposition.
+            randomized_method: Algorithm for randomized SVD ('variable' or 'fixed').
+            max_rank: Hard limit on the rank for the 'variable' method.
+            power: Number of power iterations to improve spectral accuracy.
+            rtol: Relative tolerance for the 'variable' method.
+            block_size: Number of new vectors to sample per iteration ('variable').
+            parallel: Whether to use parallel matrix multiplication.
+            n_jobs: Number of CPU cores for parallelism.
+    
+        Returns:
+            The estimated log-determinant as a float.
+        """
+    
+        A = self.forward_problem.forward_operator
+        Q_measure = self.model_prior_measure
+    
+        if not self.forward_problem.data_error_measure_set:
+            raise ValueError(
+                "Data error measure must be set to compute Bayesian Evidence."
+            )
+    
+        R_measure = self.forward_problem.data_error_measure
+        R = R_measure.covariance
+    
+        # =====================================================================
+        # 1. Resolve Noise Log-Determinant and Inverse
+        # =====================================================================
+        if log_det_noise_cov is not None:
+            R_log_det = log_det_noise_cov
+        elif isinstance(R, DiagonalSparseMatrixLinearOperator):
+            R_log_det = float(np.sum(np.log(R.extract_diagonal(galerkin=True))))
+        elif isinstance(R, DenseMatrixLinearOperator):
+            sign, R_log_det = np.linalg.slogdet(R.matrix(dense=True, galerkin=True))
+            if sign <= 0:
+                raise ValueError(
+                    "Dense noise covariance matrix is not positive definite."
+                )
+        elif isinstance(R, SparseMatrixLinearOperator):
+            # Fast exact determinant for generic sparse matrices via LU decomposition
+            if not R.is_galerkin:
+                raise ValueError(
+                    "Sparse noise covariance must be initialized with galerkin=True."
+                )
+            # Access the internal scipy.sparse.sparray directly
+            lu_factor = splinalg.splu(R._matrix.tocsc())
+            R_log_det = float(np.sum(np.log(np.abs(lu_factor.U.diagonal()))))
+        else:
+            raise ValueError(
+                "Cannot automatically compute the log-determinant of the noise "
+                "covariance for this operator type. You must provide it manually "
+                "via the `log_det_noise_cov` argument."
+            )
+    
+        if R_measure.inverse_covariance_set:
+            R_inv = R_measure.inverse_covariance
+        else:
+            if noise_solver is None:
+>               raise ValueError(
+                    "A noise_solver must be provided if the data error measure lacks an inverse."
+                )
+E               ValueError: A noise_solver must be provided if the data error measure lacks an inverse.
+
+pygeoinf/linear_bayesian.py:648: ValueError
+__ TestLogMarginalLikelihood.test_full_marginal_likelihood_dense_equivalence ___
+
+self = <tests.test_linear_bayesian.TestLogMarginalLikelihood object at 0x7bbd99be87d0>
+forward_problem = <pygeoinf.forward_problem.LinearForwardProblem object at 0x7bbd9992cc80>
+model_prior_measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x7bbd9992c9e0>
+data = array([-1.04044782,  0.80164096, -0.19203123, -0.42137077,  0.51474351,
+       -0.2283635 , -0.23971775,  0.01956411, ...912401, -1.12994163, -1.1736222 , -1.0074249 ,
+        0.71628868,  0.45162214, -0.86006985,  0.33234763, -1.60919443])
+
+    def test_full_marginal_likelihood_dense_equivalence(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the end-to-end marginal likelihood matches the exact
+        dense analytical formula.
+        """
+        solver = CholeskySolver(galerkin=True)
+    
+        # Re-build the forward problem with an explicit Dense matrix noise covariance
+        # so the log_det_evidence_term can compute its log det automatically.
+        R_exact = forward_problem.data_error_measure.covariance.matrix(dense=True)
+        R_dense_op = DenseMatrixLinearOperator(
+            forward_problem.data_space,
+            forward_problem.data_space,
+            R_exact,
+            galerkin=True,
+        )
+        fp_dense = LinearForwardProblem(
+            forward_problem.forward_operator,
+            data_error_measure=GaussianMeasure(covariance=R_dense_op),
+        )
+    
+        inversion = LinearBayesianInversion(
+            fp_dense, model_prior_measure, formalism="data_space"
+        )
+    
+        # 1. Compute Matrix-Free Log Evidence
+>       actual_log_evidence = inversion.log_marginal_likelihood(
+            data, solver, rank=forward_problem.data_space.dim, power=1
+        )
+
+tests/test_linear_bayesian.py:1184: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pygeoinf/linear_bayesian.py:742: in log_marginal_likelihood
+    log_det = self.log_det_evidence_term(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <pygeoinf.linear_bayesian.LinearBayesianInversion object at 0x7bbd9992e5d0>
+
+    def log_det_evidence_term(
+        self,
+        /,
+        *,
+        noise_solver: Optional[LinearSolver] = None,
+        log_det_noise_cov: Optional[float] = None,
+        rank: int = 50,
+        randomized_method: str = "variable",
+        max_rank: Optional[int] = None,
+        power: int = 2,
+        rtol: float = 1e-3,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Estimates the log-determinant of the data-space covariance matrix.
+    
+        This calculates ln det(A Q A* + R), representing the "Occam's Razor"
+        complexity penalty of the Bayesian Evidence. It uses Sylvester's
+        determinant identity and a randomized low-rank eigendecomposition to
+        efficiently evaluate the term without dense data-space matrices.
+    
+        Args:
+            noise_solver: Optional solver to invert the data error covariance (R) if
+                          its inverse is not already set.
+            log_det_noise_cov: The pre-computed log determinant of the noise covariance.
+                               Required if R is a generic matrix-free operator.
+            rank: The target rank for the randomized eigendecomposition.
+            randomized_method: Algorithm for randomized SVD ('variable' or 'fixed').
+            max_rank: Hard limit on the rank for the 'variable' method.
+            power: Number of power iterations to improve spectral accuracy.
+            rtol: Relative tolerance for the 'variable' method.
+            block_size: Number of new vectors to sample per iteration ('variable').
+            parallel: Whether to use parallel matrix multiplication.
+            n_jobs: Number of CPU cores for parallelism.
+    
+        Returns:
+            The estimated log-determinant as a float.
+        """
+    
+        A = self.forward_problem.forward_operator
+        Q_measure = self.model_prior_measure
+    
+        if not self.forward_problem.data_error_measure_set:
+            raise ValueError(
+                "Data error measure must be set to compute Bayesian Evidence."
+            )
+    
+        R_measure = self.forward_problem.data_error_measure
+        R = R_measure.covariance
+    
+        # =====================================================================
+        # 1. Resolve Noise Log-Determinant and Inverse
+        # =====================================================================
+        if log_det_noise_cov is not None:
+            R_log_det = log_det_noise_cov
+        elif isinstance(R, DiagonalSparseMatrixLinearOperator):
+            R_log_det = float(np.sum(np.log(R.extract_diagonal(galerkin=True))))
+        elif isinstance(R, DenseMatrixLinearOperator):
+            sign, R_log_det = np.linalg.slogdet(R.matrix(dense=True, galerkin=True))
+            if sign <= 0:
+                raise ValueError(
+                    "Dense noise covariance matrix is not positive definite."
+                )
+        elif isinstance(R, SparseMatrixLinearOperator):
+            # Fast exact determinant for generic sparse matrices via LU decomposition
+            if not R.is_galerkin:
+                raise ValueError(
+                    "Sparse noise covariance must be initialized with galerkin=True."
+                )
+            # Access the internal scipy.sparse.sparray directly
+            lu_factor = splinalg.splu(R._matrix.tocsc())
+            R_log_det = float(np.sum(np.log(np.abs(lu_factor.U.diagonal()))))
+        else:
+            raise ValueError(
+                "Cannot automatically compute the log-determinant of the noise "
+                "covariance for this operator type. You must provide it manually "
+                "via the `log_det_noise_cov` argument."
+            )
+    
+        if R_measure.inverse_covariance_set:
+            R_inv = R_measure.inverse_covariance
+        else:
+            if noise_solver is None:
+>               raise ValueError(
+                    "A noise_solver must be provided if the data error measure lacks an inverse."
+                )
+E               ValueError: A noise_solver must be provided if the data error measure lacks an inverse.
+
+pygeoinf/linear_bayesian.py:648: ValueError
+=========================== short test summary info ============================
+FAILED tests/test_linear_bayesian.py::TestLogMarginalLikelihood::test_log_det_operator_dispatch
+FAILED tests/test_linear_bayesian.py::TestLogMarginalLikelihood::test_full_marginal_likelihood_dense_equivalence
+================= 2 failed, 32 passed, 914 deselected in 1.49s =================

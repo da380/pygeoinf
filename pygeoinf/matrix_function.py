@@ -41,6 +41,58 @@ _RealFunction = Callable[[np.ndarray], np.ndarray]
 _BREAKDOWN_TOL = 1e-13
 
 
+class LanczosMatrixFunction(LinearOperator):
+    """
+    A matrix-free LinearOperator representing f(A) evaluated via the Lanczos method.
+
+    Every time this operator is applied to a vector `v`, it runs `k` steps of the
+    Lanczos iteration to approximate f(A)v. Because A is self-adjoint, f(A) is
+    also self-adjoint.
+    """
+
+    def __init__(
+        self,
+        operator: LinearOperator,
+        func: Callable[[np.ndarray], np.ndarray],
+        k: int,
+        *,
+        reorth: str = "full",
+    ):
+        """
+        Args:
+            operator: The self-adjoint positive operator A.
+            func: A vectorized real-valued function on the spectrum of A.
+            k: The Krylov dimension (number of Lanczos steps per evaluation).
+            reorth: Reorthogonalization strategy ('full' or 'none').
+        """
+        if operator.domain != operator.codomain:
+            raise ValueError("Lanczos requires an automorphism (domain == codomain).")
+
+        self._base_operator = operator
+        self._func = func
+        self._k = k
+        self._reorth = reorth
+
+        # f(A) is self-adjoint, so the mapping and adjoint_mapping are the same.
+        super().__init__(
+            operator.domain,
+            operator.domain,
+            self._mapping_impl,
+            adjoint_mapping=self._mapping_impl,
+        )
+
+    def _mapping_impl(self, x: Vector) -> Vector:
+        """Evaluates f(A)x on the fly using the Lanczos process."""
+        return apply_matrix_function(
+            self._base_operator, x, self._func, self._k, reorth=self._reorth
+        )
+
+    @property
+    def base_operator(self) -> LinearOperator:
+        """The underlying operator A."""
+        return self._base_operator
+
+
 def lanczos_tridiagonalize(
     operator: LinearOperator,
     v: Vector,
@@ -82,7 +134,7 @@ def lanczos_tridiagonalize(
         raise ValueError("reorth must be 'full' or 'none'.")
 
     space: HilbertSpace = operator.domain
-    norm_v = float(space.norm(v))
+    norm_v = space.norm(v)
     if norm_v == 0.0:
         raise ValueError("v must be non-zero.")
 
@@ -97,7 +149,7 @@ def lanczos_tridiagonalize(
     for j in range(k):
         Q.append(q_curr)
         Cq = operator(q_curr)
-        alpha_j = float(space.inner_product(Cq, q_curr))
+        alpha_j = space.inner_product(Cq, q_curr)
         alpha_list.append(alpha_j)
 
         r = space.subtract(Cq, space.multiply(alpha_j, q_curr))
