@@ -45,6 +45,7 @@ from .linear_operators import (
     LinearOperator,
     DiagonalSparseMatrixLinearOperator,
     SparseMatrixLinearOperator,
+    DenseMatrixLinearOperator,
 )
 
 
@@ -83,6 +84,7 @@ class GaussianMeasure:
         sample: Callable[[], Vector] = None,
         inverse_covariance: LinearOperator = None,
         inverse_covariance_factor: LinearOperator = None,
+        log_det_covariance: Optional[float] = None,
     ) -> None:
         """
          Initializes the GaussianMeasure.
@@ -137,8 +139,13 @@ class GaussianMeasure:
         else:
             self._inverse_covariance = None
 
-        # Store exactly what is passed (None implies a zero expectation)
         self._expectation: Optional[Vector] = expectation
+
+        self._log_det_covariance: Optional[float] = log_det_covariance
+
+    # ---------------------------------------- #
+    #                Constructors              #
+    # ---------------------------------------- #
 
     @staticmethod
     def from_standard_deviation(
@@ -162,15 +169,15 @@ class GaussianMeasure:
         inverse_covariance_factor = (
             1 / standard_deviation
         ) * domain.identity_operator()
+        log_det = (
+            2.0 * domain.dim * np.log(standard_deviation) if domain.dim > 0 else None
+        )
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
+            log_det_covariance=log_det,
         )
-
-    # ---------------------------------------- #
-    #                Constructors              #
-    # ---------------------------------------- #
 
     @staticmethod
     def from_standard_deviations(
@@ -200,10 +207,12 @@ class GaussianMeasure:
         covariance_factor = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
             euclidean, domain, standard_deviations
         )
+        log_det = 2.0 * float(np.sum(np.log(standard_deviations)))
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=covariance_factor.inverse,
             expectation=expectation,
+            log_det_covariance=log_det,
         )
 
     @staticmethod
@@ -265,11 +274,14 @@ class GaussianMeasure:
         inverse_covariance_factor = LinearOperator.from_matrix(
             domain, EuclideanSpace(domain.dim), Li, galerkin=False
         )
+        safe_eigenvalues = np.where(eigenvalues > 0, eigenvalues, 1e-300)
+        log_det = float(np.sum(np.log(safe_eigenvalues)))
 
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
+            log_det_covariance=log_det,
         )
 
     @staticmethod
@@ -1912,6 +1924,41 @@ class GaussianMeasure:
         # 5. Assemble the KL divergence
         kl_div = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
         return float(kl_div)
+
+    def log_det_covariance(self) -> float:
+        """
+        Returns the log determinant of the covariance operator.
+
+        If the measure was constructed from explicit parameters (like a standard
+        deviation or dense matrix), this returns the exact cached value.
+        Otherwise, it attempts to compute it from the operator's matrix form.
+        """
+        if self._log_det_covariance is not None:
+            return self._log_det_covariance
+
+        # Fallback: Attempt to extract it from specific matrix types
+        cov = self.covariance
+        if isinstance(cov, DiagonalSparseMatrixLinearOperator):
+            return float(np.sum(np.log(cov.extract_diagonal(galerkin=True))))
+
+        if isinstance(cov, DenseMatrixLinearOperator):
+            sign, log_det = np.linalg.slogdet(cov.matrix(dense=True, galerkin=True))
+            if sign <= 0:
+                raise ValueError("Dense covariance matrix is not positive definite.")
+            return float(log_det)
+
+        if isinstance(cov, SparseMatrixLinearOperator):
+            if not cov.is_galerkin:
+                raise ValueError(
+                    "Sparse covariance must be initialized with galerkin=True."
+                )
+            lu_factor = spla.splu(cov.sparse_array.tocsc())
+            return float(np.sum(np.log(np.abs(lu_factor.U.diagonal()))))
+
+        raise NotImplementedError(
+            "Log determinant is not pre-computed and cannot be automatically "
+            "extracted from this generic covariance operator type."
+        )
 
     # ---------------------------------------- #
     #               Special methods            #

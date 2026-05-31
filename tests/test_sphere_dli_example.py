@@ -155,21 +155,33 @@ def test_cap_property_operator_exact_mode_is_n_cap_independent():
 
 
 def test_forward_operator_shape():
-    from sphere_dli_example import N_RECEIVERS, N_SOURCES, build_forward_operator, build_model_space
+    from sphere_dli_example import build_forward_operator, build_model_space
 
     model_space = build_model_space()
-    forward_operator, paths = build_forward_operator(model_space)
+    n_sources = 2
+    n_receivers = 3
+    forward_operator, paths = build_forward_operator(
+        model_space,
+        n_sources=n_sources,
+        n_receivers=n_receivers,
+        seed=0,
+    )
 
     assert forward_operator.domain == model_space
-    assert forward_operator.codomain == EuclideanSpace(N_SOURCES * N_RECEIVERS)
-    assert len(paths) == N_SOURCES * N_RECEIVERS
+    assert forward_operator.codomain == EuclideanSpace(n_sources * n_receivers)
+    assert len(paths) == n_sources * n_receivers
 
 
 def test_forward_operator_finite():
     from sphere_dli_example import build_forward_operator, build_model_space
 
     model_space = build_model_space()
-    forward_operator, _ = build_forward_operator(model_space)
+    forward_operator, _ = build_forward_operator(
+        model_space,
+        n_sources=2,
+        n_receivers=3,
+        seed=0,
+    )
     rng = np.random.default_rng(0)
     raw_components = rng.standard_normal(model_space.dim)
     random_model = model_space.from_components(raw_components)
@@ -219,7 +231,12 @@ def test_synthetic_data_shape():
     from sphere_dli_example import build_forward_operator, build_model_space, generate_synthetic_data
 
     model_space = build_model_space()
-    forward_operator, _ = build_forward_operator(model_space)
+    forward_operator, _ = build_forward_operator(
+        model_space,
+        n_sources=2,
+        n_receivers=3,
+        seed=0,
+    )
 
     truth_model, data_vector = generate_synthetic_data(
         model_space,
@@ -296,7 +313,15 @@ def test_truth_inside_bounds():
     truth, _ = generate_synthetic_data(model_space, fwd_op, seed=1)
     data = np.asarray(fwd_op(truth), dtype=float)
 
-    result = solve_dli(model_space, fwd_op, prop_op, truth, data, sigma_noise=1e-8)
+    result = solve_dli(
+        model_space,
+        fwd_op,
+        prop_op,
+        truth,
+        data,
+        sigma_noise=1e-8,
+        n_jobs=1,
+    )
 
     true_vals = result["true_values"]
     tol = 0.05

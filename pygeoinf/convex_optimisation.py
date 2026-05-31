@@ -1492,7 +1492,6 @@ def _solve_support_values_bundle(cost, qs, solver, lambda0, *, warm_start, n_job
                 RuntimeWarning,
                 stacklevel=2,
             )
-
     lam_current = lambda0
     values_list = []
     lambdas = []
