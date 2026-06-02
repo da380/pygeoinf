@@ -1,35 +1,29 @@
-import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
-from pygeoinf.symmetric_space.plane import (
+from pygeoinf.symmetric_space.sphere import (
     Sobolev,
+    create_map_figure,
     plot,
+    plot_points,
     plot_geodesic_network,
 )
 
 
 # Global Tomography Parameters
-order = 2  # Sobolev smoothness order
-scale = 0.2  # Sobolev length scale
-prior_scale = 0.1
-n_sources = 12
-n_receivers = 12 * 8
+lmax = 128
+order = 2
+scale = 0.1
+prior_scale = 0.005
+n_sources = 30
+n_receivers = n_sources
 
 print("Global parameters initialized.")
 
 
-model_space = Sobolev.from_heat_kernel_prior(
-    prior_scale,
+model_space = Sobolev(
+    lmax,
     order,
     scale,
-    ax=0.0,
-    bx=6.0,
-    cx=0.5,
-    ay=0.0,
-    by=6.0,
-    cy=0.5,
-    power_of_two=True,
-    min_degree=32,
 )
 print(f"Initialized model space with dimension {model_space.dim}")
 
@@ -41,10 +35,10 @@ sources = model_space.random_points(n_sources)
 paths = [(src, rec) for src in sources for rec in receivers]
 
 # 2. Define the Forward Operator and Data Noise
-forward_operator = model_space.path_average_operator(paths)  #
+forward_operator = model_space.path_average_operator(paths)
 data_error_measure = inf.GaussianMeasure.from_standard_deviation(
     forward_operator.codomain, 0.05
-)  #
+)
 
 # 3. Combine into a Linear Forward Problem
 forward_problem = inf.LinearForwardProblem(
@@ -52,9 +46,7 @@ forward_problem = inf.LinearForwardProblem(
 )  #
 
 # 4. Define the Prior
-model_prior = model_space.point_value_scaled_heat_kernel_gaussian_measure(
-    prior_scale
-)  #
+model_prior = model_space.point_value_scaled_heat_kernel_gaussian_measure(prior_scale)
 
 print(f"Forward problem set up with {len(paths)} ray paths.")
 
@@ -65,7 +57,7 @@ model_true, data_obs = forward_problem.joint_measure(model_prior).sample()
 print("Synthetic model and data generated.")
 
 # 1. Initialize the Bayesian Inversion
-inverse_problem = inf.LinearBayesianInversion(forward_problem, model_prior)  #
+inverse_problem = inf.LinearBayesianInversion(forward_problem, model_prior)
 
 # 2. Build the Woodbury Surrogate Preconditioner
 surrogate_space = model_space.with_degree(model_space.degree // 6)
@@ -83,7 +75,7 @@ precon = inverse_problem.surrogate_inversion(
 
 
 # 3. Solve for the Posterior Expectation
-solver = inf.CGMatrixSolver()  #
+solver = inf.CGMatrixSolver()
 model_posterior = inverse_problem.model_posterior_measure(
     data_obs, solver, preconditioner=precon
 )
@@ -98,14 +90,15 @@ k_posterior = model_posterior.two_point_covariance(x)
 
 
 # Plot the results
-fig1, ax1 = plt.subplots(figsize=(8, 5), layout="constrained")
+fig1, ax1 = create_map_figure(figsize=(8, 5))
+
 
 plot(
-    model_space,
     model_true,
     ax=ax1,
     colorbar=True,
     symmetric=True,
+    coasts=True,
     cmap="seismic",
     colorbar_kwargs={
         "label": "True model",
@@ -115,14 +108,14 @@ plot(
 plot_geodesic_network(paths, ax=ax1, alpha=0.1)
 
 
-fig2, ax2 = plt.subplots(figsize=(8, 5), layout="constrained")
+fig2, ax2 = create_map_figure(figsize=(8, 5))
 
 plot(
-    model_space,
     model_posterior.expectation,
     ax=ax2,
     colorbar=True,
     symmetric=True,
+    coasts=True,
     cmap="seismic",
     colorbar_kwargs={
         "label": "Posterior expectation",
@@ -133,40 +126,40 @@ plot(
 plot_geodesic_network(paths, ax=ax2, alpha=0.1)
 
 
-fig3, ax3 = plt.subplots(figsize=(8, 5), layout="constrained")
+fig3, ax3 = create_map_figure(figsize=(8, 5))
 
 plot(
-    model_space,
     k_prior,
     ax=ax3,
     colorbar=True,
     symmetric=True,
+    coasts=True,
     cmap="seismic",
     colorbar_kwargs={
         "label": "Prior covariance function",
     },
 )
-ax3.plot(x[0], x[1], "ko")
 
 
+plot_points([x], ax=ax3, color="black", s=15, zorder=5)
 plot_geodesic_network(paths, ax=ax3, alpha=0.1)
 
 
-fig4, ax4 = plt.subplots(figsize=(8, 5), layout="constrained")
+fig4, ax4 = create_map_figure(figsize=(8, 5))
 
 plot(
-    model_space,
     k_posterior,
     ax=ax4,
     colorbar=True,
     symmetric=True,
+    coasts=True,
     cmap="seismic",
     colorbar_kwargs={
         "label": "Posterior covariance function",
     },
 )
-ax4.plot(x[0], x[1], "ko")
 
+plot_points([x], ax=ax4, color="black", s=15, zorder=5)
 plot_geodesic_network(paths, ax=ax4, alpha=0.1)
 
 
