@@ -153,6 +153,8 @@ from .datasets import (
 
 from .low_rank import LowRankSVD, LowRankCholesky, LowRankEig, white_noise_measure
 
+from .functional_calculus import LanczosOperatorFunction
+
 from .config import DATADIR
 
 __all__ = [
@@ -280,4 +282,6 @@ __all__ = [
     "LowRankEig",
     "LowRankCholesky",
     "white_noise_measure",
+    # functional_calculus
+    "LanczosOperatorFunction",
 ]
