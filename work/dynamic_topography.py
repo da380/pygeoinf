@@ -23,7 +23,7 @@ lmax_geoid = 64
 lmax_topo = 96
 
 space_order, space_scale = 2.0, 0.1 * b
-traction_order, traction_scale, traction_std = 1.25, 100.0e3, 1.0e6
+traction_order, traction_scale, traction_std = 1.25, 100.0e3, 2.0e6
 density_order, density_scale, density_std = 2.0, 500.0e3, 10.0
 
 
@@ -209,6 +209,7 @@ D_base = full_space.project_function(lambda _: D_ocean)
 D_raw = D_base * (1.0 + 10.0 * full_space.domain_mask())
 smoothing_op = full_space.heat_kernel_gaussian_measure(0.05 * b).covariance
 D_field_full = smoothing_op(D_raw)
+# D_field_full = D_ocean
 
 print("2. Building Full System Operators & Measures (Variable Rigidity)...")
 physics_op, forward_op = build_operators(full_space, D_field_full)

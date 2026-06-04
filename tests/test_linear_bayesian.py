@@ -905,3 +905,167 @@ class TestMahalanobisEvidenceTerm:
 
         with pytest.raises(ValueError, match="Data error measure must be set"):
             inversion.mahalanobis_evidence_term(dummy_data, solver)
+
+
+class TestBayesianEvidence:
+    """Tests for the Log-Determinant SLQ estimator and full Log-Evidence calculations."""
+
+    def test_estimate_log_determinant_data_space(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the SLQ estimator converges to the neighborhood of the exact
+        dense log-determinant of the data-space normal operator.
+        """
+        inversion = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        # 1. Exact Dense Calculation
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        exact_normal_matrix = A @ Q @ A.T + R
+        sign, exact_log_det = np.linalg.slogdet(exact_normal_matrix)
+        assert sign > 0
+
+        # 2. SLQ Matrix-Free Estimation
+        # Using lanczos_degree = dim ensures the inner Krylov subspace is exact.
+        # The Hutchinson outer-loop still has variance, so we use a statistical tolerance.
+        dim = forward_problem.data_space.dim
+        np.random.seed(42)  # Fix seed for stable test variance
+        approx_log_det = inversion.estimate_log_determinant(
+            operator_type="data_space",
+            size_estimate=dim,
+            method="fixed",
+            lanczos_degree=dim,
+            lanczos_rtol=None,  # Force exact Lanczos
+        )
+
+        assert np.isclose(approx_log_det, exact_log_det, rtol=0.05)
+
+    def test_estimate_log_determinant_model_space(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the SLQ estimator converges to the neighborhood of the exact
+        dense log-determinant of the model-space normal operator.
+        """
+        # Force model_space formalism to trigger prior inverse requirements
+        solver = CholeskySolver(galerkin=True)
+        prior = model_prior_measure.with_regularized_inverse(solver, damping=0.1)
+        error = forward_problem.data_error_measure.with_regularized_inverse(
+            solver, damping=0.1
+        )
+
+        fp_invertible = LinearForwardProblem(
+            forward_problem.forward_operator, data_error_measure=error
+        )
+
+        inversion = LinearBayesianInversion(
+            fp_invertible, prior, formalism="model_space"
+        )
+
+        # 1. Exact Dense Calculation
+        A = fp_invertible.forward_operator.matrix(dense=True)
+        Q_inv = prior.inverse_covariance.matrix(dense=True)
+        R_inv = error.inverse_covariance.matrix(dense=True)
+
+        exact_normal_matrix = Q_inv + A.T @ R_inv @ A
+        sign, exact_log_det = np.linalg.slogdet(exact_normal_matrix)
+        assert sign > 0
+
+        # 2. SLQ Matrix-Free Estimation
+        dim = fp_invertible.model_space.dim
+        np.random.seed(42)
+        approx_log_det = inversion.estimate_log_determinant(
+            operator_type="model_space",
+            size_estimate=dim,
+            method="fixed",
+            lanczos_degree=dim,
+            lanczos_rtol=None,
+        )
+
+        assert np.isclose(approx_log_det, exact_log_det, rtol=0.05)
+
+    def test_log_evidence_exact_dense(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the full log-evidence computation closely matches the
+        analytical likelihood of the data under the marginal distribution.
+        """
+        solver = CholeskySolver(galerkin=True)
+        inversion = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        # 1. Exact Dense Calculation
+        A = forward_problem.forward_operator.matrix(dense=True)
+        Q = model_prior_measure.covariance.matrix(dense=True)
+        R = forward_problem.data_error_measure.covariance.matrix(dense=True)
+
+        exact_normal_matrix = A @ Q @ A.T + R
+
+        # Using Scipy's multivariate normal to compute exact log p(d)
+        from scipy.stats import multivariate_normal
+
+        exact_marginal = multivariate_normal(
+            mean=np.zeros(forward_problem.data_space.dim), cov=exact_normal_matrix
+        )
+        expected_evidence = exact_marginal.logpdf(data)
+
+        # 2. Matrix-Free Evidence Calculation
+        dim = forward_problem.data_space.dim
+        np.random.seed(42)
+        actual_evidence = inversion.log_evidence(
+            data,
+            solver,
+            size_estimate=dim,
+            method="fixed",
+            lanczos_degree=dim,
+            lanczos_rtol=None,
+        )
+
+        assert np.isclose(actual_evidence, expected_evidence, rtol=0.05)
+
+    def test_log_evidence_dynamic_convergence(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the 'variable' method successfully evaluates without errors
+        and produces a statistically sound estimate of the log-evidence.
+        """
+        solver = CholeskySolver(galerkin=True)
+        inversion = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="data_space"
+        )
+
+        dim = forward_problem.data_space.dim
+        np.random.seed(42)
+
+        # Running the dynamic SLQ logic
+        actual_evidence = inversion.log_evidence(
+            data,
+            solver,
+            size_estimate=10,
+            method="variable",
+            max_samples=dim * 2,  # Let Hutchinson run a bit to ensure stability
+            rtol=1e-2,
+            lanczos_degree=dim,
+            lanczos_rtol=1e-3,
+        )
+
+        # Because it is stochastic, we just want to ensure it completes and returns a float
+        assert isinstance(actual_evidence, float)

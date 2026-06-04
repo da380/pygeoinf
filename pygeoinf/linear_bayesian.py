@@ -54,6 +54,7 @@ from .linear_solvers import (
 from .hilbert_space import Vector, EuclideanSpace
 from .affine_operators import AffineOperator
 from .low_rank import LowRankSVD, LowRankEig
+from .functional_calculus import operator_function_quadratic_form
 
 
 class LinearBayesianInversion(LinearInversion):
@@ -557,6 +558,196 @@ class LinearBayesianInversion(LinearInversion):
             mahalanobis_term = misfit_base - misfit_reduction
 
         return float(mahalanobis_term)
+
+    def estimate_log_determinant(
+        self,
+        /,
+        *,
+        operator_type: Literal["data_space", "model_space"] = "data_space",
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 5,
+        lanczos_degree: int = 40,
+        lanczos_rtol: Optional[float] = 1e-3,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Estimates the log-determinant of the Bayesian normal operator using
+        Stochastic Lanczos Quadrature (SLQ).
+
+        This combines a Hutchinson trace estimator (outer loop) with the Lanczos
+        method (inner loop) to compute `Tr(ln(N)) = ln(|N|)` entirely matrix-free.
+        It features dual-layer dynamic convergence, able to break early on both
+        the trace sum and the Krylov subspace generation.
+
+        Args:
+            operator_type: Evaluates the 'data_space' normal operator (A Q A* + R)
+                or the 'model_space' normal operator (Q^-1 + A* R^-1 A).
+            size_estimate: Initial number of Hutchinson samples (probe vectors).
+            method: 'variable' to sample until `rtol` is met, 'fixed' otherwise.
+            max_samples: Hard limit on the number of Hutchinson samples.
+            rtol: Relative tolerance for the Hutchinson trace estimate.
+            block_size: Number of new samples per iteration in the 'variable' method.
+            lanczos_degree: Maximum Krylov dimension (k) per probe vector.
+            lanczos_rtol: Relative tolerance for dynamic Lanczos truncation.
+                If None, uses fixed `lanczos_degree` steps.
+            parallel: If True, evaluates probe vectors in parallel.
+            n_jobs: Number of CPU cores to use if parallel=True.
+
+        Returns:
+            The estimated log-determinant of the chosen normal operator.
+        """
+
+        # 1. Resolve the target operator and space
+        if operator_type == "data_space":
+            space = self.data_space
+            A = self.forward_problem.forward_operator
+            Q_cov = self.model_prior_measure.covariance
+
+            if self.forward_problem.data_error_measure_set:
+                R_cov = self.forward_problem.data_error_measure.covariance
+                op = (A @ Q_cov @ A.adjoint) + R_cov
+            else:
+                op = A @ Q_cov @ A.adjoint
+        else:
+            space = self.model_space
+            op = self.normal_operator
+
+        # 2. Define the log function with a safeguard against numerical ghost eigenvalues
+        def log_func(x: np.ndarray) -> np.ndarray:
+            return np.log(np.maximum(x, 1e-15))
+
+        # 3. Helper to correctly scale Rademacher noise to the Hilbert space basis
+        if hasattr(space, "squared_norms"):
+            inv_norms = 1.0 / np.sqrt(space.squared_norms)
+        else:
+            inv_norms = np.array(
+                [
+                    1.0 / np.sqrt(space.squared_norm(space.basis_vector(i)))
+                    for i in range(space.dim)
+                ]
+            )
+
+        if max_samples is None:
+            max_samples = space.dim
+
+        num_samples = min(size_estimate, max_samples)
+
+        # 4. Block sampling helper
+        def _compute_sample_sum(n_samples_to_draw: int) -> float:
+            def _single_sample() -> float:
+                c_z = np.random.choice([-1.0, 1.0], size=space.dim) * inv_norms
+                z = space.from_components(c_z)
+
+                # Apply the newly hardened functional calculus API
+                return operator_function_quadratic_form(
+                    op,
+                    z,
+                    log_func,
+                    size_estimate=lanczos_degree,
+                    method="fixed" if lanczos_rtol is None else "variable",
+                    rtol=lanczos_rtol if lanczos_rtol is not None else 1e-3,
+                )
+
+            if parallel:
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(_single_sample)() for _ in range(n_samples_to_draw)
+                )
+                return sum(results)
+            else:
+                return sum(_single_sample() for _ in range(n_samples_to_draw))
+
+        # 5. Progressive Hutchinson Iteration
+        total_sum = _compute_sample_sum(num_samples)
+        trace_est = total_sum / num_samples if num_samples > 0 else 0.0
+
+        if method == "variable" and num_samples < max_samples:
+            while num_samples < max_samples:
+                old_est = trace_est
+                samples_to_add = min(block_size, max_samples - num_samples)
+
+                new_sum = _compute_sample_sum(samples_to_add)
+
+                total_sum += new_sum
+                total_samples = num_samples + samples_to_add
+                trace_est = total_sum / total_samples
+
+                if abs(trace_est) > 0:
+                    error = abs(trace_est - old_est) / abs(trace_est)
+                    if error < rtol:
+                        break
+
+                num_samples = total_samples
+
+        return float(trace_est)
+
+    def log_evidence(
+        self,
+        data: Vector,
+        solver: LinearSolver,
+        /,
+        *,
+        preconditioner: Optional[LinearOperator] = None,
+        # Hutchinson kwargs
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 5,
+        # Lanczos kwargs
+        lanczos_degree: int = 40,
+        lanczos_rtol: Optional[float] = 1e-3,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the approximate log marginal likelihood (evidence) of the data.
+
+        The log-evidence is a critical metric for Bayesian model selection, allowing
+        users to quantitatively compare different prior assumptions or forward models.
+
+        This method relies on Stochastic Lanczos Quadrature (SLQ) to estimate the
+        expensive log-determinant of the data-space normal operator in O(k*N) time.
+
+        Args:
+            data: The observed data vector `d`.
+            solver: The linear solver used to invert the normal operator for the
+                Mahalanobis misfit term.
+            preconditioner: Optional preconditioner for the iterative solver.
+            [Hutchinson/Lanczos kwargs define dynamic convergence for the SLQ trace estimator]
+
+        Returns:
+            The estimated log-evidence ln(p(d)).
+        """
+        # 1. Mahalanobis Term (Exact, up to solver tolerance)
+        mahalanobis = self.mahalanobis_evidence_term(
+            data, solver, preconditioner=preconditioner
+        )
+
+        # 2. Log-Determinant Term (Stochastic Approximation)
+        # We enforce data_space evaluation because the evidence is a measure on the data
+        log_det = self.estimate_log_determinant(
+            operator_type="data_space",
+            size_estimate=size_estimate,
+            method=method,
+            max_samples=max_samples,
+            rtol=rtol,
+            block_size=block_size,
+            lanczos_degree=lanczos_degree,
+            lanczos_rtol=lanczos_rtol,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        # 3. Dimensionality Constant
+        m = self.data_space.dim
+        constant = m * np.log(2 * np.pi)
+
+        # log p(d) = -0.5 * (ln|N| + <v, N^-1 v> + M*ln(2*pi))
+        return -0.5 * (log_det + mahalanobis + constant)
 
     # =========================================================================
     # Preconditioners
