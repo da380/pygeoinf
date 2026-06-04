@@ -12,7 +12,17 @@ invariant operators and probability measures.
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Any, List, Optional, TypeAlias, Iterator, Tuple, Union
+from typing import (
+    Callable,
+    Any,
+    List,
+    Optional,
+    TypeAlias,
+    Iterator,
+    Tuple,
+    Union,
+    Literal,
+)
 
 import numpy as np
 from scipy.sparse import diags
@@ -337,34 +347,6 @@ class InvariantGaussianMeasure(GaussianMeasure):
             expectation=self._expectation,  # Pass the raw attribute to avoid zero instantiation
         )
 
-    def kl_divergence(self, other: GaussianMeasure) -> float:
-        """
-        Computes the exact Kullback-Leibler (KL) divergence D_KL(self || other).
-
-        If 'other' is also an InvariantGaussianMeasure, this calculates the divergence
-        in ultra-fast O(N) time directly from the spectral variances.
-        """
-        if isinstance(other, InvariantGaussianMeasure) and self.domain == other.domain:
-            k = self.domain.dim
-            var_p = self.spectral_variances
-            var_q = other.spectral_variances
-
-            trace_term = np.sum(var_p / var_q)
-            log_det_term = np.sum(np.log(var_q)) - np.sum(np.log(var_p))
-
-            if self.has_zero_expectation and other.has_zero_expectation:
-                mahalanobis_term = 0.0
-            else:
-                diff = self.domain.subtract(self.expectation, other.expectation)
-                inv_Q = other.covariance.inverse
-                diff_invQ = inv_Q(diff)
-                mahalanobis_term = self.domain.inner_product(diff, diff_invQ)
-
-            return float(0.5 * (trace_term + mahalanobis_term - k + log_det_term))
-
-        # Fallback to the dense Galerkin method for mixed types
-        return super().kl_divergence(other)
-
     # ------------------------------------------------------#
     #           Overloads of base class methods             #
     # ------------------------------------------------------#
@@ -450,6 +432,51 @@ class InvariantGaussianMeasure(GaussianMeasure):
             inverse_solver=inverse_solver,
             inverse_preconditioner=inverse_preconditioner,
         )
+
+    def kl_divergence(
+        self,
+        other: GaussianMeasure,
+        /,
+        *,
+        method: Literal["auto", "dense", "randomized"] = "auto",
+        **kwargs,
+    ) -> float:
+        """
+        Computes the exact or approximate Kullback-Leibler (KL) divergence D_KL(self || other).
+
+        If both measures are InvariantGaussianMeasures on the same domain,
+        and method="auto", this calculates the divergence in ultra-fast O(N)
+        time directly from the spectral variances.
+        """
+        if (
+            method == "auto"
+            and isinstance(other, InvariantGaussianMeasure)
+            and self.domain == other.domain
+        ):
+            k = self.domain.dim
+            var_p = self.spectral_variances
+            var_q = other.spectral_variances
+
+            # 1. Trace Term: Tr(Q^-1 P)
+            trace_term = np.sum(var_p / var_q)
+
+            # 2. Log-Det Term: ln|Q| - ln|P|
+            log_det_term = np.sum(np.log(var_q)) - np.sum(np.log(var_p))
+
+            # 3. Mahalanobis Term: <mu_P - mu_Q, Q^-1 (mu_P - mu_Q)>
+            if self.has_zero_expectation and other.has_zero_expectation:
+                mahalanobis_term = 0.0
+            else:
+                diff = self.domain.subtract(self.expectation, other.expectation)
+                inv_Q = other.covariance.inverse
+                diff_invQ = inv_Q(diff)
+                mahalanobis_term = self.domain.inner_product(diff, diff_invQ)
+
+            return float(0.5 * (trace_term + mahalanobis_term - k + log_det_term))
+
+        # Fallback to the base class (which handles 'dense' and 'randomized')
+        _method = "dense" if method == "auto" else method
+        return super().kl_divergence(other, method=_method, **kwargs)
 
     def __neg__(self) -> InvariantGaussianMeasure:
         """Returns the measure with a negated expectation. Covariance is unchanged."""
@@ -657,6 +684,34 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         used with care.
         """
         return self.invariant_automorphism(lambda k: k)
+
+    # ------------------------------------------------------------#
+    #                 Optimized Base Operator Overrides           #
+    # ------------------------------------------------------------#
+
+    def identity_operator(self) -> InvariantLinearAutomorphism:
+        """
+        Returns the identity operator on the space.
+
+        Overridden to return an InvariantLinearAutomorphism, ensuring that
+        compositions with other invariant operators preserve the fast-path
+        diagonal structure.
+        """
+        return InvariantLinearAutomorphism(self, np.ones(self.dim, dtype=float))
+
+    def zero_operator(self, codomain: Optional[HilbertSpace] = None) -> LinearOperator:
+        """
+        Returns the zero operator.
+
+        If the codomain is the space itself (or not provided), it returns an
+        InvariantLinearAutomorphism for optimal arithmetic operations.
+        Otherwise, it falls back to the standard abstract zero operator.
+        """
+        codomain = self if codomain is None else codomain
+        if codomain == self:
+            return InvariantLinearAutomorphism(self, np.zeros(self.dim, dtype=float))
+
+        return super().zero_operator(codomain=codomain)
 
     # ------------------------------------------------------------#
     #                      Abstract methods                       #

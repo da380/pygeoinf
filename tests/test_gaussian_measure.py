@@ -254,47 +254,121 @@ class TestGaussianMeasure:
 
     def test_kl_divergence_self(self, measure: GaussianMeasure):
         """
-        The KL divergence of a measure with itself must be exactly zero.
+        The KL divergence of a measure with itself must be exactly zero,
+        both for the exact dense method and the randomized SLQ method.
         """
-        kl_div = measure.kl_divergence(measure)
-        assert np.isclose(kl_div, 0.0, atol=1e-10)
+        # Ensure the measure has an inverse covariance for the randomized method
+        solver = CholeskySolver(galerkin=True)
+        reg_measure = measure.with_regularized_inverse(solver, damping=0.1)
 
-    def test_kl_divergence_known_values(self, space: HilbertSpace):
+        kl_dense = reg_measure.kl_divergence(reg_measure, method="dense")
+        assert np.isclose(kl_dense, 0.0, atol=1e-10)
+
+        # The randomized method should gracefully handle self-divergence
+        # (the stochastic noise perfectly cancels out)
+        kl_rand = reg_measure.kl_divergence(
+            reg_measure,
+            method="randomized",
+            hutchinson_size_estimate=10,
+            hutchinson_method="fixed",
+            lanczos_size_estimate=reg_measure.domain.dim,
+            lanczos_method="fixed",
+        )
+        assert np.isclose(kl_rand, 0.0, atol=1e-10)
+
+    def test_kl_divergence_known_values_dense(self, space: HilbertSpace):
         """
-        Tests the KL divergence calculation against a known analytical result.
+        Tests the dense KL divergence calculation against a known analytical result.
         P = N(0, I)
         Q = N(mu, sigma^2 * I)
         """
         k = space.dim
 
         # Measure P: Standard Normal N(0, I)
-        mean_p = space.zero
-        cov_p = np.eye(k)
         measure_p = GaussianMeasure.from_covariance_matrix(
-            space, cov_p, expectation=mean_p
+            space, np.eye(k), expectation=space.zero
         )
 
         # Measure Q: N(1, 2 * I)
         sigma_sq = 2.0
-        mean_q_components = np.ones(k)
-        mean_q = space.from_components(mean_q_components)
-        cov_q = sigma_sq * np.eye(k)
         measure_q = GaussianMeasure.from_covariance_matrix(
-            space, cov_q, expectation=mean_q
+            space, sigma_sq * np.eye(k), expectation=space.from_components(np.ones(k))
         )
 
         # Analytical Calculation for D_KL(P || Q)
-        # 1. Trace term: tr( (sigma^2 I)^-1 * I ) = k / sigma^2
         trace_term = k / sigma_sq
-        # 2. Mahalanobis term: (0 - mu)^T (sigma^2 I)^-1 (0 - mu) = k / sigma^2
         mahalanobis_term = k / sigma_sq
-        # 3. Log det term: ln(det(Q)/det(P)) = ln((sigma^2)^k / 1) = k * ln(sigma^2)
         log_det_term = k * np.log(sigma_sq)
-
         expected_kl = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
 
-        actual_kl = measure_p.kl_divergence(measure_q)
+        actual_kl = measure_p.kl_divergence(measure_q, method="dense")
         assert np.isclose(actual_kl, expected_kl, rtol=1e-7)
+
+    def test_kl_divergence_known_values_randomized(self, space: HilbertSpace):
+        """
+        Tests the randomized SLQ KL divergence calculation against an analytical result.
+        Using the progressive 'variable' method to ensure convergence logic works.
+        """
+        k = space.dim
+
+        # Measure P: Standard Normal N(0, I)
+        measure_p = GaussianMeasure.from_covariance_matrix(
+            space, np.eye(k), expectation=space.zero
+        )
+
+        # Measure Q: N(1, 2 * I)
+        sigma_sq = 2.0
+        q_cov = sigma_sq * np.eye(k)
+        # The randomized method requires the reference measure (Q) to have an inverse
+        q_inv_cov = np.eye(k) / sigma_sq
+
+        q_cov_op = LinearOperator.from_matrix(space, space, q_cov, galerkin=True)
+        q_inv_cov_op = LinearOperator.from_matrix(
+            space, space, q_inv_cov, galerkin=True
+        )
+
+        measure_q = GaussianMeasure(
+            covariance=q_cov_op,
+            inverse_covariance=q_inv_cov_op,
+            expectation=space.from_components(np.ones(k)),
+        )
+
+        # Analytical Calculation for D_KL(P || Q)
+        trace_term = k / sigma_sq
+        mahalanobis_term = k / sigma_sq
+        log_det_term = k * np.log(sigma_sq)
+        expected_kl = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
+
+        # Variable method: should converge dynamically
+        actual_kl = measure_p.kl_divergence(
+            measure_q,
+            method="randomized",
+            hutchinson_size_estimate=5,
+            hutchinson_method="variable",
+            max_samples=k * 10,
+            rtol=1e-2,
+            block_size=5,
+            lanczos_size_estimate=k,
+            lanczos_method="fixed",  # Exact for k-dimensional space
+        )
+
+        # Because it's a stochastic estimate, we allow a slightly looser tolerance
+        assert np.isclose(actual_kl, expected_kl, rtol=0.1, atol=0.1)
+
+    def test_kl_divergence_randomized_requires_inverse(self, measure: GaussianMeasure):
+        """
+        Verifies the randomized method gracefully rejects reference measures
+        that lack an inverse covariance operator.
+        """
+        # Create a measure from samples (which doesn't set inverse_covariance)
+        samples = [measure.domain.random() for _ in range(5)]
+        prior_measure = GaussianMeasure.from_samples(measure.domain, samples)
+        assert not prior_measure.inverse_covariance_set
+
+        with pytest.raises(
+            ValueError, match="Randomized KL divergence requires the 'other' measure"
+        ):
+            measure.kl_divergence(prior_measure, method="randomized")
 
     def test_kl_divergence_domain_mismatch(self, measure: GaussianMeasure):
         """

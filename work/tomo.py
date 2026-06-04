@@ -8,14 +8,15 @@ from pygeoinf.symmetric_space.sphere import (
     plot_geodesic_network,
 )
 
+inf.configure_threading(n_threads=1)
 
 # Global Tomography Parameters
 lmax = 128
 order = 2
 scale = 0.1
-prior_scale = 0.005
-n_sources = 30
-n_receivers = n_sources
+prior_scale = 0.05
+n_sources = 2
+n_receivers = 2
 
 print("Global parameters initialized.")
 
@@ -29,7 +30,6 @@ print(f"Initialized model space with dimension {model_space.dim}")
 
 
 # 1. Generate random paths (sources and receivers)
-# model_space.random_point() handles 1D floats or 2D tuples automatically
 receivers = model_space.random_points(n_receivers)
 sources = model_space.random_points(n_sources)
 paths = [(src, rec) for src in sources for rec in receivers]
@@ -79,14 +79,19 @@ solver = inf.CGMatrixSolver()
 model_posterior = inverse_problem.model_posterior_measure(
     data_obs, solver, preconditioner=precon
 )
-
 print(f"Solution found in {solver.iterations} iterations.")
 
 
 # Get the two-point covariance functions
+print("Computing covariance functions...")
 x = model_space.random_point()
 k_prior = model_prior.two_point_covariance(x)
 k_posterior = model_posterior.two_point_covariance(x)
+
+
+# Estimate the pointwise std
+print("Computing pointwise std...")
+posterior_std = model_posterior.sample_pointwise_std(200)
 
 
 # Plot the results
@@ -161,6 +166,22 @@ plot(
 
 plot_points([x], ax=ax4, color="black", s=15, zorder=5)
 plot_geodesic_network(paths, ax=ax4, alpha=0.1)
+
+
+fig5, ax5 = create_map_figure(figsize=(8, 5))
+
+plot(
+    posterior_std,
+    ax=ax5,
+    colorbar=True,
+    coasts=True,
+    cmap="Blues",
+    colorbar_kwargs={
+        "label": "Pointwise STD",
+    },
+)
+
+plot_geodesic_network(paths, ax=ax5, alpha=0.1)
 
 
 plt.show()
