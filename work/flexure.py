@@ -15,17 +15,17 @@ if __name__ == "__main__":
     # Setup Physical Parameters
     nu = 0.25  # Poisson's ratio
     rho_g = 1.0  # Normalized restoring force (e.g., mantle/water density contrast)
-    D0 = 0.0001  # Baseline oceanic flexural rigidity
+    D0 = 0.000001  # Baseline oceanic flexural rigidity
 
     print("2. Constructing Spatially Varying Rigidity Field...")
     # Create base uniform rigidity
     D_base = X.project_function(lambda _: D0)
 
     # Stiffen continents by some factor
-    D_raw = D_base * (1.0 + 3 * X.domain_mask())
+    D_raw = D_base * (1.0 + 99 * X.domain_mask())
 
     # Smooth the sharp coastlines using a heat kernel to prevent Gibbs ringing
-    S = X.heat_kernel_gaussian_measure(0.05).covariance
+    S = X.heat_kernel_gaussian_measure(0.1).covariance
     D = S(D_raw)
 
     P = X.invariant_automorphism(lambda k: 1 / (D0 * k**2 + rho_g))
@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
     print("4. Generating Random  Load...")
     # Use a smoothed random field
-    mu = X.heat_kernel_gaussian_measure(0.05)
+    mu = X.sobolev_kernel_gaussian_measure(2.0, 0.1)
     u = mu.sample()
 
     print("5. Solving the Flexure Equations...")
@@ -61,7 +61,6 @@ if __name__ == "__main__":
     )
     ax.set_title("Smoothed Flexural Rigidity ($D$)", pad=15)
 
-    # --- SHOWCASING NEW FUNCTIONALITY ---
     # Intercept the attached colorbar to adjust labels and ticks
     im.colorbar.set_label("Rigidity Value (normalized)", fontsize=12, fontweight="bold")
     im.colorbar.ax.tick_params(labelsize=10, color="gray")
