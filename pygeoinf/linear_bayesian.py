@@ -49,7 +49,7 @@ from .linear_solvers import (
     IterativeLinearSolver,
     ResidualTrackingCallback,
 )
-from .hilbert_space import Vector, EuclideanSpace
+from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
 from .affine_operators import AffineOperator
 from .low_rank import LowRankSVD, LowRankEig
 from .functional_calculus import operator_function_quadratic_form
@@ -501,17 +501,29 @@ class LinearBayesianInversion(LinearInversion):
         """
         Computes the data-dependent Mahalanobis term of the log-evidence.
 
-        This value is equal to the unnormalized log-posterior evaluated at the
-        posterior expectation. It captures the optimal fit to the data, balanced
-        by the prior penalty.
+        This value represents the optimal, penalty-balanced data misfit. It is
+        equivalent to the unnormalized log-posterior evaluated at the posterior
+        expectation.
+
+        Mathematically, for a shifted data residual vector v = d - A(mu_u) - mu_e,
+        the term evaluates the quadratic form:
+            Misfit = <v, (A Q A* + R)^-1 v>
+
+        In the 'model_space' formalism, this is computed far more efficiently
+        using the Woodbury matrix identity to bypass the massive data-space
+        inversion:
+            Misfit = <v, R^-1 v> - <A* R^-1 v, (Q^-1 + A* R^-1 A)^-1 A* R^-1 v>
 
         Args:
-            data: The observed data vector.
+            data: The observed data vector 'd'.
             solver: The LinearSolver used to invert the normal operator.
-            preconditioner: An optional preconditioner for iterative solvers.
+            preconditioner: An optional preconditioner to accelerate iterative solvers.
 
         Returns:
-            The Mahalanobis distance as a float.
+            float: The scalar Mahalanobis distance.
+
+        Raises:
+            ValueError: If the forward problem lacks a defined data error measure.
         """
         if not self.forward_problem.data_error_measure_set:
             raise ValueError("Data error measure must be set.")
@@ -548,7 +560,7 @@ class LinearBayesianInversion(LinearInversion):
     def _trace_log_slq(
         self,
         op: LinearOperator,
-        space: EuclideanSpace,  # Or HilbertSpace type
+        space: HilbertSpace,
         size_estimate: int,
         method: Literal["variable", "fixed"],
         max_samples: Optional[int],
@@ -559,7 +571,32 @@ class LinearBayesianInversion(LinearInversion):
         parallel: bool,
         n_jobs: int,
     ) -> float:
-        """Generalized Stochastic Lanczos Quadrature for Tr(ln(A))."""
+        """
+        Internal matrix-free engine for estimating Tr(ln(A)) using
+        Stochastic Lanczos Quadrature (SLQ).
+
+        This relies on the identity ln(|A|) = Tr(ln(A)). It combines a Hutchinson
+        stochastic trace estimator (outer loop) with the Lanczos process (inner loop)
+        to evaluate the matrix logarithm quadratic forms <z, ln(A) z> without ever
+        assembling A.
+
+        Args:
+            op: The self-adjoint, positive-definite operator to evaluate.
+            space: The Hilbert space on which the operator acts.
+            size_estimate: Initial number of Hutchinson probe vectors (z).
+            method: 'variable' to sample until 'rtol' is met; 'fixed' otherwise.
+            max_samples: Hard limit on Hutchinson probe vectors.
+            rtol: Relative tolerance for the outer Hutchinson trace estimator.
+            block_size: Number of probes to evaluate between convergence checks.
+            lanczos_degree: The maximum Krylov subspace dimension (k) per probe.
+            lanczos_rtol: Relative tolerance for early stopping in the Lanczos loop.
+                          If None, forces exactly 'lanczos_degree' iterations.
+            parallel: If True, evaluates the independent probe vectors concurrently.
+            n_jobs: Number of CPU cores to utilize.
+
+        Returns:
+            float: The estimated trace of the matrix logarithm.
+        """
 
         def log_func(x: np.ndarray) -> np.ndarray:
             return np.log(np.maximum(x, 1e-15))
@@ -594,7 +631,6 @@ class LinearBayesianInversion(LinearInversion):
                 )
 
             if parallel:
-                from joblib import Parallel, delayed
 
                 results = Parallel(n_jobs=n_jobs)(
                     delayed(_single_sample)() for _ in range(n_samples_to_draw)
@@ -644,6 +680,27 @@ class LinearBayesianInversion(LinearInversion):
         """
         Estimates the log-determinant of the Bayesian normal operator using
         Stochastic Lanczos Quadrature (SLQ).
+
+        This acts as a public interface for computing the log-determinant of
+        either the data-space normal operator (A Q A* + R) or the model-space
+        normal operator (Q^-1 + A* R^-1 A). It securely resolves the correct
+        algebraic space and delegates to the internal matrix-free SLQ engine.
+
+        Args:
+            operator_type: The target normal operator ('data_space' or 'model_space').
+            size_estimate: Initial number of Hutchinson samples (probe vectors).
+            method: 'variable' to sample until 'rtol' is met, 'fixed' otherwise.
+            max_samples: Hard limit on the number of Hutchinson samples.
+            rtol: Relative tolerance for the Hutchinson trace estimate.
+            block_size: Number of new samples per iteration in the 'variable' method.
+            lanczos_degree: Maximum Krylov dimension (k) per probe vector.
+            lanczos_rtol: Relative tolerance for dynamic Lanczos truncation.
+                If None, uses fixed 'lanczos_degree' steps.
+            parallel: If True, evaluates probe vectors in parallel.
+            n_jobs: Number of CPU cores to use if parallel=True.
+
+        Returns:
+            float: The estimated log-determinant ln(|N|).
         """
         surrogate = self.with_formalism(operator_type)
         space = (
@@ -685,7 +742,37 @@ class LinearBayesianInversion(LinearInversion):
         n_jobs: int = -1,
     ) -> float:
         """
-        Computes the approximate log marginal likelihood (evidence) of the data.
+        Computes the approximate log marginal likelihood (evidence) of the data, ln(p(d)).
+
+        The log-evidence is a critical metric for Bayesian model selection, allowing
+        users to quantitatively compare different prior assumptions or forward models.
+        It evaluates the likelihood of the observed data marginalized over all possible
+        model states.
+
+        The computation evaluates the Gaussian marginal density equation:
+            ln p(d) = -0.5 * [ ln|N_d| + <v, N_d^-1 v> + M * ln(2*pi) ]
+
+        Args:
+            data: The observed data vector 'd'.
+            solver: The LinearSolver used to invert the normal operator for the
+                Mahalanobis misfit term.
+            preconditioner: Optional preconditioner for the iterative solver.
+            size_estimate: Initial number of SLQ Hutchinson samples.
+            method: 'variable' to dynamically bound SLQ error, 'fixed' otherwise.
+            max_samples: Hard limit on SLQ Hutchinson samples.
+            rtol: Relative tolerance for the SLQ trace estimate.
+            block_size: Number of new SLQ samples per iteration.
+            lanczos_degree: Maximum Krylov dimension for SLQ.
+            lanczos_rtol: Relative tolerance for dynamic Lanczos truncation.
+            parallel: If True, evaluates SLQ probe vectors in parallel.
+            n_jobs: Number of CPU cores to use if parallel=True.
+
+        Returns:
+            float: The estimated log-evidence ln(p(d)).
+
+        Raises:
+            ValueError: If the 'model_space' formalism is used but no data error measure
+                        has been set on the forward problem.
         """
         mahalanobis = self.mahalanobis_evidence_term(
             data, solver, preconditioner=preconditioner
