@@ -28,9 +28,14 @@ if __name__ == "__main__":
     S = X.heat_kernel_gaussian_measure(0.05).covariance
     D = S(D_raw)
 
-    print("3. Building Exact Forward Operator and Preconditioner...")
-    A = X.thin_elastic_shell_operator(D, nu, rho_g)
     P = X.invariant_automorphism(lambda k: 1 / (D0 * k**2 + rho_g))
+    B = X.inverse_flexural_operator(
+        D,
+        nu,
+        rho_g,
+        baseline_rigidity=D0,
+        solver=inf.CGSolver(callback=inf.ProgressCallback()),
+    )
 
     print("4. Generating Random  Load...")
     # Use a smoothed random field
@@ -40,10 +45,7 @@ if __name__ == "__main__":
     print("5. Solving the Flexure Equations...")
     # Baseline solve if the Earth were entirely oceanic (instantaneous)
     v0 = P(u)
-
-    # Iterative CG solve for the exact variable rigidity
-    solver = inf.CGSolver(callback=inf.ProgressCallback())
-    v = solver(A, preconditioner=P)(u)
+    v = B(u)
 
     print("6. Plotting Results...")
 

@@ -1,3 +1,12 @@
+"""
+Provides concrete implementations of function spaces on the 2D Torus.
+
+This module defines Lebesgue (L²) and Sobolev (Hˢ) spaces for doubly periodic
+functions defined on a rectangular domain that wraps at its boundaries.
+It utilizes 2D Real Fast Fourier Transforms (rfft2) for highly efficient
+spectral operations and coordinate basis mapping.
+"""
+
 from __future__ import annotations
 from typing import Callable, Any, Optional, Tuple, List, Union
 
@@ -12,7 +21,12 @@ from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpa
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
-    """Implementation of the Lebesgue space L² on a 2D Torus."""
+    """
+    Implementation of the Lebesgue space L² on a 2D Torus.
+
+    Functions are represented by their values on an evenly spaced 2D grid. The
+    coordinate basis for the space is formed by 2D Fourier expansions.
+    """
 
     def __init__(
         self,
@@ -22,6 +36,12 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         radius_x: float = 1.0,
         radius_y: float = 1.0,
     ):
+        """
+        Args:
+            kmax: The maximum Fourier degree to be represented in both dimensions.
+            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
+            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
+        """
         if kmax <= 0:
             raise ValueError("kmax must be non-negative")
         if radius_x <= 0 or radius_y <= 0:
@@ -54,6 +74,23 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         max_degree: Optional[int] = None,
         power_of_two: bool = False,
     ) -> Lebesgue:
+        """
+        Creates an instance of the L² space with a Fourier truncation degree (`kmax`)
+        automatically chosen to capture the expected energy of functions drawn from
+        a specified prior measure.
+
+        Args:
+            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
+            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
+            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 1.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+
+        Returns:
+            Lebesgue: A fully instantiated L² space on the Torus with the optimal `kmax`.
+        """
         dummy_space = cls(max(1, min_degree), radius_x=radius_x, radius_y=radius_y)
         optimal_degree = dummy_space.estimate_truncation_degree(
             covariance_function, rtol=rtol, min_degree=min_degree, max_degree=max_degree
@@ -76,6 +113,19 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         max_degree: Optional[int] = None,
         power_of_two: bool = False,
     ) -> Lebesgue:
+        """
+        Creates an instance of the L² space on the Torus, tuned to the expected
+        energy of a Heat Kernel prior measure.
+
+        Args:
+            kernel_scale: The length-scale parameter of the heat kernel covariance.
+            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
+            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 1.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+        """
         return cls.from_covariance(
             cls.heat_kernel(kernel_scale),
             radius_x=radius_x,
@@ -100,6 +150,20 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         max_degree: Optional[int] = None,
         power_of_two: bool = False,
     ) -> Lebesgue:
+        """
+        Creates an instance of the L² space on the Torus, tuned to the expected
+        energy of a Sobolev-type prior measure.
+
+        Args:
+            kernel_order: The smoothness order of the Sobolev prior measure.
+            kernel_scale: The length-scale parameter of the Sobolev prior measure.
+            radius_x: The effective radius of the Torus in the x-direction. Defaults to 1.0.
+            radius_y: The effective radius of the Torus in the y-direction. Defaults to 1.0.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return. Defaults to 1.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+        """
         return cls.from_covariance(
             cls.sobolev_kernel(kernel_order, kernel_scale),
             radius_x=radius_x,
@@ -112,58 +176,90 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
 
     @property
     def kmax(self) -> int:
+        """The maximum Fourier degree represented in this space."""
         return self._kmax
 
     @property
     def radius_x(self) -> float:
+        """The radius of the Torus in the x-direction."""
         return self._radius_x
 
     @property
     def radius_y(self) -> float:
+        """The radius of the Torus in the y-direction."""
         return self._radius_y
 
     @property
     def fft_factor(self) -> float:
+        """The scaling factor applied during forward Fourier transforms."""
         return self._fft_factor
 
     @property
     def inverse_fft_factor(self) -> float:
+        """The scaling factor applied during inverse Fourier transforms."""
         return self._inverse_fft_factor
 
     @property
     def gaussian_curvature(self) -> float:
+        """The Gaussian curvature of the Torus (always 0.0)."""
         return 0.0
 
     def points(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Returns two flattened 1D arrays representing the X and Y coordinates of the 2D grid.
+        """
         x = np.arange(2 * self.kmax) * np.pi / self.kmax
         y = np.arange(2 * self.kmax) * np.pi / self.kmax
         X, Y = np.meshgrid(x, y, indexing="ij")
         return X.flatten(), Y.flatten()
 
     def project_function(self, f: Callable[[Tuple[float, float]], float]) -> np.ndarray:
+        """
+        Returns an element of the space by projecting a given continuous 2D function.
+
+        Args:
+            f: A callable that takes a tuple `(x, y)` and returns a scalar value.
+
+        Returns:
+            A 2D numpy array representing the function evaluated on the spatial grid.
+        """
         X, Y = self.points()
         Z = np.fromiter((f((x, y)) for x, y in zip(X, Y)), float)
         return Z.reshape((2 * self.kmax, 2 * self.kmax))
 
     def to_coefficients(self, u: np.ndarray) -> np.ndarray:
+        """Maps a spatial function vector to its 2D complex Fourier coefficients."""
         return rfft2(u) * self.fft_factor
 
     def from_coefficients(self, coeff: np.ndarray) -> np.ndarray:
+        """Maps 2D complex Fourier coefficients back to a spatial function vector."""
         return (
             irfft2(coeff, s=(2 * self.kmax, 2 * self.kmax)) * self._inverse_fft_factor
         )
 
     def to_coefficient_operator(self, kmax: int) -> LinearOperator:
+        """Returns an operator that maps a function to its spectral coefficients."""
         target_space = self.with_degree(kmax)
         transfer_op = self.degree_transfer_operator(kmax)
         return target_space.coordinate_projection @ transfer_op
 
     def from_coefficient_operator(self, kmax: int) -> LinearOperator:
+        """Returns an operator that maps spectral coefficients to a spatial function."""
         target_space = self.with_degree(kmax)
         transfer_op = self.degree_transfer_operator(kmax)
         return transfer_op.adjoint @ target_space.coordinate_inclusion
 
     def wavevector_indices(self, kx: int, ky: int) -> List[int]:
+        """
+        Retrieves the 1D component indices corresponding to a specific 2D wavevector.
+
+        Args:
+            kx: The spatial frequency in the x-direction.
+            ky: The spatial frequency in the y-direction.
+
+        Returns:
+            A list of integers representing the indices in the flattened spectral vector.
+        """
         if ky < 0 or ky > self.kmax:
             raise ValueError(
                 f"Due to Real-FFT symmetry, ky must be in [0, {self.kmax}]."
@@ -174,6 +270,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def spectral_projection_operator(
         self, modes: List[Tuple[int, int]]
     ) -> LinearOperator:
+        """
+        Returns an operator that projects a function onto a specific set of
+        Fourier wavevector modes.
+        """
         indices = []
         for kx, ky in modes:
             indices.extend(self.wavevector_indices(kx, ky))
@@ -195,12 +295,15 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return k
 
     def laplacian_eigenvalue(self, k: int) -> float:
+        """Returns the eigenvalue of the Laplacian for the given flat index."""
         return self._eigenvalues[k]
 
     def laplacian_eigenvector_squared_norm(self, k: int) -> float:
+        """Returns the squared norm of the eigenfunction for the given flat index."""
         return self._squared_norms[k]
 
     def laplacian_eigenvectors_at_point(self, pt: Tuple[float, float]) -> np.ndarray:
+        """Evaluates all Laplacian eigenfunctions at a given physical coordinate."""
         tx, ty = pt
         phase = self._kx_freqs * tx + self._ky_freqs * ty
         vals = np.where(self._is_imag, -np.sin(phase), np.cos(phase))
@@ -208,11 +311,13 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return self._metric @ vals / norm_factor
 
     def random_point(self) -> Tuple[float, float]:
+        """Returns a random coordinate point within the Torus domain [0, 2π] x [0, 2π]."""
         return (np.random.uniform(0, 2 * np.pi), np.random.uniform(0, 2 * np.pi))
 
     def geodesic_distance(
         self, p1: Tuple[float, float], p2: Tuple[float, float]
     ) -> float:
+        """Computes the shortest path distance between two points, accounting for periodic wrapping."""
         dx = (p2[0] - p1[0] + np.pi) % (2 * np.pi) - np.pi
         dy = (p2[1] - p1[1] + np.pi) % (2 * np.pi) - np.pi
         return float(np.sqrt((dx * self.radius_x) ** 2 + (dy * self.radius_y) ** 2))
@@ -220,6 +325,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def geodesic_quadrature(
         self, p1: Tuple[float, float], p2: Tuple[float, float], n_points: int
     ) -> Tuple[List[Tuple[float, float]], np.ndarray]:
+        """Generates quadrature points and weights along a shortest-path geodesic."""
         arc_length = self.geodesic_distance(p1, p2)
         dx = (p2[0] - p1[0] + np.pi) % (2 * np.pi) - np.pi
         dy = (p2[1] - p1[1] + np.pi) % (2 * np.pi) - np.pi
@@ -236,9 +342,14 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return points, scaled_weights
 
     def with_degree(self, degree: int) -> Lebesgue:
+        """Returns a new space identical to this one but with a modified truncation degree."""
         return Lebesgue(degree, radius_x=self.radius_x, radius_y=self.radius_y)
 
     def degree_transfer_operator(self, target_degree: int) -> LinearOperator:
+        """
+        Returns a mapping operator that safely truncates or zero-pads Fourier
+        coefficients to transition between different spectral resolutions.
+        """
         codomain = self.with_degree(target_degree)
 
         forward_indices = []
@@ -287,6 +398,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def invariant_covariance_function(
         self, spectral_variances: np.ndarray
     ) -> Callable[[np.ndarray], np.ndarray]:
+        """
+        Raises NotImplementedError. The anisotropic layout of the 2D Torus prevents
+        an exact 1D distance-to-covariance mapping.
+        """
         raise NotImplementedError(
             "Due to the grid anisotropy, an exact 1D distance-to-covariance mapping "
             "is not mathematically defined for the Torus. Use purely diagonal preconditioners."
@@ -301,6 +416,10 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         min_degree: int = 1,
         max_degree: Optional[int] = None,
     ) -> int:
+        """
+        Iteratively calculates the spherical truncation degree needed to capture
+        the variance of a random field below a specified error tolerance.
+        """
         summation = 0.0
         K = 0
         err = 1.0
@@ -345,14 +464,17 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return degree
 
     def to_components(self, x: np.ndarray) -> np.ndarray:
+        """Flattens and packs spatial data into a real-valued 1D component array."""
         coeff = self.to_coefficients(x)
         return self._coefficient_to_component(coeff)
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
+        """Unpacks a real-valued 1D component array back into spatial data."""
         coeff = self._component_to_coefficients(c)
         return self.from_coefficients(coeff)
 
     def is_element(self, x: Any) -> bool:
+        """Checks if the given object is a valid spatial representation in this space."""
         if not isinstance(x, np.ndarray):
             return False
         if not x.shape == (2 * self.kmax, 2 * self.kmax):
@@ -360,6 +482,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return True
 
     def __eq__(self, other: object) -> bool:
+        """Checks for mathematical equality based on truncation and radii."""
         if not isinstance(other, Lebesgue):
             return NotImplemented
         return (
@@ -369,25 +492,31 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         )
 
     def vector_multiply(self, x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
+        """Pointwise multiplication of two spatial functions."""
         return x1 * x2
 
     def vector_sqrt(self, x: np.ndarray) -> np.ndarray:
+        """Pointwise square root of a spatial function."""
         return np.sqrt(x)
 
     @property
     def zero(self) -> np.ndarray:
+        """Returns a spatial field populated entirely with zeros."""
         return np.zeros((2 * self.kmax, 2 * self.kmax))
 
     def inner_product(self, x: np.ndarray, y: np.ndarray) -> float:
+        """Computes the exact L² inner product utilizing the spectral metric."""
         cx = self.to_components(x)
         cy = self.to_components(y)
         return float(np.dot(cx, self._metric @ cy))
 
     def norm(self, x: np.ndarray) -> float:
+        """Computes the exact L² norm utilizing the spectral metric."""
         cx = self.to_components(x)
         return float(np.sqrt(np.clip(np.dot(cx, self._metric @ cx), 0.0, None)))
 
     def _build_index_map(self, dim: int):
+        """Constructs mappings between 1D component indices and 2D wavevectors."""
         self._eigenvalues = np.zeros(dim)
         self._squared_norms = np.zeros(dim)
         self._kx_freqs = np.zeros(dim)
@@ -433,6 +562,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
                 add_mode(kx, ky, False)
 
     def _coefficient_to_component(self, coeff: np.ndarray) -> np.ndarray:
+        """Packs a 2D complex Fourier array into a dense 1D real vector."""
         c = np.empty(self.dim, dtype=float)
         k = self.kmax
 
@@ -456,6 +586,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return c
 
     def _component_to_coefficients(self, c: np.ndarray) -> np.ndarray:
+        """Unpacks a dense 1D real vector back into a 2D complex Fourier array."""
         k = self.kmax
         coeff = np.zeros((2 * k, k + 1), dtype=complex)
 
@@ -482,7 +613,12 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
 
 
 class Sobolev(SymmetricSobolevSpace):
-    """Implementation of the Sobolev space Hˢ on a 2D Torus."""
+    """
+    Implementation of the Sobolev space Hˢ on a 2D Torus.
+
+    Constructs a mass-weighted Hilbert space over the base Torus Lebesgue geometry,
+    accounting for fractional smoothness via a spectral order parameter.
+    """
 
     def __init__(
         self,
@@ -495,6 +631,16 @@ class Sobolev(SymmetricSobolevSpace):
         radius_y: float = 1.0,
         safe: bool = True,
     ):
+        """
+        Args:
+            kmax: The maximum Fourier degree to be represented in both dimensions.
+            order: The Sobolev order, controlling the smoothness of the function space.
+            scale: The Sobolev length-scale parameter.
+            radius_x: The effective radius of the Torus in the x-direction.
+            radius_y: The effective radius of the Torus in the y-direction.
+            safe: If True, enforces rigorous mathematical checks (e.g., verifying
+                  that point evaluation only occurs if the order is > 1.0).
+        """
         lebesgue_space = Lebesgue(kmax, radius_x=radius_x, radius_y=radius_y)
         SymmetricSobolevSpace.__init__(self, lebesgue_space, order, scale, safe=safe)
 
@@ -510,6 +656,19 @@ class Sobolev(SymmetricSobolevSpace):
         power_of_two: bool = False,
         safe: bool = True,
     ) -> Sobolev:
+        """
+        Creates an instance with `kmax` automatically chosen to limit spatial
+        truncation error.
+
+        Args:
+            order: The Sobolev order. Must be > 1.0 for valid point evaluation on a 2D domain.
+            scale: The Sobolev length-scale parameter.
+            radius_x: The radius of the Torus in the x-direction.
+            radius_y: The radius of the Torus in the y-direction.
+            rtol: Relative tolerance used in assessing truncation error.
+            power_of_two: If True, rounds `kmax` up to the next power of two.
+            safe: If True, enables mathematical correctness checks.
+        """
         if safe and order <= 1.0:
             raise ValueError(
                 "Point evaluation on a 2D Torus requires Sobolev order > 1.0"
@@ -544,6 +703,22 @@ class Sobolev(SymmetricSobolevSpace):
         power_of_two: bool = False,
         safe: bool = True,
     ) -> Sobolev:
+        """
+        Creates an instance with a Fourier truncation degree (`kmax`) automatically
+        chosen to capture the expected energy of functions drawn from a specified prior.
+
+        Args:
+            covariance_function: A callable mapping a Laplacian eigenvalue to its spectral variance.
+            order: The Sobolev order defining the function space.
+            scale: The Sobolev length-scale defining the function space.
+            radius_x: The radius of the Torus in the x-direction.
+            radius_y: The radius of the Torus in the y-direction.
+            rtol: The relative tolerance for the energy truncation. Defaults to 1e-6.
+            min_degree: The absolute minimum truncation degree to return.
+            max_degree: An optional safety ceiling for the truncation degree.
+            power_of_two: If True, rounds the resulting `kmax` up to the nearest power of two.
+            safe: If True, enables mathematical correctness checks.
+        """
         dummy_space = cls(
             max(1, min_degree),
             order,
@@ -584,6 +759,10 @@ class Sobolev(SymmetricSobolevSpace):
         power_of_two: bool = False,
         safe: bool = True,
     ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space tuned to the expected energy of a
+        Heat Kernel prior measure.
+        """
         return cls.from_covariance(
             cls.heat_kernel(kernel_scale),
             order,
@@ -614,6 +793,10 @@ class Sobolev(SymmetricSobolevSpace):
         power_of_two: bool = False,
         safe: bool = True,
     ) -> Sobolev:
+        """
+        Creates an instance of the Sobolev space tuned to the expected energy of a
+        Sobolev-type prior measure.
+        """
         return cls.from_covariance(
             cls.sobolev_kernel(kernel_order, kernel_scale),
             order,
@@ -629,33 +812,41 @@ class Sobolev(SymmetricSobolevSpace):
 
     @property
     def kmax(self) -> int:
+        """The maximum Fourier degree represented in this space."""
         return self.underlying_space.kmax
 
     @property
     def radius_x(self) -> float:
+        """The radius of the Torus in the x-direction."""
         return self.underlying_space.radius_x
 
     @property
     def radius_y(self) -> float:
+        """The radius of the Torus in the y-direction."""
         return self.underlying_space.radius_y
 
     def points(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Returns two flattened 1D arrays representing the X and Y grid coordinates."""
         return self.underlying_space.points()
 
     @property
     def fft_factor(self) -> float:
+        """The scaling factor applied during forward Fourier transforms."""
         return self.underlying_space.fft_factor
 
     @property
     def inverse_fft_factor(self) -> float:
+        """The scaling factor applied during inverse Fourier transforms."""
         return self.underlying_space.inverse_fft_factor
 
     def with_order(self, order: float) -> Sobolev:
+        """Returns a new Sobolev instance with a modified order."""
         return Sobolev(
             self.kmax, order, self.scale, radius_x=self.radius_x, radius_y=self.radius_y
         )
 
     def with_degree(self, degree: int) -> Sobolev:
+        """Returns a new Sobolev instance with a modified truncation degree."""
         return Sobolev(
             degree,
             self.order,
@@ -665,6 +856,7 @@ class Sobolev(SymmetricSobolevSpace):
         )
 
     def project_function(self, f: Callable[[Tuple[float, float]], float]) -> np.ndarray:
+        """Evaluates and projects a continuous function onto the spatial grid."""
         return self.underlying_space.project_function(f)
 
     def estimate_truncation_degree(
@@ -678,7 +870,7 @@ class Sobolev(SymmetricSobolevSpace):
     ) -> int:
         """
         Delegates the energy truncation search to the underlying Torus Lebesgue space,
-        ensuring it loops geometrically over (kx, ky) shells rather than flat 1D indices.
+        ensuring it loops geometrically over (kx, ky) shells.
         """
 
         # We must wrap the covariance function in the Sobolev weighting factor
@@ -697,21 +889,25 @@ class Sobolev(SymmetricSobolevSpace):
     # ------------------------------------------------------ #
 
     def wavevector_indices(self, kx: int, ky: int) -> List[int]:
+        """Retrieves the 1D component indices corresponding to a specific 2D wavevector."""
         return self.underlying_space.wavevector_indices(kx, ky)
 
     def to_coefficient_operator(self, kmax: int) -> LinearOperator:
+        """Returns an operator that maps a function to its spectral coefficients."""
         l2_operator = self.underlying_space.to_coefficient_operator(kmax)
         return LinearOperator.from_formal_adjoint(
             self, l2_operator.codomain, l2_operator
         )
 
     def from_coefficient_operator(self, kmax: int) -> LinearOperator:
+        """Returns an operator that maps spectral coefficients to a spatial function."""
         l2_operator = self.underlying_space.from_coefficient_operator(kmax)
         return LinearOperator.from_formal_adjoint(l2_operator.domain, self, l2_operator)
 
     def spectral_projection_operator(
         self, modes: List[Tuple[int, int]]
     ) -> LinearOperator:
+        """Returns an operator projecting onto specific Fourier wavevector modes."""
         l2_operator = self.underlying_space.spectral_projection_operator(modes)
         return LinearOperator.from_formal_adjoint(
             self, l2_operator.codomain, l2_operator
@@ -722,39 +918,63 @@ class Sobolev(SymmetricSobolevSpace):
     # ------------------------------------------------------ #
 
     def is_element(self, x: Any) -> bool:
+        """Checks if the given object is a valid spatial representation in this space."""
         return self.underlying_space.is_element(x)
 
     def to_components(self, x: np.ndarray) -> np.ndarray:
+        """Flattens and packs spatial data into a dense 1D component array."""
         return self.underlying_space.to_components(x)
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
+        """Unpacks a 1D component array back into spatial grid data."""
         return self.underlying_space.from_components(c)
 
     def to_coefficients(self, u: np.ndarray) -> np.ndarray:
+        """Maps a spatial function vector to its 2D complex Fourier coefficients."""
         return self.underlying_space.to_coefficients(u)
 
     def from_coefficients(self, coeff: np.ndarray) -> np.ndarray:
+        """Maps 2D complex Fourier coefficients back to a spatial function vector."""
         return self.underlying_space.from_coefficients(coeff)
 
     def inner_product(self, x: np.ndarray, y: np.ndarray) -> float:
+        """Computes the exact Sobolev inner product utilizing the mass-weighted metric."""
         cx = self.to_components(x)
         cy = self.to_components(y)
         return float(np.dot(cx, self._metric @ cy))
 
     def norm(self, x: np.ndarray) -> float:
+        """Computes the exact Sobolev norm utilizing the mass-weighted metric."""
         cx = self.to_components(x)
         return float(np.sqrt(np.clip(np.dot(cx, self._metric @ cx), 0.0, None)))
 
 
+# ------------------------------------------------- #
+#           Associated plotting functions           #
+# ------------------------------------------------- #
+
+
+def _unwrap_axes(
+    ax_input: Optional[Union[Axes, Tuple[Axes, Any]]],
+) -> Tuple[plt.Figure, Axes]:
+    """Helper to safely unwrap chained axes tuples and initialize figures."""
+    if ax_input is None:
+        fig, ax = plt.subplots(figsize=(6, 6), layout="constrained")
+        return fig, ax
+
+    ax = ax_input[0] if isinstance(ax_input, tuple) else ax_input
+    return ax.get_figure(), ax
+
+
 def plot(
-    space: Union[Lebesgue, Sobolev],
+    space: Union["Lebesgue", "Sobolev"],
     u: np.ndarray,
     /,
     *,
-    ax: Optional[Axes] = None,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
     contour: bool = False,
     cmap: str = "RdBu",
-    symmetric: bool = False,
+    symmetric: Union[bool, float] = False,
     contour_lines: bool = False,
     contour_lines_kwargs: Optional[dict] = None,
     num_levels: int = 10,
@@ -762,17 +982,16 @@ def plot(
     colorbar_kwargs: Optional[dict] = None,
     **kwargs,
 ) -> Tuple[Axes, Any]:
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 6), layout="constrained")
-    else:
-        fig = ax.get_figure()
+    """Creates a high-quality plot of a function on the 2D Torus."""
+    fig, ax = _unwrap_axes(ax)
 
     x_1d = np.arange(2 * space.kmax) * np.pi / space.kmax
     y_1d = np.arange(2 * space.kmax) * np.pi / space.kmax
 
     kwargs.setdefault("cmap", cmap)
     if symmetric:
-        data_max = 1.2 * np.nanmax(np.abs(u))
+        scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
+        data_max = scale_factor * np.nanmax(np.abs(u))
         kwargs.setdefault("vmin", -data_max)
         kwargs.setdefault("vmax", data_max)
 
@@ -795,17 +1014,19 @@ def plot(
         im = ax.pcolormesh(x_1d, y_1d, u_plot, **kwargs)
 
     if contour_lines:
-        cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
+        cl_kwargs = contour_lines_kwargs.copy() if contour_lines_kwargs else {}
         cl_kwargs.setdefault("colors", "k")
         cl_kwargs.setdefault("linewidths", 0.5)
         ax.contour(x_1d, y_1d, u_plot, levels=levels, **cl_kwargs)
 
     if colorbar and fig:
-        cb_opts = colorbar_kwargs or {}
+        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
         cb_opts.setdefault("orientation", "horizontal")
         cb_opts.setdefault("shrink", 0.7)
         cb_opts.setdefault("pad", 0.05)
-        fig.colorbar(im, ax=ax, **cb_opts)
+
+        cb = fig.colorbar(im, ax=ax, **cb_opts)
+        im.colorbar = cb
 
     ax.set_xlim(0, 2 * np.pi)
     ax.set_ylim(0, 2 * np.pi)
@@ -814,16 +1035,80 @@ def plot(
     return ax, im
 
 
+def plot_points(
+    points: List[Tuple[float, float]],
+    /,
+    *,
+    data: Optional[Union[List[float], np.ndarray]] = None,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
+    cmap: str = "RdBu",
+    color: str = "red",
+    s: float = 20,
+    marker: str = "o",
+    edgecolors: str = "none",
+    zorder: int = 5,
+    symmetric: Union[bool, float] = False,
+    colorbar: bool = False,
+    colorbar_kwargs: Optional[dict] = None,
+    **kwargs,
+) -> Tuple[Axes, Any]:
+    """Plots discrete observation points wrapped onto the primary Torus domain [0, 2π] x [0, 2π]."""
+    fig, ax = _unwrap_axes(ax)
+
+    # Torus topology: Wrap coordinate bounds to [0, 2pi]
+    x_pts = [p[0] % (2 * np.pi) for p in points]
+    y_pts = [p[1] % (2 * np.pi) for p in points]
+
+    if data is not None:
+        if len(data) != len(points):
+            raise ValueError("The length of 'data' must match the length of 'points'.")
+        c = data
+        kwargs.setdefault("cmap", cmap)
+        if symmetric:
+            scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
+            data_max = scale_factor * np.nanmax(np.abs(data))
+            kwargs.setdefault("vmin", -data_max)
+            kwargs.setdefault("vmax", data_max)
+    else:
+        c = color
+
+    sc = ax.scatter(
+        x_pts,
+        y_pts,
+        c=c,
+        s=s,
+        marker=marker,
+        edgecolors=edgecolors,
+        zorder=zorder,
+        **kwargs,
+    )
+
+    if colorbar and data is not None and fig:
+        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
+        cb_opts.setdefault("orientation", "horizontal")
+        cb_opts.setdefault("shrink", 0.7)
+        cb_opts.setdefault("pad", 0.05)
+
+        cb = fig.colorbar(sc, ax=ax, **cb_opts)
+        sc.colorbar = cb
+
+    ax.set_xlim(0, 2 * np.pi)
+    ax.set_ylim(0, 2 * np.pi)
+    ax.set_aspect("equal", adjustable="box")
+
+    return ax, sc
+
+
 def plot_geodesic(
     p1: Tuple[float, float],
     p2: Tuple[float, float],
     /,
     *,
-    ax: Optional[Axes] = None,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
     **kwargs,
-) -> Axes:
-    if ax is None:
-        ax = plt.gca()
+) -> Tuple[Axes, Any]:
+    """Plots a straight-line geodesic, wrapping around the Torus boundaries if necessary."""
+    fig, ax = _unwrap_axes(ax)
 
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 2)
@@ -838,6 +1123,7 @@ def plot_geodesic(
     x_wrapped = x % (2 * np.pi)
     y_wrapped = y % (2 * np.pi)
 
+    # Insert NaNs at wrap boundaries to prevent visual streaking across the plot
     jump_idx = np.where(
         (np.abs(np.diff(x_wrapped)) > np.pi) | (np.abs(np.diff(y_wrapped)) > np.pi)
     )[0]
@@ -849,63 +1135,76 @@ def plot_geodesic(
         x_plot = x_wrapped
         y_plot = y_wrapped
 
-    ax.plot(x_plot, y_plot, **kwargs)
+    (line,) = ax.plot(x_plot, y_plot, **kwargs)
 
     ax.set_xlim(0, 2 * np.pi)
     ax.set_ylim(0, 2 * np.pi)
     ax.set_aspect("equal", adjustable="box")
 
-    return ax
+    return ax, line
 
 
 def plot_geodesic_network(
     paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
     /,
     *,
-    ax: Optional[Axes] = None,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
+    plot_sources: bool = True,
+    plot_receivers: bool = True,
+    source_kwargs: Optional[dict] = None,
+    receiver_kwargs: Optional[dict] = None,
     **kwargs,
-) -> Axes:
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
+) -> Tuple[Axes, List[Any]]:
+    """Plots a network of intersecting geodesic paths on the Torus."""
+    fig, ax = _unwrap_axes(ax)
 
     line_kwargs = kwargs.copy()
-    src_style = line_kwargs.pop("source_kwargs", {})
-    rec_style = line_kwargs.pop("receiver_kwargs", {})
-
     line_kwargs.setdefault("color", "black")
     line_kwargs.setdefault("linewidth", 0.8)
     line_kwargs.setdefault("alpha", 0.5)
 
+    artists = []
+
     for p1, p2 in paths:
-        plot_geodesic(p1, p2, ax=ax, **line_kwargs)
+        _, line = plot_geodesic(p1, p2, ax=ax, **line_kwargs)
+        artists.append(line)
 
-    sources = list(set([tuple(p[0]) for p in paths]))
-    receivers = list(set([tuple(p[1]) for p in paths]))
+    if plot_sources or plot_receivers:
+        sources = list(set([tuple(p[0]) for p in paths]))
+        receivers = list(set([tuple(p[1]) for p in paths]))
 
-    if sources:
-        src_x, src_y = zip(*sources)
-        src_x = np.array(src_x) % (2 * np.pi)
-        src_y = np.array(src_y) % (2 * np.pi)
-        src_style.setdefault("marker", "*")
-        src_style.setdefault("color", "gold")
-        src_style.setdefault("s", 150)
-        src_style.setdefault("edgecolor", "black")
-        src_style.setdefault("zorder", 5)
-        ax.scatter(src_x, src_y, **src_style)
+        if plot_sources and sources:
+            src_x, src_y = zip(*sources)
+            src_x = np.array(src_x) % (2 * np.pi)
+            src_y = np.array(src_y) % (2 * np.pi)
 
-    if receivers:
-        rec_x, rec_y = zip(*receivers)
-        rec_x = np.array(rec_x) % (2 * np.pi)
-        rec_y = np.array(rec_y) % (2 * np.pi)
-        rec_style.setdefault("marker", "o")
-        rec_style.setdefault("color", "red")
-        rec_style.setdefault("s", 50)
-        rec_style.setdefault("edgecolor", "white")
-        rec_style.setdefault("zorder", 5)
-        ax.scatter(rec_x, rec_y, **rec_style)
+            src_style = source_kwargs.copy() if source_kwargs else {}
+            src_style.setdefault("marker", "*")
+            src_style.setdefault("color", "gold")
+            src_style.setdefault("s", 150)
+            src_style.setdefault("edgecolor", "black")
+            src_style.setdefault("zorder", 5)
+
+            sc_src = ax.scatter(src_x, src_y, **src_style)
+            artists.append(sc_src)
+
+        if plot_receivers and receivers:
+            rec_x, rec_y = zip(*receivers)
+            rec_x = np.array(rec_x) % (2 * np.pi)
+            rec_y = np.array(rec_y) % (2 * np.pi)
+
+            rec_style = receiver_kwargs.copy() if receiver_kwargs else {}
+            rec_style.setdefault("marker", "o")
+            rec_style.setdefault("color", "red")
+            rec_style.setdefault("s", 50)
+            rec_style.setdefault("edgecolor", "white")
+            rec_style.setdefault("zorder", 5)
+
+            sc_rec = ax.scatter(rec_x, rec_y, **rec_style)
+            artists.append(sc_rec)
 
     ax.set_xlim(0, 2 * np.pi)
     ax.set_ylim(0, 2 * np.pi)
     ax.set_aspect("equal", adjustable="box")
 
-    return ax
+    return ax, artists

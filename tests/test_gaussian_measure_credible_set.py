@@ -188,9 +188,7 @@ def test_ambient_ball_equal_spectrum_matches_chi2():
     eigvals = np.full(space.dim, sigma2)
 
     p = 0.9
-    ball = measure.credible_set(
-        p, geometry="ambient_ball", spectrum=eigvals
-    )
+    ball = measure.credible_set(p, geometry="ambient_ball", spectrum=eigvals)
     expected_radius = np.sqrt(sigma2 * chi2.ppf(p, df=space.dim))
     assert isinstance(ball, Ball)
     assert_allclose(ball.radius, expected_radius, rtol=1e-8)
@@ -204,9 +202,7 @@ def test_ambient_ball_anisotropic_matches_mc():
 
     eigvals = np.diag(cov_matrix)
     p = 0.9
-    ball_spectral = measure.credible_set(
-        p, geometry="ambient_ball", spectrum=eigvals
-    )
+    ball_spectral = measure.credible_set(p, geometry="ambient_ball", spectrum=eigvals)
 
     # Monte Carlo: draw and quantile.
     samples = measure.samples(20_000)
@@ -224,9 +220,7 @@ def test_ambient_ball_sampling_path():
 
     eigvals = np.diag(cov_matrix)
     p = 0.85
-    ball_spectral = measure.credible_set(
-        p, geometry="ambient_ball", spectrum=eigvals
-    )
+    ball_spectral = measure.credible_set(p, geometry="ambient_ball", spectrum=eigvals)
     ball_sampling = measure.credible_set(
         p,
         geometry="ambient_ball",
@@ -310,7 +304,9 @@ def test_weakened_ellipsoid_spectral_vs_lanczos():
         theta=theta,
         spectrum=eig.eigenvalues,
         fractional_apply="lanczos",
-        n_lanczos=space.dim,
+        # --- NEW DYNAMIC API ---
+        lanczos_size_estimate=space.dim,
+        lanczos_method="fixed",
     )
     # Same eigenvalues, same weights, same quantile method -> identical r_p.
     assert_allclose(ell_spectral.radius, ell_lanczos.radius, rtol=1e-8)
@@ -360,9 +356,7 @@ def test_credible_set_empirical_coverage():
 
     eigvals = np.diag(cov_matrix)
     p = 0.9
-    ball = measure.credible_set(
-        p, geometry="ambient_ball", spectrum=eigvals
-    )
+    ball = measure.credible_set(p, geometry="ambient_ball", spectrum=eigvals)
 
     n = 5000
     samples = measure.samples(n)

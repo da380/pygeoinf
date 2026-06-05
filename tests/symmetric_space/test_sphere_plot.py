@@ -49,9 +49,7 @@ def test_create_map_figure():
     fig, ax = create_map_figure(figsize=(10, 5), projection=projection)
 
     assert isinstance(ax, GeoAxes)
-    # Compare the instances directly instead of using isinstance on an instance
-    assert ax.projection == projection
-    # Alternatively, check against the class: isinstance(ax.projection, ccrs.Robinson)
+    assert isinstance(ax.projection, ccrs.Robinson)
 
     # Ensure modern constrained_layout is enabled
     assert fig.get_constrained_layout()
@@ -96,7 +94,7 @@ def test_plot_avoids_cartesian_axis_bleed(sphere_data):
 
 
 def test_plot_with_native_colorbar(sphere_data):
-    """Tests the integrated colorbar toggle in the base library."""
+    """Tests the integrated colorbar toggle and dynamic attribute attachment."""
     _, u_grid = sphere_data
     ax, im = plot(
         u_grid,
@@ -109,6 +107,8 @@ def test_plot_with_native_colorbar(sphere_data):
     assert len(fig.axes) > 1
     # Verify the label was applied
     assert fig.axes[-1].get_ylabel() == "EWT (mm)"
+    # Verify our custom dynamic attribute is attached
+    assert hasattr(im, "colorbar")
 
     plt.close(fig)
 
@@ -136,23 +136,26 @@ def test_plot_contour_and_symmetric(sphere_data):
 def test_plot_geodesic():
     """Tests plotting a single great-circle path."""
     p1, p2 = (10.0, -20.0), (40.0, 50.0)
-    ax = plot_geodesic(p1, p2, color="blue", linewidth=3)
+    # Updated to unpack the tuple
+    ax, line = plot_geodesic(p1, p2, color="blue", linewidth=3)
 
     assert isinstance(ax, GeoAxes)
-    # Check that a line artist was created
-    assert len(ax.lines) > 0
-    assert ax.lines[-1].get_color() == "blue"
+    assert line is not None
+    assert line.get_color() == "blue"
+
     plt.close(ax.figure)
 
 
 def test_plot_geodesic_network():
     """Tests plotting a source-receiver network."""
     paths = [((10.0, 20.0), (40.0, 50.0)), ((-10.0, -20.0), (30.0, 10.0))]
-    ax = plot_geodesic_network(paths, alpha=0.5)
+    # Updated to unpack the tuple
+    ax, artists = plot_geodesic_network(paths, alpha=0.5)
 
     assert isinstance(ax, GeoAxes)
-    # 2 geodesic paths + coastlines
-    assert len(ax.lines) >= 2
+    # The artists list should contain the lines and the scatter collections
+    assert len(artists) >= 2
     # Check that markers (sources/receivers) were added via scatter
     assert len(ax.collections) >= 2
+
     plt.close(ax.figure)

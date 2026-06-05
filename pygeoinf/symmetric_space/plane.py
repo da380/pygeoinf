@@ -563,15 +563,27 @@ class Sobolev(SymmetricSobolevSpace):
 # ------------------------------------------------- #
 
 
+def _unwrap_axes(
+    ax_input: Optional[Union[Axes, Tuple[Axes, Any]]],
+) -> Tuple[plt.Figure, Axes]:
+    """Helper to safely unwrap chained axes tuples and initialize figures."""
+    if ax_input is None:
+        fig, ax = plt.subplots(figsize=(6, 6), layout="constrained")
+        return fig, ax
+
+    ax = ax_input[0] if isinstance(ax_input, tuple) else ax_input
+    return ax.get_figure(), ax
+
+
 def plot(
-    space: Union[Lebesgue, Sobolev],
+    space: Union["Lebesgue", "Sobolev"],
     u: np.ndarray,
     /,
     *,
-    ax: Optional[Axes] = None,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
     contour: bool = False,
     cmap: str = "RdBu",
-    symmetric: bool = False,
+    symmetric: Union[bool, float] = False,
     contour_lines: bool = False,
     contour_lines_kwargs: Optional[dict] = None,
     num_levels: int = 10,
@@ -585,14 +597,26 @@ def plot(
 
     By default, this crops the view to the primary computational domain
     [ax, bx] x [ay, by]. Set `full=True` to view the tapered padding regions.
+
+    Args:
+        space: The Plane function space (Lebesgue or Sobolev).
+        u: The scalar field array to be plotted.
+        ax: An existing Matplotlib Axes object or (Axes, Artist) tuple.
+        contour: If True, renders the field as a filled contour plot (`contourf`).
+        cmap: The Matplotlib colormap string or object to use.
+        symmetric: If True, dynamically centers the color scale around zero.
+        contour_lines: If True, overlays solid contour lines on top of the base plot.
+        contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`.
+        num_levels: The number of color levels to generate automatically. Defaults to 10.
+        colorbar: If True, attaches a colorbar to the plot.
+        colorbar_kwargs: Formatting options for the colorbar.
+        full: If False, crops the plot to the unpadded domain. If True, shows the padding.
+        **kwargs: Additional keyword arguments forwarded to `ax.contourf` or `ax.pcolormesh`.
+
+    Returns:
+        A tuple `(Axes, Any)` containing the Axes and the rendered image artist.
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 6), layout="constrained")
-    elif isinstance(ax, tuple):
-        ax = ax[0]
-        fig = ax.get_figure()
-    else:
-        fig = ax.get_figure()
+    fig, ax = _unwrap_axes(ax)
 
     X_flat, Y_flat = space.points()
     x_1d = X_flat.reshape((2 * space.kmax, 2 * space.kmax))[:, 0]
@@ -600,7 +624,8 @@ def plot(
 
     kwargs.setdefault("cmap", cmap)
     if symmetric:
-        data_max = 1.2 * np.nanmax(np.abs(u))
+        scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
+        data_max = scale_factor * np.nanmax(np.abs(u))
         kwargs.setdefault("vmin", -data_max)
         kwargs.setdefault("vmax", data_max)
 
@@ -623,23 +648,25 @@ def plot(
         im = ax.pcolormesh(x_1d, y_1d, u_plot, **kwargs)
 
     if contour_lines:
-        cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
+        cl_kwargs = contour_lines_kwargs.copy() if contour_lines_kwargs else {}
         cl_kwargs.setdefault("colors", "k")
         cl_kwargs.setdefault("linewidths", 0.5)
         ax.contour(x_1d, y_1d, u_plot, levels=levels, **cl_kwargs)
 
     if colorbar and fig:
-        cb_opts = colorbar_kwargs or {}
+        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
         cb_opts.setdefault("orientation", "horizontal")
         cb_opts.setdefault("shrink", 0.7)
         cb_opts.setdefault("pad", 0.05)
-        fig.colorbar(im, ax=ax, **cb_opts)
 
+        cb = fig.colorbar(im, ax=ax, **cb_opts)
+        im.colorbar = cb
+
+    # Domain cropping logic unique to the Plane
     if not full:
         ax.set_xlim(space.bounds_x[0], space.bounds_x[1])
         ax.set_ylim(space.bounds_y[0], space.bounds_y[1])
     else:
-        # Show the entire padded computational domain
         ax.set_xlim(
             space.bounds_x[0] - space.bounds_x[2], space.bounds_x[1] + space.bounds_x[2]
         )
@@ -652,51 +679,176 @@ def plot(
     return ax, im
 
 
+def plot_points(
+    points: List[Tuple[float, float]],
+    /,
+    *,
+    data: Optional[Union[List[float], np.ndarray]] = None,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
+    cmap: str = "RdBu",
+    color: str = "red",
+    s: float = 20,
+    marker: str = "o",
+    edgecolors: str = "none",
+    zorder: int = 5,
+    symmetric: Union[bool, float] = False,
+    colorbar: bool = False,
+    colorbar_kwargs: Optional[dict] = None,
+    **kwargs,
+) -> Tuple[Axes, Any]:
+    """
+    Plots discrete observation points on the 2D plane.
+
+    Args:
+        points: A list of (x, y) tuples.
+        data: Optional array of values to color the points by.
+        ax: An existing Matplotlib Axes object or (Axes, Artist) tuple.
+        cmap: The colormap to use if `data` is provided.
+        color: The fixed color to use if `data` is NOT provided.
+        s: The marker size.
+        marker: The marker style (e.g., 'o', '*', '^').
+        edgecolors: The color of the marker edges.
+        zorder: The drawing order.
+        symmetric: If True, dynamically centers the color scale symmetrically around zero.
+        colorbar: If True and `data` is provided, attaches a colorbar.
+        colorbar_kwargs: Formatting options for the colorbar.
+        **kwargs: Additional keyword arguments passed to `ax.scatter`.
+    """
+    fig, ax = _unwrap_axes(ax)
+
+    x_pts = [p[0] for p in points]
+    y_pts = [p[1] for p in points]
+
+    if data is not None:
+        if len(data) != len(points):
+            raise ValueError("The length of 'data' must match the length of 'points'.")
+        c = data
+        kwargs.setdefault("cmap", cmap)
+        if symmetric:
+            scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
+            data_max = scale_factor * np.nanmax(np.abs(data))
+            kwargs.setdefault("vmin", -data_max)
+            kwargs.setdefault("vmax", data_max)
+    else:
+        c = color
+
+    sc = ax.scatter(
+        x_pts,
+        y_pts,
+        c=c,
+        s=s,
+        marker=marker,
+        edgecolors=edgecolors,
+        zorder=zorder,
+        **kwargs,
+    )
+
+    if colorbar and data is not None and fig:
+        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
+        cb_opts.setdefault("orientation", "horizontal")
+        cb_opts.setdefault("shrink", 0.7)
+        cb_opts.setdefault("pad", 0.05)
+
+        cb = fig.colorbar(sc, ax=ax, **cb_opts)
+        sc.colorbar = cb
+
+    ax.set_aspect("equal", adjustable="box")
+
+    return ax, sc
+
+
+def plot_geodesic(
+    p1: Tuple[float, float],
+    p2: Tuple[float, float],
+    /,
+    *,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
+    **kwargs,
+) -> Tuple[Axes, Any]:
+    """
+    Plots a straight-line geodesic between two points on the 2D plane.
+
+    Args:
+        p1: The starting coordinate as a tuple (x, y).
+        p2: The ending coordinate as a tuple (x, y).
+        ax: An existing Matplotlib Axes object or (Axes, Artist) tuple.
+        **kwargs: Keyword arguments passed directly to `ax.plot`.
+    """
+    fig, ax = _unwrap_axes(ax)
+
+    kwargs.setdefault("color", "black")
+    kwargs.setdefault("linewidth", 2)
+
+    (line,) = ax.plot([p1[0], p2[0]], [p1[1], p2[1]], **kwargs)
+
+    ax.set_aspect("equal", adjustable="box")
+
+    return ax, line
+
+
 def plot_geodesic_network(
     paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
     /,
     *,
-    ax: Optional[Axes] = None,
+    ax: Optional[Union[Axes, Tuple[Axes, Any]]] = None,
+    plot_sources: bool = True,
+    plot_receivers: bool = True,
+    source_kwargs: Optional[dict] = None,
+    receiver_kwargs: Optional[dict] = None,
     **kwargs,
-) -> Axes:
+) -> Tuple[Axes, List[Any]]:
     """
-    Plots a network of intersecting straight-line paths on the 2D Plane.
+    Plots a network of intersecting straight-line paths on the 2D plane.
+
+    Args:
+        paths: A list of point pairs defining the network. Each pair is ((x1, y1), (x2, y2)).
+        ax: An existing Matplotlib Axes object or (Axes, Artist) tuple.
+        plot_sources: If True, plots the unique source points.
+        plot_receivers: If True, plots the unique receiver points.
+        source_kwargs: Styling arguments for the source scatter points.
+        receiver_kwargs: Styling arguments for the receiver scatter points.
+        **kwargs: Default styling arguments applied to the geodesic lines.
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8), layout="constrained")
-    elif isinstance(ax, tuple):
-        ax = ax[0]
+    fig, ax = _unwrap_axes(ax)
 
     line_kwargs = kwargs.copy()
-    src_style = line_kwargs.pop("source_kwargs", {})
-    rec_style = line_kwargs.pop("receiver_kwargs", {})
-
     line_kwargs.setdefault("color", "black")
     line_kwargs.setdefault("linewidth", 0.8)
     line_kwargs.setdefault("alpha", 0.5)
 
+    artists = []
+
     for p1, p2 in paths:
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], **line_kwargs)
+        _, line = plot_geodesic(p1, p2, ax=ax, **line_kwargs)
+        artists.append(line)
 
     sources = list(set([tuple(p[0]) for p in paths]))
     receivers = list(set([tuple(p[1]) for p in paths]))
 
-    if sources:
+    if plot_sources and sources:
         src_x, src_y = zip(*sources)
+        src_style = source_kwargs.copy() if source_kwargs else {}
         src_style.setdefault("marker", "*")
         src_style.setdefault("color", "gold")
         src_style.setdefault("s", 150)
         src_style.setdefault("edgecolor", "black")
         src_style.setdefault("zorder", 5)
-        ax.scatter(src_x, src_y, **src_style)
 
-    if receivers:
+        sc_src = ax.scatter(src_x, src_y, **src_style)
+        artists.append(sc_src)
+
+    if plot_receivers and receivers:
         rec_x, rec_y = zip(*receivers)
+        rec_style = receiver_kwargs.copy() if receiver_kwargs else {}
         rec_style.setdefault("marker", "o")
         rec_style.setdefault("color", "red")
         rec_style.setdefault("s", 50)
         rec_style.setdefault("edgecolor", "white")
         rec_style.setdefault("zorder", 5)
-        ax.scatter(rec_x, rec_y, **rec_style)
 
-    return ax
+        sc_rec = ax.scatter(rec_x, rec_y, **rec_style)
+        artists.append(sc_rec)
+
+    ax.set_aspect("equal", adjustable="box")
+
+    return ax, artists

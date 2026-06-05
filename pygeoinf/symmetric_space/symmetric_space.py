@@ -12,7 +12,17 @@ invariant operators and probability measures.
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Callable, Any, List, Optional, TypeAlias, Iterator, Tuple
+from typing import (
+    Callable,
+    Any,
+    List,
+    Optional,
+    TypeAlias,
+    Iterator,
+    Tuple,
+    Union,
+    Literal,
+)
 
 import numpy as np
 from scipy.sparse import diags
@@ -32,7 +42,7 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 
 from pygeoinf.affine_operators import AffineOperator
 
-from pygeoinf.linear_solvers import IterativeLinearSolver, LinearSolver
+from pygeoinf.linear_solvers import IterativeLinearSolver, LinearSolver, CGSolver
 from pygeoinf.direct_sum import BlockDiagonalLinearOperator
 
 # Alias for the index for the eigenvalues or eigenfunctions
@@ -337,34 +347,6 @@ class InvariantGaussianMeasure(GaussianMeasure):
             expectation=self._expectation,  # Pass the raw attribute to avoid zero instantiation
         )
 
-    def kl_divergence(self, other: GaussianMeasure) -> float:
-        """
-        Computes the exact Kullback-Leibler (KL) divergence D_KL(self || other).
-
-        If 'other' is also an InvariantGaussianMeasure, this calculates the divergence
-        in ultra-fast O(N) time directly from the spectral variances.
-        """
-        if isinstance(other, InvariantGaussianMeasure) and self.domain == other.domain:
-            k = self.domain.dim
-            var_p = self.spectral_variances
-            var_q = other.spectral_variances
-
-            trace_term = np.sum(var_p / var_q)
-            log_det_term = np.sum(np.log(var_q)) - np.sum(np.log(var_p))
-
-            if self.has_zero_expectation and other.has_zero_expectation:
-                mahalanobis_term = 0.0
-            else:
-                diff = self.domain.subtract(self.expectation, other.expectation)
-                inv_Q = other.covariance.inverse
-                diff_invQ = inv_Q(diff)
-                mahalanobis_term = self.domain.inner_product(diff, diff_invQ)
-
-            return float(0.5 * (trace_term + mahalanobis_term - k + log_det_term))
-
-        # Fallback to the dense Galerkin method for mixed types
-        return super().kl_divergence(other)
-
     # ------------------------------------------------------#
     #           Overloads of base class methods             #
     # ------------------------------------------------------#
@@ -450,6 +432,51 @@ class InvariantGaussianMeasure(GaussianMeasure):
             inverse_solver=inverse_solver,
             inverse_preconditioner=inverse_preconditioner,
         )
+
+    def kl_divergence(
+        self,
+        other: GaussianMeasure,
+        /,
+        *,
+        method: Literal["auto", "dense", "randomized"] = "auto",
+        **kwargs,
+    ) -> float:
+        """
+        Computes the exact or approximate Kullback-Leibler (KL) divergence D_KL(self || other).
+
+        If both measures are InvariantGaussianMeasures on the same domain,
+        and method="auto", this calculates the divergence in ultra-fast O(N)
+        time directly from the spectral variances.
+        """
+        if (
+            method == "auto"
+            and isinstance(other, InvariantGaussianMeasure)
+            and self.domain == other.domain
+        ):
+            k = self.domain.dim
+            var_p = self.spectral_variances
+            var_q = other.spectral_variances
+
+            # 1. Trace Term: Tr(Q^-1 P)
+            trace_term = np.sum(var_p / var_q)
+
+            # 2. Log-Det Term: ln|Q| - ln|P|
+            log_det_term = np.sum(np.log(var_q)) - np.sum(np.log(var_p))
+
+            # 3. Mahalanobis Term: <mu_P - mu_Q, Q^-1 (mu_P - mu_Q)>
+            if self.has_zero_expectation and other.has_zero_expectation:
+                mahalanobis_term = 0.0
+            else:
+                diff = self.domain.subtract(self.expectation, other.expectation)
+                inv_Q = other.covariance.inverse
+                diff_invQ = inv_Q(diff)
+                mahalanobis_term = self.domain.inner_product(diff, diff_invQ)
+
+            return float(0.5 * (trace_term + mahalanobis_term - k + log_det_term))
+
+        # Fallback to the base class (which handles 'dense' and 'randomized')
+        _method = "dense" if method == "auto" else method
+        return super().kl_divergence(other, method=_method, **kwargs)
 
     def __neg__(self) -> InvariantGaussianMeasure:
         """Returns the measure with a negated expectation. Covariance is unchanged."""
@@ -659,6 +686,34 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         return self.invariant_automorphism(lambda k: k)
 
     # ------------------------------------------------------------#
+    #                 Optimized Base Operator Overrides           #
+    # ------------------------------------------------------------#
+
+    def identity_operator(self) -> InvariantLinearAutomorphism:
+        """
+        Returns the identity operator on the space.
+
+        Overridden to return an InvariantLinearAutomorphism, ensuring that
+        compositions with other invariant operators preserve the fast-path
+        diagonal structure.
+        """
+        return InvariantLinearAutomorphism(self, np.ones(self.dim, dtype=float))
+
+    def zero_operator(self, codomain: Optional[HilbertSpace] = None) -> LinearOperator:
+        """
+        Returns the zero operator.
+
+        If the codomain is the space itself (or not provided), it returns an
+        InvariantLinearAutomorphism for optimal arithmetic operations.
+        Otherwise, it falls back to the standard abstract zero operator.
+        """
+        codomain = self if codomain is None else codomain
+        if codomain == self:
+            return InvariantLinearAutomorphism(self, np.zeros(self.dim, dtype=float))
+
+        return super().zero_operator(codomain=codomain)
+
+    # ------------------------------------------------------------#
     #                      Abstract methods                       #
     # ------------------------------------------------------------#
 
@@ -791,7 +846,9 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         measure = float(np.sum(weights))
         components = np.zeros(self.dim)
         for point, weight in zip(points, weights):
-            components += weight * np.asarray(self.laplacian_eigenvectors_at_point(point))
+            components += weight * np.asarray(
+                self.laplacian_eigenvectors_at_point(point)
+            )
 
         if normalize:
             if measure <= 0.0:
@@ -1166,7 +1223,7 @@ class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
     vector_sqrt
     """
 
-    def gradient_dot_product(self, f: Any, g: Any) -> Any:
+    def gradient_dot_product(self, f: Vector, g: Vector) -> Vector:
         """
         Computes the pointwise dot product of the surface gradients of two fields.
         """
@@ -1184,22 +1241,82 @@ class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
 
         return result
 
-    def thin_elastic_shell_operator(
-        self, D: Any, nu: Any, rho_g: Any
+    def flexural_operator(
+        self,
+        flexural_rigidity: Union[Vector, float, int],
+        poisson_ratio: Union[Vector, float, int],
+        buoyancy_factor: Union[Vector, float, int],
     ) -> LinearOperator:
-        """
+        r"""
         Constructs the generalized 4th-order variable-coefficient flexure operator
-        for a thin elastic shell on this specific Riemannian manifold.
+        for a thin elastic shell on a Riemannian manifold.
+
+        This operator models the normal deflection of a shell subjected to a transverse
+        load. It accounts for spatially varying material properties without requiring
+        explicit tensor calculus by utilizing Bochner-style identities to express
+        the inner product of Hessians purely in terms of Laplacians and surface gradients.
+
+        The operator evaluates:
+        Op(w) = L(D * L(w)) - tr(Hess(D_eff) * Hess(w)) + rho_g * w
+
+        Where:
+        * w is the normal deflection.
+        * D is the flexural rigidity.
+        * D_eff is the effective rigidity: D * (1 - nu).
+        * nu is Poisson's ratio.
+        * rho_g is the foundation restoring force (buoyancy factor).
+        * L() is the Laplace-Beltrami operator.
+
+        Mathematical Details (The Hessian Calculation):
+        ---------------------------------------------
+        Because the framework is built on the spectral properties of the Laplacian,
+        it does not compute Hessians directly. Instead, it uses a well-known identity
+        for the inner product of two Hessians on a 2D manifold:
+
+        tr(Hess(A) * Hess(B)) = 0.5 * L(grad(A) . grad(B))
+                                - 0.5 * (grad(L(A)) . grad(B))
+                                - 0.5 * (grad(A) . grad(L(B)))
+                                - K * (grad(A) . grad(B))
+
+        Here, K is the Gaussian curvature of the manifold. In flat Euclidean space,
+        derivatives commute and K = 0. On a curved manifold (like a sphere), derivatives
+        do not commute. The Gaussian curvature K acts as the precise geometric penalty
+        required to correct for this non-commutativity. The method `gradient_dot_product`
+        is used to evaluate the (grad(A) . grad(B)) terms internally.
+
+        Args:
+            flexural_rigidity: The flexural rigidity field (D). Can be a spatially
+                varying Vector in this space or a constant scalar.
+            poisson_ratio: Poisson's ratio (nu). Can be a spatially varying Vector
+                or a constant scalar.
+            buoyancy_factor: The density contrast or foundation restoring force (rho * g).
+                Can be a spatially varying Vector or a constant scalar.
+
+        Returns:
+            LinearOperator: A self-adjoint linear operator mapping a deflection field
+            to its corresponding load field.
         """
         L = self.laplacian
         K = self.gaussian_curvature
 
-        if isinstance(nu, (float, int)):
-            D_eff = self.multiply(1.0 - nu, D)
+        if isinstance(flexural_rigidity, (float, int)):
+            D = self.project_function(lambda _: flexural_rigidity)
         else:
-            one_vec = self.project_function(lambda _: 1.0)
-            one_minus_nu = self.subtract(one_vec, nu)
-            D_eff = self.vector_multiply(D, one_minus_nu)
+            D = flexural_rigidity
+
+        if isinstance(poisson_ratio, (float, int)):
+            nu = self.project_function(lambda _: poisson_ratio)
+        else:
+            nu = poisson_ratio
+
+        if isinstance(buoyancy_factor, (float, int)):
+            rho_g = self.project_function(lambda _: buoyancy_factor)
+        else:
+            rho_g = buoyancy_factor
+
+        one_vec = self.project_function(lambda _: 1.0)
+        one_minus_nu = self.subtract(one_vec, nu)
+        D_eff = self.vector_multiply(D, one_minus_nu)
 
         delta_D_eff = L(D_eff)
 
@@ -1232,6 +1349,102 @@ class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
             return result
 
         return LinearOperator.self_adjoint(self, apply_operator)
+
+    def inverse_flexural_operator(
+        self,
+        flexural_rigidity: Union[Vector, float, int],
+        poisson_ratio: Union[Vector, float, int],
+        buoyancy_factor: Union[Vector, float, int],
+        /,
+        *,
+        baseline_rigidity: Optional[float] = None,
+        baseline_buoyancy: Optional[float] = None,
+        solver: Optional[IterativeLinearSolver] = None,
+    ) -> LinearOperator:
+        r"""
+        Constructs the inverse of the generalized variable-coefficient flexure operator.
+
+        This method acts as an intelligent factory, mapping a spatial load field to
+        the resulting normal deflection. It utilizes a dual-path execution strategy
+        depending on the spatial variance of the input parameters:
+
+        1. **Analytical Fast-Path:** If $D$, $\nu$, and $\rho_g$ are all constant scalars,
+           the Poisson penalty vanishes ($\nabla D_{eff} = 0$), and the operator simplifies
+           exactly to $D \Delta^2 + \rho_g$. The method returns an ultra-fast, exact
+           `InvariantLinearAutomorphism` by reciprocating the spectral eigenvalues.
+
+        2. **Iterative Slow-Path:** If any parameter is a spatially varying field,
+           the method wraps a preconditioned Conjugate Gradient (CG) iterative solver
+           inside a standard `LinearOperator` interface.
+
+        To accelerate the iterative solver, an invariant preconditioner is built using
+        baseline scalar values for rigidity and buoyancy. If these baselines are not
+        explicitly provided, the solver automatically computes the spatial means of
+        the provided fields via $L^2$ projection.
+
+        Args:
+            flexural_rigidity: The flexural rigidity field $D$ or a constant scalar.
+            poisson_ratio: Poisson's ratio $\nu$ or a constant scalar.
+            buoyancy_factor: The restoring force $\rho_g$ or a constant scalar.
+            baseline_rigidity: An optional scalar guess for the average rigidity,
+                used to construct the spectral preconditioner.
+            baseline_buoyancy: An optional scalar guess for the average buoyancy,
+                used to construct the spectral preconditioner.
+            solver: An optional pre-configured `IterativeLinearSolver` instance
+                (e.g., to inject specific tolerances or progress callbacks).
+                Defaults to a standard `CGSolver`.
+
+        Returns:
+            LinearOperator: A self-adjoint linear operator mapping a load field
+            to its corresponding deflection field.
+        """
+
+        all_scalars = all(
+            isinstance(param, (float, int))
+            for param in (flexural_rigidity, poisson_ratio, buoyancy_factor)
+        )
+
+        if all_scalars:
+            D = float(flexural_rigidity)
+            rho_g = float(buoyancy_factor)
+
+            return self.invariant_automorphism(lambda k: 1.0 / (D * (k**2) + rho_g))
+
+        flexural_operator = self.flexural_operator(
+            flexural_rigidity, poisson_ratio, buoyancy_factor
+        )
+
+        def compute_average(f: Union[Vector, float, int]) -> float:
+            if isinstance(f, (float, int)):
+                return float(f)
+            else:
+                one = self.project_function(lambda _: 1.0)
+                num = self.inner_product(f, one)
+                den = self.squared_norm(one)
+                return num / den
+
+        if baseline_rigidity is not None:
+            D0 = baseline_rigidity
+        else:
+            D0 = compute_average(flexural_rigidity)
+
+        if baseline_buoyancy is not None:
+            rho_0 = baseline_buoyancy
+        else:
+            rho_0 = compute_average(buoyancy_factor)
+
+        preconditioner = self.invariant_automorphism(
+            lambda k: 1.0 / (D0 * (k**2) + rho_0)
+        )
+
+        _solver = CGSolver() if solver is None else solver
+
+        if not isinstance(_solver, IterativeLinearSolver):
+            raise ValueError(
+                "The solver prodided must be an instance of IterativeLinearSolver"
+            )
+
+        return _solver(flexural_operator, preconditioner=preconditioner)
 
 
 class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgueSpace):
@@ -1271,7 +1484,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
             self, lebesgue_space, mass_operator, inverse_mass_operator
         )
 
-        SymmetricHilbertSpace.__init__(
+        AbstractSymmetricLebesgueSpace.__init__(
             self,
             lebesgue_space.spatial_dimension,
             lebesgue_space.degree,
@@ -1781,16 +1994,109 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
             self, l2_operator.codomain, l2_operator
         )
 
-    def thin_elastic_shell_operator(
-        self, D: Any, nu: Any, rho_g: Any
+    def flexural_operator(
+        self,
+        flexural_rigidity: Union[Vector, float, int],
+        poisson_ratio: Union[Vector, float, int],
+        buoyancy_factor: Union[Vector, float, int],
     ) -> LinearOperator:
-        """
+        r"""
         Constructs the generalized 4th-order variable-coefficient flexure operator
-        for a thin elastic shell on this specific Riemannian manifold.
+        for a thin elastic shell on a Riemannian manifold.
+
+        This operator models the normal deflection of a shell subjected to a transverse
+        load. It accounts for spatially varying material properties without requiring
+        explicit tensor calculus by utilizing Bochner-style identities to express
+        the inner product of Hessians purely in terms of Laplacians and surface gradients.
+
+        Mathematically, the operator evaluates:
+        $$ Op(w) = \Delta(D \Delta w) - \text{tr}(\text{Hess}(D(1-\nu)) \text{Hess}(w)) + \rho_g w $$
+
+        Where:
+        * $w$ is the normal deflection.
+        * $D$ is the flexural rigidity.
+        * $\nu$ is Poisson's ratio.
+        * $\rho_g$ is the foundation restoring force (buoyancy factor).
+        * $K$ is the Gaussian curvature of the underlying manifold (handled internally).
+
+        Args:
+            flexural_rigidity: The flexural rigidity field $D$. Can be a spatially
+                varying Vector in this space or a constant scalar.
+            poisson_ratio: Poisson's ratio $\nu$. Can be a spatially varying Vector
+                or a constant scalar.
+            buoyancy_factor: The density contrast or foundation restoring force $\rho_g$.
+                Can be a spatially varying Vector or a constant scalar.
+
+        Returns:
+            LinearOperator: A self-adjoint linear operator mapping a deflection field
+            to its corresponding load field.
         """
-        l2_operator = self.underlying_space.thin_elastic_shell_operator(D, nu, rho_g)
+        l2_operator = self.underlying_space.flexural_operator(
+            flexural_rigidity, poisson_ratio, buoyancy_factor
+        )
 
         return LinearOperator.from_formally_self_adjoint(self, l2_operator)
+
+    def inverse_flexural_operator(
+        self,
+        flexural_rigidity: Union[Vector, float, int],
+        poisson_ratio: Union[Vector, float, int],
+        buoyancy_factor: Union[Vector, float, int],
+        /,
+        *,
+        baseline_rigidity: Optional[float] = None,
+        baseline_buoyancy: Optional[float] = None,
+        solver: Optional[IterativeLinearSolver] = None,
+    ) -> LinearOperator:
+        r"""
+        Constructs the inverse of the generalized variable-coefficient flexure operator.
+
+        This method acts as an intelligent factory, mapping a spatial load field to
+        the resulting normal deflection. It utilizes a dual-path execution strategy
+        depending on the spatial variance of the input parameters:
+
+        1. **Analytical Fast-Path:** If $D$, $\nu$, and $\rho_g$ are all constant scalars,
+           the Poisson penalty vanishes ($\nabla D_{eff} = 0$), and the operator simplifies
+           exactly to $D \Delta^2 + \rho_g$. The method returns an ultra-fast, exact
+           `InvariantLinearAutomorphism` by reciprocating the spectral eigenvalues.
+
+        2. **Iterative Slow-Path:** If any parameter is a spatially varying field,
+           the method wraps a preconditioned Conjugate Gradient (CG) iterative solver
+           inside a standard `LinearOperator` interface.
+
+        To accelerate the iterative solver, an invariant preconditioner is built using
+        baseline scalar values for rigidity and buoyancy. If these baselines are not
+        explicitly provided, the solver automatically computes the spatial means of
+        the provided fields via $L^2$ projection.
+
+        Args:
+            flexural_rigidity: The flexural rigidity field $D$ or a constant scalar.
+            poisson_ratio: Poisson's ratio $\nu$ or a constant scalar.
+            buoyancy_factor: The restoring force $\rho_g$ or a constant scalar.
+            baseline_rigidity: An optional scalar guess for the average rigidity,
+                used to construct the spectral preconditioner.
+            baseline_buoyancy: An optional scalar guess for the average buoyancy,
+                used to construct the spectral preconditioner.
+            solver: An optional pre-configured `IterativeLinearSolver` instance
+                (e.g., to inject specific tolerances or progress callbacks).
+                Defaults to a standard `CGSolver`.
+
+        Returns:
+            LinearOperator: A self-adjoint linear operator mapping a load field
+            to its corresponding deflection field.
+        """
+        l2_operator = self.underlying_space.inverse_flexural_operator(
+            flexural_rigidity,
+            poisson_ratio,
+            buoyancy_factor,
+            baseline_rigidity=baseline_rigidity,
+            baseline_buoyancy=baseline_buoyancy,
+            solver=solver,
+        )
+
+        return LinearOperator.from_formal_adjoint(
+            self, l2_operator.codomain, l2_operator
+        )
 
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #

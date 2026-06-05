@@ -1879,36 +1879,41 @@ class Sobolev(SymmetricSobolevSpace):
 #             Associated plotting methods            #
 # -------------------------------------------------- #
 
-# -------------------------------------------------- #
-#             Associated plotting methods            #
-# -------------------------------------------------- #
-
 
 def create_map_figure(
     figsize: Optional[Tuple[float, float]] = None,
     projection: Optional[Projection] = None,
     **kwargs,
 ) -> Tuple[plt.Figure, GeoAxes]:
-    """
-    Creates a modern Matplotlib Figure and Cartopy GeoAxes optimized for maps.
-    """
+    """Creates a modern Matplotlib Figure and Cartopy GeoAxes optimized for maps."""
     if projection is None:
         projection = ccrs.PlateCarree()
 
-    # Default to constrained layout to prevent map/colorbar overlap
     kwargs.setdefault("layout", "constrained")
-
     fig, ax = plt.subplots(
         figsize=figsize, subplot_kw={"projection": projection}, **kwargs
     )
     return fig, ax
 
 
+def _unwrap_axes(
+    ax_input: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]],
+    projection: Optional[Projection] = None,
+) -> Tuple[plt.Figure, GeoAxes]:
+    """Helper to safely unwrap chained axes tuples and initialize figures."""
+    if ax_input is None:
+        fig, ax = create_map_figure(projection=projection)
+        return fig, ax
+
+    ax = ax_input[0] if isinstance(ax_input, tuple) else ax_input
+    return ax.get_figure(), ax
+
+
 def plot(
     u: "SHGrid",
     /,
     *,
-    ax: Optional[GeoAxes] = None,
+    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
     projection: Optional[Projection] = None,
     contour: bool = False,
     cmap: str = "RdBu",
@@ -1918,7 +1923,7 @@ def plot(
     map_extent: Optional[List[float]] = None,
     gridlines: bool = True,
     gridlines_kwargs: Optional[dict] = None,
-    symmetric: bool = False,
+    symmetric: Union[bool, float] = False,
     contour_lines: bool = False,
     contour_lines_kwargs: Optional[dict] = None,
     num_levels: int = 10,
@@ -1926,44 +1931,10 @@ def plot(
     colorbar_kwargs: Optional[dict] = None,
     **kwargs,
 ) -> Tuple[GeoAxes, Any]:
-    """
-    Creates a high-quality map plot of a spherical harmonic function using Cartopy.
+    """Creates a high-quality map plot of a spherical harmonic function using Cartopy."""
+    fig, ax = _unwrap_axes(ax, projection)
 
-    Args:
-        u: The scalar field to be plotted, evaluated on a spatial grid.
-        ax: An existing Cartopy GeoAxes object. If None, creates a new one.
-        projection: A `cartopy.crs` projection instance defining the map view.
-        contour: If True, renders the field as a filled contour plot (`contourf`).
-        cmap: The Matplotlib colormap string or object to use. Defaults to "RdBu".
-        coasts: If True, overlays high-resolution coastlines. Defaults to False.
-        rivers: If True, overlays major river systems. Defaults to False.
-        borders: If True, overlays international country borders. Defaults to False.
-        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view.
-        gridlines: If True, draws latitude and longitude gridlines with labels.
-        gridlines_kwargs: Formatting options for the Cartopy Gridliner.
-        symmetric: If True, dynamically centers the color scale symmetrically around zero.
-        contour_lines: If True, overlays solid contour lines on top of the base plot.
-        contour_lines_kwargs: A dictionary of keyword arguments passed to `ax.contour`.
-        num_levels: The number of color levels to generate automatically. Defaults to 10.
-        colorbar: If True, attaches a colorbar to the plot. Defaults to False.
-        colorbar_kwargs: Formatting options for the colorbar (e.g., orientation, label).
-        **kwargs: Additional keyword arguments forwarded to `ax.contourf` or `ax.pcolormesh`.
-
-    Returns:
-        A tuple `(ax, im)` containing the GeoAxes and the rendered image artist.
-
-        *Customization Note*: To keep the return signature clean, auxiliary Matplotlib
-        objects are attached dynamically to the returned objects:
-        - `im.colorbar`: Access the generated `matplotlib.colorbar.Colorbar` (if requested).
-        - `ax.gridliner`: Access the generated `cartopy.mpl.gridliner.Gridliner` (if requested).
-    """
-    if ax is None:
-        fig, ax = create_map_figure(projection=projection)
-    else:
-        fig = ax.get_figure()
-
-    lons = u.lons()
-    lats = u.lats()
+    lons, lats = u.lons(), u.lats()
 
     if map_extent is not None:
         ax.set_extent(map_extent, crs=ccrs.PlateCarree())
@@ -1976,7 +1947,8 @@ def plot(
 
     kwargs.setdefault("cmap", cmap)
     if symmetric:
-        data_max = 1.2 * np.nanmax(np.abs(u.data))
+        scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
+        data_max = scale_factor * np.nanmax(np.abs(u.data))
         kwargs.setdefault("vmin", -data_max)
         kwargs.setdefault("vmax", data_max)
 
@@ -1998,7 +1970,7 @@ def plot(
         im = ax.pcolormesh(lons, lats, u.data, transform=ccrs.PlateCarree(), **kwargs)
 
     if contour_lines:
-        cl_kwargs = contour_lines_kwargs if contour_lines_kwargs is not None else {}
+        cl_kwargs = contour_lines_kwargs.copy() if contour_lines_kwargs else {}
         cl_kwargs.setdefault("colors", "k")
         cl_kwargs.setdefault("linewidths", 0.5)
         ax.contour(
@@ -2006,7 +1978,7 @@ def plot(
         )
 
     if gridlines:
-        gl_opts = gridlines_kwargs or {}
+        gl_opts = gridlines_kwargs.copy() if gridlines_kwargs else {}
         lat_interval = gl_opts.pop("lat_interval", 30)
         lon_interval = gl_opts.pop("lon_interval", 30)
 
@@ -2021,17 +1993,16 @@ def plot(
         gl.ylocator = mticker.MultipleLocator(lat_interval)
         gl.xformatter = LongitudeFormatter()
         gl.yformatter = LatitudeFormatter()
-
-        ax.gridliner = gl  # Attach attribute for downstream customization
+        ax.gridliner = gl
 
     if colorbar and fig:
-        cb_opts = colorbar_kwargs or {}
+        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
         cb_opts.setdefault("orientation", "horizontal")
         cb_opts.setdefault("shrink", 0.7)
         cb_opts.setdefault("pad", 0.05)
 
         cb = fig.colorbar(im, ax=ax, **cb_opts)
-        im.colorbar = cb  # Attach attribute for downstream customization
+        im.colorbar = cb
 
     return ax, im
 
@@ -2041,7 +2012,7 @@ def plot_points(
     /,
     *,
     data: Optional[Union[List[float], np.ndarray]] = None,
-    ax: Optional[GeoAxes] = None,
+    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
     projection: Optional[Projection] = None,
     cmap: str = "RdBu",
     color: str = "red",
@@ -2055,54 +2026,20 @@ def plot_points(
     map_extent: Optional[List[float]] = None,
     gridlines: bool = True,
     gridlines_kwargs: Optional[dict] = None,
-    symmetric: bool = False,
+    symmetric: Union[bool, float] = False,
     colorbar: bool = False,
     colorbar_kwargs: Optional[dict] = None,
     **kwargs,
 ) -> Tuple[GeoAxes, Any]:
-    """
-    Plots discrete observation points (e.g., tide gauges or altimetry tracks) on a map.
+    """Plots discrete observation points on a map."""
+    fig, ax = _unwrap_axes(ax, projection)
 
-    Args:
-        points: A list of (latitude, longitude) tuples in degrees.
-        data: Optional array of values to color the points by.
-        ax: An existing Cartopy GeoAxes object. If None, creates a new one.
-        projection: A cartopy projection instance if creating a new axes.
-        cmap: The colormap to use if `data` is provided.
-        color: The fixed color to use if `data` is NOT provided.
-        s: The marker size.
-        marker: The marker style (e.g., 'o', '*', '^').
-        edgecolors: The color of the marker edges.
-        zorder: The drawing order (higher means drawn on top of other elements).
-        coasts: If True, overlays high-resolution coastlines. Defaults to False.
-        rivers: If True, overlays major river systems. Defaults to False.
-        borders: If True, overlays international country borders. Defaults to False.
-        map_extent: A list `[lon_min, lon_max, lat_min, lat_max]` limiting the view.
-        gridlines: If True, draws latitude and longitude gridlines with labels.
-        gridlines_kwargs: Formatting options for the Cartopy Gridliner.
-        symmetric: If True, dynamically centers the color scale symmetrically around zero.
-        colorbar: If True and `data` is provided, attaches a colorbar.
-        colorbar_kwargs: Formatting options for the colorbar.
-        **kwargs: Additional keyword arguments passed to `ax.scatter`.
-
-    Returns:
-        A tuple `(ax, sc)` containing the GeoAxes and the PathCollection artist.
-
-        *Customization Note*: To keep the return signature clean, auxiliary Matplotlib
-        objects are attached dynamically to the returned objects:
-        - `sc.colorbar`: Access the generated `matplotlib.colorbar.Colorbar` (if requested).
-        - `ax.gridliner`: Access the generated `cartopy.mpl.gridliner.Gridliner` (if requested).
-    """
-    if ax is None:
-        fig, ax = create_map_figure(projection=projection)
+    # Only set global if we initialized a fresh axis and no extent is provided
+    if map_extent is None and not ax.get_extent():
         ax.set_global()
-    else:
-        fig = ax.get_figure()
-
-    if map_extent is not None:
+    elif map_extent is not None:
         ax.set_extent(map_extent, crs=ccrs.PlateCarree())
 
-    # Apply high zorder to features so they aren't buried by dense scatter points
     if coasts:
         ax.add_feature(cfeature.COASTLINE, linewidth=0.8, zorder=10)
     if rivers:
@@ -2113,12 +2050,14 @@ def plot_points(
     lats = [p[0] for p in points]
     lons = [p[1] for p in points]
 
-    # Handle colormapping or fixed colors
     if data is not None:
+        if len(data) != len(points):
+            raise ValueError("The length of 'data' must match the length of 'points'.")
         c = data
         kwargs.setdefault("cmap", cmap)
         if symmetric:
-            data_max = 1.2 * np.nanmax(np.abs(data))
+            scale_factor = 1.2 if isinstance(symmetric, bool) else float(symmetric)
+            data_max = scale_factor * np.nanmax(np.abs(data))
             kwargs.setdefault("vmin", -data_max)
             kwargs.setdefault("vmax", data_max)
     else:
@@ -2137,15 +2076,12 @@ def plot_points(
     )
 
     if gridlines:
-        gl_opts = gridlines_kwargs or {}
+        gl_opts = gridlines_kwargs.copy() if gridlines_kwargs else {}
         lat_interval = gl_opts.pop("lat_interval", 30)
         lon_interval = gl_opts.pop("lon_interval", 30)
 
         gl_opts.setdefault("linestyle", "--")
         gl_opts.setdefault("draw_labels", True)
-        gl_opts.setdefault("dms", True)
-        gl_opts.setdefault("x_inline", False)
-        gl_opts.setdefault("y_inline", False)
         gl_opts.setdefault("zorder", 10)
 
         gl = ax.gridlines(**gl_opts)
@@ -2153,17 +2089,16 @@ def plot_points(
         gl.ylocator = mticker.MultipleLocator(lat_interval)
         gl.xformatter = LongitudeFormatter()
         gl.yformatter = LatitudeFormatter()
-
-        ax.gridliner = gl  # Attach attribute for downstream customization
+        ax.gridliner = gl
 
     if colorbar and data is not None and fig:
-        cb_opts = colorbar_kwargs or {}
+        cb_opts = colorbar_kwargs.copy() if colorbar_kwargs else {}
         cb_opts.setdefault("orientation", "horizontal")
         cb_opts.setdefault("shrink", 0.7)
         cb_opts.setdefault("pad", 0.05)
 
         cb = fig.colorbar(sc, ax=ax, **cb_opts)
-        sc.colorbar = cb  # Attach attribute for downstream customization
+        sc.colorbar = cb
 
     return ax, sc
 
@@ -2173,76 +2108,51 @@ def plot_geodesic(
     p2: Tuple[float, float],
     /,
     *,
-    ax: Optional[GeoAxes] = None,
+    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
     **kwargs,
-) -> GeoAxes:
-    """
-    Plots a geodesic (great-circle) curve between two points on the sphere.
-
-    Args:
-        p1: The starting coordinate as a tuple `(latitude, longitude)` in degrees.
-        p2: The ending coordinate as a tuple `(latitude, longitude)` in degrees.
-        ax: An existing Cartopy GeoAxes object. If None, creates a new one.
-        **kwargs: Keyword arguments passed directly to `ax.plot`.
-
-    Returns:
-        The Cartopy GeoAxes object.
-    """
-    if ax is None:
-        _, ax = create_map_figure(projection=ccrs.PlateCarree())
+) -> Tuple[GeoAxes, Any]:
+    """Plots a geodesic (great-circle) curve between two points on the sphere."""
+    _, ax = _unwrap_axes(ax)
 
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 2)
 
     lat1, lon1 = p1
     lat2, lon2 = p2
-    ax.plot([lon1, lon2], [lat1, lat2], transform=ccrs.Geodetic(), **kwargs)
 
-    return ax
+    # ax.plot returns a list of Line2D objects; we extract the first one
+    (line,) = ax.plot([lon1, lon2], [lat1, lat2], transform=ccrs.Geodetic(), **kwargs)
+
+    return ax, line
 
 
 def plot_geodesic_network(
     paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
     /,
     *,
-    ax: Optional["GeoAxes"] = None,
+    ax: Optional[Union[GeoAxes, Tuple[GeoAxes, Any]]] = None,
     plot_sources: bool = True,
     plot_receivers: bool = True,
     source_kwargs: Optional[dict] = None,
     receiver_kwargs: Optional[dict] = None,
     **kwargs,
-) -> "GeoAxes":
-    """
-    Plots a network of intersecting geodesic paths onto a Cartopy map.
+) -> Tuple[GeoAxes, List[Any]]:
+    """Plots a network of intersecting geodesic paths onto a Cartopy map."""
+    fig, ax = _unwrap_axes(ax)
 
-    Args:
-        paths: A list of point pairs defining the network. Each pair is
-               ((source_lat, source_lon), (receiver_lat, receiver_lon)).
-        ax: An existing Cartopy GeoAxes object. If None, creates a new global view.
-        plot_sources: If True, plots the source points.
-        plot_receivers: If True, plots the receiver points.
-        source_kwargs: Styling arguments for the source scatter points.
-        receiver_kwargs: Styling arguments for the receiver scatter points.
-        **kwargs: Default styling arguments applied to the geodesic lines.
-
-    Returns:
-        The Cartopy GeoAxes object.
-    """
-    if ax is None:
-        _, ax = create_map_figure(projection=ccrs.PlateCarree())
+    if not ax.get_extent():
         ax.set_global()
         ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
 
-    # Line styling defaults
     kwargs.setdefault("color", "black")
     kwargs.setdefault("linewidth", 0.8)
     kwargs.setdefault("alpha", 0.5)
 
-    # Plot the paths
+    artists = []
     for p1, p2 in paths:
-        plot_geodesic(p1, p2, ax=ax, **kwargs)
+        _, line = plot_geodesic(p1, p2, ax=ax, **kwargs)
+        artists.append(line)
 
-    # Plot the nodes
     if plot_sources or plot_receivers:
         sources = list(set([tuple(p[0]) for p in paths]))
         receivers = list(set([tuple(p[1]) for p in paths]))
@@ -2256,7 +2166,10 @@ def plot_geodesic_network(
             src_style.setdefault("edgecolor", "black")
             src_style.setdefault("zorder", 5)
 
-            ax.scatter(src_lons, src_lats, transform=ccrs.Geodetic(), **src_style)
+            sc_src = ax.scatter(
+                src_lons, src_lats, transform=ccrs.Geodetic(), **src_style
+            )
+            artists.append(sc_src)
 
         if plot_receivers and receivers:
             rec_lats, rec_lons = zip(*receivers)
@@ -2267,6 +2180,9 @@ def plot_geodesic_network(
             rec_style.setdefault("edgecolor", "white")
             rec_style.setdefault("zorder", 5)
 
-            ax.scatter(rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style)
+            sc_rec = ax.scatter(
+                rec_lons, rec_lats, transform=ccrs.Geodetic(), **rec_style
+            )
+            artists.append(sc_rec)
 
-    return ax
+    return ax, artists

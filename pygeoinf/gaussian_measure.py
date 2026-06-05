@@ -20,7 +20,7 @@ Key Features
 """
 
 from __future__ import annotations
-from typing import Callable, Optional, Any, List, TYPE_CHECKING, Tuple
+from typing import Callable, Optional, Any, List, TYPE_CHECKING, Tuple, Literal
 import warnings
 
 import numpy as np
@@ -45,7 +45,6 @@ from .linear_operators import (
     LinearOperator,
     DiagonalSparseMatrixLinearOperator,
     SparseMatrixLinearOperator,
-    DenseMatrixLinearOperator,
 )
 
 
@@ -56,7 +55,6 @@ from .affine_operators import AffineOperator
 from .direct_sum import BlockDiagonalLinearOperator, BlockLinearOperator
 
 
-# This block is only processed by type checkers, not at runtime.
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace
 
@@ -69,9 +67,6 @@ class GaussianMeasure:
     potentially infinite-dimensional, Hilbert spaces. A measure is
     defined by its expectation (mean vector) and its covariance, which is a
     `LinearOperator` on the space.
-
-    It provides a powerful toolkit for probabilistic modeling, especially in
-    the context of Bayesian inversion.
     """
 
     def __init__(
@@ -84,36 +79,33 @@ class GaussianMeasure:
         sample: Callable[[], Vector] = None,
         inverse_covariance: LinearOperator = None,
         inverse_covariance_factor: LinearOperator = None,
-        log_det_covariance: Optional[float] = None,
     ) -> None:
         """
-         Initializes the GaussianMeasure.
+        Initializes the GaussianMeasure.
 
         The measure can be defined in several ways, primarily by providing
-         either a covariance operator or a covariance factor.
+        either a covariance operator or a covariance factor.
 
-         Args:
-             covariance (LinearOperator, optional): A self-adjoint and positive
-                 semi-definite linear operator on the domain.
-             covariance_factor (LinearOperator, optional): A linear operator L
-                 such that the covariance C = L @ L*.
-             expectation (vector, optional): The expectation (mean) of the
-                 measure. Defaults to the zero vector of the space (stored internally as None).
-             sample (callable, optional): A function that returns a random
-                 sample from the measure. If a `covariance_factor` is given,
-                 a default sampler is created.
-             inverse_covariance (LinearOperator, optional): The inverse of the
-                 covariance operator (the precision operator).
-             inverse_covariance_factor (LinearOperator, optional): A factor Li
-                 of the inverse covariance, such that C_inv = Li.T @ Li.
+        Args:
+            covariance: A self-adjoint and positive semi-definite linear
+                operator on the domain.
+            covariance_factor: A linear operator L such that the covariance
+                C = L @ L*.
+            expectation: The expectation (mean) of the measure. Defaults to
+                the zero vector of the space (stored internally as None).
+            sample: A function that returns a random sample from the measure.
+                If a `covariance_factor` is given, a default sampler is created.
+            inverse_covariance: The inverse of the covariance operator (the
+                precision operator).
+            inverse_covariance_factor: A factor Li of the inverse covariance,
+                such that C_inv = Li.T @ Li.
 
-         Raises:
-             ValueError: If neither `covariance` nor `covariance_factor`
-                 is provided.
+        Raises:
+            ValueError: If neither `covariance` nor `covariance_factor` is provided.
         """
         if covariance is None and covariance_factor is None:
             raise ValueError(
-                "Neither covariance or covariance factor has been provided"
+                "Neither covariance nor covariance_factor has been provided."
             )
 
         self._covariance_factor: Optional[LinearOperator] = covariance_factor
@@ -141,8 +133,6 @@ class GaussianMeasure:
 
         self._expectation: Optional[Vector] = expectation
 
-        self._log_det_covariance: Optional[float] = log_det_covariance
-
     # ---------------------------------------- #
     #                Constructors              #
     # ---------------------------------------- #
@@ -156,27 +146,24 @@ class GaussianMeasure:
         expectation: Vector = None,
     ) -> GaussianMeasure:
         """
-        Creates an isotropic Gaussian measure with scaled identity covariance.
+        Creates an isotropic Gaussian measure with a scaled identity covariance.
 
         Args:
-            domain (HilbertSpace): The Hilbert space for the measure.
-            standard_deviation (float): The standard deviation. The covariance
-                will be `sigma^2 * I`.
-            expectation (vector, optional): The expectation of the measure.
-                Defaults to zero.
+            domain: The Hilbert space on which the measure is defined.
+            standard_deviation: The uniform standard deviation for all dimensions.
+            expectation: The mean vector. Defaults to the zero vector.
+
+        Returns:
+            A new GaussianMeasure instance.
         """
         covariance_factor = standard_deviation * domain.identity_operator()
         inverse_covariance_factor = (
             1 / standard_deviation
         ) * domain.identity_operator()
-        log_det = (
-            2.0 * domain.dim * np.log(standard_deviation) if domain.dim > 0 else None
-        )
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
-            log_det_covariance=log_det,
         )
 
     @staticmethod
@@ -191,28 +178,29 @@ class GaussianMeasure:
         Creates a Gaussian measure with a diagonal covariance operator.
 
         Args:
-            domain (HilbertSpace): The Hilbert space for the measure.
-            standard_deviations (np.ndarray): A vector of standard deviations
-                for each basis direction. The resulting covariance will be
-                diagonal in the basis of the space.
-            expectation (vector, optional): The expectation of the measure.
-                Defaults to zero.
-        """
+            domain: The Hilbert space on which the measure is defined.
+            standard_deviations: A 1D NumPy array representing the diagonal
+                entries of the covariance factor.
+            expectation: The mean vector. Defaults to the zero vector.
 
+        Returns:
+            A new GaussianMeasure instance.
+
+        Raises:
+            ValueError: If the size of the array does not match the space dimension.
+        """
         if standard_deviations.size != domain.dim:
             raise ValueError(
-                "Standard deviation vector does not have the correct length"
+                "Standard deviation vector does not have the correct length."
             )
         euclidean = EuclideanSpace(domain.dim)
         covariance_factor = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
             euclidean, domain, standard_deviations
         )
-        log_det = 2.0 * float(np.sum(np.log(standard_deviations)))
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=covariance_factor.inverse,
             expectation=expectation,
-            log_det_covariance=log_det,
         )
 
     @staticmethod
@@ -227,20 +215,19 @@ class GaussianMeasure:
         """
         Creates a Gaussian measure from a dense covariance matrix.
 
-        The provided matrix is interpreted as the Galerkin representation of
-        the covariance operator. This method computes a Cholesky-like
-        decomposition of the matrix to create a `covariance_factor`.
-
-        It includes a check to handle numerical precision issues, allowing for
-        eigenvalues that are slightly negative within a relative tolerance.
-
         Args:
-            domain: The Hilbert space the measure is defined on.
-            covariance_matrix: The dense covariance matrix.
-            expectation: The expectation (mean) of the measure.
-            rtol: The relative tolerance used to check for negative eigenvalues.
-        """
+            domain: The Hilbert space on which the measure is defined.
+            covariance_matrix: A 2D symmetric positive semi-definite NumPy array.
+            expectation: The mean vector. Defaults to the zero vector.
+            rtol: Relative tolerance for clipping small negative eigenvalues
+                caused by floating-point inaccuracies.
 
+        Returns:
+            A new GaussianMeasure instance.
+
+        Raises:
+            ValueError: If the matrix has significantly negative eigenvalues.
+        """
         eigenvalues, U = eigh(covariance_matrix)
 
         if np.any(eigenvalues < 0):
@@ -274,29 +261,31 @@ class GaussianMeasure:
         inverse_covariance_factor = LinearOperator.from_matrix(
             domain, EuclideanSpace(domain.dim), Li, galerkin=False
         )
-        safe_eigenvalues = np.where(eigenvalues > 0, eigenvalues, 1e-300)
-        log_det = float(np.sum(np.log(safe_eigenvalues)))
 
         return GaussianMeasure(
             covariance_factor=covariance_factor,
             inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
-            log_det_covariance=log_det,
         )
 
     @staticmethod
-    def from_samples(domain: HilbertSpace, samples: List[Vector]) -> GaussianMeasure:
+    def from_samples(domain: HilbertSpace, samples: List[Vector], /) -> GaussianMeasure:
         """
         Estimates a Gaussian measure from a collection of sample vectors.
 
-        The expectation and covariance are estimated using the sample mean
-        and sample covariance.
+        Constructs an empirical mean and an unnormalized sample covariance operator
+        using a tensor product expansion.
 
         Args:
-            domain (HilbertSpace): The space the measure is defined on.
-            samples (list): A list of sample vectors from the domain.
-        """
+            domain: The Hilbert space the samples belong to.
+            samples: A list of sample vectors.
 
+        Returns:
+            A new GaussianMeasure instance.
+
+        Raises:
+            ValueError: If the list of samples is empty.
+        """
         assert all([domain.is_element(x) for x in samples])
         n = len(samples)
         if n == 0:
@@ -328,17 +317,19 @@ class GaussianMeasure:
         )
 
     @staticmethod
-    def from_direct_sum(measures: List[GaussianMeasure]) -> GaussianMeasure:
+    def from_direct_sum(measures: List[GaussianMeasure], /) -> GaussianMeasure:
         """
         Constructs a product measure from a list of other measures.
 
-        The resulting measure is defined on the direct sum of the individual
-        Hilbert spaces. Its covariance is a block-diagonal operator.
+        The resulting measure resides on the direct sum of the input domains,
+        with block-diagonal covariance and concatenated expectations.
 
         Args:
-            measures (list): A list of `GaussianMeasure` objects.
-        """
+            measures: A list of GaussianMeasure instances.
 
+        Returns:
+            A new GaussianMeasure instance defined on the direct sum space.
+        """
         if all(measure.has_zero_expectation for measure in measures):
             expectation = None
         else:
@@ -386,24 +377,24 @@ class GaussianMeasure:
 
     @property
     def inverse_covariance_set(self) -> bool:
-        """True if the inverse covariance (precision) is available."""
+        """True if the inverse covariance (precision) operator is available."""
         return self._inverse_covariance is not None
 
     @property
     def inverse_covariance(self) -> LinearOperator:
-        """The inverse covariance (precision) operator."""
+        """The inverse covariance (precision) operator. Raises AttributeError if not set."""
         if self._inverse_covariance is None:
             raise AttributeError("Inverse covariance is not set for this measure.")
         return self._inverse_covariance
 
     @property
     def covariance_factor_set(self) -> bool:
-        """True if a covariance factor L (s.t. C=LL*) is available."""
+        """True if a covariance factor L (such that C = L @ L*) is available."""
         return self._covariance_factor is not None
 
     @property
     def covariance_factor(self) -> LinearOperator:
-        """The covariance factor L (s.t. C=LL*)."""
+        """The covariance factor L. Raises AttributeError if not set."""
         if self._covariance_factor is None:
             raise AttributeError("Covariance factor has not been set.")
         return self._covariance_factor
@@ -415,554 +406,42 @@ class GaussianMeasure:
 
     @property
     def inverse_covariance_factor(self) -> LinearOperator:
-        """The inverse covariance factor."""
+        """The inverse covariance factor. Raises AttributeError if not set."""
         if self._inverse_covariance_factor is None:
             raise AttributeError("Inverse covariance factor has not been set.")
         return self._inverse_covariance_factor
 
     @property
     def has_zero_expectation(self) -> bool:
-        """True if the measure has an exactly zero expectation."""
+        """True if the measure is internally stored with an exactly zero expectation."""
         return self._expectation is None
 
     @property
     def expectation(self) -> Vector:
-        """The expectation (mean) of the measure."""
+        """The expectation (mean) vector of the measure."""
         if self.has_zero_expectation:
             return self.domain.zero
         return self._expectation
 
     @property
     def sample_set(self) -> bool:
-        """True if a method for drawing samples is available."""
+        """True if a method for drawing random samples is available."""
         return self._sample is not None
-
-    def _sampling_radius(
-        self,
-        probability: float,
-        gauge_squared,
-        *,
-        n_samples: int = 10_000,
-        parallel: bool = False,
-        n_jobs: int = -1,
-    ) -> float:
-        r"""Empirical $p$-quantile of $R(X)^2$ over Monte Carlo draws.
-
-        For internal use by :meth:`credible_set` when ``radius_method =
-        "sampling"``. Draws ``n_samples`` independent samples
-        $X^{(i)} \sim \mu$, evaluates the gauge squared
-        $R(X^{(i)} - m_0)^2$, and returns the empirical $p$-quantile.
-
-        Args:
-            probability: Target probability in $(0, 1)$.
-            gauge_squared: A callable mapping a centered vector $X - m_0$
-                in the model space to the non-negative scalar $R(\cdot)^2$.
-            n_samples: Number of Monte Carlo draws.
-            parallel: Whether to draw samples in parallel.
-            n_jobs: Number of cores when ``parallel=True``.
-
-        Returns:
-            The empirical $p$-quantile of $R(X)^2$ as a float.
-
-        Raises:
-            ValueError: if the measure cannot draw samples or the
-                probability is out of range.
-        """
-        if not 0.0 < probability < 1.0:
-            raise ValueError("probability must lie strictly between 0 and 1.")
-        if not self.sample_set:
-            raise ValueError(
-                "Sampling-based radius requires a measure equipped with a "
-                "sample method."
-            )
-        samples = self.samples(n_samples, parallel=parallel, n_jobs=n_jobs)
-        mean = self.expectation
-        gauge_sq_values = np.empty(n_samples, dtype=float)
-        for i, x in enumerate(samples):
-            diff = self.domain.subtract(x, mean)
-            gauge_sq_values[i] = float(gauge_squared(diff))
-        return float(np.quantile(gauge_sq_values, probability))
-
-    def credible_set(
-        self,
-        probability: float,
-        /,
-        *,
-        geometry: str = "ellipsoid",
-        rank: Optional[int] = None,
-        open_set: bool = False,
-        theta: Optional[float] = None,
-        spectrum=None,
-        spectrum_size: Optional[int] = None,
-        radius_method: str = "auto",
-        quantile_method: str = "auto",
-        quantile_tol: float = 1e-2,
-        fractional_apply: str = "auto",
-        n_samples: int = 10_000,
-        n_lanczos: int = 50,
-        spectrum_low_rank_kwargs: Optional[dict] = None,
-        rng: Optional[np.random.Generator] = None,
-    ):
-        r"""Return a probability-calibrated Gaussian credible subset.
-
-        Five geometries are supported:
-
-        ``"ellipsoid"`` / ``"mahalanobis"`` / ``"domain"``
-            The classical Mahalanobis ellipsoid
-            $\{x : \langle C^{-1}(x-m), x-m\rangle \le r_p^2\}$ with
-            $r_p^2 = \chi^2_k(p)$ where $k$ is ``rank`` or
-            ``self.domain.dim``.
-
-        ``"cameron_martin"`` / ``"cm"`` / ``"ball"`` / ``"norm_ball"``
-            The same set expressed as a unit ball in the Cameron-Martin
-            geometry whose mass operator is $C^{-1}$.
-
-        ``"ambient_ball"`` / ``"ambient"``
-            **New (function-space mode).** The ambient norm ball
-            $\{m : \|m - m_0\|_H \le r_p\}$ whose radius solves
-            $\mathbb{P}(\sum_j \lambda_j Z_j^2 \le r_p^2) = p$ where
-            $\{\lambda_j\}$ is the covariance spectrum.
-
-        ``"weakened_ellipsoid"`` / ``"fractional"``
-            **New (function-space mode).** Requires ``theta`` in
-            $(0, 1)$. The weakened-covariance ellipsoid
-            $\{m : \|C^{-\theta/2}(m-m_0)\|_H \le r_p\}$ with radius
-            satisfying $\mathbb{P}(\sum_j \lambda_j^{1-\theta} Z_j^2 \le
-            r_p^2) = p$.
-
-        See ``docs/agent-docs/theory/function-space-hardening.md`` for the
-        mathematical derivations.
-
-        Args:
-            probability: Credible probability $p$, strictly between 0 and 1.
-            geometry: Selects the ball/ellipsoid family (see above).
-            rank: Chi-square degrees of freedom (legacy modes only).
-            open_set: If true, return the open version of the set.
-            theta: Fractional exponent in $(0, 1)$, required for
-                ``"weakened_ellipsoid"``. The bound case $\theta = 1$ is
-                the Cameron-Martin norm and is not admissible in genuine
-                infinite-dim; use the legacy ``"cameron_martin"`` mode for
-                that.
-            spectrum: Covariance spectrum specification. One of:
-                a 1-D ``np.ndarray`` of eigenvalues; a
-                :class:`pygeoinf.low_rank.LowRankEig` instance; a
-                callable ``f(k)`` returning the first $k$ eigenvalues;
-                or ``None`` to compute a randomized eigendecomposition.
-            spectrum_size: Truncation length when ``spectrum`` is callable
-                or ``None``.
-            radius_method: ``"auto"`` (default), ``"spectral"``, or
-                ``"sampling"``.
-            quantile_method: Weighted-chi-square quantile method; one of
-                ``"auto"`` (default), ``"imhof"``, ``"ws"``,
-                ``"saddlepoint"``, ``"mc"``. With ``"auto"`` the method
-                is selected automatically based on spectrum isotropy and
-                ``quantile_tol``. See
-                :mod:`pygeoinf.quadratic_form_quantile`.
-            quantile_tol: Desired relative accuracy of the weighted-chi-square
-                quantile when ``quantile_method="auto"`` (default ``1e-2``).
-                Ignored when an explicit method is specified.
-            fractional_apply: How to apply $C^{-\theta/2}$ for the
-                weakened ellipsoid. One of ``"auto"``, ``"lanczos"``,
-                ``"low_rank_eig"``.
-            n_samples: Monte Carlo sample count for sampling radius.
-            n_lanczos: Krylov dimension for Lanczos matrix-function apply.
-            spectrum_low_rank_kwargs: Extra kwargs forwarded to
-                ``LowRankEig.from_randomized`` when ``spectrum`` is None.
-            rng: Optional NumPy generator for Monte Carlo paths.
-
-        Returns:
-            A :class:`pygeoinf.subsets.Ellipsoid` or
-            :class:`pygeoinf.subsets.Ball`.
-        """
-        if not 0.0 < probability < 1.0:
-            raise ValueError("Probability must lie strictly between 0 and 1.")
-
-        geometry_key = geometry.lower().replace("-", "_")
-
-        # ---- Legacy paths (unchanged) -----------------------------------
-        if geometry_key in {"ellipsoid", "domain", "mahalanobis"}:
-            return self._credible_set_chi2_ellipsoid(
-                probability, rank=rank, open_set=open_set
-            )
-        if geometry_key in {"cameron_martin", "cm", "ball", "norm_ball"}:
-            return self._credible_set_chi2_cameron_martin(
-                probability, rank=rank, open_set=open_set
-            )
-
-        # ---- New spectrum-aware paths -----------------------------------
-        if geometry_key in {"ambient_ball", "ambient", "h_ball"}:
-            return self._credible_set_ambient_ball(
-                probability,
-                open_set=open_set,
-                spectrum=spectrum,
-                spectrum_size=spectrum_size,
-                radius_method=radius_method,
-                quantile_method=quantile_method,
-                quantile_tol=quantile_tol,
-                n_samples=n_samples,
-                spectrum_low_rank_kwargs=spectrum_low_rank_kwargs,
-                rng=rng,
-            )
-        if geometry_key in {"weakened_ellipsoid", "fractional"}:
-            if theta is None:
-                raise ValueError("theta is required for geometry='weakened_ellipsoid'.")
-            if not 0.0 < theta < 1.0:
-                raise ValueError(
-                    "theta must lie strictly in (0, 1); the boundary "
-                    "theta=1 is the Cameron-Martin norm — use "
-                    "geometry='cameron_martin' for the finite-rank "
-                    "chi-square version."
-                )
-            return self._credible_set_weakened_ellipsoid(
-                probability,
-                theta=theta,
-                open_set=open_set,
-                spectrum=spectrum,
-                spectrum_size=spectrum_size,
-                radius_method=radius_method,
-                quantile_method=quantile_method,
-                quantile_tol=quantile_tol,
-                fractional_apply=fractional_apply,
-                n_samples=n_samples,
-                n_lanczos=n_lanczos,
-                spectrum_low_rank_kwargs=spectrum_low_rank_kwargs,
-                rng=rng,
-            )
-
-        raise ValueError(
-            "Geometry must be one of 'ellipsoid', 'cameron_martin', "
-            "'ambient_ball', or 'weakened_ellipsoid'."
-        )
-
-    # ------------------------------------------------------------------ #
-    # Convenience wrappers
-    # ------------------------------------------------------------------ #
-
-    def ambient_ball(self, probability: float, /, **kwargs):
-        """Shortcut for ``credible_set(..., geometry='ambient_ball', ...)``."""
-        kwargs.setdefault("geometry", "ambient_ball")
-        return self.credible_set(probability, **kwargs)
-
-    def weakened_ellipsoid(self, probability: float, /, *, theta: float, **kwargs):
-        """Shortcut for the weakened-covariance ellipsoid mode."""
-        kwargs.setdefault("geometry", "weakened_ellipsoid")
-        kwargs["theta"] = theta
-        return self.credible_set(probability, **kwargs)
-
-    # ------------------------------------------------------------------ #
-    # Legacy chi-square implementations (factored out for readability)
-    # ------------------------------------------------------------------ #
-
-    def _credible_set_chi2_ellipsoid(
-        self,
-        probability: float,
-        *,
-        rank: Optional[int],
-        open_set: bool,
-    ):
-        effective_rank = self._resolve_rank(rank)
-        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
-        from .subsets import Ellipsoid
-
-        return Ellipsoid(
-            self.domain,
-            self.expectation,
-            radius,
-            self.inverse_covariance,
-            open_set=open_set,
-            inverse_operator=self.covariance,
-        )
-
-    def _credible_set_chi2_cameron_martin(
-        self,
-        probability: float,
-        *,
-        rank: Optional[int],
-        open_set: bool,
-    ):
-        effective_rank = self._resolve_rank(rank)
-        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
-        from .subsets import Ball
-
-        induced_domain_type = (
-            MassWeightedHilbertModule
-            if isinstance(self.domain, HilbertModule)
-            else MassWeightedHilbertSpace
-        )
-        induced_domain = induced_domain_type(
-            self.domain, self.inverse_covariance, self.covariance
-        )
-        return Ball(induced_domain, self.expectation, radius, open_set=open_set)
-
-    def _resolve_rank(self, rank: Optional[int]) -> int:
-        if rank is None and self.domain.dim < 1:
-            raise ValueError(
-                "Rank must be provided for domains without a positive "
-                "finite dimension, such as basis-free function spaces."
-            )
-        effective_rank = self.domain.dim if rank is None else rank
-        if not isinstance(effective_rank, int) or effective_rank < 1:
-            raise ValueError("Rank must be a positive integer.")
-        return effective_rank
-
-    # ------------------------------------------------------------------ #
-    # Spectrum-aware paths
-    # ------------------------------------------------------------------ #
-
-    def _resolve_spectrum(
-        self,
-        spectrum,
-        spectrum_size: Optional[int],
-        spectrum_low_rank_kwargs: Optional[dict],
-        rng: Optional[np.random.Generator],
-    ):
-        """Return ``(eigenvalues, eig_or_None)``.
-
-        Resolves the four ``spectrum`` input forms (array, ``LowRankEig``,
-        callable, ``None``) to a concrete spectrum and (when available)
-        the originating ``LowRankEig`` for eigenvector access.
-        """
-        from .low_rank import LowRankEig
-
-        if spectrum is None:
-            if spectrum_size is None or spectrum_size < 1:
-                raise ValueError(
-                    "spectrum_size (>=1) is required when spectrum is None."
-                )
-            kwargs = dict(spectrum_low_rank_kwargs or {})
-            eig = LowRankEig.from_randomized(
-                self.covariance,
-                spectrum_size,
-                measure=self,
-                **kwargs,
-            )
-            return np.asarray(eig.eigenvalues, dtype=float), eig
-
-        if isinstance(spectrum, LowRankEig):
-            return np.asarray(spectrum.eigenvalues, dtype=float), spectrum
-
-        if callable(spectrum):
-            if spectrum_size is None or spectrum_size < 1:
-                raise ValueError(
-                    "spectrum_size (>=1) is required when spectrum is a " "callable."
-                )
-            eigvals = np.asarray(spectrum(spectrum_size), dtype=float).ravel()
-            return eigvals, None
-
-        eigvals = np.asarray(spectrum, dtype=float).ravel()
-        if eigvals.ndim != 1:
-            raise ValueError(
-                "spectrum array must be 1-D; got shape " f"{eigvals.shape}."
-            )
-        return eigvals, None
-
-    def _resolve_radius_method(self, radius_method: str, has_spectrum: bool) -> str:
-        if radius_method == "spectral":
-            return "spectral"
-        if radius_method == "sampling":
-            if not self.sample_set:
-                raise ValueError(
-                    "radius_method='sampling' requires a sampling-equipped "
-                    "Gaussian measure."
-                )
-            return "sampling"
-        if radius_method == "auto":
-            if has_spectrum:
-                return "spectral"
-            if self.sample_set:
-                return "sampling"
-            raise ValueError(
-                "Cannot resolve a radius for this measure: pass a spectrum "
-                "or set radius_method='sampling' on a sampling-equipped "
-                "measure."
-            )
-        raise ValueError("radius_method must be 'auto', 'spectral', or 'sampling'.")
-
-    def _credible_set_ambient_ball(
-        self,
-        probability: float,
-        *,
-        open_set: bool,
-        spectrum,
-        spectrum_size: Optional[int],
-        radius_method: str,
-        quantile_method: str,
-        quantile_tol: float,
-        n_samples: int,
-        spectrum_low_rank_kwargs: Optional[dict],
-        rng: Optional[np.random.Generator],
-    ):
-        from .subsets import Ball
-        from .quadratic_form_quantile import weighted_chi2_quantile
-
-        method = self._resolve_radius_method(
-            radius_method, has_spectrum=(spectrum is not None)
-        )
-
-        if method == "spectral":
-            eigvals, _ = self._resolve_spectrum(
-                spectrum, spectrum_size, spectrum_low_rank_kwargs, rng
-            )
-            r_p_sq = weighted_chi2_quantile(
-                eigvals, probability, method=quantile_method, tol=quantile_tol
-            )
-        else:
-
-            def gauge_squared(d):
-                return float(self.domain.squared_norm(d))
-
-            r_p_sq = self._sampling_radius(
-                probability, gauge_squared, n_samples=n_samples
-            )
-
-        r_p = float(np.sqrt(max(r_p_sq, 0.0)))
-        return Ball(self.domain, self.expectation, r_p, open_set=open_set)
-
-    def _credible_set_weakened_ellipsoid(
-        self,
-        probability: float,
-        *,
-        theta: float,
-        open_set: bool,
-        spectrum,
-        spectrum_size: Optional[int],
-        radius_method: str,
-        quantile_method: str,
-        quantile_tol: float,
-        fractional_apply: str,
-        n_samples: int,
-        n_lanczos: int,
-        spectrum_low_rank_kwargs: Optional[dict],
-        rng: Optional[np.random.Generator],
-    ):
-        from .low_rank import LowRankEig
-        from .quadratic_form_quantile import weighted_chi2_quantile
-        from .subsets import Ellipsoid
-
-        method = self._resolve_radius_method(
-            radius_method, has_spectrum=(spectrum is not None)
-        )
-
-        # Resolve fractional_apply backend.
-        if fractional_apply not in ("auto", "lanczos", "low_rank_eig"):
-            raise ValueError(
-                "fractional_apply must be 'auto', 'lanczos', or 'low_rank_eig'."
-            )
-        if fractional_apply == "auto":
-            if isinstance(spectrum, LowRankEig) or spectrum is None:
-                backend = "low_rank_eig"
-            else:
-                backend = "lanczos"
-        else:
-            backend = fractional_apply
-
-        eigvals: Optional[np.ndarray] = None
-        eig_obj: Optional[LowRankEig] = None
-        if method == "spectral" or backend == "low_rank_eig":
-            eigvals, eig_obj = self._resolve_spectrum(
-                spectrum, spectrum_size, spectrum_low_rank_kwargs, rng
-            )
-
-        # Build the metric operator A = C^{-theta} plus inverse/sqrt-inverse.
-        A, A_inv, A_inv_sqrt = self._build_fractional_operators(
-            theta=theta,
-            backend=backend,
-            eig_obj=eig_obj,
-            n_lanczos=n_lanczos,
-        )
-
-        # Radius computation.
-        if method == "spectral":
-            assert eigvals is not None
-            weights = np.power(eigvals, 1.0 - theta)
-            self._maybe_warn_trace_borderline(weights, theta, eigvals.size)
-            r_p_sq = weighted_chi2_quantile(
-                weights, probability, method=quantile_method, tol=quantile_tol
-            )
-        else:
-
-            def gauge_squared(d):
-                return float(self.domain.inner_product(A(d), d))
-
-            r_p_sq = self._sampling_radius(
-                probability, gauge_squared, n_samples=n_samples
-            )
-
-        r_p = float(np.sqrt(max(r_p_sq, 0.0)))
-        return Ellipsoid(
-            self.domain,
-            self.expectation,
-            r_p,
-            A,
-            open_set=open_set,
-            inverse_operator=A_inv,
-            inverse_sqrt_operator=A_inv_sqrt,
-        )
-
-    def _build_fractional_operators(
-        self,
-        *,
-        theta: float,
-        backend: str,
-        eig_obj,
-        n_lanczos: int,
-    ) -> Tuple[LinearOperator, LinearOperator, LinearOperator]:
-        if backend == "low_rank_eig":
-            if eig_obj is None:
-                raise ValueError(
-                    "fractional_apply='low_rank_eig' requires a "
-                    "LowRankEig spectrum or spectrum=None (so it can be "
-                    "computed); got an array/callable. Pass "
-                    "fractional_apply='lanczos' instead."
-                )
-            from .spectral_operator import fractional_operators_from_eig
-
-            return fractional_operators_from_eig(eig_obj, theta)
-
-        # Lanczos backend.
-        from .matrix_function import apply_matrix_function
-
-        cov = self.covariance
-
-        def make(power: float) -> LinearOperator:
-            def mapping(v):
-                return apply_matrix_function(
-                    cov, v, lambda x: np.power(x, power), n_lanczos
-                )
-
-            return LinearOperator.self_adjoint(cov.domain, mapping)
-
-        return make(-theta), make(theta), make(0.5 * theta)
-
-    def _maybe_warn_trace_borderline(
-        self,
-        weights: np.ndarray,
-        theta: float,
-        n: int,
-    ) -> None:
-        """Warn when the (1-theta)-trace condition is numerically borderline."""
-        if n < 20:
-            return
-        tail_share = float(np.sum(weights[n // 2 :])) / max(
-            float(np.sum(weights)), 1e-300
-        )
-        if tail_share > 0.3:
-            warnings.warn(
-                f"The (1-theta) trace tail of the resolved spectrum is "
-                f"{tail_share:.2f} of the total at theta={theta:.3f}; the "
-                "trace-class condition may be numerically borderline. "
-                "Increase spectrum_size or reduce theta to improve "
-                "reliability.",
-                UserWarning,
-                stacklevel=3,
-            )
 
     # ---------------------------------------- #
     #               Public methods             #
     # ---------------------------------------- #
 
     def sample(self) -> Vector:
-        """Returns a single random sample drawn from the measure."""
+        """
+        Returns a single random sample drawn from the measure.
+
+        Returns:
+            A randomly sampled vector.
+
+        Raises:
+            NotImplementedError: If a sample method is not set for this measure.
+        """
         if self._sample is None:
             raise NotImplementedError("A sample method is not set for this measure.")
         return self._sample()
@@ -971,12 +450,18 @@ class GaussianMeasure:
         self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
     ) -> List[Vector]:
         """
-        Returns a list of n random samples from the measure.
+        Returns a list of `n` independent random samples from the measure.
 
         Args:
-            n: Number of samples to draw.
-            parallel: If True, draws samples in parallel.
-            n_jobs: Number of CPU cores to use. -1 means all available.
+            n: The number of samples to draw.
+            parallel: If True, draws samples concurrently.
+            n_jobs: The number of CPU cores to use if parallel=True.
+
+        Returns:
+            A list of sampled vectors.
+
+        Raises:
+            ValueError: If `n` is less than 1.
         """
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
@@ -990,12 +475,15 @@ class GaussianMeasure:
         self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
     ) -> Vector:
         """
-        Estimates the expectation by drawing n samples.
+        Estimates the expectation vector by drawing `n` Monte Carlo samples.
 
         Args:
-            n: Number of samples to draw.
-            parallel: If True, draws samples in parallel.
-            n_jobs: Number of CPU cores to use. -1 means all available.
+            n: The number of samples to use for the estimation.
+            parallel: If True, draws samples concurrently.
+            n_jobs: The number of CPU cores to use if parallel=True.
+
+        Returns:
+            The empirical expectation vector.
         """
         if n < 1:
             raise ValueError("Number of samples must be a positive integer.")
@@ -1007,16 +495,19 @@ class GaussianMeasure:
         self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
     ) -> Vector:
         """
-        Estimates the pointwise variance by drawing n samples.
+        Estimates the pointwise variance field by drawing `n` Monte Carlo samples.
 
         Args:
-            n: Number of samples to draw.
-            parallel: If True, draws samples in parallel.
-            n_jobs: Number of CPU cores to use. -1 means all available.
+            n: The number of samples to use.
+            parallel: If True, draws samples concurrently.
+            n_jobs: The number of CPU cores to use if parallel=True.
 
-        Notes:
-            This method is only implemented for measures on HilbertModules
-            so that products of vectors can be defined.
+        Returns:
+            A vector representing the pointwise variance field.
+
+        Raises:
+            NotImplementedError: If the domain is not a HilbertModule (which
+                provides pointwise multiplication).
         """
         if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
@@ -1026,7 +517,6 @@ class GaussianMeasure:
             raise ValueError("Number of samples must be a positive integer.")
 
         samples = self.samples(n, parallel=parallel, n_jobs=n_jobs)
-
         variance = self.domain.zero
 
         if self.has_zero_expectation:
@@ -1046,16 +536,15 @@ class GaussianMeasure:
         self, n: int, /, *, parallel: bool = False, n_jobs: int = -1
     ) -> Vector:
         """
-        Estimates the pointwise standard deviation by drawing n samples.
+        Estimates the pointwise standard deviation field by drawing `n` Monte Carlo samples.
 
         Args:
-            n: Number of samples to draw.
-            parallel: If True, draws samples in parallel.
-            n_jobs: Number of CPU cores to use. -1 means all available.
+            n: The number of samples to use.
+            parallel: If True, draws samples concurrently.
+            n_jobs: The number of CPU cores to use if parallel=True.
 
-        Notes:
-            This method is only implemented for measures on HilbertModules
-            so that products of vectors can be defined.
+        Returns:
+            A vector representing the pointwise standard deviation field.
         """
         variance = self.sample_pointwise_variance(n, parallel=parallel, n_jobs=n_jobs)
         return self.domain.vector_sqrt(variance)
@@ -1074,9 +563,27 @@ class GaussianMeasure:
         n_jobs: int = -1,
     ) -> Vector:
         """
-        Estimates the pointwise variance using a deflated Hutchinson's method.
-        """
+        Estimates the pointwise variance field using a deflated Hutchinson's method.
 
+        This combines a deterministic low-rank extraction (via SVD deflation) with
+        a stochastic Hutchinson trace estimator for the residual variance.
+
+        Args:
+            rank: The rank of the deterministic SVD deflation.
+            size_estimate: The initial number of stochastic residual samples.
+            method: 'variable' to sample until `rtol` is met, 'fixed' otherwise.
+            max_samples: Hard limit on stochastic residual samples.
+            rtol: Relative tolerance for the stochastic residual phase.
+            block_size: Number of samples added per check in the 'variable' method.
+            parallel: If True, draws stochastic samples in parallel.
+            n_jobs: The number of CPU cores to use.
+
+        Returns:
+            A vector representing the pointwise variance field.
+
+        Raises:
+            NotImplementedError: If the domain is not a HilbertModule.
+        """
         if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
                 "Pointwise variance requires vector multiplication on the domain."
@@ -1088,15 +595,11 @@ class GaussianMeasure:
         space = self.domain
         deterministic_var = space.zero
 
-        # -------------------------------------------------------------
-        # 1. Deterministic Low-Rank Variance
-        # -------------------------------------------------------------
         if rank > 0:
             if rank == 1:
-                raise ValueError("Rank must be greater than 1")
+                raise ValueError("Rank must be greater than 1.")
 
             F = self.low_rank_approximation(rank, method="fixed").covariance_factor
-
             actual_rank = F.domain.dim
 
             for i in range(actual_rank):
@@ -1109,9 +612,6 @@ class GaussianMeasure:
         else:
             residual_cov = self.covariance
 
-        # -------------------------------------------------------------
-        # 2. Stochastic Residual Variance (Progressive Hutchinson's)
-        # -------------------------------------------------------------
         if size_estimate == 0 and method == "fixed":
             return deterministic_var
 
@@ -1131,8 +631,6 @@ class GaussianMeasure:
             )
 
         def _compute_sample_sum(n_samples_to_draw: int) -> Vector:
-            """Helper to draw a block of samples and return their spatial sum."""
-
             def _single_sample():
                 c_z = np.random.choice([-1.0, 1.0], size=space.dim) * inv_norms
                 z = space.from_components(c_z)
@@ -1194,31 +692,21 @@ class GaussianMeasure:
         n_jobs: int = -1,
     ) -> Vector:
         """
-        Estimates the pointwise standard deviation using a deflated Hutchinson's method.
-
-        This method wraps `deflated_pointwise_variance` and returns the pointwise
-        square root of the result. It supports both fixed and progressive variable
-        sampling strategies for the stochastic residual.
+        Estimates the pointwise standard deviation field using a deflated Hutchinson's method.
 
         Args:
-            rank: The rank of the deterministic low-rank approximation.
-            size_estimate: Initial number of samples for the stochastic residual.
-            method: 'variable' to sample until convergence, 'fixed' to stop at size_estimate.
-            max_samples: Hard limit on residual samples (defaults to domain dimension).
-            rtol: Relative tolerance for the 'variable' method.
-            block_size: Number of new samples per iteration in 'variable' method.
-            parallel: If True, computes the stochastic residual samples in parallel.
-            n_jobs: Number of CPU cores to use. -1 means all available.
+            rank: The rank of the deterministic SVD deflation.
+            size_estimate: The initial number of stochastic residual samples.
+            method: 'variable' to sample until `rtol` is met, 'fixed' otherwise.
+            max_samples: Hard limit on stochastic residual samples.
+            rtol: Relative tolerance for the stochastic residual phase.
+            block_size: Number of samples added per check in the 'variable' method.
+            parallel: If True, draws stochastic samples in parallel.
+            n_jobs: The number of CPU cores to use.
 
         Returns:
-            A Vector representing the pointwise standard deviation.
-
-        Raises:
-            NotImplementedError: If the domain is not a HilbertModule.
+            A vector representing the pointwise standard deviation field.
         """
-        # The variance method already checks if the domain is a HilbertModule,
-        # but we check it here too just to give a clear error message specifically for std.
-
         if not isinstance(self.domain, HilbertModule):
             raise NotImplementedError(
                 "Pointwise standard deviation requires vector multiplication on the domain "
@@ -1238,11 +726,160 @@ class GaussianMeasure:
 
         return self.domain.vector_sqrt(variance)
 
-    def with_dense_covariance(self, parallel: bool = False, n_jobs: int = -1):
+    def credible_set(
+        self,
+        probability: float,
+        /,
+        *,
+        geometry: str = "ellipsoid",
+        rank: Optional[int] = None,
+        open_set: bool = False,
+        theta: Optional[float] = None,
+        spectrum=None,
+        spectrum_size: Optional[int] = None,
+        radius_method: str = "auto",
+        quantile_method: str = "auto",
+        quantile_tol: float = 1e-2,
+        fractional_apply: str = "auto",
+        n_samples: int = 10_000,
+        lanczos_size_estimate: int = 50,
+        lanczos_method: Literal["variable", "fixed"] = "fixed",
+        lanczos_max_k: Optional[int] = None,
+        lanczos_rtol: float = 1e-3,
+        lanczos_atol: float = 1e-8,
+        lanczos_check_interval: int = 5,
+        spectrum_low_rank_kwargs: Optional[dict] = None,
+        rng: Optional[np.random.Generator] = None,
+    ):
+        r"""
+        Return a probability-calibrated Gaussian credible subset.
+
+        Five geometries are supported:
+
+        ``"ellipsoid"`` / ``"mahalanobis"`` / ``"domain"``
+            The classical Mahalanobis ellipsoid.
+
+        ``"cameron_martin"`` / ``"cm"`` / ``"ball"`` / ``"norm_ball"``
+            The ellipsoid expressed as a unit ball in the Cameron-Martin geometry.
+
+        ``"ambient_ball"`` / ``"ambient"``
+            The ambient norm ball $\{m : \|m - m_0\|_H \le r_p\}$.
+
+        ``"weakened_ellipsoid"`` / ``"fractional"``
+            The weakened-covariance ellipsoid $\{m : \|C^{-\theta/2}(m-m_0)\|_H \le r_p\}$.
+
+        Args:
+            probability: Credible probability $p$, strictly between 0 and 1.
+            geometry: Selects the ball/ellipsoid family (see above).
+            rank: Chi-square degrees of freedom (legacy modes only).
+            open_set: If true, return the open version of the set.
+            theta: Fractional exponent in $(0, 1)$, required for weakened_ellipsoid.
+            spectrum: Covariance spectrum specification.
+            spectrum_size: Truncation length when ``spectrum`` is callable or ``None``.
+            radius_method: ``"auto"``, ``"spectral"``, or ``"sampling"``.
+            quantile_method: Weighted-chi-square quantile method.
+            quantile_tol: Desired relative accuracy of the weighted-chi-square quantile.
+            fractional_apply: How to apply $C^{-\theta/2}$ for the weakened ellipsoid.
+            n_samples: Monte Carlo sample count for sampling radius.
+            lanczos_size_estimate: Initial or fixed Krylov dimension for Lanczos fractional evaluation.
+            lanczos_method: 'fixed' or 'variable' dynamic convergence for Lanczos.
+            lanczos_max_k: Maximum Krylov dimension if 'variable' is used.
+            lanczos_rtol: Relative tolerance for Lanczos convergence.
+            lanczos_atol: Absolute tolerance for Lanczos convergence.
+            lanczos_check_interval: Number of iterations between Lanczos convergence checks.
+            spectrum_low_rank_kwargs: Extra kwargs forwarded to ``LowRankEig.from_randomized``.
+            rng: Optional NumPy generator for Monte Carlo paths.
+
+        Returns:
+            An Ellipsoid or Ball defining the credible subset.
+        """
+        if not 0.0 < probability < 1.0:
+            raise ValueError("Probability must lie strictly between 0 and 1.")
+
+        geometry_key = geometry.lower().replace("-", "_")
+
+        if geometry_key in {"ellipsoid", "domain", "mahalanobis"}:
+            return self._credible_set_chi2_ellipsoid(
+                probability, rank=rank, open_set=open_set
+            )
+        if geometry_key in {"cameron_martin", "cm", "ball", "norm_ball"}:
+            return self._credible_set_chi2_cameron_martin(
+                probability, rank=rank, open_set=open_set
+            )
+
+        if geometry_key in {"ambient_ball", "ambient", "h_ball"}:
+            return self._credible_set_ambient_ball(
+                probability,
+                open_set=open_set,
+                spectrum=spectrum,
+                spectrum_size=spectrum_size,
+                radius_method=radius_method,
+                quantile_method=quantile_method,
+                quantile_tol=quantile_tol,
+                n_samples=n_samples,
+                spectrum_low_rank_kwargs=spectrum_low_rank_kwargs,
+                rng=rng,
+            )
+        if geometry_key in {"weakened_ellipsoid", "fractional"}:
+            if theta is None:
+                raise ValueError("theta is required for geometry='weakened_ellipsoid'.")
+            if not 0.0 < theta < 1.0:
+                raise ValueError(
+                    "theta must lie strictly in (0, 1); the boundary "
+                    "theta=1 is the Cameron-Martin norm — use "
+                    "geometry='cameron_martin' for the finite-rank "
+                    "chi-square version."
+                )
+            return self._credible_set_weakened_ellipsoid(
+                probability,
+                theta=theta,
+                open_set=open_set,
+                spectrum=spectrum,
+                spectrum_size=spectrum_size,
+                radius_method=radius_method,
+                quantile_method=quantile_method,
+                quantile_tol=quantile_tol,
+                fractional_apply=fractional_apply,
+                n_samples=n_samples,
+                lanczos_size_estimate=lanczos_size_estimate,
+                lanczos_method=lanczos_method,
+                lanczos_max_k=lanczos_max_k,
+                lanczos_rtol=lanczos_rtol,
+                lanczos_atol=lanczos_atol,
+                lanczos_check_interval=lanczos_check_interval,
+                spectrum_low_rank_kwargs=spectrum_low_rank_kwargs,
+                rng=rng,
+            )
+
+        raise ValueError(
+            "Geometry must be one of 'ellipsoid', 'cameron_martin', "
+            "'ambient_ball', or 'weakened_ellipsoid'."
+        )
+
+    def ambient_ball(self, probability: float, /, **kwargs):
+        """Shortcut for ``credible_set(..., geometry='ambient_ball', ...)``."""
+        kwargs.setdefault("geometry", "ambient_ball")
+        return self.credible_set(probability, **kwargs)
+
+    def weakened_ellipsoid(self, probability: float, /, *, theta: float, **kwargs):
+        """Shortcut for the weakened-covariance ellipsoid mode."""
+        kwargs.setdefault("geometry", "weakened_ellipsoid")
+        kwargs["theta"] = theta
+        return self.credible_set(probability, **kwargs)
+
+    def with_dense_covariance(
+        self, /, *, parallel: bool = False, n_jobs: int = -1
+    ) -> GaussianMeasure:
         """
         Forms a new Gaussian measure equivalent to the existing one, but
-        with its covariance matrix stored in dense form. The dense matrix
-        calculation can optionally be parallelised.
+        with its covariance matrix stored explicitly in dense form.
+
+        Args:
+            parallel: If True, computes the dense matrix concurrently.
+            n_jobs: Number of CPU cores to use if parallel=True.
+
+        Returns:
+            A new GaussianMeasure instance backed by a dense matrix.
         """
         covariance_matrix = self.covariance.matrix(
             dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
@@ -1271,24 +908,18 @@ class GaussianMeasure:
         (inverse covariance) computed via Tikhonov regularization.
 
         Args:
-            solver: The LinearSolver used to invert the regularized covariance.
-            damping: The Tikhonov regularization parameter (alpha) added to the diagonal.
-                     Defaults to 0.0.
-            preconditioner: An optional preconditioner for iterative solvers.
+            solver: The linear solver used to invert the covariance.
+            damping: Tikhonov regularization parameter added to the diagonal.
+            preconditioner: Optional preconditioner for iterative solvers.
 
         Returns:
-            A new GaussianMeasure equipped with an inverse covariance.
+            A new GaussianMeasure instance equipped with an inverse covariance.
 
         Raises:
-            ValueError: If the damping is negative.
-
-        Notes:
-            This method is only well-defined for measures on finite-dimensional
-            spaces due to the trace-class condition.
+            ValueError: If the damping parameter is negative.
         """
-
         if damping < 0.0:
-            raise ValueError("Damping must be non-negative")
+            raise ValueError("Damping must be non-negative.")
 
         if damping == 0.0 and self.inverse_covariance_set:
             return self
@@ -1327,6 +958,7 @@ class GaussianMeasure:
 
     def with_sparse_approximation(
         self,
+        /,
         *,
         threshold: float = 1e-3,
         max_nnz: Optional[int] = None,
@@ -1338,39 +970,24 @@ class GaussianMeasure:
     ) -> GaussianMeasure:
         """
         Creates an approximately equivalent measure with a sparse covariance matrix
-        and an exactly factorized sparse inverse, built matrix-free.
-
-        Note:
-            This sparsified measure is intended strictly as a high-performance
-            computational surrogate for linear algebra (e.g., preconditioning).
-            Because the sparse approximation alters the true physical correlations,
-            sampling from this measure is explicitly disabled (`sample_set=False`)
-            to prevent the generation of statistically inconsistent models. Always
-            draw samples from your original, dense physics measure.
+        and an exactly factorized sparse inverse, built entirely matrix-free.
 
         Args:
-            threshold: The relative correlation threshold below which elements are zeroed.
-            max_nnz: The maximum number of non-zeros to retain per column.
-            diag_rank: Rank of deterministic SVD deflation for the diagonal estimate.
-            diag_samples: Number of stochastic Hutchinson samples for the diagonal estimate.
-                          If both are 0, uses exact O(N) diagonal extraction.
-            regularization_fraction: The fraction of the largest eigenvalue used to
-                                     regularize the sparsified covariance before inversion.
-                                     This guarantees the precision operator remains stable
-                                     even if thresholding destroys positive-definiteness.
-            parallel: If True, evaluates the operator columns in parallel.
-            n_jobs: Number of CPU cores to use.
+            threshold: Minimum correlation required to keep an off-diagonal element.
+            max_nnz: Maximum number of non-zero elements allowed per column.
+            diag_rank: Rank of deterministic SVD used to estimate the diagonal.
+            diag_samples: Number of stochastic samples used to estimate the diagonal.
+            regularization_fraction: Tikhonov regularization applied before sparse inversion.
+            parallel: If True, computes the sparse approximations concurrently.
+            n_jobs: Number of CPU cores to use if parallel=True.
 
         Returns:
-            A new GaussianMeasure with sparse properties.
+            A new GaussianMeasure backed by sparse operators.
         """
         from .low_rank import deflated_diagonal
 
         dim = self.domain.dim
 
-        # -------------------------------------------------------------
-        # 1. Diagonal Extraction for Correlation Thresholding
-        # -------------------------------------------------------------
         if diag_rank == 0 and diag_samples == 0:
             diag_vars = self.covariance.extract_diagonal(
                 galerkin=True, parallel=parallel, n_jobs=n_jobs
@@ -1386,20 +1003,14 @@ class GaussianMeasure:
             )
 
         safe_diag = np.where(np.abs(diag_vars) < 1e-14, 1.0, np.abs(diag_vars))
-
         scipy_op = self.covariance.matrix(galerkin=True)
 
-        # -------------------------------------------------------------
-        # 2. Parallel Column Evaluation & Thresholding
-        # -------------------------------------------------------------
         def _process_column(j: int):
             e_j = np.zeros(dim)
             e_j[j] = 1.0
 
             col_vals = scipy_op @ e_j
-
             correlations = np.abs(col_vals) / np.sqrt(safe_diag * safe_diag[j])
-
             valid_indices = np.where(correlations >= threshold)[0]
 
             if max_nnz is not None and len(valid_indices) > max_nnz:
@@ -1433,14 +1044,12 @@ class GaussianMeasure:
             J_global.extend(cols)
             V_local.extend(vals)
 
-        # Assemble and symmetrize
         sparse_cov_matrix = sps.coo_matrix(
             (V_local, (I_global, J_global)), shape=(dim, dim)
         ).tocsc()
 
         sparse_cov_matrix = 0.5 * (sparse_cov_matrix + sparse_cov_matrix.T)
 
-        # Keep the exact thresholded operator for the covariance property
         sparse_cov_op = SparseMatrixLinearOperator.from_matrix(
             self.covariance.domain,
             self.covariance.codomain,
@@ -1448,19 +1057,13 @@ class GaussianMeasure:
             galerkin=True,
         )
 
-        # -------------------------------------------------------------
-        # 3. Scale-Invariant Regularization for the Inverse
-        # -------------------------------------------------------------
         try:
-            # Estimate the largest eigenvalue using Lanczos
             max_eig = spla.eigsh(
                 sparse_cov_matrix, k=1, which="LA", return_eigenvectors=False
             )[0]
         except spla.ArpackNoConvergence:
-            # Fallback to the maximum diagonal element
             max_eig = sparse_cov_matrix.diagonal().max()
 
-        # Apply Tikhonov regularization strictly to the matrix being inverted
         regularization_matrix = sps.eye(dim, format="csc") * (
             max_eig * regularization_fraction
         )
@@ -1500,29 +1103,24 @@ class GaussianMeasure:
         """
         Transforms the measure under an affine map `y = A(x) + b`.
 
-        If a random variable `x` is distributed according to this Gaussian
-        measure, `x ~ N(μ, C)`, this method computes the new Gaussian measure
-        for the transformed variable `y`.
+        This method calculates the push-forward measure. It can also construct
+        the implied inverse covariance (precision) using a saddle-point (KKT) system.
 
         Args:
-            operator: The linear operator `A` in the transformation.
-                Defaults to the identity.
-            translation: The translation vector `b`. Defaults to zero.
-            affine_operator: An `AffineOperator` instance representing the map.
-                If provided, `operator` and `translation` must not be used.
-            inverse_solver: An optional LinearSolver (e.g., MinResSolver). If provided,
-                and the current measure has an inverse covariance, the new measure will
-                be equipped with an exact inverse covariance operator derived via a
-                saddle-point (KKT) formulation.
-            inverse_preconditioner: An optional preconditioner for the KKT system.
-                If using an iterative solver and none is provided, a mathematically
-                optimal block-diagonal default will be built.
+            operator: The linear part of the mapping (A).
+            translation: The translation vector (b).
+            affine_operator: An AffineOperator instance (cannot be used with
+                `operator` or `translation`).
+            inverse_solver: A solver used to evaluate the KKT inverse covariance.
+            inverse_preconditioner: A preconditioner for the inverse_solver.
 
         Returns:
-            The transformed `GaussianMeasure`.
-        """
+            A new GaussianMeasure representing the push-forward distribution.
 
-        #  Pure Translation.
+        Raises:
+            ValueError: If mutually exclusive arguments are provided, or if an
+                inverse solve is requested but the prior lacks an inverse covariance.
+        """
         if operator is None and affine_operator is None:
             if translation is None:
                 return self
@@ -1550,7 +1148,6 @@ class GaussianMeasure:
                 inverse_covariance_factor=self._inverse_covariance_factor,
             )
 
-        # General case.
         if affine_operator is not None:
             if operator is not None or translation is not None:
                 raise ValueError(
@@ -1642,17 +1239,15 @@ class GaussianMeasure:
         """
         Returns the measure as a `scipy.stats.multivariate_normal` object.
 
-        This is only possible if the measure is defined on a EuclideanSpace.
-
-        If the covariance matrix has small negative eigenvalues due to numerical
-        precision issues, this method attempts to correct them by setting them
-        to zero.
-
         Args:
-            parallel (bool, optional): If `True`, computes the dense covariance
-                matrix in parallel. Defaults to `False`.
-            n_jobs (int, optional): The number of parallel jobs to use. `-1`
-                uses all available cores. Defaults to -1.
+            parallel: If True, evaluates the dense covariance matrix concurrently.
+            n_jobs: The number of CPU cores to use if parallel=True.
+
+        Returns:
+            A frozen scipy.stats.multivariate_normal object.
+
+        Raises:
+            NotImplementedError: If the measure is not defined on a EuclideanSpace.
         """
         if not isinstance(self.domain, EuclideanSpace):
             raise NotImplementedError(
@@ -1660,19 +1255,15 @@ class GaussianMeasure:
             )
 
         mean_vector = self.expectation
-
-        # Pass the parallelization arguments directly to the matrix creation method
         cov_matrix = self.covariance.matrix(
             dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
         )
 
         try:
-            # First, try to create the distribution directly.
             return multivariate_normal(
                 mean=mean_vector, cov=cov_matrix, allow_singular=True
             )
         except ValueError:
-            # If it fails, clean the covariance matrix and try again.
             warnings.warn(
                 "Covariance matrix is not positive semi-definite due to "
                 "numerical errors. Setting negative eigenvalues to zero.",
@@ -1703,30 +1294,23 @@ class GaussianMeasure:
         """
         Constructs a low-rank approximation of the measure.
 
-        The covariance operator is replaced by a low-rank approximation, which
-        can be much more efficient for sampling and storage.
+        Uses randomized matrix-free algorithms to factorize the covariance.
 
         Args:
-            size_estimate: For 'fixed' method, the exact target rank. For 'variable'
-                       method, this is the initial rank to sample.
-            method ({'variable', 'fixed'}): The algorithm to use.
-            - 'variable': (Default) Progressively samples to find the rank needed
-                          to meet tolerance `rtol`, stopping at `max_rank`.
-            - 'fixed': Returns a basis with exactly `size_estimate` columns.
-            max_rank: For 'variable' method, a hard limit on the rank.
-            power: Number of power iterations to improve accuracy.
+            size_estimate: Target rank or initial sample size for the algorithm.
+            method: 'variable' to sample dynamically, 'fixed' otherwise.
+            max_rank: Upper limit on rank for the 'variable' method.
+            power: Number of power iterations to enhance spectral decay.
             rtol: Relative tolerance for the 'variable' method.
-            block_size: Number of new vectors to sample per iteration.
-            parallel: Whether to use parallel matrix multiplication.
-            n_jobs: Number of jobs for parallelism.
+            block_size: Samples drawn per iteration in the 'variable' method.
+            parallel: If True, parallelizes the evaluations.
+            n_jobs: Number of CPU cores to use if parallel=True.
 
         Returns:
-            GaussianMeasure: The new, low-rank Gaussian measure.
+            A new GaussianMeasure backed by a LowRankCholesky covariance factor.
         """
-        # Local import to prevent circular dependency with low_rank.py
         from .low_rank import LowRankCholesky
 
-        # We pass measure=None to probe the operator with component-based white noise N(0, I)
         lr_cholesky = LowRankCholesky.from_randomized(
             self.covariance,
             size_estimate,
@@ -1740,19 +1324,23 @@ class GaussianMeasure:
             n_jobs=n_jobs,
         )
 
-        # LowRankCholesky provides the L factor we need for the new measure
         return GaussianMeasure(
             covariance_factor=lr_cholesky.l_factor,
             expectation=self._expectation,
         )
 
-    def two_point_covariance(self, point: Any) -> Vector:
+    def two_point_covariance(self, point: Any, /) -> Vector:
         """
-        Computes the two-point covariance function.
+        Computes the two-point covariance function radiating from a specific point.
 
-        For measures on spaces of functions, this returns the covariance
-        between the function value at a fixed `point` and all other points.
-        This requires the domain to support point evaluation (a `dirac` method).
+        Args:
+            point: The spatial coordinate to evaluate from.
+
+        Returns:
+            The covariance field evaluated at the chosen point.
+
+        Raises:
+            NotImplementedError: If the domain lacks a `dirac_representation` method.
         """
         if not hasattr(self.domain, "dirac_representation"):
             raise NotImplementedError(
@@ -1763,15 +1351,15 @@ class GaussianMeasure:
         cov = self.covariance
         return cov(u)
 
-    def directional_statistics(self, direction: Vector) -> Tuple[float, float]:
+    def directional_statistics(self, direction: Vector, /) -> Tuple[float, float]:
         """
         Returns the expectation and variance of the scalar Gaussian <x, direction>.
 
         Args:
-            direction: The vector defining the linear functional.
+            direction: The test vector.
 
         Returns:
-            A tuple of (mean, variance).
+            A tuple containing (expectation, variance).
         """
         expectation = (
             0.0
@@ -1781,35 +1369,37 @@ class GaussianMeasure:
         variance = self.domain.inner_product(self.covariance(direction), direction)
         return expectation, variance
 
-    def directional_covariance(self, d1: Vector, d2: Vector) -> float:
+    def directional_covariance(self, d1: Vector, d2: Vector, /) -> float:
         """
-            Returns the covariance between <x, d1> and <x, d2>.
+        Returns the covariance between the scalar projections <x, d1> and <x, d2>.
 
         Args:
-            d1: The first direction vector.
-            d2: The second direction vector.
+            d1: The first test vector.
+            d2: The second test vector.
 
         Returns:
-            The scalar covariance <Q d1, d2>.
+            The covariance scalar.
         """
         return self.domain.inner_product(self.covariance(d1), d2)
 
-    def directional_variance(self, d: Vector) -> float:
+    def directional_variance(self, d: Vector, /) -> float:
         """
-            Returns the variance of <x, d>
+        Returns the variance of the scalar projection <x, d>.
 
         Args:
-            d: The direction
+            d: The test vector.
 
         Returns:
-            The scalar variance <Q d, d>.
+            The variance scalar.
         """
         return self.directional_covariance(d, d)
 
     def zero_expectation(self) -> GaussianMeasure:
         """
-        Returns a new measure with the same covariance, but
-        with expectation set to zero.
+        Returns a new measure with the same covariance, but zero expectation.
+
+        Returns:
+            A mean-shifted GaussianMeasure.
         """
         if self.covariance_factor_set:
             return GaussianMeasure(
@@ -1836,12 +1426,20 @@ class GaussianMeasure:
         )
 
     def rescale_directional_variance(
-        self, direction: Vector, std: float
+        self, direction: Vector, std: float, /
     ) -> GaussianMeasure:
         """
         Returns a new measure where Var[<x, direction>] is scaled to std^2.
 
-        The expectation of the resulting measure is unchanged.
+        Args:
+            direction: The test vector to scale against.
+            std: The target standard deviation for the projection.
+
+        Returns:
+            A variance-scaled GaussianMeasure.
+
+        Raises:
+            ValueError: If the current directional variance is zero or negative.
         """
         current_var = self.directional_variance(direction)
         if current_var <= 0:
@@ -1851,103 +1449,81 @@ class GaussianMeasure:
         scaled_measure = norm * shifted_measure
         return scaled_measure.affine_mapping(translation=self._expectation)
 
-    def kl_divergence(self, other: GaussianMeasure) -> float:
+    def kl_divergence(
+        self,
+        other: GaussianMeasure,
+        /,
+        *,
+        method: Literal["dense", "randomized"] = "dense",
+        hutchinson_size_estimate: int = 10,
+        hutchinson_method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 5,
+        lanczos_size_estimate: int = 40,
+        lanczos_method: Literal["variable", "fixed"] = "variable",
+        lanczos_max_k: Optional[int] = None,
+        lanczos_rtol: float = 1e-3,
+        lanczos_atol: float = 1e-8,
+        lanczos_check_interval: int = 5,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
         """
-        Computes the exact Kullback-Leibler (KL) divergence D_KL(self || other).
+        Computes the exact or approximate Kullback-Leibler (KL) divergence D_KL(self || other).
 
-        This computes the divergence of 'self' (P) from the prior/reference
-        measure 'other' (Q). It uses the dense Galerkin matrix representations
-        of the covariance operators, making it suitable for measures on
-        low-dimensional spaces or direct sums thereof.
+        This calculates the divergence of 'self' (P) from the prior/reference
+        measure 'other' (Q).
 
         Args:
-            other: The other GaussianMeasure (usually the prior/approximating measure).
+            other: The reference GaussianMeasure (Q).
+            method: 'dense' uses exact dense matrix factorizations (O(N^3)).
+                    'randomized' uses matrix-free Stochastic Lanczos Quadrature (SLQ).
+            hutchinson_size_estimate: Initial samples for the randomized trace estimator.
+            hutchinson_method: 'variable' to sample until `rtol` is met, 'fixed' otherwise.
+            max_samples: Hard limit on Hutchinson samples.
+            rtol: Relative tolerance for the Hutchinson estimator.
+            block_size: Samples added per check in the 'variable' Hutchinson method.
+            lanczos_size_estimate: Initial Krylov dimension for fractional evaluations.
+            lanczos_method: 'variable' or 'fixed' convergence for Lanczos.
+            lanczos_max_k: Maximum Krylov dimension if 'variable' is used.
+            lanczos_rtol: Relative tolerance for Lanczos convergence.
+            lanczos_atol: Absolute tolerance for Lanczos convergence.
+            lanczos_check_interval: Iterations between Lanczos convergence checks.
+            parallel: If True, evaluates the stochastic probes concurrently.
+            n_jobs: Number of CPU cores to use if parallel=True.
 
         Returns:
-            The KL divergence as a float.
+            The calculated KL divergence.
 
         Raises:
-            ValueError: If the measures are not on the same domain, or if
-                        the covariances are not positive definite.
+            ValueError: If the measures reside on different domains, or if the 'randomized'
+                        method is called without an inverse covariance on the reference measure.
         """
         if self.domain != other.domain:
             raise ValueError("Measures must be defined on the same domain.")
 
-        k = self.domain.dim
-
-        # 1. Extract the dense Galerkin matrices
-        G_p = self.covariance.matrix(dense=True, galerkin=True)
-        G_q = other.covariance.matrix(dense=True, galerkin=True)
-
-        # Cholesky decomposition of Q's covariance matrix for fast solving/determinant
-        try:
-            L_q = cholesky(G_q, lower=True)
-        except np.linalg.LinAlgError:
-            raise ValueError(
-                "The covariance matrix of the 'other' measure is not positive definite."
+        if method == "dense":
+            return self._kl_divergence_dense(other)
+        elif method == "randomized":
+            return self._kl_divergence_randomized(
+                other,
+                hutchinson_size_estimate=hutchinson_size_estimate,
+                hutchinson_method=hutchinson_method,
+                max_samples=max_samples,
+                rtol=rtol,
+                block_size=block_size,
+                lanczos_size_estimate=lanczos_size_estimate,
+                lanczos_method=lanczos_method,
+                lanczos_max_k=lanczos_max_k,
+                lanczos_rtol=lanczos_rtol,
+                lanczos_atol=lanczos_atol,
+                lanczos_check_interval=lanczos_check_interval,
+                parallel=parallel,
+                n_jobs=n_jobs,
             )
-
-        # 2. Trace term: tr(Sigma_Q^-1 Sigma_P)
-        X = cho_solve((L_q, True), G_p)
-        trace_term = np.trace(X)
-
-        # 3. Log-determinant term: ln(det(Sigma_Q)) - ln(det(Sigma_P))
-        log_det_q = 2.0 * np.sum(np.log(np.diag(L_q)))
-        sign_p, log_det_p = np.linalg.slogdet(G_p)
-        if sign_p <= 0:
-            raise ValueError(
-                "The covariance matrix of 'self' is not positive definite."
-            )
-        log_det_term = log_det_q - log_det_p
-
-        # 4. Mahalanobis term: <mu_P - mu_Q, Sigma_Q^-1 (mu_P - mu_Q)>
-        if self.has_zero_expectation and other.has_zero_expectation:
-            mahalanobis_term = 0.0
         else:
-            diff = self.domain.subtract(self.expectation, other.expectation)
-            diff_dual = self.domain.to_dual(diff)
-            diff_c_prime = self.domain.dual.to_components(diff_dual)
-            y = cho_solve((L_q, True), diff_c_prime)
-            mahalanobis_term = np.dot(diff_c_prime, y)
-
-        # 5. Assemble the KL divergence
-        kl_div = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
-        return float(kl_div)
-
-    def log_det_covariance(self) -> float:
-        """
-        Returns the log determinant of the covariance operator.
-
-        If the measure was constructed from explicit parameters (like a standard
-        deviation or dense matrix), this returns the exact cached value.
-        Otherwise, it attempts to compute it from the operator's matrix form.
-        """
-        if self._log_det_covariance is not None:
-            return self._log_det_covariance
-
-        # Fallback: Attempt to extract it from specific matrix types
-        cov = self.covariance
-        if isinstance(cov, DiagonalSparseMatrixLinearOperator):
-            return float(np.sum(np.log(cov.extract_diagonal(galerkin=True))))
-
-        if isinstance(cov, DenseMatrixLinearOperator):
-            sign, log_det = np.linalg.slogdet(cov.matrix(dense=True, galerkin=True))
-            if sign <= 0:
-                raise ValueError("Dense covariance matrix is not positive definite.")
-            return float(log_det)
-
-        if isinstance(cov, SparseMatrixLinearOperator):
-            if not cov.is_galerkin:
-                raise ValueError(
-                    "Sparse covariance must be initialized with galerkin=True."
-                )
-            lu_factor = spla.splu(cov.sparse_array.tocsc())
-            return float(np.sum(np.log(np.abs(lu_factor.U.diagonal()))))
-
-        raise NotImplementedError(
-            "Log determinant is not pre-computed and cannot be automatically "
-            "extracted from this generic covariance operator type."
-        )
+            raise ValueError("method must be 'dense' or 'randomized'.")
 
     # ---------------------------------------- #
     #               Special methods            #
@@ -2012,9 +1588,7 @@ class GaussianMeasure:
         return self * (1.0 / a)
 
     def __add__(self, other: GaussianMeasure) -> GaussianMeasure:
-        """
-        Adds two independent Gaussian measures defined on the same domain.
-        """
+        """Adds two independent Gaussian measures defined on the same domain."""
         if self.domain != other.domain:
             raise ValueError("Measures must be defined on the same domain.")
 
@@ -2039,9 +1613,7 @@ class GaussianMeasure:
         )
 
     def __sub__(self, other: GaussianMeasure) -> GaussianMeasure:
-        """
-        Subtracts two independent Gaussian measures on the same domain.
-        """
+        """Subtracts two independent Gaussian measures on the same domain."""
         if self.domain != other.domain:
             raise ValueError("Measures must be defined on the same domain.")
 
@@ -2069,6 +1641,31 @@ class GaussianMeasure:
     #               Private methods            #
     # ---------------------------------------- #
 
+    def _sampling_radius(
+        self,
+        probability: float,
+        gauge_squared,
+        *,
+        n_samples: int = 10_000,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """Empirical p-quantile of R(X)^2 over Monte Carlo draws."""
+        if not 0.0 < probability < 1.0:
+            raise ValueError("probability must lie strictly between 0 and 1.")
+        if not self.sample_set:
+            raise ValueError(
+                "Sampling-based radius requires a measure equipped with a "
+                "sample method."
+            )
+        samples = self.samples(n_samples, parallel=parallel, n_jobs=n_jobs)
+        mean = self.expectation
+        gauge_sq_values = np.empty(n_samples, dtype=float)
+        for i, x in enumerate(samples):
+            diff = self.domain.subtract(x, mean)
+            gauge_sq_values[i] = float(gauge_squared(diff))
+        return float(np.quantile(gauge_sq_values, probability))
+
     def _sample_from_factor(self) -> Vector:
         """Default sampling method when a covariance factor is provided."""
         covariance_factor = self.covariance_factor
@@ -2081,10 +1678,7 @@ class GaussianMeasure:
     def _build_jacobi_schur_block(
         self, operator: LinearOperator, schur_op: LinearOperator
     ) -> LinearOperator:
-        """
-        Builds the inverse Jacobi (diagonal) approximation of the Schur complement
-        for use in KKT preconditioners.
-        """
+        """Builds the inverse Jacobi (diagonal) approximation of the Schur complement."""
         try:
             n_data = operator.codomain.dim
 
@@ -2094,7 +1688,7 @@ class GaussianMeasure:
                 from .low_rank import deflated_diagonal
 
                 schur_diag = deflated_diagonal(
-                    schur_op, rank=10, size_estimate=40, method="fixed", galerkin=True
+                    schur_op, 10, 40, method="fixed", galerkin=True
                 )
 
             max_var = np.max(schur_diag)
@@ -2109,3 +1703,470 @@ class GaussianMeasure:
             )
         except Exception:
             return operator.codomain.identity_operator()
+
+    def _credible_set_chi2_ellipsoid(
+        self,
+        probability: float,
+        *,
+        rank: Optional[int],
+        open_set: bool,
+    ):
+        """Builds the classical Mahalanobis ellipsoid."""
+        effective_rank = self._resolve_rank(rank)
+        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
+        from .subsets import Ellipsoid
+
+        return Ellipsoid(
+            self.domain,
+            self.expectation,
+            radius,
+            self.inverse_covariance,
+            open_set=open_set,
+            inverse_operator=self.covariance,
+        )
+
+    def _credible_set_chi2_cameron_martin(
+        self,
+        probability: float,
+        *,
+        rank: Optional[int],
+        open_set: bool,
+    ):
+        """Builds the unit ball in Cameron-Martin geometry."""
+        effective_rank = self._resolve_rank(rank)
+        radius = float(np.sqrt(chi2.ppf(probability, df=effective_rank)))
+        from .subsets import Ball
+
+        induced_domain_type = (
+            MassWeightedHilbertModule
+            if isinstance(self.domain, HilbertModule)
+            else MassWeightedHilbertSpace
+        )
+        induced_domain = induced_domain_type(
+            self.domain, self.inverse_covariance, self.covariance
+        )
+        return Ball(induced_domain, self.expectation, radius, open_set=open_set)
+
+    def _resolve_rank(self, rank: Optional[int]) -> int:
+        """Resolves the chi-square degrees of freedom."""
+        if rank is None and self.domain.dim < 1:
+            raise ValueError(
+                "Rank must be provided for domains without a positive "
+                "finite dimension, such as basis-free function spaces."
+            )
+        effective_rank = self.domain.dim if rank is None else rank
+        if not isinstance(effective_rank, int) or effective_rank < 1:
+            raise ValueError("Rank must be a positive integer.")
+        return effective_rank
+
+    def _resolve_spectrum(
+        self,
+        spectrum,
+        spectrum_size: Optional[int],
+        spectrum_low_rank_kwargs: Optional[dict],
+        rng: Optional[np.random.Generator],
+    ):
+        """Resolves the covariance spectrum input into eigenvalues and objects."""
+        from .low_rank import LowRankEig
+
+        if spectrum is None:
+            if spectrum_size is None or spectrum_size < 1:
+                raise ValueError(
+                    "spectrum_size (>=1) is required when spectrum is None."
+                )
+            kwargs = dict(spectrum_low_rank_kwargs or {})
+            eig = LowRankEig.from_randomized(
+                self.covariance,
+                spectrum_size,
+                measure=self,
+                **kwargs,
+            )
+            return np.asarray(eig.eigenvalues, dtype=float), eig
+
+        if isinstance(spectrum, LowRankEig):
+            return np.asarray(spectrum.eigenvalues, dtype=float), spectrum
+
+        if callable(spectrum):
+            if spectrum_size is None or spectrum_size < 1:
+                raise ValueError(
+                    "spectrum_size (>=1) is required when spectrum is a callable."
+                )
+            eigvals = np.asarray(spectrum(spectrum_size), dtype=float).ravel()
+            return eigvals, None
+
+        eigvals = np.asarray(spectrum, dtype=float).ravel()
+        if eigvals.ndim != 1:
+            raise ValueError(f"spectrum array must be 1-D; got shape {eigvals.shape}.")
+        return eigvals, None
+
+    def _resolve_radius_method(self, radius_method: str, has_spectrum: bool) -> str:
+        """Resolves the algorithm used to compute the credible radius."""
+        if radius_method == "spectral":
+            return "spectral"
+        if radius_method == "sampling":
+            if not self.sample_set:
+                raise ValueError(
+                    "radius_method='sampling' requires a sampling-equipped "
+                    "Gaussian measure."
+                )
+            return "sampling"
+        if radius_method == "auto":
+            if has_spectrum:
+                return "spectral"
+            if self.sample_set:
+                return "sampling"
+            raise ValueError(
+                "Cannot resolve a radius for this measure: pass a spectrum "
+                "or set radius_method='sampling' on a sampling-equipped measure."
+            )
+        raise ValueError("radius_method must be 'auto', 'spectral', or 'sampling'.")
+
+    def _credible_set_ambient_ball(
+        self,
+        probability: float,
+        *,
+        open_set: bool,
+        spectrum,
+        spectrum_size: Optional[int],
+        radius_method: str,
+        quantile_method: str,
+        quantile_tol: float,
+        n_samples: int,
+        spectrum_low_rank_kwargs: Optional[dict],
+        rng: Optional[np.random.Generator],
+    ):
+        """Builds the ambient norm ball using the specified radius method."""
+        from .subsets import Ball
+        from .quadratic_form_quantile import weighted_chi2_quantile
+
+        method = self._resolve_radius_method(
+            radius_method, has_spectrum=(spectrum is not None)
+        )
+
+        if method == "spectral":
+            eigvals, _ = self._resolve_spectrum(
+                spectrum, spectrum_size, spectrum_low_rank_kwargs, rng
+            )
+            r_p_sq = weighted_chi2_quantile(
+                eigvals, probability, method=quantile_method, tol=quantile_tol
+            )
+        else:
+
+            def gauge_squared(d):
+                return float(self.domain.squared_norm(d))
+
+            r_p_sq = self._sampling_radius(
+                probability, gauge_squared, n_samples=n_samples
+            )
+
+        r_p = float(np.sqrt(max(r_p_sq, 0.0)))
+        return Ball(self.domain, self.expectation, r_p, open_set=open_set)
+
+    def _credible_set_weakened_ellipsoid(
+        self,
+        probability: float,
+        *,
+        theta: float,
+        open_set: bool,
+        spectrum,
+        spectrum_size: Optional[int],
+        radius_method: str,
+        quantile_method: str,
+        quantile_tol: float,
+        fractional_apply: str,
+        n_samples: int,
+        lanczos_size_estimate: int,
+        lanczos_method: str,
+        lanczos_max_k: Optional[int],
+        lanczos_rtol: float,
+        lanczos_atol: float,
+        lanczos_check_interval: int,
+        spectrum_low_rank_kwargs: Optional[dict],
+        rng: Optional[np.random.Generator],
+    ):
+        """Builds the weakened-covariance ellipsoid."""
+        from .low_rank import LowRankEig
+        from .quadratic_form_quantile import weighted_chi2_quantile
+        from .subsets import Ellipsoid
+
+        method = self._resolve_radius_method(
+            radius_method, has_spectrum=(spectrum is not None)
+        )
+
+        if fractional_apply not in ("auto", "lanczos", "low_rank_eig"):
+            raise ValueError(
+                "fractional_apply must be 'auto', 'lanczos', or 'low_rank_eig'."
+            )
+        if fractional_apply == "auto":
+            if isinstance(spectrum, LowRankEig) or spectrum is None:
+                backend = "low_rank_eig"
+            else:
+                backend = "lanczos"
+        else:
+            backend = fractional_apply
+
+        eigvals: Optional[np.ndarray] = None
+        eig_obj: Optional[LowRankEig] = None
+        if method == "spectral" or backend == "low_rank_eig":
+            eigvals, eig_obj = self._resolve_spectrum(
+                spectrum, spectrum_size, spectrum_low_rank_kwargs, rng
+            )
+
+        A, A_inv, A_inv_sqrt = self._build_fractional_operators(
+            theta=theta,
+            backend=backend,
+            eig_obj=eig_obj,
+            lanczos_size_estimate=lanczos_size_estimate,
+            lanczos_method=lanczos_method,
+            lanczos_max_k=lanczos_max_k,
+            lanczos_rtol=lanczos_rtol,
+            lanczos_atol=lanczos_atol,
+            lanczos_check_interval=lanczos_check_interval,
+        )
+
+        if method == "spectral":
+            assert eigvals is not None
+            weights = np.power(eigvals, 1.0 - theta)
+            self._maybe_warn_trace_borderline(weights, theta, eigvals.size)
+            r_p_sq = weighted_chi2_quantile(
+                weights, probability, method=quantile_method, tol=quantile_tol
+            )
+        else:
+
+            def gauge_squared(d):
+                return float(self.domain.inner_product(A(d), d))
+
+            r_p_sq = self._sampling_radius(
+                probability, gauge_squared, n_samples=n_samples
+            )
+
+        r_p = float(np.sqrt(max(r_p_sq, 0.0)))
+        return Ellipsoid(
+            self.domain,
+            self.expectation,
+            r_p,
+            A,
+            open_set=open_set,
+            inverse_operator=A_inv,
+            inverse_sqrt_operator=A_inv_sqrt,
+        )
+
+    def _build_fractional_operators(
+        self,
+        *,
+        theta: float,
+        backend: str,
+        eig_obj,
+        lanczos_size_estimate: int,
+        lanczos_method: str,
+        lanczos_max_k: Optional[int],
+        lanczos_rtol: float,
+        lanczos_atol: float,
+        lanczos_check_interval: int,
+    ) -> Tuple[LinearOperator, LinearOperator, LinearOperator]:
+        """Builds the fractional metric operators required by the weakened ellipsoid."""
+        if backend == "low_rank_eig":
+            if eig_obj is None:
+                raise ValueError(
+                    "fractional_apply='low_rank_eig' requires a "
+                    "LowRankEig spectrum or spectrum=None (so it can be "
+                    "computed); got an array/callable. Pass "
+                    "fractional_apply='lanczos' instead."
+                )
+            from .spectral_operator import fractional_operators_from_eig
+
+            return fractional_operators_from_eig(eig_obj, theta)
+
+        from .functional_calculus import LanczosOperatorFunction
+
+        cov = self.covariance
+
+        def make(power: float) -> LinearOperator:
+            return LanczosOperatorFunction(
+                cov,
+                lambda x: np.power(x, power),
+                size_estimate=lanczos_size_estimate,
+                method=lanczos_method,
+                max_k=lanczos_max_k,
+                rtol=lanczos_rtol,
+                atol=lanczos_atol,
+                check_interval=lanczos_check_interval,
+            )
+
+        return make(-theta), make(theta), make(0.5 * theta)
+
+    def _maybe_warn_trace_borderline(
+        self,
+        weights: np.ndarray,
+        theta: float,
+        n: int,
+    ) -> None:
+        """Warns when the (1-theta)-trace condition is numerically borderline."""
+        if n < 20:
+            return
+        tail_share = float(np.sum(weights[n // 2 :])) / max(
+            float(np.sum(weights)), 1e-300
+        )
+        if tail_share > 0.3:
+            warnings.warn(
+                f"The (1-theta) trace tail of the resolved spectrum is "
+                f"{tail_share:.2f} of the total at theta={theta:.3f}; the "
+                "trace-class condition may be numerically borderline. "
+                "Increase spectrum_size or reduce theta to improve "
+                "reliability.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+    def _kl_divergence_dense(self, other: GaussianMeasure) -> float:
+        """Original dense matrix implementation of the KL divergence."""
+        k = self.domain.dim
+
+        G_p = self.covariance.matrix(dense=True, galerkin=True)
+        G_q = other.covariance.matrix(dense=True, galerkin=True)
+
+        try:
+            L_q = cholesky(G_q, lower=True)
+        except np.linalg.LinAlgError:
+            raise ValueError(
+                "Covariance matrix of the 'other' measure is not positive definite."
+            )
+
+        X = cho_solve((L_q, True), G_p)
+        trace_term = np.trace(X)
+
+        log_det_q = 2.0 * np.sum(np.log(np.diag(L_q)))
+        sign_p, log_det_p = np.linalg.slogdet(G_p)
+        if sign_p <= 0:
+            raise ValueError("Covariance matrix of 'self' is not positive definite.")
+        log_det_term = log_det_q - log_det_p
+
+        if self.has_zero_expectation and other.has_zero_expectation:
+            mahalanobis_term = 0.0
+        else:
+            diff = self.domain.subtract(self.expectation, other.expectation)
+            diff_dual = self.domain.to_dual(diff)
+            diff_c_prime = self.domain.dual.to_components(diff_dual)
+            y = cho_solve((L_q, True), diff_c_prime)
+            mahalanobis_term = np.dot(diff_c_prime, y)
+
+        return float(0.5 * (trace_term + mahalanobis_term - k + log_det_term))
+
+    def _kl_divergence_randomized(
+        self,
+        other: GaussianMeasure,
+        *,
+        hutchinson_size_estimate: int,
+        hutchinson_method: str,
+        max_samples: Optional[int],
+        rtol: float,
+        block_size: int,
+        lanczos_size_estimate: int,
+        lanczos_method: str,
+        lanczos_max_k: Optional[int],
+        lanczos_rtol: float,
+        lanczos_atol: float,
+        lanczos_check_interval: int,
+        parallel: bool,
+        n_jobs: int,
+    ) -> float:
+        """Matrix-free SLQ / Hutchinson estimation of the KL divergence."""
+        if not other.inverse_covariance_set:
+            raise ValueError(
+                "Randomized KL divergence requires the 'other' measure to "
+                "have an inverse covariance operator set."
+            )
+
+        space = self.domain
+        k = space.dim
+
+        if self.has_zero_expectation and other.has_zero_expectation:
+            mahalanobis_term = 0.0
+        else:
+            diff = space.subtract(self.expectation, other.expectation)
+            q_inv_diff = other.inverse_covariance(diff)
+            mahalanobis_term = space.inner_product(diff, q_inv_diff)
+
+        from .functional_calculus import operator_function_quadratic_form
+
+        if hasattr(space, "squared_norms"):
+            inv_norms = 1.0 / np.sqrt(space.squared_norms)
+        else:
+            inv_norms = np.array(
+                [
+                    1.0 / np.sqrt(space.squared_norm(space.basis_vector(i)))
+                    for i in range(space.dim)
+                ]
+            )
+
+        def log_func(x: np.ndarray) -> np.ndarray:
+            return np.log(np.maximum(x, 1e-15))
+
+        def _single_sample() -> float:
+            c_z = np.random.choice([-1.0, 1.0], size=space.dim) * inv_norms
+            z = space.from_components(c_z)
+
+            p_z = self.covariance(z)
+            q_inv_p_z = other.inverse_covariance(p_z)
+            trace_val = space.inner_product(z, q_inv_p_z)
+
+            log_q = operator_function_quadratic_form(
+                other.covariance,
+                z,
+                log_func,
+                size_estimate=lanczos_size_estimate,
+                method=lanczos_method,
+                max_k=lanczos_max_k,
+                rtol=lanczos_rtol,
+                atol=lanczos_atol,
+                check_interval=lanczos_check_interval,
+            )
+
+            log_p = operator_function_quadratic_form(
+                self.covariance,
+                z,
+                log_func,
+                size_estimate=lanczos_size_estimate,
+                method=lanczos_method,
+                max_k=lanczos_max_k,
+                rtol=lanczos_rtol,
+                atol=lanczos_atol,
+                check_interval=lanczos_check_interval,
+            )
+
+            return trace_val + log_q - log_p
+
+        if max_samples is None:
+            max_samples = space.dim
+
+        num_samples = min(hutchinson_size_estimate, max_samples)
+
+        def _compute_sample_sum(n_samples_to_draw: int) -> float:
+            if parallel:
+                results = Parallel(n_jobs=n_jobs)(
+                    delayed(_single_sample)() for _ in range(n_samples_to_draw)
+                )
+                return sum(results)
+            else:
+                return sum(_single_sample() for _ in range(n_samples_to_draw))
+
+        total_sum = _compute_sample_sum(num_samples)
+        stochastic_term = total_sum / num_samples if num_samples > 0 else 0.0
+
+        if hutchinson_method == "variable" and num_samples < max_samples:
+            while num_samples < max_samples:
+                old_est = stochastic_term
+                samples_to_add = min(block_size, max_samples - num_samples)
+
+                total_sum += _compute_sample_sum(samples_to_add)
+                total_samples = num_samples + samples_to_add
+                stochastic_term = total_sum / total_samples
+
+                if abs(stochastic_term) > 0:
+                    error = abs(stochastic_term - old_est) / abs(stochastic_term)
+                    if error < rtol:
+                        break
+
+                num_samples = total_samples
+
+        return float(0.5 * (stochastic_term + mahalanobis_term - k))
