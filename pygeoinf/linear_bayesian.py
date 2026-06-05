@@ -49,7 +49,7 @@ from .linear_solvers import (
     IterativeLinearSolver,
     ResidualTrackingCallback,
 )
-from .hilbert_space import Vector, EuclideanSpace
+from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
 from .affine_operators import AffineOperator
 from .low_rank import LowRankSVD, LowRankEig
 from .functional_calculus import operator_function_quadratic_form
