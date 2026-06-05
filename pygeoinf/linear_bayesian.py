@@ -25,11 +25,10 @@ Key Classes
 -----------
 - `LinearBayesianInversion`: Computes the posterior Gaussian measure `p(u|d)`
   for the model `u` given observed data `d`.
-- `ConstrainedLinearBayesianInversion`: Solves the inverse problem subject to
-  an affine constraint `u in A`.
 """
 
 from __future__ import annotations
+
 from typing import Optional, List, Literal, Union
 
 from joblib import Parallel, delayed
@@ -37,7 +36,6 @@ import numpy as np
 
 import scipy.sparse as sps
 import scipy.sparse.linalg as splinalg
-
 
 from .inversion import LinearInversion
 from .gaussian_measure import GaussianMeasure
@@ -194,6 +192,30 @@ class LinearBayesianInversion(LinearInversion):
             else:
                 return prior_inv_cov + forward_operator.adjoint @ forward_operator
 
+    def _compute_data_residual(self, data: Vector) -> Vector:
+        """
+        Computes the exact data residual shifted by the prior and noise expectations.
+        v = d - A(mu_u) - mu_e
+        """
+        data_space = self.data_space
+        A = self.forward_problem.forward_operator
+
+        v_data = data_space.copy(data)
+        if not self.model_prior_measure.has_zero_expectation:
+            v_data = data_space.subtract(
+                v_data, A(self.model_prior_measure.expectation)
+            )
+
+        if (
+            self.forward_problem.data_error_measure_set
+            and not self.forward_problem.data_error_measure.has_zero_expectation
+        ):
+            v_data = data_space.subtract(
+                v_data, self.forward_problem.data_error_measure.expectation
+            )
+
+        return v_data
+
     def get_normal_equations_rhs(self, data: Vector) -> Vector:
         """
         Computes the exact right-hand side vector (v) of the normal equations
@@ -201,23 +223,8 @@ class LinearBayesianInversion(LinearInversion):
         for non-zero prior and noise expectations.
         """
         forward_operator = self.forward_problem.forward_operator
-        data_space = forward_operator.codomain
+        shifted_data = self._compute_data_residual(data)
 
-        # 1. Shift data by the prior model expectation: d - A(mu_u)
-        if self.model_prior_measure.has_zero_expectation:
-            shifted_data = data_space.copy(data)
-        else:
-            shifted_data = data_space.subtract(
-                data, forward_operator(self.model_prior_measure.expectation)
-            )
-
-        # 2. Shift data by the noise expectation: d - A(mu_u) - mu_e
-        if self.forward_problem.data_error_measure_set:
-            if not self.forward_problem.data_error_measure.has_zero_expectation:
-                error_expectation = self.forward_problem.data_error_measure.expectation
-                shifted_data = data_space.subtract(shifted_data, error_expectation)
-
-        # 3. Apply formalism-specific mappings
         if self.formalism == "data_space":
             # In data space, the RHS is exactly the shifted data residuals
             return shifted_data
@@ -307,8 +314,8 @@ class LinearBayesianInversion(LinearInversion):
         Returns:
             A GaussianMeasure representing the posterior distribution.
         """
-        data_space = self.data_space
         model_space = self.model_space
+        data_space = self.data_space
         forward_operator = self.forward_problem.forward_operator
         model_prior_covariance = self.model_prior_measure.covariance
 
@@ -345,20 +352,7 @@ class LinearBayesianInversion(LinearInversion):
             covariance = inverse_normal_operator
 
         # 2. Compute Posterior Mean
-        # Shift data: d - A(mu_u)
-        if self.model_prior_measure.has_zero_expectation:
-            shifted_data = data_space.copy(data)
-        else:
-            shifted_data = data_space.subtract(
-                data, forward_operator(self.model_prior_measure.expectation)
-            )
-
-        # Shift for noise mean: d - A(mu_u) - mu_e
-        if self.forward_problem.data_error_measure_set:
-            if not self.forward_problem.data_error_measure.has_zero_expectation:
-                error_expectation = self.forward_problem.data_error_measure.expectation
-                shifted_data = data_space.subtract(shifted_data, error_expectation)
-
+        shifted_data = self._compute_data_residual(data)
         mean_update = kalman_gain(shifted_data)
 
         if self.model_prior_measure.has_zero_expectation:
@@ -519,22 +513,15 @@ class LinearBayesianInversion(LinearInversion):
         Returns:
             The Mahalanobis distance as a float.
         """
-
         if not self.forward_problem.data_error_measure_set:
             raise ValueError("Data error measure must be set.")
 
         data_space = self.data_space
         model_space = self.model_space
-        A = self.forward_problem.forward_operator
-        Q_measure = self.model_prior_measure
         R_measure = self.forward_problem.data_error_measure
 
-        # 1. Compute the raw data residual shifted by prior/noise expectations
-        v_data = data_space.copy(data)
-        if not Q_measure.has_zero_expectation:
-            v_data = data_space.subtract(v_data, A(Q_measure.expectation))
-        if not R_measure.has_zero_expectation:
-            v_data = data_space.subtract(v_data, R_measure.expectation)
+        # 1. Compute the raw shifted data residual
+        v_data = self._compute_data_residual(data)
 
         # 2. Solve the normal equations
         normal_op = self.normal_operator
@@ -552,75 +539,31 @@ class LinearBayesianInversion(LinearInversion):
         else:
             # Woodbury optimization for model_space.
             R_inv = R_measure.inverse_covariance
-
             misfit_base = data_space.inner_product(v_data, R_inv(v_data))
             misfit_reduction = model_space.inner_product(rhs, w)
             mahalanobis_term = misfit_base - misfit_reduction
 
         return float(mahalanobis_term)
 
-    def estimate_log_determinant(
+    def _trace_log_slq(
         self,
-        /,
-        *,
-        operator_type: Literal["data_space", "model_space"] = "data_space",
-        size_estimate: int = 10,
-        method: Literal["variable", "fixed"] = "variable",
-        max_samples: Optional[int] = None,
-        rtol: float = 1e-2,
-        block_size: int = 5,
-        lanczos_degree: int = 40,
-        lanczos_rtol: Optional[float] = 1e-3,
-        parallel: bool = False,
-        n_jobs: int = -1,
+        op: LinearOperator,
+        space: EuclideanSpace,  # Or HilbertSpace type
+        size_estimate: int,
+        method: Literal["variable", "fixed"],
+        max_samples: Optional[int],
+        rtol: float,
+        block_size: int,
+        lanczos_degree: int,
+        lanczos_rtol: Optional[float],
+        parallel: bool,
+        n_jobs: int,
     ) -> float:
-        """
-        Estimates the log-determinant of the Bayesian normal operator using
-        Stochastic Lanczos Quadrature (SLQ).
+        """Generalized Stochastic Lanczos Quadrature for Tr(ln(A))."""
 
-        This combines a Hutchinson trace estimator (outer loop) with the Lanczos
-        method (inner loop) to compute `Tr(ln(N)) = ln(|N|)` entirely matrix-free.
-        It features dual-layer dynamic convergence, able to break early on both
-        the trace sum and the Krylov subspace generation.
-
-        Args:
-            operator_type: Evaluates the 'data_space' normal operator (A Q A* + R)
-                or the 'model_space' normal operator (Q^-1 + A* R^-1 A).
-            size_estimate: Initial number of Hutchinson samples (probe vectors).
-            method: 'variable' to sample until `rtol` is met, 'fixed' otherwise.
-            max_samples: Hard limit on the number of Hutchinson samples.
-            rtol: Relative tolerance for the Hutchinson trace estimate.
-            block_size: Number of new samples per iteration in the 'variable' method.
-            lanczos_degree: Maximum Krylov dimension (k) per probe vector.
-            lanczos_rtol: Relative tolerance for dynamic Lanczos truncation.
-                If None, uses fixed `lanczos_degree` steps.
-            parallel: If True, evaluates probe vectors in parallel.
-            n_jobs: Number of CPU cores to use if parallel=True.
-
-        Returns:
-            The estimated log-determinant of the chosen normal operator.
-        """
-
-        # 1. Resolve the target operator and space
-        if operator_type == "data_space":
-            space = self.data_space
-            A = self.forward_problem.forward_operator
-            Q_cov = self.model_prior_measure.covariance
-
-            if self.forward_problem.data_error_measure_set:
-                R_cov = self.forward_problem.data_error_measure.covariance
-                op = (A @ Q_cov @ A.adjoint) + R_cov
-            else:
-                op = A @ Q_cov @ A.adjoint
-        else:
-            space = self.model_space
-            op = self.normal_operator
-
-        # 2. Define the log function with a safeguard against numerical ghost eigenvalues
         def log_func(x: np.ndarray) -> np.ndarray:
             return np.log(np.maximum(x, 1e-15))
 
-        # 3. Helper to correctly scale Rademacher noise to the Hilbert space basis
         if hasattr(space, "squared_norms"):
             inv_norms = 1.0 / np.sqrt(space.squared_norms)
         else:
@@ -636,13 +579,11 @@ class LinearBayesianInversion(LinearInversion):
 
         num_samples = min(size_estimate, max_samples)
 
-        # 4. Block sampling helper
         def _compute_sample_sum(n_samples_to_draw: int) -> float:
             def _single_sample() -> float:
                 c_z = np.random.choice([-1.0, 1.0], size=space.dim) * inv_norms
                 z = space.from_components(c_z)
 
-                # Apply the newly hardened functional calculus API
                 return operator_function_quadratic_form(
                     op,
                     z,
@@ -653,6 +594,8 @@ class LinearBayesianInversion(LinearInversion):
                 )
 
             if parallel:
+                from joblib import Parallel, delayed
+
                 results = Parallel(n_jobs=n_jobs)(
                     delayed(_single_sample)() for _ in range(n_samples_to_draw)
                 )
@@ -660,7 +603,6 @@ class LinearBayesianInversion(LinearInversion):
             else:
                 return sum(_single_sample() for _ in range(n_samples_to_draw))
 
-        # 5. Progressive Hutchinson Iteration
         total_sum = _compute_sample_sum(num_samples)
         trace_est = total_sum / num_samples if num_samples > 0 else 0.0
 
@@ -684,53 +626,36 @@ class LinearBayesianInversion(LinearInversion):
 
         return float(trace_est)
 
-    def log_evidence(
+    def estimate_log_determinant(
         self,
-        data: Vector,
-        solver: LinearSolver,
         /,
         *,
-        preconditioner: Optional[LinearOperator] = None,
-        # Hutchinson kwargs
+        operator_type: Literal["data_space", "model_space"] = "data_space",
         size_estimate: int = 10,
         method: Literal["variable", "fixed"] = "variable",
         max_samples: Optional[int] = None,
         rtol: float = 1e-2,
         block_size: int = 5,
-        # Lanczos kwargs
         lanczos_degree: int = 40,
         lanczos_rtol: Optional[float] = 1e-3,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> float:
         """
-        Computes the approximate log marginal likelihood (evidence) of the data.
-
-        The log-evidence is a critical metric for Bayesian model selection, allowing
-        users to quantitatively compare different prior assumptions or forward models.
-
-        This method relies on Stochastic Lanczos Quadrature (SLQ) to estimate the
-        expensive log-determinant of the data-space normal operator in O(k*N) time.
-
-        Args:
-            data: The observed data vector `d`.
-            solver: The linear solver used to invert the normal operator for the
-                Mahalanobis misfit term.
-            preconditioner: Optional preconditioner for the iterative solver.
-            [Hutchinson/Lanczos kwargs define dynamic convergence for the SLQ trace estimator]
-
-        Returns:
-            The estimated log-evidence ln(p(d)).
+        Estimates the log-determinant of the Bayesian normal operator using
+        Stochastic Lanczos Quadrature (SLQ).
         """
-        # 1. Mahalanobis Term (Exact, up to solver tolerance)
-        mahalanobis = self.mahalanobis_evidence_term(
-            data, solver, preconditioner=preconditioner
+        surrogate = self.with_formalism(operator_type)
+        space = (
+            surrogate.model_space
+            if operator_type == "model_space"
+            else surrogate.data_space
         )
+        op = surrogate.normal_operator
 
-        # 2. Log-Determinant Term (Stochastic Approximation)
-        # We enforce data_space evaluation because the evidence is a measure on the data
-        log_det = self.estimate_log_determinant(
-            operator_type="data_space",
+        return self._trace_log_slq(
+            op,
+            space,
             size_estimate=size_estimate,
             method=method,
             max_samples=max_samples,
@@ -742,11 +667,73 @@ class LinearBayesianInversion(LinearInversion):
             n_jobs=n_jobs,
         )
 
-        # 3. Dimensionality Constant
+    def log_evidence(
+        self,
+        data: Vector,
+        solver: LinearSolver,
+        /,
+        *,
+        preconditioner: Optional[LinearOperator] = None,
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 5,
+        lanczos_degree: int = 40,
+        lanczos_rtol: Optional[float] = 1e-3,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the approximate log marginal likelihood (evidence) of the data.
+        """
+        mahalanobis = self.mahalanobis_evidence_term(
+            data, solver, preconditioner=preconditioner
+        )
+
+        slq_kwargs = {
+            "size_estimate": size_estimate,
+            "method": method,
+            "max_samples": max_samples,
+            "rtol": rtol,
+            "block_size": block_size,
+            "lanczos_degree": lanczos_degree,
+            "lanczos_rtol": lanczos_rtol,
+            "parallel": parallel,
+            "n_jobs": n_jobs,
+        }
+
+        if self.formalism == "data_space":
+            log_det = self.estimate_log_determinant(
+                operator_type="data_space", **slq_kwargs
+            )
+        else:
+            # By Sylvester's determinant identity:
+            # ln|N_d| = ln|N_m| + ln|Q| + ln|R|
+            log_det_Nm = self.estimate_log_determinant(
+                operator_type="model_space", **slq_kwargs
+            )
+
+            log_det_Q = self._trace_log_slq(
+                self.model_prior_measure.covariance, self.model_space, **slq_kwargs
+            )
+
+            if not self.forward_problem.data_error_measure_set:
+                raise ValueError(
+                    "Data error measure is required to compute log evidence."
+                )
+
+            log_det_R = self._trace_log_slq(
+                self.forward_problem.data_error_measure.covariance,
+                self.data_space,
+                **slq_kwargs,
+            )
+
+            log_det = log_det_Nm + log_det_Q + log_det_R
+
         m = self.data_space.dim
         constant = m * np.log(2 * np.pi)
 
-        # log p(d) = -0.5 * (ln|N| + <v, N^-1 v> + M*ln(2*pi))
         return -0.5 * (log_det + mahalanobis + constant)
 
     # =========================================================================

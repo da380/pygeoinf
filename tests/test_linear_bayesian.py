@@ -1069,3 +1069,106 @@ class TestBayesianEvidence:
 
         # Because it is stochastic, we just want to ensure it completes and returns a float
         assert isinstance(actual_evidence, float)
+
+    def test_log_evidence_model_space_sylvester_identity(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Verifies that the log-evidence computed in the 'model_space' formalism
+        (which relies on Sylvester's determinant identity: ln|Nm| + ln|Q| + ln|R|)
+        matches the exact dense analytical likelihood.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        # Force prior and error to have strict inverses for model_space formulation
+        prior = model_prior_measure.with_regularized_inverse(solver, damping=0.1)
+        error = forward_problem.data_error_measure.with_regularized_inverse(
+            solver, damping=0.1
+        )
+        fp_invertible = LinearForwardProblem(
+            forward_problem.forward_operator, data_error_measure=error
+        )
+
+        inversion = LinearBayesianInversion(
+            fp_invertible, prior, formalism="model_space"
+        )
+
+        # 1. Exact Dense Calculation (Data Space Marginal)
+        A = fp_invertible.forward_operator.matrix(dense=True)
+        Q = prior.covariance.matrix(dense=True)
+        R = error.covariance.matrix(dense=True)
+
+        exact_normal_matrix = A @ Q @ A.T + R
+
+        from scipy.stats import multivariate_normal
+
+        exact_marginal = multivariate_normal(
+            mean=np.zeros(forward_problem.data_space.dim), cov=exact_normal_matrix
+        )
+        expected_evidence = exact_marginal.logpdf(data)
+
+        # 2. Matrix-Free Evidence Calculation using Sylvester's Identity
+        # We use a high sample count to tightly bound the stochastic error
+        dim_data = forward_problem.data_space.dim
+        dim_model = forward_problem.model_space.dim
+        max_dim = max(dim_data, dim_model)
+
+        np.random.seed(42)
+        actual_evidence = inversion.log_evidence(
+            data,
+            solver,
+            size_estimate=max_dim,
+            method="fixed",
+            lanczos_degree=max_dim,
+            lanczos_rtol=None,
+        )
+
+        # Check equivalence
+        assert np.isclose(actual_evidence, expected_evidence, rtol=0.05)
+
+    def test_estimate_log_determinant_cross_formalism(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies the bugfix where calling estimate_log_determinant for 'data_space'
+        on a 'model_space' inversion correctly instantiates the internal surrogate
+        and avoids dimensionality mismatch crashes.
+        """
+        solver = CholeskySolver(galerkin=True)
+        prior = model_prior_measure.with_regularized_inverse(solver, damping=0.1)
+        error = forward_problem.data_error_measure.with_regularized_inverse(
+            solver, damping=0.1
+        )
+        fp_invertible = LinearForwardProblem(
+            forward_problem.forward_operator, data_error_measure=error
+        )
+
+        # Initialize in model_space
+        inversion = LinearBayesianInversion(
+            fp_invertible, prior, formalism="model_space"
+        )
+
+        # Request data_space determinant explicitly
+        dim = fp_invertible.data_space.dim
+        np.random.seed(42)
+        approx_log_det = inversion.estimate_log_determinant(
+            operator_type="data_space",
+            size_estimate=dim,
+            method="fixed",
+            lanczos_degree=dim,
+            lanczos_rtol=None,
+        )
+
+        # Verify against exact dense data-space determinant
+        A = fp_invertible.forward_operator.matrix(dense=True)
+        Q = prior.covariance.matrix(dense=True)
+        R = error.covariance.matrix(dense=True)
+        exact_normal_matrix = A @ Q @ A.T + R
+        sign, exact_log_det = np.linalg.slogdet(exact_normal_matrix)
+
+        assert np.isclose(approx_log_det, exact_log_det, rtol=0.05)
