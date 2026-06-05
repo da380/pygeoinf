@@ -726,8 +726,6 @@ class LinearBayesianInversion(LinearInversion):
 
     def log_evidence(
         self,
-        data: Vector,
-        solver: LinearSolver,
         /,
         *,
         preconditioner: Optional[LinearOperator] = None,
@@ -789,6 +787,7 @@ class LinearBayesianInversion(LinearInversion):
         mahalanobis = self.mahalanobis_evidence_term(
             data, solver, preconditioner=preconditioner
         )
+        op = surrogate.normal_operator
 
         slq_kwargs = {
             "size_estimate": size_estimate,
