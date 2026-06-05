@@ -15,8 +15,8 @@ lmax = 128
 order = 2
 scale = 0.1
 prior_scale = 0.05
-n_sources = 2
-n_receivers = 2
+n_sources = 10
+n_receivers = 50
 
 print("Global parameters initialized.")
 
@@ -91,7 +91,7 @@ k_posterior = model_posterior.two_point_covariance(x)
 
 # Estimate the pointwise std
 print("Computing pointwise std...")
-posterior_std = model_posterior.sample_pointwise_std(200)
+posterior_std = model_posterior.sample_pointwise_std(1000)
 
 
 # Plot the results

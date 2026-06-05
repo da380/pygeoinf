@@ -1,0 +1,195 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
+rootdir: /home/david/dev/pygeoinf
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-6.3.0
+collected 965 items
+
+tests/symmetric_space/test_circle_lebesgue.py ........                   [  0%]
+tests/symmetric_space/test_circle_plot.py ...                            [  1%]
+tests/symmetric_space/test_circle_sobolev.py ...........                 [  2%]
+tests/symmetric_space/test_invariant_objects.py ...........              [  3%]
+tests/symmetric_space/test_line_lebesgue.py ........                     [  4%]
+tests/symmetric_space/test_line_plot.py ...                              [  4%]
+tests/symmetric_space/test_line_sobolev.py ..........                    [  5%]
+tests/symmetric_space/test_plane_lebesgue.py ........                    [  6%]
+tests/symmetric_space/test_plane_plot.py ........                        [  7%]
+tests/symmetric_space/test_plane_sobolev.py ...........                  [  8%]
+tests/symmetric_space/test_sphere_cap_integrals.py ......                [  9%]
+tests/symmetric_space/test_sphere_lebesgue.py ..........                 [ 10%]
+tests/symmetric_space/test_sphere_plot.py .......                        [ 10%]
+tests/symmetric_space/test_sphere_sobolev.py ...................         [ 12%]
+tests/symmetric_space/test_torus_lebesgue.py .........                   [ 13%]
+tests/symmetric_space/test_torus_plot.py .......                         [ 14%]
+tests/symmetric_space/test_torus_sobolev.py ...............              [ 15%]
+tests/test_affine_operators.py .....                                     [ 16%]
+tests/test_auxiliary.py ...................                              [ 18%]
+tests/test_bundle_core.py ..........                                     [ 19%]
+tests/test_chambolle_pock.py .....                                       [ 20%]
+tests/test_direct_sum.py .........................                       [ 22%]
+tests/test_dual_master_cost.py ....                                      [ 23%]
+tests/test_euclidean.py .......                                          [ 23%]
+tests/test_euclidean_nonlinear_operators.py ..                           [ 23%]
+tests/test_forward_problem.py .........                                  [ 24%]
+tests/test_functional_calculus.py ................                       [ 26%]
+tests/test_gaussian_measure.py ..............F.................          [ 29%]
+tests/test_gaussian_measure_credible_set.py ............................ [ 32%]
+.                                                                        [ 32%]
+tests/test_halfspaces.py ...................................             [ 36%]
+tests/test_inversion.py .................                                [ 38%]
+tests/test_level_bundle.py ......                                        [ 38%]
+tests/test_linear_bayesian.py ..............................F..          [ 42%]
+tests/test_linear_forms.py ............................................. [ 46%]
+.........                                                                [ 47%]
+tests/test_linear_operators.py ..............................            [ 50%]
+tests/test_linear_optimisation.py ................................       [ 54%]
+tests/test_linear_solvers.py ........................................... [ 58%]
+...                                                                      [ 59%]
+tests/test_low_rank.py ....................                              [ 61%]
+tests/test_mass_weighted.py ...                                          [ 61%]
+tests/test_nonlinear_forms.py ................                           [ 63%]
+tests/test_nonlinear_optimisation.py ....x.                              [ 63%]
+tests/test_parallelism.py ....                                           [ 64%]
+tests/test_plot.py ..................................................s.. [ 69%]
+sss                                                                      [ 69%]
+tests/test_plot_exact_quadratic_slices.py .........................      [ 72%]
+tests/test_preconditioners.py ............                               [ 73%]
+tests/test_primal_kkt_solver.py ..............                           [ 75%]
+tests/test_proximal_bundle.py ......                                     [ 75%]
+tests/test_qp_backends.py .sss..                                         [ 76%]
+tests/test_quadratic_form_quantile.py .................................. [ 80%]
+........................                                                 [ 82%]
+tests/test_smoothed_lbfgs.py .....                                       [ 83%]
+tests/test_solve_support_values.py .....                                 [ 83%]
+tests/test_spectral_operator.py ..............                           [ 84%]
+tests/test_sphere_dli_example.py ..............                          [ 86%]
+tests/test_subgradient.py ....                                           [ 86%]
+tests/test_subsets.py .............                                      [ 88%]
+tests/test_subspaces.py .........                                        [ 89%]
+tests/test_support_function_algebra.py ................................. [ 92%]
+...............................                                          [ 95%]
+tests/test_support_function_constructors.py ............................ [ 98%]
+..........                                                               [ 99%]
+tests/test_torus_plot.py ...                                             [100%]
+
+=================================== FAILURES ===================================
+____ TestGaussianMeasure.test_kl_divergence_known_values_randomized[space0] ____
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x74e642cbc830>
+space = <pygeoinf.hilbert_space.EuclideanSpace object at 0x74e642c2bb00>
+
+    def test_kl_divergence_known_values_randomized(self, space: HilbertSpace):
+        """
+        Tests the randomized SLQ KL divergence calculation against an analytical result.
+        Using the progressive 'variable' method to ensure convergence logic works.
+        """
+        k = space.dim
+    
+        # Measure P: Standard Normal N(0, I)
+        measure_p = GaussianMeasure.from_covariance_matrix(
+            space, np.eye(k), expectation=space.zero
+        )
+    
+        # Measure Q: N(1, 2 * I)
+        sigma_sq = 2.0
+        q_cov = sigma_sq * np.eye(k)
+        # The randomized method requires the reference measure (Q) to have an inverse
+        q_inv_cov = np.eye(k) / sigma_sq
+    
+        q_cov_op = LinearOperator.from_matrix(space, space, q_cov, galerkin=True)
+        q_inv_cov_op = LinearOperator.from_matrix(
+            space, space, q_inv_cov, galerkin=True
+        )
+    
+        measure_q = GaussianMeasure(
+            covariance=q_cov_op,
+            inverse_covariance=q_inv_cov_op,
+            expectation=space.from_components(np.ones(k)),
+        )
+    
+        # Analytical Calculation for D_KL(P || Q)
+        trace_term = k / sigma_sq
+        mahalanobis_term = k / sigma_sq
+        log_det_term = k * np.log(sigma_sq)
+        expected_kl = 0.5 * (trace_term + mahalanobis_term - k + log_det_term)
+    
+        # Variable method: should converge dynamically
+        actual_kl = measure_p.kl_divergence(
+            measure_q,
+            method="randomized",
+            hutchinson_size_estimate=5,
+            hutchinson_method="variable",
+            max_samples=k * 10,
+            rtol=1e-2,
+            block_size=5,
+            lanczos_size_estimate=k,
+            lanczos_method="fixed",  # Exact for k-dimensional space
+        )
+    
+        # Because it's a stochastic estimate, we allow a slightly looser tolerance
+>       assert np.isclose(actual_kl, expected_kl, rtol=0.1, atol=0.1)
+E       assert np.False_
+E        +  where np.False_ = <function isclose at 0x74e6a13f1f70>(0.0, np.float64(1.3862943611198906), rtol=0.1, atol=0.1)
+E        +    where <function isclose at 0x74e6a13f1f70> = np.isclose
+
+tests/test_gaussian_measure.py:356: AssertionError
+________ TestBayesianEvidence.test_estimate_log_determinant_model_space ________
+
+self = <tests.test_linear_bayesian.TestBayesianEvidence object at 0x74e642b4b170>
+forward_problem = <pygeoinf.forward_problem.LinearForwardProblem object at 0x74e63e4595e0>
+model_prior_measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x74e642b995b0>
+
+    def test_estimate_log_determinant_model_space(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Verifies that the SLQ estimator converges to the neighborhood of the exact
+        dense log-determinant of the model-space normal operator.
+        """
+        # Force model_space formalism to trigger prior inverse requirements
+        solver = CholeskySolver(galerkin=True)
+        prior = model_prior_measure.with_regularized_inverse(solver, damping=0.1)
+        error = forward_problem.data_error_measure.with_regularized_inverse(
+            solver, damping=0.1
+        )
+    
+        fp_invertible = LinearForwardProblem(
+            forward_problem.forward_operator, data_error_measure=error
+        )
+    
+        inversion = LinearBayesianInversion(
+            fp_invertible, prior, formalism="model_space"
+        )
+    
+        # 1. Exact Dense Calculation
+        A = fp_invertible.forward_operator.matrix(dense=True)
+        Q_inv = prior.inverse_covariance.matrix(dense=True)
+        R_inv = error.inverse_covariance.matrix(dense=True)
+    
+        exact_normal_matrix = Q_inv + A.T @ R_inv @ A
+        sign, exact_log_det = np.linalg.slogdet(exact_normal_matrix)
+        assert sign > 0
+    
+        # 2. SLQ Matrix-Free Estimation
+        dim = fp_invertible.model_space.dim
+        np.random.seed(42)
+        approx_log_det = inversion.estimate_log_determinant(
+            operator_type="model_space",
+            size_estimate=dim,
+            method="fixed",
+            lanczos_degree=dim,
+            lanczos_rtol=None,
+        )
+    
+>       assert np.isclose(approx_log_det, exact_log_det, rtol=0.05)
+E       assert np.False_
+E        +  where np.False_ = <function isclose at 0x74e6a13f1f70>(0.0, np.float64(102.27124401693288), rtol=0.05)
+E        +    where <function isclose at 0x74e6a13f1f70> = np.isclose
+
+tests/test_linear_bayesian.py:994: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_kl_divergence_known_values_randomized[space0]
+FAILED tests/test_linear_bayesian.py::TestBayesianEvidence::test_estimate_log_determinant_model_space
+============= 2 failed, 955 passed, 7 skipped, 1 xfailed in 56.89s =============
