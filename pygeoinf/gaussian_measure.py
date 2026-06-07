@@ -54,9 +54,12 @@ from .affine_operators import AffineOperator
 
 from .direct_sum import BlockDiagonalLinearOperator, BlockLinearOperator
 
+from .functional_calculus import LanczosOperatorFunction
+
 
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace
+    from .low_rank import LowRankEig
 
 
 class GaussianMeasure:
@@ -1956,7 +1959,7 @@ class GaussianMeasure:
         *,
         theta: float,
         backend: str,
-        eig_obj,
+        eig_obj: LowRankEig,
         lanczos_size_estimate: int,
         lanczos_method: str,
         lanczos_max_k: Optional[int],
@@ -1973,11 +1976,19 @@ class GaussianMeasure:
                     "computed); got an array/callable. Pass "
                     "fractional_apply='lanczos' instead."
                 )
-            from .spectral_operator import fractional_operators_from_eig
+            regularization = 1e-12 * float(np.max(np.abs(eig_obj.eigenvalues)))
 
-            return fractional_operators_from_eig(eig_obj, theta)
-
-        from .functional_calculus import LanczosOperatorFunction
+            return (
+                eig_obj.apply_function(
+                    lambda x: np.power(x, -theta), regularization=regularization
+                ),
+                eig_obj.apply_function(
+                    lambda x: np.power(x, theta), regularization=regularization
+                ),
+                eig_obj.apply_function(
+                    lambda x: np.power(x, 0.5 * theta), regularization=regularization
+                ),
+            )
 
         cov = self.covariance
 

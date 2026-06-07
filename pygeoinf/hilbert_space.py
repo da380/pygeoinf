@@ -554,7 +554,49 @@ class HilbertModule(HilbertSpace, ABC):
         """
 
 
-class EuclideanSpace(HilbertSpace):
+class OrthogonalHilbertSpace(HilbertSpace, ABC):
+    """A specialisation of the HilbertSpace class for cases where the basis is orthogonal."""
+
+    @property
+    @abstractmethod
+    def squared_norms(self) -> np.ndarray:
+        """Returns ||e_i||^2 for the basis vectors."""
+
+    def to_dual(self, x: Vector) -> LinearForm:
+        from .linear_forms import LinearForm
+
+        cx = self.to_components(x)
+        cxp = self.squared_norms * cx
+        return LinearForm(self, components=cxp)
+
+    def from_dual(self, xp: LinearForm) -> Vector:
+        cxp = xp.components
+        cx = cxp / self.squared_norms
+        return self.from_components(cx)
+
+
+class OrthonormalHilbertSpace(OrthogonalHilbertSpace):
+    """
+    A specialisation of the OrthogonalHilbertSpace class for cases where the basis is orthonormal.
+    """
+
+    @property
+    def squared_norms(self) -> np.ndarray:
+        """Returns an array of ones."""
+        return np.ones(self.dim, dtype=float)
+
+    def to_dual(self, x: Vector) -> LinearForm:
+        from .linear_forms import LinearForm
+
+        cx = self.to_components(x)
+        return LinearForm(self, components=cx)
+
+    def from_dual(self, xp: LinearForm) -> Vector:
+        cxp = xp.components
+        return self.from_components(cxp)
+
+
+class EuclideanSpace(OrthonormalHilbertSpace):
     """
     An n-dimensional Euclidean space, R^n.
 
@@ -583,16 +625,6 @@ class EuclideanSpace(HilbertSpace):
     def from_components(self, c: np.ndarray) -> np.ndarray:
         """Returns the component array itself, as it is the vector."""
         return c
-
-    def to_dual(self, x: np.ndarray) -> "LinearForm":
-        """Maps a vector `x` to a `LinearForm` with the same components."""
-        from .linear_forms import LinearForm
-
-        return LinearForm(self, components=x)
-
-    def from_dual(self, xp: "LinearForm") -> np.ndarray:
-        """Maps a `LinearForm` back to a vector via its components."""
-        return self.dual.to_components(xp)
 
     def inner_product(self, x1: np.ndarray, x2: np.ndarray) -> float:
         """

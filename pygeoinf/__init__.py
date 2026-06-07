@@ -5,6 +5,8 @@ Unified imports for the package.
 from .hilbert_space import (
     HilbertSpace,
     DualHilbertSpace,
+    OrthogonalHilbertSpace,
+    OrthonormalHilbertSpace,
     EuclideanSpace,
     HilbertModule,
     MassWeightedHilbertSpace,
@@ -161,6 +163,8 @@ __all__ = [
     # hilbert_space
     "HilbertSpace",
     "DualHilbertSpace",
+    "OrthogonalHilbertSpace",
+    "OrthonormalHilbertSpace",
     "EuclideanSpace",
     "HilbertModule",
     "MassWeightedHilbertSpace",

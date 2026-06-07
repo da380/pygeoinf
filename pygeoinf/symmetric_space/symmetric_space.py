@@ -31,6 +31,7 @@ import scipy.sparse.linalg as splinalg
 
 from pygeoinf.hilbert_space import (
     HilbertSpace,
+    OrthogonalHilbertSpace,
     HilbertModule,
     Vector,
     MassWeightedHilbertModule,
@@ -580,7 +581,7 @@ class InvariantGaussianMeasure(GaussianMeasure):
         return self.domain.add(sample_vector, self.expectation)
 
 
-class SymmetricHilbertSpace(HilbertSpace, ABC):
+class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
     """
     An abstract base class for Hilbert spaces of functions spaces on
     symmetric manifolds.
