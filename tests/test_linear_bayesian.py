@@ -381,7 +381,10 @@ class TestDiagonalNormalPreconditioner:
         blocks = [[0, 1], [2], list(range(3, data_dim))]
         preconditioner = inversion.diagonal_normal_preconditioner(blocks=blocks)
 
-        approx_normal_diagonal = preconditioner.inverse.extract_diagonal()
+        # Extract the inverted diagonal from the preconditioner and manually
+        # invert it back to the original normal diagonal for verification
+        precon_diagonal = preconditioner.extract_diagonal()
+        approx_normal_diagonal = 1.0 / precon_diagonal
 
         model_space = forward_problem.model_space
         data_space = forward_problem.data_space

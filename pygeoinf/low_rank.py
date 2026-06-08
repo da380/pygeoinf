@@ -321,19 +321,32 @@ class LowRankEig(LinearOperator):
         return cls(u_op, d_op)
 
     def apply_function(
-        self, func: Callable[[np.ndarray], np.ndarray], *, regularization: float = 0.0
+        self,
+        func: Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        regularization: float = 0.0,
     ) -> LowRankEig:
         """
         Applies a function to the spectrum of the operator.
         Returns a new LowRankEig representing f(A).
         """
 
-        def safe_func(x: np.ndarray) -> np.ndarray:
-            return func(x + regularization)
+        current_eigenvalues = self.eigenvalues + regularization
 
-        new_d_op = self.d_factor.apply_function(safe_func)
+        try:
+            new_eigenvalues = func(current_eigenvalues)
+        except (TypeError, AttributeError):
+            vectorized_func = np.vectorize(func)
+            new_eigenvalues = vectorized_func(current_eigenvalues)
 
-        # Return a new LowRankEig with the updated diagonal
+        new_d_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            self.d_factor.domain,
+            self.d_factor.codomain,
+            new_eigenvalues,
+            galerkin=self.d_factor.is_galerkin,
+        )
+
         return LowRankEig(self.u_factor, new_d_op)
 
 

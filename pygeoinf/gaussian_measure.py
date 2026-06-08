@@ -200,9 +200,14 @@ class GaussianMeasure:
         covariance_factor = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
             euclidean, domain, standard_deviations
         )
+        inverse_covariance_factor = (
+            DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+                euclidean, domain, np.reciprocal(standard_deviations)
+            )
+        )
         return GaussianMeasure(
             covariance_factor=covariance_factor,
-            inverse_covariance_factor=covariance_factor.inverse,
+            inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
         )
 

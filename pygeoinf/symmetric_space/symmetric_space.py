@@ -144,6 +144,62 @@ class InvariantLinearAutomorphism(DiagonalSparseMatrixLinearOperator):
             self.domain, np.reciprocal(current_eigenvalues)
         )
 
+    @property
+    def sqrt(self) -> InvariantLinearAutomorphism:
+        """Returns the principal square root of the operator."""
+        if np.any(self.eigenvalues < 0):
+            raise ValueError(
+                "Cannot compute real square root of operator with negative eigenvalues."
+            )
+        return self.apply_function(np.sqrt)
+
+    @property
+    def exp(self) -> InvariantLinearAutomorphism:
+        """Returns the matrix exponential of the operator."""
+        return self.apply_function(np.exp)
+
+    @property
+    def log(self) -> InvariantLinearAutomorphism:
+        """Returns the matrix logarithm of the operator."""
+        if np.any(self.eigenvalues <= 0):
+            raise ValueError("Logarithm requires strictly positive eigenvalues.")
+        return self.apply_function(np.log)
+
+    def apply_function(
+        self, func: Callable[[np.ndarray], np.ndarray]
+    ) -> InvariantLinearAutomorphism:
+        """
+        Applies a mathematical function to the operator via functional calculus.
+
+        Because this operator is invariant and diagonal in the spectral basis,
+        the function is simply applied element-wise to the eigenvalues.
+
+        Args:
+            func: A NumPy ufunc or a callable that can be vectorized.
+
+        Returns:
+            A new InvariantLinearAutomorphism representing f(A).
+        """
+        try:
+            new_eigenvalues = func(self.eigenvalues)
+        except (TypeError, AttributeError):
+            vectorized_func = np.vectorize(func)
+            new_eigenvalues = vectorized_func(self.eigenvalues)
+
+        return InvariantLinearAutomorphism(self.domain, new_eigenvalues)
+
+    def __abs__(self) -> InvariantLinearAutomorphism:
+        """Returns the absolute value (modulus) of the operator."""
+        return self.apply_function(np.abs)
+
+    def __pow__(self, power: float) -> InvariantLinearAutomorphism:
+        """Raises the operator to a fractional or integer power."""
+        if power % 1 != 0 and np.any(self.eigenvalues < 0):
+            raise ValueError(
+                "Cannot compute fractional power of operator with negative eigenvalues."
+            )
+        return self.apply_function(lambda x: x**power)
+
     def __neg__(self) -> InvariantLinearAutomorphism:
         current_diagonal = self.eigenvalues
         return InvariantLinearAutomorphism(self.domain, -current_diagonal)

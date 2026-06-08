@@ -923,11 +923,15 @@ class LinearBayesianInversion(LinearInversion):
         else:
             normal_diag = aqa_diag
 
-        approx_normal_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            data_space, data_space, normal_diag, galerkin=True
+        inv_normal_diag = np.zeros_like(normal_diag)
+        valid = normal_diag > 1e-14
+        inv_normal_diag[valid] = 1.0 / normal_diag[valid]
+
+        approx_inv_normal_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            data_space, data_space, inv_normal_diag, galerkin=True
         )
 
-        return approx_normal_op.inverse
+        return approx_inv_normal_op
 
     def sparse_localized_preconditioner(
         self,
