@@ -15,14 +15,14 @@ if __name__ == "__main__":
     # Setup Physical Parameters
     nu = 0.25  # Poisson's ratio
     rho_g = 1.0  # Normalized restoring force (e.g., mantle/water density contrast)
-    D0 = 0.000001  # Baseline oceanic flexural rigidity
+    D0 = 0.0001  # Baseline oceanic flexural rigidity
 
     print("2. Constructing Spatially Varying Rigidity Field...")
     # Create base uniform rigidity
     D_base = X.project_function(lambda _: D0)
 
     # Stiffen continents by some factor
-    D_raw = D_base * (1.0 + 99 * X.domain_mask())
+    D_raw = D_base * (1.0 + 9 * X.domain_mask())
 
     # Smooth the sharp coastlines using a heat kernel to prevent Gibbs ringing
     S = X.heat_kernel_gaussian_measure(0.1).covariance
