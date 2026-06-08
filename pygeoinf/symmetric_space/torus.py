@@ -59,7 +59,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         dim = 4 * kmax**2
         self._build_index_map(dim)
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 2, kmax, dim, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, kmax, dim)
 
     @classmethod
     def from_covariance(
@@ -308,7 +308,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         phase = self._kx_freqs * tx + self._ky_freqs * ty
         vals = np.where(self._is_imag, -np.sin(phase), np.cos(phase))
         norm_factor = np.sqrt(4 * np.pi**2 * self.radius_x * self.radius_y)
-        return self._metric @ vals / norm_factor
+        return self.metric @ vals / norm_factor
 
     def random_point(self) -> Tuple[float, float]:
         """Returns a random coordinate point within the Torus domain [0, 2π] x [0, 2π]."""
@@ -379,7 +379,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         in_idx = np.array([pair[0] for pair in forward_indices], dtype=int)
         out_idx = np.array([pair[1] for pair in forward_indices], dtype=int)
 
-        metric_ratio = codomain.squared_norms[out_idx] / self.squared_norms[in_idx]
+        metric_ratio = codomain.metric_values[out_idx] / self.metric_values[in_idx]
 
         def mapping(u: np.ndarray) -> np.ndarray:
             c_in = self.to_components(u)
@@ -508,12 +508,12 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """Computes the exact L² inner product utilizing the spectral metric."""
         cx = self.to_components(x)
         cy = self.to_components(y)
-        return float(np.dot(cx, self._metric @ cy))
+        return float(np.dot(cx, self.metric @ cy))
 
     def norm(self, x: np.ndarray) -> float:
         """Computes the exact L² norm utilizing the spectral metric."""
         cx = self.to_components(x)
-        return float(np.sqrt(np.clip(np.dot(cx, self._metric @ cx), 0.0, None)))
+        return float(np.sqrt(np.clip(np.dot(cx, self.metric @ cx), 0.0, None)))
 
     def _build_index_map(self, dim: int):
         """Constructs mappings between 1D component indices and 2D wavevectors."""
@@ -941,12 +941,12 @@ class Sobolev(SymmetricSobolevSpace):
         """Computes the exact Sobolev inner product utilizing the mass-weighted metric."""
         cx = self.to_components(x)
         cy = self.to_components(y)
-        return float(np.dot(cx, self._metric @ cy))
+        return float(np.dot(cx, self.metric @ cy))
 
     def norm(self, x: np.ndarray) -> float:
         """Computes the exact Sobolev norm utilizing the mass-weighted metric."""
         cx = self.to_components(x)
-        return float(np.sqrt(np.clip(np.dot(cx, self._metric @ cx), 0.0, None)))
+        return float(np.sqrt(np.clip(np.dot(cx, self.metric @ cx), 0.0, None)))
 
 
 # ------------------------------------------------- #

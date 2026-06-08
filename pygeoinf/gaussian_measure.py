@@ -35,7 +35,7 @@ from joblib import Parallel, delayed
 
 from .hilbert_space import (
     EuclideanSpace,
-    HilbertModule,
+    HilbertModuleMixin,
     MassWeightedHilbertModule,
     MassWeightedHilbertSpace,
     Vector,
@@ -509,10 +509,10 @@ class GaussianMeasure:
             A vector representing the pointwise variance field.
 
         Raises:
-            NotImplementedError: If the domain is not a HilbertModule (which
+            NotImplementedError: If the domain is not a HilbertModuleMixin (which
                 provides pointwise multiplication).
         """
-        if not isinstance(self.domain, HilbertModule):
+        if not isinstance(self.domain, HilbertModuleMixin):
             raise NotImplementedError(
                 "Pointwise variance requires vector multiplication on the domain."
             )
@@ -585,9 +585,9 @@ class GaussianMeasure:
             A vector representing the pointwise variance field.
 
         Raises:
-            NotImplementedError: If the domain is not a HilbertModule.
+            NotImplementedError: If the domain is not a HilbertModuleMixin.
         """
-        if not isinstance(self.domain, HilbertModule):
+        if not isinstance(self.domain, HilbertModuleMixin):
             raise NotImplementedError(
                 "Pointwise variance requires vector multiplication on the domain."
             )
@@ -710,10 +710,10 @@ class GaussianMeasure:
         Returns:
             A vector representing the pointwise standard deviation field.
         """
-        if not isinstance(self.domain, HilbertModule):
+        if not isinstance(self.domain, HilbertModuleMixin):
             raise NotImplementedError(
                 "Pointwise standard deviation requires vector multiplication on the domain "
-                "(the domain must be a HilbertModule)."
+                "(the domain must be a HilbertModuleMixin)."
             )
 
         variance = self.deflated_pointwise_variance(
@@ -1742,7 +1742,7 @@ class GaussianMeasure:
 
         induced_domain_type = (
             MassWeightedHilbertModule
-            if isinstance(self.domain, HilbertModule)
+            if isinstance(self.domain, HilbertModuleMixin)
             else MassWeightedHilbertSpace
         )
         induced_domain = induced_domain_type(

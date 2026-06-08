@@ -54,9 +54,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
 
         self._torus_space = TorusLebesgue(kmax, radius_x=radius_x, radius_y=radius_y)
 
-        AbstractSymmetricLebesgueSpace.__init__(
-            self, 2, kmax, self._torus_space.dim, False
-        )
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, kmax, self._torus_space.dim)
 
     # ---------------------------------------------- #
     #                   Properties                   #

@@ -41,7 +41,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         radius = length / (2 * np.pi)
         self._circle_space = CircleLebesgue(kmax, radius=radius)
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 1, kmax, 2 * kmax, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 1, kmax, 2 * kmax)
 
     @property
     def kmax(self) -> int:

@@ -8,7 +8,7 @@ from .hilbert_space import (
     OrthogonalHilbertSpace,
     OrthonormalHilbertSpace,
     EuclideanSpace,
-    HilbertModule,
+    HilbertModuleMixin,
     MassWeightedHilbertSpace,
     MassWeightedHilbertModule,
 )
@@ -166,7 +166,7 @@ __all__ = [
     "OrthogonalHilbertSpace",
     "OrthonormalHilbertSpace",
     "EuclideanSpace",
-    "HilbertModule",
+    "HilbertModuleMixin",
     "MassWeightedHilbertSpace",
     "MassWeightedHilbertModule",
     # nonlinear_forms

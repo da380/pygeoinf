@@ -103,7 +103,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         self._normalization: str = "ortho"
         self._csphase: int = 1
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 2, lmax, (lmax + 1) ** 2, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 2, lmax, (lmax + 1) ** 2)
 
     @classmethod
     def from_covariance(

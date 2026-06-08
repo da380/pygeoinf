@@ -24,15 +24,16 @@ from typing import (
     Literal,
 )
 
+
 import numpy as np
-from scipy.sparse import diags
+from scipy.cluster.hierarchy import linkage, fcluster
 import scipy.sparse as sps
 import scipy.sparse.linalg as splinalg
 
 from pygeoinf.hilbert_space import (
     HilbertSpace,
     OrthogonalHilbertSpace,
-    HilbertModule,
+    HilbertModuleMixin,
     Vector,
     MassWeightedHilbertModule,
     EuclideanSpace,
@@ -229,8 +230,7 @@ class InvariantGaussianMeasure(GaussianMeasure):
         self._spectral_variances = spectral_variances
         covariance = InvariantLinearAutomorphism(domain, spectral_variances)
 
-        squared_norms = domain.squared_norms
-        self._kl_scaling_array = np.sqrt(spectral_variances / squared_norms)
+        self._kl_scaling_array = np.sqrt(spectral_variances / domain.metric_values)
 
         inverse_covariance = None
         if np.all(spectral_variances > 0):
@@ -597,7 +597,7 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
     necessarily orthogonal, but need not be normalised.
     """
 
-    def __init__(self, spatial_dim: int, degree: Degree, dim: int, orthonormal: bool):
+    def __init__(self, spatial_dim: int, degree: Degree, dim: int):
         """
         Initializes the abstract invariant Lebesgue space.
 
@@ -605,24 +605,20 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
             spatial_dim: The dimension of the symmetric manifold
             degree: The truncation degree.
             dim: The dimension of the space.
-            orthonormal: True if the eigenfunction basis is orthonormal.
         """
         self._spatial_dim = spatial_dim
         self._degree = degree
-        self._dim = dim
-        self._orthonormal = orthonormal
 
-        if self._orthonormal:
-            self._metric = None
-            self._inverse_metric = None
-        else:
-            metric_values = np.fromiter(
-                (self.laplacian_eigenvector_squared_norm(k) for k in self.indices),
-                dtype=float,
-                count=self.dim,
-            )
-            self._metric = diags([metric_values], [0])
-            self._inverse_metric = diags([np.reciprocal(metric_values)], [0])
+        metric_values = np.fromiter(
+            (
+                self.laplacian_eigenvector_squared_norm(self.integer_to_index(i))
+                for i in range(dim)
+            ),
+            dtype=float,
+            count=dim,
+        )
+
+        OrthogonalHilbertSpace.__init__(self, dim, metric_values)
 
     # Add to SymmetricHilbertSpace
     @staticmethod
@@ -648,27 +644,6 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
     def degree(self) -> Degree:
         """The spectral truncation degree of the space."""
         return self._degree
-
-    @property
-    def dim(self) -> int:
-        return self._dim
-
-    @property
-    def orthonormal(self) -> bool:
-        """
-        True if the eigenfunction basis is normalised
-        """
-        return self._orthonormal
-
-    @property
-    def squared_norms(self) -> np.ndarray:
-        """
-        Returns a vector of the squared eigenvector norms.
-        """
-        if self.orthonormal:
-            return np.ones(self.dim, dtype=float)
-        else:
-            return self._metric.diagonal(k=0)
 
     @property
     def indices(self) -> Iterator[Index]:
@@ -700,7 +675,9 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
         """
         return InvariantLinearAutomorphism(self, np.ones(self.dim, dtype=float))
 
-    def zero_operator(self, codomain: Optional[HilbertSpace] = None) -> LinearOperator:
+    def zero_operator(
+        self, codomain: Optional[HilbertSpace] = None
+    ) -> InvariantLinearAutomorphism:
         """
         Returns the zero operator.
 
@@ -912,22 +889,6 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
     #                        Public methods                       #
     # ------------------------------------------------------------#
 
-    def to_dual(self, x: Vector) -> LinearForm:
-        cx = self.to_components(x)
-        if self.orthonormal:
-            return LinearForm(self, components=cx)
-        else:
-            cxp = self._metric @ cx
-            return LinearForm(self, components=cxp)
-
-    def from_dual(self, xp: LinearForm) -> Vector:
-        cxp = xp.components
-        if self.orthonormal:
-            return self.from_components(cxp)
-        else:
-            cx = self._inverse_metric @ cxp
-            return self.from_components(cx)
-
     def random_points(self, n: int) -> List[Point]:
         """
         Returns a list of `n` random points.
@@ -1097,7 +1058,6 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
             A list of lists, where each sub-list contains the indices of the
             points belonging to a specific cluster.
         """
-        from scipy.cluster.hierarchy import linkage, fcluster
 
         n = len(points)
         if n == 0:
@@ -1214,7 +1174,7 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
         return LinearOperator.from_vectors(self, weighting_functions)
 
 
-class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
+class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, ABC):
     """
     A specialisation for scalar-valued L² function spaces on symmetric manifolds.
 
@@ -1490,7 +1450,6 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
             lebesgue_space.spatial_dimension,
             lebesgue_space.degree,
             lebesgue_space.dim,
-            False,
         )
 
     @property

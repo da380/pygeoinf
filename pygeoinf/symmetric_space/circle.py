@@ -45,7 +45,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         self._fft_factor: float = np.sqrt(2 * np.pi * radius) / (2 * self.kmax)
         self._inverse_fft_factor: float = 1.0 / self._fft_factor
 
-        AbstractSymmetricLebesgueSpace.__init__(self, 1, kmax, 2 * kmax, False)
+        AbstractSymmetricLebesgueSpace.__init__(self, 1, kmax, 2 * kmax)
 
     @classmethod
     def from_covariance(
@@ -266,7 +266,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         cos_terms = np.cos(k_vals * theta)
         sin_terms = np.sin(k_vals[1 : self.kmax] * theta)
         return (
-            self._metric
+            self.metric
             @ np.concatenate([cos_terms, -sin_terms])
             / (np.sqrt(2 * np.pi * self.radius))
         )
