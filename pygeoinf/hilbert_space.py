@@ -157,6 +157,14 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
         """The zero vector (additive identity) of the space."""
         return self.from_components(np.zeros((self.dim)))
 
+    @property
+    def is_orthonormal(self) -> bool:
+        """
+        True if the space has an orthonormal basis where the component mapping
+        is an exact isometric isomorphism (i.e., the metric tensor is the identity).
+        """
+        return False
+
     def is_element(self, x: Any) -> bool:
         """
         Checks if an object is a valid element of the space.
@@ -621,6 +629,10 @@ class OrthonormalHilbertSpace(OrthogonalHilbertSpace):
 
     def __init__(self, dim: int):
         super().__init__(dim, np.ones(dim, dtype=float))
+
+    @property
+    def is_orthonormal(self) -> bool:
+        return True
 
     def to_dual(self, x: Vector) -> LinearForm:
         from .linear_forms import LinearForm

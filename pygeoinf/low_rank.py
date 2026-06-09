@@ -20,7 +20,7 @@ import scipy.linalg
 from scipy.linalg import qr
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 
-from .hilbert_space import Vector, EuclideanSpace, HilbertSpace, OrthonormalHilbertSpace
+from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .gaussian_measure import GaussianMeasure
 from .parallel import parallel_mat_mat
@@ -542,7 +542,7 @@ def random_range(
         the codomain, where `k` is the determined rank of the approximation.
     """
 
-    if measure is None and not isinstance(operator.codomain, OrthonormalHilbertSpace):
+    if measure is None and not operator.codomain.is_orthonormal:
         measure = white_noise_measure(operator.domain)
 
     max_possible_dim = min(operator.domain.dim, operator.codomain.dim)

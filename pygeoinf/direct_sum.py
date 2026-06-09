@@ -58,6 +58,14 @@ class HilbertSpaceDirectSum(HilbertSpace):
         """Returns the dimension of the direct sum space."""
         return self._dim
 
+    @property
+    def is_orthonormal(self) -> bool:
+        """
+        A direct sum space is orthonormal if and only if all of its
+        component subspaces are strictly orthonormal.
+        """
+        return all(space.is_orthonormal for space in self.subspaces)
+
     def to_components(self, xs: List[Any]) -> np.ndarray:
         cs = [space.to_components(x) for space, x in zip(self._spaces, xs)]
         return np.concatenate(cs, 0)
