@@ -3,23 +3,28 @@ Defines the foundational abstractions for working with Hilbert spaces.
 
 This module provides the core `HilbertSpace` abstract base class (ABC), which
 serves as a mathematical abstraction for real vector spaces equipped with an
-inner product. The design separates abstract vector operations from their
-concrete representations (e.g., as NumPy arrays), allowing for generic and
-reusable implementations of linear operators and algorithms.
+inner product. The design strictly decouples abstract vector space operations
+from their underlying concrete array representations, enabling highly extensible
+and reusable implementations of linear operators and numerical algorithms.
 
-The inner product of a space is defined by its Riesz representation map
-(`to_dual` and `from_dual` methods), which connects the space to its dual.
-Concrete subclasses must implement the abstract methods to define a specific
-type of space.
+The inner product of a space is rigorously defined by its Riesz representation
+map (`to_dual` and `from_dual` methods), formally bridging the space to its dual.
+Concrete subclasses must implement the core abstract methods to define the
+algebraic and geometric properties of a specific space.
 
 Key Classes
 -----------
-- `HilbertSpace`: The primary ABC defining the interface for all Hilbert spaces.
-- `DualHilbertSpace`: A wrapper class representing the dual of a Hilbert space.
-- `HilbertModule`: An ABC for Hilbert spaces that also support vector multiplication.
-- `EuclideanSpace`: A concrete implementation for R^n using NumPy arrays.
-- `MassWeightedHilbertSpace`: A space whose inner product is weighted by a
-  mass operator relative to an underlying space.
+- `HilbertSpace`: The primary ABC defining the strict API interface for all spaces.
+- `DualHilbertSpace`: A wrapper allowing linear functionals to be treated as vectors.
+- `OrthogonalHilbertSpace`: Base for spaces with known orthogonal bases, caching
+  sparse metric tensors for high-performance inner products.
+- `OrthonormalHilbertSpace`: Base for spaces with orthonormal bases, bypassing
+  metric scaling for optimal efficiency.
+- `EuclideanSpace`: A concrete implementation of R^n using standard NumPy arrays.
+- `MassWeightedHilbertSpace`: Modifies an inner product using a mass operator,
+  crucial for Galerkin representations and the Finite Element Method.
+- `HilbertModuleMixin` / `MassWeightedHilbertModule`: Extensions for spaces that
+  also form an algebra, supporting operations like pointwise vector multiplication.
 """
 
 from __future__ import annotations

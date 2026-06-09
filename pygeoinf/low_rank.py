@@ -20,7 +20,7 @@ import scipy.linalg
 from scipy.linalg import qr
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 
-from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
+from .hilbert_space import Vector, EuclideanSpace, HilbertSpace, OrthonormalHilbertSpace
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
 from .gaussian_measure import GaussianMeasure
 from .parallel import parallel_mat_mat
@@ -244,6 +244,16 @@ class LowRankEig(LinearOperator):
     def eigenvalues(self) -> np.ndarray:
         """np.ndarray: A 1D array of the computed eigenvalues."""
         return self.d_factor.extract_diagonal()
+
+    @property
+    def trace(self) -> float:
+        """
+        Computes the trace of the low-rank approximation.
+
+        This is calculated by summing the eigenvalues of the truncated
+        eigendecomposition (i.e., Tr(A_k) = sum(lambda_i)).
+        """
+        return float(np.sum(self.eigenvalues))
 
     @classmethod
     def from_randomized(
@@ -493,19 +503,33 @@ def random_range(
     n_jobs: int = -1,
 ) -> LinearOperator:
     """
-    Unified random range finder acting as an architectural bridge.
+    Computes an orthonormal basis for the range of an operator using randomized methods.
 
-    If a `GaussianMeasure` is provided, it draws abstract structured samples
-    to respect Hilbert space geometries and mass matrices. If no measure is
-    provided, it routes to high-performance component-based representations
-    via SciPy `LinearOperator`s.
+    This function acts as an intelligent architectural bridge, dynamically selecting
+    the safest and most performant algorithm based on the geometry of the codomain.
+    It guarantees that the resulting basis operator `Q` is a true geometric isometry
+    (`Q* Q = I`), which is strictly required for downstream low-rank factorizations.
+
+    Execution Paths:
+    - **Path A (Abstract/Geometric):** If a `GaussianMeasure` is provided (or generated),
+      it draws structured samples and applies abstract Gram-Schmidt orthogonalization.
+      This strictly respects the space's intrinsic inner product (e.g., mass matrices).
+    - **Path B (Component-Based Fallback):** If no measure is provided, and the codomain
+      is strictly an `OrthonormalHilbertSpace`, it extracts the raw component arrays and
+      uses highly optimized SciPy Euclidean QR decompositions.
+
+    Geometric Safety Guard:
+    If no measure is provided but the codomain is a general or mass-weighted `HilbertSpace`,
+    Euclidean QR cannot guarantee geometric orthogonality. The function will safely intercept
+    this by dynamically generating a white noise measure and routing execution through Path A.
 
     Args:
         operator (LinearOperator): The linear operator whose range is to be approximated.
         size_estimate (int): Target rank ('fixed') or initial sample size ('variable').
-        measure (GaussianMeasure, optional): Measure to draw test samples from.
+        measure (GaussianMeasure, optional): Measure to draw test samples from. If None,
+            the algorithm attempts Path B or auto-generates a white noise measure for Path A.
         galerkin (bool): If True, uses the Galerkin representation for the component fallback.
-        method (str): {'variable', 'fixed'}. Algorithm choice.
+        method (str): {'variable', 'fixed'}. The rank-determination algorithm to use.
         max_rank (int, optional): Hard limit on rank for variable sampling.
         power (int): Number of power iterations to enhance singular value decay.
         rtol (float): Relative tolerance for convergence checking.
@@ -514,8 +538,17 @@ def random_range(
         n_jobs (int): CPU cores to use.
 
     Returns:
-        LinearOperator: The isometry Q mapping from Euclidean(k) into the codomain.
+        LinearOperator: An isometric operator `Q` mapping from `EuclideanSpace(k)` into
+        the codomain, where `k` is the determined rank of the approximation.
     """
+
+    if measure is None and not isinstance(operator.codomain, OrthonormalHilbertSpace):
+        measure = white_noise_measure(operator.domain)
+
+    max_possible_dim = min(operator.domain.dim, operator.codomain.dim)
+    size_estimate = min(size_estimate, max_possible_dim)
+    if max_rank is not None:
+        max_rank = min(max_rank, max_possible_dim)
 
     # --- PATH A: Abstract, Measure-Based (Matrix-Free) ---
     if measure is not None:
