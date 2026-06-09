@@ -535,6 +535,86 @@ class InvariantGaussianMeasure(GaussianMeasure):
         _method = "dense" if method == "auto" else method
         return super().kl_divergence(other, method=_method, **kwargs)
 
+    def nuclear_norm(
+        self,
+        /,
+        *,
+        exact: bool = False,
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the Nuclear norm (Trace norm) of the covariance operator.
+
+        Because a covariance operator is positive semi-definite, its Nuclear norm
+        is mathematically identical to its trace: ||C||_* = Tr(C).
+
+        Args:
+            exact: If True, computes the exact norm by extracting the full diagonal
+                of the component matrix. This is fast for diagonal/dense matrices
+                but O(N^2) for abstract operators. If False, uses stochastic
+                Hutchinson trace estimation.
+            size_estimate: Initial number of stochastic probe vectors.
+            method: 'variable' to sample dynamically until 'rtol' is met; 'fixed' otherwise.
+            max_samples: Hard limit on stochastic samples.
+            rtol: Relative tolerance for the stochastic estimator.
+            block_size: Number of probes evaluated between convergence checks.
+            parallel: If True, evaluates the vectors concurrently.
+            n_jobs: Number of CPU cores to utilize.
+
+        Returns:
+            float: The Nuclear norm of the covariance operator.
+
+        Notes:
+            Optimisations within the invariant class mean that the various optional
+            arguments are not used in this instance.
+        """
+        return self.covariance.trace
+
+    def hilbert_schmidt_norm(
+        self,
+        /,
+        *,
+        exact: bool = False,
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the Hilbert-Schmidt norm of the covariance operator.
+
+        By definition, ||C||_HS = sqrt( Tr(C* C) ).
+        Because the covariance is self-adjoint, this evaluates to sqrt( Tr(C^2) ).
+
+        Args:
+            exact: If True, computes the exact norm by sweeping the basis.
+            size_estimate: Initial number of stochastic probe vectors.
+            method: 'variable' to sample dynamically until 'rtol' is met; 'fixed' otherwise.
+            max_samples: Hard limit on stochastic samples.
+            rtol: Relative tolerance for the stochastic estimator.
+            block_size: Number of probes evaluated between convergence checks.
+            parallel: If True, evaluates the vectors concurrently.
+            n_jobs: Number of CPU cores to utilize.
+
+        Returns:
+            float: The Hilbert-Schmidt norm of the covariance operator.
+
+        Notes:
+            Optimisations within the invariant class mean that the various optional
+            arguments are not used in this instance.
+        """
+        c2 = self.covariance @ self.covariance
+        return np.sqrt(max(c2.trace, 0.0))
+
     def __neg__(self) -> InvariantGaussianMeasure:
         """Returns the measure with a negated expectation. Covariance is unchanged."""
         return InvariantGaussianMeasure(
