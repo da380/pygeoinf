@@ -51,8 +51,8 @@ from .linear_solvers import (
 )
 from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
 from .affine_operators import AffineOperator
-from .low_rank import LowRankSVD, LowRankEig
-from .functional_calculus import operator_function_quadratic_form
+from .low_rank import LowRankSVD, LowRankEig, random_trace
+from .functional_calculus import LanczosOperatorFunction
 
 
 class LinearBayesianInversion(LinearInversion):
@@ -575,10 +575,11 @@ class LinearBayesianInversion(LinearInversion):
         Internal matrix-free engine for estimating Tr(ln(A)) using
         Stochastic Lanczos Quadrature (SLQ).
 
-        This relies on the identity ln(|A|) = Tr(ln(A)). It combines a Hutchinson
-        stochastic trace estimator (outer loop) with the Lanczos process (inner loop)
-        to evaluate the matrix logarithm quadratic forms <z, ln(A) z> without ever
-        assembling A.
+        This relies on the identity ln(|A|) = Tr(ln(A)). By wrapping the operator
+        in a LanczosOperatorFunction, we evaluate the action of the matrix logarithm
+        dynamically. We then delegate the trace estimation to the geometrically-safe
+        `random_trace` method, which evaluates the trace in the component space to
+        bypass any abstract metric distortions.
 
         Args:
             op: The self-adjoint, positive-definite operator to evaluate.
@@ -601,66 +602,26 @@ class LinearBayesianInversion(LinearInversion):
         def log_func(x: np.ndarray) -> np.ndarray:
             return np.log(np.maximum(x, 1e-15))
 
-        if hasattr(space, "squared_norms"):
-            inv_norms = 1.0 / np.sqrt(space.squared_norms)
-        else:
-            inv_norms = np.array(
-                [
-                    1.0 / np.sqrt(space.squared_norm(space.basis_vector(i)))
-                    for i in range(space.dim)
-                ]
-            )
+        # 1. Wrap the operator to dynamically evaluate y = ln(A)z via Lanczos
+        log_op = LanczosOperatorFunction(
+            op,
+            log_func,
+            size_estimate=lanczos_degree,
+            method="fixed" if lanczos_rtol is None else "variable",
+            rtol=lanczos_rtol if lanczos_rtol is not None else 1e-3,
+        )
 
-        if max_samples is None:
-            max_samples = space.dim
-
-        num_samples = min(size_estimate, max_samples)
-
-        def _compute_sample_sum(n_samples_to_draw: int) -> float:
-            def _single_sample() -> float:
-                c_z = np.random.choice([-1.0, 1.0], size=space.dim) * inv_norms
-                z = space.from_components(c_z)
-
-                return operator_function_quadratic_form(
-                    op,
-                    z,
-                    log_func,
-                    size_estimate=lanczos_degree,
-                    method="fixed" if lanczos_rtol is None else "variable",
-                    rtol=lanczos_rtol if lanczos_rtol is not None else 1e-3,
-                )
-
-            if parallel:
-
-                results = Parallel(n_jobs=n_jobs)(
-                    delayed(_single_sample)() for _ in range(n_samples_to_draw)
-                )
-                return sum(results)
-            else:
-                return sum(_single_sample() for _ in range(n_samples_to_draw))
-
-        total_sum = _compute_sample_sum(num_samples)
-        trace_est = total_sum / num_samples if num_samples > 0 else 0.0
-
-        if method == "variable" and num_samples < max_samples:
-            while num_samples < max_samples:
-                old_est = trace_est
-                samples_to_add = min(block_size, max_samples - num_samples)
-
-                new_sum = _compute_sample_sum(samples_to_add)
-
-                total_sum += new_sum
-                total_samples = num_samples + samples_to_add
-                trace_est = total_sum / total_samples
-
-                if abs(trace_est) > 0:
-                    error = abs(trace_est - old_est) / abs(trace_est)
-                    if error < rtol:
-                        break
-
-                num_samples = total_samples
-
-        return float(trace_est)
+        # 2. Delegate to the unified, geometry-safe trace estimator
+        return random_trace(
+            log_op,
+            size_estimate,
+            method=method,
+            max_samples=max_samples,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
 
     def estimate_log_determinant(
         self,
@@ -923,11 +884,15 @@ class LinearBayesianInversion(LinearInversion):
         else:
             normal_diag = aqa_diag
 
-        approx_normal_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            data_space, data_space, normal_diag, galerkin=True
+        inv_normal_diag = np.zeros_like(normal_diag)
+        valid = normal_diag > 1e-14
+        inv_normal_diag[valid] = 1.0 / normal_diag[valid]
+
+        approx_inv_normal_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            data_space, data_space, inv_normal_diag, galerkin=True
         )
 
-        return approx_normal_op.inverse
+        return approx_inv_normal_op
 
     def sparse_localized_preconditioner(
         self,

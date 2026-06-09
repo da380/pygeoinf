@@ -24,14 +24,16 @@ from typing import (
     Literal,
 )
 
+
 import numpy as np
-from scipy.sparse import diags
+from scipy.cluster.hierarchy import linkage, fcluster
 import scipy.sparse as sps
 import scipy.sparse.linalg as splinalg
 
 from pygeoinf.hilbert_space import (
     HilbertSpace,
-    HilbertModule,
+    OrthogonalHilbertSpace,
+    HilbertModuleMixin,
     Vector,
     MassWeightedHilbertModule,
     EuclideanSpace,
@@ -142,6 +144,62 @@ class InvariantLinearAutomorphism(DiagonalSparseMatrixLinearOperator):
             self.domain, np.reciprocal(current_eigenvalues)
         )
 
+    @property
+    def sqrt(self) -> InvariantLinearAutomorphism:
+        """Returns the principal square root of the operator."""
+        if np.any(self.eigenvalues < 0):
+            raise ValueError(
+                "Cannot compute real square root of operator with negative eigenvalues."
+            )
+        return self.apply_function(np.sqrt)
+
+    @property
+    def exp(self) -> InvariantLinearAutomorphism:
+        """Returns the matrix exponential of the operator."""
+        return self.apply_function(np.exp)
+
+    @property
+    def log(self) -> InvariantLinearAutomorphism:
+        """Returns the matrix logarithm of the operator."""
+        if np.any(self.eigenvalues <= 0):
+            raise ValueError("Logarithm requires strictly positive eigenvalues.")
+        return self.apply_function(np.log)
+
+    def apply_function(
+        self, func: Callable[[np.ndarray], np.ndarray]
+    ) -> InvariantLinearAutomorphism:
+        """
+        Applies a mathematical function to the operator via functional calculus.
+
+        Because this operator is invariant and diagonal in the spectral basis,
+        the function is simply applied element-wise to the eigenvalues.
+
+        Args:
+            func: A NumPy ufunc or a callable that can be vectorized.
+
+        Returns:
+            A new InvariantLinearAutomorphism representing f(A).
+        """
+        try:
+            new_eigenvalues = func(self.eigenvalues)
+        except (TypeError, AttributeError):
+            vectorized_func = np.vectorize(func)
+            new_eigenvalues = vectorized_func(self.eigenvalues)
+
+        return InvariantLinearAutomorphism(self.domain, new_eigenvalues)
+
+    def __abs__(self) -> InvariantLinearAutomorphism:
+        """Returns the absolute value (modulus) of the operator."""
+        return self.apply_function(np.abs)
+
+    def __pow__(self, power: float) -> InvariantLinearAutomorphism:
+        """Raises the operator to a fractional or integer power."""
+        if power % 1 != 0 and np.any(self.eigenvalues < 0):
+            raise ValueError(
+                "Cannot compute fractional power of operator with negative eigenvalues."
+            )
+        return self.apply_function(lambda x: x**power)
+
     def __neg__(self) -> InvariantLinearAutomorphism:
         current_diagonal = self.eigenvalues
         return InvariantLinearAutomorphism(self.domain, -current_diagonal)
@@ -228,8 +286,7 @@ class InvariantGaussianMeasure(GaussianMeasure):
         self._spectral_variances = spectral_variances
         covariance = InvariantLinearAutomorphism(domain, spectral_variances)
 
-        squared_norms = domain.squared_norms
-        self._kl_scaling_array = np.sqrt(spectral_variances / squared_norms)
+        self._kl_scaling_array = np.sqrt(spectral_variances / domain.metric_values)
 
         inverse_covariance = None
         if np.all(spectral_variances > 0):
@@ -478,6 +535,86 @@ class InvariantGaussianMeasure(GaussianMeasure):
         _method = "dense" if method == "auto" else method
         return super().kl_divergence(other, method=_method, **kwargs)
 
+    def nuclear_norm(
+        self,
+        /,
+        *,
+        exact: bool = False,
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the Nuclear norm (Trace norm) of the covariance operator.
+
+        Because a covariance operator is positive semi-definite, its Nuclear norm
+        is mathematically identical to its trace: ||C||_* = Tr(C).
+
+        Args:
+            exact: If True, computes the exact norm by extracting the full diagonal
+                of the component matrix. This is fast for diagonal/dense matrices
+                but O(N^2) for abstract operators. If False, uses stochastic
+                Hutchinson trace estimation.
+            size_estimate: Initial number of stochastic probe vectors.
+            method: 'variable' to sample dynamically until 'rtol' is met; 'fixed' otherwise.
+            max_samples: Hard limit on stochastic samples.
+            rtol: Relative tolerance for the stochastic estimator.
+            block_size: Number of probes evaluated between convergence checks.
+            parallel: If True, evaluates the vectors concurrently.
+            n_jobs: Number of CPU cores to utilize.
+
+        Returns:
+            float: The Nuclear norm of the covariance operator.
+
+        Notes:
+            Optimisations within the invariant class mean that the various optional
+            arguments are not used in this instance.
+        """
+        return self.covariance.trace
+
+    def hilbert_schmidt_norm(
+        self,
+        /,
+        *,
+        exact: bool = False,
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the Hilbert-Schmidt norm of the covariance operator.
+
+        By definition, ||C||_HS = sqrt( Tr(C* C) ).
+        Because the covariance is self-adjoint, this evaluates to sqrt( Tr(C^2) ).
+
+        Args:
+            exact: If True, computes the exact norm by sweeping the basis.
+            size_estimate: Initial number of stochastic probe vectors.
+            method: 'variable' to sample dynamically until 'rtol' is met; 'fixed' otherwise.
+            max_samples: Hard limit on stochastic samples.
+            rtol: Relative tolerance for the stochastic estimator.
+            block_size: Number of probes evaluated between convergence checks.
+            parallel: If True, evaluates the vectors concurrently.
+            n_jobs: Number of CPU cores to utilize.
+
+        Returns:
+            float: The Hilbert-Schmidt norm of the covariance operator.
+
+        Notes:
+            Optimisations within the invariant class mean that the various optional
+            arguments are not used in this instance.
+        """
+        c2 = self.covariance @ self.covariance
+        return np.sqrt(max(c2.trace, 0.0))
+
     def __neg__(self) -> InvariantGaussianMeasure:
         """Returns the measure with a negated expectation. Covariance is unchanged."""
         return InvariantGaussianMeasure(
@@ -580,7 +717,7 @@ class InvariantGaussianMeasure(GaussianMeasure):
         return self.domain.add(sample_vector, self.expectation)
 
 
-class SymmetricHilbertSpace(HilbertSpace, ABC):
+class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
     """
     An abstract base class for Hilbert spaces of functions spaces on
     symmetric manifolds.
@@ -596,7 +733,7 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     necessarily orthogonal, but need not be normalised.
     """
 
-    def __init__(self, spatial_dim: int, degree: Degree, dim: int, orthonormal: bool):
+    def __init__(self, spatial_dim: int, degree: Degree, dim: int):
         """
         Initializes the abstract invariant Lebesgue space.
 
@@ -604,24 +741,20 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             spatial_dim: The dimension of the symmetric manifold
             degree: The truncation degree.
             dim: The dimension of the space.
-            orthonormal: True if the eigenfunction basis is orthonormal.
         """
         self._spatial_dim = spatial_dim
         self._degree = degree
-        self._dim = dim
-        self._orthonormal = orthonormal
 
-        if self._orthonormal:
-            self._metric = None
-            self._inverse_metric = None
-        else:
-            metric_values = np.fromiter(
-                (self.laplacian_eigenvector_squared_norm(k) for k in self.indices),
-                dtype=float,
-                count=self.dim,
-            )
-            self._metric = diags([metric_values], [0])
-            self._inverse_metric = diags([np.reciprocal(metric_values)], [0])
+        metric_values = np.fromiter(
+            (
+                self.laplacian_eigenvector_squared_norm(self.integer_to_index(i))
+                for i in range(dim)
+            ),
+            dtype=float,
+            count=dim,
+        )
+
+        OrthogonalHilbertSpace.__init__(self, dim, metric_values)
 
     # Add to SymmetricHilbertSpace
     @staticmethod
@@ -647,27 +780,6 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     def degree(self) -> Degree:
         """The spectral truncation degree of the space."""
         return self._degree
-
-    @property
-    def dim(self) -> int:
-        return self._dim
-
-    @property
-    def orthonormal(self) -> bool:
-        """
-        True if the eigenfunction basis is normalised
-        """
-        return self._orthonormal
-
-    @property
-    def squared_norms(self) -> np.ndarray:
-        """
-        Returns a vector of the squared eigenvector norms.
-        """
-        if self.orthonormal:
-            return np.ones(self.dim, dtype=float)
-        else:
-            return self._metric.diagonal(k=0)
 
     @property
     def indices(self) -> Iterator[Index]:
@@ -699,7 +811,9 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         """
         return InvariantLinearAutomorphism(self, np.ones(self.dim, dtype=float))
 
-    def zero_operator(self, codomain: Optional[HilbertSpace] = None) -> LinearOperator:
+    def zero_operator(
+        self, codomain: Optional[HilbertSpace] = None
+    ) -> InvariantLinearAutomorphism:
         """
         Returns the zero operator.
 
@@ -911,22 +1025,6 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
     #                        Public methods                       #
     # ------------------------------------------------------------#
 
-    def to_dual(self, x: Vector) -> LinearForm:
-        cx = self.to_components(x)
-        if self.orthonormal:
-            return LinearForm(self, components=cx)
-        else:
-            cxp = self._metric @ cx
-            return LinearForm(self, components=cxp)
-
-    def from_dual(self, xp: LinearForm) -> Vector:
-        cxp = xp.components
-        if self.orthonormal:
-            return self.from_components(cxp)
-        else:
-            cx = self._inverse_metric @ cxp
-            return self.from_components(cx)
-
     def random_points(self, n: int) -> List[Point]:
         """
         Returns a list of `n` random points.
@@ -1096,7 +1194,6 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
             A list of lists, where each sub-list contains the indices of the
             points belonging to a specific cluster.
         """
-        from scipy.cluster.hierarchy import linkage, fcluster
 
         n = len(points)
         if n == 0:
@@ -1213,7 +1310,7 @@ class SymmetricHilbertSpace(HilbertSpace, ABC):
         return LinearOperator.from_vectors(self, weighting_functions)
 
 
-class AbstractSymmetricLebesgueSpace(HilbertModule, SymmetricHilbertSpace, ABC):
+class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, ABC):
     """
     A specialisation for scalar-valued L² function spaces on symmetric manifolds.
 
@@ -1489,7 +1586,6 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
             lebesgue_space.spatial_dimension,
             lebesgue_space.degree,
             lebesgue_space.dim,
-            False,
         )
 
     @property

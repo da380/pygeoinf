@@ -5,8 +5,10 @@ Unified imports for the package.
 from .hilbert_space import (
     HilbertSpace,
     DualHilbertSpace,
+    OrthogonalHilbertSpace,
+    OrthonormalHilbertSpace,
     EuclideanSpace,
-    HilbertModule,
+    HilbertModuleMixin,
     MassWeightedHilbertSpace,
     MassWeightedHilbertModule,
 )
@@ -151,7 +153,15 @@ from .datasets import (
     sample_earthquakes,
 )
 
-from .low_rank import LowRankSVD, LowRankCholesky, LowRankEig, white_noise_measure
+from .low_rank import (
+    LowRankSVD,
+    LowRankCholesky,
+    LowRankEig,
+    white_noise_measure,
+    random_range,
+    random_diagonal,
+    random_trace,
+)
 
 from .functional_calculus import LanczosOperatorFunction
 
@@ -161,8 +171,10 @@ __all__ = [
     # hilbert_space
     "HilbertSpace",
     "DualHilbertSpace",
+    "OrthogonalHilbertSpace",
+    "OrthonormalHilbertSpace",
     "EuclideanSpace",
-    "HilbertModule",
+    "HilbertModuleMixin",
     "MassWeightedHilbertSpace",
     "MassWeightedHilbertModule",
     # nonlinear_forms
@@ -282,6 +294,9 @@ __all__ = [
     "LowRankEig",
     "LowRankCholesky",
     "white_noise_measure",
+    "random_range",
+    "random_diagonal",
+    "random_trace",
     # functional_calculus
     "LanczosOperatorFunction",
 ]

@@ -352,9 +352,6 @@ class TestOperatorFactories:
         assert not dense_op.is_galerkin
         assert np.allclose(dense_op.matrix(dense=True, galerkin=False), M)
 
-        # Verify that direct component access (a feature of DenseMatrixLinearOperator) works
-        assert dense_op[0, 1] == 2.0
-
         # Verify it respects the galerkin flag
         dense_op_galerkin = free_op.with_dense_matrix(galerkin=True)
         assert isinstance(dense_op_galerkin, inf.DenseMatrixLinearOperator)
@@ -403,15 +400,6 @@ class TestMatrixOperatorSpecializations:
     """
     Tests for the specialized MatrixLinearOperator and its subclasses.
     """
-
-    def test_dense_matrix_op_getitem(self):
-        """Tests component-wise access for DenseMatrixLinearOperator."""
-        domain = inf.EuclideanSpace(2)
-        matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-        op = inf.DenseMatrixLinearOperator(domain, domain, matrix)
-
-        assert op[0, 1] == 2.0
-        assert np.allclose(op[1, :], np.array([3.0, 4.0]))
 
     def test_matrix_op_optimized_diagonals(self):
         """Confirms the optimized diagonal extraction override works correctly."""
@@ -487,19 +475,6 @@ class TestSparseMatrixOperator:
         )
         assert np.allclose(diagonals, expected_diagonals)
         assert offsets == [-1, 0, 1]
-
-    def test_getitem_access(self, sparse_op_fixture):
-        """Tests component and slice access."""
-        op, _ = sparse_op_fixture
-
-        # Single element access
-        assert op[0, 2] == 2.0
-        assert op[1, 0] == 0.0  # Test a zero element
-
-        # Row slice access
-        row_slice = op[1, :]
-        assert isinstance(row_slice, sp.sparray)
-        assert np.allclose(row_slice.toarray().flatten(), np.array([0, 3, 0]))
 
 
 @pytest.fixture
@@ -634,72 +609,3 @@ class TestDiagonalSparseOperator:
             inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
                 domain, domain, short_values
             )
-
-    def test_inverse_property(self):
-        """
-        Tests the .inverse property for strictly diagonal operators.
-        """
-        domain = inf.EuclideanSpace(3)
-        diagonal_values = np.array([2.0, 4.0, 5.0])
-        op = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            domain, domain, diagonal_values
-        )
-
-        # Compute the inverse
-        inv_op = op.inverse
-
-        # Check that the product is the identity
-        identity_op = op @ inv_op
-        identity_matrix = identity_op.matrix(dense=True)
-
-        assert isinstance(inv_op, inf.DiagonalSparseMatrixLinearOperator)
-        assert np.allclose(identity_matrix, np.eye(3))
-        assert np.allclose(inv_op.extract_diagonal(), [0.5, 0.25, 0.2])
-
-        # Test that it fails for a non-diagonal operator
-        multi_diag_op = inf.DiagonalSparseMatrixLinearOperator(
-            domain, domain, (np.array([[1, 2, 0], [0, 3, 4]]), [-1, 1])
-        )
-        with pytest.raises(NotImplementedError):
-            _ = multi_diag_op.inverse
-
-        # Test that it fails for a diagonal with zeros
-        zero_diag_op = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            domain, domain, np.array([1.0, 0.0, 3.0])
-        )
-        with pytest.raises(ValueError):
-            _ = zero_diag_op.inverse
-
-    def test_sqrt_property(self):
-        """
-        Tests the .sqrt property for strictly diagonal operators.
-        """
-        domain = inf.EuclideanSpace(3)
-        diagonal_values = np.array([4.0, 9.0, 16.0])
-        op = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            domain, domain, diagonal_values
-        )
-
-        # Compute the square root
-        sqrt_op = op.sqrt
-
-        # Check that squaring the result gives back the original
-        reconstructed_op = sqrt_op**2
-
-        assert isinstance(sqrt_op, inf.DiagonalSparseMatrixLinearOperator)
-        assert np.allclose(reconstructed_op.matrix(dense=True), op.matrix(dense=True))
-        assert np.allclose(sqrt_op.extract_diagonal(), [2.0, 3.0, 4.0])
-
-        # NEW: Test that it fails for a non-diagonal operator
-        multi_diag_op = inf.DiagonalSparseMatrixLinearOperator(
-            domain, domain, (np.array([[1, 2, 0], [0, 3, 4]]), [-1, 1])
-        )
-        with pytest.raises(NotImplementedError):
-            _ = multi_diag_op.sqrt
-
-        # Test that it fails for a diagonal with negative entries
-        neg_val_op = inf.DiagonalSparseMatrixLinearOperator.from_diagonal_values(
-            domain, domain, np.array([1.0, -4.0, 9.0])
-        )
-        with pytest.raises(ValueError):
-            _ = neg_val_op.sqrt

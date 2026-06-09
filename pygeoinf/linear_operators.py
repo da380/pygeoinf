@@ -29,7 +29,7 @@ from scipy.sparse.linalg import LinearOperator as ScipyLinOp
 
 from joblib import Parallel, delayed
 
-# from .operators import Operator
+
 from .nonlinear_operators import NonLinearOperator
 
 
@@ -37,7 +37,7 @@ from .parallel import parallel_compute_dense_matrix_from_scipy_op
 
 from .checks.linear_operators import LinearOperatorAxiomChecks
 
-# This block only runs for type checkers, not at runtime
+
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace, Vector
     from .linear_forms import LinearForm
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     """A linear operator between two Hilbert spaces.
 
-    This class represents a linear map `L(x) = Ax` and provides rich
+    This class represents a linear map `A(x)` and provides rich
     functionality for linear algebraic operations. It specializes
     `NonLinearOperator`, with the derivative mapping taking the
     required form (i.e., the derivative is just the operator itself).
@@ -61,11 +61,11 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         self,
         domain: HilbertSpace,
         codomain: HilbertSpace,
-        mapping: Callable[[Any], Any],
+        mapping: Callable[[Vector], Vector],
         /,
         *,
-        dual_mapping: Optional[Callable[[Any], Any]] = None,
-        adjoint_mapping: Optional[Callable[[Any], Any]] = None,
+        dual_mapping: Optional[Callable[[Vector], Vector]] = None,
+        adjoint_mapping: Optional[Callable[[Vector], Vector]] = None,
         dual_base: Optional[LinearOperator] = None,
         adjoint_base: Optional[LinearOperator] = None,
     ) -> None:
@@ -83,7 +83,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
 
         Notes:
             If neither the dual or adjoint mappings are provided, an they are
-            deduced internally using a correction but very inefficient method.
+            deduced internally using a correct but very inefficient method.
             In general this functionality should not be relied on other than
             for operators between low-dimensional spaces.
         """
@@ -789,7 +789,7 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
         galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
-    ) -> "DenseMatrixLinearOperator":
+    ) -> DenseMatrixLinearOperator:
         """
         Returns a new operator equivalent to the existing one, but with its
         matrix representation computed and stored internally in dense form.
@@ -831,34 +831,19 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
     def _compute_dense_matrix(
         self, galerkin: bool, parallel: bool, n_jobs: int
     ) -> np.ndarray:
-        # Optimization: If the codomain is smaller than the domain, it is cheaper
-        # to compute the matrix of the adjoint/dual (which has fewer columns)
-        # and transpose the result.
 
-        # Note: This recursion naturally terminates because the adjoint/dual
-        # swaps the domain and codomain. In the recursive call,
-        # (codomain.dim < domain.dim) will be False, forcing the standard path.
-
-        # If the operator has its dual and adjoint actions done using the
-        # default implementation, this optimisation is skipped.
         if (
             self.codomain.dim < self.domain.dim
             and not self.__using_default_dual_and_adjoint
         ):
             if galerkin:
-                # For Galerkin representations: Matrix(L) = Matrix(L*).T
                 return self.adjoint.matrix(
                     dense=True, galerkin=True, parallel=parallel, n_jobs=n_jobs
                 ).T
             else:
-                # For Standard representations: Matrix(L) = Matrix(L').T
                 return self.dual.matrix(
                     dense=True, galerkin=False, parallel=parallel, n_jobs=n_jobs
                 ).T
-
-        # --- Standard Column-wise Construction ---
-        # This block executes if optimization is not applicable (or in the
-        # recursive base case).
 
         scipy_op_wrapper = self.matrix(galerkin=galerkin)
 
@@ -930,7 +915,6 @@ class LinearOperator(NonLinearOperator, LinearOperatorAxiomChecks):
             a `NonLinearOperator`.
         """
 
-        # Yield to AffineOperator to preserve structure
         if type(other).__name__ == "AffineOperator":
             return NotImplemented
 
@@ -1245,16 +1229,6 @@ class DenseMatrixLinearOperator(MatrixLinearOperator):
 
         return DenseMatrixLinearOperator(domain, codomain, matrix, galerkin=galerkin)
 
-    def __getitem__(self, key: tuple[int, int] | int | slice) -> float | np.ndarray:
-        """
-        Provides direct, component-wise access to the underlying matrix.
-
-        This allows for intuitive slicing and indexing, like `op[i, j]` or `op[0, :]`.
-        Note: The access is on the stored matrix, which may be in either
-        standard or Galerkin form depending on how the operator was initialized.
-        """
-        return self._matrix[key]
-
 
 class SparseMatrixLinearOperator(MatrixLinearOperator):
     """
@@ -1300,10 +1274,6 @@ class SparseMatrixLinearOperator(MatrixLinearOperator):
         Provides public read-only access to the underlying SciPy sparse array.
         """
         return self._matrix
-
-    def __getitem__(self, key):
-        """Provides direct component access using SciPy's sparse indexing."""
-        return self._matrix[key]
 
     def _compute_dense_matrix(
         self, galerkin: bool, parallel: bool, n_jobs: int
@@ -1369,7 +1339,7 @@ class SparseMatrixLinearOperator(MatrixLinearOperator):
         return diagonals_array, offsets
 
 
-class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
+class DiagonalSparseMatrixLinearOperator(MatrixLinearOperator):
     """
     A highly specialized operator for matrices defined purely by a set of
     non-zero diagonals.
@@ -1378,16 +1348,6 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
     for maximum efficiency in storage and matrix-vector products. It provides
     extremely fast methods for extracting diagonals, as this is its native
     storage format.
-
-    A key feature of this class is its support for **functional calculus**. It
-    dynamically proxies element-wise mathematical functions (e.g., `.sqrt()`,
-    `.log()`, `abs()`, `**`) to the underlying sparse array. For reasons of
-    mathematical correctness, these operations are restricted to operators that
-    are **strictly diagonal** (i.e., have only a non-zero main diagonal) and
-    will raise a `NotImplementedError` otherwise.
-
-    Aggregation methods that do not return a new operator (e.g., `.sum()`)
-    are not restricted and can be used on any multi-diagonal operator.
 
     Class Methods
     -------------
@@ -1429,9 +1389,7 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         shape = (codomain.dim, domain.dim)
         dia_array = sp.dia_array(diagonals, shape=shape)
 
-        MatrixLinearOperator.__init__(
-            self, domain, codomain, dia_array, galerkin=galerkin
-        )
+        super().__init__(domain, codomain, dia_array, galerkin=galerkin)
 
     @classmethod
     def from_operator(
@@ -1492,7 +1450,6 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
                 "Domain, codomain, and diagonal_values must all have the same dimension."
             )
 
-        # Reshape the 1D array of values into the 2D `data` array format
         diagonals_data = diagonal_values.reshape(1, -1)
         offsets = [0]
 
@@ -1510,72 +1467,30 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
         """
         return len(self.offsets) == 1 and self.offsets[0] == 0
 
-    @property
-    def inverse(self) -> "DiagonalSparseMatrixLinearOperator":
+    def extract_diagonal(
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> np.ndarray:
         """
-        The inverse of the operator, computed via functional calculus.
-        Requires the operator to be strictly diagonal with no zero entries.
+        Overrides the base method to efficiently extract the main diagonal.
         """
-        if not self.is_strictly_diagonal:
-            raise NotImplementedError(
-                "Inverse is only implemented for strictly diagonal operators."
+        if galerkin == self.is_galerkin:
+            return self._matrix.diagonal(k=0)
+        else:
+            return super().extract_diagonal(
+                galerkin=galerkin, parallel=parallel, n_jobs=n_jobs
             )
-
-        if np.any(self._matrix.diagonal(k=0) == 0):
-            raise ValueError("Cannot invert an operator with zeros on the diagonal.")
-
-        return self**-1
-
-    @property
-    def sqrt(self) -> "DiagonalSparseMatrixLinearOperator":
-        """
-        The square root of the operator, computed via functional calculus.
-        Requires the operator to be strictly diagonal with non-negative entries.
-        """
-        if np.any(self._matrix.data < 0):
-            raise ValueError(
-                "Cannot take the square root of an operator with negative entries."
-            )
-
-        return self.apply_function(np.sqrt)
-
-    def apply_function(
-        self, func: Union[str, Callable[[np.ndarray], np.ndarray]]
-    ) -> DiagonalSparseMatrixLinearOperator:
-        """
-        Applies a function to the diagonal values (eigenvalues) of the operator.
-
-        This supports functional calculus for strictly diagonal operators.
-        For maximum performance, pass a NumPy ufunc (e.g., `np.sqrt`, `np.exp`).
-
-        Args:
-            func: A callable function, or the string name of a SciPy sparse method.
-        """
-        if not self.is_strictly_diagonal:
-            raise NotImplementedError(
-                "Functional calculus (apply_function) is only mathematically "
-                "defined here for strictly diagonal operators."
-            )
-
-        try:
-            new_data = func(self._matrix.data)
-        except (TypeError, AttributeError):
-            vectorized_func = np.vectorize(func)
-            new_data = vectorized_func(self._matrix.data)
-
-        return DiagonalSparseMatrixLinearOperator(
-            self.domain,
-            self.codomain,
-            (new_data, self.offsets),
-            galerkin=self.is_galerkin,
-        )
 
     def extract_diagonals(
         self,
         offsets: List[int],
         /,
         *,
-        galerkin: bool = True,
+        galerkin: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
     ) -> Tuple[np.ndarray, List[int]]:
@@ -1597,10 +1512,13 @@ class DiagonalSparseMatrixLinearOperator(SparseMatrixLinearOperator):
 
         return result_diagonals, offsets
 
-    def __abs__(self):
-        """Explicitly handle the built-in abs() function."""
-        return self.apply_function(np.abs)
-
-    def __pow__(self, power):
-        """Explicitly handle the power operator (**)."""
-        return self.apply_function(lambda x: x**power)
+    def _compute_dense_matrix(
+        self, galerkin: bool, parallel: bool, n_jobs: int
+    ) -> np.ndarray:
+        """
+        Overrides the base method to efficiently compute the dense matrix.
+        """
+        if galerkin == self.is_galerkin:
+            return self._matrix.toarray()
+        else:
+            return super()._compute_dense_matrix(galerkin, parallel, n_jobs)

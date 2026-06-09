@@ -12,13 +12,15 @@ is provided, they fall back to highly optimized, component-based matrix-free alg
 """
 
 from __future__ import annotations
-from typing import List, Optional, Union, Callable
+from typing import List, Optional, Union, Callable, Literal
 import warnings
 
 import numpy as np
 import scipy.linalg
 from scipy.linalg import qr
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
+
+from joblib import Parallel, delayed
 
 from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
@@ -245,6 +247,16 @@ class LowRankEig(LinearOperator):
         """np.ndarray: A 1D array of the computed eigenvalues."""
         return self.d_factor.extract_diagonal()
 
+    @property
+    def trace(self) -> float:
+        """
+        Computes the trace of the low-rank approximation.
+
+        This is calculated by summing the eigenvalues of the truncated
+        eigendecomposition (i.e., Tr(A_k) = sum(lambda_i)).
+        """
+        return float(np.sum(self.eigenvalues))
+
     @classmethod
     def from_randomized(
         cls,
@@ -321,19 +333,32 @@ class LowRankEig(LinearOperator):
         return cls(u_op, d_op)
 
     def apply_function(
-        self, func: Callable[[np.ndarray], np.ndarray], *, regularization: float = 0.0
+        self,
+        func: Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        regularization: float = 0.0,
     ) -> LowRankEig:
         """
         Applies a function to the spectrum of the operator.
         Returns a new LowRankEig representing f(A).
         """
 
-        def safe_func(x: np.ndarray) -> np.ndarray:
-            return func(x + regularization)
+        current_eigenvalues = self.eigenvalues + regularization
 
-        new_d_op = self.d_factor.apply_function(safe_func)
+        try:
+            new_eigenvalues = func(current_eigenvalues)
+        except (TypeError, AttributeError):
+            vectorized_func = np.vectorize(func)
+            new_eigenvalues = vectorized_func(current_eigenvalues)
 
-        # Return a new LowRankEig with the updated diagonal
+        new_d_op = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+            self.d_factor.domain,
+            self.d_factor.codomain,
+            new_eigenvalues,
+            galerkin=self.d_factor.is_galerkin,
+        )
+
         return LowRankEig(self.u_factor, new_d_op)
 
 
@@ -480,19 +505,33 @@ def random_range(
     n_jobs: int = -1,
 ) -> LinearOperator:
     """
-    Unified random range finder acting as an architectural bridge.
+    Computes an orthonormal basis for the range of an operator using randomized methods.
 
-    If a `GaussianMeasure` is provided, it draws abstract structured samples
-    to respect Hilbert space geometries and mass matrices. If no measure is
-    provided, it routes to high-performance component-based representations
-    via SciPy `LinearOperator`s.
+    This function acts as an intelligent architectural bridge, dynamically selecting
+    the safest and most performant algorithm based on the geometry of the codomain.
+    It guarantees that the resulting basis operator `Q` is a true geometric isometry
+    (`Q* Q = I`), which is strictly required for downstream low-rank factorizations.
+
+    Execution Paths:
+    - **Path A (Abstract/Geometric):** If a `GaussianMeasure` is provided (or generated),
+      it draws structured samples and applies abstract Gram-Schmidt orthogonalization.
+      This strictly respects the space's intrinsic inner product (e.g., mass matrices).
+    - **Path B (Component-Based Fallback):** If no measure is provided, and the codomain
+      is strictly an `OrthonormalHilbertSpace`, it extracts the raw component arrays and
+      uses highly optimized SciPy Euclidean QR decompositions.
+
+    Geometric Safety Guard:
+    If no measure is provided but the codomain is a general or mass-weighted `HilbertSpace`,
+    Euclidean QR cannot guarantee geometric orthogonality. The function will safely intercept
+    this by dynamically generating a white noise measure and routing execution through Path A.
 
     Args:
         operator (LinearOperator): The linear operator whose range is to be approximated.
         size_estimate (int): Target rank ('fixed') or initial sample size ('variable').
-        measure (GaussianMeasure, optional): Measure to draw test samples from.
+        measure (GaussianMeasure, optional): Measure to draw test samples from. If None,
+            the algorithm attempts Path B or auto-generates a white noise measure for Path A.
         galerkin (bool): If True, uses the Galerkin representation for the component fallback.
-        method (str): {'variable', 'fixed'}. Algorithm choice.
+        method (str): {'variable', 'fixed'}. The rank-determination algorithm to use.
         max_rank (int, optional): Hard limit on rank for variable sampling.
         power (int): Number of power iterations to enhance singular value decay.
         rtol (float): Relative tolerance for convergence checking.
@@ -501,8 +540,17 @@ def random_range(
         n_jobs (int): CPU cores to use.
 
     Returns:
-        LinearOperator: The isometry Q mapping from Euclidean(k) into the codomain.
+        LinearOperator: An isometric operator `Q` mapping from `EuclideanSpace(k)` into
+        the codomain, where `k` is the determined rank of the approximation.
     """
+
+    if measure is None and not operator.codomain.is_orthonormal:
+        measure = white_noise_measure(operator.domain)
+
+    max_possible_dim = min(operator.domain.dim, operator.codomain.dim)
+    size_estimate = min(size_estimate, max_possible_dim)
+    if max_rank is not None:
+        max_rank = min(max_rank, max_possible_dim)
 
     # --- PATH A: Abstract, Measure-Based (Matrix-Free) ---
     if measure is not None:
@@ -1000,3 +1048,109 @@ def deflated_diagonal(
         total_diagonal += stochastic_diag
 
     return total_diagonal
+
+
+def random_trace(
+    operator: LinearOperator,
+    size_estimate: int,
+    /,
+    *,
+    method: Literal["variable", "fixed"] = "variable",
+    max_samples: Optional[int] = None,
+    rtol: float = 1e-2,
+    block_size: int = 10,
+    parallel: bool = False,
+    n_jobs: int = -1,
+) -> float:
+    """
+    Estimates the trace of an operator using Hutchinson's randomized method.
+
+    This function calculates the trace of an endomorphism (an operator mapping a
+    space to itself). Because the trace of a linear operator is invariant under
+    any change of basis, it is entirely independent of the space's abstract inner
+    product or metric tensor (mass matrix).
+
+    To achieve an unbiased estimate for any arbitrary Hilbert space, this method
+    bypasses abstract metric distortions by evaluating the trace directly on the
+    coordinate matrix representation of the operator. It draws standard Euclidean
+    Rademacher noise (z_c), lifts it to the abstract space to apply the operator,
+    extracts the components of the result, and computes the standard dot product:
+        Tr(A) = E[ z_c . (A_c z_c) ]
+
+
+    Args:
+        operator (LinearOperator): The operator whose trace is to be estimated.
+            Must be an endomorphism (i.e., operator.domain == operator.codomain).
+        size_estimate (int): The baseline number of Monte Carlo probe vectors to
+            draw. If method='fixed', exactly this many samples are evaluated. If
+            method='variable', this acts as the initial batch size.
+        method (str): The convergence strategy. 'variable' dynamically evaluates
+            batches until the running average stabilizes. 'fixed' runs exactly
+            `size_estimate` iterations. Defaults to 'variable'.
+        max_samples (int, optional): The absolute maximum number of probe vectors
+            allowed when using the 'variable' method. If None, defaults to the
+            dimension of the underlying Hilbert space.
+        rtol (float): The relative tolerance for dynamic convergence checking. The
+            loop terminates when the fractional change in the running average falls
+            below this threshold. Defaults to 1e-2.
+        block_size (int): The number of new samples drawn between each convergence
+            check when using the 'variable' method. Defaults to 10.
+        parallel (bool): If True, parallelizes the independent Monte Carlo samples
+            across multiple CPU cores. Defaults to False.
+        n_jobs (int): The number of CPU cores to use if parallel=True. A value of
+            -1 utilizes all available cores. Defaults to -1.
+
+    Returns:
+        float: The stochastic estimate of the trace.
+
+    Raises:
+        ValueError: If the operator's domain and codomain are not mathematically identical.
+    """
+    if operator.domain != operator.codomain:
+        raise ValueError(
+            "Trace is only defined for operators where domain == codomain."
+        )
+
+    space = operator.domain
+
+    if max_samples is None:
+        max_samples = space.dim
+
+    num_samples = min(size_estimate, max_samples)
+
+    def _compute_sample_sum(n_samples_to_draw: int) -> float:
+        def _single_sample() -> float:
+            z_c = np.random.choice([-1.0, 1.0], size=space.dim)
+            z = space.from_components(z_c)
+            Op_z = operator(z)
+            Op_z_c = space.to_components(Op_z)
+            return float(np.dot(z_c, Op_z_c))
+
+        if parallel:
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(_single_sample)() for _ in range(n_samples_to_draw)
+            )
+            return sum(results)
+        else:
+            return sum(_single_sample() for _ in range(n_samples_to_draw))
+
+    total_sum = _compute_sample_sum(num_samples)
+    trace_est = total_sum / num_samples if num_samples > 0 else 0.0
+
+    if method == "variable" and num_samples < max_samples:
+        while num_samples < max_samples:
+            old_est = trace_est
+            samples_to_add = min(block_size, max_samples - num_samples)
+
+            total_sum += _compute_sample_sum(samples_to_add)
+            total_samples = num_samples + samples_to_add
+            trace_est = total_sum / total_samples
+
+            if abs(trace_est) > 0:
+                error = abs(trace_est - old_est) / abs(trace_est)
+                if error < rtol:
+                    break
+
+            num_samples = total_samples
+
+    return trace_est

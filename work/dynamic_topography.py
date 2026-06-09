@@ -170,10 +170,10 @@ def build_noise_measure(
     # 3. Extract exact coefficient variances natively (Instantaneous O(N))
     # Coefficient Variance = Spectral Variance / Squared Norm
     geoid_coeff_vars = (
-        raw_geoid_spatial_noise.spectral_variances / field_space.squared_norms
+        raw_geoid_spatial_noise.spectral_variances / field_space.metric_values
     )
     topo_coeff_vars = (
-        raw_topo_spatial_noise.spectral_variances / field_space.squared_norms
+        raw_topo_spatial_noise.spectral_variances / field_space.metric_values
     )
 
     # Truncate to the data space dimensions

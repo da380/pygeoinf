@@ -35,7 +35,7 @@ from joblib import Parallel, delayed
 
 from .hilbert_space import (
     EuclideanSpace,
-    HilbertModule,
+    HilbertModuleMixin,
     MassWeightedHilbertModule,
     MassWeightedHilbertSpace,
     Vector,
@@ -54,9 +54,12 @@ from .affine_operators import AffineOperator
 
 from .direct_sum import BlockDiagonalLinearOperator, BlockLinearOperator
 
+from .functional_calculus import LanczosOperatorFunction
+
 
 if TYPE_CHECKING:
     from .hilbert_space import HilbertSpace
+    from .low_rank import LowRankEig
 
 
 class GaussianMeasure:
@@ -197,9 +200,14 @@ class GaussianMeasure:
         covariance_factor = DiagonalSparseMatrixLinearOperator.from_diagonal_values(
             euclidean, domain, standard_deviations
         )
+        inverse_covariance_factor = (
+            DiagonalSparseMatrixLinearOperator.from_diagonal_values(
+                euclidean, domain, np.reciprocal(standard_deviations)
+            )
+        )
         return GaussianMeasure(
             covariance_factor=covariance_factor,
-            inverse_covariance_factor=covariance_factor.inverse,
+            inverse_covariance_factor=inverse_covariance_factor,
             expectation=expectation,
         )
 
@@ -506,10 +514,10 @@ class GaussianMeasure:
             A vector representing the pointwise variance field.
 
         Raises:
-            NotImplementedError: If the domain is not a HilbertModule (which
+            NotImplementedError: If the domain is not a HilbertModuleMixin (which
                 provides pointwise multiplication).
         """
-        if not isinstance(self.domain, HilbertModule):
+        if not isinstance(self.domain, HilbertModuleMixin):
             raise NotImplementedError(
                 "Pointwise variance requires vector multiplication on the domain."
             )
@@ -582,9 +590,9 @@ class GaussianMeasure:
             A vector representing the pointwise variance field.
 
         Raises:
-            NotImplementedError: If the domain is not a HilbertModule.
+            NotImplementedError: If the domain is not a HilbertModuleMixin.
         """
-        if not isinstance(self.domain, HilbertModule):
+        if not isinstance(self.domain, HilbertModuleMixin):
             raise NotImplementedError(
                 "Pointwise variance requires vector multiplication on the domain."
             )
@@ -707,10 +715,10 @@ class GaussianMeasure:
         Returns:
             A vector representing the pointwise standard deviation field.
         """
-        if not isinstance(self.domain, HilbertModule):
+        if not isinstance(self.domain, HilbertModuleMixin):
             raise NotImplementedError(
                 "Pointwise standard deviation requires vector multiplication on the domain "
-                "(the domain must be a HilbertModule)."
+                "(the domain must be a HilbertModuleMixin)."
             )
 
         variance = self.deflated_pointwise_variance(
@@ -1525,6 +1533,115 @@ class GaussianMeasure:
         else:
             raise ValueError("method must be 'dense' or 'randomized'.")
 
+    def nuclear_norm(
+        self,
+        /,
+        *,
+        exact: bool = False,
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the Nuclear norm (Trace norm) of the covariance operator.
+
+        Because a covariance operator is positive semi-definite, its Nuclear norm
+        is mathematically identical to its trace: ||C||_* = Tr(C).
+
+        Args:
+            exact: If True, computes the exact norm by extracting the full diagonal
+                of the component matrix. This is fast for diagonal/dense matrices
+                but O(N^2) for abstract operators. If False, uses stochastic
+                Hutchinson trace estimation.
+            size_estimate: Initial number of stochastic probe vectors.
+            method: 'variable' to sample dynamically until 'rtol' is met; 'fixed' otherwise.
+            max_samples: Hard limit on stochastic samples.
+            rtol: Relative tolerance for the stochastic estimator.
+            block_size: Number of probes evaluated between convergence checks.
+            parallel: If True, evaluates the vectors concurrently.
+            n_jobs: Number of CPU cores to utilize.
+
+        Returns:
+            float: The Nuclear norm of the covariance operator.
+        """
+        if exact:
+            diag = self.covariance.extract_diagonal(
+                galerkin=False, parallel=parallel, n_jobs=n_jobs
+            )
+            return np.sum(diag)
+
+        from .low_rank import random_trace
+
+        return random_trace(
+            self.covariance,
+            size_estimate,
+            method=method,
+            max_samples=max_samples,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+    def hilbert_schmidt_norm(
+        self,
+        /,
+        *,
+        exact: bool = False,
+        size_estimate: int = 10,
+        method: Literal["variable", "fixed"] = "variable",
+        max_samples: Optional[int] = None,
+        rtol: float = 1e-2,
+        block_size: int = 10,
+        parallel: bool = False,
+        n_jobs: int = -1,
+    ) -> float:
+        """
+        Computes the Hilbert-Schmidt norm of the covariance operator.
+
+        By definition, ||C||_HS = sqrt( Tr(C* C) ).
+        Because the covariance is self-adjoint, this evaluates to sqrt( Tr(C^2) ).
+
+        Args:
+            exact: If True, computes the exact norm by sweeping the basis.
+            size_estimate: Initial number of stochastic probe vectors.
+            method: 'variable' to sample dynamically until 'rtol' is met; 'fixed' otherwise.
+            max_samples: Hard limit on stochastic samples.
+            rtol: Relative tolerance for the stochastic estimator.
+            block_size: Number of probes evaluated between convergence checks.
+            parallel: If True, evaluates the vectors concurrently.
+            n_jobs: Number of CPU cores to utilize.
+
+        Returns:
+            float: The Hilbert-Schmidt norm of the covariance operator.
+        """
+        c_squared = self.covariance @ self.covariance
+
+        if exact:
+            diag = c_squared.extract_diagonal(
+                galerkin=False, parallel=parallel, n_jobs=n_jobs
+            )
+            return np.sqrt(np.sum(diag))
+
+        from .low_rank import random_trace
+
+        trace_c2 = random_trace(
+            c_squared,
+            size_estimate,
+            method=method,
+            max_samples=max_samples,
+            rtol=rtol,
+            block_size=block_size,
+            parallel=parallel,
+            n_jobs=n_jobs,
+        )
+
+        return np.sqrt(max(trace_c2, 0.0))
+
     # ---------------------------------------- #
     #               Special methods            #
     # ---------------------------------------- #
@@ -1739,7 +1856,7 @@ class GaussianMeasure:
 
         induced_domain_type = (
             MassWeightedHilbertModule
-            if isinstance(self.domain, HilbertModule)
+            if isinstance(self.domain, HilbertModuleMixin)
             else MassWeightedHilbertSpace
         )
         induced_domain = induced_domain_type(
@@ -1956,7 +2073,7 @@ class GaussianMeasure:
         *,
         theta: float,
         backend: str,
-        eig_obj,
+        eig_obj: LowRankEig,
         lanczos_size_estimate: int,
         lanczos_method: str,
         lanczos_max_k: Optional[int],
@@ -1973,11 +2090,19 @@ class GaussianMeasure:
                     "computed); got an array/callable. Pass "
                     "fractional_apply='lanczos' instead."
                 )
-            from .spectral_operator import fractional_operators_from_eig
+            regularization = 1e-12 * float(np.max(np.abs(eig_obj.eigenvalues)))
 
-            return fractional_operators_from_eig(eig_obj, theta)
-
-        from .functional_calculus import LanczosOperatorFunction
+            return (
+                eig_obj.apply_function(
+                    lambda x: np.power(x, -theta), regularization=regularization
+                ),
+                eig_obj.apply_function(
+                    lambda x: np.power(x, theta), regularization=regularization
+                ),
+                eig_obj.apply_function(
+                    lambda x: np.power(x, 0.5 * theta), regularization=regularization
+                ),
+            )
 
         cov = self.covariance
 

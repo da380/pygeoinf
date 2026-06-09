@@ -3,23 +3,28 @@ Defines the foundational abstractions for working with Hilbert spaces.
 
 This module provides the core `HilbertSpace` abstract base class (ABC), which
 serves as a mathematical abstraction for real vector spaces equipped with an
-inner product. The design separates abstract vector operations from their
-concrete representations (e.g., as NumPy arrays), allowing for generic and
-reusable implementations of linear operators and algorithms.
+inner product. The design strictly decouples abstract vector space operations
+from their underlying concrete array representations, enabling highly extensible
+and reusable implementations of linear operators and numerical algorithms.
 
-The inner product of a space is defined by its Riesz representation map
-(`to_dual` and `from_dual` methods), which connects the space to its dual.
-Concrete subclasses must implement the abstract methods to define a specific
-type of space.
+The inner product of a space is rigorously defined by its Riesz representation
+map (`to_dual` and `from_dual` methods), formally bridging the space to its dual.
+Concrete subclasses must implement the core abstract methods to define the
+algebraic and geometric properties of a specific space.
 
 Key Classes
 -----------
-- `HilbertSpace`: The primary ABC defining the interface for all Hilbert spaces.
-- `DualHilbertSpace`: A wrapper class representing the dual of a Hilbert space.
-- `HilbertModule`: An ABC for Hilbert spaces that also support vector multiplication.
-- `EuclideanSpace`: A concrete implementation for R^n using NumPy arrays.
-- `MassWeightedHilbertSpace`: A space whose inner product is weighted by a
-  mass operator relative to an underlying space.
+- `HilbertSpace`: The primary ABC defining the strict API interface for all spaces.
+- `DualHilbertSpace`: A wrapper allowing linear functionals to be treated as vectors.
+- `OrthogonalHilbertSpace`: Base for spaces with known orthogonal bases, caching
+  sparse metric tensors for high-performance inner products.
+- `OrthonormalHilbertSpace`: Base for spaces with orthonormal bases, bypassing
+  metric scaling for optimal efficiency.
+- `EuclideanSpace`: A concrete implementation of R^n using standard NumPy arrays.
+- `MassWeightedHilbertSpace`: Modifies an inner product using a mass operator,
+  crucial for Galerkin representations and the Finite Element Method.
+- `HilbertModuleMixin` / `MassWeightedHilbertModule`: Extensions for spaces that
+  also form an algebra, supporting operations like pointwise vector multiplication.
 """
 
 from __future__ import annotations
@@ -36,15 +41,16 @@ from typing import (
 )
 
 import numpy as np
+from scipy.sparse import diags
 
 from .checks.hilbert_space import HilbertSpaceAxiomChecks
 
-# This block only runs for type checkers, not at runtime
+
 if TYPE_CHECKING:
     from .linear_operators import LinearOperator
     from .linear_forms import LinearForm
 
-# Define a generic type for vectors in a Hilbert space
+
 Vector = TypeVar("Vector")
 
 
@@ -150,6 +156,14 @@ class HilbertSpace(ABC, HilbertSpaceAxiomChecks):
     def zero(self) -> Vector:
         """The zero vector (additive identity) of the space."""
         return self.from_components(np.zeros((self.dim)))
+
+    @property
+    def is_orthonormal(self) -> bool:
+        """
+        True if the space has an orthonormal basis where the component mapping
+        is an exact isometric isomorphism (i.e., the metric tensor is the identity).
+        """
+        return False
 
     def is_element(self, x: Any) -> bool:
         """
@@ -526,35 +540,113 @@ class DualHilbertSpace(HilbertSpace):
         return x(xp)
 
 
-class HilbertModule(HilbertSpace, ABC):
+class HilbertModuleMixin(ABC):
     """
-    An ABC for a `HilbertSpace` where vector multiplication is defined.
-
-    This acts as a "mixin" interface, adding the `vector_multiply` requirement
-    to the `HilbertSpace` contract.
+    A mixin interface for Hilbert spaces that also form an algebra,
+    supporting pointwise vector multiplication.
     """
 
     @abstractmethod
     def vector_multiply(self, x1: Vector, x2: Vector) -> Vector:
-        """
-        Computes the product of two vectors.
-
-        Args:
-            x1: The first vector.
-            x2: The second vector.
-
-        Returns:
-            The product of the two vectors.
-        """
+        """Computes the pointwise product of two vectors."""
 
     @abstractmethod
     def vector_sqrt(self, x: Vector) -> Vector:
-        """
-        Returns the square root of a vector.
-        """
+        """Returns the pointwise square root of a vector."""
 
 
-class EuclideanSpace(HilbertSpace):
+class OrthogonalHilbertSpace(HilbertSpace, ABC):
+    """
+    An abstract base class for Hilbert spaces with a known orthogonal basis.
+
+    This class explicitly stores the diagonal metric values and metric matrices
+    at instantiation, providing a common, high-performance point of access.
+    """
+
+    def __init__(self, dim: int, metric_values: np.ndarray):
+        """
+        Args:
+            dim: The dimension of the space.
+            metric_values: The diagonal metric values.
+        """
+
+        if dim <= 0:
+            raise ValueError("Dimension must be a positive integer.")
+
+        if metric_values.shape != (dim,):
+            raise ValueError("Metric values must be a 1D array of length dim.")
+
+        self._dim = dim
+        self._metric_values = metric_values
+
+        self._metric = diags([self._metric_values], [0], format="csr")
+        self._inverse_metric = diags(
+            [np.reciprocal(self._metric_values)], [0], format="csr"
+        )
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    @property
+    def metric_values(self) -> np.ndarray:
+        """Returns a 1D array of the diagonal metric tensor values (||e_i||^2)."""
+        return self._metric_values
+
+    @property
+    def metric(self):
+        """Returns the metric tensor as a sparse diagonal matrix."""
+        return self._metric
+
+    @property
+    def inverse_metric(self):
+        """Returns the inverse metric tensor as a sparse diagonal matrix."""
+        return self._inverse_metric
+
+    # --- Concrete Geometric Mappings ---
+
+    def to_dual(self, x: Vector) -> LinearForm:
+        from .linear_forms import LinearForm
+
+        cx = self.to_components(x)
+        return LinearForm(self, components=cx * self._metric_values)
+
+    def from_dual(self, xp: LinearForm) -> Vector:
+        cxp = xp.components
+        return self.from_components(cxp / self._metric_values)
+
+    def inner_product(self, x1: Vector, x2: Vector) -> float:
+        cx1 = self.to_components(x1)
+        cx2 = self.to_components(x2)
+        return float(np.sum(cx1 * cx2 * self._metric_values))
+
+
+class OrthonormalHilbertSpace(OrthogonalHilbertSpace):
+    """
+    A base class for Hilbert spaces with a known orthonormal basis.
+    Overrides Riesz maps to skip unnecessary metric scaling.
+    """
+
+    def __init__(self, dim: int):
+        super().__init__(dim, np.ones(dim, dtype=float))
+
+    @property
+    def is_orthonormal(self) -> bool:
+        return True
+
+    def to_dual(self, x: Vector) -> LinearForm:
+        from .linear_forms import LinearForm
+
+        return LinearForm(self, components=self.to_components(x))
+
+    def from_dual(self, xp: LinearForm) -> Vector:
+        return self.from_components(xp.components)
+
+    def inner_product(self, x1: Vector, x2: Vector) -> float:
+        return float(np.dot(self.to_components(x1), self.to_components(x2)))
+
+
+class EuclideanSpace(OrthonormalHilbertSpace):
     """
     An n-dimensional Euclidean space, R^n.
 
@@ -571,6 +663,8 @@ class EuclideanSpace(HilbertSpace):
             raise ValueError("Dimension must be a positive integer.")
         self._dim = dim
 
+        super().__init__(dim)
+
     @property
     def dim(self) -> int:
         """The dimension of the space."""
@@ -583,16 +677,6 @@ class EuclideanSpace(HilbertSpace):
     def from_components(self, c: np.ndarray) -> np.ndarray:
         """Returns the component array itself, as it is the vector."""
         return c
-
-    def to_dual(self, x: np.ndarray) -> "LinearForm":
-        """Maps a vector `x` to a `LinearForm` with the same components."""
-        from .linear_forms import LinearForm
-
-        return LinearForm(self, components=x)
-
-    def from_dual(self, xp: "LinearForm") -> np.ndarray:
-        """Maps a `LinearForm` back to a vector via its components."""
-        return self.dual.to_components(xp)
 
     def inner_product(self, x1: np.ndarray, x2: np.ndarray) -> float:
         """
@@ -801,7 +885,7 @@ class MassWeightedHilbertSpace(HilbertSpace):
         return self.underlying_space.copy(x)
 
 
-class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):
+class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModuleMixin):
     """
     A mass-weighted Hilbert space that also supports vector multiplication.
 
@@ -812,7 +896,7 @@ class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):
 
     def __init__(
         self,
-        underlying_space: HilbertModule,
+        underlying_space: HilbertSpace,
         mass_operator: LinearOperator,
         inverse_mass_operator: LinearOperator,
     ):
@@ -824,8 +908,8 @@ class MassWeightedHilbertModule(MassWeightedHilbertSpace, HilbertModule):
                 operator (M).
             inverse_mass_operator: The inverse of the mass operator.
         """
-        if not isinstance(underlying_space, HilbertModule):
-            raise TypeError("Underlying space must be a HilbertModule.")
+        if not isinstance(underlying_space, HilbertModuleMixin):
+            raise TypeError("Underlying space must be a HilbertModuleMixin.")
 
         MassWeightedHilbertSpace.__init__(
             self, underlying_space, mass_operator, inverse_mass_operator
