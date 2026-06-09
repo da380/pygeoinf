@@ -1,0 +1,181 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
+rootdir: /home/david/dev/pygeoinf
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-6.3.0
+collected 981 items / 877 deselected / 104 selected
+
+tests/symmetric_space/test_invariant_objects.py ........                 [  7%]
+tests/test_auxiliary.py ..                                               [  9%]
+tests/test_gaussian_measure.py .....F...F.s.s...s.....F...s.s.....F..... [ 49%]
+........F.........s....                                                  [ 71%]
+tests/test_gaussian_measure_credible_set.py ............................ [ 98%]
+.                                                                        [ 99%]
+tests/test_parallelism.py .                                              [100%]
+
+=================================== FAILURES ===================================
+_______________ TestGaussianMeasure.test_affine_mapping[space1] ________________
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x7d927d8b7c20>
+measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x7d927ffb0fb0>
+
+    def test_affine_mapping(self, measure: GaussianMeasure):
+        transform_matrix = np.random.randn(measure.domain.dim, measure.domain.dim)
+        op = LinearOperator.from_matrix(
+            measure.domain, measure.domain, transform_matrix, galerkin=True
+        )
+        translation = measure.domain.random()
+        transformed_measure = measure.affine_mapping(
+            operator=op, translation=translation
+        )
+        expected_mean = op(measure.expectation) + translation
+        assert np.allclose(
+            measure.domain.to_components(transformed_measure.expectation),
+            measure.domain.to_components(expected_mean),
+        )
+    
+        # Linear transformations of operators are valid on non-Galerkin component representations
+        C_c = measure.covariance.matrix(dense=True, galerkin=False)
+        A_c = op.matrix(dense=True, galerkin=False)
+        expected_covariance_c = A_c @ C_c @ A_c.T
+    
+        actual_covariance_c = transformed_measure.covariance.matrix(
+            dense=True, galerkin=False
+        )
+>       assert np.allclose(actual_covariance_c, expected_covariance_c)
+E       assert False
+E        +  where False = <function allclose at 0x7d92de30df70>(array([[ 1.55984242e+00, -1.49385709e-01, -3.92539003e-01,\n         4.30322752e-01, -4.18244360e-02, -3.51119086e-01,\n... 1.40866157e-01,\n        -2.80427375e-01, -1.81654346e-01,  6.69429509e-02,\n         1.33123373e-01,  4.66016682e-01]]), array([[ 3.16657208, -0.15431829, -0.27374165,  0.26399801, -0.08112625,\n        -0.28056914,  0.3426121 ,  0.72562726...     [ 0.72562726, -0.10991858,  0.02779726, -0.15204005, -0.10546784,\n        -0.00380865,  0.13638293,  0.39754781]]))
+E        +    where <function allclose at 0x7d92de30df70> = np.allclose
+
+tests/test_gaussian_measure.py:103: AssertionError
+__________ TestGaussianMeasure.test_from_standard_deviations[space1] ___________
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x7d927d8dc290>
+space = <pygeoinf.symmetric_space.circle.Sobolev object at 0x7d927d8b6ed0>
+
+    def test_from_standard_deviations(self, space: HilbertSpace):
+        std_devs = np.random.rand(space.dim) + 0.1
+        measure = GaussianMeasure.from_standard_deviations(space, std_devs)
+    
+        # Verify by checking the abstract operator action on the standard basis vectors
+        for i in range(space.dim):
+            e_i = space.basis_vector(i)
+            c_i = measure.covariance(e_i)
+            expected_c_i = space.multiply(std_devs[i] ** 2, e_i)
+>           assert np.allclose(
+                space.to_components(c_i), space.to_components(expected_c_i)
+            )
+E           assert False
+E            +  where False = <function allclose at 0x7d92de30df70>(array([ 0.00000000e+00,  7.65898525e-01,  0.00000000e+00,  6.95729106e-17,\n        0.00000000e+00, -2.01691467e-17,  0.00000000e+00,  2.01691467e-17]), array([0.        , 0.37915769, 0.        , 0.        , 0.        ,\n       0.        , 0.        , 0.        ]))
+E            +    where <function allclose at 0x7d92de30df70> = np.allclose
+E            +    and   array([ 0.00000000e+00,  7.65898525e-01,  0.00000000e+00,  6.95729106e-17,\n        0.00000000e+00, -2.01691467e-17,  0.00000000e+00,  2.01691467e-17]) = to_components(array([ 6.11098609e-01,  4.32111970e-01,  3.21853015e-17, -4.32111970e-01,\n       -6.11098609e-01, -4.32111970e-01, -3.21853015e-17,  4.32111970e-01]))
+E            +      where to_components = <pygeoinf.symmetric_space.circle.Sobolev object at 0x7d927d8b6ed0>.to_components
+E            +    and   array([0.        , 0.37915769, 0.        , 0.        , 0.        ,\n       0.        , 0.        , 0.        ]) = to_components(array([ 0.30252406,  0.21391682,  0.        , -0.21391682, -0.30252406,\n       -0.21391682,  0.        ,  0.21391682]))
+E            +      where to_components = <pygeoinf.symmetric_space.circle.Sobolev object at 0x7d927d8b6ed0>.to_components
+
+tests/test_gaussian_measure.py:130: AssertionError
+_____ TestGaussianMeasure.test_affine_mapping_with_affine_operator[space1] _____
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x7d927d8dd6a0>
+measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x7d9273f69760>
+
+    def test_affine_mapping_with_affine_operator(self, measure: GaussianMeasure):
+        transform_matrix = np.random.randn(measure.domain.dim, measure.domain.dim)
+        op = LinearOperator.from_matrix(
+            measure.domain, measure.domain, transform_matrix, galerkin=True
+        )
+        translation = measure.domain.random()
+        affine_op = AffineOperator(op, translation)
+    
+        transformed_measure = measure.affine_mapping(affine_operator=affine_op)
+    
+        expected_mean = op(measure.expectation) + translation
+        assert np.allclose(
+            measure.domain.to_components(transformed_measure.expectation),
+            measure.domain.to_components(expected_mean),
+        )
+    
+        C_c = measure.covariance.matrix(dense=True, galerkin=False)
+        A_c = (
+            transform_matrix
+            if measure.domain.identity_operator()
+            .matrix(dense=True, galerkin=True)
+            .shape
+            == transform_matrix.shape
+            else op.matrix(dense=True, galerkin=False)
+        )
+    
+        # Compute exact verification via component forms
+        A_comp = op.matrix(dense=True, galerkin=False)
+        expected_covariance_c = A_comp @ C_c @ A_comp.T
+        actual_covariance_c = transformed_measure.covariance.matrix(
+            dense=True, galerkin=False
+        )
+>       assert np.allclose(actual_covariance_c, expected_covariance_c)
+E       assert False
+E        +  where False = <function allclose at 0x7d92de30df70>(array([[ 0.62523182, -0.09436491,  0.26075424, -0.07693126, -0.07780871,\n         0.27071581,  0.17082131,  0.07408127...     [ 0.03398223,  0.04325022, -0.0305516 ,  0.10868163, -0.05554335,\n         0.16708028, -0.02031812,  0.15464124]]), array([[ 1.27152131e+00, -1.03705966e-01,  3.79694338e-01,\n        -2.76336331e-01,  1.37299911e-02,  1.50392678e-02,\n...-6.67095664e-04,\n         3.97646022e-02, -2.39967622e-02,  8.05572508e-02,\n        -9.89960431e-03,  1.29944724e-01]]))
+E        +    where <function allclose at 0x7d92de30df70> = np.allclose
+
+tests/test_gaussian_measure.py:254: AssertionError
+____ TestGaussianMeasure.test_with_regularized_inverse_zero_damping[space1] ____
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x7d927d8dec00>
+measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x7d9273f2d1f0>
+
+    def test_with_regularized_inverse_zero_damping(self, measure: GaussianMeasure):
+        solver = CholeskySolver(galerkin=True)
+        reg_measure = measure.with_regularized_inverse(solver, damping=0.0)
+    
+        assert reg_measure.inverse_covariance_set
+    
+        orig_cov_c = measure.covariance.matrix(dense=True, galerkin=False)
+        reg_cov_c = reg_measure.covariance.matrix(dense=True, galerkin=False)
+        assert np.allclose(orig_cov_c, reg_cov_c)
+    
+        inv_cov_c = reg_measure.inverse_covariance.matrix(dense=True, galerkin=False)
+        identity = np.eye(measure.domain.dim)
+>       assert np.allclose(inv_cov_c @ reg_cov_c, identity, atol=1e-7)
+E       assert False
+E        +  where False = <function allclose at 0x7d92de30df70>((array([[ 4.22576683e+00,  0.00000000e+00,  0.00000000e+00,\n         0.00000000e+00,  0.00000000e+00,  0.00000000e+00,\n... 0.00000000e+00,\n         3.35225274e-17,  0.00000000e+00, -1.39145821e-16,\n         0.00000000e+00,  1.06677158e+00]]) @ array([[ 2.36643440e-01,  0.00000000e+00,  0.00000000e+00,\n         0.00000000e+00,  0.00000000e+00,  0.00000000e+00,\n... 0.00000000e+00,\n        -8.69661383e-18,  0.00000000e+00,  0.00000000e+00,\n         0.00000000e+00,  1.97249349e-01]])), array([[1., 0., 0., 0., 0., 0., 0., 0.],\n       [0., 1., 0., 0., 0., 0., 0., 0.],\n       [0., 0., 1., 0., 0., 0., 0., ...   [0., 0., 0., 0., 0., 1., 0., 0.],\n       [0., 0., 0., 0., 0., 0., 1., 0.],\n       [0., 0., 0., 0., 0., 0., 0., 1.]]), atol=1e-07)
+E        +    where <function allclose at 0x7d92de30df70> = np.allclose
+
+tests/test_gaussian_measure.py:376: AssertionError
+____ TestGaussianMeasure.test_affine_mapping_kkt_inverse_covariance[space1] ____
+
+self = <tests.test_gaussian_measure.TestGaussianMeasure object at 0x7d927d8dfec0>
+measure = <pygeoinf.gaussian_measure.GaussianMeasure object at 0x7d927914e9c0>
+
+    def test_affine_mapping_kkt_inverse_covariance(self, measure: GaussianMeasure):
+        dim_in = measure.domain.dim
+        dim_out = max(1, dim_in // 2)
+        target_space = EuclideanSpace(dim_out)
+    
+        P_matrix = np.random.randn(dim_out, dim_in)
+        P = LinearOperator.from_matrix(
+            measure.domain, target_space, P_matrix, galerkin=True
+        )
+    
+        solver = MinResSolver(rtol=1e-10)
+        transformed_measure = measure.affine_mapping(operator=P, inverse_solver=solver)
+    
+        assert transformed_measure.inverse_covariance_set
+    
+        C_new_c = transformed_measure.covariance.matrix(dense=True, galerkin=False)
+        E_actual_c = transformed_measure.inverse_covariance.matrix(
+            dense=True, galerkin=False
+        )
+    
+        identity = np.eye(dim_out)
+>       assert np.allclose(E_actual_c @ C_new_c, identity, atol=1e-5)
+E       assert False
+E        +  where False = <function allclose at 0x7d92de30df70>((array([[ 0.83736351,  0.61240908,  0.19234964, -0.19412109],\n       [ 0.61240908,  0.7114965 ,  0.00856319, -0.1389322...    [ 0.19234964,  0.00856319,  0.86222569, -0.03994022],\n       [-0.19412109, -0.13893226, -0.03994022,  0.28311125]]) @ array([[ 0.93388283, -0.9728909 , -0.19737832, -0.14885576],\n       [-0.9728909 ,  1.745733  ,  0.21021776,  1.0180903...    [-0.19737832,  0.21021776,  0.28783388,  0.04013724],\n       [-0.14885576,  1.01809031,  0.04013724,  2.21092012]])), array([[1., 0., 0., 0.],\n       [0., 1., 0., 0.],\n       [0., 0., 1., 0.],\n       [0., 0., 0., 1.]]), atol=1e-05)
+E        +    where <function allclose at 0x7d92de30df70> = np.allclose
+
+tests/test_gaussian_measure.py:524: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_affine_mapping[space1]
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_from_standard_deviations[space1]
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_affine_mapping_with_affine_operator[space1]
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_with_regularized_inverse_zero_damping[space1]
+FAILED tests/test_gaussian_measure.py::TestGaussianMeasure::test_affine_mapping_kkt_inverse_covariance[space1]
+=========== 5 failed, 93 passed, 6 skipped, 877 deselected in 11.30s ===========

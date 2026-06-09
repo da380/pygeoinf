@@ -579,7 +579,7 @@ class LinearBayesianInversion(LinearInversion):
         in a LanczosOperatorFunction, we evaluate the action of the matrix logarithm
         dynamically. We then delegate the trace estimation to the geometrically-safe
         `random_trace` method, which evaluates the trace in the component space to
-        bypass any abstract metric distortions (mass matrices).
+        bypass any abstract metric distortions.
 
         Args:
             op: The self-adjoint, positive-definite operator to evaluate.
