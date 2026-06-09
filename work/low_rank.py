@@ -1,4 +1,3 @@
-import numpy as np
 import matplotlib.pyplot as plt
 import pygeoinf as inf
 from pygeoinf.symmetric_space.circle import Sobolev, plot
@@ -10,17 +9,21 @@ print(f"Dimension of space = {X.dim}")
 
 A = X.invariant_automorphism(lambda k: 1 / (1 + 0.1 * k**2))
 
+mu = X.heat_kernel_gaussian_measure(0.01)
+u = mu.sample()
+
 
 print(f"True trace =  {A.trace}")
 
-B = inf.LowRankEig.from_randomized(A, 10, method="variable", power=2, rtol=1e-3)
+B = inf.LowRankEig.from_randomized(
+    A, 10, method="variable", power=2, rtol=1e-3, measure=mu
+)
 print(f"Rank of decomposition = {B.rank}")
-print(f"Estimated trace = {B.trace}")
+print(f"Estimated trace via decomposition = {B.trace}")
 
-mu = X.heat_kernel_gaussian_measure(0.01)
-
-u = mu.sample()
-
+print(
+    f"Estimated trace via Hutchinson = {inf.random_trace(A, 10, method="variable", rtol=1e-3)} "
+)
 
 v = A(u)
 w = B(u)

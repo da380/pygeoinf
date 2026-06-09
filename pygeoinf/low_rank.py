@@ -12,13 +12,15 @@ is provided, they fall back to highly optimized, component-based matrix-free alg
 """
 
 from __future__ import annotations
-from typing import List, Optional, Union, Callable
+from typing import List, Optional, Union, Callable, Literal
 import warnings
 
 import numpy as np
 import scipy.linalg
 from scipy.linalg import qr
 from scipy.sparse.linalg import LinearOperator as ScipyLinOp
+
+from joblib import Parallel, delayed
 
 from .hilbert_space import Vector, EuclideanSpace, HilbertSpace
 from .linear_operators import LinearOperator, DiagonalSparseMatrixLinearOperator
@@ -1046,3 +1048,109 @@ def deflated_diagonal(
         total_diagonal += stochastic_diag
 
     return total_diagonal
+
+
+def random_trace(
+    operator: LinearOperator,
+    size_estimate: int,
+    /,
+    *,
+    method: Literal["variable", "fixed"] = "variable",
+    max_samples: Optional[int] = None,
+    rtol: float = 1e-2,
+    block_size: int = 10,
+    parallel: bool = False,
+    n_jobs: int = -1,
+) -> float:
+    """
+    Estimates the trace of an operator using Hutchinson's randomized method.
+
+    This function calculates the trace of an endomorphism (an operator mapping a
+    space to itself). Because the trace of a linear operator is invariant under
+    any change of basis, it is entirely independent of the space's abstract inner
+    product or metric tensor (mass matrix).
+
+    To achieve an unbiased estimate for any arbitrary Hilbert space, this method
+    bypasses abstract metric distortions by evaluating the trace directly on the
+    coordinate matrix representation of the operator. It draws standard Euclidean
+    Rademacher noise (z_c), lifts it to the abstract space to apply the operator,
+    extracts the components of the result, and computes the standard dot product:
+        Tr(A) = E[ z_c . (A_c z_c) ]
+
+
+    Args:
+        operator (LinearOperator): The operator whose trace is to be estimated.
+            Must be an endomorphism (i.e., operator.domain == operator.codomain).
+        size_estimate (int): The baseline number of Monte Carlo probe vectors to
+            draw. If method='fixed', exactly this many samples are evaluated. If
+            method='variable', this acts as the initial batch size.
+        method (str): The convergence strategy. 'variable' dynamically evaluates
+            batches until the running average stabilizes. 'fixed' runs exactly
+            `size_estimate` iterations. Defaults to 'variable'.
+        max_samples (int, optional): The absolute maximum number of probe vectors
+            allowed when using the 'variable' method. If None, defaults to the
+            dimension of the underlying Hilbert space.
+        rtol (float): The relative tolerance for dynamic convergence checking. The
+            loop terminates when the fractional change in the running average falls
+            below this threshold. Defaults to 1e-2.
+        block_size (int): The number of new samples drawn between each convergence
+            check when using the 'variable' method. Defaults to 10.
+        parallel (bool): If True, parallelizes the independent Monte Carlo samples
+            across multiple CPU cores. Defaults to False.
+        n_jobs (int): The number of CPU cores to use if parallel=True. A value of
+            -1 utilizes all available cores. Defaults to -1.
+
+    Returns:
+        float: The stochastic estimate of the trace.
+
+    Raises:
+        ValueError: If the operator's domain and codomain are not mathematically identical.
+    """
+    if operator.domain != operator.codomain:
+        raise ValueError(
+            "Trace is only defined for operators where domain == codomain."
+        )
+
+    space = operator.domain
+
+    if max_samples is None:
+        max_samples = space.dim
+
+    num_samples = min(size_estimate, max_samples)
+
+    def _compute_sample_sum(n_samples_to_draw: int) -> float:
+        def _single_sample() -> float:
+            z_c = np.random.choice([-1.0, 1.0], size=space.dim)
+            z = space.from_components(z_c)
+            Op_z = operator(z)
+            Op_z_c = space.to_components(Op_z)
+            return float(np.dot(z_c, Op_z_c))
+
+        if parallel:
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(_single_sample)() for _ in range(n_samples_to_draw)
+            )
+            return sum(results)
+        else:
+            return sum(_single_sample() for _ in range(n_samples_to_draw))
+
+    total_sum = _compute_sample_sum(num_samples)
+    trace_est = total_sum / num_samples if num_samples > 0 else 0.0
+
+    if method == "variable" and num_samples < max_samples:
+        while num_samples < max_samples:
+            old_est = trace_est
+            samples_to_add = min(block_size, max_samples - num_samples)
+
+            total_sum += _compute_sample_sum(samples_to_add)
+            total_samples = num_samples + samples_to_add
+            trace_est = total_sum / total_samples
+
+            if abs(trace_est) > 0:
+                error = abs(trace_est - old_est) / abs(trace_est)
+                if error < rtol:
+                    break
+
+            num_samples = total_samples
+
+    return trace_est

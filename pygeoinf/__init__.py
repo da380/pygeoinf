@@ -153,7 +153,15 @@ from .datasets import (
     sample_earthquakes,
 )
 
-from .low_rank import LowRankSVD, LowRankCholesky, LowRankEig, white_noise_measure
+from .low_rank import (
+    LowRankSVD,
+    LowRankCholesky,
+    LowRankEig,
+    white_noise_measure,
+    random_range,
+    random_diagonal,
+    random_trace,
+)
 
 from .functional_calculus import LanczosOperatorFunction
 
@@ -286,6 +294,9 @@ __all__ = [
     "LowRankEig",
     "LowRankCholesky",
     "white_noise_measure",
+    "random_range",
+    "random_diagonal",
+    "random_trace",
     # functional_calculus
     "LanczosOperatorFunction",
 ]
