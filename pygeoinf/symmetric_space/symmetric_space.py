@@ -1543,6 +1543,17 @@ class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, 
 
         return _solver(flexural_operator, preconditioner=preconditioner)
 
+    def spatial_multiplication_operator(self, f: Vector) -> LinearOperator:
+        """
+        Returns a LinearOperator corresponding to the mapping u -> f * u
+        with f a given function that is suitably regular.
+        """
+
+        def mapping(u: Vector):
+            return self.vector_multiply(f, u)
+
+        return LinearOperator.self_adjoint(self, mapping)
+
 
 class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgueSpace):
     """
@@ -2193,6 +2204,16 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
         return LinearOperator.from_formal_adjoint(
             self, l2_operator.codomain, l2_operator
         )
+
+    def spatial_multiplication_operator(self, f: Vector) -> LinearOperator:
+        """
+        Returns a LinearOperator corresponding to the mapping u -> f * u
+        with f a given function that is suitably regular.
+        """
+
+        l2_operator = self.underlying_space.spatial_multiplication_operator(f)
+
+        return LinearOperator.from_formal_adjoint(self, self, l2_operator)
 
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #

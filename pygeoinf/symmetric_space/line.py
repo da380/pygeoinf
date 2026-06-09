@@ -741,6 +741,8 @@ class Sobolev(SymmetricSobolevSpace):
 def plot(
     space: Lebesgue | Sobolev,
     u: np.ndarray,
+    /,
+    *,
     ax: Optional[Axes] = None,
     full: Optional[bool] = False,
     **kwargs,
@@ -772,6 +774,8 @@ def plot_error_bounds(
     space: Lebesgue | Sobolev,
     u: np.ndarray,
     u_bound: np.ndarray,
+    /,
+    *,
     ax: Optional[Axes] = None,
     full: Optional[bool] = False,
     **kwargs,
