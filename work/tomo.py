@@ -15,8 +15,8 @@ lmax = 128
 order = 2
 scale = 0.1
 prior_scale = 0.05
-n_sources = 10
-n_receivers = 50
+n_sources = 1000
+n_receivers = 1
 
 print("Global parameters initialized.")
 
@@ -87,11 +87,6 @@ print("Computing covariance functions...")
 x = model_space.random_point()
 k_prior = model_prior.two_point_covariance(x)
 k_posterior = model_posterior.two_point_covariance(x)
-
-
-# Estimate the pointwise std
-print("Computing pointwise std...")
-posterior_std = model_posterior.sample_pointwise_std(1000)
 
 
 # Plot the results
@@ -166,22 +161,6 @@ plot(
 
 plot_points([x], ax=ax4, color="black", s=15, zorder=5)
 plot_geodesic_network(paths, ax=ax4, alpha=0.1)
-
-
-fig5, ax5 = create_map_figure(figsize=(8, 5))
-
-plot(
-    posterior_std,
-    ax=ax5,
-    colorbar=True,
-    coasts=True,
-    cmap="Blues",
-    colorbar_kwargs={
-        "label": "Pointwise STD",
-    },
-)
-
-plot_geodesic_network(paths, ax=ax5, alpha=0.1)
 
 
 plt.show()
