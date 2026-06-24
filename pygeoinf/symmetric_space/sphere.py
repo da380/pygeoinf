@@ -348,7 +348,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return powers
 
     @staticmethod
-    def iris_stations(n_stations: int = None, include_names: bool = False):
+    def iris_stations(*, n_stations: int = None, include_names: bool = False):
         """
         Convenience method to retrieve a globally distributed set of
         Global Seismograph Network (GSN) stations from IRIS.

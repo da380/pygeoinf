@@ -1345,69 +1345,77 @@ class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, 
         buoyancy_factor: Union[Vector, float, int],
     ) -> LinearOperator:
         r"""
-        Constructs the generalized 4th-order variable-coefficient flexure operator
-        for a thin elastic shell on a Riemannian manifold.
+        Constructs the exact 4th-order variable-coefficient flexure operator
+        for a floating elastic plate mapped to a Riemannian manifold.
 
-        This operator models the normal deflection of a shell subjected to a transverse
-        load. It accounts for spatially varying material properties without requiring
-        explicit tensor calculus by utilizing Bochner-style identities to express
-        the inner product of Hessians purely in terms of Laplacians and surface gradients.
+        Mathematical Formulation:
+        -------------------------
+        This operator evaluates the covariant tensor divergence of the non-Euclidean
+        moment equations. Under the geometer's Laplacian convention, the exact
+        equation is:
 
-        The operator evaluates:
-        Op(w) = L(D * L(w)) - tr(Hess(D_eff) * Hess(w)) + rho_g * w
+        Op(w) = \Delta(D \Delta w)
+              - \Delta(D_{eff}) \Delta w
+              + tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
+              - K D_{eff} \Delta w
+              + \rho_g w
 
-        Where:
-        * w is the normal deflection.
-        * D is the flexural rigidity.
-        * D_eff is the effective rigidity: D * (1 - nu).
-        * nu is Poisson's ratio.
-        * rho_g is the foundation restoring force (buoyancy factor).
-        * L() is the Laplace-Beltrami operator.
+        Notation:
+        ---------
+        * $D_{eff} = D(1 - \nu)$ is the effective flexural rigidity.
+        * $K$ is the Gaussian curvature of the manifold.
 
-        Mathematical Details (The Hessian Calculation):
-        ---------------------------------------------
-        Because the framework is built on the spectral properties of the Laplacian,
-        it does not compute Hessians directly. Instead, it uses a well-known identity
-        for the inner product of two Hessians on a 2D manifold:
+        Physical & Geometric Breakdown:
+        -------------------------------
+        1. Principal Bending: \Delta(D \Delta w)
+            The standard biharmonic flexure term.
 
-        tr(Hess(A) * Hess(B)) = 0.5 * L(grad(A) . grad(B))
-                                - 0.5 * (grad(L(A)) . grad(B))
-                                - 0.5 * (grad(A) . grad(L(B)))
-                                - K * (grad(A) . grad(B))
+        2. Scalar Property Interaction: - \Delta(D_{eff}) \Delta w
+            The scalar component of the Föppl-von Kármán bilinear bracket,
+            accounting for gradients in the effective rigidity.
 
-        Here, K is the Gaussian curvature of the manifold. In flat Euclidean space,
-        derivatives commute and K = 0. On a curved manifold (like a sphere), derivatives
-        do not commute. The Gaussian curvature K acts as the precise geometric penalty
-        required to correct for this non-commutativity. The method `gradient_dot_product`
-        is used to evaluate the (grad(A) . grad(B)) terms internally.
+        3. Tensor Gradients & Commutator: tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
+            Accounts for the coupling of spatial rigidity gradients with surface twist.
+            The second half of this term (the gradient-curvature coupling) arises
+            analytically from the non-commutativity of covariant derivatives.
+            In this implementation, both terms are elegantly generated together in a
+            coordinate-free manner by subtracting the Bochner identity block.
+
+        4. Geometric Covariant Softening: - K D_{eff} \Delta w
+            Because covariant derivatives do not commute, pure bending on a curved
+            surface inherently penalizes the manifold's stiffness.
+
+        5. Foundation Restoring Force: \rho_g w
+            The local hydrostatic restoring force (e.g., fluid mantle buoyancy).
 
         Args:
-            flexural_rigidity: The flexural rigidity field (D). Can be a spatially
-                varying Vector in this space or a constant scalar.
-            poisson_ratio: Poisson's ratio (nu). Can be a spatially varying Vector
-                or a constant scalar.
-            buoyancy_factor: The density contrast or foundation restoring force (rho * g).
-                Can be a spatially varying Vector or a constant scalar.
+            flexural_rigidity (Union[Vector, float, int]): The flexural rigidity of the plate ($D$).
+                Can be a spatially varying field (Vector) or a constant scalar.
+            poisson_ratio (Union[Vector, float, int]): The Poisson's ratio of the material ($\nu$).
+                Can be a spatially varying field (Vector) or a constant scalar. (Used to compute
+                the effective rigidity $D_{eff}$).
+            buoyancy_factor (Union[Vector, float, int]): The hydrostatic foundation restoring force
+                coefficient ($\rho_g$). Can be a spatially varying field (Vector) or a constant scalar.
 
         Returns:
-            LinearOperator: A self-adjoint linear operator mapping a deflection field
-            to its corresponding load field.
+            LinearOperator: A formally self-adjoint linear operator representing the exact
+            4th-order variable-coefficient flexural equations mapped to the manifold.
         """
         L = self.laplacian
         K = self.gaussian_curvature
 
         if isinstance(flexural_rigidity, (float, int)):
-            D = self.project_function(lambda _: flexural_rigidity)
+            D = self.project_function(lambda _: float(flexural_rigidity))
         else:
             D = flexural_rigidity
 
         if isinstance(poisson_ratio, (float, int)):
-            nu = self.project_function(lambda _: poisson_ratio)
+            nu = self.project_function(lambda _: float(poisson_ratio))
         else:
             nu = poisson_ratio
 
         if isinstance(buoyancy_factor, (float, int)):
-            rho_g = self.project_function(lambda _: buoyancy_factor)
+            rho_g = self.project_function(lambda _: float(buoyancy_factor))
         else:
             rho_g = buoyancy_factor
 
@@ -1420,9 +1428,13 @@ class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, 
         def apply_operator(w: Any) -> Any:
             delta_w = L(w)
 
+            # 1. Principal Bending Term: \Delta(D \Delta w) -> L(D L(w))
             D_delta_w = self.vector_multiply(D, delta_w)
             principal_term = L(D_delta_w)
 
+            # 3. Hessian Trace & Commutator via Bochner Identity:
+            # Note: Subtracting this block yields exactly:
+            # + tr(Hess(D_eff) Hess(w)) + 2 K \nabla D_eff \cdot \nabla w
             grad_Deff_w = self.gradient_dot_product(D_eff, w)
 
             poisson_penalty = self.multiply(0.5, L(grad_Deff_w))
@@ -1435,10 +1447,25 @@ class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, 
 
             self.axpy(-K, grad_Deff_w, poisson_penalty)
 
+            # 2. Scalar Interaction: - \Delta(D_eff) \Delta w -> - L(D_eff) L(w)
+            scalar_interaction = self.vector_multiply(delta_D_eff, delta_w)
+
+            # 4. Geometric Covariant Softening: - K D_eff \Delta w -> - K D_eff L(w)
+            if K != 0.0:
+                curvature_penalty = self.vector_multiply(D_eff, delta_w)
+
+            # --- Operator Assembly ---
             result = principal_term
+
             self.axpy(-1.0, poisson_penalty, result)
-            if isinstance(rho_g, (float, int)):
-                self.axpy(float(rho_g), w, result)
+            self.axpy(-1.0, scalar_interaction, result)
+
+            if K != 0.0:
+                self.axpy(-K, curvature_penalty, result)
+
+            # 5. Foundation Restoring Force
+            if isinstance(buoyancy_factor, (float, int)):
+                self.axpy(float(buoyancy_factor), w, result)
             else:
                 restoring_force = self.vector_multiply(rho_g, w)
                 self.axpy(1.0, restoring_force, result)
@@ -1459,53 +1486,57 @@ class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, 
         solver: Optional[IterativeLinearSolver] = None,
     ) -> LinearOperator:
         r"""
-        Constructs the inverse of the generalized variable-coefficient flexure operator.
+        Constructs the inverse of the exact variable-coefficient flexure operator.
 
-        This method acts as an intelligent factory, mapping a spatial load field to
-        the resulting normal deflection. It utilizes a dual-path execution strategy
-        depending on the spatial variance of the input parameters:
+        For manifolds with constant properties, this method computes the exact inverse
+        in a single shot via a spectral invariant automorphism. Under the geometer's
+        Laplacian convention (\Delta), the geometric polynomial spectrum for eigenvalues
+        `k` evaluates exactly to:
 
-        1. **Analytical Fast-Path:** If $D$, $\nu$, and $\rho_g$ are all constant scalars,
-           the Poisson penalty vanishes ($\nabla D_{eff} = 0$), and the operator simplifies
-           exactly to $D \Delta^2 + \rho_g$. The method returns an ultra-fast, exact
-           `InvariantLinearAutomorphism` by reciprocating the spectral eigenvalues.
+            Eigenvalue(k) = D k^2 - K D_{eff} k + \rho_g
 
-        2. **Iterative Slow-Path:** If any parameter is a spatially varying field,
-           the method wraps a preconditioned Conjugate Gradient (CG) iterative solver
-           inside a standard `LinearOperator` interface.
+        Where $D_{eff} = D(1 - \nu)$ and $K$ is the Gaussian curvature.
 
-        To accelerate the iterative solver, an invariant preconditioner is built using
-        baseline scalar values for rigidity and buoyancy. If these baselines are not
-        explicitly provided, the solver automatically computes the spatial means of
-        the provided fields via $L^2$ projection.
+        For varying properties, it utilizes a preconditioned Conjugate Gradient solver,
+        using the spatially averaged properties to build the exact geometric spectral
+        inverse as an ideal preconditioner.
 
         Args:
-            flexural_rigidity: The flexural rigidity field $D$ or a constant scalar.
-            poisson_ratio: Poisson's ratio $\nu$ or a constant scalar.
-            buoyancy_factor: The restoring force $\rho_g$ or a constant scalar.
-            baseline_rigidity: An optional scalar guess for the average rigidity,
-                used to construct the spectral preconditioner.
-            baseline_buoyancy: An optional scalar guess for the average buoyancy,
-                used to construct the spectral preconditioner.
-            solver: An optional pre-configured `IterativeLinearSolver` instance
-                (e.g., to inject specific tolerances or progress callbacks).
-                Defaults to a standard `CGSolver`.
+            flexural_rigidity (Union[Vector, float, int]): The flexural rigidity of the plate ($D$).
+            poisson_ratio (Union[Vector, float, int]): The Poisson's ratio of the material ($\nu$).
+                (Used to compute the effective rigidity $D_{eff}$).
+            buoyancy_factor (Union[Vector, float, int]): The hydrostatic foundation restoring force
+                coefficient ($\rho_g$).
+            baseline_rigidity (Optional[float], optional): A constant scalar rigidity used to
+                construct the geometric spectral preconditioner. If None, the spatial average
+                of `flexural_rigidity` is computed dynamically.
+            baseline_buoyancy (Optional[float], optional): A constant scalar foundation restoring
+                force used to construct the geometric spectral preconditioner. If None, the spatial
+                average of `buoyancy_factor` is computed dynamically.
+            solver (Optional[IterativeLinearSolver], optional): An instance of an iterative linear
+                solver used to invert the varying-coefficient operator. If None, a standard
+                Conjugate Gradient solver (`CGSolver`) is instantiated.
 
         Returns:
-            LinearOperator: A self-adjoint linear operator mapping a load field
-            to its corresponding deflection field.
+            LinearOperator: A linear operator representing the exact geometric spectral inverse
+            (for constant properties) or the preconditioned iterative inverse (for varying properties).
         """
-
         all_scalars = all(
             isinstance(param, (float, int))
             for param in (flexural_rigidity, poisson_ratio, buoyancy_factor)
         )
 
+        K = self.gaussian_curvature
+
         if all_scalars:
             D = float(flexural_rigidity)
+            nu = float(poisson_ratio)
             rho_g = float(buoyancy_factor)
+            D_eff = D * (1.0 - nu)
 
-            return self.invariant_automorphism(lambda k: 1.0 / (D * (k**2) + rho_g))
+            return self.invariant_automorphism(
+                lambda k: 1.0 / (D * (k**2) - K * D_eff * k + rho_g)
+            )
 
         flexural_operator = self.flexural_operator(
             flexural_rigidity, poisson_ratio, buoyancy_factor
@@ -1518,30 +1549,48 @@ class AbstractSymmetricLebesgueSpace(SymmetricHilbertSpace, HilbertModuleMixin, 
                 one = self.project_function(lambda _: 1.0)
                 num = self.inner_product(f, one)
                 den = self.squared_norm(one)
-                return num / den
+                return float(num / den)
 
         if baseline_rigidity is not None:
             D0 = baseline_rigidity
         else:
             D0 = compute_average(flexural_rigidity)
 
+        if isinstance(poisson_ratio, (float, int)):
+            nu0 = float(poisson_ratio)
+        else:
+            nu0 = compute_average(poisson_ratio)
+
         if baseline_buoyancy is not None:
             rho_0 = baseline_buoyancy
         else:
             rho_0 = compute_average(buoyancy_factor)
 
+        D_eff0 = D0 * (1.0 - nu0)
+
         preconditioner = self.invariant_automorphism(
-            lambda k: 1.0 / (D0 * (k**2) + rho_0)
+            lambda k: 1.0 / (D0 * (k**2) - K * D_eff0 * k + rho_0)
         )
 
         _solver = CGSolver() if solver is None else solver
 
         if not isinstance(_solver, IterativeLinearSolver):
             raise ValueError(
-                "The solver prodided must be an instance of IterativeLinearSolver"
+                "The solver provided must be an instance of IterativeLinearSolver"
             )
 
         return _solver(flexural_operator, preconditioner=preconditioner)
+
+    def spatial_multiplication_operator(self, f: Vector) -> LinearOperator:
+        """
+        Returns a LinearOperator corresponding to the mapping u -> f * u
+        with f a given function that is suitably regular.
+        """
+
+        def mapping(u: Vector):
+            return self.vector_multiply(f, u)
+
+        return LinearOperator.self_adjoint(self, mapping)
 
 
 class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgueSpace):
@@ -2097,35 +2146,61 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
         buoyancy_factor: Union[Vector, float, int],
     ) -> LinearOperator:
         r"""
-        Constructs the generalized 4th-order variable-coefficient flexure operator
-        for a thin elastic shell on a Riemannian manifold.
+        Constructs the exact 4th-order variable-coefficient flexure operator
+        for a floating elastic plate mapped to a Riemannian manifold.
 
-        This operator models the normal deflection of a shell subjected to a transverse
-        load. It accounts for spatially varying material properties without requiring
-        explicit tensor calculus by utilizing Bochner-style identities to express
-        the inner product of Hessians purely in terms of Laplacians and surface gradients.
+        Mathematical Formulation:
+        -------------------------
+        This operator evaluates the covariant tensor divergence of the non-Euclidean
+        moment equations. Under the geometer's Laplacian convention, the exact
+        equation is:
 
-        Mathematically, the operator evaluates:
-        $$ Op(w) = \Delta(D \Delta w) - \text{tr}(\text{Hess}(D(1-\nu)) \text{Hess}(w)) + \rho_g w $$
+        Op(w) = \Delta(D \Delta w)
+              - \Delta(D_{eff}) \Delta w
+              + tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
+              - K D_{eff} \Delta w
+              + \rho_g w
 
-        Where:
-        * $w$ is the normal deflection.
-        * $D$ is the flexural rigidity.
-        * $\nu$ is Poisson's ratio.
-        * $\rho_g$ is the foundation restoring force (buoyancy factor).
-        * $K$ is the Gaussian curvature of the underlying manifold (handled internally).
+        Notation:
+        ---------
+        * $D_{eff} = D(1 - \nu)$ is the effective flexural rigidity.
+        * $K$ is the Gaussian curvature of the manifold.
+
+        Physical & Geometric Breakdown:
+        -------------------------------
+        1. Principal Bending: \Delta(D \Delta w)
+            The standard biharmonic flexure term.
+
+        2. Scalar Property Interaction: - \Delta(D_{eff}) \Delta w
+            The scalar component of the Föppl-von Kármán bilinear bracket,
+            accounting for gradients in the effective rigidity.
+
+        3. Tensor Gradients & Commutator: tr(Hess(D_{eff}) Hess(w)) + 2 K \nabla(D_{eff}) \cdot \nabla w
+            Accounts for the coupling of spatial rigidity gradients with surface twist.
+            The second half of this term (the gradient-curvature coupling) arises
+            analytically from the non-commutativity of covariant derivatives.
+            In this implementation, both terms are elegantly generated together in a
+            coordinate-free manner by subtracting the Bochner identity block.
+
+        4. Geometric Covariant Softening: - K D_{eff} \Delta w
+            Because covariant derivatives do not commute, pure bending on a curved
+            surface inherently penalizes the manifold's stiffness.
+
+        5. Foundation Restoring Force: \rho_g w
+            The local hydrostatic restoring force (e.g., fluid mantle buoyancy).
 
         Args:
-            flexural_rigidity: The flexural rigidity field $D$. Can be a spatially
-                varying Vector in this space or a constant scalar.
-            poisson_ratio: Poisson's ratio $\nu$. Can be a spatially varying Vector
-                or a constant scalar.
-            buoyancy_factor: The density contrast or foundation restoring force $\rho_g$.
-                Can be a spatially varying Vector or a constant scalar.
+            flexural_rigidity (Union[Vector, float, int]): The flexural rigidity of the plate ($D$).
+                Can be a spatially varying field (Vector) or a constant scalar.
+            poisson_ratio (Union[Vector, float, int]): The Poisson's ratio of the material ($\nu$).
+                Can be a spatially varying field (Vector) or a constant scalar. (Used to compute
+                the effective rigidity $D_{eff}$).
+            buoyancy_factor (Union[Vector, float, int]): The hydrostatic foundation restoring force
+                coefficient ($\rho_g$). Can be a spatially varying field (Vector) or a constant scalar.
 
         Returns:
-            LinearOperator: A self-adjoint linear operator mapping a deflection field
-            to its corresponding load field.
+            LinearOperator: A formally self-adjoint linear operator representing the exact
+            4th-order variable-coefficient flexural equations mapped to the manifold.
         """
         l2_operator = self.underlying_space.flexural_operator(
             flexural_rigidity, poisson_ratio, buoyancy_factor
@@ -2145,41 +2220,40 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
         solver: Optional[IterativeLinearSolver] = None,
     ) -> LinearOperator:
         r"""
-        Constructs the inverse of the generalized variable-coefficient flexure operator.
+        Constructs the inverse of the exact variable-coefficient flexure operator.
 
-        This method acts as an intelligent factory, mapping a spatial load field to
-        the resulting normal deflection. It utilizes a dual-path execution strategy
-        depending on the spatial variance of the input parameters:
+        For manifolds with constant properties, this method computes the exact inverse
+        in a single shot via a spectral invariant automorphism. Under the geometer's
+        Laplacian convention (\Delta), the geometric polynomial spectrum for eigenvalues
+        `k` evaluates exactly to:
 
-        1. **Analytical Fast-Path:** If $D$, $\nu$, and $\rho_g$ are all constant scalars,
-           the Poisson penalty vanishes ($\nabla D_{eff} = 0$), and the operator simplifies
-           exactly to $D \Delta^2 + \rho_g$. The method returns an ultra-fast, exact
-           `InvariantLinearAutomorphism` by reciprocating the spectral eigenvalues.
+            Eigenvalue(k) = D k^2 - K D_{eff} k + \rho_g
 
-        2. **Iterative Slow-Path:** If any parameter is a spatially varying field,
-           the method wraps a preconditioned Conjugate Gradient (CG) iterative solver
-           inside a standard `LinearOperator` interface.
+        Where $D_{eff} = D(1 - \nu)$ and $K$ is the Gaussian curvature.
 
-        To accelerate the iterative solver, an invariant preconditioner is built using
-        baseline scalar values for rigidity and buoyancy. If these baselines are not
-        explicitly provided, the solver automatically computes the spatial means of
-        the provided fields via $L^2$ projection.
+        For varying properties, it utilizes a preconditioned Conjugate Gradient solver,
+        using the spatially averaged properties to build the exact geometric spectral
+        inverse as an ideal preconditioner.
 
         Args:
-            flexural_rigidity: The flexural rigidity field $D$ or a constant scalar.
-            poisson_ratio: Poisson's ratio $\nu$ or a constant scalar.
-            buoyancy_factor: The restoring force $\rho_g$ or a constant scalar.
-            baseline_rigidity: An optional scalar guess for the average rigidity,
-                used to construct the spectral preconditioner.
-            baseline_buoyancy: An optional scalar guess for the average buoyancy,
-                used to construct the spectral preconditioner.
-            solver: An optional pre-configured `IterativeLinearSolver` instance
-                (e.g., to inject specific tolerances or progress callbacks).
-                Defaults to a standard `CGSolver`.
+            flexural_rigidity (Union[Vector, float, int]): The flexural rigidity of the plate ($D$).
+            poisson_ratio (Union[Vector, float, int]): The Poisson's ratio of the material ($\nu$).
+                (Used to compute the effective rigidity $D_{eff}$).
+            buoyancy_factor (Union[Vector, float, int]): The hydrostatic foundation restoring force
+                coefficient ($\rho_g$).
+            baseline_rigidity (Optional[float], optional): A constant scalar rigidity used to
+                construct the geometric spectral preconditioner. If None, the spatial average
+                of `flexural_rigidity` is computed dynamically.
+            baseline_buoyancy (Optional[float], optional): A constant scalar foundation restoring
+                force used to construct the geometric spectral preconditioner. If None, the spatial
+                average of `buoyancy_factor` is computed dynamically.
+            solver (Optional[IterativeLinearSolver], optional): An instance of an iterative linear
+                solver used to invert the varying-coefficient operator. If None, a standard
+                Conjugate Gradient solver (`CGSolver`) is instantiated.
 
         Returns:
-            LinearOperator: A self-adjoint linear operator mapping a load field
-            to its corresponding deflection field.
+            LinearOperator: A linear operator representing the exact geometric spectral inverse
+            (for constant properties) or the preconditioned iterative inverse (for varying properties).
         """
         l2_operator = self.underlying_space.inverse_flexural_operator(
             flexural_rigidity,
@@ -2193,6 +2267,16 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
         return LinearOperator.from_formal_adjoint(
             self, l2_operator.codomain, l2_operator
         )
+
+    def spatial_multiplication_operator(self, f: Vector) -> LinearOperator:
+        """
+        Returns a LinearOperator corresponding to the mapping u -> f * u
+        with f a given function that is suitably regular.
+        """
+
+        l2_operator = self.underlying_space.spatial_multiplication_operator(f)
+
+        return LinearOperator.from_formal_adjoint(self, self, l2_operator)
 
     # ------------------------------------------------------- #
     #          Methods defered to the Lebesgue space          #

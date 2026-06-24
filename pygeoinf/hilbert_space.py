@@ -698,7 +698,7 @@ class EuclideanSpace(OrthonormalHilbertSpace):
         """
         return isinstance(x, np.ndarray) and x.shape == (self.dim,)
 
-    def subspace_projection(self, indices: Union[int, List[int]]) -> "LinearOperator":
+    def subspace_projection(self, indices: Union[int, List[int]]) -> LinearOperator:
         """
         Returns a projection operator onto specified coordinates.
 
@@ -805,7 +805,7 @@ class MassWeightedHilbertSpace(HilbertSpace):
         """Delegates vector creation to the underlying space."""
         return self.underlying_space.from_components(c)
 
-    def to_dual(self, x: Vector) -> "LinearForm":
+    def to_dual(self, x: Vector) -> LinearForm:
         """
         Computes the dual mapping `R_Y(x) = R_X(M x)`.
         """
@@ -815,7 +815,7 @@ class MassWeightedHilbertSpace(HilbertSpace):
         yp = self.underlying_space.to_dual(y)
         return LinearForm(self, components=yp.components)
 
-    def from_dual(self, xp: "LinearForm") -> Vector:
+    def from_dual(self, xp: LinearForm) -> Vector:
         """
         Computes the inverse dual mapping `R_Y^{-1}(xp) = M^{-1} R_X^{-1}(xp)`.
         """
