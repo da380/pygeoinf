@@ -282,6 +282,26 @@ def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarra
     assert np.allclose(result_adjoint, x, rtol=TEST_TOLERANCE, atol=TEST_TOLERANCE)
 
 
+def test_cg_solver_is_stable_under_large_rhs_scaling(
+    spd_operator: LinearOperator, x: np.ndarray
+):
+    """CG should be homogeneous for large right-hand-side amplitudes."""
+    solver = CGSolver(rtol=1e-10)
+    inverse_op = solver(spd_operator)
+
+    scale = 1.0e14
+    b = spd_operator(x)
+    result = inverse_op(spd_operator.domain.multiply(scale, b))
+
+    assert np.all(np.isfinite(spd_operator.domain.to_components(result)))
+    assert np.allclose(
+        spd_operator.domain.multiply(1.0 / scale, result),
+        x,
+        rtol=1e-8,
+        atol=1e-8,
+    )
+
+
 # =============================================================================
 # MinRes Specific Tests
 # =============================================================================

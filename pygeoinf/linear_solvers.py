@@ -150,7 +150,7 @@ class CholeskySolver(DirectLinearSolver):
         factor = cho_factor(matrix, overwrite_a=False)
 
         def solve_galerkin(c: np.ndarray) -> np.ndarray:
-            return cho_solve(factor, c)
+            return cho_solve(factor, c, check_finite=False)
 
         return self._build_inverse_operator(operator, solve_galerkin)
 
@@ -475,18 +475,20 @@ class CGSolver(IterativeLinearSolver):
             self._callback.reset()
 
         domain = operator.domain
-        x = domain.zero if x0 is None else domain.copy(x0)
-
-        r = domain.subtract(y, operator(x))
-        z = domain.copy(r) if preconditioner is None else preconditioner(r)
-        p = domain.copy(z)
-
         y_squared_norm = domain.squared_norm(y)
 
         if y_squared_norm == 0.0:
             return domain.zero
 
-        tol_sq = max(self._atol**2, (self._rtol**2) * y_squared_norm)
+        rhs_scale = np.sqrt(y_squared_norm)
+        y_scaled = domain.multiply(1.0 / rhs_scale, y)
+        x = domain.zero if x0 is None else domain.multiply(1.0 / rhs_scale, x0)
+
+        r = domain.subtract(y_scaled, operator(x))
+        z = domain.copy(r) if preconditioner is None else preconditioner(r)
+        p = domain.copy(z)
+
+        tol_sq = max((self._atol / rhs_scale) ** 2, self._rtol**2)
 
         maxiter = self._maxiter if self._maxiter is not None else 10 * domain.dim
 
@@ -525,7 +527,7 @@ class CGSolver(IterativeLinearSolver):
         if hasattr(self._callback, "finalize") and callable(self._callback.finalize):
             self._callback.finalize()
 
-        return x
+        return domain.multiply(rhs_scale, x)
 
 
 class MinResSolver(IterativeLinearSolver):
