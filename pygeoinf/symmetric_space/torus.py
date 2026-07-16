@@ -319,11 +319,11 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         real-only modes at indices 0-3 followed by strict (cos, -sin) pairs
         that share a wavevector. Returns the wavevector components of the
         unique modes (singles plus one per pair) and the combined scaling
-        vector `metric_values / sqrt(4 pi^2 R_x R_y)`.
+        vector `dirac_weights / sqrt(4 pi^2 R_x R_y)`.
         """
         unique = np.concatenate((np.arange(4), np.arange(4, self.dim, 2)))
         norm_factor = np.sqrt(4 * np.pi**2 * self.radius_x * self.radius_y)
-        scale = self.metric_values / norm_factor
+        scale = self._dirac_weights / norm_factor
         return self._kx_freqs[unique], self._ky_freqs[unique], scale
 
     def laplacian_eigenvectors_at_point(self, pt: Tuple[float, float]) -> np.ndarray:
@@ -549,6 +549,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """Constructs mappings between 1D component indices and 2D wavevectors."""
         self._eigenvalues = np.zeros(dim)
         self._squared_norms = np.zeros(dim)
+        self._dirac_weights = np.zeros(dim)
         self._kx_freqs = np.zeros(dim)
         self._ky_freqs = np.zeros(dim)
         self._is_imag = np.zeros(dim, dtype=bool)
@@ -561,8 +562,18 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             ky_freq = ky_idx
             eval_val = (kx_freq / self.radius_x) ** 2 + (ky_freq / self.radius_y) ** 2
 
+            # A paired component stores a conjugate pair of modes: its basis
+            # function has amplitude 2 (dirac weight) and squared norm 2. A
+            # real-only Nyquist mode is stored once: amplitude 1 and squared
+            # norm 1/2. The constant mode has amplitude 1 and unit norm.
+            if is_real_only:
+                squared_norm = 1.0 if kx_idx == 0 and ky_idx == 0 else 0.5
+            else:
+                squared_norm = 2.0
+
             self._eigenvalues[idx] = eval_val
-            self._squared_norms[idx] = 1.0 if is_real_only else 2.0
+            self._squared_norms[idx] = squared_norm
+            self._dirac_weights[idx] = 1.0 if is_real_only else 2.0
             self._kx_freqs[idx] = kx_freq
             self._ky_freqs[idx] = ky_freq
             self._is_imag[idx] = False
@@ -571,6 +582,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             if not is_real_only:
                 self._eigenvalues[idx] = eval_val
                 self._squared_norms[idx] = 2.0
+                self._dirac_weights[idx] = 2.0
                 self._kx_freqs[idx] = kx_freq
                 self._ky_freqs[idx] = ky_freq
                 self._is_imag[idx] = True
@@ -649,15 +661,16 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         Cached index arrays linking the component layout to a dense NUFFT grid.
 
         Returns the grid size N = 2 kmax + 2, the per-unique-mode scaling
-        s_m = metric_m / sqrt(4 pi^2 R_x R_y), the flattened grid positions of
-        +k_m and -k_m, and the (row, column) grid indices of +k_m.
+        s_m = w_m / sqrt(4 pi^2 R_x R_y) with w_m the dirac (mode-multiplicity)
+        weight, the flattened grid positions of +k_m and -k_m, and the
+        (row, column) grid indices of +k_m.
         """
         unique = np.concatenate((np.arange(4), np.arange(4, self.dim, 2)))
         grid_size = 2 * self.kmax + 2
         offset = grid_size // 2
         kx = self._kx_freqs[unique].astype(int)
         ky = self._ky_freqs[unique].astype(int)
-        scale = self.metric_values[unique] / np.sqrt(
+        scale = self._dirac_weights[unique] / np.sqrt(
             4 * np.pi**2 * self.radius_x * self.radius_y
         )
         positive_flat = (kx + offset) * grid_size + (ky + offset)
