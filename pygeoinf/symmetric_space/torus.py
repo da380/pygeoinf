@@ -17,7 +17,78 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
 from pygeoinf.linear_operators import LinearOperator
+from pygeoinf.hilbert_space import EuclideanSpace
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
+
+
+
+def _matrix_free_point_evaluation_2d(
+    space, layout, th_x: np.ndarray, th_y: np.ndarray
+) -> LinearOperator:
+    """
+    Builds a matrix-free point-evaluation operator for a 2D Fourier space.
+
+    Internal helper shared by the torus and plane Sobolev spaces. The
+    operator's action matches the dense NUDFT matrix assembled by
+    `point_evaluation_operator` to machine precision, but only two thin
+    complex phase matrices are stored: the separability of the Fourier
+    kernel, e^{i(kx tx + ky ty)} = e^{i kx tx} e^{i ky ty}, lets the
+    operator and its adjoint be applied with a single complex matrix
+    product each (BLAS level 3).
+
+    Args:
+        space: The Hilbert space on which the operator is defined.
+        layout: The torus Lebesgue space providing the coefficient layout
+            and FFT conventions of `space`.
+        th_x: Torus angles of the evaluation points in the x-direction.
+        th_y: Torus angles of the evaluation points in the y-direction.
+
+    Returns:
+        LinearOperator: An operator from `space` to `EuclideanSpace(n_points)`.
+    """
+    kmax = layout.kmax
+    two_k = 2 * kmax
+    n_points = th_x.size
+
+    # rfft2 row frequencies, with dirac's +kmax Nyquist convention
+    freqs_x = np.arange(two_k, dtype=float)
+    freqs_x[kmax + 1 :] -= two_k
+    freqs_y = np.arange(kmax + 1, dtype=float)
+
+    phase_x = np.exp(1j * th_x[:, None] * freqs_x[None, :])
+    phase_y = np.exp(1j * th_y[:, None] * freqs_y[None, :])
+
+    # interior ky columns stand in for the conjugate pair not stored by rfft2
+    weights = np.full(kmax + 1, 2.0)
+    weights[0] = 1.0
+    weights[kmax] = 1.0
+
+    inv_grid_size = 1.0 / (two_k * two_k)
+    adjoint_scale = inv_grid_size / layout.fft_factor
+    inverse_metric_values = np.reciprocal(space.metric_values)
+    codomain = EuclideanSpace(n_points)
+
+    def mapping(x):
+        coeff = rfft2(x)
+        cw = coeff * weights[None, :]
+        # ky = kmax column: keep the pure +(kx, +kmax) modes used by dirac;
+        # the rfft2 mirror rows of this column must not contribute
+        cw[1:kmax, kmax] = 2.0 * coeff[1:kmax, kmax]
+        cw[kmax + 1 :, kmax] = 0.0
+        g = phase_x @ cw
+        return np.einsum("ij,ij->i", g, phase_y).real * inv_grid_size
+
+    def adjoint_mapping(y):
+        # z[kx, ky] = sum_i y_i e^{-i(freqs_x[kx] th_x_i + ky th_y_i)}
+        z = phase_x.conj().T @ (y[:, None] * phase_y.conj())
+        # ky = 0 column: the +-kx conjugate partners are stored explicitly
+        z[1:kmax, 0] += np.conj(z[two_k - 1 : kmax : -1, 0])
+        zw = z * weights[None, :]
+        zw[1:kmax, kmax] = 2.0 * z[1:kmax, kmax]
+        components = layout._coefficient_to_component(zw) * adjoint_scale
+        return space.from_components(inverse_metric_values * components)
+
+    return LinearOperator(space, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
@@ -820,6 +891,38 @@ class Sobolev(SymmetricSobolevSpace):
             max_degree=max_degree,
             power_of_two=power_of_two,
             safe=safe,
+        )
+
+    def point_evaluation_operator(
+        self, points: List[Any], /, *, matrix_free: bool = False
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Both implementations realise the same truncated Fourier interpolant
+        (including the Nyquist conventions of `dirac`) and give identical
+        results to machine precision.
+
+        Args:
+            points: A list of (theta_x, theta_y) angle pairs.
+            matrix_free: If True, the dense (n_points x dim) matrix is never
+                formed. The Fourier kernel separates as
+                e^{i(kx tx + ky ty)} = e^{i kx tx} e^{i ky ty}, so the
+                operator stores only two thin complex phase matrices and
+                applies itself and its adjoint with a single matrix product
+                each. Memory usage is O(n_points * kmax) instead of
+                O(n_points * kmax^2), and both construction and application
+                are substantially faster for large spaces.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        angles = np.asarray(points, dtype=float).reshape(-1, 2)
+        return _matrix_free_point_evaluation_2d(
+            self, self.underlying_space, angles[:, 0], angles[:, 1]
         )
 
     @property

@@ -10,6 +10,7 @@ from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 from .torus import Lebesgue as TorusLebesgue
 from .torus import Sobolev as TorusSobolev
+from .torus import _matrix_free_point_evaluation_2d
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
@@ -466,6 +467,41 @@ class Sobolev(SymmetricSobolevSpace):
         return cls.from_covariance(
             cls.sobolev_kernel(kernel_order, kernel_scale), order, scale, **kwargs
         )
+
+    def point_evaluation_operator(
+        self, points: List[Any], /, *, matrix_free: bool = False
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Both implementations realise the same truncated Fourier interpolant
+        (including the Nyquist conventions of `dirac`) and give identical
+        results to machine precision.
+
+        Args:
+            points: A list of (x, y) coordinate pairs.
+            matrix_free: If True, the dense (n_points x dim) matrix is never
+                formed. The Fourier kernel separates as
+                e^{i(kx tx + ky ty)} = e^{i kx tx} e^{i ky ty}, so the
+                operator stores only two thin complex phase matrices and
+                applies itself and its adjoint with a single matrix product
+                each. Memory usage is O(n_points * kmax) instead of
+                O(n_points * kmax^2), and both construction and application
+                are substantially faster for large spaces.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        pts = np.asarray(points, dtype=float).reshape(-1, 2)
+        torus = self.underlying_space.torus_space
+        ax, _, cx = self.bounds_x
+        ay, _, cy = self.bounds_y
+        th_x = (pts[:, 0] - ax + cx) / torus.radius_x
+        th_y = (pts[:, 1] - ay + cy) / torus.radius_y
+        return _matrix_free_point_evaluation_2d(self, torus, th_x, th_y)
 
     # ---------------------------------------------- #
     #                   Properties                   #

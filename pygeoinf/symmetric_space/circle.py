@@ -8,7 +8,57 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
 from pygeoinf.linear_operators import LinearOperator
+from pygeoinf.hilbert_space import EuclideanSpace
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
+
+
+
+def _matrix_free_point_evaluation_1d(
+    space, layout, th: np.ndarray
+) -> LinearOperator:
+    """
+    Builds a matrix-free point-evaluation operator for a 1D Fourier space.
+
+    Internal helper shared by the circle and line Sobolev spaces. The
+    operator's action matches the dense matrix assembled by
+    `point_evaluation_operator` to machine precision, but only a thin
+    complex phase matrix of shape (n_points, kmax + 1) is stored.
+
+    Args:
+        space: The Hilbert space on which the operator is defined.
+        layout: The circle Lebesgue space providing the coefficient layout
+            and FFT conventions of `space`.
+        th: Circle angles of the evaluation points.
+
+    Returns:
+        LinearOperator: An operator from `space` to `EuclideanSpace(n_points)`.
+    """
+    kmax = layout.kmax
+    n_points = th.size
+
+    freqs = np.arange(kmax + 1, dtype=float)
+    phase = np.exp(1j * th[:, None] * freqs[None, :])
+
+    # interior frequencies stand in for the conjugate pair not stored by rfft
+    weights = np.full(kmax + 1, 2.0)
+    weights[0] = 1.0
+    weights[kmax] = 1.0
+
+    inv_grid_size = 1.0 / (2 * kmax)
+    adjoint_scale = inv_grid_size / layout.fft_factor
+    inverse_metric_values = np.reciprocal(space.metric_values)
+    codomain = EuclideanSpace(n_points)
+
+    def mapping(x):
+        coeff = rfft(x) * weights
+        return (phase @ coeff).real * inv_grid_size
+
+    def adjoint_mapping(y):
+        z = phase.conj().T @ y
+        components = layout._coefficient_to_component(z * weights) * adjoint_scale
+        return space.from_components(inverse_metric_values * components)
+
+    return LinearOperator(space, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
@@ -679,6 +729,34 @@ class Sobolev(SymmetricSobolevSpace):
             power_of_two=power_of_two,
             safe=safe,
         )
+
+    def point_evaluation_operator(
+        self, points: List[Any], /, *, matrix_free: bool = False
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Both implementations realise the same truncated Fourier interpolant
+        (including the Nyquist conventions of `dirac`) and give identical
+        results to machine precision.
+
+        Args:
+            points: A list of angles.
+            matrix_free: If True, the dense (n_points x dim) matrix is never
+                assembled row by row from `dirac`; the operator instead
+                stores a thin complex phase matrix and applies itself and
+                its adjoint with a single matrix product each. In 1D the
+                phase matrix occupies the same memory as the dense matrix,
+                so the benefit is faster construction, not storage.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        angles = np.asarray(points, dtype=float).ravel()
+        return _matrix_free_point_evaluation_1d(self, self.underlying_space, angles)
 
     # ---------------------------------------------- #
     #                   Properties                   #
