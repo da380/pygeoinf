@@ -259,15 +259,29 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         return (k / self.radius) ** 2
 
     def laplacian_eigenvector_squared_norm(self, k: int) -> float:
-        return 1.0 if k == 0 else 2.0
+        # The basis function for k = 0 is a constant of unit norm. For
+        # 0 < |k| < kmax a unit component stores a conjugate pair of modes,
+        # giving a basis function of squared norm 2. The Nyquist mode
+        # k = kmax is stored once (rfft keeps a single real coefficient),
+        # so its basis function has squared norm 1/2.
+        if k == 0:
+            return 1.0
+        if abs(k) == self.kmax:
+            return 0.5
+        return 2.0
 
     def laplacian_eigenvectors_at_point(self, theta: float) -> np.ndarray:
         k_vals = np.arange(self.kmax + 1)
         cos_terms = np.cos(k_vals * theta)
         sin_terms = np.sin(k_vals[1 : self.kmax] * theta)
+        # Mode multiplicity of each component: conjugate pairs count twice,
+        # while the constant and the (real-only) Nyquist mode count once.
+        weights = np.full(self.dim, 2.0)
+        weights[0] = 1.0
+        weights[self.kmax] = 1.0
         return (
-            self.metric
-            @ np.concatenate([cos_terms, -sin_terms])
+            weights
+            * np.concatenate([cos_terms, -sin_terms])
             / (np.sqrt(2 * np.pi * self.radius))
         )
 
@@ -316,9 +330,16 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             k_min = min(self.kmax, target_degree)
             c_out[: k_min + 1] = c_in[: k_min + 1]
 
-            # 3. Enforce a strictly real Nyquist frequency when downsampling
-            if target_degree < self.kmax:
-                c_out[target_degree] = c_out[target_degree].real + 0j
+            # 3. Handle the Nyquist frequency. When upsampling, the domain's
+            # Nyquist mode (counted once) becomes an interior mode (counted
+            # twice with its conjugate): halve it so the function is
+            # preserved. When downsampling, an interior conjugate pair folds
+            # onto the codomain's strictly real Nyquist mode: keeping twice
+            # its real part gives the orthogonal projection.
+            if target_degree > self.kmax:
+                c_out[self.kmax] = 0.5 * c_in[self.kmax].real + 0j
+            elif target_degree < self.kmax:
+                c_out[target_degree] = 2.0 * c_in[target_degree].real + 0j
 
             # 4. Return to the spatial domain
             return codomain.from_coefficients(c_out)
@@ -330,9 +351,13 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             k_min = min(self.kmax, target_degree)
             c_out[: k_min + 1] = c_in[: k_min + 1]
 
-            # The adjoint must mirror the forward map's Nyquist handling perfectly
-            if self.kmax < target_degree:
-                c_out[self.kmax] = c_out[self.kmax].real + 0j
+            # The adjoint must mirror the forward map's Nyquist handling:
+            # the adjoint of the halved embedding gathers both conjugate
+            # copies, and the adjoint of the projection is the embedding.
+            if target_degree > self.kmax:
+                c_out[self.kmax] = 2.0 * c_in[self.kmax].real + 0j
+            elif target_degree < self.kmax:
+                c_out[target_degree] = 0.5 * c_in[target_degree].real + 0j
 
             return self.from_coefficients(c_out)
 

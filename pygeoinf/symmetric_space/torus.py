@@ -308,7 +308,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         phase = self._kx_freqs * tx + self._ky_freqs * ty
         vals = np.where(self._is_imag, -np.sin(phase), np.cos(phase))
         norm_factor = np.sqrt(4 * np.pi**2 * self.radius_x * self.radius_y)
-        return self.metric @ vals / norm_factor
+        return self._dirac_weights * vals / norm_factor
 
     def random_point(self) -> Tuple[float, float]:
         """Returns a random coordinate point within the Torus domain [0, 2π] x [0, 2π]."""
@@ -519,6 +519,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """Constructs mappings between 1D component indices and 2D wavevectors."""
         self._eigenvalues = np.zeros(dim)
         self._squared_norms = np.zeros(dim)
+        self._dirac_weights = np.zeros(dim)
         self._kx_freqs = np.zeros(dim)
         self._ky_freqs = np.zeros(dim)
         self._is_imag = np.zeros(dim, dtype=bool)
@@ -531,8 +532,18 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             ky_freq = ky_idx
             eval_val = (kx_freq / self.radius_x) ** 2 + (ky_freq / self.radius_y) ** 2
 
+            # A paired component stores a conjugate pair of modes: its basis
+            # function has amplitude 2 (dirac weight) and squared norm 2. A
+            # real-only Nyquist mode is stored once: amplitude 1 and squared
+            # norm 1/2. The constant mode has amplitude 1 and unit norm.
+            if is_real_only:
+                squared_norm = 1.0 if kx_idx == 0 and ky_idx == 0 else 0.5
+            else:
+                squared_norm = 2.0
+
             self._eigenvalues[idx] = eval_val
-            self._squared_norms[idx] = 1.0 if is_real_only else 2.0
+            self._squared_norms[idx] = squared_norm
+            self._dirac_weights[idx] = 1.0 if is_real_only else 2.0
             self._kx_freqs[idx] = kx_freq
             self._ky_freqs[idx] = ky_freq
             self._is_imag[idx] = False
@@ -541,6 +552,7 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             if not is_real_only:
                 self._eigenvalues[idx] = eval_val
                 self._squared_norms[idx] = 2.0
+                self._dirac_weights[idx] = 2.0
                 self._kx_freqs[idx] = kx_freq
                 self._ky_freqs[idx] = ky_freq
                 self._is_imag[idx] = True
