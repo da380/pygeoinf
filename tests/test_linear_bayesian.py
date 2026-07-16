@@ -267,7 +267,7 @@ class TestBayesianSampling:
         """
         Tests that invalid formalisms and missing inverse covariances are correctly caught.
         """
-        with pytest.raises(ValueError, match="formalism must be either"):
+        with pytest.raises(ValueError, match="formalism must be"):
             LinearBayesianInversion(
                 forward_problem, model_prior_measure, formalism="spectral_space"
             )
@@ -1175,3 +1175,314 @@ class TestBayesianEvidence:
         sign, exact_log_det = np.linalg.slogdet(exact_normal_matrix)
 
         assert np.isclose(approx_log_det, exact_log_det, rtol=0.05)
+
+
+# =============================================================================
+# Tests for the Whitened Model-Space Formalism
+# =============================================================================
+
+
+@pytest.fixture
+def correlated_prior(forward_problem: LinearForwardProblem) -> GaussianMeasure:
+    """
+    Provides a correlated prior with a non-trivial covariance factor whose
+    domain is a EuclideanSpace distinct from the model space.
+    """
+    space = forward_problem.model_space
+    B = np.random.randn(space.dim, space.dim)
+    covariance_matrix = B @ B.T + 0.5 * np.eye(space.dim)
+    return GaussianMeasure.from_covariance_matrix(space, covariance_matrix)
+
+
+class TestWhitenedFormalism:
+    """Tests for the 'whitened_model_space' formalism."""
+
+    def test_normal_operator_structure(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+    ):
+        """
+        The whitened normal operator must equal I + L* A* R^-1 A L on the
+        domain of the prior covariance factor, with spectrum bounded below
+        by one.
+        """
+        inversion = LinearBayesianInversion(
+            forward_problem, correlated_prior, formalism="whitened_model_space"
+        )
+        normal_op = inversion.normal_operator
+        factor = correlated_prior.covariance_factor
+
+        assert normal_op.domain == factor.domain
+        assert normal_op.codomain == factor.domain
+
+        A = forward_problem.forward_operator.matrix(dense=True)
+        L = factor.matrix(dense=True)
+        R_inv = forward_problem.data_error_measure.inverse_covariance.matrix(
+            dense=True
+        )
+        expected = np.eye(L.shape[1]) + L.T @ A.T @ R_inv @ A @ L
+
+        actual = normal_op.matrix(dense=True)
+        assert np.allclose(actual, expected)
+
+        eigenvalues = np.linalg.eigvalsh(actual)
+        assert np.min(eigenvalues) >= 1.0 - 1e-10
+
+    def test_posterior_equivalence_with_other_formalisms(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        All three formalisms must produce the same posterior expectation and
+        covariance.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        posteriors = {}
+        for formalism in ("data_space", "model_space", "whitened_model_space"):
+            inversion = LinearBayesianInversion(
+                forward_problem, correlated_prior, formalism=formalism
+            )
+            posteriors[formalism] = inversion.model_posterior_measure(data, solver)
+
+        reference = posteriors["data_space"]
+        model_space = forward_problem.model_space
+        for formalism in ("model_space", "whitened_model_space"):
+            posterior = posteriors[formalism]
+            assert np.allclose(
+                model_space.to_components(posterior.expectation),
+                model_space.to_components(reference.expectation),
+                atol=1e-6,
+                rtol=1e-6,
+            )
+            assert np.allclose(
+                posterior.covariance.matrix(dense=True),
+                reference.covariance.matrix(dense=True),
+                atol=1e-6,
+                rtol=1e-6,
+            )
+
+    def test_kalman_operator_equivalence(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        The whitened Kalman gain must act identically to the data-space one.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        gain_data = LinearBayesianInversion(
+            forward_problem, correlated_prior, formalism="data_space"
+        ).kalman_operator(solver)
+        gain_whitened = LinearBayesianInversion(
+            forward_problem, correlated_prior, formalism="whitened_model_space"
+        ).kalman_operator(solver)
+
+        assert np.allclose(
+            gain_whitened(data), gain_data(data), atol=1e-6, rtol=1e-6
+        )
+
+    def test_mahalanobis_evidence_term_equivalence(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        The Woodbury-based Mahalanobis term must agree across formalisms.
+        """
+        solver = CholeskySolver(galerkin=True)
+
+        terms = [
+            LinearBayesianInversion(
+                forward_problem, correlated_prior, formalism=formalism
+            ).mahalanobis_evidence_term(data, solver)
+            for formalism in ("data_space", "model_space", "whitened_model_space")
+        ]
+
+        assert np.isclose(terms[1], terms[0], rtol=1e-6)
+        assert np.isclose(terms[2], terms[0], rtol=1e-6)
+
+    def test_determinant_identity(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+    ):
+        """
+        Validates the Weinstein-Aronszajn identity ln|N_d| = ln|N_w| + ln|R|
+        that the whitened log-evidence computation relies upon.
+        """
+        inv_data = LinearBayesianInversion(
+            forward_problem, correlated_prior, formalism="data_space"
+        )
+        inv_whitened = inv_data.with_formalism("whitened_model_space")
+
+        _, log_det_Nd = np.linalg.slogdet(inv_data.normal_operator.matrix(dense=True))
+        _, log_det_Nw = np.linalg.slogdet(
+            inv_whitened.normal_operator.matrix(dense=True)
+        )
+        _, log_det_R = np.linalg.slogdet(
+            forward_problem.data_error_measure.covariance.matrix(dense=True)
+        )
+
+        assert np.isclose(log_det_Nd, log_det_Nw + log_det_R, rtol=1e-8)
+
+    def test_estimate_log_determinant_whitened(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+    ):
+        """
+        The SLQ log-determinant of the whitened normal operator must match
+        the exact dense value.
+        """
+        inversion = LinearBayesianInversion(
+            forward_problem, correlated_prior, formalism="whitened_model_space"
+        )
+
+        dim = correlated_prior.covariance_factor.domain.dim
+        np.random.seed(42)
+        approx_log_det = inversion.estimate_log_determinant(
+            operator_type="whitened_model_space",
+            size_estimate=dim,
+            method="fixed",
+            lanczos_degree=dim,
+            lanczos_rtol=None,
+        )
+
+        _, exact_log_det = np.linalg.slogdet(
+            inversion.normal_operator.matrix(dense=True)
+        )
+        assert np.isclose(approx_log_det, exact_log_det, rtol=0.05)
+
+    def test_posterior_sampling_statistics(
+        self,
+        identity_problem: LinearForwardProblem,
+        standard_prior: GaussianMeasure,
+        r3,
+    ):
+        """
+        Randomize-then-optimize sampling under the whitened formalism must
+        reproduce the posterior statistics.
+        """
+        solver = CholeskySolver(galerkin=True)
+        data = r3.random()
+
+        inversion = LinearBayesianInversion(
+            identity_problem, standard_prior, formalism="whitened_model_space"
+        )
+        posterior = inversion.model_posterior_measure(data, solver)
+
+        assert posterior.sample_set, "Posterior should support sampling."
+
+        n_samples = 4000
+        samples = posterior.samples(n_samples)
+        sample_matrix = np.column_stack([r3.to_components(s) for s in samples])
+
+        true_mean = r3.to_components(posterior.expectation)
+        true_cov = posterior.covariance.matrix(dense=True)
+
+        assert np.allclose(np.mean(sample_matrix, axis=1), true_mean, atol=0.01)
+        assert np.allclose(np.cov(sample_matrix), true_cov, atol=0.01)
+
+    def test_validation_errors(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Missing prior covariance factors or data error precisions must be
+        caught at initialization.
+        """
+        factorless_prior = GaussianMeasure(
+            covariance=model_prior_measure.covariance
+        )
+        with pytest.raises(ValueError, match="Prior covariance factor must be set"):
+            LinearBayesianInversion(
+                forward_problem, factorless_prior, formalism="whitened_model_space"
+            )
+
+        cov_only_error = GaussianMeasure(
+            covariance=forward_problem.data_error_measure.covariance
+        )
+        bad_fp = LinearForwardProblem(
+            forward_problem.forward_operator, data_error_measure=cov_only_error
+        )
+        with pytest.raises(
+            ValueError, match="Data error inverse covariance must be set"
+        ):
+            LinearBayesianInversion(
+                bad_fp, model_prior_measure, formalism="whitened_model_space"
+            )
+
+    def test_data_space_preconditioner_guards(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        """
+        Data-space-only preconditioners must reject the whitened formalism.
+        """
+        inversion = LinearBayesianInversion(
+            forward_problem, model_prior_measure, formalism="whitened_model_space"
+        )
+
+        with pytest.raises(
+            ValueError, match="mathematically derived for the data-space"
+        ):
+            inversion.diagonal_normal_preconditioner()
+
+        with pytest.raises(
+            ValueError, match="mathematically derived for the data-space"
+        ):
+            inversion.sparse_localized_preconditioner(interacting_blocks=[[0, 1]])
+
+    def test_parameterized_inversion_whitened(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Parameterized surrogates must support the whitened formalism, with the
+        pulled-back prior automatically densified to provide a factor.
+        """
+        model_space = forward_problem.model_space
+        parameter_space = EuclideanSpace(10)
+        parameterization = LinearOperator.from_matrix(
+            parameter_space,
+            model_space,
+            np.random.randn(model_space.dim, parameter_space.dim),
+        )
+
+        inv_data = LinearBayesianInversion(
+            forward_problem, correlated_prior, formalism="data_space"
+        )
+        sub_data = inv_data.parameterized_inversion(parameterization)
+        sub_whitened = inv_data.parameterized_inversion(
+            parameterization, formalism="whitened_model_space"
+        )
+
+        assert sub_whitened.formalism == "whitened_model_space"
+
+        solver = CholeskySolver(galerkin=True)
+        post_data = sub_data.model_posterior_measure(data, solver)
+        post_whitened = sub_whitened.model_posterior_measure(data, solver)
+
+        assert np.allclose(
+            parameter_space.to_components(post_whitened.expectation),
+            parameter_space.to_components(post_data.expectation),
+            atol=1e-6,
+            rtol=1e-6,
+        )
+        assert np.allclose(
+            post_whitened.covariance.matrix(dense=True),
+            post_data.covariance.matrix(dense=True),
+            atol=1e-6,
+            rtol=1e-6,
+        )

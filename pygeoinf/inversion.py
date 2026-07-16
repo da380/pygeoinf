@@ -23,6 +23,10 @@ from .forward_problem import LinearForwardProblem, ForwardProblem
 from .gaussian_measure import GaussianMeasure
 
 
+Formalism = Literal["model_space", "data_space", "whitened_model_space"]
+"""The algebraic spaces in which the normal equations can be assembled."""
+
+
 class Inversion:
     """
     A base class for inversion methods.
@@ -101,7 +105,7 @@ class LinearInversion(Inversion):
         forward_problem: LinearForwardProblem,
         /,
         *,
-        formalism: Literal["model_space", "data_space"] = "data_space",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Initializes the LinearInversion class.
@@ -109,19 +113,22 @@ class LinearInversion(Inversion):
         Args:
             forward_problem: An instance of a linear forward problem.
             formalism: The algebraic space in which the normal equations are
-                assembled and solved. Must be 'model_space' or 'data_space'.
+                assembled and solved. Must be 'model_space', 'data_space', or
+                'whitened_model_space'.
         """
         if not isinstance(forward_problem, LinearForwardProblem):
             raise ValueError("Forward problem must be a LinearForwardProblem.")
         super().__init__(forward_problem)
 
-        if formalism not in ("model_space", "data_space"):
-            raise ValueError("formalism must be either 'model_space' or 'data_space'")
+        if formalism not in ("model_space", "data_space", "whitened_model_space"):
+            raise ValueError(
+                "formalism must be 'model_space', 'data_space', or 'whitened_model_space'"
+            )
 
         self._formalism = formalism
 
     @property
-    def formalism(self) -> Literal["model_space", "data_space"]:
+    def formalism(self) -> Formalism:
         """
         The algebraic space in which the normal equations are assembled and solved.
         """
@@ -149,9 +156,7 @@ class LinearInversion(Inversion):
         """
         return self.forward_problem.joint_measure(model_measure)
 
-    def with_formalism(
-        self, formalism: Literal["model_space", "data_space"]
-    ) -> LinearInversion:
+    def with_formalism(self, formalism: Formalism) -> LinearInversion:
         """
         Returns a new instance of the inversion using the specified formalism.
         """
@@ -165,7 +170,7 @@ class LinearInversion(Inversion):
         dense: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
-        formalism: Optional[Literal["model_space", "data_space"]] = None,
+        formalism: Optional[Formalism] = None,
     ) -> LinearInversion:
         """
         Constructs a parameterized surrogate of the linear inversion.
@@ -201,7 +206,7 @@ class LinearInversion(Inversion):
         dense: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
-        formalism: Optional[Literal["model_space", "data_space"]] = None,
+        formalism: Optional[Formalism] = None,
     ) -> LinearInversion:
         """
         Constructs a surrogate of the linear inversion using a reduced data space.

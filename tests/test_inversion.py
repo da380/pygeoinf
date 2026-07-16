@@ -172,7 +172,7 @@ class TestLinearInversion:
         assert inv_model.formalism == "model_space"
 
         # Test validation
-        with pytest.raises(ValueError, match="formalism must be either"):
+        with pytest.raises(ValueError, match="formalism must be"):
             ConcreteLinearInversion(forward_problem_no_error, formalism="wrong_space")
 
     def test_base_parameterized_inversion_type(

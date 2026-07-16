@@ -141,9 +141,30 @@ class TestLinearLeastSquaresInversion:
         Tests that providing an invalid formalism string raises the appropriate error.
         """
         with pytest.raises(
-            ValueError, match="formalism must be either 'model_space' or 'data_space'"
+            ValueError, match="formalism must be"
         ):
             LinearLeastSquaresInversion(forward_problem, formalism="spectral_space")
+
+    def test_whitened_formalism_rejected(
+        self, forward_problem: LinearForwardProblem
+    ):
+        """
+        Tests that the Bayesian-only whitened_model_space formalism is rejected
+        by the optimisation-based inversion classes.
+        """
+        with pytest.raises(
+            ValueError, match="only available for Bayesian inversions"
+        ):
+            LinearLeastSquaresInversion(
+                forward_problem, formalism="whitened_model_space"
+            )
+
+        with pytest.raises(
+            ValueError, match="only available for Bayesian inversions"
+        ):
+            LinearMinimumNormInversion(
+                forward_problem, formalism="whitened_model_space"
+            )
 
     def test_woodbury_exact_equivalence(self, forward_problem: LinearForwardProblem):
         """
