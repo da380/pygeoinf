@@ -87,6 +87,7 @@ class LinearBayesianInversion(LinearInversion):
         /,
         *,
         formalism: Formalism = "data_space",
+        gram_operator: Optional[LinearOperator] = None,
     ) -> None:
         """
         Initializes the linear Bayesian inversion problem.
@@ -98,15 +99,43 @@ class LinearBayesianInversion(LinearInversion):
             formalism: The algebraic space in which the normal equations are
                 assembled and solved. Must be 'model_space', 'data_space', or
                 'whitened_model_space'. Defaults to 'data_space'.
+            gram_operator: An optional self-adjoint operator on the model space
+                equal to the data-misfit term `A* R^-1 A` of the normal
+                equations (or `A* A` if no data error measure is set). When
+                provided, the 'model_space' and 'whitened_model_space' normal
+                operators are assembled from it instead of composing the
+                forward operator with the noise precision per application —
+                useful when a structurally fast version exists, such as
+                `point_evaluation_gram_operator` on the symmetric spaces.
+                The caller is responsible for its correctness. Not accepted
+                with the 'data_space' formalism.
 
         Raises:
-            ValueError: If an invalid formalism string is provided, or if the
+            ValueError: If an invalid formalism string is provided, if the
                 'model_space' or 'whitened_model_space' formalism is selected
                 but the necessary operators (precision operators, or the prior
-                covariance factor) are not set.
+                covariance factor) are not set, or if a gram_operator is
+                provided that is not an automorphism of the model space or is
+                combined with the 'data_space' formalism.
         """
         super().__init__(forward_problem, formalism=formalism)
         self._model_prior_measure: GaussianMeasure = model_prior_measure
+
+        if gram_operator is not None:
+            if self.formalism == "data_space":
+                raise ValueError(
+                    "gram_operator is only used by the model_space and "
+                    "whitened_model_space formalisms."
+                )
+            model_space = forward_problem.model_space
+            if (
+                gram_operator.domain != model_space
+                or gram_operator.codomain != model_space
+            ):
+                raise ValueError(
+                    "gram_operator must be an automorphism of the model space."
+                )
+        self._gram_operator: Optional[LinearOperator] = gram_operator
 
         if self.formalism == "model_space":
             if not self.model_prior_measure.inverse_covariance_set:
@@ -146,9 +175,15 @@ class LinearBayesianInversion(LinearInversion):
         Returns:
             A new LinearBayesianInversion instance sharing the exact same forward
             problem and prior measure, but configured to use the specified formalism.
+            A gram_operator carries over, except to the 'data_space' formalism,
+            which does not use one.
         """
+        gram_operator = self._gram_operator if formalism != "data_space" else None
         return type(self)(
-            self.forward_problem, self.model_prior_measure, formalism=formalism
+            self.forward_problem,
+            self.model_prior_measure,
+            formalism=formalism,
+            gram_operator=gram_operator,
         )
 
     @property
@@ -205,6 +240,8 @@ class LinearBayesianInversion(LinearInversion):
 
         elif self.formalism == "model_space":
             prior_inv_cov = self.model_prior_measure.inverse_covariance
+            if self._gram_operator is not None:
+                return prior_inv_cov + self._gram_operator
             if self.forward_problem.data_error_measure_set:
                 data_inv_cov = (
                     self.forward_problem.data_error_measure.inverse_covariance
@@ -219,6 +256,8 @@ class LinearBayesianInversion(LinearInversion):
         else:  # whitened_model_space
             factor = self.model_prior_measure.covariance_factor
             identity = factor.domain.identity_operator()
+            if self._gram_operator is not None:
+                return identity + factor.adjoint @ self._gram_operator @ factor
             whitened_forward = forward_operator @ factor
             if self.forward_problem.data_error_measure_set:
                 data_inv_cov = (

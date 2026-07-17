@@ -1229,6 +1229,97 @@ class TestWhitenedFormalism:
         eigenvalues = np.linalg.eigvalsh(actual)
         assert np.min(eigenvalues) >= 1.0 - 1e-10
 
+    def test_gram_operator_override_matches_composed(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+        data: np.ndarray,
+    ):
+        """
+        Supplying the data-misfit term A* R^-1 A as a gram_operator must give
+        the same normal operator and posterior as the composed default, for
+        both formalisms that use it.
+        """
+        A = forward_problem.forward_operator
+        R_inv = forward_problem.data_error_measure.inverse_covariance
+        gram = A.adjoint @ R_inv @ A
+
+        solver = CholeskySolver(galerkin=True)
+        model_space = forward_problem.model_space
+
+        for formalism in ("model_space", "whitened_model_space"):
+            default = LinearBayesianInversion(
+                forward_problem, correlated_prior, formalism=formalism
+            )
+            override = LinearBayesianInversion(
+                forward_problem,
+                correlated_prior,
+                formalism=formalism,
+                gram_operator=gram,
+            )
+            assert np.allclose(
+                override.normal_operator.matrix(dense=True),
+                default.normal_operator.matrix(dense=True),
+            )
+            assert np.allclose(
+                model_space.to_components(
+                    override.model_posterior_measure(data, solver).expectation
+                ),
+                model_space.to_components(
+                    default.model_posterior_measure(data, solver).expectation
+                ),
+            )
+
+    def test_gram_operator_rejected_for_data_space(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        A = forward_problem.forward_operator
+        gram = A.adjoint @ A
+        with pytest.raises(ValueError):
+            LinearBayesianInversion(
+                forward_problem,
+                model_prior_measure,
+                formalism="data_space",
+                gram_operator=gram,
+            )
+
+    def test_gram_operator_domain_validated(
+        self,
+        forward_problem: LinearForwardProblem,
+        model_prior_measure: GaussianMeasure,
+    ):
+        # An operator on the data space is not a model-space automorphism
+        data_space = forward_problem.data_space
+        wrong = data_space.identity_operator()
+        with pytest.raises(ValueError):
+            LinearBayesianInversion(
+                forward_problem,
+                model_prior_measure,
+                formalism="model_space",
+                gram_operator=wrong,
+            )
+
+    def test_gram_operator_carries_through_with_formalism(
+        self,
+        forward_problem: LinearForwardProblem,
+        correlated_prior: GaussianMeasure,
+    ):
+        A = forward_problem.forward_operator
+        R_inv = forward_problem.data_error_measure.inverse_covariance
+        gram = A.adjoint @ R_inv @ A
+
+        inversion = LinearBayesianInversion(
+            forward_problem,
+            correlated_prior,
+            formalism="whitened_model_space",
+            gram_operator=gram,
+        )
+        assert inversion.with_formalism("model_space")._gram_operator is gram
+        # data_space cannot use one, so it must be dropped rather than rejected
+        assert inversion.with_formalism("data_space")._gram_operator is None
+
     def test_invariant_prior_accepted_and_matches_model_space(self):
         """
         A heat-kernel (invariant) prior on a function space carries a spectral
@@ -1263,6 +1354,47 @@ class TestWhitenedFormalism:
             means["whitened_model_space"], means["model_space"]
         )
         assert space.norm(difference) <= 1e-8 * space.norm(means["model_space"])
+
+    def test_whitened_with_toeplitz_gram_operator(self):
+        """
+        End-to-end fast path: a heat-kernel prior, point-evaluation data with
+        diagonal noise, and the Toeplitz Gram operator supplied as the
+        gram_operator override must reproduce the composed whitened solution.
+        """
+        from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
+
+        rng = np.random.default_rng(20260718)
+        space = CircleSobolev(8, 2.0, 0.5)
+        prior = space.point_value_scaled_heat_kernel_gaussian_measure(0.5, std=1.0)
+
+        points = list(rng.uniform(0.0, 2.0 * np.pi, 12))
+        noise_std = 0.1
+        forward_operator = space.point_evaluation_operator(points)
+        error_measure = GaussianMeasure.from_standard_deviation(
+            forward_operator.codomain, noise_std
+        )
+        problem = LinearForwardProblem(
+            forward_operator, data_error_measure=error_measure
+        )
+        data = rng.standard_normal(len(points))
+
+        gram = space.point_evaluation_gram_operator(points, 1.0 / noise_std**2)
+
+        solver = CholeskySolver(galerkin=True)
+        means = {}
+        for label, kwargs in (
+            ("composed", {}),
+            ("toeplitz", {"gram_operator": gram}),
+        ):
+            inversion = LinearBayesianInversion(
+                problem, prior, formalism="whitened_model_space", **kwargs
+            )
+            means[label] = inversion.model_posterior_measure(
+                data, solver
+            ).expectation
+
+        difference = space.subtract(means["toeplitz"], means["composed"])
+        assert space.norm(difference) <= 1e-8 * space.norm(means["composed"])
 
     def test_posterior_equivalence_with_other_formalisms(
         self,
