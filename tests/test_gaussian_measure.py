@@ -772,3 +772,83 @@ class TestSamplerPrecedence:
 
         assert measure.sample_set is True
         assert measure.sample().shape == (4,)
+
+
+class TestDirectSumFactorPropagation:
+    """from_direct_sum propagates covariance factors block-diagonally."""
+
+    def _component_measures(self):
+        space_a = EuclideanSpace(3)
+        space_b = EuclideanSpace(5)
+        cov_a = np.diag(np.arange(1.0, 4.0))
+        cov_b = np.diag(np.arange(1.0, 6.0))
+        measure_a = GaussianMeasure.from_covariance_matrix(space_a, cov_a)
+        measure_b = GaussianMeasure.from_covariance_matrix(space_b, cov_b)
+        return measure_a, measure_b
+
+    def test_factors_propagated_when_all_set(self):
+        measure_a, measure_b = self._component_measures()
+        combined = GaussianMeasure.from_direct_sum([measure_a, measure_b])
+
+        assert combined.covariance_factor_set is True
+        assert combined.inverse_covariance_factor_set is True
+
+        # L L* must reproduce the block-diagonal covariance.
+        factor = combined.covariance_factor
+        x = combined.domain.random()
+        lhs = factor(factor.adjoint(x))
+        rhs = combined.covariance(x)
+        assert np.allclose(
+            combined.domain.to_components(lhs), combined.domain.to_components(rhs)
+        )
+
+        # Li* Li must reproduce the block-diagonal precision.
+        inv_factor = combined.inverse_covariance_factor
+        lhs = inv_factor.adjoint(inv_factor(x))
+        rhs = combined.inverse_covariance(x)
+        assert np.allclose(
+            combined.domain.to_components(lhs), combined.domain.to_components(rhs)
+        )
+
+    def test_factor_not_set_when_any_component_lacks_one(self):
+        measure_a, measure_b = self._component_measures()
+        # A measure built from a bare covariance operator has no factor.
+        bare = GaussianMeasure(covariance=measure_b.covariance)
+        combined = GaussianMeasure.from_direct_sum([measure_a, bare])
+
+        assert combined.covariance_factor_set is False
+        assert combined.inverse_covariance_factor_set is False
+
+    def test_whitened_formalism_accepts_direct_sum_prior(self):
+        """A direct-sum prior of invariant measures must pass the
+        whitened_model_space guard and reproduce the model_space posterior."""
+        from pygeoinf.linear_bayesian import LinearBayesianInversion
+        from pygeoinf.forward_problem import LinearForwardProblem
+
+        space = CircleSobolev(8, 2.0, 0.5)
+        measure = space.heat_kernel_gaussian_measure(0.3)
+        prior = GaussianMeasure.from_direct_sum([measure, measure])
+        model_space = prior.domain
+
+        points = [0.5, 1.5, 2.5]
+        op_a = space.point_evaluation_operator(points)
+        forward_operator = LinearOperator(
+            model_space,
+            op_a.codomain,
+            lambda x: op_a(model_space.subspace_projection(0)(x)),
+            adjoint_mapping=lambda y: [op_a.adjoint(y), space.zero],
+        )
+        error = GaussianMeasure.from_standard_deviation(op_a.codomain, 0.1)
+        problem = LinearForwardProblem(forward_operator, data_error_measure=error)
+
+        data = op_a.codomain.random()
+        posterior_w = LinearBayesianInversion(
+            problem, prior, formalism="whitened_model_space"
+        ).model_posterior_measure(data, CholeskySolver(galerkin=True))
+        posterior_m = LinearBayesianInversion(
+            problem, prior, formalism="model_space"
+        ).model_posterior_measure(data, CholeskySolver(galerkin=True))
+
+        mean_w = model_space.to_components(posterior_w.expectation)
+        mean_m = model_space.to_components(posterior_m.expectation)
+        assert np.allclose(mean_w, mean_m, atol=1e-8)

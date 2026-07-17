@@ -335,7 +335,10 @@ class GaussianMeasure:
         Constructs a product measure from a list of other measures.
 
         The resulting measure resides on the direct sum of the input domains,
-        with block-diagonal covariance and concatenated expectations.
+        with block-diagonal covariance and concatenated expectations. Covariance
+        factors (and inverse covariance factors) are propagated block-diagonally
+        whenever every input measure provides one, so that e.g. the
+        whitened_model_space formalism remains available for product priors.
 
         Args:
             measures: A list of GaussianMeasure instances.
@@ -352,11 +355,27 @@ class GaussianMeasure:
             [measure.covariance for measure in measures]
         )
 
+        covariance_factor = (
+            BlockDiagonalLinearOperator(
+                [measure.covariance_factor for measure in measures]
+            )
+            if all(measure.covariance_factor_set for measure in measures)
+            else None
+        )
+
         inverse_covariance = (
             BlockDiagonalLinearOperator(
                 [measure.inverse_covariance for measure in measures]
             )
             if all(measure.inverse_covariance_set for measure in measures)
+            else None
+        )
+
+        inverse_covariance_factor = (
+            BlockDiagonalLinearOperator(
+                [measure.inverse_covariance_factor for measure in measures]
+            )
+            if all(measure.inverse_covariance_factor_set for measure in measures)
             else None
         )
 
@@ -369,9 +388,11 @@ class GaussianMeasure:
 
         return GaussianMeasure(
             covariance=covariance,
+            covariance_factor=covariance_factor,
             expectation=expectation,
             sample=sample,
             inverse_covariance=inverse_covariance,
+            inverse_covariance_factor=inverse_covariance_factor,
         )
 
     # ---------------------------------------- #
