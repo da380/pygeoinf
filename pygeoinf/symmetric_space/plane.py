@@ -10,7 +10,7 @@ from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 from .torus import Lebesgue as TorusLebesgue
 from .torus import Sobolev as TorusSobolev
-from .torus import _matrix_free_point_evaluation_2d
+from .torus import _matrix_free_point_evaluation_2d, _point_evaluation_gram_2d
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
@@ -502,6 +502,46 @@ class Sobolev(SymmetricSobolevSpace):
         th_x = (pts[:, 0] - ax + cx) / torus.radius_x
         th_y = (pts[:, 1] - ay + cy) / torus.radius_y
         return _matrix_free_point_evaluation_2d(self, torus, th_x, th_y)
+
+    def point_evaluation_gram_operator(
+        self, points: List[Any], weights: Union[float, np.ndarray], /
+    ) -> LinearOperator:
+        """
+        Returns the Gram operator A* diag(w) A of the weighted
+        point-evaluation functionals, applied matrix-free via FFTs.
+
+        The operator agrees with composing `point_evaluation_operator` with
+        its adjoint to machine precision, but exploits the (2-level) Toeplitz
+        structure of the coefficient-level Gram matrix: a lag kernel is
+        accumulated once at construction — the only step whose cost grows
+        with the number of points — after which each application is a pair
+        of padded FFT products whose cost is independent of it.
+
+        In a Bayesian inversion whose data are point evaluations with a
+        diagonal error covariance R, the weights are the diagonal of R^{-1}
+        (the reciprocals of the per-point error variances), making the
+        returned operator the data-misfit term A* R^{-1} A of the
+        model-space and whitened normal operators.
+
+        Args:
+            points: A list of (x, y) coordinate pairs.
+            weights: A scalar or an array of length n_points: the diagonal
+                of the weight matrix. There is no default; for an unweighted
+                Gram operator pass 1.0.
+
+        Returns:
+            LinearOperator: A self-adjoint operator on this space.
+        """
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        pts = np.asarray(points, dtype=float).reshape(-1, 2)
+        torus = self.underlying_space.torus_space
+        ax, _, cx = self.bounds_x
+        ay, _, cy = self.bounds_y
+        th_x = (pts[:, 0] - ax + cx) / torus.radius_x
+        th_y = (pts[:, 1] - ay + cy) / torus.radius_y
+        return _point_evaluation_gram_2d(self, torus, th_x, th_y, weights)
 
     # ---------------------------------------------- #
     #                   Properties                   #

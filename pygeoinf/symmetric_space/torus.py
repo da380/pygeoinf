@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Callable, Any, Optional, Tuple, List, Union
 
 import numpy as np
-from scipy.fft import rfft2, irfft2
+from scipy.fft import rfft2, irfft2, fft2, ifft2, next_fast_len
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
@@ -89,6 +89,117 @@ def _matrix_free_point_evaluation_2d(
         return space.from_components(inverse_metric_values * components)
 
     return LinearOperator(space, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+
+# Number of points accumulated per block while building Gram-operator lag
+# kernels, bounding the size of the temporary phase matrices.
+_GRAM_KERNEL_CHUNK = 65536
+
+
+def _point_evaluation_gram_2d(
+    space, layout, th_x: np.ndarray, th_y: np.ndarray, weights
+) -> LinearOperator:
+    """
+    Builds the Gram operator A* diag(w) A of weighted point-evaluation
+    functionals for a 2D Fourier space, applied via FFTs.
+
+    Internal helper shared by the torus and plane Sobolev spaces. At the
+    coefficient level the Gram matrix is 2-level Toeplitz: its entries
+    depend only on frequency differences (and, through the real cos/sin
+    basis, frequency sums), all drawn from the single lag kernel
+    W(p) = sum_i w_i e^{-i p.theta_i}. The kernel is accumulated once at
+    construction — the only step whose cost depends on the number of
+    points — and every application is one circular convolution plus one
+    circular correlation on a padded frequency grid (two FFT pairs), at a
+    cost independent of the number of points.
+
+    Args:
+        space: The Hilbert space on which the operator is defined.
+        layout: The torus Lebesgue space providing the coefficient layout
+            and FFT conventions of `space`.
+        th_x: Torus angles of the evaluation points in the x-direction.
+        th_y: Torus angles of the evaluation points in the y-direction.
+        weights: A scalar or an array of length n_points holding the
+            diagonal of the weight matrix.
+
+    Returns:
+        LinearOperator: A self-adjoint operator on `space`.
+    """
+    kmax = layout.kmax
+    two_k = 2 * kmax
+    n_points = th_x.size
+
+    w = np.asarray(weights, dtype=float)
+    if w.ndim == 0:
+        w = np.full(n_points, float(w))
+    elif w.shape != (n_points,):
+        raise ValueError(
+            f"weights must be a scalar or an array of length {n_points}, "
+            f"got shape {w.shape}"
+        )
+
+    # rfft2 row frequencies, with dirac's +kmax Nyquist convention
+    freqs_x = np.arange(two_k, dtype=int)
+    freqs_x[kmax + 1 :] -= two_k
+
+    # interior ky columns stand in for the conjugate pair not stored by rfft2
+    mu = np.full(kmax + 1, 2.0)
+    mu[0] = 1.0
+    mu[kmax] = 1.0
+
+    # The needed lags k' -+ k span [-(2 kmax - 1), 2 kmax] in each direction:
+    # with a padded grid of at least 4 kmax slots they are all distinct
+    # modulo the padding, so each slot carries exactly one true lag value.
+    pad = next_fast_len(4 * kmax)
+    min_lag = -(two_k - 1)
+    lags = min_lag + (np.arange(pad) - min_lag) % pad
+
+    # One-time kernel accumulation W(p) = sum_i w_i e^{-i p.theta_i},
+    # chunked over points so the phase matrices for very large point sets
+    # are never materialised in full.
+    kernel = np.zeros((pad, pad), dtype=complex)
+    for start in range(0, n_points, _GRAM_KERNEL_CHUNK):
+        block = slice(start, start + _GRAM_KERNEL_CHUNK)
+        phase_x = np.exp(-1j * th_x[block, None] * lags[None, :])
+        phase_y = np.exp(-1j * th_y[block, None] * lags[None, :])
+        kernel += phase_x.T @ (w[block, None] * phase_y)
+    kernel_fft = fft2(kernel)
+
+    # pad-grid slots of the stored frequencies (rows in freqs_x order,
+    # columns the non-negative rfft2 frequencies)
+    row_slots = freqs_x % pad
+    col_slots = np.arange(kmax + 1)
+    scatter = np.ix_(row_slots, col_slots)
+
+    inv_grid_size = 1.0 / (two_k * two_k)
+    adjoint_scale = inv_grid_size / layout.fft_factor
+    inverse_metric_values = np.reciprocal(space.metric_values)
+
+    def mapping(x):
+        # forward half of the matrix-free point evaluation
+        coeff = rfft2(x)
+        cw = coeff * mu[None, :]
+        cw[1:kmax, kmax] = 2.0 * coeff[1:kmax, kmax]
+        cw[kmax + 1 :, kmax] = 0.0
+
+        grid = np.zeros((pad, pad), dtype=complex)
+        grid[scatter] = cw
+        grid_fft = fft2(grid)
+        # z(k') = sum_k [cw(k) W(k'-k) + conj(cw(k)) W(k'+k)] / 2: a circular
+        # convolution for the difference lags plus a circular correlation
+        # for the sum lags
+        conv = ifft2(kernel_fft * grid_fft)
+        corr = ifft2(kernel_fft * np.conj(grid_fft))
+        z = (0.5 * inv_grid_size) * (conv + corr)[scatter]
+
+        # adjoint half of the matrix-free point evaluation
+        z[1:kmax, 0] += np.conj(z[two_k - 1 : kmax : -1, 0])
+        zw = z * mu[None, :]
+        zw[1:kmax, kmax] = 2.0 * z[1:kmax, kmax]
+        components = layout._coefficient_to_component(zw) * adjoint_scale
+        return space.from_components(inverse_metric_values * components)
+
+    return LinearOperator(space, space, mapping, adjoint_mapping=mapping)
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
@@ -923,6 +1034,43 @@ class Sobolev(SymmetricSobolevSpace):
         angles = np.asarray(points, dtype=float).reshape(-1, 2)
         return _matrix_free_point_evaluation_2d(
             self, self.underlying_space, angles[:, 0], angles[:, 1]
+        )
+
+    def point_evaluation_gram_operator(
+        self, points: List[Any], weights: Union[float, np.ndarray], /
+    ) -> LinearOperator:
+        """
+        Returns the Gram operator A* diag(w) A of the weighted
+        point-evaluation functionals, applied matrix-free via FFTs.
+
+        The operator agrees with composing `point_evaluation_operator` with
+        its adjoint to machine precision, but exploits the (2-level) Toeplitz
+        structure of the coefficient-level Gram matrix: a lag kernel is
+        accumulated once at construction — the only step whose cost grows
+        with the number of points — after which each application is a pair
+        of padded FFT products whose cost is independent of it.
+
+        In a Bayesian inversion whose data are point evaluations with a
+        diagonal error covariance R, the weights are the diagonal of R^{-1}
+        (the reciprocals of the per-point error variances), making the
+        returned operator the data-misfit term A* R^{-1} A of the
+        model-space and whitened normal operators.
+
+        Args:
+            points: A list of (theta_x, theta_y) angle pairs.
+            weights: A scalar or an array of length n_points: the diagonal
+                of the weight matrix. There is no default; for an unweighted
+                Gram operator pass 1.0.
+
+        Returns:
+            LinearOperator: A self-adjoint operator on this space.
+        """
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        angles = np.asarray(points, dtype=float).reshape(-1, 2)
+        return _point_evaluation_gram_2d(
+            self, self.underlying_space, angles[:, 0], angles[:, 1], weights
         )
 
     @property

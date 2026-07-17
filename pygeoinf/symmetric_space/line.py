@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Callable, Any, Optional, Tuple, List
+from typing import Callable, Any, Optional, Tuple, List, Union
 
 import numpy as np
 
@@ -10,7 +10,7 @@ from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 from .circle import Lebesgue as CircleLebesgue
 from .circle import Sobolev as CircleSobolev
-from .circle import _matrix_free_point_evaluation_1d
+from .circle import _matrix_free_point_evaluation_1d, _point_evaluation_gram_1d
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
@@ -653,6 +653,44 @@ class Sobolev(SymmetricSobolevSpace):
         circle = lebesgue.circle_space
         th = (pts - lebesgue.a + lebesgue.c) / circle.radius
         return _matrix_free_point_evaluation_1d(self, circle, th)
+
+    def point_evaluation_gram_operator(
+        self, points: List[Any], weights: Union[float, np.ndarray], /
+    ) -> LinearOperator:
+        """
+        Returns the Gram operator A* diag(w) A of the weighted
+        point-evaluation functionals, applied matrix-free via FFTs.
+
+        The operator agrees with composing `point_evaluation_operator` with
+        its adjoint to machine precision, but exploits the Toeplitz structure
+        of the coefficient-level Gram matrix: a lag kernel is accumulated
+        once at construction — the only step whose cost grows with the
+        number of points — after which each application is a pair of padded
+        FFT products whose cost is independent of it.
+
+        In a Bayesian inversion whose data are point evaluations with a
+        diagonal error covariance R, the weights are the diagonal of R^{-1}
+        (the reciprocals of the per-point error variances), making the
+        returned operator the data-misfit term A* R^{-1} A of the
+        model-space and whitened normal operators.
+
+        Args:
+            points: A list of x-coordinates.
+            weights: A scalar or an array of length n_points: the diagonal
+                of the weight matrix. There is no default; for an unweighted
+                Gram operator pass 1.0.
+
+        Returns:
+            LinearOperator: A self-adjoint operator on this space.
+        """
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        pts = np.asarray(points, dtype=float).ravel()
+        lebesgue = self.underlying_space
+        circle = lebesgue.circle_space
+        th = (pts - lebesgue.a + lebesgue.c) / circle.radius
+        return _point_evaluation_gram_1d(self, circle, th, weights)
 
     # ---------------------------------------------- #
     #                   Properties                   #
