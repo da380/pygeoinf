@@ -252,6 +252,57 @@ def test_action_defined_operator_solver(
     )
 
 
+def test_cholesky_solver_check_finite_can_be_disabled():
+    """Finite right-hand-side validation is an explicit Cholesky option."""
+    space = EuclideanSpace(1)
+    identity = LinearOperator.from_matrix(
+        space, space, np.array([[1.0]]), galerkin=True
+    )
+    invalid_rhs = np.array([np.nan])
+
+    with pytest.raises(ValueError):
+        CholeskySolver(galerkin=True)(identity)(invalid_rhs)
+
+    unchecked_result = CholeskySolver(
+        galerkin=True, check_finite=False
+    )(identity)(invalid_rhs)
+    assert np.isnan(unchecked_result[0])
+
+
+def test_cg_raises_for_non_finite_recurrence_product():
+    """CG reports overflow instead of returning a non-finite solution."""
+    space = EuclideanSpace(1)
+    identity = LinearOperator.from_matrix(
+        space, space, np.array([[1.0]]), galerkin=True
+    )
+    preconditioner = LinearOperator.from_matrix(
+        space, space, np.array([[1.0e150]]), galerkin=True
+    )
+    rhs = np.array([1.0e100])
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        with pytest.raises(FloatingPointError, match="non-finite recurrence"):
+            CGSolver(rtol=1.0e-12, maxiter=2)(
+                identity, preconditioner=preconditioner
+            )(rhs)
+
+def test_cg_does_not_expose_rhs_normalization_option():
+    """RHS scaling remains a caller-controlled system transformation."""
+    with pytest.raises(TypeError, match="normalize_rhs"):
+        CGSolver(normalize_rhs=True)
+
+
+def test_cg_raises_for_non_positive_curvature():
+    """CG rejects a non-SPD recurrence instead of dividing by its curvature."""
+    space = EuclideanSpace(1)
+    negative_identity = LinearOperator.from_matrix(
+        space, space, np.array([[-1.0]]), galerkin=True
+    )
+
+    with pytest.raises(FloatingPointError, match="non-positive p.T A p"):
+        CGSolver(rtol=1.0e-12, maxiter=2)(negative_identity)(np.array([1.0]))
+
+
 @pytest.mark.parametrize("solver", preconditionable_solvers)
 def test_preconditioned_solve(solver, spd_operator: LinearOperator, x: np.ndarray):
     """
