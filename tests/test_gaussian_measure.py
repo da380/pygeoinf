@@ -748,3 +748,27 @@ class TestDeflatedPointwiseVariance:
         # Verify std = sqrt(var) using the HilbertModule's pointwise vector_sqrt
         expected_std_field = space.vector_sqrt(var_field)
         assert np.allclose(std_field, expected_std_field)
+
+
+class TestSamplerPrecedence:
+    """Constructor precedence between an explicit sampler and a factor."""
+
+    def test_explicit_sample_takes_precedence_over_factor(self):
+        """An explicitly provided sampler must not be displaced by the
+        default factor-based sampler."""
+        space = EuclideanSpace(4)
+        factor = LinearOperator.from_matrix(space, space, np.eye(4))
+        fixed = np.arange(4.0)
+
+        measure = GaussianMeasure(covariance_factor=factor, sample=lambda: fixed)
+
+        assert np.allclose(measure.sample(), fixed)
+
+    def test_factor_sampler_used_when_no_explicit_sample(self):
+        space = EuclideanSpace(4)
+        factor = LinearOperator.from_matrix(space, space, np.eye(4))
+
+        measure = GaussianMeasure(covariance_factor=factor)
+
+        assert measure.sample_set is True
+        assert measure.sample().shape == (4,)

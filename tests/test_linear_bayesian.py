@@ -1229,6 +1229,41 @@ class TestWhitenedFormalism:
         eigenvalues = np.linalg.eigvalsh(actual)
         assert np.min(eigenvalues) >= 1.0 - 1e-10
 
+    def test_invariant_prior_accepted_and_matches_model_space(self):
+        """
+        A heat-kernel (invariant) prior on a function space carries a spectral
+        covariance factor, so the whitened formalism must accept it and agree
+        with the model-space solution.
+        """
+        from pygeoinf.symmetric_space.circle import Sobolev as CircleSobolev
+
+        rng = np.random.default_rng(20260717)
+        space = CircleSobolev(8, 2.0, 0.5)
+        prior = space.point_value_scaled_heat_kernel_gaussian_measure(0.5, std=1.0)
+
+        points = list(rng.uniform(0.0, 2.0 * np.pi, 12))
+        forward_operator = space.point_evaluation_operator(points)
+        error_measure = GaussianMeasure.from_standard_deviation(
+            forward_operator.codomain, 0.1
+        )
+        problem = LinearForwardProblem(
+            forward_operator, data_error_measure=error_measure
+        )
+        data = rng.standard_normal(len(points))
+
+        solver = CholeskySolver(galerkin=True)
+        means = {}
+        for formalism in ("model_space", "whitened_model_space"):
+            inversion = LinearBayesianInversion(problem, prior, formalism=formalism)
+            means[formalism] = inversion.model_posterior_measure(
+                data, solver
+            ).expectation
+
+        difference = space.subtract(
+            means["whitened_model_space"], means["model_space"]
+        )
+        assert space.norm(difference) <= 1e-8 * space.norm(means["model_space"])
+
     def test_posterior_equivalence_with_other_formalisms(
         self,
         forward_problem: LinearForwardProblem,

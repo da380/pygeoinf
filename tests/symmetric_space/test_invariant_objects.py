@@ -95,6 +95,26 @@ class TestInvariantGaussianMeasure:
         with pytest.raises(AttributeError):
             _ = measure_zero.inverse_covariance
 
+    def test_covariance_factor(self, space: Lebesgue):
+        """The spectral square root must be set as the covariance factor."""
+        measure = space.invariant_gaussian_measure(lambda k: 1.0 / (1.0 + k))
+
+        assert measure.covariance_factor_set is True
+        factor = measure.covariance_factor
+        assert isinstance(factor, InvariantLinearAutomorphism)
+        assert np.allclose(factor.eigenvalues**2, measure.spectral_variances)
+
+        # L L* = C
+        x = space.random()
+        lhs = factor(factor.adjoint(x))
+        rhs = measure.covariance(x)
+        assert np.allclose(space.to_components(lhs), space.to_components(rhs))
+
+    def test_kl_sampler_not_displaced_by_factor(self, space: Lebesgue):
+        """Setting the covariance factor must not replace the KL sampler."""
+        measure = space.invariant_gaussian_measure(lambda k: 1.0 / (1.0 + k))
+        assert measure._sample.__func__ is InvariantGaussianMeasure._kl_sample
+
     def test_algebra_type_preservation(self, space: Lebesgue):
         m1 = space.invariant_gaussian_measure(lambda k: 1.0)
         m2 = space.invariant_gaussian_measure(lambda k: 2.0)

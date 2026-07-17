@@ -97,7 +97,9 @@ class GaussianMeasure:
             expectation: The expectation (mean) of the measure. Defaults to
                 the zero vector of the space (stored internally as None).
             sample: A function that returns a random sample from the measure.
-                If a `covariance_factor` is given, a default sampler is created.
+                If not provided and a `covariance_factor` is given, a default
+                sampler based on the factor is created; an explicitly provided
+                sampler always takes precedence.
             inverse_covariance: The inverse of the covariance operator (the
                 precision operator).
             inverse_covariance_factor: A factor Li of the inverse covariance,
@@ -118,9 +120,12 @@ class GaussianMeasure:
             else covariance
         )
         self._domain: HilbertSpace = self._covariance.domain
-        self._sample: Optional[Callable[[], Vector]] = (
-            sample if covariance_factor is None else self._sample_from_factor
-        )
+        if sample is not None:
+            self._sample: Optional[Callable[[], Vector]] = sample
+        elif covariance_factor is not None:
+            self._sample = self._sample_from_factor
+        else:
+            self._sample = None
         self._inverse_covariance_factor: Optional[LinearOperator] = (
             inverse_covariance_factor
         )

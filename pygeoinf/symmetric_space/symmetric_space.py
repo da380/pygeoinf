@@ -286,6 +286,12 @@ class InvariantGaussianMeasure(GaussianMeasure):
         self._spectral_variances = spectral_variances
         covariance = InvariantLinearAutomorphism(domain, spectral_variances)
 
+        # The spectral square root is a (self-adjoint) covariance factor,
+        # L L* = C, needed e.g. for the whitened_model_space formalism.
+        covariance_factor = InvariantLinearAutomorphism(
+            domain, np.sqrt(spectral_variances)
+        )
+
         self._kl_scaling_array = np.sqrt(spectral_variances / domain.metric_values)
 
         inverse_covariance = None
@@ -296,6 +302,7 @@ class InvariantGaussianMeasure(GaussianMeasure):
 
         super().__init__(
             covariance=covariance,
+            covariance_factor=covariance_factor,
             expectation=expectation,
             sample=self._kl_sample,
             inverse_covariance=inverse_covariance,
