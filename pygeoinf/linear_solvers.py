@@ -134,9 +134,25 @@ class CholeskySolver(DirectLinearSolver):
     """
 
     def __init__(
-        self, /, *, galerkin: bool = False, parallel: bool = False, n_jobs: int = -1
+        self,
+        /,
+        *,
+        galerkin: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        check_finite: bool = True,
     ) -> None:
+        """
+        Args:
+            galerkin: Whether to use the Galerkin matrix representation.
+            parallel: Whether to parallelize matrix construction.
+            n_jobs: Number of workers for parallel matrix construction.
+            check_finite: Whether to validate factor and right-hand-side arrays
+                before passing them to SciPy. Disable only for trusted finite
+                inputs when repeated solve-time validation is a bottleneck.
+        """
         super().__init__(galerkin=galerkin, parallel=parallel, n_jobs=n_jobs)
+        self._check_finite = check_finite
 
     def __call__(self, operator: LinearOperator) -> LinearOperator:
         assert operator.is_automorphism
@@ -147,10 +163,12 @@ class CholeskySolver(DirectLinearSolver):
             parallel=self._parallel,
             n_jobs=self._n_jobs,
         )
-        factor = cho_factor(matrix, overwrite_a=False)
+        factor = cho_factor(
+            matrix, overwrite_a=False, check_finite=self._check_finite
+        )
 
         def solve_galerkin(c: np.ndarray) -> np.ndarray:
-            return cho_solve(factor, c)
+            return cho_solve(factor, c, check_finite=self._check_finite)
 
         return self._build_inverse_operator(operator, solve_galerkin)
 
@@ -475,22 +493,31 @@ class CGSolver(IterativeLinearSolver):
             self._callback.reset()
 
         domain = operator.domain
-        x = domain.zero if x0 is None else domain.copy(x0)
-
-        r = domain.subtract(y, operator(x))
-        z = domain.copy(r) if preconditioner is None else preconditioner(r)
-        p = domain.copy(z)
-
         y_squared_norm = domain.squared_norm(y)
 
         if y_squared_norm == 0.0:
             return domain.zero
 
+        x = domain.zero if x0 is None else domain.copy(x0)
         tol_sq = max(self._atol**2, (self._rtol**2) * y_squared_norm)
+
+        r = domain.subtract(y, operator(x))
+        z = domain.copy(r) if preconditioner is None else preconditioner(r)
+        p = domain.copy(z)
 
         maxiter = self._maxiter if self._maxiter is not None else 10 * domain.dim
 
         num = domain.inner_product(r, z)
+        if not np.isfinite(num):
+            raise FloatingPointError(
+                "CG numerical breakdown: non-finite recurrence product "
+                "r.T M^-1 r. Rescale the problem or preconditioner."
+            )
+        if num <= 0:
+            raise FloatingPointError(
+                "CG numerical breakdown: non-positive r.T M^-1 r. The "
+                "preconditioner must be positive definite."
+            )
 
         for k in range(maxiter):
             if domain.squared_norm(r) <= tol_sq:
@@ -499,7 +526,21 @@ class CGSolver(IterativeLinearSolver):
 
             q = operator(p)
             den = domain.inner_product(p, q)
+            if not np.isfinite(den):
+                raise FloatingPointError(
+                "CG numerical breakdown: non-finite recurrence product "
+                "p.T A p. Rescale the problem or preconditioner."
+                )
+            if den <= 0:
+                raise FloatingPointError(
+                    "CG numerical breakdown: non-positive p.T A p. The "
+                    "operator must be positive definite."
+                )
             alpha = num / den
+            if not np.isfinite(alpha):
+                raise FloatingPointError(
+                    "CG numerical breakdown: non-finite step length alpha."
+                )
 
             domain.axpy(alpha, p, x)
             domain.axpy(-alpha, q, r)
@@ -511,7 +552,21 @@ class CGSolver(IterativeLinearSolver):
 
             den = num
             num = operator.domain.inner_product(r, z)
+            if not np.isfinite(num):
+                raise FloatingPointError(
+                    "CG numerical breakdown: non-finite recurrence product "
+                    "r.T M^-1 r after an iteration."
+                )
+            if num < 0:
+                raise FloatingPointError(
+                    "CG numerical breakdown: negative r.T M^-1 r after an "
+                    "iteration. The preconditioner must be positive definite."
+                )
             beta = num / den
+            if not np.isfinite(beta):
+                raise FloatingPointError(
+                    "CG numerical breakdown: non-finite direction weight beta."
+                )
 
             domain.ax(beta, p)
             domain.axpy(1.0, z, p)
