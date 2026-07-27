@@ -236,7 +236,6 @@ def plot_1d_distributions(
     return (ax1, ax2) if prior_measures is not None else ax1
 
 
-
 class SubspaceSlicePlotter:
     """
     Plotter for visualizing subsets sliced along 1D, 2D, or 3D affine subspaces.
@@ -331,7 +330,9 @@ class SubspaceSlicePlotter:
 
         # Validate and store pixel-based bar height for 1D rendering
         if not isinstance(bar_pixel_height, int) or bar_pixel_height <= 0:
-            raise ValueError(f"bar_pixel_height must be a positive int, got {bar_pixel_height}.")
+            raise ValueError(
+                f"bar_pixel_height must be a positive int, got {bar_pixel_height}."
+            )
         self.bar_pixel_height = bar_pixel_height
 
         # Warn about 3D sampling cost: grid_size³ membership oracle calls.
@@ -340,8 +341,13 @@ class SubspaceSlicePlotter:
         # paths, so skip the warning for those types.
         _3D_GRID_WARN_THRESHOLD = 30
         _uses_exact_path = isinstance(subset, (PolyhedralSet, Ball, Ellipsoid))
-        if self.dimension == 3 and grid_size > _3D_GRID_WARN_THRESHOLD and not _uses_exact_path:
+        if (
+            self.dimension == 3
+            and grid_size > _3D_GRID_WARN_THRESHOLD
+            and not _uses_exact_path
+        ):
             import warnings as _warnings
+
             _warnings.warn(
                 f"3D sampled rendering will evaluate {grid_size**3:,} membership oracle "
                 f"calls (grid_size={grid_size}). Consider grid_size ≤ {_3D_GRID_WARN_THRESHOLD} "
@@ -354,10 +360,7 @@ class SubspaceSlicePlotter:
     # Common Methods (All Dims)
     # ===========================
 
-    def parse_bounds(
-        self,
-        bounds: Optional[Union[tuple, List]]
-    ) -> tuple:
+    def parse_bounds(self, bounds: Optional[Union[tuple, List]]) -> tuple:
         """
         Parse and validate bounds for current dimension.
 
@@ -390,15 +393,15 @@ class SubspaceSlicePlotter:
             if len(bounds_tuple) == 2 and isinstance(bounds_tuple[0], (int, float)):
                 return tuple(float(b) for b in bounds_tuple)  # type: ignore
             else:
-                raise ValueError(
-                    f"1D bounds must be (u_min, u_max), got {bounds}."
-                )
+                raise ValueError(f"1D bounds must be (u_min, u_max), got {bounds}.")
 
         elif self.dimension == 2:
             if len(bounds_tuple) == 4:
                 # (u_min, u_max, v_min, v_max)
                 return tuple(float(b) for b in bounds_tuple)  # type: ignore
-            elif len(bounds_tuple) == 2 and all(isinstance(b, (tuple, list)) for b in bounds_tuple):
+            elif len(bounds_tuple) == 2 and all(
+                isinstance(b, (tuple, list)) for b in bounds_tuple
+            ):
                 # ((u_min, u_max), (v_min, v_max))
                 (u_min, u_max), (v_min, v_max) = bounds_tuple  # type: ignore
                 return (float(u_min), float(u_max), float(v_min), float(v_max))
@@ -412,18 +415,24 @@ class SubspaceSlicePlotter:
         if len(bounds_tuple) == 6:
             # (u_min, u_max, v_min, v_max, w_min, w_max)
             return tuple(float(b) for b in bounds_tuple)  # type: ignore
-        elif len(bounds_tuple) == 3 and all(isinstance(b, (tuple, list)) for b in bounds_tuple):
+        elif len(bounds_tuple) == 3 and all(
+            isinstance(b, (tuple, list)) for b in bounds_tuple
+        ):
             # ((u_min, u_max), (v_min, v_max), (w_min, w_max))
             (u_min, u_max), (v_min, v_max), (w_min, w_max) = bounds_tuple  # type: ignore
-            return (float(u_min), float(u_max), float(v_min), float(v_max), float(w_min), float(w_max))
-        else:
-            raise ValueError(
-                f"3D bounds format error: {bounds}."
+            return (
+                float(u_min),
+                float(u_max),
+                float(v_min),
+                float(v_max),
+                float(w_min),
+                float(w_max),
             )
+        else:
+            raise ValueError(f"3D bounds format error: {bounds}.")
 
     def embed_point(
-        self,
-        params: Union[float, Tuple[float, ...], List[float]]
+        self, params: Union[float, Tuple[float, ...], List[float]]
     ) -> object:
         """
         Map parameter(s) to ambient point using tangent basis.
@@ -461,8 +470,7 @@ class SubspaceSlicePlotter:
         return result
 
     def _generate_param_grid(
-        self,
-        bounds: tuple
+        self, bounds: tuple
     ) -> Union[np.ndarray, Tuple[np.ndarray, ...]]:
         """
         Generate parameter grid for sampling.
@@ -487,7 +495,7 @@ class SubspaceSlicePlotter:
             u_min, u_max, v_min, v_max = bounds
             u = np.linspace(u_min, u_max, self.grid_size)
             v = np.linspace(v_min, v_max, self.grid_size)
-            U, V = np.meshgrid(u, v, indexing='xy')
+            U, V = np.meshgrid(u, v, indexing="xy")
             return (U, V)
 
         elif self.dimension == 3:
@@ -498,7 +506,7 @@ class SubspaceSlicePlotter:
             # indexing='ij': U[i,j,k]=u[i], V[i,j,k]=v[j], W[i,j,k]=w[k]
             # so mask[i,j,k] = membership at (u[i], v[j], w[k]), matching
             # parameter coords (Local Param 1=u, 2=v, 3=w).
-            U, V, W = np.meshgrid(u, v, w, indexing='ij')
+            U, V, W = np.meshgrid(u, v, w, indexing="ij")
             return (U, V, W)
 
     def _pixel_to_data_height(self, ax: matplotlib.axes.Axes, pixels: int) -> float:
@@ -529,8 +537,7 @@ class SubspaceSlicePlotter:
         return abs(y_data1 - y_data0)
 
     def sample_membership(
-        self,
-        param_grid: Union[np.ndarray, Tuple[np.ndarray, ...]]
+        self, param_grid: Union[np.ndarray, Tuple[np.ndarray, ...]]
     ) -> np.ndarray:
         """
         Evaluate subset membership on parameter grid.
@@ -572,9 +579,9 @@ class SubspaceSlicePlotter:
             for i in range(shape[0]):
                 for j in range(shape[1]):
                     for k in range(shape[2]):
-                        point = self.embed_point((float(U[i, j, k]),
-                                                  float(V[i, j, k]),
-                                                  float(W[i, j, k])))
+                        point = self.embed_point(
+                            (float(U[i, j, k]), float(V[i, j, k]), float(W[i, j, k]))
+                        )
                         mask[i, j, k] = self.subset.is_element(point, rtol=self.rtol)
             return mask
 
@@ -634,8 +641,16 @@ class SubspaceSlicePlotter:
             u_start = u[min(start, len(u) - 1)]
             u_end = u[min(end - 1, len(u) - 1)]
             width = u_end - u_start
-            ax.barh(0, width, left=u_start, height=height_data, color=color,
-                    alpha=self.alpha, edgecolor='black', linewidth=1.5)
+            ax.barh(
+                0,
+                width,
+                left=u_start,
+                height=height_data,
+                color=color,
+                alpha=self.alpha,
+                edgecolor="black",
+                linewidth=1.5,
+            )
 
         # Formatting
         ax.set_xlim(u_min, u_max)
@@ -643,7 +658,7 @@ class SubspaceSlicePlotter:
         ax.set_xlabel("Line Parameter (Local Coord 1)")
         ax.set_title(f"1D Slice: {self.subset.__class__.__name__}")
         ax.set_yticks([])
-        ax.grid(True, alpha=0.3, axis='x')
+        ax.grid(True, alpha=0.3, axis="x")
 
         if show_plot:
             plt.show()
@@ -684,16 +699,16 @@ class SubspaceSlicePlotter:
             fig = ax.figure
 
         # Contourf for filled regions, contour for boundary
-        ax.contourf(U, V, mask.astype(float), levels=[0.5, 1.5],
-                    cmap=cmap, alpha=self.alpha)
-        ax.contour(U, V, mask.astype(float), levels=[0.5],
-                   colors='k', linewidths=1.0)
+        ax.contourf(
+            U, V, mask.astype(float), levels=[0.5, 1.5], cmap=cmap, alpha=self.alpha
+        )
+        ax.contour(U, V, mask.astype(float), levels=[0.5], colors="k", linewidths=1.0)
 
         # Labels and formatting
         ax.set_xlabel("Local Param 1")
         ax.set_ylabel("Local Param 2")
         ax.set_title(f"2D Slice: {self.subset.__class__.__name__}")
-        ax.set_aspect('equal', adjustable='box')
+        ax.set_aspect("equal", adjustable="box")
         ax.set_xlim(u_min, u_max)
         ax.set_ylim(v_min, v_max)
 
@@ -731,7 +746,6 @@ class SubspaceSlicePlotter:
             ``(fig, ax3, mask)`` where *ax3* is an ``Axes3D`` instance and
             *mask* is the same boolean array passed in (payload).
         """
-        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers '3d' projection
 
         u_min, u_max, v_min, v_max, w_min, w_max = bounds
 
@@ -754,7 +768,7 @@ class SubspaceSlicePlotter:
         u_edges = np.linspace(u_min, u_max, n + 1)
         v_edges = np.linspace(v_min, v_max, n + 1)
         w_edges = np.linspace(w_min, w_max, n + 1)
-        X_e, Y_e, Z_e = np.meshgrid(u_edges, v_edges, w_edges, indexing='ij')
+        X_e, Y_e, Z_e = np.meshgrid(u_edges, v_edges, w_edges, indexing="ij")
         # Bake alpha into the RGBA tuple to avoid masked-array broadcast issues.
         ax3.voxels(X_e, Y_e, Z_e, mask, facecolors=(r, g, b, self.alpha))
 
@@ -802,9 +816,11 @@ class SubspaceSlicePlotter:
         if backend == "auto":
             try:
                 import plotly.graph_objects  # noqa: F401
+
                 return "plotly"
             except ImportError:
                 import warnings as _w
+
                 _w.warn(
                     "Plotly is not installed; falling back to Matplotlib for 3D "
                     "rendering.  Install it with: pip install pygeoinf[interactive]",
@@ -838,18 +854,20 @@ class SubspaceSlicePlotter:
         # when Plotly centers a single surface at value 1.0 for boolean data.
         iso_level = 0.5
         iso_half_width = 1e-3
-        fig = go.Figure(data=go.Isosurface(
-            x=U.ravel(),
-            y=V.ravel(),
-            z=W.ravel(),
-            value=mask.astype(float).ravel(),
-            isomin=iso_level - iso_half_width,
-            isomax=iso_level + iso_half_width,
-            surface_count=1,
-            colorscale="Blues",
-            opacity=self.alpha,
-            showscale=False,
-        ))
+        fig = go.Figure(
+            data=go.Isosurface(
+                x=U.ravel(),
+                y=V.ravel(),
+                z=W.ravel(),
+                value=mask.astype(float).ravel(),
+                isomin=iso_level - iso_half_width,
+                isomax=iso_level + iso_half_width,
+                surface_count=1,
+                colorscale="Blues",
+                opacity=self.alpha,
+                showscale=False,
+            )
+        )
         u_min, u_max, v_min, v_max, w_min, w_max = bounds
         fig.update_layout(
             scene=dict(
@@ -881,17 +899,19 @@ class SubspaceSlicePlotter:
         import plotly.graph_objects as go
 
         hull = scipy.spatial.ConvexHull(pts)
-        fig = go.Figure(data=go.Mesh3d(
-            x=pts[:, 0],
-            y=pts[:, 1],
-            z=pts[:, 2],
-            i=hull.simplices[:, 0],
-            j=hull.simplices[:, 1],
-            k=hull.simplices[:, 2],
-            opacity=self.alpha,
-            color="lightblue",
-            flatshading=True,
-        ))
+        fig = go.Figure(
+            data=go.Mesh3d(
+                x=pts[:, 0],
+                y=pts[:, 1],
+                z=pts[:, 2],
+                i=hull.simplices[:, 0],
+                j=hull.simplices[:, 1],
+                k=hull.simplices[:, 2],
+                opacity=self.alpha,
+                color="lightblue",
+                flatshading=True,
+            )
+        )
         u_min, u_max, v_min, v_max, w_min, w_max = bounds
         fig.update_layout(
             scene=dict(
@@ -996,17 +1016,17 @@ class SubspaceSlicePlotter:
 
         # Dispatch to dimension-specific renderer
         if self.dimension == 1:
-            return self._render_1d(param_grid, mask, parsed_bounds, color,
-                                   show_plot, ax)
+            return self._render_1d(
+                param_grid, mask, parsed_bounds, color, show_plot, ax
+            )
         elif self.dimension == 2:
-            return self._render_2d(param_grid, mask, parsed_bounds, cmap,
-                                   show_plot, ax)
+            return self._render_2d(param_grid, mask, parsed_bounds, cmap, show_plot, ax)
         elif self.dimension == 3:
             if effective_backend == "plotly":
-                return self._render_3d_plotly(param_grid, mask, parsed_bounds,
-                                              show_plot)
-            return self._render_3d(param_grid, mask, parsed_bounds, cmap,
-                                   show_plot, ax)
+                return self._render_3d_plotly(
+                    param_grid, mask, parsed_bounds, show_plot
+                )
+            return self._render_3d(param_grid, mask, parsed_bounds, cmap, show_plot, ax)
 
     # ===========================
     # Quadratic (Ball / Ellipsoid) Fast Path
@@ -1048,7 +1068,7 @@ class SubspaceSlicePlotter:
         """
         subset = self.subset
         H = self.domain
-        V = self.tangent_basis          # list of k ambient vectors
+        V = self.tangent_basis  # list of k ambient vectors
         x0 = self.translation
         k = self.dimension
 
@@ -1118,13 +1138,21 @@ class SubspaceSlicePlotter:
         M = info["M"]
 
         if self.dimension == 1:
-            return self._render_1d_quadratic_exact(u_c, rho_sq, M, bounds, color, show_plot, ax)
+            return self._render_1d_quadratic_exact(
+                u_c, rho_sq, M, bounds, color, show_plot, ax
+            )
         elif self.dimension == 2:
-            return self._render_2d_quadratic_exact(u_c, rho_sq, M, bounds, cmap, color, show_plot, ax)
+            return self._render_2d_quadratic_exact(
+                u_c, rho_sq, M, bounds, cmap, color, show_plot, ax
+            )
         elif self.dimension == 3:
-            return self._render_3d_quadratic_exact(u_c, rho_sq, M, bounds, cmap, show_plot, ax, backend)
+            return self._render_3d_quadratic_exact(
+                u_c, rho_sq, M, bounds, cmap, show_plot, ax, backend
+            )
         else:
-            raise ValueError(f"Unsupported slice dimension {self.dimension} for exact quadratic rendering.")
+            raise ValueError(
+                f"Unsupported slice dimension {self.dimension} for exact quadratic rendering."
+            )
 
     def _render_1d_quadratic_exact(
         self,
@@ -1263,6 +1291,7 @@ class SubspaceSlicePlotter:
         facecolor = plt.get_cmap(cmap)(0.5)
         if fill:
             from matplotlib.patches import Polygon as MplPolygon
+
             patch = MplPolygon(
                 boundary,
                 closed=True,
@@ -1337,11 +1366,13 @@ class SubspaceSlicePlotter:
         phi = np.linspace(0.0, np.pi, n_phi)
         TH, PH = np.meshgrid(theta, phi)
 
-        sphere = rho * np.column_stack([
-            np.sin(PH).ravel() * np.cos(TH).ravel(),
-            np.sin(PH).ravel() * np.sin(TH).ravel(),
-            np.cos(PH).ravel(),
-        ])  # (n_theta*n_phi, 3)
+        sphere = rho * np.column_stack(
+            [
+                np.sin(PH).ravel() * np.cos(TH).ravel(),
+                np.sin(PH).ravel() * np.sin(TH).ravel(),
+                np.cos(PH).ravel(),
+            ]
+        )  # (n_theta*n_phi, 3)
 
         # Map unit sphere through L^{-T}
         surface_pts = np.linalg.solve(L.T, sphere.T).T + u_c  # (N, 3)
@@ -1402,7 +1433,9 @@ class SubspaceSlicePlotter:
     # Polyhedral Fast Path
     # ===========================
 
-    def _polyhedral_inequalities_in_params(self, bounds: tuple) -> tuple[np.ndarray, np.ndarray]:
+    def _polyhedral_inequalities_in_params(
+        self, bounds: tuple
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Build linear inequalities A u <= b for the polyhedral slice within plot bounds.
 
         For each ambient halfspace <a, x> <= off (or >=), with x = x0 + sum_j u_j v_j,
@@ -1423,7 +1456,9 @@ class SubspaceSlicePlotter:
             off = hs.offset
 
             # Reduce to parameter space: a_param[j] = <a, v_j>
-            a_param = np.array([self.domain.inner_product(a, vj) for vj in V], dtype=float)
+            a_param = np.array(
+                [self.domain.inner_product(a, vj) for vj in V], dtype=float
+            )
             b_param = float(off - self.domain.inner_product(a, x0))
 
             # Convert >= to <= by multiplying by -1
@@ -1477,7 +1512,9 @@ class SubspaceSlicePlotter:
         b = np.array(b_rows, dtype=float)
         return A, b
 
-    def _chebyshev_center(self, A: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, float]:
+    def _chebyshev_center(
+        self, A: np.ndarray, b: np.ndarray
+    ) -> tuple[np.ndarray, float]:
         """Compute a strictly interior point via Chebyshev center LP.
 
         Maximizes radius r such that a_i^T x + r ||a_i|| <= b_i.
@@ -1490,9 +1527,13 @@ class SubspaceSlicePlotter:
         A_ub = np.hstack([A, norms[:, None]])
         b_ub = b
         lp_bounds = [(None, None)] * k + [(0.0, None)]
-        res = scipy.optimize.linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=lp_bounds, method="highs")
+        res = scipy.optimize.linprog(
+            c, A_ub=A_ub, b_ub=b_ub, bounds=lp_bounds, method="highs"
+        )
         if not res.success:
-            raise ValueError(f"Failed to find an interior point for polyhedral slice: {res.message}")
+            raise ValueError(
+                f"Failed to find an interior point for polyhedral slice: {res.message}"
+            )
         x = np.array(res.x[:k], dtype=float)
         r = float(res.x[-1])
         return x, r
@@ -1638,7 +1679,13 @@ class SubspaceSlicePlotter:
 
         hull = scipy.spatial.ConvexHull(pts)
         triangles = pts[hull.simplices]
-        poly3d = Poly3DCollection(triangles, alpha=self.alpha, facecolor=facecolor, edgecolor="k", linewidths=0.5)
+        poly3d = Poly3DCollection(
+            triangles,
+            alpha=self.alpha,
+            facecolor=facecolor,
+            edgecolor="k",
+            linewidths=0.5,
+        )
         ax3.add_collection3d(poly3d)
 
         (u_min, u_max, v_min, v_max, w_min, w_max) = bounds
@@ -1726,7 +1773,14 @@ def plot_slice(
     plotter = SubspaceSlicePlotter(
         subset, on_subspace, grid_size=grid_size, rtol=rtol, alpha=alpha
     )
-    return plotter.plot(bounds=bounds, cmap=cmap, color=color, show_plot=show_plot, ax=ax, backend=backend)
+    return plotter.plot(
+        bounds=bounds,
+        cmap=cmap,
+        color=color,
+        show_plot=show_plot,
+        ax=ax,
+        backend=backend,
+    )
 
 
 def plot_corner_distributions(
@@ -2083,12 +2137,22 @@ def plot_corner_distributions(
     cleaned_labels = [label.split(":")[0] for label in labels_leg]
     unique_legend = dict(zip(cleaned_labels, handles))
 
-    fig.legend(
-        unique_legend.values(),
-        unique_legend.keys(),
-        loc="upper right",
-        bbox_to_anchor=legend_position,
-    )
+    if n_dims > 1:
+        leg_ax = axes[0, n_dims - 1]
+        leg_ax.set_visible(True)
+        leg_ax.axis("off")
+        leg_ax.legend(
+            unique_legend.values(),
+            unique_legend.keys(),
+            loc="center",
+        )
+    else:
+        fig.legend(
+            unique_legend.values(),
+            unique_legend.keys(),
+            loc="upper right",
+            bbox_to_anchor=legend_position,
+        )
 
     if n_dims > 1 and pcm is not None and fill_density:
         cbar = fig.colorbar(pcm, ax=axes, shrink=0.7, aspect=30, pad=0.02)
