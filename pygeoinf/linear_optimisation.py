@@ -86,6 +86,11 @@ class LinearLeastSquaresInversion(LinearInversion):
         Raises:
             ValueError: If an invalid formalism string is provided.
         """
+        if formalism == "whitened_model_space":
+            raise ValueError(
+                "The whitened_model_space formalism requires a prior measure and "
+                "is only available for Bayesian inversions."
+            )
         super().__init__(forward_problem, formalism=formalism)
 
         if (
@@ -582,6 +587,11 @@ class ConstrainedLinearLeastSquaresInversion(LinearInversion):
         Raises:
             ValueError: If an invalid formalism string is provided.
         """
+        if formalism == "whitened_model_space":
+            raise ValueError(
+                "The whitened_model_space formalism requires a prior measure and "
+                "is only available for Bayesian inversions."
+            )
         super().__init__(forward_problem, formalism=formalism)
 
         if (
@@ -805,6 +815,11 @@ class LinearMinimumNormInversion(LinearInversion):
             formalism: The algebraic space in which the normal equations are
                 assembled and solved. Defaults to 'data_space'.
         """
+        if formalism == "whitened_model_space":
+            raise ValueError(
+                "The whitened_model_space formalism requires a prior measure and "
+                "is only available for Bayesian inversions."
+            )
         super().__init__(forward_problem, formalism=formalism)
 
         if (
@@ -1066,6 +1081,11 @@ class ConstrainedLinearMinimumNormInversion(LinearInversion):
             formalism: The algebraic space in which the normal equations are
                 assembled and solved. Defaults to 'data_space'.
         """
+        if formalism == "whitened_model_space":
+            raise ValueError(
+                "The whitened_model_space formalism requires a prior measure and "
+                "is only available for Bayesian inversions."
+            )
         super().__init__(forward_problem, formalism=formalism)
 
         if (

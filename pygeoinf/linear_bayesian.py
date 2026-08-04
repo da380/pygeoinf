@@ -6,8 +6,8 @@ than seeking a single deterministic "best-fit" solution, it aims to determine
 the full posterior probability distribution of the unknown model parameters
 given the observed data, prior knowledge, and noise statistics.
 
-A core feature of this module is its dual algebraic formalism, allowing users to
-optimize computational efficiency based on the problem geometry:
+A core feature of this module is its choice of algebraic formalism, allowing users
+to optimize computational efficiency based on the problem geometry:
 
 - **data_space**: Assembles the data-space normal operator (size M x M, where M is
   the data dimension).
@@ -20,6 +20,14 @@ optimize computational efficiency based on the problem geometry:
   Normal Operator: `N = Q^-1 + A* R^-1 A`
   Kalman Gain:     `K = N^-1 A* R^-1`
   Best suited for overdetermined problems (N << M).
+
+- **whitened_model_space**: Assembles the normal operator on the whitened model
+  space, i.e. the domain of the prior covariance factor `L` (where `Q = L L*`).
+  Normal Operator: `N = I + L* A* R^-1 A L`
+  Kalman Gain:     `K = L N^-1 L* A* R^-1`
+  Requires the prior covariance factor rather than the prior precision `Q^-1`.
+  Since `N` is an identity-plus-positive-semi-definite operator, its spectrum
+  is bounded below by one, making unpreconditioned iterative solvers effective.
 
 Key Classes
 -----------
@@ -37,7 +45,7 @@ import numpy as np
 import scipy.sparse as sps
 import scipy.sparse.linalg as splinalg
 
-from .inversion import LinearInversion
+from .inversion import LinearInversion, Formalism
 from .gaussian_measure import GaussianMeasure
 from .forward_problem import LinearForwardProblem
 from .linear_operators import (
@@ -78,7 +86,7 @@ class LinearBayesianInversion(LinearInversion):
         model_prior_measure: GaussianMeasure,
         /,
         *,
-        formalism: Literal["model_space", "data_space"] = "data_space",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Initializes the linear Bayesian inversion problem.
@@ -88,13 +96,14 @@ class LinearBayesianInversion(LinearInversion):
                 containing the forward operator `A` and data error measure `R`.
             model_prior_measure: The prior Gaussian measure `Q` on the model space.
             formalism: The algebraic space in which the normal equations are
-                assembled and solved. Must be 'model_space' or 'data_space'.
-                Defaults to 'data_space'.
+                assembled and solved. Must be 'model_space', 'data_space', or
+                'whitened_model_space'. Defaults to 'data_space'.
 
         Raises:
             ValueError: If an invalid formalism string is provided, or if the
-                'model_space' formalism is selected but the necessary inverse
-                covariance operators (precision operators) are not set.
+                'model_space' or 'whitened_model_space' formalism is selected
+                but the necessary operators (precision operators, or the prior
+                covariance factor) are not set.
         """
         super().__init__(forward_problem, formalism=formalism)
         self._model_prior_measure: GaussianMeasure = model_prior_measure
@@ -111,16 +120,28 @@ class LinearBayesianInversion(LinearInversion):
                 raise ValueError(
                     "Data error inverse covariance must be set for model_space formalism."
                 )
+        elif self.formalism == "whitened_model_space":
+            if not self.model_prior_measure.covariance_factor_set:
+                raise ValueError(
+                    "Prior covariance factor must be set for whitened_model_space formalism."
+                )
+            if (
+                self.forward_problem.data_error_measure_set
+                and not self.forward_problem.data_error_measure.inverse_covariance_set
+            ):
+                raise ValueError(
+                    "Data error inverse covariance must be set for "
+                    "whitened_model_space formalism."
+                )
 
-    def with_formalism(
-        self, formalism: Literal["model_space", "data_space"]
-    ) -> LinearBayesianInversion:
+    def with_formalism(self, formalism: Formalism) -> LinearBayesianInversion:
         """
         Returns a new instance of the Bayesian inversion using the specified formalism.
 
         Args:
             formalism: The algebraic space in which the normal equations should be
-                assembled and solved. Must be 'model_space' or 'data_space'.
+                assembled and solved. Must be 'model_space', 'data_space', or
+                'whitened_model_space'.
 
         Returns:
             A new LinearBayesianInversion instance sharing the exact same forward
@@ -161,6 +182,9 @@ class LinearBayesianInversion(LinearInversion):
 
         For 'data_space': Returns `N = A Q A* + R`
         For 'model_space': Returns `N = Q^-1 + A* R^-1 A`
+        For 'whitened_model_space': Returns `N = I + L* A* R^-1 A L`, where `L`
+        is the prior covariance factor. This operator acts on the domain of `L`,
+        which need not coincide with the model space.
 
         Returns:
             A LinearOperator representing the normal equations matrix.
@@ -179,7 +203,7 @@ class LinearBayesianInversion(LinearInversion):
                     forward_operator @ model_prior_covariance @ forward_operator.adjoint
                 )
 
-        else:  # model_space
+        elif self.formalism == "model_space":
             prior_inv_cov = self.model_prior_measure.inverse_covariance
             if self.forward_problem.data_error_measure_set:
                 data_inv_cov = (
@@ -191,6 +215,21 @@ class LinearBayesianInversion(LinearInversion):
                 )
             else:
                 return prior_inv_cov + forward_operator.adjoint @ forward_operator
+
+        else:  # whitened_model_space
+            factor = self.model_prior_measure.covariance_factor
+            identity = factor.domain.identity_operator()
+            whitened_forward = forward_operator @ factor
+            if self.forward_problem.data_error_measure_set:
+                data_inv_cov = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                return (
+                    identity
+                    + whitened_forward.adjoint @ data_inv_cov @ whitened_forward
+                )
+            else:
+                return identity + whitened_forward.adjoint @ whitened_forward
 
     def _compute_data_residual(self, data: Vector) -> Vector:
         """
@@ -228,15 +267,19 @@ class LinearBayesianInversion(LinearInversion):
         if self.formalism == "data_space":
             # In data space, the RHS is exactly the shifted data residuals
             return shifted_data
+
+        # In model space, the RHS is projected back via A* R^-1
+        if self.forward_problem.data_error_measure_set:
+            data_inv_cov = self.forward_problem.data_error_measure.inverse_covariance
+            rhs = forward_operator.adjoint(data_inv_cov(shifted_data))
         else:
-            # In model space, the RHS is projected back via A* R^-1
-            if self.forward_problem.data_error_measure_set:
-                data_inv_cov = (
-                    self.forward_problem.data_error_measure.inverse_covariance
-                )
-                return forward_operator.adjoint(data_inv_cov(shifted_data))
-            else:
-                return forward_operator.adjoint(shifted_data)
+            rhs = forward_operator.adjoint(shifted_data)
+
+        if self.formalism == "model_space":
+            return rhs
+
+        # In the whitened model space, the RHS is further pulled back via L*
+        return self.model_prior_measure.covariance_factor.adjoint(rhs)
 
     def kalman_operator(
         self,
@@ -252,6 +295,7 @@ class LinearBayesianInversion(LinearInversion):
 
         For 'data_space': `K = Q A* (A Q A* + R)^-1`
         For 'model_space': `K = (Q^-1 + A* R^-1 A)^-1 A* R^-1`
+        For 'whitened_model_space': `K = L (I + L* A* R^-1 A L)^-1 L* A* R^-1`
 
         Args:
             solver: The LinearSolver used to invert the normal operator.
@@ -277,7 +321,7 @@ class LinearBayesianInversion(LinearInversion):
                 @ forward_operator.adjoint
                 @ inverse_normal_operator
             )
-        else:  # model_space
+        elif self.formalism == "model_space":
             if self.forward_problem.data_error_measure_set:
                 data_inv_cov = (
                     self.forward_problem.data_error_measure.inverse_covariance
@@ -285,6 +329,18 @@ class LinearBayesianInversion(LinearInversion):
                 return inverse_normal_operator @ forward_operator.adjoint @ data_inv_cov
             else:
                 return inverse_normal_operator @ forward_operator.adjoint
+        else:  # whitened_model_space
+            factor = self.model_prior_measure.covariance_factor
+            whitened_gain = (
+                factor @ inverse_normal_operator @ factor.adjoint
+            ) @ forward_operator.adjoint
+            if self.forward_problem.data_error_measure_set:
+                data_inv_cov = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                return whitened_gain @ data_inv_cov
+            else:
+                return whitened_gain
 
     # =========================================================================
     # Posterior Extraction
@@ -338,7 +394,7 @@ class LinearBayesianInversion(LinearInversion):
             covariance = model_prior_covariance - (
                 kalman_gain @ forward_operator @ model_prior_covariance
             )
-        else:  # model_space
+        elif self.formalism == "model_space":
             if self.forward_problem.data_error_measure_set:
                 data_inv_cov = (
                     self.forward_problem.data_error_measure.inverse_covariance
@@ -350,6 +406,17 @@ class LinearBayesianInversion(LinearInversion):
                 kalman_gain = inverse_normal_operator @ forward_operator.adjoint
             # Optimization: In model space, the inverted normal operator IS the posterior covariance
             covariance = inverse_normal_operator
+        else:  # whitened_model_space
+            factor = self.model_prior_measure.covariance_factor
+            # C_post = L (I + L* A* R^-1 A L)^-1 L*
+            covariance = factor @ inverse_normal_operator @ factor.adjoint
+            if self.forward_problem.data_error_measure_set:
+                data_inv_cov = (
+                    self.forward_problem.data_error_measure.inverse_covariance
+                )
+                kalman_gain = covariance @ forward_operator.adjoint @ data_inv_cov
+            else:
+                kalman_gain = covariance @ forward_operator.adjoint
 
         # 2. Compute Posterior Mean
         shifted_data = self._compute_data_residual(data)
@@ -514,6 +581,10 @@ class LinearBayesianInversion(LinearInversion):
         inversion:
             Misfit = <v, R^-1 v> - <A* R^-1 v, (Q^-1 + A* R^-1 A)^-1 A* R^-1 v>
 
+        The same identity holds in the 'whitened_model_space' formalism with
+        the whitened right-hand side `L* A* R^-1 v` and normal operator, since
+        `L (I + L* A* R^-1 A L)^-1 L* = (Q^-1 + A* R^-1 A)^-1`.
+
         Args:
             data: The observed data vector 'd'.
             solver: The LinearSolver used to invert the normal operator.
@@ -529,7 +600,6 @@ class LinearBayesianInversion(LinearInversion):
             raise ValueError("Data error measure must be set.")
 
         data_space = self.data_space
-        model_space = self.model_space
         R_measure = self.forward_problem.data_error_measure
 
         # 1. Compute the raw shifted data residual
@@ -549,10 +619,10 @@ class LinearBayesianInversion(LinearInversion):
             # Misfit = <v_data, (A Q A* + R)^-1 v_data>
             mahalanobis_term = data_space.inner_product(v_data, w)
         else:
-            # Woodbury optimization for model_space.
+            # Woodbury optimization for model_space / whitened_model_space.
             R_inv = R_measure.inverse_covariance
             misfit_base = data_space.inner_product(v_data, R_inv(v_data))
-            misfit_reduction = model_space.inner_product(rhs, w)
+            misfit_reduction = normal_op.domain.inner_product(rhs, w)
             mahalanobis_term = misfit_base - misfit_reduction
 
         return float(mahalanobis_term)
@@ -627,7 +697,7 @@ class LinearBayesianInversion(LinearInversion):
         self,
         /,
         *,
-        operator_type: Literal["data_space", "model_space"] = "data_space",
+        operator_type: Formalism = "data_space",
         size_estimate: int = 10,
         method: Literal["variable", "fixed"] = "variable",
         max_samples: Optional[int] = None,
@@ -643,12 +713,14 @@ class LinearBayesianInversion(LinearInversion):
         Stochastic Lanczos Quadrature (SLQ).
 
         This acts as a public interface for computing the log-determinant of
-        either the data-space normal operator (A Q A* + R) or the model-space
-        normal operator (Q^-1 + A* R^-1 A). It securely resolves the correct
+        the data-space normal operator (A Q A* + R), the model-space normal
+        operator (Q^-1 + A* R^-1 A), or the whitened model-space normal
+        operator (I + L* A* R^-1 A L). It securely resolves the correct
         algebraic space and delegates to the internal matrix-free SLQ engine.
 
         Args:
-            operator_type: The target normal operator ('data_space' or 'model_space').
+            operator_type: The target normal operator ('data_space',
+                'model_space', or 'whitened_model_space').
             size_estimate: Initial number of Hutchinson samples (probe vectors).
             method: 'variable' to sample until 'rtol' is met, 'fixed' otherwise.
             max_samples: Hard limit on the number of Hutchinson samples.
@@ -664,12 +736,8 @@ class LinearBayesianInversion(LinearInversion):
             float: The estimated log-determinant ln(|N|).
         """
         surrogate = self.with_formalism(operator_type)
-        space = (
-            surrogate.model_space
-            if operator_type == "model_space"
-            else surrogate.data_space
-        )
         op = surrogate.normal_operator
+        space = op.domain
 
         return self._trace_log_slq(
             op,
@@ -732,8 +800,9 @@ class LinearBayesianInversion(LinearInversion):
             float: The estimated log-evidence ln(p(d)).
 
         Raises:
-            ValueError: If the 'model_space' formalism is used but no data error measure
-                        has been set on the forward problem.
+            ValueError: If the 'model_space' or 'whitened_model_space' formalism
+                        is used but no data error measure has been set on the
+                        forward problem.
         """
         mahalanobis = self.mahalanobis_evidence_term(
             data, solver, preconditioner=preconditioner
@@ -756,16 +825,6 @@ class LinearBayesianInversion(LinearInversion):
                 operator_type="data_space", **slq_kwargs
             )
         else:
-            # By Sylvester's determinant identity:
-            # ln|N_d| = ln|N_m| + ln|Q| + ln|R|
-            log_det_Nm = self.estimate_log_determinant(
-                operator_type="model_space", **slq_kwargs
-            )
-
-            log_det_Q = self._trace_log_slq(
-                self.model_prior_measure.covariance, self.model_space, **slq_kwargs
-            )
-
             if not self.forward_problem.data_error_measure_set:
                 raise ValueError(
                     "Data error measure is required to compute log evidence."
@@ -777,7 +836,26 @@ class LinearBayesianInversion(LinearInversion):
                 **slq_kwargs,
             )
 
-            log_det = log_det_Nm + log_det_Q + log_det_R
+            if self.formalism == "model_space":
+                # By Sylvester's determinant identity:
+                # ln|N_d| = ln|N_m| + ln|Q| + ln|R|
+                log_det_Nm = self.estimate_log_determinant(
+                    operator_type="model_space", **slq_kwargs
+                )
+
+                log_det_Q = self._trace_log_slq(
+                    self.model_prior_measure.covariance, self.model_space, **slq_kwargs
+                )
+
+                log_det = log_det_Nm + log_det_Q + log_det_R
+            else:  # whitened_model_space
+                # By the Weinstein-Aronszajn determinant identity:
+                # ln|N_d| = ln|N_w| + ln|R|
+                log_det_Nw = self.estimate_log_determinant(
+                    operator_type="whitened_model_space", **slq_kwargs
+                )
+
+                log_det = log_det_Nw + log_det_R
 
         m = self.data_space.dim
         constant = m * np.log(2 * np.pi)
@@ -822,8 +900,8 @@ class LinearBayesianInversion(LinearInversion):
         if self.formalism != "data_space":
             raise ValueError(
                 "This custom preconditioner is mathematically derived for the "
-                "data-space normal operator (A Q A* + R) and cannot be used "
-                "with the model-space formalism."
+                "data-space normal operator (A Q A* + R) and can only be used "
+                "with the data-space formalism."
             )
 
         data_space = self.data_space
@@ -923,8 +1001,8 @@ class LinearBayesianInversion(LinearInversion):
         if self.formalism != "data_space":
             raise ValueError(
                 "This custom preconditioner is mathematically derived for the "
-                "data-space normal operator (A Q A* + R) and cannot be used "
-                "with the model-space formalism."
+                "data-space normal operator (A Q A* + R) and can only be used "
+                "with the data-space formalism."
             )
 
         forward_op = self.forward_problem.forward_operator
@@ -1359,15 +1437,16 @@ class LinearBayesianInversion(LinearInversion):
         dense: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
-        formalism: Optional[Literal["model_space", "data_space"]] = None,
+        formalism: Optional[Formalism] = None,
     ) -> LinearBayesianInversion:
         """
         Constructs a parameterized surrogate of the Bayesian inversion.
 
-        If the target formalism resolves to 'model_space' (which is typical for
-        parameterized inversions), the parameter prior's covariance matrix will
-        be automatically densified to explicitly compute the required precision
-        (inverse covariance) operator.
+        If the target formalism resolves to 'model_space' or
+        'whitened_model_space' (which is typical for parameterized inversions),
+        the parameter prior's covariance matrix will be automatically densified
+        to explicitly compute the required precision (inverse covariance)
+        operator and covariance factor.
 
         Args:
             parameterization: A LinearOperator mapping from the parameter
@@ -1402,7 +1481,7 @@ class LinearBayesianInversion(LinearInversion):
         )
 
         new_prior = parameter_prior
-        if dense or target_formalism == "model_space":
+        if dense or target_formalism in ("model_space", "whitened_model_space"):
             new_prior = new_prior.with_dense_covariance(
                 parallel=parallel, n_jobs=n_jobs
             )
@@ -1418,7 +1497,7 @@ class LinearBayesianInversion(LinearInversion):
         dense: bool = False,
         parallel: bool = False,
         n_jobs: int = -1,
-        formalism: Optional[Literal["model_space", "data_space"]] = None,
+        formalism: Optional[Formalism] = None,
     ) -> LinearBayesianInversion:
         """
         Constructs a surrogate of the Bayesian inversion using a reduced data space.
@@ -1447,7 +1526,7 @@ class LinearBayesianInversion(LinearInversion):
         )
 
         new_prior = self.model_prior_measure
-        if dense or target_formalism == "model_space":
+        if dense or target_formalism in ("model_space", "whitened_model_space"):
             new_prior = new_prior.with_dense_covariance(
                 parallel=parallel, n_jobs=n_jobs
             )

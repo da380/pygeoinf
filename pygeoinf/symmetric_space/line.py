@@ -10,6 +10,7 @@ from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 from .circle import Lebesgue as CircleLebesgue
 from .circle import Sobolev as CircleSobolev
+from .circle import _matrix_free_point_evaluation_1d
 
 
 class Lebesgue(AbstractSymmetricLebesgueSpace):
@@ -621,6 +622,37 @@ class Sobolev(SymmetricSobolevSpace):
             power_of_two=power_of_two,
             safe=safe,
         )
+
+    def point_evaluation_operator(
+        self, points: List[Any], /, *, matrix_free: bool = False
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Both implementations realise the same truncated Fourier interpolant
+        (including the Nyquist conventions of `dirac`) and give identical
+        results to machine precision.
+
+        Args:
+            points: A list of x-coordinates.
+            matrix_free: If True, the dense (n_points x dim) matrix is never
+                assembled row by row from `dirac`; the operator instead
+                stores a thin complex phase matrix and applies itself and
+                its adjoint with a single matrix product each. In 1D the
+                phase matrix occupies the same memory as the dense matrix,
+                so the benefit is faster construction, not storage.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        pts = np.asarray(points, dtype=float).ravel()
+        lebesgue = self.underlying_space
+        circle = lebesgue.circle_space
+        th = (pts - lebesgue.a + lebesgue.c) / circle.radius
+        return _matrix_free_point_evaluation_1d(self, circle, th)
 
     # ---------------------------------------------- #
     #                   Properties                   #
