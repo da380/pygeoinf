@@ -10,6 +10,7 @@ from .symmetric_space import (
     SymmetricSobolevSpace,
     InvariantLinearAutomorphism,
     InvariantGaussianMeasure,
+    CorrelatedInvariantGaussianMeasure,
 )
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "SymmetricSobolevSpace",
     "InvariantLinearAutomorphism",
     "InvariantGaussianMeasure",
+    "CorrelatedInvariantGaussianMeasure",
 ]
 
 

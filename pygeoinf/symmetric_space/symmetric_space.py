@@ -45,7 +45,7 @@ from pygeoinf.gaussian_measure import GaussianMeasure
 from pygeoinf.affine_operators import AffineOperator
 
 from pygeoinf.linear_solvers import IterativeLinearSolver, LinearSolver, CGSolver
-from pygeoinf.direct_sum import BlockDiagonalLinearOperator
+from pygeoinf.direct_sum import BlockDiagonalLinearOperator, BlockLinearOperator
 
 # Alias for the index for the eigenvalues or eigenfunctions
 Index: TypeAlias = int | tuple[int, ...]
@@ -717,6 +717,721 @@ class InvariantGaussianMeasure(GaussianMeasure):
         return self.domain.add(sample_vector, self.expectation)
 
 
+class CorrelatedInvariantGaussianMeasure(GaussianMeasure):
+    """
+    A Gaussian measure for a tuple of correlated random fields defined on a
+    common SymmetricHilbertSpace, constructed through a shared Karhunen-Loeve
+    expansion.
+
+    The measure is defined on the direct sum of n copies of the field space.
+    Its covariance is block-structured, with each block diagonal within the
+    shared Laplacian eigenbasis: the (i, j) block is the invariant operator
+    with eigenvalues equal to the spectral cross-covariances Sigma_ij(k).
+    Each marginal is an invariant measure with spectral variances
+    Sigma_ii(k), while the correlations between the fields' coefficients may
+    vary with scale through the k-dependence of Sigma(k).
+
+    Sampling draws, for each eigen-index k, a jointly Gaussian coefficient
+    vector for the n fields, so that a sample is a list of n elements of the
+    field space with the requested correlation structure.
+    """
+
+    def __init__(
+        self,
+        field_space: SymmetricHilbertSpace,
+        spectral_cross_covariances: np.ndarray,
+        /,
+        *,
+        expectation: Optional[List[Vector]] = None,
+    ):
+        """
+        Initializes the CorrelatedInvariantGaussianMeasure.
+
+        Args:
+            field_space: The symmetric space on which each field is defined.
+            spectral_cross_covariances: An array of shape (dim, n, n) whose
+                k-th slice is the spectral cross-covariance matrix, Sigma(k),
+                of the n fields at the k-th eigenfunction. Each slice must be
+                symmetric and positive semi-definite.
+            expectation: The mean as a list of n vectors within the field
+                space. Defaults to zero.
+
+        Raises:
+            ValueError: If the array has the wrong shape, or if any of the
+                spectral cross-covariance matrices fails to be symmetric and
+                positive semi-definite.
+        """
+        sigma = np.asarray(spectral_cross_covariances, dtype=float)
+
+        if (
+            sigma.ndim != 3
+            or sigma.shape[0] != field_space.dim
+            or sigma.shape[1] != sigma.shape[2]
+        ):
+            raise ValueError(
+                "spectral_cross_covariances must have shape (dim, n, n) with "
+                f"dim = {field_space.dim}, but has shape {sigma.shape}."
+            )
+
+        scale = np.max(np.abs(sigma)) if sigma.size > 0 else 0.0
+        tolerance = 1.0e-10 * max(scale, np.finfo(float).tiny)
+
+        if not np.allclose(
+            sigma, np.swapaxes(sigma, -1, -2), rtol=1.0e-10, atol=tolerance
+        ):
+            raise ValueError(
+                "The spectral cross-covariance matrices must be symmetric."
+            )
+        sigma = 0.5 * (sigma + np.swapaxes(sigma, -1, -2))
+
+        spectral_eigenvalues, spectral_eigenvectors = np.linalg.eigh(sigma)
+
+        if np.min(spectral_eigenvalues) < -tolerance:
+            bad = int(np.argmin(np.min(spectral_eigenvalues, axis=1)))
+            raise ValueError(
+                "The spectral cross-covariance matrices must be positive "
+                "semi-definite, but the matrix for eigenvalue index "
+                f"{field_space.integer_to_index(bad)} has minimum eigenvalue "
+                f"{np.min(spectral_eigenvalues):.3e}. For correlation-based "
+                "constructions this requires each spectral correlation matrix "
+                "to be positive semi-definite with unit diagonal; for a pair "
+                "of fields, |rho| <= 1."
+            )
+        spectral_eigenvalues = np.clip(spectral_eigenvalues, 0.0, None)
+
+        self._field_space = field_space
+        self._number_of_fields = sigma.shape[1]
+        self._spectral_cross_covariances = sigma
+        self._spectral_operator_eigenvalues = spectral_eigenvalues
+
+        # Symmetric square roots L(k), with L(k) @ L(k) = Sigma(k), scaled
+        # by 1 / sqrt(m_k) to act on the (possibly non-normalised)
+        # component basis, mirroring the univariate KL scaling.
+        sqrt_eigenvalues = np.sqrt(spectral_eigenvalues)
+        factors = (spectral_eigenvectors * sqrt_eigenvalues[:, None, :]) @ np.swapaxes(
+            spectral_eigenvectors, -1, -2
+        )
+        self._kl_factor_array = (
+            factors / np.sqrt(field_space.metric_values)[:, None, None]
+        )
+
+        covariance = BlockLinearOperator(
+            [
+                [
+                    InvariantLinearAutomorphism(
+                        field_space, np.ascontiguousarray(sigma[:, i, j])
+                    )
+                    for j in range(self._number_of_fields)
+                ]
+                for i in range(self._number_of_fields)
+            ]
+        )
+
+        inverse_covariance = None
+        if np.all(spectral_eigenvalues > 0):
+            precisions = np.linalg.inv(sigma)
+            precisions = 0.5 * (precisions + np.swapaxes(precisions, -1, -2))
+            inverse_covariance = BlockLinearOperator(
+                [
+                    [
+                        InvariantLinearAutomorphism(
+                            field_space, np.ascontiguousarray(precisions[:, i, j])
+                        )
+                        for j in range(self._number_of_fields)
+                    ]
+                    for i in range(self._number_of_fields)
+                ]
+            )
+
+        if expectation is not None:
+            if (
+                not isinstance(expectation, (list, tuple))
+                or len(expectation) != self._number_of_fields
+            ):
+                raise ValueError(
+                    "The expectation must be a list of "
+                    f"{self._number_of_fields} vectors within the field space."
+                )
+            expectation = list(expectation)
+
+        super().__init__(
+            covariance=covariance,
+            expectation=expectation,
+            sample=self._kl_sample,
+            inverse_covariance=inverse_covariance,
+        )
+
+    # ---------------------------------------------------------- #
+    #                         Constructors                       #
+    # ---------------------------------------------------------- #
+
+    @staticmethod
+    def from_invariant_measures(
+        measures: List[InvariantGaussianMeasure],
+        correlation: Union[float, np.ndarray, Callable],
+        /,
+        *,
+        expectation: Optional[List[Vector]] = None,
+    ) -> CorrelatedInvariantGaussianMeasure:
+        """
+        Returns the correlated measure with the given marginals and spectral
+        correlations.
+
+        Each marginal of the resulting measure coincides with the
+        corresponding input measure, while the correlations between the
+        fields' KL coefficients are set through the correlation argument. The
+        spectral cross-covariances are
+
+            Sigma_ij(k) = R_ij(k) * sqrt(sigma_i(k) * sigma_j(k)),
+
+        with sigma_i(k) the spectral variances of the i-th marginal and R(k)
+        the spectral correlation matrix at the k-th eigenfunction.
+
+        Args:
+            measures: A list of n >= 2 invariant Gaussian measures on a
+                common symmetric space that provide the marginal
+                distributions for the fields.
+            correlation: The spectral correlations. This may be given as:
+                (i) a float, for a constant correlation between each pair of
+                fields; (ii) a callable of the Laplacian eigenvalue returning
+                either a scalar pairwise correlation or an n x n correlation
+                matrix, allowing the correlation to vary with scale; (iii) an
+                (n, n) array of constant matrix correlations; (iv) a (dim,)
+                array of pairwise correlations, one per eigen-index; or (v) a
+                (dim, n, n) array of correlation matrices, one per
+                eigen-index. Correlation matrices must have unit diagonals
+                and be positive semi-definite.
+            expectation: The mean as a list of n vectors. If not provided,
+                the expectations of the input measures are used.
+
+        Raises:
+            ValueError: If the measures are inconsistent or the correlations
+                are invalid.
+        """
+        if len(measures) < 2:
+            raise ValueError("At least two marginal measures are required.")
+
+        if not all(
+            isinstance(measure, InvariantGaussianMeasure) for measure in measures
+        ):
+            raise ValueError("The marginal measures must be InvariantGaussianMeasures.")
+
+        field_space = measures[0].domain
+        if not all(measure.domain == field_space for measure in measures[1:]):
+            raise ValueError("The marginal measures must be defined on a common space.")
+
+        number_of_fields = len(measures)
+        variances = np.stack(
+            [measure.spectral_variances for measure in measures], axis=1
+        )
+        if np.any(variances < 0):
+            raise ValueError("Marginal spectral variances must be non-negative.")
+        standard_deviations = np.sqrt(variances)
+
+        correlations = CorrelatedInvariantGaussianMeasure._correlation_array(
+            field_space, correlation, number_of_fields
+        )
+
+        if not np.allclose(np.einsum("kii->ki", correlations), 1.0, atol=1.0e-8):
+            raise ValueError(
+                "The spectral correlation matrices must have unit diagonals."
+            )
+
+        sigma = (
+            correlations
+            * standard_deviations[:, :, None]
+            * standard_deviations[:, None, :]
+        )
+
+        if expectation is None and not all(
+            measure.has_zero_expectation for measure in measures
+        ):
+            expectation = [measure.expectation for measure in measures]
+
+        return CorrelatedInvariantGaussianMeasure(
+            field_space, sigma, expectation=expectation
+        )
+
+    @staticmethod
+    def from_index_function(
+        field_space: SymmetricHilbertSpace,
+        g: Callable[[Index], np.ndarray],
+        /,
+        *,
+        expectation: Optional[List[Vector]] = None,
+    ) -> CorrelatedInvariantGaussianMeasure:
+        """
+        Returns a correlated invariant measure whose spectral
+        cross-covariance matrices are expressed as a function, g, of the
+        eigenvalue index.
+
+        Args:
+            field_space: The symmetric space on which each field is defined.
+            g: A function mapping an eigenvalue index to the n x n spectral
+                cross-covariance matrix, Sigma(k). The number of fields is
+                inferred from the first evaluation.
+            expectation: The mean as a list of n vectors. Defaults to zero.
+        """
+        first = np.asarray(g(field_space.integer_to_index(0)), dtype=float)
+        if first.ndim != 2 or first.shape[0] != first.shape[1]:
+            raise ValueError(
+                "The index function must return square matrices, but the "
+                f"first evaluation has shape {first.shape}."
+            )
+        number_of_fields = first.shape[0]
+
+        sigma = np.empty((field_space.dim, number_of_fields, number_of_fields))
+        sigma[0] = first
+        for i in range(1, field_space.dim):
+            sigma[i] = np.asarray(g(field_space.integer_to_index(i)), dtype=float)
+
+        return CorrelatedInvariantGaussianMeasure(
+            field_space, sigma, expectation=expectation
+        )
+
+    @staticmethod
+    def from_function(
+        field_space: SymmetricHilbertSpace,
+        f: Callable[[float], np.ndarray],
+        /,
+        *,
+        expectation: Optional[List[Vector]] = None,
+    ) -> CorrelatedInvariantGaussianMeasure:
+        """
+        Returns a correlated invariant measure whose spectral
+        cross-covariance matrices take the form F(lambda) with F a
+        matrix-valued function that is well-defined on the spectrum of the
+        Laplacian.
+
+        Args:
+            field_space: The symmetric space on which each field is defined.
+            f: A function mapping a Laplacian eigenvalue to the n x n
+                spectral cross-covariance matrix.
+            expectation: The mean as a list of n vectors. Defaults to zero.
+        """
+        return CorrelatedInvariantGaussianMeasure.from_index_function(
+            field_space,
+            lambda k: f(field_space.laplacian_eigenvalue(k)),
+            expectation=expectation,
+        )
+
+    # ---------------------------------------------------------- #
+    #                         Properties                         #
+    # ---------------------------------------------------------- #
+
+    @property
+    def field_space(self) -> SymmetricHilbertSpace:
+        """The common symmetric space on which each field is defined."""
+        return self._field_space
+
+    @property
+    def number_of_fields(self) -> int:
+        """The number of correlated fields."""
+        return self._number_of_fields
+
+    @property
+    def spectral_cross_covariances(self) -> np.ndarray:
+        """
+        The (dim, n, n) array of spectral cross-covariance matrices, the
+        k-th slice being the matrix Sigma(k) at the k-th eigenfunction.
+        """
+        return self._spectral_cross_covariances
+
+    # ---------------------------------------------------------- #
+    #                        Public methods                      #
+    # ---------------------------------------------------------- #
+
+    def marginal(self, i: int) -> InvariantGaussianMeasure:
+        """
+        Returns the marginal measure for the i-th field.
+
+        Args:
+            i: The index of the field.
+        """
+        self._check_field_index(i)
+        expectation = None if self.has_zero_expectation else self._expectation[i]
+        return InvariantGaussianMeasure(
+            self._field_space,
+            np.ascontiguousarray(self._spectral_cross_covariances[:, i, i]),
+            expectation=expectation,
+        )
+
+    def cross_covariance(self, i: int, j: int) -> InvariantLinearAutomorphism:
+        """
+        Returns the cross-covariance of the i-th and j-th fields as an
+        invariant operator on the field space with eigenvalues Sigma_ij(k).
+
+        Args:
+            i: The index of the first field.
+            j: The index of the second field.
+        """
+        self._check_field_index(i)
+        self._check_field_index(j)
+        return InvariantLinearAutomorphism(
+            self._field_space,
+            np.ascontiguousarray(self._spectral_cross_covariances[:, i, j]),
+        )
+
+    def spectral_correlations(self, i: int = 0, j: int = 1) -> np.ndarray:
+        """
+        Returns the spectral correlations between the i-th and j-th fields,
+
+            rho_ij(k) = Sigma_ij(k) / sqrt(Sigma_ii(k) * Sigma_jj(k)),
+
+        with the convention that the correlation vanishes wherever either
+        marginal spectral variance is zero.
+
+        Args:
+            i: The index of the first field. Defaults to 0.
+            j: The index of the second field. Defaults to 1.
+        """
+        self._check_field_index(i)
+        self._check_field_index(j)
+        sigma = self._spectral_cross_covariances
+        denominator = np.sqrt(sigma[:, i, i] * sigma[:, j, j])
+        return np.divide(
+            sigma[:, i, j],
+            denominator,
+            out=np.zeros(self._field_space.dim),
+            where=denominator > 0,
+        )
+
+    def zero_expectation(self) -> CorrelatedInvariantGaussianMeasure:
+        """
+        Returns a new correlated measure with the same covariance, but
+        with expectation set to zero.
+        """
+        if self.has_zero_expectation:
+            return self
+
+        return CorrelatedInvariantGaussianMeasure(
+            self._field_space,
+            self._spectral_cross_covariances,
+            expectation=None,
+        )
+
+    def rescale_norm_variance(self, std: float) -> CorrelatedInvariantGaussianMeasure:
+        """
+        Returns a new measure whose covariance is scaled such that
+
+        E[||x - E[x]||^2] = std^2,
+
+        with the norm taken on the direct sum space. The expectation of the
+        measure is unchanged.
+        """
+        current_trace = float(np.sum(self._spectral_operator_eigenvalues))
+
+        if current_trace <= 0:
+            raise ValueError("Trace must be positive to perform rescaling.")
+
+        scale_factor_squared = (std**2) / current_trace
+
+        return CorrelatedInvariantGaussianMeasure(
+            self._field_space,
+            scale_factor_squared * self._spectral_cross_covariances,
+            expectation=self._expectation,
+        )
+
+    # ------------------------------------------------------#
+    #           Overloads of base class methods             #
+    # ------------------------------------------------------#
+
+    def kl_divergence(
+        self,
+        other: GaussianMeasure,
+        /,
+        *,
+        method: Literal["auto", "dense", "randomized"] = "auto",
+        **kwargs,
+    ) -> float:
+        """
+        Computes the exact or approximate Kullback-Leibler (KL) divergence
+        D_KL(self || other).
+
+        If both measures are CorrelatedInvariantGaussianMeasures for the same
+        number of fields on a common space, and method="auto", the divergence
+        is computed exactly in O(dim * n^3) time from the spectral
+        cross-covariances.
+        """
+        if (
+            method == "auto"
+            and isinstance(other, CorrelatedInvariantGaussianMeasure)
+            and self._field_space == other._field_space
+            and self._number_of_fields == other._number_of_fields
+        ):
+            sigma_p = self._spectral_cross_covariances
+            sigma_q = other._spectral_cross_covariances
+
+            try:
+                inverse_sigma_q = np.linalg.inv(sigma_q)
+            except np.linalg.LinAlgError as exc:
+                raise ValueError(
+                    "The KL divergence requires the second measure to have "
+                    "non-degenerate spectral cross-covariances."
+                ) from exc
+
+            # 1. Trace term: Tr(Q^-1 P)
+            trace_term = float(np.einsum("kij,kji->", inverse_sigma_q, sigma_p))
+
+            # 2. Log-det term: ln|Q| - ln|P|
+            _, log_det_p = np.linalg.slogdet(sigma_p)
+            _, log_det_q = np.linalg.slogdet(sigma_q)
+            log_det_term = float(np.sum(log_det_q) - np.sum(log_det_p))
+
+            # 3. Mahalanobis term: <mu_P - mu_Q, Q^-1 (mu_P - mu_Q)>
+            if self.has_zero_expectation and other.has_zero_expectation:
+                mahalanobis_term = 0.0
+            else:
+                difference = self.domain.subtract(self.expectation, other.expectation)
+                components = np.stack(
+                    [self._field_space.to_components(d) for d in difference],
+                    axis=1,
+                )
+                weighted = np.einsum("kij,kj->ki", inverse_sigma_q, components)
+                mahalanobis_term = float(
+                    np.sum(
+                        self._field_space.metric_values[:, None] * components * weighted
+                    )
+                )
+
+            k = self.domain.dim
+            return float(0.5 * (trace_term + mahalanobis_term - k + log_det_term))
+
+        # Fallback to the base class (which handles 'dense' and 'randomized')
+        _method = "dense" if method == "auto" else method
+        return super().kl_divergence(other, method=_method, **kwargs)
+
+    def nuclear_norm(self, /, **kwargs) -> float:
+        """
+        Computes the Nuclear norm (Trace norm) of the covariance operator.
+
+        Because a covariance operator is positive semi-definite, its Nuclear
+        norm is mathematically identical to its trace, which is here computed
+        exactly as the sum of the eigenvalues of the spectral
+        cross-covariance matrices.
+
+        Notes:
+            Optimisations within the correlated invariant class mean that the
+            optional arguments of the base class method are not used.
+        """
+        return float(np.sum(self._spectral_operator_eigenvalues))
+
+    def hilbert_schmidt_norm(self, /, **kwargs) -> float:
+        """
+        Computes the Hilbert-Schmidt norm of the covariance operator, here
+        computed exactly as the root sum of squares of the eigenvalues of
+        the spectral cross-covariance matrices.
+
+        Notes:
+            Optimisations within the correlated invariant class mean that the
+            optional arguments of the base class method are not used.
+        """
+        return float(np.sqrt(np.sum(self._spectral_operator_eigenvalues**2)))
+
+    def __neg__(self) -> CorrelatedInvariantGaussianMeasure:
+        """Returns the measure with a negated expectation. Covariance is unchanged."""
+        return CorrelatedInvariantGaussianMeasure(
+            self._field_space,
+            self._spectral_cross_covariances,
+            expectation=(
+                None
+                if self.has_zero_expectation
+                else self.domain.negative(self.expectation)
+            ),
+        )
+
+    def __mul__(self, alpha: float) -> CorrelatedInvariantGaussianMeasure:
+        """Scales the measure by a scalar alpha."""
+        new_expectation = (
+            None
+            if self.has_zero_expectation
+            else self.domain.multiply(alpha, self.expectation)
+        )
+
+        return CorrelatedInvariantGaussianMeasure(
+            self._field_space,
+            (alpha**2) * self._spectral_cross_covariances,
+            expectation=new_expectation,
+        )
+
+    def __rmul__(self, alpha: float) -> CorrelatedInvariantGaussianMeasure:
+        return self * alpha
+
+    def __truediv__(self, alpha: float) -> CorrelatedInvariantGaussianMeasure:
+        return self * (1.0 / alpha)
+
+    def __add__(self, other: GaussianMeasure) -> GaussianMeasure:
+        """Adds two independent Gaussian measures."""
+        if self.domain != other.domain:
+            raise ValueError("Measures must be defined on the same domain.")
+
+        if (
+            isinstance(other, CorrelatedInvariantGaussianMeasure)
+            and self._field_space == other._field_space
+            and self._number_of_fields == other._number_of_fields
+        ):
+            new_sigma = (
+                self._spectral_cross_covariances + other._spectral_cross_covariances
+            )
+
+            if self.has_zero_expectation and other.has_zero_expectation:
+                new_expectation = None
+            elif self.has_zero_expectation:
+                new_expectation = other.expectation
+            elif other.has_zero_expectation:
+                new_expectation = self.expectation
+            else:
+                new_expectation = self.domain.add(self.expectation, other.expectation)
+
+            return CorrelatedInvariantGaussianMeasure(
+                self._field_space,
+                new_sigma,
+                expectation=new_expectation,
+            )
+
+        return super().__add__(other)
+
+    def __sub__(self, other: GaussianMeasure) -> GaussianMeasure:
+        """Subtracts two independent Gaussian measures."""
+        if self.domain != other.domain:
+            raise ValueError("Measures must be defined on the same domain.")
+
+        if (
+            isinstance(other, CorrelatedInvariantGaussianMeasure)
+            and self._field_space == other._field_space
+            and self._number_of_fields == other._number_of_fields
+        ):
+            new_sigma = (
+                self._spectral_cross_covariances + other._spectral_cross_covariances
+            )
+
+            if self.has_zero_expectation and other.has_zero_expectation:
+                new_expectation = None
+            elif self.has_zero_expectation:
+                new_expectation = self.domain.negative(other.expectation)
+            elif other.has_zero_expectation:
+                new_expectation = self.expectation
+            else:
+                new_expectation = self.domain.subtract(
+                    self.expectation, other.expectation
+                )
+
+            return CorrelatedInvariantGaussianMeasure(
+                self._field_space,
+                new_sigma,
+                expectation=new_expectation,
+            )
+
+        return super().__sub__(other)
+
+    # ------------------------------------------------------#
+    #                    Private methods                    #
+    # ------------------------------------------------------#
+
+    def _check_field_index(self, i: int) -> None:
+        if not 0 <= i < self._number_of_fields:
+            raise ValueError(
+                f"Field index {i} is out of range for "
+                f"{self._number_of_fields} fields."
+            )
+
+    @staticmethod
+    def _correlation_array(
+        field_space: SymmetricHilbertSpace,
+        correlation: Union[float, np.ndarray, Callable],
+        number_of_fields: int,
+    ) -> np.ndarray:
+        """
+        Normalises the accepted forms for the spectral correlations into an
+        array of shape (dim, n, n).
+        """
+        dim = field_space.dim
+        n = number_of_fields
+        identity = np.eye(n)
+        off_diagonal = np.ones((n, n)) - identity
+
+        def equicorrelation(rho: np.ndarray) -> np.ndarray:
+            return rho[:, None, None] * off_diagonal + identity
+
+        if callable(correlation):
+            eigenvalues = np.fromiter(
+                (field_space.laplacian_eigenvalue(k) for k in field_space.indices),
+                dtype=float,
+                count=dim,
+            )
+
+            # Attempt a vectorised evaluation first.
+            try:
+                values = np.asarray(correlation(eigenvalues), dtype=float)
+            except Exception:
+                values = None
+
+            if values is not None:
+                if values.shape == (dim,):
+                    return equicorrelation(values)
+                if values.shape == (dim, n, n):
+                    return values
+                if values.shape == (n, n, dim):
+                    return np.ascontiguousarray(np.moveaxis(values, -1, 0))
+
+            # Fall back to evaluation index by index.
+            first = np.asarray(correlation(eigenvalues[0]), dtype=float)
+            if first.ndim == 0:
+                rho = np.fromiter(
+                    (float(correlation(value)) for value in eigenvalues),
+                    dtype=float,
+                    count=dim,
+                )
+                return equicorrelation(rho)
+            if first.shape != (n, n):
+                raise ValueError(
+                    "A correlation function must return scalars or "
+                    f"({n}, {n}) matrices, but returned an array of shape "
+                    f"{first.shape}."
+                )
+            correlations = np.empty((dim, n, n))
+            correlations[0] = first
+            for i in range(1, dim):
+                correlations[i] = np.asarray(correlation(eigenvalues[i]), dtype=float)
+            return correlations
+
+        array = np.asarray(correlation, dtype=float)
+        if array.ndim == 0:
+            return equicorrelation(np.full(dim, float(array)))
+        if array.shape == (n, n):
+            return np.ascontiguousarray(np.broadcast_to(array, (dim, n, n)))
+        if array.shape == (dim,):
+            return equicorrelation(array)
+        if array.shape == (dim, n, n):
+            return array
+        raise ValueError(
+            f"Cannot interpret correlations of shape {array.shape} for "
+            f"{n} fields on a space of dimension {dim}."
+        )
+
+    def _kl_sample(self) -> List[Vector]:
+        """
+        Draws a joint sample using the shared Karhunen-Loeve expansion.
+        """
+        xi = np.random.randn(self._field_space.dim, self._number_of_fields)
+        coefficients = np.einsum("kij,kj->ki", self._kl_factor_array, xi)
+        sample_vector = [
+            self._field_space.from_components(np.ascontiguousarray(coefficients[:, i]))
+            for i in range(self._number_of_fields)
+        ]
+
+        if self.has_zero_expectation:
+            return sample_vector
+        return self.domain.add(sample_vector, self.expectation)
+
+
+# ------------------------------------------------------------------- #
+# The following function is a method of SymmetricHilbertSpace: move it
+# into the class body (within the "Public methods" section, alongside
+# invariant_gaussian_measure) and delete the attribute assignment below.
+# ------------------------------------------------------------------- #
+
+
 class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
     """
     An abstract base class for Hilbert spaces of functions spaces on
@@ -1066,6 +1781,51 @@ class SymmetricHilbertSpace(OrthogonalHilbertSpace, ABC):
         """
 
         return InvariantGaussianMeasure.from_function(self, f, expectation=expectation)
+
+    def correlated_invariant_gaussian_measure(
+        self,
+        f: Union[Callable[[float], float], List[Callable[[float], float]]],
+        correlation: Union[float, np.ndarray, Callable],
+        /,
+        *,
+        expectation: Optional[List[Vector]] = None,
+    ) -> CorrelatedInvariantGaussianMeasure:
+        """
+        Returns a Gaussian measure for a tuple of correlated random fields on
+        the space, defined on the direct sum of copies of the space.
+
+        Each field's marginal covariance takes the form f(Delta) with f a
+        function that is well-defined on the spectrum of the Laplacian, Delta,
+        while the correlations between the fields' Karhunen-Loeve coefficients
+        are set through the correlation argument and may vary with scale.
+
+        In order for the covariance to be well-defined, the trace of each
+        marginal covariance must be finite; as for invariant_gaussian_measure,
+        this condition is not checked. Positive semi-definiteness of the joint
+        spectral covariances is checked.
+
+        Args:
+            f: A function giving the spectral variances of each field, or a
+                list of such functions, one per field. A single function is
+                interpreted as a pair of fields with a common marginal
+                covariance.
+            correlation: The spectral correlations between the fields; see
+                CorrelatedInvariantGaussianMeasure.from_invariant_measures for
+                the accepted forms.
+            expectation: The mean as a list of vectors, one per field.
+                Defaults to zero.
+
+        Returns:
+            The measure as an instance of CorrelatedInvariantGaussianMeasure.
+        """
+        functions = list(f) if isinstance(f, (list, tuple)) else [f, f]
+        measures = [
+            InvariantGaussianMeasure.from_function(self, function)
+            for function in functions
+        ]
+        return CorrelatedInvariantGaussianMeasure.from_invariant_measures(
+            measures, correlation, expectation=expectation
+        )
 
     def norm_scaled_invariant_gaussian_measure(
         self, f: Callable[float, float], /, *, expectation=None, std=1.0
