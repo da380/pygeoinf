@@ -3,7 +3,7 @@ __pycache__
 *~
 dist/*
 poetry.lock
-
+*.png
 
 # Python bytecode
 __pycache__/
