@@ -6,6 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
+from scipy import sparse
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.linear_forms import LinearForm
+
 from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
 from .torus import Lebesgue as TorusLebesgue
@@ -372,6 +376,45 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def vector_sqrt(self, x: np.ndarray) -> np.ndarray:
         return self._torus_space.vector_sqrt(x)
 
+    def _points_to_angle_arrays(
+        self, points: List[Tuple[float, float]]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Maps plane coordinates to contiguous float64 torus-angle arrays."""
+        arr = np.asarray(points, dtype=np.float64)
+        theta_x = (arr[:, 0] - self._ax + self._cx) / self._torus_space.radius_x
+        theta_y = (arr[:, 1] - self._ay + self._cy) / self._torus_space.radius_y
+        return np.ascontiguousarray(theta_x), np.ascontiguousarray(theta_y)
+
+    def _nufft_evaluate(
+        self,
+        c: np.ndarray,
+        theta_x: np.ndarray,
+        theta_y: np.ndarray,
+        /,
+        *,
+        eps: float = 1e-12,
+        nthreads: int = 1,
+    ) -> np.ndarray:
+        """Delegates NUFFT evaluation to the wrapped torus space."""
+        return self._torus_space._nufft_evaluate(
+            c, theta_x, theta_y, eps=eps, nthreads=nthreads
+        )
+
+    def _nufft_accumulate(
+        self,
+        weights: np.ndarray,
+        theta_x: np.ndarray,
+        theta_y: np.ndarray,
+        /,
+        *,
+        eps: float = 1e-12,
+        nthreads: int = 1,
+    ) -> np.ndarray:
+        """Delegates NUFFT accumulation to the wrapped torus space."""
+        return self._torus_space._nufft_accumulate(
+            weights, theta_x, theta_y, eps=eps, nthreads=nthreads
+        )
+
 
 class Sobolev(SymmetricSobolevSpace):
     """Implementation of the Sobolev space Hˢ on a compact 2D plane."""
@@ -554,6 +597,144 @@ class Sobolev(SymmetricSobolevSpace):
             min_degree=min_degree,
             max_degree=max_degree,
         )
+
+    def point_evaluation_operator(
+        self,
+        points: List[Tuple[float, float]],
+        /,
+        *,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        eps: float = 1e-12,
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Args:
+            points: A list of coordinate tuples.
+            matrix_free: If True, applies the operator via NUFFTs (finufft)
+                instead of building a dense matrix.
+            parallel: If True, lets finufft use multiple threads.
+            n_jobs: Thread count for finufft when parallel. -1 uses all cores.
+            eps: Requested NUFFT accuracy for the matrix-free operator.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        space = self.underlying_space
+        theta_x, theta_y = space._points_to_angle_arrays(points)
+        codomain = EuclideanSpace(len(points))
+        nthreads = (0 if n_jobs < 0 else n_jobs) if parallel else 1
+
+        def mapping(u) -> np.ndarray:
+            return space._nufft_evaluate(
+                self.to_components(u), theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+
+        def adjoint_mapping(y: np.ndarray):
+            components = space._nufft_accumulate(
+                y, theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+            return self.from_dual(LinearForm(self, components=components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def path_average_operator(
+        self,
+        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+        /,
+        *,
+        n_points: Optional[int] = None,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        lazy_quadrature: bool = False,
+        eps: float = 1e-12,
+    ) -> LinearOperator:
+        """
+        Constructs a tomographic operator mapping a function field to its
+        line integrals along a set of geodesic paths.
+
+        The matrix-free operator is factorised as A = W E, with E point
+        evaluation at the flattened quadrature nodes (applied via NUFFTs) and
+        W a sparse matrix of quadrature weights.
+
+        Args:
+            paths: A list of start and end point pairs defining the geodesics.
+            n_points: The number of quadrature points per path.
+            matrix_free: If True, applies the operator via NUFFTs (finufft)
+                instead of building a dense matrix.
+            parallel: If True, lets finufft use multiple threads.
+            n_jobs: Thread count for finufft when parallel. -1 uses all cores.
+            lazy_quadrature: If True, recomputes the quadrature geometry on
+                each application instead of storing it.
+            eps: Requested NUFFT accuracy for the matrix-free operator.
+        """
+        if not matrix_free:
+            return super().path_average_operator(paths, n_points=n_points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        space = self.underlying_space
+        n_paths = len(paths)
+        codomain = EuclideanSpace(n_paths)
+        nthreads = (0 if n_jobs < 0 else n_jobs) if parallel else 1
+
+        def get_quad(p1, p2):
+            if n_points is None:
+                arc_length = self.geodesic_distance(p1, p2)
+                pts_count = max(2, int(np.ceil((arc_length / self.scale) * 2.0)))
+            else:
+                pts_count = n_points
+            return self.geodesic_quadrature(p1, p2, pts_count)
+
+        def build_geometry():
+            quads = [get_quad(*path) for path in paths]
+            flat_points = [pt for pts, _ in quads for pt in pts]
+            theta_x, theta_y = space._points_to_angle_arrays(flat_points)
+            lengths = np.array([len(wts) for _, wts in quads])
+            n_total = int(lengths.sum())
+            indptr = np.concatenate(([0], np.cumsum(lengths)))
+            weight_matrix = sparse.csr_matrix(
+                (
+                    np.concatenate([wts for _, wts in quads]),
+                    np.arange(n_total),
+                    indptr,
+                ),
+                shape=(n_paths, n_total),
+            )
+            return theta_x, theta_y, weight_matrix
+
+        if not lazy_quadrature:
+            precomputed_geometry = build_geometry()
+
+            def get_geometry():
+                return precomputed_geometry
+
+        else:
+            get_geometry = build_geometry
+
+        def mapping(u) -> np.ndarray:
+            theta_x, theta_y, weight_matrix = get_geometry()
+            values = space._nufft_evaluate(
+                self.to_components(u), theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+            return weight_matrix @ values
+
+        def adjoint_mapping(y: np.ndarray):
+            theta_x, theta_y, weight_matrix = get_geometry()
+            node_weights = weight_matrix.T @ y
+            components = space._nufft_accumulate(
+                node_weights, theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+            return self.from_dual(LinearForm(self, components=components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
 
 # ------------------------------------------------- #

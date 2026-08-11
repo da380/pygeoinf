@@ -10,11 +10,19 @@ spectral operations and coordinate basis mapping.
 from __future__ import annotations
 from typing import Callable, Any, Optional, Tuple, List, Union
 
+from functools import cached_property
+
 import numpy as np
 from scipy.fft import rfft2, irfft2
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
+
+import finufft
+from scipy import sparse
+
+from pygeoinf.hilbert_space import EuclideanSpace
+from pygeoinf.linear_forms import LinearForm
 
 from pygeoinf.linear_operators import LinearOperator
 from .symmetric_space import AbstractSymmetricLebesgueSpace, SymmetricSobolevSpace
@@ -302,13 +310,35 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
         """Returns the squared norm of the eigenfunction for the given flat index."""
         return self._squared_norms[k]
 
+    @cached_property
+    def _eigvec_assembly(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Cached arrays for fast eigenfunction evaluation at a point.
+
+        Exploits the component layout built by `_build_index_map`: four
+        real-only modes at indices 0-3 followed by strict (cos, -sin) pairs
+        that share a wavevector. Returns the wavevector components of the
+        unique modes (singles plus one per pair) and the combined scaling
+        vector `metric_values / sqrt(4 pi^2 R_x R_y)`.
+        """
+        unique = np.concatenate((np.arange(4), np.arange(4, self.dim, 2)))
+        norm_factor = np.sqrt(4 * np.pi**2 * self.radius_x * self.radius_y)
+        scale = self.metric_values / norm_factor
+        return self._kx_freqs[unique], self._ky_freqs[unique], scale
+
     def laplacian_eigenvectors_at_point(self, pt: Tuple[float, float]) -> np.ndarray:
         """Evaluates all Laplacian eigenfunctions at a given physical coordinate."""
         tx, ty = pt
-        phase = self._kx_freqs * tx + self._ky_freqs * ty
-        vals = np.where(self._is_imag, -np.sin(phase), np.cos(phase))
-        norm_factor = np.sqrt(4 * np.pi**2 * self.radius_x * self.radius_y)
-        return self.metric @ vals / norm_factor
+        unique_kx, unique_ky, scale = self._eigvec_assembly
+        phase = unique_kx * tx
+        phase += unique_ky * ty
+        cos_phase = np.cos(phase)
+        vals = np.empty(self.dim)
+        vals[:4] = cos_phase[:4]
+        vals[4::2] = cos_phase[4:]
+        vals[5::2] = -np.sin(phase[4:])
+        vals *= scale
+        return vals
 
     def random_point(self) -> Tuple[float, float]:
         """Returns a random coordinate point within the Torus domain [0, 2π] x [0, 2π]."""
@@ -610,6 +640,98 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
             coeff[:, 1:k] = interior_flat.reshape((k - 1, 2 * k)).T
 
         return coeff
+
+    @cached_property
+    def _nufft_assembly(
+        self,
+    ) -> Tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Cached index arrays linking the component layout to a dense NUFFT grid.
+
+        Returns the grid size N = 2 kmax + 2, the per-unique-mode scaling
+        s_m = metric_m / sqrt(4 pi^2 R_x R_y), the flattened grid positions of
+        +k_m and -k_m, and the (row, column) grid indices of +k_m.
+        """
+        unique = np.concatenate((np.arange(4), np.arange(4, self.dim, 2)))
+        grid_size = 2 * self.kmax + 2
+        offset = grid_size // 2
+        kx = self._kx_freqs[unique].astype(int)
+        ky = self._ky_freqs[unique].astype(int)
+        scale = self.metric_values[unique] / np.sqrt(
+            4 * np.pi**2 * self.radius_x * self.radius_y
+        )
+        positive_flat = (kx + offset) * grid_size + (ky + offset)
+        negative_flat = (-kx + offset) * grid_size + (-ky + offset)
+        return grid_size, scale, positive_flat, negative_flat, kx + offset, ky + offset
+
+    def _points_to_angle_arrays(
+        self, points: List[Tuple[float, float]]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Splits a list of points into contiguous float64 angle arrays."""
+        arr = np.asarray(points, dtype=np.float64)
+        return np.ascontiguousarray(arr[:, 0]), np.ascontiguousarray(arr[:, 1])
+
+    def _nufft_evaluate(
+        self,
+        c: np.ndarray,
+        theta_x: np.ndarray,
+        theta_y: np.ndarray,
+        /,
+        *,
+        eps: float = 1e-12,
+        nthreads: int = 1,
+    ) -> np.ndarray:
+        """
+        Evaluates the field with components `c` at the given angles via a
+        type-2 NUFFT.
+        """
+        grid_size, scale, positive_flat, negative_flat, _, _ = self._nufft_assembly
+        c_cos = np.concatenate((c[:4], c[4::2]))
+        c_sin = np.concatenate((np.zeros(4), c[5::2]))
+        w = scale * (c_cos + 1j * c_sin)
+        spectrum = np.zeros(grid_size * grid_size, dtype=complex)
+        np.add.at(spectrum, positive_flat, 0.5 * w)
+        np.add.at(spectrum, negative_flat, 0.5 * np.conj(w))
+        values = finufft.nufft2d2(
+            theta_x,
+            theta_y,
+            spectrum.reshape(grid_size, grid_size),
+            isign=+1,
+            eps=eps,
+            nthreads=nthreads,
+        )
+        return np.ascontiguousarray(values.real)
+
+    def _nufft_accumulate(
+        self,
+        weights: np.ndarray,
+        theta_x: np.ndarray,
+        theta_y: np.ndarray,
+        /,
+        *,
+        eps: float = 1e-12,
+        nthreads: int = 1,
+    ) -> np.ndarray:
+        """
+        Returns the components of sum_i weights_i * dirac(x_i) via a type-1
+        NUFFT (the adjoint of `_nufft_evaluate`).
+        """
+        grid_size, scale, _, _, grid_i, grid_j = self._nufft_assembly
+        spectrum = finufft.nufft2d1(
+            theta_x,
+            theta_y,
+            np.ascontiguousarray(weights, dtype=complex),
+            (grid_size, grid_size),
+            isign=-1,
+            eps=eps,
+            nthreads=nthreads,
+        )
+        g = spectrum[grid_i, grid_j]
+        components = np.empty(self.dim)
+        components[:4] = scale[:4] * g[:4].real
+        components[4::2] = scale[4:] * g[4:].real
+        components[5::2] = scale[4:] * g[4:].imag
+        return components
 
 
 class Sobolev(SymmetricSobolevSpace):
@@ -947,6 +1069,144 @@ class Sobolev(SymmetricSobolevSpace):
         """Computes the exact Sobolev norm utilizing the mass-weighted metric."""
         cx = self.to_components(x)
         return float(np.sqrt(np.clip(np.dot(cx, self.metric @ cx), 0.0, None)))
+
+    def point_evaluation_operator(
+        self,
+        points: List[Tuple[float, float]],
+        /,
+        *,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        eps: float = 1e-12,
+    ) -> LinearOperator:
+        """
+        Returns a linear operator that evaluates a function at a list of points.
+
+        Args:
+            points: A list of coordinate tuples.
+            matrix_free: If True, applies the operator via NUFFTs (finufft)
+                instead of building a dense matrix.
+            parallel: If True, lets finufft use multiple threads.
+            n_jobs: Thread count for finufft when parallel. -1 uses all cores.
+            eps: Requested NUFFT accuracy for the matrix-free operator.
+        """
+        if not matrix_free:
+            return super().point_evaluation_operator(points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        space = self.underlying_space
+        theta_x, theta_y = space._points_to_angle_arrays(points)
+        codomain = EuclideanSpace(len(points))
+        nthreads = (0 if n_jobs < 0 else n_jobs) if parallel else 1
+
+        def mapping(u) -> np.ndarray:
+            return space._nufft_evaluate(
+                self.to_components(u), theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+
+        def adjoint_mapping(y: np.ndarray):
+            components = space._nufft_accumulate(
+                y, theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+            return self.from_dual(LinearForm(self, components=components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
+
+    def path_average_operator(
+        self,
+        paths: List[Tuple[Tuple[float, float], Tuple[float, float]]],
+        /,
+        *,
+        n_points: Optional[int] = None,
+        matrix_free: bool = False,
+        parallel: bool = False,
+        n_jobs: int = -1,
+        lazy_quadrature: bool = False,
+        eps: float = 1e-12,
+    ) -> LinearOperator:
+        """
+        Constructs a tomographic operator mapping a function field to its
+        line integrals along a set of geodesic paths.
+
+        The matrix-free operator is factorised as A = W E, with E point
+        evaluation at the flattened quadrature nodes (applied via NUFFTs) and
+        W a sparse matrix of quadrature weights.
+
+        Args:
+            paths: A list of start and end point pairs defining the geodesics.
+            n_points: The number of quadrature points per path.
+            matrix_free: If True, applies the operator via NUFFTs (finufft)
+                instead of building a dense matrix.
+            parallel: If True, lets finufft use multiple threads.
+            n_jobs: Thread count for finufft when parallel. -1 uses all cores.
+            lazy_quadrature: If True, recomputes the quadrature geometry on
+                each application instead of storing it.
+            eps: Requested NUFFT accuracy for the matrix-free operator.
+        """
+        if not matrix_free:
+            return super().path_average_operator(paths, n_points=n_points)
+
+        if self.safe and self.order <= self.spatial_dimension / 2:
+            raise NotImplementedError("Point evaluation is not defined on this space")
+
+        space = self.underlying_space
+        n_paths = len(paths)
+        codomain = EuclideanSpace(n_paths)
+        nthreads = (0 if n_jobs < 0 else n_jobs) if parallel else 1
+
+        def get_quad(p1, p2):
+            if n_points is None:
+                arc_length = self.geodesic_distance(p1, p2)
+                pts_count = max(2, int(np.ceil((arc_length / self.scale) * 2.0)))
+            else:
+                pts_count = n_points
+            return self.geodesic_quadrature(p1, p2, pts_count)
+
+        def build_geometry():
+            quads = [get_quad(*path) for path in paths]
+            flat_points = [pt for pts, _ in quads for pt in pts]
+            theta_x, theta_y = space._points_to_angle_arrays(flat_points)
+            lengths = np.array([len(wts) for _, wts in quads])
+            n_total = int(lengths.sum())
+            indptr = np.concatenate(([0], np.cumsum(lengths)))
+            weight_matrix = sparse.csr_matrix(
+                (
+                    np.concatenate([wts for _, wts in quads]),
+                    np.arange(n_total),
+                    indptr,
+                ),
+                shape=(n_paths, n_total),
+            )
+            return theta_x, theta_y, weight_matrix
+
+        if not lazy_quadrature:
+            precomputed_geometry = build_geometry()
+
+            def get_geometry():
+                return precomputed_geometry
+
+        else:
+            get_geometry = build_geometry
+
+        def mapping(u) -> np.ndarray:
+            theta_x, theta_y, weight_matrix = get_geometry()
+            values = space._nufft_evaluate(
+                self.to_components(u), theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+            return weight_matrix @ values
+
+        def adjoint_mapping(y: np.ndarray):
+            theta_x, theta_y, weight_matrix = get_geometry()
+            node_weights = weight_matrix.T @ y
+            components = space._nufft_accumulate(
+                node_weights, theta_x, theta_y, eps=eps, nthreads=nthreads
+            )
+            return self.from_dual(LinearForm(self, components=components))
+
+        return LinearOperator(self, codomain, mapping, adjoint_mapping=adjoint_mapping)
 
 
 # ------------------------------------------------- #
