@@ -15,12 +15,14 @@ utilities built on `cartopy` for professional-quality geospatial visualization.
 from __future__ import annotations
 from typing import Callable, Any, List, Optional, Tuple, TYPE_CHECKING, Union
 
+from functools import cached_property
+
 import math
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, effective_n_jobs
 
 from scipy.spatial import cKDTree
 
@@ -424,18 +426,43 @@ class Lebesgue(AbstractSymmetricLebesgueSpace):
     def laplacian_eigenvector_squared_norm(self, k: Tuple[int, int]) -> float:
         return self.radius**2
 
-    def laplacian_eigenvectors_at_point(self, point: Tuple[float, float]) -> np.ndarray:
-        latitude, longitude = point
-        colatitude = 90.0 - latitude
+    @cached_property
+    def _ylm_index_maps(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Gather indices mapping the packed associated-Legendre array (index
+        l(l+1)/2 + m) and the order tables onto the SHVector component
+        ordering (l^2 + m for m >= 0, l^2 + l + |m| for m < 0). Built once.
+        """
+        lmax = self.lmax
+        dim = (lmax + 1) ** 2
+        pidx = np.empty(dim, dtype=np.intp)
+        midx = np.empty(dim, dtype=np.intp)
+        is_cos = np.empty(dim, dtype=bool)
+        for l in range(lmax + 1):
+            base = l * (l + 1) // 2
+            m = np.arange(l + 1)
+            pidx[l * l : l * l + l + 1] = base + m
+            midx[l * l : l * l + l + 1] = m
+            is_cos[l * l : l * l + l + 1] = True
+            pidx[l * l + l + 1 : (l + 1) ** 2] = base + m[1:]
+            midx[l * l + l + 1 : (l + 1) ** 2] = m[1:]
+            is_cos[l * l + l + 1 : (l + 1) ** 2] = False
+        return pidx, midx, is_cos
 
-        coeffs = sh.expand.spharm(
-            self.lmax,
-            colatitude,
-            longitude,
-            normalization=self.normalization,
-            degrees=True,
-        )
-        return SHCilmToVector(coeffs)
+    def laplacian_eigenvectors_at_point(self, point: tuple[float, float]) -> np.ndarray:
+        """
+        Values of all basis functions at a point, assembled from a single
+        Fortran Legendre call plus vectorized trigonometric factors. The
+        space fixes normalization='ortho'; if that is ever relaxed, dispatch
+        on it here (PlmON / PlmBar / PlmSchmidt for ortho / 4pi / schmidt).
+        """
+        latitude, longitude = point
+        pidx, midx, is_cos = self._ylm_index_maps
+        z = np.sin(np.deg2rad(latitude))  # cos(colatitude)
+        p = sh.legendre.PlmON(self.lmax, z, csphase=self.csphase)
+        m_phi = np.arange(self.lmax + 1) * np.deg2rad(longitude)
+        trig = np.where(is_cos, np.cos(m_phi)[midx], np.sin(m_phi)[midx])
+        return p[pidx] * trig
 
     def random_point(self) -> Tuple[float, float]:
         """Returns a random point as `[latitude, longitude]`."""
@@ -1540,7 +1567,9 @@ class Sobolev(SymmetricSobolevSpace):
 
         # Heuristic chunking: Target ~4 chunks per worker to balance load and overhead
         n_points = len(points)
-        num_chunks = min(n_points, abs(n_jobs) * 4 if n_jobs > 0 else 16)
+        # num_chunks = min(n_points, abs(n_jobs) * 4 if n_jobs > 0 else 16)
+        num_chunks = min(n_points, 4 * effective_n_jobs(n_jobs))
+
         chunks = np.array_split(range(n_points), num_chunks)
 
         def mapping(u: sh.SHGrid) -> np.ndarray:
