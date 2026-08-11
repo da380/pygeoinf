@@ -2472,8 +2472,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
         matrix = np.zeros((dim, self.dim))
 
         for i, point in enumerate(points):
-            cp = self.dirac(point).components
-            matrix[i, :] = cp
+            matrix[i, :] = self.laplacian_eigenvectors_at_point(point)
 
         return LinearOperator.from_matrix(
             self, EuclideanSpace(dim), matrix, galerkin=True
@@ -2601,8 +2600,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
             )
 
         if n_points is None:
-            _, temp_weights = self.geodesic_quadrature(p1, p2, n_points=2)
-            arc_length = np.sum(temp_weights)
+            arc_length = self.geodesic_distance(p1, p2)
             n_points = int(np.ceil((arc_length / self.scale) * 2.0))
             n_points = max(2, n_points)
 
@@ -2610,7 +2608,7 @@ class SymmetricSobolevSpace(MassWeightedHilbertModule, AbstractSymmetricLebesgue
 
         total_components = np.zeros(self.dim)
         for pt, weight in zip(points, weights):
-            total_components += weight * self.dirac(pt).components
+            total_components += weight * self.laplacian_eigenvectors_at_point(pt)
 
         return LinearForm(self, components=total_components)
 
