@@ -216,7 +216,9 @@ def plot_1d_distributions(
             if show_true_value_in_legend
             else "True Value"
         )
-        ax1.axvline(true_value, color="black", linestyle="-", lw=2, label=label_text)
+        ax1.axvline(
+            true_value, color="black", linestyle="-", lw=2, label=label_text, zorder=1.9
+        )
 
     # Create combined legend
     handles1, labels1 = ax1.get_legend_handles_labels()
