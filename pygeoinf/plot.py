@@ -1955,6 +1955,7 @@ def plot_corner_distributions(
                         color="black",
                         linestyle="-",
                         label=label_text,
+                        zorder=1.0,
                     )
 
                 ax.set_xlim(mu - i_disp * sigma, mu + i_disp * sigma)
