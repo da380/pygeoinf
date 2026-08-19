@@ -11,7 +11,7 @@ build:
     post_create_environment:
       - pip install poetry
     post_install:
-      - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH poetry install --with dev
+      - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH poetry install --with dev --all-extras
       - sphinx-apidoc -f -o docs/source/ pygeoinf/
 
 sphinx:

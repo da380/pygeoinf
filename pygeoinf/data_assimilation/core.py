@@ -5,7 +5,9 @@ A dimension-agnostic engine for numerical integration, statistical analysis,
 Bayesian inference, and generic visualisation.
 """
 
-from typing import Callable, List, Tuple, Union, Optional, Any, Dict
+from __future__ import annotations
+
+from typing import Callable, List, Tuple, Union, Optional, Any, Dict, TYPE_CHECKING
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -13,7 +15,9 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp, trapezoid
 from scipy.interpolate import RegularGridInterpolator
 from scipy.stats import multivariate_normal
-from IPython.display import HTML
+
+if TYPE_CHECKING:
+    from IPython.display import HTML
 
 
 # --- Math Utilities ---
@@ -1331,6 +1335,8 @@ def display_animation_html(anim: Any) -> HTML:
         IPython HTML object for display.
     """
     print("Rendering animation...")
+    from IPython.display import HTML
+
     return HTML(anim.to_jshtml())
 
 
