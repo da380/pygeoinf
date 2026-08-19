@@ -1,6 +1,6 @@
 [project]
 name = "pygeoinf"
-version = "1.8.8"
+version = "1.8.9"
 description = "A package for solving geophysical inference and inverse problems"
 # NOTE: poetry-core renders only authors[0] into the distribution metadata
 # (Package._get_author), so the names are kept as one combined credit line to
