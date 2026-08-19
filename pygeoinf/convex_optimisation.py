@@ -477,7 +477,7 @@ class OSQPQPSolver:
         except ImportError as exc:
             raise ImportError(
                 "OSQPQPSolver requires the 'osqp' package. "
-                "Install it with: pip install osqp"
+                "Install it with: pip install pygeoinf[osqp]"
             ) from exc
         self._eps_abs = eps_abs
         self._eps_rel = eps_rel
@@ -577,7 +577,7 @@ class ClarabelQPSolver:
         except ImportError as exc:
             raise ImportError(
                 "ClarabelQPSolver requires the 'clarabel' package. "
-                "Install it with: pip install clarabel"
+                "Install it with: pip install pygeoinf[clarabel]"
             ) from exc
         self._verbose = verbose
         self._max_iter = max_iter

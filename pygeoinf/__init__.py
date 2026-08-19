@@ -165,7 +165,7 @@ from .low_rank import (
 
 from .functional_calculus import LanczosOperatorFunction
 
-from .config import DATADIR
+from .config import CACHEDIR, DATADIR
 
 __all__ = [
     # hilbert_space
@@ -287,8 +287,9 @@ __all__ = [
     "download_gsn_stations",
     "download_usgs_earthquakes",
     "sample_earthquakes",
-    # congif
+    # config
     "DATADIR",
+    "CACHEDIR",
     # low_rank
     "LowRankSVD",
     "LowRankEig",

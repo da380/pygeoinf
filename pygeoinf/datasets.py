@@ -12,25 +12,49 @@ import urllib.request
 import urllib.parse
 from typing import List, Tuple, Union
 
-# Import the centralized path
-from .config import DATADIR
+# Import the centralized paths
+from .config import CACHEDIR, DATADIR
 
-# Define the specific file path
-_CSV_PATH = os.path.join(DATADIR, "gsn_stations.csv")
+# Name of the station file, resolved through _data_path/_cache_path below.
+_GSN_FILENAME = "gsn_stations.csv"
+
+
+def _cache_path(filename: str) -> str:
+    """Return the writable cache location for ``filename``."""
+    return os.path.join(CACHEDIR, filename)
+
+
+def _data_path(filename: str) -> Union[str, None]:
+    """
+    Locate a dataset, preferring a freshly downloaded copy over the bundled one.
+
+    Returns the path to the cached copy if one exists, otherwise the path to the
+    copy bundled with the package, otherwise None if neither is present.
+    """
+    cached = _cache_path(filename)
+    if os.path.exists(cached):
+        return cached
+
+    bundled = os.path.join(DATADIR, filename)
+    if os.path.exists(bundled):
+        return bundled
+
+    return None
 
 
 def download_gsn_stations(force: bool = False) -> None:
     """
     Fetches the Global Seismograph Network (GSN) stations from the IRIS
-    FDSN API and saves them to a local CSV file in the data/ directory.
+    FDSN API and saves them to a CSV file in the user's cache directory.
     """
-    if os.path.exists(_CSV_PATH) and not force:
+    if _data_path(_GSN_FILENAME) is not None and not force:
         return
 
     print("pygeoinf: Local dataset missing. Fetching station data from IRIS...")
 
-    # Ensure the central DATADIR exists before writing!
-    os.makedirs(DATADIR, exist_ok=True)
+    # Downloads always go to the writable cache, never to the packaged DATADIR.
+    csv_path = _cache_path(_GSN_FILENAME)
+    os.makedirs(CACHEDIR, exist_ok=True)
 
     url = "http://service.iris.edu/fdsnws/station/1/query"
     params = {"network": "IU,II", "level": "station", "format": "text"}
@@ -47,12 +71,12 @@ def download_gsn_stations(force: bool = False) -> None:
                 if len(parts) >= 4:
                     stations.append([parts[1], float(parts[2]), float(parts[3])])
 
-        with open(_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["Station", "Latitude", "Longitude"])
             writer.writerows(stations)
 
-        print(f"pygeoinf: Successfully saved {len(stations)} stations to {_CSV_PATH}")
+        print(f"pygeoinf: Successfully saved {len(stations)} stations to {csv_path}")
 
     except Exception as e:
         raise RuntimeError(f"Failed to download GSN stations from IRIS. Error: {e}")
@@ -64,8 +88,8 @@ def load_gsn_stations(
     """
     Loads a representative global set of seismic stations from the GSN.
 
-    If the internal CSV file is missing, this function will attempt to
-    automatically download it from IRIS into the pygeoinf/data/ directory.
+    The station list ships with the package. If it is missing, this function
+    will attempt to download it from IRIS into the user's cache directory.
 
     Args:
         n_stations: If provided, returns a random subsample of this size.
@@ -76,13 +100,14 @@ def load_gsn_stations(
     Returns:
         A list of station tuples in degrees.
     """
-    _CSV_PATH = os.path.join(DATADIR, "gsn_stations.csv")
+    csv_path = _data_path(_GSN_FILENAME)
 
-    if not os.path.exists(_CSV_PATH):
+    if csv_path is None:
         download_gsn_stations()
+        csv_path = _cache_path(_GSN_FILENAME)
 
     stations = []
-    with open(_CSV_PATH, "r", encoding="utf-8") as f:
+    with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             lat = float(row["Latitude"])
@@ -112,15 +137,16 @@ def download_usgs_earthquakes(
 ) -> None:
     """
     Fetches a filtered catalog of earthquakes from the USGS API and saves it
-    to a CSV in the centralized DATADIR.
+    to a CSV in the user's cache directory.
     """
-    csv_path = os.path.join(DATADIR, filename)
-
-    if os.path.exists(csv_path) and not force:
+    if _data_path(filename) is not None and not force:
         return
 
     print(f"pygeoinf: Fetching up to {limit} earthquakes from USGS...")
-    os.makedirs(DATADIR, exist_ok=True)
+
+    # Downloads always go to the writable cache, never to the packaged DATADIR.
+    csv_path = _cache_path(filename)
+    os.makedirs(CACHEDIR, exist_ok=True)
 
     params = {"format": "csv", "limit": limit, "orderby": "time"}
 
@@ -174,12 +200,12 @@ def sample_earthquakes(
         A list of tuples: (Latitude, Longitude, Depth_in_km).
     """
     cache_filename = "usgs_event_cache.csv"
-    cache_path = os.path.join(DATADIR, cache_filename)
+    cache_path = _data_path(cache_filename)
 
     events = []
 
     # 1. Try loading from the existing cache
-    if os.path.exists(cache_path):
+    if cache_path is not None:
         with open(cache_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -212,6 +238,7 @@ def sample_earthquakes(
     )
 
     # 4. Reload the newly downloaded cache
+    cache_path = _cache_path(cache_filename)
     events = []
     with open(cache_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)

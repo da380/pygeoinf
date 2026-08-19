@@ -27,20 +27,18 @@ from joblib import Parallel, delayed, effective_n_jobs
 from scipy.spatial import cKDTree
 from scipy import sparse
 
-import cartopy.io.shapereader as shpreader
-import shapely.geometry as sgeom
-from shapely.prepared import prep
-
-
 try:
     import pyshtools as sh
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
+    import cartopy.io.shapereader as shpreader
     from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
     from cartopy.mpl.geoaxes import GeoAxes
+    import shapely.geometry as sgeom
+    from shapely.prepared import prep
 except ImportError:
     raise ImportError(
-        "pyshtools and cartopy are required for the sphere module. "
+        "pyshtools, cartopy and shapely are required for the sphere module. "
         "Please install them with 'pip install pygeoinf[sphere]'"
     ) from None
 
