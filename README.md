@@ -95,6 +95,7 @@ simply by changing the model space and forward operator.
 * **Bayesian inversion**: `LinearBayesianInversion` returns the full posterior measure, not merely a point estimate.
 * **Optimisation methods**: Tikhonov-regularised least-squares and minimum-norm inversions, each available in a constrained form where the solution is restricted to an affine subspace or a convex set.
 * **Backus–Gilbert inference**: Given a property operator, a prior norm bound, and a significance level, the `BackusInference` and `DualMasterCostFunction` classes of `pygeoinf.backus_gilbert` compute bounds on properties of the model by dual-level-set methods, rather than estimating the model itself.
+* **Convex analysis and non-smooth optimisation**: Convex sets are represented through their support functions — `BallSupportFunction`, `EllipsoidSupportFunction` and `HalfSpaceSupportFunction`, along with their images under linear maps, Minkowski sums and scalings — each of which is a `NonLinearForm` carrying its own subgradient, so that a set can be used directly as an ingredient in an optimisation problem. The solvers of `pygeoinf.convex_optimisation` then minimise the resulting non-smooth objectives: subgradient descent, proximal and level bundle methods that build a cutting-plane model of the objective and solve a small master quadratic programme at each step, a Chambolle–Pock primal–dual solver for the equivalent primal feasibility problem, and smoothed and KKT-based alternatives. This is the machinery on which the dual-level-set inference above is built. It remains under active development, and its interfaces may still change.
 * **Non-linear problems**: `ScipyUnconstrainedOptimiser` adapts a `NonLinearForm` for use with `scipy.optimize`, with derivative information supplied through the form's gradient and Hessian.
 
 ### Function spaces on symmetric domains
@@ -113,30 +114,74 @@ simply by changing the model space and forward operator.
 
 ## Installation
 
-The package can be installed directly using pip. By default, this performs a minimal installation.
+The package can be installed directly using pip. By default, this performs a minimal
+installation.
 
 ```bash
 # Minimal installation
 pip install pygeoinf
 ```
 
-To include functionality for functions on the sphere, install the `sphere` extra. This adds support for `pyshtools`, `Cartopy` and `shapely`.
+The minimal installation pulls in `numpy`, `scipy`, `matplotlib`, `joblib`,
+`threadpoolctl` and `finufft`, and it covers the whole of the abstract framework:
+Hilbert spaces and operators, Gaussian measures, sets and subspaces, all direct and
+iterative solvers, preconditioners, the randomised algorithms, the inversion and
+inference classes, and the function spaces on the line, circle, plane and torus. Only
+the features listed below need anything further.
+
+### Optional dependencies
+
+| Extra | Installs | Enables | Without it |
+| --- | --- | --- | --- |
+| `sphere` | `pyshtools`, `Cartopy`, `shapely` | Function spaces on the two-sphere, with geospatial plotting | `pygeoinf.symmetric_space.sphere` cannot be imported |
+| `interactive` | `plotly` | Interactive (rotatable) rendering of three-dimensional slice plots | Those plots fall back to Matplotlib |
+| `osqp` | `osqp` | The OSQP quadratic programming backend, used by the convex-optimisation solvers | The SciPy QP backend is used |
+| `clarabel` | `clarabel` | The Clarabel quadratic programming backend, used by the convex-optimisation solvers | The SciPy QP backend is used |
+
+Extras are installed by name in square brackets, and can be combined:
 
 ```bash
 # Installation with sphere-related features
 pip install pygeoinf[sphere]
+
+# Several extras at once (quote the argument in zsh)
+pip install "pygeoinf[sphere,interactive]"
 ```
 
-The full set of optional extras is:
+**`sphere`.** This is the extra most users will want. `pyshtools` provides the spherical
+harmonic transforms underlying `Lebesgue` and `Sobolev` spaces on the two-sphere;
+`Cartopy` provides the map projections, coastlines, borders and rivers used by the
+plotting routines; and `shapely` provides the point-in-polygon tests behind land masks
+and land-restricted point sampling. The three are needed together: importing
+`pygeoinf.symmetric_space.sphere` without them raises an `ImportError` pointing back to
+this extra, rather than failing later at the point of use. Note also that the
+land-related helpers ask `Cartopy` for Natural Earth shapefiles, which it downloads and
+caches on first use, so that first call requires a network connection. Both `pyshtools`
+and `Cartopy` ship binary wheels for the common platforms; if pip has to build either
+from source, installing them from `conda-forge` beforehand is usually the easier route.
 
-| Extra | Installs | Enables |
-| --- | --- | --- |
-| `sphere` | `pyshtools`, `Cartopy`, `shapely` | Function spaces on the two-sphere, with geospatial plotting |
-| `osqp` | `osqp` | The OSQP quadratic programming backend |
-| `clarabel` | `clarabel` | The Clarabel quadratic programming backend |
-| `interactive` | `plotly` | Interactive plotting |
+**`interactive`.** `plotly` is used in one place only: the three-dimensional slice plots
+of sets and measures produced by `plot_slice` and `SubspaceSlicePlotter`. These take a
+`backend` argument which defaults to `"auto"`, meaning Plotly is used when it is
+importable and Matplotlib otherwise, with a warning. Passing `backend="plotly"`
+explicitly raises an `ImportError` if the package is absent. All other plotting in the
+library, including the map projections and the distribution and corner plots, is
+Matplotlib throughout.
 
-Extras can be combined, for example `pip install pygeoinf[sphere,interactive]`. Everything else in the library works with the minimal installation.
+**`osqp` and `clarabel`.** These are alternative quadratic programming backends for the
+convex-optimisation solvers. The non-smooth solvers of `pygeoinf.convex_optimisation`, and
+the bundle methods in particular, work by accumulating a cutting-plane model of the
+objective from subgradients and solving a small master quadratic programme at each
+iteration, so a QP is solved once per oracle call. These QPs are reached through a common
+`QPSolver` protocol with three implementations: `SciPyQPSolver`, built on SLSQP from
+`scipy.optimize` and always available; `OSQPQPSolver`, an ADMM method that scales well to
+larger, sparser problems; and `ClarabelQPSolver`, an interior-point method giving higher
+accuracy. SciPy is the default, so neither extra is needed for correctness, but the SLSQP
+route slows down as the bundle grows, and either extra will make longer runs appreciably
+faster. The helper `best_available_qp_solver()` returns whichever is installed, preferring
+OSQP, then Clarabel, then SciPy.
+
+### Development installation
 
 For development, clone the repository and install using Poetry:
 
@@ -146,7 +191,10 @@ cd pygeoinf
 poetry install
 ```
 
-The `dev` group provides the tools for running the test suite, building the documentation, and running the Jupyter tutorials. The extras are needed as well, since parts of the test suite and documentation cover the optional features:
+The `dev` group provides the tools for running the test suite, building the
+documentation, and running the Jupyter tutorials. The extras are needed as well, since
+parts of the test suite and documentation cover the optional features, and this is what
+continuous integration runs:
 
 ```bash
 # Install all development dependencies (for tests, docs, and tutorials)
