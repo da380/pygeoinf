@@ -3361,3 +3361,44 @@ Four rows, all in package P, and two of them are one thing:
 - **`CorrelatedInvariantGaussianMeasure`** and `correlated_invariant_gaussian_measure`. Not needed by any worked example — `work/dynamic_topography.py` uses a *product* measure — so the design question it raises is unforced: your note says the reason to keep it is the extended Karhunen-Loeve expansion it makes samplable, which is a statement about sampling rather than about covariance, and worth settling before writing it.
 - **`deflated_diagonal`**, and `deflated_pointwise_variance` with it. Your note says you are not sure it ever worked properly. That makes it a verification task before it is a porting one: establish what it should give against a dense computation, then decide.
 - Plus the two live download commands in package X, and `IterativePreconditioningMethod`, which belongs with M5's other preconditioners.
+
+### 21.19 Correlated invariant measures, and the deflated diagonal
+
+The two rows §21.18 left open. Both are built.
+
+**`correlated_measure`** puts several fields on one domain and correlates them
+*scale by scale*: at each mode the coefficients come from one small covariance
+matrix rather than independently, so the correlation between the fields is a
+function of scale rather than a single number multiplying two marginals. That
+is the whole difference from a product measure, and it is what a coupled
+physical prior needs.
+
+**Sampling is an extended Karhunen-Loeve expansion, and it costs no code.** The
+covariance *factor* is the block operator carrying the symmetric square roots
+``L(k)``, so one draw of white noise on the direct sum — correlated mode by
+mode by the factor — is a sample. The ``1/sqrt(g)`` a non-trivial metric
+demands rides on the white noise rather than being written out, which is §13.1
+one field wider. v1 hand-codes the expansion and the metric correction; here
+neither appears.
+
+`correlated_measure_from_correlations` is the parameterisation anyone has an
+opinion about: each field's own spectrum, and how strongly they are correlated,
+either once or once per scale.
+
+**`deflated_diagonal`** removes the leading eigenpairs before sampling the
+rest. The Bekas-Kokiopoulou-Saad estimator's variance is set by the size of the
+*whole* operator, not by the size of what it is failing to resolve, so every
+covariance with a decaying spectrum is estimated badly for a reason unrelated
+to its tail. Measured on a Sobolev space with a spectrum decaying by `0.6` per
+mode, the relative error falls from `0.36` undeflated to `0.0004` at full rank
+— a factor of a thousand for the same number of probes. It does work.
+
+One thing it needed care with: the exact contribution of the low-rank part is
+``sum_i lambda_i (G c_i)_j^2`` for the Galerkin diagonal and
+``sum_i lambda_i c_{ij} (G c_i)_j`` for the component one — one metric or two.
+The first version had it wrong both ways and passed on a Euclidean space, where
+they coincide. It is tested on a weighted one.
+
+`pointwise_variance_at` is the general counterpart of `pointwise_variance`:
+exact at one covariance application per point, or deflated when there are many.
+The invariant case has a closed form, which is what it is checked against.

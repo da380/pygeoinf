@@ -499,6 +499,70 @@ def random_trace(
     )
 
 
+def deflated_diagonal(
+    operator: LinearOperator,
+    /,
+    *,
+    rank: int = 10,
+    samples: int = 100,
+    form: Literal["galerkin", "components"] = "galerkin",
+    rng: Generator | None = None,
+) -> np.ndarray:
+    """A diagonal estimate with the dominant eigenvalues removed first.
+
+    The Bekas-Kokiopoulou-Saad estimator's variance is set by the size of the
+    *whole* operator, not by the size of what it is failing to resolve. So an
+    operator with a few large eigenvalues and a long tail — every covariance
+    with a decaying spectrum — is estimated badly for a reason that has nothing
+    to do with the tail.
+
+    Deflating fixes that. The leading ``rank`` eigenpairs are found exactly
+    enough, their contribution to the diagonal is computed in closed form, and
+    only the remainder is sampled. The stochastic part then sees an operator
+    whose norm is the ``(rank + 1)``-th eigenvalue rather than the first.
+
+    Args:
+        operator: self-adjoint, and positive semidefinite in the case this is
+            for.
+        rank: how many eigenpairs to remove.
+        samples: probes for the remainder.
+        form: which matrix's diagonal, as for :func:`random_diagonal`.
+        rng: the generator.
+
+    Returns:
+        The diagonal, as an array.
+    """
+    require_coordinates(operator.domain, operator.codomain)
+    if rank < 0:
+        raise ValueError(f"The rank must be non-negative, got {rank}.")
+    if rank == 0:
+        return random_diagonal(operator, samples=samples, form=form, rng=rng)
+
+    generator = rng if rng is not None else np.random.default_rng()
+    low_rank = random_eig(operator, rank=rank, rng=generator)
+    domain: CoordinateSpace = operator.domain
+
+    # diag(U L U*) exactly. The operator's component matrix is
+    # sum_i lambda_i c_i (G c_i)^T and its Galerkin matrix is
+    # sum_i lambda_i (G c_i)(G c_i)^T, so which diagonal is wanted decides
+    # how many times the metric appears -- once or twice. On an orthonormal
+    # basis the two coincide, which is why this needs a weighted space to test.
+    columns = np.stack(
+        [
+            domain.to_components(low_rank.factor(vector))
+            for vector in np.identity(low_rank.eigenvalues.size)
+        ]
+    )
+    weighted = np.stack([domain.apply_gram(column) for column in columns])
+    if form == "galerkin":
+        exact = np.einsum("i,ij,ij->j", low_rank.eigenvalues, weighted, weighted)
+    else:
+        exact = np.einsum("i,ij,ij->j", low_rank.eigenvalues, columns, weighted)
+
+    remainder = operator - low_rank
+    return exact + random_diagonal(remainder, samples=samples, form=form, rng=generator)
+
+
 def random_diagonal(
     operator: LinearOperator,
     /,

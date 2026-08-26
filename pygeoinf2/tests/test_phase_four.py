@@ -535,3 +535,172 @@ class TestAcquisitionHelpers:
         assert paths
         assert all(X.geodesic_distance(a, b) > 0.4 for a, b in paths)
         assert len(paths) < 20  # some pairs were dropped
+
+
+class TestCorrelatedMeasures:
+    """Several fields on one domain, correlated scale by scale."""
+
+    @staticmethod
+    def space():
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        return Sobolev(10, 2.0, 0.2)
+
+    @pytest.mark.parametrize("correlation", [0.0, 0.7, -0.9])
+    def test_the_requested_correlation_appears_in_samples(self, correlation, rng):
+        X = self.space()
+        first = X.sobolev_symbol(-2.0, 0.2)
+        second = X.heat_symbol(0.02)
+        measure = X.correlated_measure_from_correlations(
+            [first, second],
+            np.array([[1.0, correlation], [correlation, 1.0]]),
+            labels=("u", "v"),
+        )
+        draws = [measure.sample(rng=rng) for _ in range(3000)]
+        u = np.array([X.to_components(draw[0]) for draw in draws])
+        v = np.array([X.to_components(draw[1]) for draw in draws])
+        empirical = np.corrcoef(u[:, 5], v[:, 5])[0, 1]
+        assert empirical == pytest.approx(correlation, abs=0.06)
+
+    def test_the_marginals_are_the_invariant_measures(self, rng):
+        X = self.space()
+        first = X.sobolev_symbol(-2.0, 0.2)
+        measure = X.correlated_measure_from_correlations(
+            [first, X.heat_symbol(0.02)], np.array([[1.0, 0.5], [0.5, 1.0]])
+        )
+        block = measure.covariance.matrix(form="components")[: X.dim, : X.dim]
+        assert np.allclose(np.diag(block), first)
+
+    def test_sampling_comes_from_the_factor(self, rng):
+        """An extended Karhunen-Loeve expansion, without writing one."""
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.02), X.heat_symbol(0.02)],
+            np.array([[1.0, 0.8], [0.8, 1.0]]),
+        )
+        assert measure.can_sample
+        draw = measure.sample(rng=rng)
+        assert len(draw) == 2
+
+    def test_a_correlation_beyond_one_is_refused(self):
+        X = self.space()
+        with pytest.raises(ValueError, match="positive semidefinite"):
+            X.correlated_measure_from_correlations(
+                [X.heat_symbol(0.02), X.heat_symbol(0.02)],
+                np.array([[1.0, 1.5], [1.5, 1.0]]),
+            )
+
+    def test_a_correlation_may_vary_with_scale(self, rng):
+        """The point of the construction, as against one number times two
+        marginals."""
+        X = self.space()
+        varying = np.zeros((X.dim, 2, 2))
+        varying[:, 0, 0] = varying[:, 1, 1] = 1.0
+        varying[:, 0, 1] = varying[:, 1, 0] = np.where(X.degrees < 3, 0.9, 0.0)
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.02), X.heat_symbol(0.02)], varying
+        )
+        components = measure.covariance.matrix(form="components")
+        cross = np.diag(components[: X.dim, X.dim :])
+        assert np.all(cross[X.degrees < 3] > 0.0)
+        assert np.allclose(cross[X.degrees >= 3], 0.0)
+
+    def test_a_non_symmetric_slice_is_refused(self):
+        X = self.space()
+        sigma = np.zeros((X.dim, 2, 2))
+        sigma[:, 0, 0] = sigma[:, 1, 1] = 1.0
+        sigma[:, 0, 1] = 0.5
+        with pytest.raises(ValueError, match="symmetric"):
+            X.correlated_measure(sigma)
+
+    def test_a_wrong_shape_is_refused(self):
+        X = self.space()
+        with pytest.raises(ValueError, match="Expected shape"):
+            X.correlated_measure(np.zeros((3, 2, 2)))
+
+
+class TestDeflatedDiagonal:
+    @staticmethod
+    def operator(space, rng, decay=0.6):
+        size = space.dim
+        rotation, _ = np.linalg.qr(rng.normal(size=(size, size)))
+        spectrum = np.array([100.0 * decay**index for index in range(size)]) + 1e-4
+        matrix = rotation @ np.diag(spectrum) @ rotation.T
+        return LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            matrix,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+
+    @pytest.mark.parametrize("form", ["galerkin", "components"])
+    def test_deflation_reduces_the_error(self, form, rng):
+        """The whole point: the estimator's variance is set by the operator's
+        size, not by the size of what it is failing to resolve."""
+        from pygeoinf2.numerics.randomised import deflated_diagonal
+
+        X = make_weighted_space()
+        operator = self.operator(X, rng)
+        truth = np.diag(operator.matrix(form=form))
+
+        def error(rank):
+            estimates = [
+                deflated_diagonal(
+                    operator,
+                    rank=rank,
+                    samples=80,
+                    form=form,
+                    rng=np.random.default_rng(seed),
+                )
+                for seed in range(4)
+            ]
+            return np.mean(
+                [np.abs(e - truth).max() / np.abs(truth).max() for e in estimates]
+            )
+
+        assert error(X.dim - 1) < 0.2 * error(0)
+
+    def test_full_rank_deflation_is_essentially_exact(self, rng):
+        from pygeoinf2.numerics.randomised import deflated_diagonal
+
+        X = make_weighted_space()
+        operator = self.operator(X, rng)
+        truth = np.diag(operator.matrix(form="galerkin"))
+        estimate = deflated_diagonal(operator, rank=X.dim, samples=10, rng=rng)
+        assert np.allclose(estimate, truth, rtol=1e-6)
+
+    def test_zero_rank_is_the_undeflated_estimator(self, rng):
+        from pygeoinf2.numerics.randomised import deflated_diagonal, random_diagonal
+
+        X = make_weighted_space()
+        operator = self.operator(X, rng)
+        first = deflated_diagonal(
+            operator, rank=0, samples=40, rng=np.random.default_rng(3)
+        )
+        second = random_diagonal(operator, samples=40, rng=np.random.default_rng(3))
+        assert np.allclose(first, second)
+
+    def test_a_negative_rank_is_refused(self, rng):
+        from pygeoinf2.numerics.randomised import deflated_diagonal
+
+        X = make_weighted_space()
+        with pytest.raises(ValueError, match="non-negative"):
+            deflated_diagonal(self.operator(X, rng), rank=-1)
+
+    def test_the_pointwise_variance_of_a_general_measure(self, rng):
+        """Exact for a few points; deflated when there are many."""
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        X = Sobolev(12, 2.0, 0.2)
+        symbol = X.sobolev_symbol(-2.0, 0.2)
+        measure = X.invariant_measure(symbol)
+        points = X.random_points(8, rng=rng)
+        exact = X.pointwise_variance_at(measure, points)
+        # an invariant measure has a closed form, which is the check
+        assert np.allclose(exact, X.pointwise_variance(symbol))
+        estimate = X.pointwise_variance_at(
+            measure, points, rank=4, samples=300, rng=rng
+        )
+        assert np.allclose(estimate, exact, rtol=0.25)

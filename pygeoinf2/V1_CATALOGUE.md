@@ -170,7 +170,7 @@ addtional information as you suggest will be very useful. |
 | `random_range` | Ported | same name; no longer routes mass-weighted spaces through the broken white-noise measure (§9) | |
 | `random_trace` | Ported | same name, returning an `Estimate` with a standard error | |
 | `random_diagonal` | Ported | same name (Bekas–Kokiopoulou–Saad) | |
-| `deflated_diagonal` | Planned (P) | Not ported. Diagonal estimation with a low-rank part removed first | follows `deflated_pointwise_variance`, which you flagged as possibly never having worked |
+| `deflated_diagonal` | Ported | Not ported. Diagonal estimation with a low-rank part removed first | follows `deflated_pointwise_variance`, which you flagged as possibly never having worked |
 | `white_noise_measure` | Dropped | The v1 defect of §9: it produced covariance `G`, not `I`. Replaced by `HilbertSpace.white_noise` | |
 
 ## `nonlinear_optimisation.py` → `numerics/optimisation.py`, `line_search.py`
@@ -273,7 +273,7 @@ deliberately not started.
 | `SymmetricSobolevSpace` | Subsumed | `SymmetricSpace` with a Sobolev metric — *not* a mass-weighted space (§13.2) | |
 | `InvariantLinearAutomorphism` | Ported | `DiagonalLinearOperator` | This is fine so long as the functionality is the same. Worth checking in detail, including methods for construction. |
 | `InvariantGaussianMeasure` | Subsumed | `GaussianMeasure` with a diagonal covariance; the hand-coded sampling correction falls out of `white_noise` (§13.1) | Again, this is fine so long as the functionality is still there, including, say, all the optimisations for KL divergence etc.|
-| `CorrelatedInvariantGaussianMeasure` | Planned (P) | Cross-covariance between two invariant fields on one domain. `work/dynamic_topography.py` uses it for the coupled density/traction problem. Not ported; probably wants to be a `DirectSum` measure with a diagonal cross-block | This is a needed feature. The reason perhaps for keeping it is the form of sampling it allows via an extended KL expansion.|
+| `CorrelatedInvariantGaussianMeasure` | Ported | Cross-covariance between two invariant fields on one domain. `work/dynamic_topography.py` uses it for the coupled density/traction problem. Not ported; probably wants to be a `DirectSum` measure with a diagonal cross-block | This is a needed feature. The reason perhaps for keeping it is the form of sampling it allows via an extended KL expansion.|
 | `circle.Lebesgue/Sobolev` | Ported | `PeriodicBox` in 1D | |
 | `torus.Lebesgue/Sobolev` | Ported | `PeriodicBox` in 2D | |
 | `plane.Lebesgue/Sobolev` | Ported | `Box` in 2D | |
@@ -409,7 +409,7 @@ concentration of things to decide about.
 | `with_regularized_inverse` | Ported | Precision of a rank-deficient covariance, with a floor. Not ported | Has been used, so probably worth keeping. |
 | `with_sparse_approximation` | Ported | Thresholded sparse covariance. Wanted by the localised preconditioners | Has been used, so probably worth keeping.  |
 | `sample_pointwise_variance`, `sample_pointwise_std` | Subsumed | `pointwise_variance` on a `SymmetricSpace` computes this exactly, without sampling — but only for an *invariant* measure. The sampled version is still the general answer | |
-| `deflated_pointwise_variance`, `deflated_pointwise_std` | Planned (P) | Pointwise variance with a low-rank part removed. Needs `deflated_diagonal` | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
+| `deflated_pointwise_variance`, `deflated_pointwise_std` | Ported | Pointwise variance with a low-rank part removed. Needs `deflated_diagonal` | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
 | `two_point_covariance` | Ported | `C(x, y)` as a function of two points. Not ported | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
 | `directional_statistics`, `directional_covariance`, `directional_variance` | Ported | Statistics of `(x, u)` along given directions. Cheap and useful; no v2 home | Yes. useful. |
 | `rescale_directional_variance` | Ported | as above | Again, useful|
@@ -474,7 +474,7 @@ different metric. So the union of method names is the honest comparison.
 | `sobolev_kernel_gaussian_measure` | Ported | `sobolev_measure` | |
 | `point_value_scaled_*_gaussian_measure` (three) | Ported | `pointwise_std=` on each of the above, which is one keyword rather than three methods (§20.7) | |
 | `norm_scaled_*_gaussian_measure` (three) | Ported | Calibration by the *norm* rather than the pointwise value. Not ported; the same one-keyword treatment would work | Worth it|
-| `correlated_invariant_gaussian_measure` | Planned (P) | See `CorrelatedInvariantGaussianMeasure` in Part 1 | Needed in some form. See comments above |
+| `correlated_invariant_gaussian_measure` | Ported | See `CorrelatedInvariantGaussianMeasure` in Part 1 | Needed in some form. See comments above |
 | `heat_kernel`, `sobolev_kernel`, `sobolev_function` | Subsumed | `heat_symbol`, `sobolev_symbol` | |
 | `invariant_automorphism` | Ported | `invariant_operator` | |
 | `invariant_covariance_function` | Ported | The covariance as a function of geodesic distance. Not ported | Worth having, I thought. Need a reason to drop. |

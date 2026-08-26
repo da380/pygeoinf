@@ -419,6 +419,139 @@ class SymmetricSpace(
     #                        Point evaluation                           #
     # ----------------------------------------------------------------- #
 
+    def correlated_measure(
+        self,
+        spectral_cross_covariances: np.ndarray,
+        /,
+        *,
+        expectation: Sequence[np.ndarray] | None = None,
+        labels: Sequence[str] | None = None,
+    ) -> GaussianMeasure:
+        """Several fields on this domain, correlated scale by scale.
+
+        The joint prior a coupled physical problem wants: the fields share a
+        spectral basis, and at each mode their coefficients are drawn from one
+        small covariance matrix rather than independently. That makes the
+        correlation between the fields a function of *scale*, which is what
+        distinguishes it from a single number multiplying two marginals.
+
+        The measure lives on the direct sum of ``n`` copies of this space, and
+        the ``(i, j)`` block of its covariance is diagonal with eigenvalues
+        ``Sigma(k)[i, j]``. Its marginals are the invariant measures with
+        spectral variances ``Sigma(k)[i, i]``.
+
+        **Sampling is an extended Karhunen-Loeve expansion**, and it comes for
+        free: the covariance *factor* is the block operator whose blocks carry
+        the symmetric square roots ``L(k)``, so one draw of white noise on the
+        direct sum, correlated mode by mode, is a sample. The ``1/sqrt(g)`` a
+        non-trivial metric demands is carried by the white noise rather than
+        written out here — which is the same argument as §13.1, one field wider.
+
+        Args:
+            spectral_cross_covariances: shape ``(dim, n, n)``; slice ``k`` is
+                the covariance of the ``n`` fields' ``k``-th coefficients, and
+                must be symmetric and positive semidefinite.
+            expectation: one field per component. Defaults to zero.
+            labels: names for the summands, for readability.
+        """
+        from ..algebra.direct_sum import BlockLinearOperator, DirectSum
+
+        sigma = np.asarray(spectral_cross_covariances, dtype=float)
+        if (
+            sigma.ndim != 3
+            or sigma.shape[0] != self.dim
+            or sigma.shape[1] != sigma.shape[2]
+        ):
+            raise ValueError(f"Expected shape ({self.dim}, n, n), got {sigma.shape}.")
+        count = sigma.shape[1]
+
+        scale = float(np.max(np.abs(sigma))) if sigma.size else 0.0
+        tolerance = 1.0e-10 * max(scale, np.finfo(float).tiny)
+        if not np.allclose(sigma, np.swapaxes(sigma, -1, -2), atol=tolerance):
+            raise ValueError("Each cross-covariance slice must be symmetric.")
+        sigma = 0.5 * (sigma + np.swapaxes(sigma, -1, -2))
+
+        values, vectors = np.linalg.eigh(sigma)
+        if values.min(initial=0.0) < -tolerance:
+            worst = int(np.argmin(values.min(axis=1)))
+            raise ValueError(
+                "Each cross-covariance slice must be positive semidefinite; "
+                f"the one at component {worst} has smallest eigenvalue "
+                f"{values.min():.3e}. For a pair of fields that means "
+                "|correlation| <= 1."
+            )
+        values = np.clip(values, 0.0, None)
+        # The symmetric square root, so that L L == Sigma and the factor is
+        # its own adjoint block for block.
+        roots = (vectors * np.sqrt(values)[:, None, :]) @ np.swapaxes(vectors, -1, -2)
+
+        space = DirectSum([self] * count, labels=labels)
+        factor = BlockLinearOperator(
+            [
+                [
+                    DiagonalLinearOperator(self, np.ascontiguousarray(roots[:, i, j]))
+                    for j in range(count)
+                ]
+                for i in range(count)
+            ]
+        )
+        covariance = BlockLinearOperator(
+            [
+                [
+                    DiagonalLinearOperator(self, np.ascontiguousarray(sigma[:, i, j]))
+                    for j in range(count)
+                ]
+                for i in range(count)
+            ]
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE)
+
+        return GaussianMeasure(
+            space,
+            expectation=None if expectation is None else tuple(expectation),
+            covariance=covariance,
+            covariance_factor=factor,
+        )
+
+    def correlated_measure_from_correlations(
+        self,
+        variances: Sequence[np.ndarray],
+        correlations: np.ndarray,
+        /,
+        *,
+        expectation: Sequence[np.ndarray] | None = None,
+        labels: Sequence[str] | None = None,
+    ) -> GaussianMeasure:
+        """The same, from marginal spectra and a correlation matrix.
+
+        The parameterisation anyone actually has an opinion about: each field's
+        own spectrum, and how strongly they are correlated. The correlation may
+        be a single matrix, applying at every scale, or one per component if it
+        varies with scale.
+
+        Args:
+            variances: one spectral variance array per field.
+            correlations: ``(n, n)`` or ``(dim, n, n)``, with unit diagonal.
+            expectation: one field per component. Defaults to zero.
+            labels: names for the summands.
+        """
+        spectra = np.stack(
+            [self._resolve_variances(variance) for variance in variances]
+        )
+        count = spectra.shape[0]
+        matrix = np.asarray(correlations, dtype=float)
+        if matrix.shape == (count, count):
+            matrix = np.broadcast_to(matrix, (self.dim, count, count))
+        elif matrix.shape != (self.dim, count, count):
+            raise ValueError(
+                f"Correlations must have shape ({count}, {count}) or "
+                f"({self.dim}, {count}, {count}), got {matrix.shape}."
+            )
+        if not np.allclose(np.diagonal(matrix, axis1=-2, axis2=-1), 1.0):
+            raise ValueError("A correlation matrix has a unit diagonal.")
+        deviations = np.sqrt(spectra).T
+        sigma = matrix * deviations[:, :, None] * deviations[:, None, :]
+        return self.correlated_measure(sigma, expectation=expectation, labels=labels)
+
     def power_measure(
         self,
         power: np.ndarray | Callable[[np.ndarray], np.ndarray],
@@ -464,6 +597,44 @@ class SymmetricSpace(
         anchor = self.reference_point
         field = measure.two_point_covariance(anchor)
         return self.evaluate(field, self.walk_from(anchor, distances))
+
+    def pointwise_variance_at(
+        self,
+        measure: GaussianMeasure,
+        points: Sequence[Any],
+        /,
+        *,
+        rank: int = 0,
+        samples: int | None = None,
+        rng: Generator | None = None,
+    ) -> np.ndarray:
+        """``Var(x(p))`` at given points, for *any* measure on this space.
+
+        The general counterpart of :meth:`pointwise_variance`, which is exact
+        and constant but only for an invariant measure. A posterior is not
+        invariant, and its pointwise variance is the interesting one.
+
+        It is the diagonal of ``E C E*`` with ``E`` evaluation at the points,
+        since ``(C u_i, u_i)`` is the variance at the ``i``-th. Exact by
+        default, at one application of the covariance per point. Pass
+        ``samples`` to estimate it instead, and ``rank`` to deflate first —
+        which for a covariance with a decaying spectrum is the difference
+        between a useful estimate and a useless one.
+        """
+        evaluation = self.point_evaluation_operator(points)
+        operator = evaluation @ measure.covariance @ evaluation.adjoint
+        if samples is None:
+            return np.array(
+                [
+                    measure.directional_variance(self.dirac(point).representer)
+                    for point in points
+                ]
+            )
+        from ..numerics.randomised import deflated_diagonal
+
+        return deflated_diagonal(
+            operator, rank=rank, samples=samples, form="components", rng=rng
+        )
 
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
         """Points at given geodesic distances from a point, along one direction."""
