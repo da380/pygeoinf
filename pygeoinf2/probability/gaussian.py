@@ -551,11 +551,137 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if not 0.0 < level < 1.0:
             raise ValueError(f"A credible level lies in (0, 1), got {level}.")
         threshold = float(chi2.ppf(level, self.domain.dim))
+        covariance = self.covariance * threshold
+        if self._precision is not None:
+            precision = self._precision * (1.0 / threshold)
+        else:
+            # A measure built from a covariance alone has no precision, and an
+            # ellipsoid is defined by one. Inverting densely is the only thing
+            # that can be done without being told how, and it is what a caller
+            # would otherwise have to write.
+            from ..algebra.operators import LinearOperator as _LinearOperator
+
+            require_coordinates(self._domain)
+            # The Galerkin matrix of C^-1 is G C_c^-1 == G C_gal^-1 G, not
+            # C_gal^-1: inverting the Galerkin matrix gives C_c^-1 G^-1, which
+            # is the component matrix of something else entirely. On an
+            # orthonormal basis the two coincide, and the resulting credible
+            # set covered 46% of its nominal 90% on a weighted one.
+            gram = self._domain.gram_matrix()
+            galerkin = gram @ np.linalg.solve(covariance.matrix(form="galerkin"), gram)
+            precision = _LinearOperator.from_derivative_matrix(
+                self._domain,
+                self._domain,
+                0.5 * (galerkin + galerkin.T),
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            )
         return Ellipsoid(
             self.domain,
-            self.precision * (1.0 / threshold),
+            precision,
             centre=self.expectation,
-            covariance=self.covariance * threshold,
+            covariance=covariance,
+        )
+
+    def ambient_ball(self, /, *, level: float = 0.95, method: str = "auto") -> Any:
+        """The smallest ball about the mean carrying a given probability.
+
+        A different hardening from :meth:`credible_set`, and a cruder one: that
+        gives the ellipsoid the distribution's own shape, this gives a ball in
+        the *space's* norm. The two coincide only for an isotropic measure, and
+        the ball is always the larger.
+
+        It is worth having because a norm bound is what a set-theoretic prior
+        is, so this is the bridge from a Gaussian belief to one — §18.1's
+        conversion, done in the geometry the constraint will be used in.
+
+        The radius is a quantile of ``sum_i lambda_i Z_i^2`` with the
+        covariance's eigenvalues as weights, which is not a chi-square unless
+        the measure is isotropic.
+        """
+        from ..geometry.convex import Ball
+        from ..numerics.quadratic_forms import weighted_chi2_quantile
+
+        require_coordinates(self._domain)
+        matrix = self._covariance.matrix(form="components")
+        eigenvalues = np.clip(np.linalg.eigvals(matrix).real, 0.0, None)
+        radius = np.sqrt(weighted_chi2_quantile(eigenvalues, level, method=method))
+        return Ball(self._domain, radius=float(radius), centre=self.expectation)
+
+    def as_multivariate_normal(self) -> Any:
+        """The measure as a ``scipy.stats`` object, in components.
+
+        For anything scipy already does — a density, a rank correlation, a
+        statistical test. It is the *component* representation, so it is a
+        statement about coefficients rather than about fields, and a metric
+        that is not the identity does not travel with it.
+        """
+        from scipy.stats import multivariate_normal
+
+        require_coordinates(self._domain)
+        # The covariance *of the components* is G^-1 C_gal G^-1, which is
+        # symmetric; the operator's component matrix is not, on a space whose
+        # basis is not orthonormal, and scipy rightly refuses it.
+        galerkin = self._covariance.matrix(form="galerkin")
+        components = np.stack(
+            [
+                self._domain.solve_gram(row)
+                for row in self._domain.solve_gram(galerkin).T
+            ]
+        )
+        return multivariate_normal(
+            mean=self._domain.to_components(self.expectation),
+            cov=0.5 * (components + components.T),
+            allow_singular=True,
+        )
+
+    def condition(
+        self,
+        operator: LinearOperator,
+        value: X,
+        /,
+        *,
+        noise: "GaussianMeasure | None" = None,
+    ) -> "GaussianMeasure[X]":
+        """The measure conditioned on ``A x == value``, or on noisy data.
+
+        The Bayesian update, done here rather than in the inference layer
+        because it is a statement about the measure and needs no forward
+        problem: give it an operator and an observed value and it returns the
+        posterior. With ``noise`` omitted the constraint is exact, and the
+        result is supported on an affine subspace.
+        """
+        from ..traits import Traits as _Traits
+
+        covariance = self._covariance
+        normal = operator @ covariance @ operator.adjoint
+        if noise is not None:
+            normal = normal + noise.covariance
+        codomain = operator.codomain
+        inverse = np.linalg.inv(normal.matrix(form="components"))
+        gain_matrix = inverse
+
+        def gain(vector):
+            return covariance(
+                operator.adjoint(
+                    codomain.from_components(
+                        gain_matrix @ codomain.to_components(vector)
+                    )
+                )
+            )
+
+        predicted = operator(self.expectation)
+        if noise is not None:
+            predicted = codomain.add(predicted, noise.expectation)
+        shift = gain(codomain.subtract(value, predicted))
+        updated = covariance - _gain_operator(
+            covariance, operator, gain_matrix, codomain
+        )
+        return GaussianMeasure(
+            self._domain,
+            expectation=self._domain.add(self.expectation, shift),
+            covariance=updated.with_traits(
+                _Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE
+            ),
         )
 
     def mahalanobis_squared(self, x: X) -> float:
@@ -693,3 +819,23 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
     def __repr__(self) -> str:
         return f"GaussianMeasure({self._domain!r})"
+
+
+def _gain_operator(
+    covariance: LinearOperator,
+    operator: LinearOperator,
+    gain_matrix: np.ndarray,
+    codomain: HilbertSpace,
+) -> LinearOperator:
+    """``C A* N^-1 A C``, the amount a conditioning removes."""
+    from ..algebra.operators import LinearOperator as _LinearOperator
+
+    def value(x: object) -> object:
+        image = operator(covariance(x))
+        return covariance(
+            operator.adjoint(
+                codomain.from_components(gain_matrix @ codomain.to_components(image))
+            )
+        )
+
+    return _LinearOperator.self_adjoint(covariance.domain, value)

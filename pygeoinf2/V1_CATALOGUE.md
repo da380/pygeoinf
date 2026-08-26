@@ -305,8 +305,8 @@ deliberately not started.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `weighted_chi2_cdf` | Planned | M5. The distribution of a quadratic form in Gaussians — what a credible set of a chi-squared statistic needs | |
-| `weighted_chi2_quantile` | Planned | M5. Imhof, Wood–Saddlepoint, and Monte Carlo methods with an automatic choice | |
+| `weighted_chi2_cdf` | Ported | M5. The distribution of a quadratic form in Gaussians — what a credible set of a chi-squared statistic needs | |
+| `weighted_chi2_quantile` | Ported | M5. Imhof, Wood–Saddlepoint, and Monte Carlo methods with an automatic choice | |
 
 ## `dynamical_system.py`
 
@@ -402,8 +402,8 @@ concentration of things to decide about.
 | `affine_mapping` | Ported | `affine_map`, `push_forward`, `translate` | |
 | `zero_expectation` | Ported | `translate` by the negated expectation | |
 | `credible_set` | Ported | M5. This is §18.1's measure-to-set hardening, and `tutorials/gaussian_measure_to_sets_demo.ipynb` is built on it | |
-| `ambient_ball`, `weakened_ellipsoid` | Planned | M5, with `credible_set` — the two looser hardenings | |
-| `as_multivariate_normal` | Planned | M5. The bridge to `scipy.stats` | |
+| `ambient_ball`, `weakened_ellipsoid` | Ported (ambient_ball) | M5, with `credible_set` — the two looser hardenings | |
+| `as_multivariate_normal` | Ported | M5. The bridge to `scipy.stats` | |
 | `with_dense_covariance` | Subsumed | `covariance.assembled()` | |
 | `low_rank_approximation` | Subsumed | `random_eig` on the covariance | |
 | `with_regularized_inverse` | Ported | Precision of a rank-deficient covariance, with a floor. Not ported | Has been used, so probably worth keeping. |
@@ -516,7 +516,7 @@ different metric. So the union of method names is the honest comparison.
 | `with_translation`, `with_constraint_value` | Ported | Not ported | |
 | `solver`, `preconditioner` | Subsumed | Passed in where needed rather than stored on the subspace | |
 | `is_element` | Ported | `contains` on `Subset` | |
-| `condition_gaussian_measure` | Planned | M5 — conditioning a measure on a linear constraint is a small Bayesian update | |
+| `condition_gaussian_measure` | Ported | M5 — conditioning a measure on a linear constraint is a small Bayesian update | |
 
 ## `LinearBayesianInversion` (24 methods)
 
@@ -535,7 +535,7 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `diagonal_normal_preconditioner`, `sparse_localized_preconditioner`, `woodbury_data_preconditioner`, `woodbury_model_preconditioner` | Planned | `numerics.preconditioners`, M5 | |
 | `surrogate_inversion`, `surrogate_normal_preconditioner`, `surrogate_woodbury_data_preconditioner`, `surrogate_woodbury_model_preconditioner` | Subsumed | A surrogate is a transformed *problem*; the preconditioner then follows from it, so these four collapse into the four above | |
 | `parameterized_inversion`, `data_reduced_inversion` | Dropped | They forward to the `ForwardProblem` methods of the same name (§18.9) | |
-| `normal_residual_callback` | Planned | With the solver callbacks above | |
+| `normal_residual_callback` | Subsumed | With the solver callbacks above | |
 
 ## `LinearForwardProblem` (12 methods)
 

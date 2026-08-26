@@ -856,3 +856,192 @@ class TestPreconditioners:
             SpectralPreconditioner(rank=0)
         with pytest.raises(ValueError, match="bandwidth"):
             BandedPreconditioner(-1)
+
+
+class TestQuadraticForms:
+    """The distribution of ``sum w_i Z_i^2``, which has no closed form."""
+
+    def test_equal_weights_are_an_ordinary_chi_square(self):
+        from scipy.stats import chi2
+
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        for count in (1, 3, 7):
+            for level in (0.5, 0.95, 0.99):
+                assert weighted_chi2_quantile(np.ones(count), level) == pytest.approx(
+                    float(chi2.ppf(level, count))
+                )
+
+    def test_a_common_scale_factors_out(self):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        weights = np.array([2.0, 2.0, 2.0])
+        assert weighted_chi2_quantile(weights, 0.9) == pytest.approx(
+            2.0 * weighted_chi2_quantile(np.ones(3), 0.9)
+        )
+
+    def test_imhof_matches_monte_carlo_for_unequal_weights(self, rng):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_cdf
+
+        weights = np.array([5.0, 2.0, 1.0, 0.5, 0.1])
+        for value in (2.0, 8.0, 20.0):
+            exact = weighted_chi2_cdf(weights, value)
+            sampled = weighted_chi2_cdf(
+                weights, value, method="monte_carlo", samples=200_000, rng=rng
+            )
+            assert exact == pytest.approx(sampled, abs=0.005)
+
+    def test_the_quantile_inverts_the_distribution(self):
+        from pygeoinf2.numerics.quadratic_forms import (
+            weighted_chi2_cdf,
+            weighted_chi2_quantile,
+        )
+
+        weights = np.array([4.0, 1.0, 0.25])
+        for level in (0.1, 0.5, 0.95):
+            assert weighted_chi2_cdf(
+                weights, weighted_chi2_quantile(weights, level)
+            ) == pytest.approx(level, abs=1e-6)
+
+    def test_nonsense_input_is_refused(self):
+        from pygeoinf2.numerics.quadratic_forms import (
+            weighted_chi2_cdf,
+            weighted_chi2_quantile,
+        )
+
+        with pytest.raises(ValueError, match="non-negative"):
+            weighted_chi2_cdf(np.array([-1.0]), 1.0)
+        with pytest.raises(ValueError, match="[Aa]t least one weight"):
+            weighted_chi2_cdf(np.zeros(3), 1.0)
+        with pytest.raises(ValueError, match="probability"):
+            weighted_chi2_quantile(np.ones(2), 1.5)
+
+
+class TestHardening:
+    """Turning a measure into a set, which is never canonical (§18.1)."""
+
+    @pytest.fixture
+    def measures(self, rng):
+        pairs = []
+        for space in (EuclideanSpace(4), make_weighted_space()):
+            root = rng.normal(size=(space.dim, space.dim))
+            pairs.append(
+                (
+                    space,
+                    GaussianMeasure.from_covariance_matrix(
+                        space, root @ root.T + space.dim * np.identity(space.dim)
+                    ),
+                )
+            )
+        return pairs
+
+    def test_a_credible_set_covers_what_it_claims(self, measures, rng):
+        """It did not, on a weighted space, until the precision was built from
+        ``G C_gal^-1 G`` rather than from ``C_gal^-1`` -- which agree only on an
+        orthonormal basis, and there it covered 46% of its nominal 90%."""
+        for space, measure in measures:
+            for level in (0.5, 0.9):
+                region = measure.credible_set(level=level)
+                covered = np.mean(
+                    [region.contains(measure.sample(rng=rng)) for _ in range(3000)]
+                )
+                assert covered == pytest.approx(level, abs=0.03)
+
+    def test_an_ambient_ball_covers_what_it_claims(self, measures, rng):
+        for space, measure in measures:
+            ball = measure.ambient_ball(level=0.9)
+            covered = np.mean(
+                [ball.contains(measure.sample(rng=rng)) for _ in range(3000)]
+            )
+            assert covered == pytest.approx(0.9, abs=0.03)
+
+    def test_the_two_hardenings_are_different_regions(self, measures, rng):
+        """Which is what "not canonical" means, made concrete.
+
+        Both carry the same probability and they are not the same region.
+        Which way any containment runs depends on how anisotropic the measure
+        is — for a strongly anisotropic one the ball simply swallows the
+        ellipsoid, and for a mild one each reaches somewhere the other does
+        not. What is always true is that they differ, and choosing between them
+        is choosing what to say rather than computing one thing two ways.
+        """
+        for space, measure in measures:
+            ball = measure.ambient_ball(level=0.9)
+            region = measure.credible_set(level=0.9)
+            differing = 0
+            for _ in range(600):
+                point = space.add(
+                    measure.expectation,
+                    space.scale(3.0, space.white_noise(rng=rng)),
+                )
+                differing += ball.contains(point) != region.contains(point)
+            assert differing > 0
+
+    def test_the_scipy_view_has_the_sampled_covariance(self, measures, rng):
+        for space, measure in measures:
+            frozen = measure.as_multivariate_normal()
+            draws = np.array(
+                [space.to_components(measure.sample(rng=rng)) for _ in range(5000)]
+            )
+            assert np.allclose(
+                frozen.cov, np.cov(draws.T), atol=0.35 * np.abs(frozen.cov).max()
+            )
+
+
+class TestConditioning:
+    def test_an_exact_constraint_is_satisfied(self, rng):
+        space = make_weighted_space()
+        root = rng.normal(size=(space.dim, space.dim))
+        measure = GaussianMeasure.from_covariance_matrix(
+            space, root @ root.T + space.dim * np.identity(space.dim)
+        )
+        operator = LinearOperator.from_derivative_matrix(
+            space, EuclideanSpace(2), rng.normal(size=(2, space.dim))
+        )
+        value = np.array([0.5, -1.0])
+        assert np.allclose(
+            measure.condition(operator, value).expectation @ np.ones(0)
+            if False
+            else operator(measure.condition(operator, value).expectation),
+            value,
+        )
+
+    def test_a_noisy_constraint_is_the_bayesian_posterior(self, rng):
+        """Two routes to one answer: a statement about a measure, and a
+        statement about an inverse problem."""
+        from pygeoinf2.inference import Bayesian, LinearForwardProblem
+
+        space = make_weighted_space()
+        root = rng.normal(size=(space.dim, space.dim))
+        prior = GaussianMeasure.from_covariance_matrix(
+            space, root @ root.T + space.dim * np.identity(space.dim)
+        )
+        data_space = EuclideanSpace(2)
+        operator = LinearOperator.from_derivative_matrix(
+            space, data_space, rng.normal(size=(2, space.dim))
+        )
+        noise = GaussianMeasure.from_standard_deviation(data_space, 0.3)
+        value = np.array([0.5, -1.0])
+
+        conditioned = prior.condition(operator, value, noise=noise)
+        posterior = Bayesian(LinearForwardProblem(operator, error=noise), prior)(value)
+        assert np.allclose(
+            space.to_components(conditioned.expectation),
+            space.to_components(posterior.expectation),
+        )
+        assert np.allclose(
+            conditioned.covariance.matrix(form="components"),
+            posterior.covariance.matrix(form="components"),
+        )
+
+    def test_conditioning_shrinks_the_total_variance(self, rng):
+        space = make_weighted_space()
+        root = rng.normal(size=(space.dim, space.dim))
+        measure = GaussianMeasure.from_covariance_matrix(
+            space, root @ root.T + space.dim * np.identity(space.dim)
+        )
+        operator = LinearOperator.from_derivative_matrix(
+            space, EuclideanSpace(2), rng.normal(size=(2, space.dim))
+        )
+        conditioned = measure.condition(operator, np.array([0.5, -1.0]))
+        assert conditioned.nuclear_norm() < measure.nuclear_norm()

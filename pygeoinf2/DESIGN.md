@@ -3576,3 +3576,45 @@ minimisation, essentially all of it in setting up problems that small.
 Projected gradient with a closed-form simplex projection does the same job in
 **0.6 seconds**, an eighty-fold speed-up, and the whole test module went from
 189 seconds to 26.
+
+### 22.8 Hardening a measure into a set, properly
+
+`weighted_chi2_cdf` and `weighted_chi2_quantile`, and the two measure methods
+that need them.
+
+`sum_i w_i Z_i^2` has no closed form. It appears wherever something is said
+about the size of a Gaussian vector in a metric other than its own: the
+Mahalanobis form is an ordinary chi-square because its weights are all one, but
+the plain squared norm of a field is not, and its weights are the covariance's
+eigenvalues. Imhof's inversion of the characteristic function is exact to the
+tolerance asked for — matching `chi2.ppf` to `1e-12` at seven terms — and
+degrades where the integrand decays slowest, so the equal-weight case, which is
+both the commonest and the worst for the quadrature, is short-circuited to the
+exact chi-square.
+
+`ambient_ball` is the second hardening of §18.1: the smallest ball about the
+mean carrying a given probability, in the *space's* norm rather than the
+distribution's. It is the bridge from a Gaussian belief to the norm bound a
+set-theoretic prior wants, so it is the conversion that actually gets used.
+
+**Neither hardening contains the other in general**, which is what "not
+canonical" means made concrete. Both carry the same probability and they are
+different regions; which way any containment runs depends on how anisotropic
+the measure is. A test asserts only that they differ, because the stronger
+claim — that each reaches somewhere the other does not — is true for a mild
+anisotropy and false for a strong one, and asserting it was the first thing
+tried.
+
+**And `credible_set` was wrong.** On a weighted space it covered **46%** of its
+nominal 90%. The precision was built by inverting the covariance's Galerkin
+matrix, but the Galerkin matrix of `C^-1` is `G C_gal^-1 G`, not `C_gal^-1` —
+inverting the Galerkin matrix gives the component matrix of something else
+entirely. The two coincide on an orthonormal basis, which is where it had been
+tested. `as_multivariate_normal` had the same error in the other direction: the
+covariance *of the components* is `G^-1 C_gal G^-1`, and the operator's
+component matrix is not symmetric on a weighted space, so scipy refused it
+outright rather than accepting it and being wrong.
+
+`condition` completes the pair: the Bayesian update as a statement about a
+measure, needing no forward problem. It agrees exactly with `Bayesian` on the
+same data, which is two routes to one answer again.
