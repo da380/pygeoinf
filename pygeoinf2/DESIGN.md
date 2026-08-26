@@ -3481,3 +3481,28 @@ of ``w'`` comes only from ``(1/t) T* q``, and can be had at its own scale.
 noise radius of about ``1e-7`` and degrades below it — a double-precision limit
 of a Woodbury-based bisection, and not a problem, since the noise-free case is
 exactly what route (a) is for.
+
+### 22.4 The DLI example
+
+`work/sphere_dli_example.py` runs on v2, as `examples/23_feasible_set.py`:
+`H^{3/2}` on the sphere, 186 real source-receiver paths, four spherical caps as
+the property, a norm ball for the prior and another for the noise. Both routes
+(b) and (c) run, so the certificate can be seen bounding the exact answer — by
+12% on average here.
+
+The example's own conclusion is the one worth having, and it is measured rather
+than asserted. The certificate's width splits into a resolution term and a
+noise term; resolution accounts for **95%** of it, so the limit is coverage and
+not measurement quality. Counting ray samples near each cap confirms the
+mechanism exactly:
+
+| cap | interval width | ray samples within 0.3 rad |
+|---|---|---|
+| 0 | 12.20 | **0** |
+| 1 | 5.75 | 203 |
+| 2 | 10.71 | 34 |
+| 3 | 6.13 | 51 |
+
+The widest interval is the cap the rays miss entirely, and the ordering is
+monotone in coverage. A method that reported a number with an error bar would
+have reported a number for cap 0 too.

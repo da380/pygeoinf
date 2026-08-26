@@ -36,10 +36,11 @@ failing test rather than a surprise later.
 | 20 | `flexure` | a coefficient that varies in space, and a picture of it |
 | 21 | `tomography` | a Bayesian inversion, end to end |
 | 22 | `coupled_fields` | two unknowns, one shared physical chain |
+| 23 | `feasible_set` | the third kind of answer: what the data cannot rule out |
 
 ## The ones with optional dependencies
 
-Number 16 needs `mfem`, 19 needs `pyshtools`, and 20 to 22 need `cartopy`.
+Number 16 needs `mfem`, 19 needs `pyshtools`, and 20 to 23 need `cartopy`.
 Each skips without them.
 
 ```
