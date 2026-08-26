@@ -2646,3 +2646,111 @@ words for both things is what made the current naming read oddly.
 
 `spaces` is now free for the cases that are not homogeneous — a finite element
 space, an arbitrary mesh — which is where the MFEM backend already points.
+
+## 20. What the worked examples need
+
+`work/` and `tutorials/` are the real API surface — what the library is
+actually asked to do, as opposed to what its classes offer. Skimming them turns
+up one missing layer, one missing constructor, and a confirmation.
+
+`work/sphere_dli_example.py` is the reference implementation of BGP §3.1: a
+Sobolev space on the sphere, IRIS stations and USGS events, great-circle path
+integrals, spherical-cap averages as the property operator, ball support
+functions for the prior and the data-confidence set, and `PrimalKKTSolver` per
+direction — route (c) of §18.3. It solves only for `±e_k`, so it computes the
+axis-aligned box of §18.4 rather than the polyhedron. `work/tomo.py`,
+`work/flexure.py` and `work/dynamic_topography.py` are the same machinery on
+one, one and two fields respectively.
+
+### 20.1 The observation layer
+
+None of these examples is limited by the algebra. They are limited by the
+*observation operators*, and those live on the concrete space. What v1's sphere
+carries beyond the space itself:
+
+| v1 | what it is | v2 |
+|---|---|---|
+| `point_evaluation_operator` | field to point values | built, dense only |
+| `path_average_operator` | geodesic path integrals — the tomography forward map | **missing** |
+| `spherical_cap_average`, `geodesic_ball_quadrature`, `spherical_cap_integral` | cap averages — BGP's property operator `T` | **missing** |
+| `to_coefficient_operator`, `from_coefficient_operator` | spherical-harmonic coefficients — Al-Attar (2021)'s property operator | **missing** |
+| `with_degree`, `degree_transfer_operator` | multi-resolution surrogates; `work/evidence.py` builds a problem at several degrees | only `with_order` |
+| `iris_stations`, `random_earthquakes`, `domain_mask`, `random_domain_points` | real acquisition geometry and land/ocean masks, from `pygeoinf/data/*.csv` | **missing** |
+| `geodesic_distance`, `pairs_within_distance`, `invariant_covariance_function` | what the localised and sparse preconditioners need | **missing** |
+| `point_value_scaled_heat_kernel_gaussian_measure(scale, std=)` | a prior calibrated by *pointwise* standard deviation | `amplitude=` only |
+
+That last one is a one-line derivation rather than a feature: for a homogeneous
+field the pointwise variance is constant, so calibrating `std` is a single
+scalar read off the spectrum. It is worth having because it is the
+parameterisation every example actually uses — nobody knows what amplitude they
+want, and everybody knows what pointwise standard deviation they want.
+
+The rest is a real body of work, and it is what stands between the plan and the
+two papers' examples running on v2. It should be staged explicitly rather than
+assumed, and it is largely independent of §18, so it can proceed in parallel.
+
+### 20.2 The matrix-free adjoint has no guard
+
+Every one of these operators comes in a dense and a matrix-free variant, and
+`work/point_evaluation.py` and `work/path_average.py` exist to check that the
+two agree and to time them. The check they run is the adjoint identity
+`(Au, y) == (u, A*y)_H`, which is `check_operator`.
+
+v1 gets this right, and the way it does so is instructive.
+`point_evaluation_operator`'s hand-written `adjoint_mapping` accumulates
+`y[i] * laplacian_eigenvectors_at_point(points[i])` — **derivative
+components** — and only then applies `from_dual`. The metric enters once, at
+the end, exactly as §5.6 requires. But that correctness rests on the author
+remembering `from_dual`, across eighty lines with two parallel branches, in
+every such operator.
+
+In v2 the dense path is protected: `from_derivative_matrix` takes the rows and
+derives the adjoint. **The matrix-free path is not.** `from_callables` takes an
+`adjoint`, which is the gradient-valued map, so a matrix-free observation
+operator is written in precisely the place where the derivative/gradient
+confusion is easiest to make and nothing catches it.
+
+The missing constructor is the matrix-free counterpart:
+
+```python
+LinearOperator.from_derivative_callables(
+    domain, codomain, value, derivative_components
+)
+```
+
+where `derivative_components` returns the components of `y` pulled back as a
+functional, and the framework applies `representer` once. This closes the last
+place in the library where a user must apply the inverse metric by hand.
+
+### 20.3 The `v2/` skeleton already named this
+
+The repository's `v2/` directory is an empty tree of directory names — no code,
+zero lines throughout. It is a sketch, and it independently arrives at the same
+layout:
+
+```
+v2/inversion/{common,forward,point,probabilistic,set}
+v2/geometry/{convex,sets,shapes,subspaces}
+v2/geometry/shapes/{ellipsoid,polyhedra}.py
+v2/symmetric_space/
+```
+
+`point`, `probabilistic`, `set` are §18.1's three answer kinds; `polyhedra` is
+§18.4's outer bound; `symmetric_space` is §19. Those names are better than the
+ones in §18.13 and should be adopted: `inference/{point,probabilistic,set}.py`.
+
+### 20.4 The tutorials
+
+Ten numbered tutorials plus two demos. Structurally they follow the same
+sequence as `pygeoinf2/examples/`, which is reassuring rather than informative,
+with two exceptions worth noting.
+
+`gaussian_measure_to_sets_demo.ipynb` is the measure-to-set hardening of §18.1,
+already a user-facing operation with a credible set at its centre. That
+confirms the conversion deserves a name rather than being buried in a
+constructor.
+
+`tutorial10` builds the same tomography problem across several geometries to
+show what changes and what does not — which is the coordinate-free claim, tested
+by variation rather than by assertion. Worth reproducing once the observation
+layer exists.
