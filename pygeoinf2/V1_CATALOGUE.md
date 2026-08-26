@@ -447,8 +447,8 @@ different metric. So the union of method names is the honest comparison.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `point_evaluation_operator` | Ported | same name, matrix-free, and NUFFT-backed on a box | Check for numerical optimistions for the concrete spaces |
-| `path_average_operator` | Ported | same name, as `W E` (§20.6) |  As above|
+| `point_evaluation_operator` | Ported | same name, matrix-free, and NUFFT-backed on a box, and faster than v1: a non-uniform FFT rather than a per-point Legendre evaluation (DESIGN 21.15) | Check for numerical optimistions for the concrete spaces |
+| `path_average_operator` | Ported | same name, as `W E` (§20.6), and faster than v1: a non-uniform FFT rather than a per-point Legendre evaluation (DESIGN 21.15) |  As above|
 | `dirac`, `dirac_representation` | Ported | `dirac`, whose `.representer` is the second | |
 | `geodesic_distance`, `geodesic_quadrature`, `geodesic_ball_quadrature` | Ported | same names | |
 | `geodesic_ball_integral`, `geodesic_ball_average` | Ported | `geodesic_ball_average_operator` | |

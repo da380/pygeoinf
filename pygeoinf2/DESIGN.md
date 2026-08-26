@@ -3240,7 +3240,7 @@ cheap, but it is the kind of detail that would give a plausible wrong answer if
 missed.
 
 Staged as **S-NUFFT**, ahead of the rest of package S: it changes what is
-feasible rather than making an existing thing tidier.
+feasible rather than making an existing thing tidier. **Built; see §21.15.**
 
 ### 21.13 Phase 3 as built
 

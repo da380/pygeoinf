@@ -40,6 +40,13 @@ _ORTHONORMAL = 4
 # so a chunk is about 30 MB whatever the truncation.
 _CHUNK_ENTRIES = 4_000_000
 
+# When the transform route wins. Its cost is fixed in the number of points --
+# one analysis, one FFT, one NUFFT -- while the direct sum costs one basis
+# evaluation per point per component, so the crossover is a threshold on both.
+# Measured at lmax 32, 64 and 128 across four point counts; see DESIGN.md 21.15.
+_TRANSFORM_MIN_POINTS = 512
+_TRANSFORM_MIN_DIM = 512
+
 # pyshtools spells "leave the Condon-Shortley phase out" as csphase=1.
 _NO_CONDON_SHORTLEY = 1
 
@@ -344,32 +351,186 @@ class Sphere(SymmetricSpace):
         for start in range(0, len(points), per_chunk):
             yield points[start : start + per_chunk]
 
-    def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
-        """Field values at scattered points.
+    # ----------------------------------------------------------------- #
+    #                    The double Fourier sphere                      #
+    # ----------------------------------------------------------------- #
 
-        One batched Legendre evaluation per chunk of points, rather than one
-        expansion call per point.
+    @cached_property
+    def _quadrature(self) -> np.ndarray:
+        """The transform's own quadrature weight for each grid row.
+
+        :meth:`to_components` is a quadrature, so ``to_components(e_jk)`` is a
+        row-dependent multiple of ``basis_at(p_jk)`` — verifiably so, the ratio
+        being constant across every component. Reading that multiple off gives
+        the weights exactly, from the transform that will be used with them,
+        rather than from a formula that might not match its conventions.
+
+        Returned up to a common constant, which is all that is needed: the
+        constant cancels in :meth:`_synthesis_adjoint`.
+
+        **The pole row's weight is zero**, since the grid samples colatitude on
+        ``[0, pi)`` and the quadrature gives the pole no area. Anything sitting
+        there is invisible to the transform and has to be added back by hand.
         """
-        components = self.to_components(x)
-        return np.concatenate(
-            [self.basis_matrix(chunk) @ components for chunk in self._in_chunks(points)]
+        rows, columns = self.grid_shape
+        reference = float(self.basis_at(np.array([0.5, 0.0]))[0])
+        weights = np.empty(rows)
+        for row in range(rows):
+            indicator = np.zeros(self.grid_shape)
+            indicator[row] = 1.0
+            weights[row] = self.to_components(indicator)[0] / (columns * reference)
+        return weights
+
+    @cached_property
+    def _south_pole_basis(self) -> np.ndarray:
+        """The basis at colatitude ``pi``, which the grid does not sample."""
+        return self.basis_at(np.array([np.pi, 0.0]))
+
+    def _synthesis_adjoint(self, values: np.ndarray, /) -> np.ndarray:
+        """``sum_jk v_jk phi(p_jk)``: the transpose of synthesis onto the grid.
+
+        Not the analysis, which is the *inverse*. The two differ by the
+        quadrature weights, and by the pole row that the quadrature drops
+        entirely.
+        """
+        weights = self._quadrature
+        live = weights > 0.0
+        scaled = np.zeros(self.grid_shape)
+        scaled[live] = values[live] / weights[live, None]
+        total = self.to_components(scaled)
+        for row in np.flatnonzero(~live):
+            total = total + values[row].sum() * self.basis_at(
+                np.array([float(self.colatitudes[row]), 0.0])
+            )
+        return total
+
+    def _double(self, field: np.ndarray, /) -> np.ndarray:
+        """The double-Fourier-sphere extension, sampled on a doubled grid.
+
+        ``g(theta, phi) == f(theta, phi)`` on ``[0, pi]`` and
+        ``g(2 pi - theta, phi) == f(theta, phi + pi)`` beyond it. For a
+        band-limited ``f`` the result is a *trigonometric polynomial* on the
+        torus, which is what makes one FFT of it exact.
+        """
+        rows, columns = self.grid_shape
+        doubled = np.empty((2 * rows, columns))
+        doubled[:rows] = field
+        # theta == pi is the south pole: not a grid row, so it is evaluated.
+        doubled[rows] = float(self._south_pole_basis @ self.to_components(field))
+        doubled[rows + 1 :] = np.roll(field[1:][::-1], columns // 2, axis=1)
+        return doubled
+
+    def _double_adjoint(self, doubled: np.ndarray, /) -> np.ndarray:
+        """The transpose of :meth:`_double`, in components."""
+        rows, columns = self.grid_shape
+        folded = np.array(doubled[:rows], dtype=float)
+        folded[1:] += np.roll(doubled[rows + 1 :][::-1], columns // 2, axis=1)
+        return self._synthesis_adjoint(folded) + doubled[rows].sum() * (
+            self._south_pole_basis
         )
 
-    def accumulate(self, weights: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
+    def _angles(self, points: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
+        """Points as two contiguous arrays of radians."""
+        positions = np.asarray([np.asarray(point, dtype=float) for point in points])
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            raise ValueError("Points are (colatitude, longitude) pairs in radians.")
+        return (
+            np.ascontiguousarray(positions[:, 0]),
+            np.ascontiguousarray(positions[:, 1]),
+        )
+
+    def _use_transform(self, count: int) -> bool:
+        """Whether the transform route is cheaper than summing the basis.
+
+        The transform costs a fixed amount — one analysis, one FFT, one NUFFT —
+        while the direct sum costs one basis evaluation per point per
+        component. So both sides of the crossover matter: a large truncation
+        makes the direct sum expensive per point, and a small one makes the
+        transform's fixed cost not worth paying however many points there are.
+        """
+        try:
+            import finufft  # noqa: F401
+        except ImportError:  # pragma: no cover - depends on the install
+            return False
+        return count >= _TRANSFORM_MIN_POINTS and self.dim >= _TRANSFORM_MIN_DIM
+
+    def evaluate(
+        self, x: np.ndarray, points: Sequence[Any], /, *, eps: float = 1.0e-10
+    ) -> np.ndarray:
+        """Field values at scattered points.
+
+        Above a size threshold this goes through the double Fourier sphere and
+        a type-2 non-uniform FFT, which costs ``O(dim log dim + n)`` against the
+        direct sum's ``O(n dim)``. Below it, the fixed cost of the transforms is
+        not worth paying and the basis is summed directly.
+
+        Args:
+            x: a field of this space.
+            points: ``(colatitude, longitude)`` pairs in radians.
+            eps: the NUFFT's requested accuracy, when it is used.
+        """
+        points = tuple(points)
+        if not self._use_transform(len(points)):
+            components = self.to_components(x)
+            return np.concatenate(
+                [
+                    self.basis_matrix(chunk) @ components
+                    for chunk in self._in_chunks(points)
+                ]
+            )
+
+        import finufft
+
+        rows, columns = self.grid_shape
+        coefficients = np.fft.fft2(self._double(x)) / (2 * rows * columns)
+        colatitudes, longitudes = self._angles(points)
+        values = finufft.nufft2d2(
+            colatitudes,
+            longitudes,
+            np.ascontiguousarray(np.fft.fftshift(coefficients)),
+            isign=+1,
+            eps=eps,
+        )
+        return np.ascontiguousarray(np.atleast_1d(values).real)
+
+    def accumulate(
+        self, weights: np.ndarray, points: Sequence[Any], /, *, eps: float = 1.0e-10
+    ) -> np.ndarray:
         """The derivative components of ``x -> sum_i y_i x(r_i)``.
 
-        The transpose of :meth:`evaluate`'s matrix, chunked the same way.
+        The transpose of :meth:`evaluate`, step for step: a type-1 NUFFT where
+        that used a type-2, the same FFT — the discrete Fourier matrix is
+        symmetric, so it is its own transpose — and then the transposes of the
+        fold and of synthesis onto the grid.
         """
+        points = tuple(points)
         values = np.asarray(weights, dtype=float)
-        total = np.zeros(self.dim)
-        offset = 0
-        for chunk in self._in_chunks(points):
-            end = offset + len(chunk)
-            total += self.basis_matrix(chunk).T @ values[offset:end]
-            offset = end
-        if offset != values.size:
-            raise ValueError(f"Got {values.size} weights for {offset} points.")
-        return total
+        if values.size != len(points):
+            raise ValueError(f"Got {values.size} weights for {len(points)} points.")
+
+        if not self._use_transform(len(points)):
+            total = np.zeros(self.dim)
+            offset = 0
+            for chunk in self._in_chunks(points):
+                end = offset + len(chunk)
+                total += self.basis_matrix(chunk).T @ values[offset:end]
+                offset = end
+            return total
+
+        import finufft
+
+        rows, columns = self.grid_shape
+        colatitudes, longitudes = self._angles(points)
+        spectrum = finufft.nufft2d1(
+            colatitudes,
+            longitudes,
+            np.ascontiguousarray(values.astype(complex)),
+            (2 * rows, columns),
+            isign=+1,
+            eps=eps,
+        )
+        doubled = np.fft.fft2(np.fft.ifftshift(spectrum)) / (2 * rows * columns)
+        return self._double_adjoint(doubled.real)
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """Sample a function on the grid.
