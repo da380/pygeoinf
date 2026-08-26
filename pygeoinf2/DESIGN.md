@@ -2164,3 +2164,485 @@ removed; **second derivatives are supported for general operators**, curried and
 optional; **the derivative is primitive and the gradient derived** (§5.6);
 direct sums are in and tensor products of spaces are out; complex data is
 handled by realification rather than a complex core (§3.4).
+
+
+
+## 18 Inverse problems. 
+
+Here are some rough notes on how the inverse problem section will be redone. It is all based 
+on the following methods for classification along a number of axes. First, there is a distinction 
+between inverse and inference problems. In an inverse problem you output a model or an object (subset, distribution)
+on the model space. In an inference problem there is an associated property operator to a finite-dimensional space 
+of quantities of interest (the property space), and the aim is to output a property vector or a subset or distribution 
+on that space. Next, we have different types of prior information. There could be none, in which case you map data 
+to a point in either the model space or property space (least squares and backus-gilbert would be examples of this). 
+You might have prior information as a distribution on the model space, in which case you map to a distribution 
+on the model or property spaces (this is Bayesian, of course). Finally, you might have a constraint set on the 
+model space as prior, and then you map to a constraint set on the model or property space, with the latter being the 
+norm here; these are the backus-type methods that we wrote about later. Added to this you then have the usual 
+linear non-linear split. And you have specialisations for different types of prior (e.g., Gaussian priors, convex constraint 
+sets). Currently its really just the linear cases with either Gaussian or convex priors that are implemented, but we want a general 
+structure in place. If you look, there are already quite a few methods, while there are low hanging fruit on the linear side -- simple 
+Backus-Gilbert type estimators that aim to reconsruct a property vector without prior constrainta -- this is the so called "SOLA" method, but note
+that we will not reuse this term as bakcus 1970 wrote about it first and the SOLA papers all miss this (and parker developed backus' ideas too 
+which they also ignore). This is hopefully a starting point for planning. Some good names will be helpful -- the current ones on the 
+convex analysis side need work in particular. 
+
+Oh, and another point, I still want there to be an explicitly named symmetric_space sub-package. These spaces all have a common structure and they are distinct from other spaces we might later implement. 
+
+### 18.1 The classification is a type signature
+
+The axes above are not documentation. They fix the domain and codomain of every
+method in the layer, and that is the whole interface.
+
+There are **three** axes, and the third is easy to miss. Following the notation
+of the two papers in this directory — `G` there is `A` here, `B` there is `T`:
+
+- the **data relation** is point-valued (`d == A(m)`, exact), measure-valued
+  (`d == A(m) + e` with `e` distributed), or set-valued (`d - A(m) in S_eta`
+  for a convex noise set);
+- the **prior** is absent, a measure `mu_0` on `M`, or a convex set `S_M` in `M`;
+- the **target** is the model space, or a property space `P` reached by `T`.
+
+The first two together give the frameworks. Measure/measure is Bayesian.
+Set/set is the geometric case both papers develop. The mixed cells are hybrids
+and are out of scope, as BGP's Table 1 also says.
+
+Given a data relation and a prior, the target fixes what comes out:
+
+| | **no prior** | **measure prior** | **set prior** |
+|---|---|---|---|
+| **target = model** `M` | `D -> M` | `D -> Measure(M)` | `D -> Set(M)` |
+| **target = property** `P` | `D -> P` | `D -> Measure(P)` | `D -> Set(P)` |
+
+Two consequences carry the design.
+
+**The answer kind matches the prior kind.** No prior gives a point, a
+distribution gives a distribution, a constraint set gives a constraint set.
+That is the rule that says these six exist and stops a seventh being invented.
+
+**The property row is the model row pushed forward through `T`.** Push-forward
+of a point is `T m`; of a measure it is `affine_mapping`; of a convex set it is
+the support-function image, which `geometry` already computes. An inverse
+problem is an inference problem with `T == identity`, so `target` defaults to
+the identity and there is one code path, not two.
+
+So there are four algorithms, not six:
+
+| cell | status | note |
+|---|---|---|
+| `(none, M)` | v1 has it | Tikhonov and minimum-norm, `linear_optimisation.py` |
+| `(measure, M)` | v1 has it | the posterior, `linear_bayesian.py` |
+| `(set, M)` | nearly free | prior set intersected with the preimage of the noise set |
+| `(measure, P)` | free | push the posterior through `T` |
+| `(none, P)` | **empty in v1** | see §18.3 |
+| `(set, P)` | v1 has it | `convex_optimisation.py`; four routes, §18.3 |
+
+**Converting between the axes is possible but never canonical.** A Gaussian
+data error hardens into an ellipsoid at a chosen chi-squared level; a measure
+prior hardens into a ball. The reverse restores detail the set never carried.
+Backus (1988) argued a measure prior is strictly the richer object, so the
+passage set -> measure *adds* an assumption and measure -> set *discards*
+information. Both directions get a named method that says which it is doing —
+`harden(level=...)` and nothing at all in the other direction without an
+explicit choice — rather than an implicit conversion inside a constructor.
+
+### 18.2 Why two cells are computed in the dual, and what that buys
+
+`(none, P)` and `(set, P)` are still push-forwards mathematically, but they are
+not computed that way, for different reasons.
+
+With **no prior**, the model-space answer is ill-posed: `D -> M` needs a damping
+nobody can justify. A well-chosen property need not — that is the whole Backus
+and Gilbert motivation, and it is why the empty cell is worth filling rather
+than deriving.
+
+With a **set prior**, the model-space answer is well defined but lives in an
+infinite-dimensional space. A convex subset of `M` can be *represented* and can
+answer `contains`; it cannot be explored. Its image in a finite-dimensional `P`
+can be, one support direction at a time.
+
+The payoff is a test rather than an assertion. **Where two routes to the same
+set both exist, they must agree.** §18.3 gives four of them, overlapping in
+pairs, and every overlap is a parity test. Every real defect found in this
+refactor was caught by an independent computation of this kind, and this is the
+layer where the temptation to skip that is strongest.
+
+v1 already states the central identity without naming it.
+`DualMasterCostFunction.__doc__` gives
+
+```
+h_U(q) = inf_{lambda in D} { (lambda, d~)_D + sigma_B(T* q - G* lambda) + sigma_V(-lambda) }
+```
+
+which is BGP eq. (28): the support function of an image, computed by duality.
+Naming it as such is most of the modernisation.
+
+### 18.3 The set-theoretic case: one set, four routes
+
+The feasible model set and its image are
+
+```
+S_M = S_M^0  intersect  A^-1(d~ - S_eta)
+S_P = T(S_M)
+```
+
+both convex when `S_M^0` and `S_eta` are (BGP eqs. 4-5). `S_P` is characterised
+by its support function `h(q) = sup { (q, p) : p in S_P }`, and a closed convex
+set is determined by it (Rockafellar 13.1-13.2). Four routes compute it, in
+increasing order of cost and generality. **They are the same set**, which is
+what makes them testable against each other.
+
+**(a) Closed form — no data error, ball prior.** Al-Attar (2021) eq. (2.84).
+With `m~ == A*(A A*)^-1 d~` the minimum-norm model and `p~ == T m~`,
+
+```
+S_P = { p : ((T P_ker(A) T*)^-1 (p - p~), p - p~) <= r^2 - ||m~||^2 }
+```
+
+An **ellipsoid**, centred at `p~`, shaped by `T P_ker(A) T*`, and costing
+`dim(P) + 1` minimum-norm solves: eq. (2.88) gives the shape column by column
+as `T(u_j - u~_j)` with `u_j == T* g_j`. Every piece of this already exists —
+`A A*` is recognised positive-semidefinite by the palindrome rule,
+`OrthogonalProjector.onto_kernel` is example 18's subject, and `Ellipsoid`
+carries the closed-form support function `(p~, q) + sqrt((r^2 - ||m~||^2)(Sq, q))`
+that eq. (2.89) derives by Lagrange multipliers. **This is the low-hanging
+fruit**, and it is nearly free.
+
+Two ellipsoids of the same family bracket it and are worth returning together:
+the prior alone, `((T T*)^-1 p, p) <= r^2` (eq. 2.85), and the Backus-Gilbert
+one below, which is the same shape with `r^2` in place of `r^2 - ||m~||^2`.
+
+**(b) Linear certificate — any `X`, valid always.** BGP §2.5. Weak duality
+means *every* `lambda` gives a valid bound, so restricting to a linear family
+`lambda(q) == L q`, `X == L*`, costs sharpness and never validity. The dual cost
+collapses to the support function of a **Minkowski sum**,
+
+```
+X d~  +  (T - X A) S_M^0  +  (-X) S_eta
+```
+
+and for norm balls to `(q, X d~) + M ||(T - X A)* q|| + D ||L q||`: a resolution
+term and a noise term, added. Choosing `X` by the quadratic surrogate
+`M^2 ||T - X A||_HS^2 + D^2 ||C_D X||_HS^2` gives
+
+```
+X = T A* (A A* + alpha C_D)^-1,    alpha = D^2 / M^2
+```
+
+which is the Backus-Gilbert estimator — a Tikhonov-regularised least-norm
+solution pushed through `T`. Al-Attar (2021) eq. (2.106) is the `alpha -> 0`
+case, and its eq. (2.109) is the resulting ellipsoid. That paper also explains
+why it is looser than (a): the optimality criterion `tr[(T - XA)(T - XA)*]`
+never mentions the data, so the norm budget the data has already consumed is
+not credited back.
+
+This is the honest form of an error bar on a Backus-Gilbert point estimate. The
+estimate is `X d~`; the uncertainty is a set, and it separates into what the
+data cannot resolve and what the noise contributes.
+
+**(c) Primal — ball constraints, exact.** BGP §2.6. The support value is a
+concave maximisation over the intersection of two balls; multipliers `s, t`
+attached to the prior and data constraints give the stationarity condition
+
+```
+(s I + t A* A) m = T* q + t A* d~
+```
+
+which is a **damped least-squares solve** with damping `gamma == s/t`. The
+multipliers are fixed by `||m*|| == M` and `||d~ - A m*|| == D`; both residuals
+are monotone in their own multiplier, so nested bisection converges. If the
+prior support point `M T* q / ||T* q||` already fits the data, the data
+constraint is slack and `h(q) == M ||T* q||` in closed form. Unlike the dual,
+this route returns the **extremal model** attaining the bound.
+
+**(d) Dual — general convex sets.** BGP §2.4, the formula above. Needs only the
+support functions of `S_M^0` and `S_eta`, which `geometry` supplies, and a
+nonsmooth convex minimisation over `lambda in D` — the bundle methods. This is
+the general route and the expensive one.
+
+The overlaps are the tests. (a) and (c) agree when the noise set is trivial;
+(c) and (d) agree for norm balls; (b) bounds all of them from outside, always,
+by construction.
+
+### 18.4 Inner and outer: never report one alone
+
+Support-function evaluation in directions `q_1, ..., q_N` gives a **certified
+outer** polyhedron (BGP eq. 11):
+
+```
+P_N = intersect_j { p : -h(-q_j) <= (q_j, p) <= h(q_j) }
+```
+
+Each direction can only tighten it; the coordinate directions alone give an
+axis-aligned box, which contains `S_P` but throws away every correlation
+between properties — and the correlations are the reason for working in a
+multi-dimensional `P` at all.
+
+Feasibility testing (§18.5) at sampled points and taking the convex hull gives
+an **inner** approximation. It is an underestimate and, for a curved boundary,
+always a strict one.
+
+The two sandwich `S_P`, and the API should make it impossible to mistake one
+for the other. An inner hull returned on its own reads as the answer while
+being a guaranteed undercount, which is exactly BGP's Figure 4. So a set
+estimator returns an object that knows which side it is on, and the gap between
+them is the accuracy statement.
+
+### 18.5 Testing a property value for admissibility
+
+Al-Attar (2021) §2.3 and §3.3. Worth implementing in its own right: it is the
+membership oracle behind the inner approximation, and it answers "is this
+value possible?" without computing the whole set.
+
+**Error-free.** Parker's joint data-property map `C == (A, T) : M -> D (+) P`.
+A value `p` is admissible exactly when the minimum-norm model reproducing both
+the data and that property stays inside the prior ball:
+
+```
+min { ||m|| : A m == d~, T m == p }  <=  r
+```
+
+which is `||C^+(d~ (+) p)|| <= r` (eq. 2.46-2.47). `C C*` acts on `D (+) P`,
+so this is Parker's square system of size `dim(D) + dim(P)`, it is
+positive-semidefinite by the palindrome rule, and `Column` already builds `C`.
+The paper notes `p -> ||C^+(d~ (+) p)||` is convex and continuous, so the
+admissible set is convex and bounded — which is the primal proof of what §18.3
+computes by duality.
+
+**With data errors.** Reduce to the subspace: `m~ == T*(T T*)^-1 p`,
+`r'^2 == r^2 - ||m~||^2` — already a failure if negative — and then the same
+problem inside `ker T`, replacing `A*` by `P_ker(T) A*`. Feasibility is decided
+by a scalar root find over the multiplier `eta`, where **Lemma 3.1** proves
+`eta -> l(d~ - A m_eta)` is non-increasing. If its limit stays above the
+confidence level there is no root, and that is a *constructive proof of
+incompatibility* rather than a failure to converge.
+
+`l` there is any strictly convex negative log-likelihood, not only the Gaussian
+one, so this generalises past the chi-squared case for free.
+
+### 18.6 One numerical kernel
+
+Routes (a), (c), the inclusion test, and the discrepancy principle already in
+v1's `LinearMinimumNormInversion` are all the same computation:
+
+> **a damped least-squares solve inside a monotone scalar root find.**
+
+Monotonicity is proved in each case — Lemma 3.1 for the likelihood multiplier,
+BGP §2.6 for the two ball multipliers — so bisection is guaranteed, and
+non-existence of a root is itself the answer to a feasibility question. One
+primitive, four users, and each of them already has a solver: CG on
+`A* A + gamma I`, or the data-space form when `dim(D)` is smaller.
+
+That primitive belongs in `numerics`, not in the inference layer.
+
+### 18.7 The interface
+
+`ForwardProblem` stays what its name says: the observation model, `A` and the
+data uncertainty — a measure or a convex set, per §18.1. The prior and the
+target are arguments to the **estimator**, because the prior is what selects the
+method. One problem can then be attacked several ways without being rebuilt,
+which is the usual workflow.
+
+```python
+problem = LinearForwardProblem(A, error=noise)
+
+point = MinimumNorm(problem, solver=CG())         # D -> M
+post  = Bayesian(problem, prior, solver=CG())     # D -> Measure(M)
+band  = BackusInference(problem, ball, target=T)  # D -> Set(P)
+
+mu = post(data)
+```
+
+The estimator **is** the mapping. Three abstract kinds, distinguished only by
+what `__call__` returns:
+
+```python
+class Estimator(ABC):
+    data_space: HilbertSpace
+    target_space: HilbertSpace
+    def __call__(self, data: Vector) -> Any: ...
+    def push_forward(self, T: LinearOperator) -> Estimator: ...
+
+class PointEstimator(Estimator):    # -> Vector in target_space
+class MeasureEstimator(Estimator):  # -> ProbabilityMeasure on target_space
+class SetEstimator(Estimator):      # -> Subset of target_space
+```
+
+`push_forward` is implemented once per kind, and that single method is the
+second consequence of §18.1 made executable.
+
+**A linear point estimator is an `AffineOperator`.** v1 already returns one from
+`least_squares_operator`, so `LinearPointEstimator` subclasses `AffineOperator`
+and joins the existing algebra. It carries what the method actually produces:
+
+```python
+estimator.operator      # X  : D -> P      the estimator itself
+estimator.resolution    # XA : M -> P      the averaging kernel
+estimator.uncertainty() # a Set or a Measure, per the prior kind
+```
+
+The resolution operator is the *output* of a Backus-Gilbert method, not a
+diagnostic bolted on afterwards, which is the argument for a typed estimator
+over a bare `LinearOperator`.
+
+**A linear Gaussian estimator has a data-independent covariance.** Only the mean
+moves, and affinely, so the object is a pair and the push-forward is one line:
+
+```python
+class GaussianEstimator(MeasureEstimator):
+    mean_map: AffineOperator      # D -> X
+    covariance: LinearOperator    # on X
+
+    def __call__(self, data):
+        return GaussianMeasure(self.covariance, self.mean_map(data))
+
+    def push_forward(self, T):
+        return GaussianEstimator(T @ self.mean_map, T @ self.covariance @ T.adjoint)
+```
+
+That is cell `(measure, P)` complete. It is worth a direct path anyway, since
+`T C T*` on a small `P` is cheaper than forming the posterior covariance on `M`.
+
+Randomize-then-optimise sampling depends on the data, so the sampler is
+constructed inside `__call__` rather than stored.
+
+**The three kinds are connected.** A linear point estimator `X` induces a
+measure-valued one — mean `X d`, covariance `X R X*` — which induces a
+set-valued one through `credible_set`. With a ball prior it induces a
+set-valued one directly, by §18.3(b). Those bridges are methods, not duplicated
+implementations.
+
+### 18.8 Names
+
+The Backus family keeps the names of the people who did the work first.
+`BackusGilbert` for the no-prior property estimator, `BackusInference` for the
+constraint-set one, crediting Backus (1970) and Parker (1977) rather than the
+later SOLA literature, which reached the same construction without the
+citation. `BackusInference` takes a `method` argument selecting among the four
+routes of §18.3, defaulting to the cheapest one its arguments admit.
+
+The algorithm names — bundle methods, Chambolle-Pock, the KKT solver — retreat
+into `numerics.convex` as solver strategies, where they describe how rather than
+what.
+
+Everything else keeps its standard name: least squares, Tikhonov, minimum norm,
+Bayesian.
+
+### 18.9 What leaves the inversion layer
+
+`LinearBayesianInversion` has 25 methods. Four of them are inversion.
+
+| v1 | goes to |
+|---|---|
+| `diagonal_normal_preconditioner`, `sparse_localized_preconditioner`, `woodbury_data_preconditioner`, `woodbury_model_preconditioner` and their four surrogate variants | `numerics.preconditioners` |
+| `_trace_log_slq`, `estimate_log_determinant` | `numerics.functional_calculus` — already ported |
+| `low_rank_surrogate` | `numerics.randomised` — already ported |
+| `parameterized_inversion`, `data_reduced_inversion` | already just forward to `ForwardProblem`; drop the forwarders |
+| `log_evidence`, `mahalanobis_evidence_term` | stay, as a functional on the data rather than a method returning a float |
+
+The same applies to `linear_optimisation.py`, where the `woodbury_*` and
+`surrogate_*` methods repeat on each of four classes.
+
+### 18.10 The `formalism` flag
+
+`formalism="model_space" | "data_space"` selects between assembling `Q^-1 +
+A* R^-1 A` on `M` and `A Q A* + R` on `D`. This is a **computational** choice:
+both assemble the same mapping, and which is cheaper depends only on
+`dim(M)` against `dim(D)`.
+
+So it belongs on the construction of the estimator, not on the problem, and it
+defaults to whichever is smaller when both dimensions are known — falling back
+to an explicit choice when they are not, as for an MFEM-backed model space. The
+two paths must be tested to produce the same operator;
+`tests/test_linear_optimisation.py:120-128` already does exactly this, so the
+harness is inherited rather than written.
+
+The same reduction appears in BGP §2.6: the Woodbury identity turns the
+model-space damped solve into a `dim(D)` square system that can be assembled
+and factored once and reused across directions and multiplier values. That is
+the same flag, reached from the set-theoretic side, and it is the reason the
+bisection of §18.6 is affordable at all.
+
+### 18.11 Predicates become geometry
+
+`chi_squared_test(model, data)` asks whether the data lies in an ellipsoid
+around `A(model)`. `test_data_compatibility(data)` asks whether the feasible set
+is non-empty. Both are `geometry` questions wearing a boolean, and in v2 the
+object comes first:
+
+```python
+problem.consistency_set(model, level=0.95)   # an Ellipsoid in D
+feasible(data).is_empty()                    # on the set estimator
+```
+
+The booleans stay as conveniences on top. Note that `consistency_set` is also
+exactly the hardening of §18.1 — the data error measure at a chi-squared level —
+so a Gaussian problem and a set problem meet here rather than in two code paths.
+
+### 18.12 What `geometry` still needs
+
+Three constructors, all prerequisites rather than afterthoughts:
+
+- **`ConvexSet.from_support_function`** — a set defined by an oracle, since
+  route (d) evaluates one bundle solve per direction.
+- **Minkowski sums** — route (b) returns `X d~ + (T - XA) S_M^0 + (-X) S_eta`,
+  and support functions add. v1 has `MinkowskiSumSupportFunction`; v2 has
+  nothing.
+- **`Polytope`**, as an intersection of half-spaces with a recorded inner/outer
+  status, so §18.4's sandwich has a type rather than a convention.
+
+The linear image of a convex set already works, and it is the operation
+everything here is built from.
+
+### 18.13 Stages
+
+| | |
+|---|---|
+| 5.1 | `problem.py`: port `ForwardProblem` onto the v2 core — measure *or* set data uncertainty, direct sums, parameterisation, data reduction, synthetic data, consistency sets |
+| 5.2 | `estimators.py`: the three kinds, `push_forward`, `LinearPointEstimator`, `GaussianEstimator` |
+| 5.3 | `point.py`: least squares and minimum norm, with the formalism parity test; the damped-solve-inside-a-root-find primitive into `numerics` |
+| 5.4 | `bayesian.py`: the posterior, and the direct `(measure, P)` path |
+| 5.5 | `geometry`: `from_support_function`, Minkowski sums, `Polytope` |
+| 5.6 | `BackusGilbert`: the point estimate `X d~`, the resolution operator, and the route-(b) uncertainty set — the empty cell, and the cheapest real result in the layer |
+| 5.7 | `BackusInference` route (a): the closed-form ellipsoid, `dim(P) + 1` solves, with the prior-only and Backus-Gilbert ellipsoids that bracket it |
+| 5.8 | the inclusion test of §18.5, error-free then with errors, and the inner hull it supports |
+| 5.9 | `BackusInference` routes (c) and (d): primal bisection, then the dual with bundle methods; the parity tests between all four |
+| 5.10 | move the preconditioners and evidence machinery out; delete the forwarders |
+
+Stages 5.6 to 5.8 are worth doing before 5.9. They are closed-form or
+near-closed-form, they need no convex solver, and they produce the reference
+values that make the bundle-method route testable rather than merely plausible.
+
+The two papers in this directory are the specification for 5.5 onwards, and
+both cite this package as their implementation. Their worked examples —
+spherical-cap averages under a `H^{3/2}(S^2)` Sobolev prior, and a two-field
+flexure-gravity problem — are within reach of the existing `symmetric_space`
+sphere and are the natural end-to-end tests.
+
+The nonlinear generalisation is deliberately not staged here. The point of
+making every method a mapping with a declared domain and codomain is that the
+nonlinear versions occupy the same table with the same signatures — a nonlinear
+`PointEstimator` is a general `Operator` rather than an `AffineOperator`, and a
+nonlinear `MeasureEstimator` no longer has a data-independent covariance. Those
+are the two places the linear specialisation is used, and they are the two
+places to look when the time comes.
+
+## 19. The symmetric-space package
+
+**Done.** `pygeoinf2/spaces/` is now `pygeoinf2/symmetric_space/`, `invariant.py`
+is `base.py`, and `InvariantSpace` is `SymmetricSpace`, so the package and its
+base class say the same thing.
+
+Everything in it qualifies: the circle, the torus and the N-dimensional
+periodic box are homogeneous, and `box.py`'s intervals and boxes are built by
+embedding into them — which is how v1 arranges `line.py` and `plane.py` for the
+same reason. These spaces share a structure that no later space will, and the
+name now says so.
+
+**Invariance stays the word for operators.** A `DiagonalLinearOperator` on such
+a space is invariant under the group action; the space is symmetric. Using both
+words for both things is what made the current naming read oddly.
+
+`spaces` is now free for the cases that are not homogeneous — a finite element
+space, an arbitrary mesh — which is where the MFEM backend already points.
