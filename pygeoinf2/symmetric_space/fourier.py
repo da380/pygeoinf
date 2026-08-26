@@ -168,6 +168,18 @@ class PeriodicBox(SymmetricSpace):
         """The period along each axis."""
         return self._lengths
 
+    @cached_property
+    def degrees(self) -> np.ndarray:
+        """The wavenumber magnitude of each component, rounded down.
+
+        The analogue of a harmonic degree: components sharing one are the
+        modes of a common spatial scale.
+        """
+        wavenumbers = self._packing.wavenumbers
+        return np.floor(np.sqrt(np.sum(wavenumbers.astype(float) ** 2, axis=0))).astype(
+            int
+        )
+
     @property
     def gaussian_curvature(self) -> float:
         """Zero: a periodic box is flat."""

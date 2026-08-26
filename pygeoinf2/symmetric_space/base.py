@@ -124,6 +124,112 @@ class SymmetricSpace(
             )
         return DiagonalLinearOperator(self, values, traits=traits)
 
+    def spectral_operator(
+        self, values: np.ndarray, /, *, traits: Traits = Traits.NONE
+    ) -> DiagonalLinearOperator:
+        """A diagonal operator from an explicit value per component.
+
+        More general than :meth:`invariant_operator`, whose symbol can only
+        depend on the Laplacian eigenvalue. An operator built here need not be
+        invariant — a band-limiting projection is the obvious case — so nothing
+        is claimed about it beyond what the values themselves imply.
+
+        v1 spells this ``InvariantLinearAutomorphism.from_index_function``.
+        Taking an array rather than a callable on indices is what lets the
+        caller write ``space.spectral_operator(f(space.degrees))``.
+        """
+        array = np.asarray(values, dtype=float)
+        if array.shape != (self.dim,):
+            raise ValueError(f"Expected {self.dim} values, got {array.shape}.")
+        return DiagonalLinearOperator(self, array, traits=traits)
+
+    @property
+    def degrees(self) -> np.ndarray:
+        """The index attached to each component, for a degree-wise symbol.
+
+        On a sphere this is the harmonic degree; on a box, the wavenumber
+        magnitude rounded down. What it is for is writing a symbol that depends
+        on where a component sits rather than on its eigenvalue.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not name a degree per component."
+        )
+
+    def degree_multiplicity(self, degree: int, /) -> int:
+        """How many components share a degree."""
+        return int(np.count_nonzero(self.degrees == degree))
+
+    def spectral_projection_operator(
+        self, /, *, lmin: int = 0, lmax: int | None = None
+    ) -> DiagonalLinearOperator:
+        """The projection onto a band of degrees, *within* this space.
+
+        The companion of a coefficient operator, which maps *out* of the space
+        into a Euclidean one. This stays put: it zeroes everything outside the
+        band and leaves the rest alone, so it is an idempotent self-adjoint
+        projection.
+        """
+        degrees = self.degrees
+        top = degrees.max() if lmax is None else lmax
+        keep = ((degrees >= lmin) & (degrees <= top)).astype(float)
+        return self.spectral_operator(
+            keep, traits=Traits.SELF_ADJOINT | Traits.IDEMPOTENT
+        )
+
+    def order_inclusion_operator(self, target: "SymmetricSpace", /) -> LinearOperator:
+        """The identity, read from this space into one of a different order.
+
+        The same function, viewed in a different metric. It is *not* the
+        identity operator: its adjoint carries the ratio of the two metrics,
+        which is exactly what makes ``H^s -> H^t`` a bounded inclusion rather
+        than a relabelling.
+        """
+        if target.dim != self.dim:
+            raise ValueError(
+                f"An inclusion needs matching dimensions; {self.dim} against "
+                f"{target.dim}."
+            )
+        return lift_formal_adjoint(LinearOperator.identity(self), self, codomain=target)
+
+    def l2_products_operator(self, fields: Sequence[np.ndarray], /) -> LinearOperator:
+        """Inner products against a set of fields, in the ``L2`` metric.
+
+        ``x -> [(f_i, x)_L2]``. The ``L2`` products specifically, not this
+        space's: the rows are the fields' own components, so the operator means
+        the same thing whatever Sobolev order it is read on.
+        """
+        from ..algebra.spaces import EuclideanSpace
+
+        fields = tuple(fields)
+        if not fields:
+            raise ValueError("At least one field is needed.")
+        base = self if self.order == 0.0 else self.with_order(0.0)
+        rows = np.stack([base.to_components(field) for field in fields])
+        return LinearOperator.from_derivative_matrix(
+            self, EuclideanSpace(len(fields)), rows
+        )
+
+    def estimate_truncation_degree(
+        self, symbol: Callable[[np.ndarray], np.ndarray], /, *, tolerance: float = 1e-3
+    ) -> int:
+        """The smallest degree holding all but ``tolerance`` of a spectrum's power.
+
+        For choosing a truncation from a prior rather than by habit: pass the
+        spectral variances and get the degree beyond which the field has
+        negligible energy.
+        """
+        if not 0.0 < tolerance < 1.0:
+            raise ValueError(f"The tolerance lies in (0, 1), got {tolerance}.")
+        power = np.asarray(symbol(self.laplacian_eigenvalues), dtype=float)
+        degrees = self.degrees
+        order = np.argsort(degrees)
+        cumulative = np.cumsum(power[order])
+        total = cumulative[-1]
+        if total <= 0.0:
+            return 0
+        reached = np.searchsorted(cumulative, (1.0 - tolerance) * total)
+        return int(degrees[order][min(reached, degrees.size - 1)])
+
     def sobolev_symbol(self, order: float, scale: float, /) -> np.ndarray:
         """``(1 + scale^2 lambda)^order``, the Sobolev weight on each mode.
 

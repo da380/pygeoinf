@@ -410,11 +410,11 @@ concentration of things to decide about.
 | `with_sparse_approximation` | Planned (P) | Thresholded sparse covariance. Wanted by the localised preconditioners | Has been used, so probably worth keeping.  |
 | `sample_pointwise_variance`, `sample_pointwise_std` | Subsumed | `pointwise_variance` on a `SymmetricSpace` computes this exactly, without sampling — but only for an *invariant* measure. The sampled version is still the general answer | |
 | `deflated_pointwise_variance`, `deflated_pointwise_std` | Planned (P) | Pointwise variance with a low-rank part removed. Needs `deflated_diagonal` | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
-| `two_point_covariance` | Planned (P) | `C(x, y)` as a function of two points. Not ported | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
-| `directional_statistics`, `directional_covariance`, `directional_variance` | Planned (P) | Statistics of `(x, u)` along given directions. Cheap and useful; no v2 home | Yes. useful. |
+| `two_point_covariance` | Ported | `C(x, y)` as a function of two points. Not ported | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
+| `directional_statistics`, `directional_covariance`, `directional_variance` | Ported | Statistics of `(x, u)` along given directions. Cheap and useful; no v2 home | Yes. useful. |
 | `rescale_directional_variance` | Planned (P) | as above | Again, useful|
-| `kl_divergence` | Planned (P) | Between two Gaussians. Needs `estimate_log_determinant`, which is in `numerics` | Definitely needed, and possibly improvable.|
-| `nuclear_norm`, `hilbert_schmidt_norm` | Planned (P) | Trace-class and Hilbert–Schmidt norms of the covariance. `random_trace` gives the first stochastically | yes, useful |
+| `kl_divergence` | Ported | Between two Gaussians. Needs `estimate_log_determinant`, which is in `numerics` | Definitely needed, and possibly improvable.|
+| `nuclear_norm`, `hilbert_schmidt_norm` | Ported | Trace-class and Hilbert–Schmidt norms of the covariance. `random_trace` gives the first stochastically | yes, useful |
 | — | *(new)* | `mahalanobis_squared`, `log_density`, `grad_log_density`, `precision` | |
 
 ## The concrete spaces
@@ -437,7 +437,7 @@ different metric. So the union of method names is the honest comparison.
 | `laplacian_eigenvalue`, `laplacian_eigenvalues` | Ported | `laplacian_eigenvalues`, as an array | |
 | `laplacian_eigenvector_squared_norm` | Dropped | v1's factor-of-two bookkeeping. v2's Lebesgue basis is orthonormal, so this is identically one (§13.2) | Is this always the case, say if the sphere has non-zero radius or with fourier bases? Please check carefully.|
 | `laplacian_eigenvectors_at_point` | Ported | `basis_at` | |
-| `degree_multiplicity` | Planned (S) | Not ported. Trivial to add | Used in the past, say for traces|
+| `degree_multiplicity` | Ported | Not ported. Trivial to add | Used in the past, say for traces|
 | `fft_factor`, `inverse_fft_factor` | Subsumed | Internal to the transform | |
 | `angle_to_point`, `point_to_angle`, `angle_to_point_x/y`, `circle_space`, `torus_space` | Subsumed | `Box`/`Interval` subclass `PeriodicBox` rather than wrapping it, so there is no conversion (§13.4) | |
 | `gaussian_curvature` | Ported | Not ported | Needed for flexure, and harmless. |
@@ -456,13 +456,13 @@ different metric. So the union of method names is the honest comparison.
 | `to_coefficient_operator`, `from_coefficient_operator` | Ported | `coefficient_operator` | |
 | `with_degree`, `degree_transfer_operator` | Ported | same names | |
 | `with_order` | Ported | same name | |
-| `order_inclusion_operator` | Planned (S) | The embedding `H^s -> H^t`. Not ported | This is useful |
-| `spectral_projection_operator` | Planned (S) | Projection onto a band of degrees. `coefficient_operator` gives the map *out*; this is the projector *within* | Useful |
+| `order_inclusion_operator` | Ported | The embedding `H^s -> H^t`. Not ported | This is useful |
+| `spectral_projection_operator` | Ported | Projection onto a band of degrees. `coefficient_operator` gives the map *out*; this is the projector *within* | Useful |
 | `derivative_operator` | Planned (S) | `d/dx` on the circle and line. Diagonal in the basis, so nearly free | Useful |
 | `flexural_operator`, `inverse_flexural_operator` | Ported | Not ported. `work/flexure.py` and `work/dynamic_topography.py` are built on these, so they gate reproducing two of the worked examples | Useful |
 | `spatial_multiplication_operator` | Ported | Multiplication by a field. Needed for a spatially varying coefficient, so it gates the same two examples | Needed and simple |
-| `l2_products_operator` | Planned (S) | Inner products against a set of fields | Needed|
-| `estimate_truncation_degree` | Planned (S) | Choosing `lmax` from a target accuracy | These are useful |
+| `l2_products_operator` | Ported | Inner products against a set of fields | Needed|
+| `estimate_truncation_degree` | Ported | Choosing `lmax` from a target accuracy | These are useful |
 | `distance_localized_preconditioner` | Planned | M5, with the other preconditioners; needs `pairs_within_distance`, which is ported | This was never as good as I hoped -- so check the implementation -- but should be useful |
 
 ### Measures and fields

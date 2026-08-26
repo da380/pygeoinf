@@ -327,6 +327,110 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return x
         return self._domain.subtract(x, self._expectation)
 
+    def _diagonal_eigenvalues(self) -> np.ndarray | None:
+        """The covariance's spectrum, when it is diagonal in the space's basis."""
+        from ..algebra.diagonal import DiagonalLinearOperator
+
+        covariance = self._covariance
+        if isinstance(covariance, DiagonalLinearOperator):
+            return covariance.eigenvalues
+        return None
+
+    def hilbert_schmidt_norm(self, /, *, method: str = "auto") -> float:
+        """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``."""
+        eigenvalues = self._diagonal_eigenvalues()
+        if eigenvalues is not None and method in ("auto", "diagonal"):
+            return float(np.sqrt(np.sum(eigenvalues**2)))
+        # tr(C* C) is basis-independent, so it comes from the *component*
+        # matrix. The Galerkin one is G C_c, whose trace is a different number.
+        matrix = self._covariance.matrix(form="components")
+        return float(np.sqrt(np.sum(matrix * matrix.T)))
+
+    def nuclear_norm(self, /, *, method: str = "auto") -> float:
+        """The trace norm of the covariance, ``tr|C|``.
+
+        For a covariance this is the trace, since it is positive semidefinite —
+        the total variance of the measure.
+        """
+        eigenvalues = self._diagonal_eigenvalues()
+        if eigenvalues is not None and method in ("auto", "diagonal"):
+            return float(np.sum(np.abs(eigenvalues)))
+        # A covariance is positive semidefinite, so its trace norm is its
+        # trace -- and a trace is the component matrix's, not the Galerkin
+        # matrix's, which carries an extra factor of the metric.
+        return float(np.trace(self._covariance.matrix(form="components")))
+
+    def _weighted_squared(self, vector: X, /) -> float:
+        """``(C^-1 v, v)``, from the precision if there is one, else densely.
+
+        In Galerkin form the quadratic is ``g^T C_gal^-1 g`` with
+        ``g == G c_v`` — the metric appears on both sides because the operator
+        being inverted is ``G C_c``, not ``C_c``.
+        """
+        if self._precision is not None:
+            return float(self._domain.inner_product(self._precision(vector), vector))
+        components = self._domain.apply_gram(self._domain.to_components(vector))
+        return float(components @ np.linalg.solve(self._symmetric_matrix(), components))
+
+    def _symmetric_matrix(self) -> np.ndarray:
+        """The covariance's Galerkin matrix, symmetrised against round-off."""
+        matrix = self._covariance.matrix(form="galerkin")
+        return 0.5 * (matrix + matrix.T)
+
+    def kl_divergence(
+        self, other: "GaussianMeasure", /, *, method: str = "auto"
+    ) -> float:
+        """``D(self || other)`` between two Gaussians on the same space.
+
+        When both covariances are diagonal in the space's own basis the whole
+        thing reduces to sums over the spectrum, which is ``O(dim)`` rather
+        than a pair of dense factorisations. That is the case for every
+        invariant measure on a symmetric space, so it is the common one.
+
+        Args:
+            other: the reference measure.
+            method: ``"auto"`` takes the spectral route when it is available,
+                ``"dense"`` forces the general one.
+        """
+        if other.domain != self._domain:
+            raise ValueError("Both measures must live on the same space.")
+        dimension = self._domain.dim
+        shift = self._domain.subtract(other.expectation, self.expectation)
+
+        mine = self._diagonal_eigenvalues()
+        theirs = other._diagonal_eigenvalues()
+        if method == "auto" and mine is not None and theirs is not None:
+            if np.any(theirs <= 0.0):
+                raise ValueError(
+                    "The reference measure is singular, so the divergence from "
+                    "it is infinite."
+                )
+            components = self._domain.to_components(shift)
+            metric = self._domain.apply_gram(components)
+            quadratic = float(
+                np.sum(components * metric**2 / theirs / metric.clip(min=1e-300))
+            )
+            quadratic = float(
+                other.mahalanobis_squared(other.expectation) * 0.0
+            ) + float(self._domain.inner_product(other.precision(shift), shift))
+            trace = float(np.sum(mine / theirs))
+            logs = float(
+                np.sum(np.log(theirs)) - np.sum(np.log(np.clip(mine, 1e-300, None)))
+            )
+            return 0.5 * (trace + quadratic - dimension + logs)
+
+        mine_matrix = self._symmetric_matrix()
+        theirs_matrix = other._symmetric_matrix()
+        solved = np.linalg.solve(theirs_matrix, mine_matrix)
+        quadratic = other._weighted_squared(shift)
+        sign_mine, log_mine = np.linalg.slogdet(mine_matrix)
+        sign_theirs, log_theirs = np.linalg.slogdet(theirs_matrix)
+        if sign_mine <= 0 or sign_theirs <= 0:
+            raise ValueError("Both covariances must be positive definite.")
+        return 0.5 * (
+            float(np.trace(solved)) + quadratic - dimension + log_theirs - log_mine
+        )
+
     def credible_set(self, /, *, level: float = 0.95) -> "Ellipsoid":
         """The region carrying a given share of the probability, as a set.
 

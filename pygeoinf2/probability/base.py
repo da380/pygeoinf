@@ -19,7 +19,7 @@ See DESIGN.md section 7.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Sequence
+from typing import Any, TYPE_CHECKING, Sequence
 
 from numpy.random import Generator
 
@@ -100,6 +100,34 @@ class ProbabilityMeasure[X](ABC):
     # ----------------------------------------------------------------- #
     #                             Densities                             #
     # ----------------------------------------------------------------- #
+
+    def directional_covariance(self, u: Any, v: Any, /) -> float:
+        """``Cov((x, u), (x, v))``, the covariance of two linear readings."""
+        return self.domain.inner_product(self.covariance(u), v)
+
+    def directional_variance(self, u: Any, /) -> float:
+        """``Var((x, u))``, the variance of one linear reading."""
+        return self.directional_covariance(u, u)
+
+    def two_point_covariance(self, point: Any, /) -> Any:
+        """The covariance function anchored at a point, as a field.
+
+        ``y -> Cov(x(point), x(y))``. It is ``C u`` with ``u`` the representer
+        of evaluation at ``point``, because ``(C u, u_y)`` is exactly the value
+        of ``C u`` at ``y`` — so the whole function comes from one application
+        of the covariance rather than one per pair.
+
+        Needs a domain whose points can be evaluated at, so it is defined for a
+        space of functions and not for a space of coefficients.
+        """
+        space = self.domain
+        dirac = getattr(space, "dirac", None)
+        if dirac is None:
+            raise TypeError(
+                f"{type(space).__name__} has no evaluation functional, so a "
+                "two-point covariance is not defined on it."
+            )
+        return self.covariance(dirac(point).representer)
 
     def log_density(self, x: X) -> float:
         """The log density at ``x``, up to an additive constant."""

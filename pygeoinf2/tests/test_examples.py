@@ -25,7 +25,7 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 21
+    assert len(example_scripts()) >= 22
 
 
 # Examples that need an optional dependency, and the module that provides it.
@@ -34,13 +34,14 @@ OPTIONAL = {
     "19_observation": "pyshtools",
     "20_flexure": "cartopy",
     "21_tomography": "cartopy",
+    "22_coupled_fields": "cartopy",
 }
 
 
 # Examples that draw coastlines. Cartopy fetches the Natural Earth shapefile on
 # first use, and a test suite that reaches the network is a test suite that
 # fails for reasons unconnected to the code.
-NEEDS_COASTLINES = {"20_flexure", "21_tomography"}
+NEEDS_COASTLINES = {"20_flexure", "21_tomography", "22_coupled_fields"}
 
 
 def _coastlines_are_cached() -> bool:
