@@ -41,7 +41,7 @@ from .algebra.spaces import (
     OrthonormalSpace,
     Reals,
 )
-from .spaces import Lebesgue, PeriodicBox, Sobolev
+from .spaces import Box, Interval, Lebesgue, PeriodicBox, Sobolev
 from .probability.base import (
     ProbabilityMeasure,
     ProductMeasure,
@@ -83,6 +83,8 @@ __all__ = [
     "Linearisation",
     "QuadraticModel",
     # spaces
+    "Box",
+    "Interval",
     "Lebesgue",
     "PeriodicBox",
     "Sobolev",

@@ -1920,7 +1920,55 @@ which is §3.5's `M_X^-1 A*_U M_Y` with `M == G_U^-1 G_V` read off the diagonals
 Out of scope for the core: plotting, which is v1's `plot.py` and the
 `matplotlib` imports in every space file.
 
-### 13.4 Where the packing is delicate
+### 13.4 As built
+
+All four stages are done. 630 tests.
+
+```
+pygeoinf2/spaces/invariant.py  InvariantSpace, lift_formal_adjoint
+pygeoinf2/spaces/fourier.py    PeriodicBox in any dimension, Lebesgue, Sobolev
+pygeoinf2/spaces/box.py        Box, Interval -- bounded domains by embedding
+pygeoinf2/spaces/sphere.py     Sphere, behind the pyshtools extra
+```
+
+**S3, bounded domains**, is a subclass of the periodic box rather than a
+wrapper, because that is what it is: the same components, the same metric, the
+same operators, differing only in which physical point a grid index means and
+where a random point comes from. The support assumption — a field vanishes
+outside the domain — is made real by `project_function`, which never calls the
+function outside the domain, since it need not be defined there.
+
+`support_projection` is a small illustration of the whole design. Multiplying
+by the domain's indicator is self-adjoint and idempotent on a **Lebesgue**
+space, so it is an orthogonal projector and its traits say so. On a Sobolev
+space it is neither, because a discontinuous mask does not commute with the
+metric — so it is refused there, with the error pointing at
+`lift_formal_adjoint`, which gives the correct adjoint and claims no symmetry.
+
+**S4, the sphere**, is the one space that is genuinely its own implementation:
+a harmonic transform is not an FFT. But everything downstream of the transform
+is shared, so what is written is the transform, the spectrum and the geometry
+and nothing else — a little over 300 lines against v1's 2215, most of the
+difference being plotting and geometry helpers that are not core numerics.
+
+Its conventions are pinned by test rather than assumed: orthonormal harmonics
+with the Condon-Shortley phase, a Driscoll-Healy grid at `sampling=2`, and a
+point as a `(colatitude, longitude)` pair in radians. The test that pins them
+is the same one used for the Fourier spaces — `sum_i c_i phi_i(p) == f(p)` at
+grid points — which fails on any normalisation or phase error.
+
+Two details worth recording:
+
+- **The radius belongs in the basis, not the coefficients.** Components are
+  scaled by the radius so that the Lebesgue basis is orthonormal on *that*
+  sphere. Otherwise every norm, prior and inner product would silently be the
+  unit sphere's.
+- **`random_point` is uniform in `cos(colatitude)`**, not in colatitude.
+  Sampling the angle uniformly crowds the poles, which is the classic way to
+  bias a set of station locations, and a test checks the variance against the
+  1/3 of a uniform distribution.
+
+### 13.5 Where the packing is delicate
 
 The one genuinely fiddly part is packing `rfftn` output into real components
 in more than one dimension. A mode and its conjugate must be counted once, and
