@@ -2078,7 +2078,73 @@ pip install petsc
 pip install --no-build-isolation petsc4py
 ```
 
-## 16. Open questions
+## 16. Subsets and subspaces
+
+`pygeoinf2/geometry/` replaces v1's `subsets.py` (1713 lines) and
+`subspaces.py` (799). The modernisation is one idea and two corrections.
+
+### 16.1 Three views of one object
+
+A convex set, its indicator functional and its support function are the same
+thing seen from three directions. v1 keeps them in three places — the sets in
+`subsets`, the support functions in `convex_analysis`, and nothing at all tying
+an indicator to a proximal method. Here:
+
+```python
+subset.contains(x)            # the predicate
+subset.project(x)             # the nearest point
+subset.indicator()            # a Functional whose prox IS project
+subset.support_function()     # the convex-analysis view
+```
+
+So a hard constraint needs no new machinery: `ProximalGradient(...).minimise(f,
+x0, nonsmooth=subset.indicator())` works for a ball, a half-space, a hyperplane
+or an affine subspace alike, and the conjugate of the indicator is the support
+function.
+
+### 16.2 `project` means the metric projection
+
+The nearest point of the set, which leaves a point already inside where it is.
+That makes it idempotent, and idempotence is what a proximal method relies on.
+
+v1's `HalfSpace.project` instead maps onto the bounding hyperplane whichever
+side the point is on — its docstring says so, "independent of inequality type".
+That is a legitimate map but it is *not* the convex projection: it is not
+idempotent and it moves feasible points. Using it in a proximal iteration would
+walk perfectly good iterates onto the boundary and hold them there.
+`testing.check_projection` pins all three properties: lands in the set,
+idempotent, and nearest.
+
+### 16.3 The trace is not `sum (P e_i, e_i)`
+
+Writing `LinearSubspace.dimension` I reached for the projector's trace as
+`sum_i (P e_i, e_i)` and got 169 for a subspace of dimension 12. That sum is
+the trace only on an **orthonormal** basis; on a weighted space it is the
+Galerkin diagonal and means nothing. The trace is the sum of the *component*
+matrix's diagonal, `sum_i [A_c]_ii`.
+
+This is §5.6 in another costume, and worth recording precisely because I made
+it while writing the module whose subject is that distinction. A test now
+checks the dimension on both a weighted and an unweighted space, where the
+wrong formula agrees on one and not the other.
+
+### 16.4 What needs what
+
+Coordinate-free: the whole set algebra, every closed-form projection (ball,
+half-space, hyperplane), projectors from a basis, and — less obviously —
+projection onto the kernel of an operator, since `P x == x - A* (A A*)^-1 A x`
+and `A A*` is recognised as positive semidefinite by the palindrome rule, so
+conjugate gradients is admissible with nothing claimed.
+
+Not coordinate-free: `dimension`, which is a trace and so needs a basis.
+
+Not closed-form at all: **the projection onto a general ellipsoid**, which
+requires solving a secular equation in a scalar with a linear solve per
+evaluation. `Ellipsoid.project` raises and says so, rather than offering an
+approximation under the name of an exact operation. Its `contains` and
+`support_function` are both exact and coordinate-free.
+
+## 17. Open questions
 
 1. ~~**`DirectSum` vector type.**~~ **Settled**: tuples, with optional labels
    on the space, and labels excluded from the space's identity. See §11.6.

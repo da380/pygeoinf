@@ -19,6 +19,7 @@ from numpy.random import Generator, default_rng
 
 from .algebra.operators import Functional, LinearOperator, Operator
 from .algebra.spaces import CoordinateSpace, HilbertSpace
+from .geometry.convex import ConvexSet
 from .probability.base import ProbabilityMeasure
 from .traits import Traits
 
@@ -33,6 +34,7 @@ __all__ = [
     "check_gradient",
     "check_second_derivative",
     "check_measure",
+    "check_projection",
 ]
 
 
@@ -708,4 +710,59 @@ def check_measure(
                     "the sample covariance matches the declared covariance",
                     f"Cov[(X,u_{i}), (X,u_{j})] == {empirical[i, j]:g} but "
                     f"(C u_{i}, u_{j}) == {expected:g}, beyond {allowance:g}",
+                )
+
+
+def check_projection(
+    subset: ConvexSet,
+    /,
+    *,
+    rng: Generator | None = None,
+    trials: int = 5,
+    probes: int = 30,
+) -> None:
+    """Check that a convex set's projection really is the metric projection.
+
+    Three properties, and the first two are what a proximal method relies on:
+
+    - **idempotent**: projecting twice is projecting once;
+    - **the identity on the set**: a point already inside is left alone;
+    - **nearest**: no nearby point of the set is closer.
+
+    The third is checked by sampling rather than proved, which is the honest
+    thing for a numerical check. It is what distinguishes a projection from a
+    map onto the boundary — v1's ``HalfSpace.project`` satisfies neither of the
+    first two.
+    """
+    rng = default_rng() if rng is None else rng
+    space = subset.domain
+
+    for _ in range(trials):
+        x = space.random(rng=rng)
+        projected = subset.project(x)
+
+        if not subset.contains(projected, rtol=1e-6):
+            _fail("a projection lands in the set", f"{space.norm(projected):g}")
+
+        _assert_close(
+            space,
+            subset.project(projected),
+            projected,
+            "the projection is idempotent",
+            rtol=1e-8,
+        )
+
+        distance = space.norm(space.subtract(x, projected))
+        for _ in range(probes):
+            nearby = space.axpy(
+                0.1 * distance / max(space.norm(x), 1.0),
+                space.random(rng=rng),
+                space.copy(projected),
+            )
+            if not subset.contains(nearby, rtol=1e-9):
+                continue
+            if space.norm(space.subtract(x, nearby)) < distance * (1.0 - 1e-9):
+                _fail(
+                    "the projection is the nearest point",
+                    f"found a point of the set closer than {distance:g}",
                 )

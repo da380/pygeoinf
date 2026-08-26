@@ -41,6 +41,19 @@ from .algebra.spaces import (
     OrthonormalSpace,
     Reals,
 )
+from .geometry import (
+    AffineSubspace,
+    Ball,
+    ConvexSet,
+    Ellipsoid,
+    EmptySet,
+    HalfSpace,
+    Hyperplane,
+    LinearSubspace,
+    OrthogonalProjector,
+    Subset,
+    UniversalSet,
+)
 from .spaces import Box, Interval, Lebesgue, PeriodicBox, Sobolev
 from .probability.base import (
     ProbabilityMeasure,
@@ -82,6 +95,18 @@ __all__ = [
     # algebra.linearisation
     "Linearisation",
     "QuadraticModel",
+    # geometry
+    "AffineSubspace",
+    "Ball",
+    "ConvexSet",
+    "Ellipsoid",
+    "EmptySet",
+    "HalfSpace",
+    "Hyperplane",
+    "LinearSubspace",
+    "OrthogonalProjector",
+    "Subset",
+    "UniversalSet",
     # spaces
     "Box",
     "Interval",
