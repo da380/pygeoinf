@@ -30,25 +30,22 @@ failing test rather than a surprise later.
 | 14 | `fields` | circles, tori, boxes, spheres |
 | 15 | `worked_example` | all of it, on a small inverse problem |
 | 16 | `mfem_backend` | a finite element space, where the mass matrix is the metric |
-| 17 | `petsc_backend` | opaque distributed vectors, and the adjoint that is not a transpose |
-| 18 | `sets` | a convex set, its indicator and its support function as one object |
-| 19 | `subspaces` | projectors, kernels, and linear constraints |
+| 17 | `sets` | a convex set, its indicator and its support function as one object |
+| 18 | `subspaces` | projectors, kernels, and linear constraints |
 
-## The backend examples
+## The backend example
 
-The last two need optional dependencies and are skipped without them:
+Number 16 needs an optional dependency and is skipped without it:
 
 ```
-poetry install --extras mfem     # a wheel exists; quick
-poetry install --extras petsc    # PETSc builds from source; slow
+poetry install --extras mfem
 ```
 
-They answer the question the rest of the suite cannot: whether the
+It answers the question the rest of the suite cannot: whether the
 coordinate-free design really holds up when the vectors belong to somebody
-else. MFEM is the more instructive of the two, because a finite element space
-is the case the design was built for -- the mass matrix *is* the Gram matrix,
-an assembled bilinear form *is* a Galerkin matrix, and an assembled linear form
-*is* a derivative rather than a gradient.
+else. A finite element space is the case the design was built for -- the mass
+matrix *is* the Gram matrix, an assembled bilinear form *is* a Galerkin matrix,
+and an assembled linear form *is* a derivative rather than a gradient.
 
 ## If you read only one
 

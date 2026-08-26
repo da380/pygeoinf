@@ -1,5 +1,5 @@
 """
-19. Subspaces, and the projections onto them.
+18. Subspaces, and the projections onto them.
 
 A subspace is a convex set whose projection happens to be linear, so it carries
 the whole convex interface -- including an indicator, which is how a *linear

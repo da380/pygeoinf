@@ -15,7 +15,7 @@ map works by accident. These doubles remove that accident:
 - All of them count calls, which is how a claim like "``at()`` evaluates the
   operator once, not twice" gets tested.
 
-A real backend (petsc4py) tests one implementation; these test the contract.
+A real backend (MFEM) tests one implementation; these test the contract.
 """
 
 from __future__ import annotations

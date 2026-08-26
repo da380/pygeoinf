@@ -26,12 +26,9 @@ osqp = ["osqp>=1.0.0"]
 clarabel = ["clarabel>=0.9.0"]
 # Interactive (Plotly) plotting backend.
 interactive = ["plotly>=5.0.0"]
-# Foreign vector and matrix backends, adapted in pygeoinf2.backends. Both are
-# used only by the examples and their tests, which skip when they are absent.
-# PETSc has no binary wheel and builds from source, so installing it is a
-# substantial operation rather than a quick one.
+# Foreign vector and matrix backends, adapted in pygeoinf2.backends. Used only
+# by the examples and their tests, which skip when they are absent.
 mfem = ["mfem>=4.8.0"]
-petsc = ["petsc4py>=3.20.0"]
 
 [tool.poetry]
 packages = [{ include = "pygeoinf" }]

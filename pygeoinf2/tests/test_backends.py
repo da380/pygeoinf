@@ -3,9 +3,9 @@ Foreign backends: the claim the test doubles cannot settle.
 
 ``OpaqueSpace`` shows that the core does not *need* components. These tests
 show that it works when the vectors genuinely belong to someone else — an
-``mfem.Vector`` with its own memory, a ``PETSc.Vec`` that may be distributed.
+``mfem.Vector`` with its own memory and its own idea of what a vector is.
 
-Both are optional dependencies and skip when absent.
+MFEM is an optional dependency, so these skip when it is absent.
 """
 
 import numpy as np
@@ -133,46 +133,3 @@ class TestMfemForms:
         stiffness = _to_scipy(form.SpMat()).toarray()
         direct = np.linalg.solve(stiffness, V.gram_matrix() @ V.to_components(b))
         assert np.allclose(V.to_components(result.solution), direct, atol=1e-8)
-
-
-class TestPetsc:
-    """Written against petsc4py; skipped where PETSc is not built."""
-
-    @pytest.fixture
-    def petsc_spaces(self, rng):
-        pytest.importorskip("petsc4py")
-        from petsc4py import PETSc
-
-        from pygeoinf2.backends.petsc import PetscSpace, PetscWeightedSpace
-
-        n = 8
-
-        def matrix(array):
-            result = PETSc.Mat().createDense([n, n], array=np.ascontiguousarray(array))
-            result.assemble()
-            return result
-
-        root = rng.normal(size=(n, n))
-        mass = root @ root.T + n * np.identity(n)
-        return PetscSpace(n), PetscWeightedSpace(matrix(mass)), mass, matrix
-
-    def test_the_axioms_hold(self, petsc_spaces, rng):
-        plain, weighted, _, _ = petsc_spaces
-        check_space(plain, rng=rng)
-        check_space(weighted, rng=rng)
-        check_coordinates(weighted, rng=rng)
-
-    def test_the_adjoint_is_not_the_transpose(self, petsc_spaces, rng):
-        """The point of the weighted space, and of DESIGN.md 5.6."""
-        from pygeoinf2.backends.petsc import operator_from_matrix
-
-        _, weighted, mass, matrix = petsc_spaces
-        array = rng.normal(size=mass.shape)
-        A = operator_from_matrix(weighted, matrix(array))
-        check_operator(A, rng=rng)
-
-        y = weighted.random(rng=rng)
-        adjoint = weighted.to_components(A.adjoint(y))
-        components = weighted.to_components(y)
-        assert np.allclose(adjoint, np.linalg.solve(mass, array.T @ mass @ components))
-        assert not np.allclose(adjoint, array.T @ components)

@@ -21,13 +21,12 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 19
+    assert len(example_scripts()) >= 18
 
 
 # Examples that need an optional dependency, and the module that provides it.
 OPTIONAL = {
     "16_mfem_backend": "mfem",
-    "17_petsc_backend": "petsc4py",
 }
 
 

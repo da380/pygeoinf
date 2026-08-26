@@ -2008,10 +2008,10 @@ idea makes the illustration worse; their test is that they run.
 ## 15. Foreign backends
 
 `pygeoinf2/backends/` adapts vector and matrix types the library does not own.
-Both are optional extras (`mfem`, `petsc`) and both are skipped when absent.
-They settle the question §11.8 leaves open: `OpaqueSpace` shows the core does
-not *need* components, but only a real backend shows it works when the vectors
-belong to someone else.
+MFEM is an optional extra (`mfem`) and is skipped when absent. It settles the
+question §11.8 leaves open: `OpaqueSpace` shows the core does not *need*
+components, but only a real backend shows it works when the vectors belong to
+someone else.
 
 ### 15.1 MFEM, which is the case the design was built for
 
@@ -2036,47 +2036,30 @@ view is left pointing at freed memory — giving plausible wrong numbers rather
 than an error. `to_components` therefore returns a **copy**, and a test pins
 it. Any backend that owns its own memory needs the same care.
 
-### 15.2 PETSc, and the adjoint that is not a transpose
+### 15.2 PETSc, withdrawn for now
 
-`PetscSpace` is `R^n` over `PETSc.Vec`; `PetscWeightedSpace` carries a mass
-matrix. The difference between them is §5.6 exactly: on the first, an
-operator's adjoint *is* its transpose and `multTranspose` is right; on the
-second the adjoint is `M^-1 A^T M` and `multTranspose` is wrong. PETSc offers
-the transpose and does not offer the adjoint, so this is the setting where the
-substitution is most tempting — and the two agree whenever the metric is
-trivial, which is why it survives.
+A `petsc` backend was written and exercised against a source build of PETSc
+3.25.4: `PetscSpace` over `PETSc.Vec`, plus a `PetscWeightedSpace` carrying a
+mass matrix. It made §5.6's point in the setting where the mistake is most
+tempting, since PETSc offers `multTranspose` — the transpose — and does not
+offer the adjoint, which on a weighted space is `M^-1 A^T M`. The two agree
+whenever the metric is trivial, which is why the substitution survives.
 
-Exercised, against a source build of PETSc 3.25.4. `check_space`,
-`check_coordinates` and `check_operator` all pass over `PETSc.Vec` objects, CG
-converges over them to a residual of `2e-16`, and the adjoint on a weighted
-space is confirmed to be `M^-1 A^T M` and confirmed **not** to be `A^T`.
+**It has been removed**, along with the extra and the example, because the way
+it was installed was wrong rather than because the adapter was. The `petsc`
+PyPI package builds its own PETSc, and its own MPI, into the virtual
+environment: a slow source build that duplicates whatever the machine already
+has and pins the library to a copy nobody else uses. The right approach is to
+build `petsc4py` against an existing PETSc installation — the usual case being
+a PETSc configured with `--download-mpich`, so that PETSc builds the MPI it
+uses rather than taking a distribution package. That is a packaging question,
+not a design one, and the backend comes back once it is answered.
 
-Getting there needed three attempts, and the obstacles are worth recording for
-anyone repeating it:
-
-1. **`mpicc` was present but its libraries were not** — the OpenMPI compiler
-   wrapper is installed on this machine while `libmpi` and friends are missing,
-   so PETSc's configure step failed on a compiler that appears to exist.
-   Building serially with `--with-mpi=0` avoids needing MPI at all, and PETSc
-   supplies its own serial stub for the communicator.
-2. **The `petsc` PyPI package rejects `--with-cc`** in
-   `PETSC_CONFIGURE_OPTIONS` and wants compilers through the `MPICC` and
-   `MPICXX` environment variables instead.
-3. **Cython 3.3 cannot compile petsc4py 3.25**, failing on `Invalid index type
-   'int'` in `PC.pyx`. Pinning `cython<3.1` and building with
-   `--no-build-isolation` gets past it. Installing `petsc` and `petsc4py` as
-   separate steps also matters, since a single failing transaction rolls back
-   the PETSc build that succeeded.
-
-The whole sequence:
-
-```
-export MPICC=/usr/bin/gcc MPICXX=/usr/bin/g++
-export PETSC_CONFIGURE_OPTIONS="--with-mpi=0 --with-fc=0 --with-debugging=0 --with-shared-libraries=1"
-pip install "cython<3.1"
-pip install petsc
-pip install --no-build-isolation petsc4py
-```
+What the exercise established still stands: the core ran unmodified over
+opaque, possibly distributed vectors, `check_space`, `check_coordinates` and
+`check_operator` all passed over `PETSc.Vec` objects, CG converged over them to
+a residual of `2e-16`, and the adjoint on a weighted space was confirmed to be
+`M^-1 A^T M` and confirmed **not** to be `A^T`.
 
 ## 16. Subsets and subspaces
 

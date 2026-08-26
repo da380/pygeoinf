@@ -6,7 +6,7 @@ their components, so code reaching for array arithmetic or a component map
 works by accident. These tests remove the accident, using vectors that support
 no arithmetic and spaces that raise if their coordinate map is touched.
 
-This is what stands in for a real PETSc or MFEM backend until M3.
+This is what stands in for a real foreign backend, without needing one installed.
 """
 
 import numpy as np

@@ -1,5 +1,5 @@
 """
-18. A convex set, its indicator, and its support function are one object.
+17. A convex set, its indicator, and its support function are one object.
 
 v1 keeps these in three places and nothing connects them. Here they are three
 views of the same set, which is what lets a hard constraint enter a proximal
