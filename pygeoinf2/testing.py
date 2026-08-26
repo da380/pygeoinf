@@ -17,13 +17,20 @@ from typing import Callable
 import numpy as np
 from numpy.random import Generator, default_rng
 
+from .algebra.operators import Functional, LinearOperator, Operator
 from .algebra.spaces import CoordinateSpace, HilbertSpace
+from .traits import Traits
 
 __all__ = [
     "check_space",
     "check_coordinates",
     "check_white_noise",
     "check_representer",
+    "check_operator",
+    "check_traits",
+    "check_derivative",
+    "check_gradient",
+    "check_second_derivative",
 ]
 
 
@@ -357,3 +364,270 @@ def check_white_noise(
                     f"matrix here means components were drawn as N(0, I) "
                     f"instead of N(0, G^-1)",
                 )
+
+
+# --------------------------------------------------------------------- #
+#                               Operators                               #
+# --------------------------------------------------------------------- #
+
+
+def check_operator(
+    operator: LinearOperator,
+    /,
+    *,
+    rng: Generator | None = None,
+    trials: int = 5,
+) -> None:
+    """Check linearity and the defining property of the adjoint.
+
+    The adjoint identity ``(A x, y)_Y == (x, A* y)_X`` is the one that catches
+    a mass matrix applied in the wrong place, which is the most common way for
+    a hand-written adjoint to be subtly wrong on a non-orthonormal space.
+    """
+    rng = default_rng() if rng is None else rng
+    domain, codomain = operator.domain, operator.codomain
+
+    for _ in range(trials):
+        x, y = domain.random(rng), domain.random(rng)
+        a, b = float(rng.normal()), float(rng.normal())
+
+        combination = domain.add(domain.scale(a, x), domain.scale(b, y))
+        expected = codomain.add(
+            codomain.scale(a, operator(x)), codomain.scale(b, operator(y))
+        )
+        _assert_close(
+            codomain, operator(combination), expected, "the operator is linear"
+        )
+
+    adjoint = operator.adjoint
+    if adjoint.domain != codomain or adjoint.codomain != domain:
+        _fail(
+            "the adjoint maps between the right spaces",
+            f"{adjoint.domain!r} -> {adjoint.codomain!r}",
+        )
+    if operator.adjoint is not adjoint:
+        _fail("the adjoint is memoised", "A.adjoint is not A.adjoint")
+    if adjoint.adjoint is not operator:
+        _fail("the adjoint is an involution", "A.adjoint.adjoint is not A")
+
+    for _ in range(trials):
+        x, y = domain.random(rng), codomain.random(rng)
+        _assert_scalar(
+            codomain.inner_product(operator(x), y),
+            domain.inner_product(x, adjoint(y)),
+            "the adjoint satisfies (A x, y) == (x, A* y)",
+            rtol=1e-9,
+        )
+
+
+def check_traits(
+    operator: LinearOperator,
+    /,
+    *,
+    rng: Generator | None = None,
+    trials: int = 5,
+) -> None:
+    """Verify every trait the operator *claims*.
+
+    Traits are assertions by whoever built the operator; nothing enforces them
+    at construction. This is the safety net. Only claimed traits are checked —
+    an absent trait is not a claim that the property fails.
+    """
+    rng = default_rng() if rng is None else rng
+    traits = operator.traits
+    domain, codomain = operator.domain, operator.codomain
+
+    def claims(member: Traits) -> bool:
+        return traits & member == member
+
+    if claims(Traits.SELF_ADJOINT) and domain != codomain:
+        _fail(
+            "a self-adjoint operator is an endomorphism", f"{domain!r} -> {codomain!r}"
+        )
+
+    for _ in range(trials):
+        x, y = domain.random(rng), domain.random(rng)
+
+        if claims(Traits.SELF_ADJOINT):
+            _assert_scalar(
+                codomain.inner_product(operator(x), y),
+                domain.inner_product(x, operator(y)),
+                "the claimed SELF_ADJOINT operator is symmetric",
+                rtol=1e-9,
+            )
+
+        if claims(Traits.POSITIVE_SEMIDEFINITE):
+            quadratic = domain.inner_product(operator(x), x)
+            if quadratic < -1e-9 * max(domain.squared_norm(x), 1.0):
+                _fail(
+                    "the claimed POSITIVE_SEMIDEFINITE operator is non-negative",
+                    f"(A x, x) == {quadratic:g}",
+                )
+
+        if claims(Traits.POSITIVE_DEFINITE):
+            quadratic = domain.inner_product(operator(x), x)
+            if quadratic <= 0.0:
+                _fail(
+                    "the claimed POSITIVE_DEFINITE operator is strictly positive",
+                    f"(A x, x) == {quadratic:g} for a nonzero x",
+                )
+
+        if claims(Traits.ISOMETRY):
+            _assert_scalar(
+                codomain.squared_norm(operator(x)),
+                domain.squared_norm(x),
+                "the claimed ISOMETRY preserves the norm",
+                rtol=1e-9,
+            )
+
+        if claims(Traits.IDEMPOTENT):
+            image = operator(x)
+            _assert_close(
+                codomain,
+                operator(image),
+                image,
+                "the claimed IDEMPOTENT operator satisfies A A == A",
+            )
+
+    if claims(Traits.UNITARY) and domain.dim != codomain.dim:
+        _fail("a claimed UNITARY operator is square", f"{domain.dim} != {codomain.dim}")
+
+    if claims(Traits.INVERTIBLE):
+        if domain.dim != codomain.dim:
+            _fail(
+                "a claimed INVERTIBLE operator is square",
+                f"{domain.dim} != {codomain.dim}",
+            )
+        if isinstance(domain, CoordinateSpace) and isinstance(
+            codomain, CoordinateSpace
+        ):
+            matrix = operator.matrix(form="components")
+            if np.linalg.matrix_rank(matrix) < domain.dim:
+                _fail(
+                    "the claimed INVERTIBLE operator has full rank",
+                    f"rank {np.linalg.matrix_rank(matrix)} of {domain.dim}",
+                )
+
+
+def check_derivative(
+    operator: Operator,
+    point,
+    /,
+    *,
+    rng: Generator | None = None,
+    step: float = 1e-6,
+    trials: int = 3,
+    rtol: float = 1e-5,
+) -> None:
+    """Check the derivative against central finite differences."""
+    rng = default_rng() if rng is None else rng
+    if not operator.has_derivative:
+        _fail(
+            "the operator carries a derivative", f"{type(operator).__name__} does not"
+        )
+
+    domain, codomain = operator.domain, operator.codomain
+    linearisation = operator.at(point)
+    derivative = linearisation.derivative
+
+    for _ in range(trials):
+        direction = domain.random(rng)
+        direction = domain.scale(1.0 / max(domain.norm(direction), 1e-30), direction)
+
+        forward = operator(domain.axpy(step, direction, domain.copy(point)))
+        backward = operator(domain.axpy(-step, direction, domain.copy(point)))
+        numerical = codomain.scale(
+            1.0 / (2.0 * step), codomain.subtract(forward, backward)
+        )
+        analytic = derivative(direction)
+
+        residual = codomain.norm(codomain.subtract(numerical, analytic))
+        scale = max(codomain.norm(numerical), codomain.norm(analytic), 1.0)
+        if residual > rtol * scale:
+            _fail(
+                "the derivative agrees with finite differences",
+                f"residual {residual:g} against scale {scale:g}",
+            )
+
+
+def check_gradient(
+    functional: Functional,
+    point,
+    /,
+    *,
+    rng: Generator | None = None,
+    step: float = 1e-6,
+    trials: int = 3,
+    rtol: float = 1e-5,
+) -> None:
+    """Check that the gradient really is the gradient, not the derivative.
+
+    Compares ``(grad, d)`` against the central difference of the functional
+    along ``d``. On a non-orthonormal space, supplying a derivative array where
+    a gradient was wanted fails this by exactly a factor of the Gram matrix —
+    which is the classic adjoint-method error. On an orthonormal space the two
+    coincide and there is nothing to catch, which is why the error survives in
+    practice. See DESIGN.md section 5.6.
+    """
+    rng = default_rng() if rng is None else rng
+    domain = functional.domain
+    gradient = functional.at(point).gradient
+
+    for _ in range(trials):
+        direction = domain.random(rng)
+        direction = domain.scale(1.0 / max(domain.norm(direction), 1e-30), direction)
+
+        forward = functional(domain.axpy(step, direction, domain.copy(point)))
+        backward = functional(domain.axpy(-step, direction, domain.copy(point)))
+        numerical = (forward - backward) / (2.0 * step)
+        analytic = domain.inner_product(gradient, direction)
+
+        scale = max(abs(numerical), abs(analytic), 1.0)
+        if abs(numerical - analytic) > rtol * scale:
+            _fail(
+                "the gradient pairs with a direction as the derivative does",
+                f"(grad, d) == {analytic:g} but the finite difference is "
+                f"{numerical:g}; a mismatch by a factor of the Gram matrix "
+                f"means a derivative was supplied where a gradient was wanted",
+            )
+
+
+def check_second_derivative(
+    operator: Operator,
+    point,
+    /,
+    *,
+    rng: Generator | None = None,
+    step: float = 1e-5,
+    trials: int = 3,
+    rtol: float = 1e-4,
+) -> None:
+    """Check ``F''(x)[d, .]`` against finite differences of the derivative."""
+    rng = default_rng() if rng is None else rng
+    if not operator.has_second_derivative:
+        _fail(
+            "the operator carries a second derivative",
+            f"{type(operator).__name__} does not",
+        )
+
+    domain, codomain = operator.domain, operator.codomain
+    for _ in range(trials):
+        d = domain.random(rng)
+        d = domain.scale(1.0 / max(domain.norm(d), 1e-30), d)
+        e = domain.random(rng)
+        e = domain.scale(1.0 / max(domain.norm(e), 1e-30), e)
+
+        forward = operator.derivative(domain.axpy(step, d, domain.copy(point)))(e)
+        backward = operator.derivative(domain.axpy(-step, d, domain.copy(point)))(e)
+        numerical = codomain.scale(
+            1.0 / (2.0 * step), codomain.subtract(forward, backward)
+        )
+        analytic = operator.second_derivative(point, d)(e)
+
+        residual = codomain.norm(codomain.subtract(numerical, analytic))
+        scale = max(codomain.norm(numerical), codomain.norm(analytic), 1.0)
+        if residual > rtol * scale:
+            _fail(
+                "the second derivative agrees with finite differences",
+                f"residual {residual:g} against scale {scale:g}",
+            )

@@ -1225,7 +1225,7 @@ hashes equal to — an independently constructed copy of itself.
 | # | Deliverable | Acceptance |
 |---|---|---|
 | M0 | **done** — `traits.py`, `algebra/spaces.py`, `testing.py` | met; 67 tests, see §11.1 |
-| M1 | `operators.py`, `nodes.py`, `linearisation.py`, `Functional`, `AffineOperator` | `check_operator` and `check_traits` pass; `A @ C @ A.adjoint` reports PSD |
+| M1 | **done** — `operators.py`, `nodes.py`, `linearisation.py`, `Functional`, `AffineOperator` | met; 135 tests, see §11.2 |
 | M2 | `compat.py` adapter for v1 spaces | An existing sphere/circle problem runs against the v2 core |
 | M3 | `numerics/solvers.py` | Coordinate-free CG on an adapted Sobolev space matches v1 to tolerance |
 | M4 | `probability/` | Gaussian sampling, pushforward, and moments match v1 where v1 is correct |
@@ -1291,6 +1291,73 @@ Deferred to M1 because they need `LinearOperator`: `MassWeightedSpace` (§3.5),
 adjoint-palindrome detection. The *trait* half of the palindrome rule is
 already present as `congruence_traits` and `gramian_traits`, and is tested
 against the Bayesian normal operator `A Q A* + R`.
+
+### 11.2 M1 as built
+
+```
+pygeoinf2/algebra/
+  linearisation.py   Linearisation, QuadraticModel
+  operators.py       Operator, LinearOperator, Functional, LinearFunctional,
+                     AffineOperator, require_coordinates
+  nodes.py           _Identity, _Zero, _Adjoint, _Scaled, _Sum, _Composition
+                     and their nonlinear counterparts
+pygeoinf2/tests/
+  doubles.py         Opaque, OpaqueSpace, StrictSpace
+```
+
+Acceptance met: `check_operator` and `check_traits` pass, and
+`A @ C @ A.adjoint` — built in two steps, so the pattern only exists once the
+composition is complete — reports `SELF_ADJOINT | POSITIVE_SEMIDEFINITE`.
+`A @ Q @ A.adjoint + R` reports `POSITIVE_DEFINITE`. 135 tests.
+
+**One finding worth recording.** Memoising `adjoint` is not enough on its own.
+A composed operator's adjoint is built as a *new* node
+(`(A B)* == B* A*`), so `(A @ B).adjoint.adjoint` was a different object from
+`A @ B` — and since the palindrome rule compares factors by identity, it
+silently stopped firing for any operator that had been through the algebra.
+`_Sum._make_adjoint` and `_Composition._make_adjoint` therefore close the loop
+explicitly, caching `self` as the new node's adjoint. Caught by
+`check_operator`, which asserts the involution.
+
+Deviations:
+
+1. **`Functional.__init__` takes an optional codomain.** `LinearFunctional`
+   inherits from both `LinearOperator` and `Functional`, so
+   `LinearOperator.__init__`'s cooperative `super()` call lands on
+   `Functional.__init__`. The argument is accepted, validated to be `Reals`,
+   and otherwise ignored.
+2. **`matrix()` is dense only.** The matrix-free SciPy wrapper is deferred to
+   M3, where the solvers are what actually want it.
+3. **`with_traits`** was added, for attaching a claim to an operator built
+   elsewhere without rebuilding it.
+4. `_Inverse` is deferred to M3: it comes from a solver, not from the algebra.
+
+### 11.3 Testing the abstract framework
+
+Every NumPy-backed test space has vectors that *are* their own components, so
+code reaching for array arithmetic or for a coordinate map works by accident.
+Three doubles remove the accident:
+
+- **`Opaque`** vectors support no arithmetic at all — no `+`, no `*`, no
+  `.copy()` — so anything not routed through the space raises `TypeError`.
+- **`OpaqueSpace`** is a `HilbertSpace` and deliberately *not* a
+  `CoordinateSpace`, with an inner product that is not the component dot
+  product, so code that substitutes one for the other gives wrong answers
+  rather than right ones by luck.
+- **`StrictSpace`** wraps a coordinate space and raises if the coordinate map
+  is touched. This is what turns "coordinate-free" from a claim into an
+  assertion: `test_the_algebra_is_coordinate_free` fails loudly if any path
+  through the algebra reaches for components. A negative control asserts that
+  `matrix()` *does* trip the guard, so the test is not vacuous.
+
+**On petsc4py.** Not a dependency, and not yet a test dependency. A real
+backend tests one implementation; the doubles test the contract, and can be
+adversarial in ways a real backend cannot. What they cannot show is whether the
+API is ergonomic against a genuinely distributed backend, or whether anything
+assumes vectors are cheap to copy or local. That gap bites at **M3**, where
+coordinate-free Krylov is the claim that needs a real backend — so revisit it
+there, as an optional extra (`petsc = ["petsc4py"]`) behind `skipif`, never a
+hard dependency.
 
 ---
 

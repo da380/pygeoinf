@@ -11,6 +11,15 @@ Both may be imported side by side for comparison testing:
     import pygeoinf2 as gi2
 """
 
+from .algebra.linearisation import Linearisation, QuadraticModel
+from .algebra.operators import (
+    AffineOperator,
+    Functional,
+    LinearFunctional,
+    LinearOperator,
+    Operator,
+    require_coordinates,
+)
 from .algebra.spaces import (
     ArrayVectorMixin,
     CoordinateSpace,
@@ -31,6 +40,16 @@ __all__ = [
     "HilbertSpace",
     "OrthonormalSpace",
     "Reals",
+    # algebra.operators
+    "AffineOperator",
+    "Functional",
+    "LinearFunctional",
+    "LinearOperator",
+    "Operator",
+    "require_coordinates",
+    # algebra.linearisation
+    "Linearisation",
+    "QuadraticModel",
     # traits
     "Traits",
 ]
