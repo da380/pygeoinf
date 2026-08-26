@@ -20,7 +20,12 @@ from ..traits import Traits
 from .estimators import LinearPointEstimator
 from .problem import LinearForwardProblem
 
-__all__ = ["LeastSquares", "MinimumNorm", "choose_formalism"]
+__all__ = [
+    "ConstrainedLeastSquares",
+    "LeastSquares",
+    "MinimumNorm",
+    "choose_formalism",
+]
 
 Formalism = Literal["auto", "model_space", "data_space"]
 
@@ -230,3 +235,74 @@ class MinimumNorm(LinearPointEstimator):
             solver=self._solver,
             formalism=self._formalism,
         )
+
+
+class ConstrainedLeastSquares(LinearPointEstimator):
+    """Least squares within an affine subspace.
+
+    For a constraint that is *exact* rather than probable — a boundary
+    condition, a fixed total mass, a known mean — which a prior cannot express
+    and a penalty only approximates.
+
+    The subspace is written as ``t + range(P)``, so substituting ``u == t + P w``
+    turns the constrained problem into an unconstrained one for the operator
+    ``A P`` and the data ``d - A t``. The answer is affine in the data, so this
+    is still an operator and still joins the algebra: the projector supplies
+    the linear part and the translation the offset.
+    """
+
+    def __init__(
+        self,
+        problem: LinearForwardProblem,
+        subspace: Any,
+        /,
+        *,
+        damping: float = 0.0,
+        solver: LinearSolver | None = None,
+        formalism: Formalism = "auto",
+    ) -> None:
+        """
+        Args:
+            problem: the forward problem.
+            subspace: an ``AffineSubspace`` of the model space.
+            damping: the Tikhonov parameter, applied within the subspace.
+            solver: how to invert the reduced normal operator.
+            formalism: which space to solve in.
+        """
+        if subspace.domain != problem.model_space:
+            raise ValueError("The subspace must live in the model space.")
+        model_space = problem.model_space
+        projector = subspace.projector
+        translation = subspace.translation
+
+        reduced = LinearForwardProblem(
+            problem.forward_operator @ projector,
+            error=problem.error if problem.has_error else None,
+        )
+        inner = LeastSquares(
+            reduced, damping=damping, solver=solver, formalism=formalism
+        )
+        operator = projector @ inner.operator
+        offset = model_space.subtract(
+            translation, operator(problem.forward_operator(translation))
+        )
+
+        super().__init__(
+            operator,
+            translation=offset,
+            forward_operator=problem.forward_operator,
+            error=problem.error_measure if problem.has_error else None,
+        )
+        self._problem = problem
+        self._subspace = subspace
+        self._damping = damping
+
+    @property
+    def subspace(self) -> Any:
+        """The affine subspace the answer is confined to."""
+        return self._subspace
+
+    @property
+    def damping(self) -> float:
+        """The Tikhonov parameter used within the subspace."""
+        return self._damping

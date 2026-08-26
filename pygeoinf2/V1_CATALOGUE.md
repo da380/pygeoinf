@@ -258,9 +258,9 @@ deliberately not started.
 | `Inference`, `LinearInference` | Subsumed | as above | |
 | `LinearBayesianInversion` | Ported | M5 stage 5.4 as `Bayesian`. Four of its 24 methods are inversion; the rest move to `numerics` (§18.9) | |
 | `LinearLeastSquaresInversion` | Ported | M5 stage 5.3 | |
-| `ConstrainedLinearLeastSquaresInversion` | Planned | M5 stage 5.3 | |
+| `ConstrainedLinearLeastSquaresInversion` | Ported | M5 stage 5.3 | |
 | `LinearMinimumNormInversion` | Ported | M5 stage 5.3, with the discrepancy principle on §18.6's root-find primitive | |
-| `ConstrainedLinearMinimumNormInversion` | Planned | M5 stage 5.3 | |
+| `ConstrainedLinearMinimumNormInversion` | Ported | M5 stage 5.3 | |
 | `BackusInference` | Ported | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
 | `DualMasterCostFunction` | Ported | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
 
@@ -529,7 +529,7 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `model_posterior_measure` | Ported | M5 stage 5.4, but as `Bayesian(problem, prior, solver)(data)` — a mapping, not a method taking both data and configuration (§18.7) | |
 | `posterior_expectation_operator` | Subsumed | `GaussianEstimator.mean_map` | |
 | `with_formalism` | Subsumed | An argument on the estimator, defaulting to whichever space is smaller (§18.10) | |
-| `log_evidence`, `mahalanobis_evidence_term` | Planned | M5, as a functional on the data | |
+| `log_evidence`, `mahalanobis_evidence_term` | Ported | M5, as a functional on the data | |
 | `estimate_log_determinant` | Ported | `numerics.functional_calculus` | |
 | `low_rank_surrogate` | Ported | `numerics.randomised` | |
 | `diagonal_normal_preconditioner`, `sparse_localized_preconditioner`, `woodbury_data_preconditioner`, `woodbury_model_preconditioner` | Planned | `numerics.preconditioners`, M5 | |

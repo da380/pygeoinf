@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from numpy.random import Generator
 
 from ..algebra.operators import AffineOperator, LinearOperator
@@ -124,6 +126,39 @@ class Bayesian(GaussianEstimator):
     def prior(self) -> ProbabilityMeasure:
         """The prior this posterior updates."""
         return self._prior
+
+    def evidence_terms(self, data: Any, /) -> tuple[float, float]:
+        """The two halves of the log evidence: misfit and volume.
+
+        ``log p(d) == -(mahalanobis + log det N + dim log 2pi) / 2`` with ``N``
+        the *data* prior covariance ``A Q A* + R``. Returned separately because
+        they answer different questions: the first says whether the data are
+        surprising under this model, the second penalises a model flexible
+        enough that they would not have been.
+        """
+        prior_data = self._problem.data_measure_from_model_measure(self._prior)
+        residual = self.data_space.subtract(data, prior_data.expectation)
+        mahalanobis = prior_data._weighted_squared(residual)
+        matrix = prior_data.covariance.matrix(form="galerkin")
+        sign, logarithm = np.linalg.slogdet(0.5 * (matrix + matrix.T))
+        if sign <= 0:
+            raise ValueError(
+                "The data prior covariance is singular, so the evidence is "
+                "not defined. Regularise it first."
+            )
+        gram = self.data_space.gram_matrix()
+        _, gram_logarithm = np.linalg.slogdet(gram)
+        return float(mahalanobis), float(logarithm - gram_logarithm)
+
+    def log_evidence(self, data: Any, /) -> float:
+        """``log p(d)``: how well this model explains the data at all.
+
+        The quantity model comparison needs, and the one a posterior cannot
+        supply — a posterior is conditional on the model being right.
+        """
+        mahalanobis, volume = self.evidence_terms(data)
+        dimension = self.data_space.dim
+        return -0.5 * (mahalanobis + volume + dimension * np.log(2.0 * np.pi))
 
     @property
     def can_sample(self) -> bool:

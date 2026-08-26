@@ -3618,3 +3618,43 @@ outright rather than accepting it and being wrong.
 `condition` completes the pair: the Bayesian update as a statement about a
 measure, needing no forward problem. It agrees exactly with `Bayesian` on the
 same data, which is two routes to one answer again.
+
+### 22.9 Evidence, and an exact constraint
+
+`Bayesian.log_evidence` and `ConstrainedLeastSquares`, which close M5's point
+and measure estimators.
+
+The evidence is returned as two terms as well as one number, because they
+answer different questions: the Mahalanobis term says whether the data are
+surprising under this model, and the log-determinant term penalises a model
+flexible enough that they could not have been. It matches `scipy.stats`'
+multivariate normal density exactly, on an orthonormal space and on a weighted
+one — the second only after subtracting the metric's own determinant, which is
+the same `G` bookkeeping as §22.8.
+
+`ConstrainedLeastSquares` handles a constraint that is *exact* rather than
+probable — a boundary condition, a fixed total mass, a known mean — which a
+prior cannot express and a penalty only approximates. Writing the subspace as
+``t + range(P)`` and substituting ``u == t + P w`` turns it into the
+unconstrained problem for ``A P`` and ``d - A t``, so it stays affine in the
+data and stays an operator.
+
+### 22.10 What is left
+
+Nineteen rows, and they fall into three groups.
+
+**Alternative convex solvers** — `QPSolver` with its SciPy, OSQP and Clarabel
+backends, `SmoothedDualMaster`, `SmoothedLBFGSSolver`, `ChambollePockSolver`.
+These solve the problem `ProximalBundleMethod` already solves, by other means.
+Porting them is worthwhile for speed on particular shapes, and is not
+worthwhile merely for completeness — the question is which of them earns its
+place, and that is a judgement about workloads rather than about code.
+
+**The rest of the preconditioners** — `ColumnThresholded`, the localised and
+Woodbury ones from `linear_bayesian.py`. Mechanical, and each needs a problem
+of the right shape to show it is worth anything, which §22.5's measurements
+argue is the only honest way to add one.
+
+**Plotting and the tail** — `SubspaceSlicePlotter`, `plot_slice`, the corner
+plots, `config.py`, the live download commands, and the `dynamical_system`
+family, which was marked *later* deliberately.

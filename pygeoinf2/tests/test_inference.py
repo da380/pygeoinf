@@ -330,3 +330,115 @@ class TestPointEstimators:
         induced = estimator.as_measure()
         data = problem.data_space.random(rng=rng)
         assert np.allclose(induced(data).expectation, estimator(data))
+
+
+class TestEvidence:
+    def test_it_matches_scipy(self, problem, prior, rng):
+        """``log p(d)`` is a multivariate normal density on the data space,
+        and the reference is the one scipy computes."""
+        from scipy.stats import multivariate_normal
+
+        estimator = Bayesian(problem, prior)
+        data = problem.data_space.random(rng=rng)
+        covariance = problem.data_measure_from_model_measure(prior).covariance
+        reference = multivariate_normal(
+            mean=problem.data_space.to_components(
+                problem.forward_operator(prior.expectation)
+            ),
+            cov=covariance.matrix(form="components"),
+        ).logpdf(problem.data_space.to_components(data))
+        assert estimator.log_evidence(data) == pytest.approx(reference)
+
+    def test_the_two_terms_answer_different_questions(self, problem, prior, rng):
+        """Misfit and volume, separately: whether the data are surprising, and
+        whether the model was flexible enough that they could not have been."""
+        estimator = Bayesian(problem, prior)
+        data = problem.data_space.random(rng=rng)
+        mahalanobis, volume = estimator.evidence_terms(data)
+        assert mahalanobis > 0.0
+        assert np.isfinite(volume)
+
+    def test_a_wilder_prior_is_penalised_on_data_it_did_not_need(self, problem, rng):
+        """The whole point of an evidence: fitting is not the same as
+        explaining."""
+        model = problem.model_space
+        tight = GaussianMeasure.from_standard_deviation(model, 0.5)
+        loose = GaussianMeasure.from_standard_deviation(model, 50.0)
+        small = problem.synthetic_data(model.scale(0.1, model.random(rng=rng)), rng=rng)
+        assert Bayesian(problem, tight).log_evidence(small) > Bayesian(
+            problem, loose
+        ).log_evidence(small)
+
+
+class TestConstrainedLeastSquares:
+    @pytest.fixture
+    def constrained(self, problem, rng):
+        from pygeoinf2.geometry.subspaces import AffineSubspace
+
+        model = problem.model_space
+        constraint = LinearOperator.from_derivative_matrix(
+            model, EuclideanSpace(1), rng.normal(size=(1, model.dim))
+        )
+        subspace = AffineSubspace.from_linear_equation(constraint, np.array([2.0]))
+        return constraint, subspace
+
+    def test_the_answer_satisfies_the_constraint(self, problem, constrained, rng):
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        constraint, subspace = constrained
+        data = problem.data_space.random(rng=rng)
+        answer = ConstrainedLeastSquares(problem, subspace, damping=1e-3)(data)
+        assert np.allclose(constraint(answer), [2.0])
+
+    def test_the_unconstrained_answer_does_not(self, problem, constrained, rng):
+        """Which is what makes the constrained one a different estimator and
+        not a tidier way of writing the same one."""
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        constraint, subspace = constrained
+        data = problem.data_space.random(rng=rng)
+        assert not np.allclose(
+            constraint(LeastSquares(problem, damping=1e-3)(data)), [2.0]
+        )
+        ConstrainedLeastSquares(problem, subspace, damping=1e-3)(data)
+
+    def test_it_is_optimal_within_the_subspace(self, problem, constrained, rng):
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        constraint, subspace = constrained
+        model, data_space = problem.model_space, problem.data_space
+        data = data_space.random(rng=rng)
+        answer = ConstrainedLeastSquares(problem, subspace, damping=1e-3)(data)
+
+        def objective(x):
+            return data_space.squared_norm(
+                data_space.subtract(problem.forward_operator(x), data)
+            ) + 1e-3 * model.squared_norm(x)
+
+        best = objective(answer)
+        for size in (0.01, 0.1, 0.5):
+            for _ in range(4):
+                nudged = model.add(
+                    answer,
+                    model.scale(size, subspace.projector(model.random(rng=rng))),
+                )
+                assert objective(nudged) > best
+
+    def test_it_is_still_an_operator(self, problem, constrained):
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        _, subspace = constrained
+        estimator = ConstrainedLeastSquares(problem, subspace)
+        assert isinstance(estimator, LinearPointEstimator)
+        assert estimator.subspace is subspace
+
+    def test_a_subspace_of_the_wrong_space_is_refused(self, problem, rng):
+        from pygeoinf2.geometry.subspaces import AffineSubspace, OrthogonalProjector
+        from pygeoinf2.inference import ConstrainedLeastSquares
+
+        other = EuclideanSpace(3)
+        subspace = AffineSubspace(
+            OrthogonalProjector.from_basis(other, [other.random(rng=rng)])
+        )
+        with pytest.raises(ValueError, match="model space"):
+            ConstrainedLeastSquares(problem, subspace)

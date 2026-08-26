@@ -33,13 +33,19 @@ from .estimators import (
     PointEstimator,
     SetEstimator,
 )
-from .point import LeastSquares, MinimumNorm, choose_formalism
+from .point import (
+    ConstrainedLeastSquares,
+    LeastSquares,
+    MinimumNorm,
+    choose_formalism,
+)
 from .problem import ForwardProblem, LinearForwardProblem
 
 __all__ = [
     "BackusGilbert",
     "BackusInference",
     "Bayesian",
+    "ConstrainedLeastSquares",
     "DualFeasibleProperty",
     "FeasibleProperty",
     "Estimator",
