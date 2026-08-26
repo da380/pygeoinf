@@ -170,8 +170,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     def from_product(
         cls,
         measures: Sequence[GaussianMeasure],
-        labels: Sequence[str] | None = None,
         /,
+        *,
+        labels: Sequence[str] | None = None,
     ) -> GaussianMeasure:
         """The independent product of Gaussians, on the direct sum of domains.
 
@@ -184,7 +185,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         measures = tuple(measures)
         if not measures:
             raise ValueError("A product measure needs at least one factor.")
-        domain = DirectSum([m.domain for m in measures], labels)
+        domain = DirectSum([m.domain for m in measures], labels=labels)
 
         covariance = None
         factor = None
@@ -201,7 +202,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if factor is None and all(m.can_sample for m in measures):
 
             def sample(rng, _measures=measures):
-                return tuple(m.sample(rng) for m in _measures)
+                return tuple(m.sample(rng=rng) for m in _measures)
 
         return cls(
             domain,
@@ -254,28 +255,34 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
     @property
     def expectation(self) -> X:
+        """The mean, which is the zero vector when none was supplied."""
         if self._expectation is None:
             return self._domain.zero()
         return self._expectation
 
     @property
     def has_zero_expectation(self) -> bool:
+        """True when no expectation was supplied, so the mean is zero."""
         return self._expectation is None
 
     @property
     def covariance(self) -> LinearOperator[X, X] | None:
+        """The covariance operator, or None when only a precision is known."""
         return self._covariance
 
     @property
     def covariance_factor(self) -> LinearOperator | None:
+        """The factor ``L`` with ``C == L L*``, or None."""
         return self._covariance_factor
 
     @property
     def precision(self) -> LinearOperator[X, X] | None:
+        """The precision, or None when it was not supplied or derived."""
         return self._precision
 
     @property
     def precision_factor(self) -> LinearOperator | None:
+        """The factor ``Li`` with ``C^-1 == Li* Li``, or None."""
         return self._precision_factor
 
     # ----------------------------------------------------------------- #
@@ -284,13 +291,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
     @property
     def can_sample(self) -> bool:
+        """True when the measure can be sampled.
+
+        A covariance alone is not enough: sampling needs a factor of it, or an
+        explicit sampler.
+        """
         return self._sample_fn is not None or self._covariance_factor is not None
 
-    def sample(self, rng: Generator | None = None) -> X:
+    def sample(self, *, rng: Generator | None = None) -> X:
+        """One draw, as ``m + L xi`` with ``xi`` white noise on the factor's domain."""
         if self._sample_fn is not None:
             value = self._sample_fn(rng)
         elif self._covariance_factor is not None:
-            noise = self._covariance_factor.domain.white_noise(rng)
+            noise = self._covariance_factor.domain.white_noise(rng=rng)
             value = self._covariance_factor(noise)
         else:
             raise NotImplementedError(
@@ -340,10 +353,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
     @property
     def has_log_density(self) -> bool:
+        """True when a precision is available, so a density can be evaluated."""
         return self._precision is not None
 
     @property
     def has_grad_log_density(self) -> bool:
+        """True when a precision is available."""
         return self._precision is not None
 
     # ----------------------------------------------------------------- #
@@ -351,8 +366,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
     # ----------------------------------------------------------------- #
 
     def _rebuild(
-        self, domain, *, expectation, covariance, covariance_factor, sample=None
-    ):
+        self,
+        domain: HilbertSpace,
+        /,
+        *,
+        expectation: object | None,
+        covariance: LinearOperator | None,
+        covariance_factor: LinearOperator | None,
+        sample: Callable[[Generator | None], object] | None = None,
+    ) -> GaussianMeasure:
         """Build a measure of this class. Subclasses override to stay in theirs."""
         return GaussianMeasure(
             domain,
@@ -362,7 +384,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             sample=sample,
         )
 
-    def _combine_affine(self, operator, translation) -> GaussianMeasure[X]:
+    def _combine_affine(
+        self, operator: LinearOperator, translation: X | None
+    ) -> GaussianMeasure[X]:
         """A Gaussian stays Gaussian under an affine map."""
         codomain = operator.codomain
         mean = operator(self.expectation)
@@ -386,7 +410,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if factor is None and self.can_sample:
 
             def sample(rng, _operator=operator, _translation=translation):
-                mapped = _operator(self.sample(rng))
+                mapped = _operator(self.sample(rng=rng))
                 if _translation is None:
                     return mapped
                 return codomain.add(mapped, _translation)
@@ -399,7 +423,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             sample=sample,
         )
 
-    def _combine_add(self, other) -> GaussianMeasure[X] | None:
+    def _combine_add(self, other: object) -> GaussianMeasure[X] | None:
         """The sum of independent Gaussians is Gaussian."""
         if not isinstance(other, GaussianMeasure):
             return None
@@ -412,7 +436,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self.can_sample and other.can_sample:
 
             def sample(rng, _other=other):
-                return self._domain.add(self.sample(rng), _other.sample(rng))
+                return self._domain.add(self.sample(rng=rng), _other.sample(rng=rng))
 
         return self._rebuild(
             self._domain,

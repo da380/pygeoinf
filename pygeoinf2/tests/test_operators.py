@@ -160,7 +160,7 @@ class TestNodes:
         identity = LinearOperator.identity(X)
         check_operator(identity, rng=rng)
         check_traits(identity, rng=rng)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert identity(x) is x
 
     def test_identity_disappears_from_compositions(self, spaces, rng):
@@ -171,15 +171,15 @@ class TestNodes:
 
     def test_zero(self, spaces, rng):
         X, Y = spaces
-        zero = LinearOperator.zero(X, Y)
+        zero = LinearOperator.zero(X, codomain=Y)
         check_operator(zero, rng=rng)
-        assert np.allclose(zero(X.random(rng)), np.zeros(3))
+        assert np.allclose(zero(X.random(rng=rng)), np.zeros(3))
 
     def test_zero_disappears_from_sums(self, spaces, rng):
         X, Y = spaces
         A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
-        assert A + LinearOperator.zero(X, Y) is A
-        assert LinearOperator.zero(X, Y) + A is A
+        assert A + LinearOperator.zero(X, codomain=Y) is A
+        assert LinearOperator.zero(X, codomain=Y) + A is A
 
     def test_sums_flatten(self, spaces, rng):
         X, Y = spaces
@@ -300,7 +300,7 @@ class TestMatrixRepresentations:
         A = LinearOperator.from_derivative_matrix(X, Y, M)
         check_operator(A, rng=rng)
         # Row i acts as the i-th derivative functional...
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert np.allclose(A(x), M @ X.to_components(x))
         # ...and the adjoint of a basis covector is that row's representer.
         e0 = np.array([1.0, 0.0])

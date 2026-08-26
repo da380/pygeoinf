@@ -92,15 +92,15 @@ class TestOperatorsWithoutCoordinates:
 
     def test_functionals_work_without_components(self, rng):
         X = make_opaque_space()
-        v = X.random(rng)
+        v = X.random(rng=rng)
         f = LinearFunctional.from_representer(X, v)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert f(x) == pytest.approx(X.inner_product(v, x))
         assert X.inner_product(f.representer, x) == pytest.approx(f(x))
 
     def test_gradient_check_without_components(self, rng):
         X = make_opaque_space()
-        centre = X.random(rng)
+        centre = X.random(rng=rng)
 
         def value(x):
             d = X.subtract(x, centre)
@@ -110,7 +110,7 @@ class TestOperatorsWithoutCoordinates:
             return X.subtract(x, centre)
 
         phi = Functional.from_callables(X, value, gradient=gradient)
-        check_gradient(phi, X.random(rng), rng=rng)
+        check_gradient(phi, X.random(rng=rng), rng=rng)
 
     def test_matrix_is_refused(self, rng):
         X = make_opaque_space()
@@ -160,14 +160,14 @@ class TestStrictSpaceProvesCoordinateFreedom:
     def test_gradient_checking_is_coordinate_free(self, rng):
         base = make_weighted_space()
         strict = StrictSpace(base)
-        centre = strict.random(rng)
+        centre = strict.random(rng=rng)
 
         phi = Functional.from_callables(
             strict,
             lambda x: 0.5 * strict.squared_norm(strict.subtract(x, centre)),
             gradient=lambda x: strict.subtract(x, centre),
         )
-        check_gradient(phi, strict.random(rng), rng=rng)
+        check_gradient(phi, strict.random(rng=rng), rng=rng)
 
     def test_a_coordinate_using_path_is_caught(self, rng):
         """The negative control: matrix() does need coordinates, and says so."""

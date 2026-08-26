@@ -70,10 +70,12 @@ class Operator[X, Y]:
 
     @property
     def domain(self) -> HilbertSpace[X]:
+        """The space the operator maps from."""
         return self._domain
 
     @property
     def codomain(self) -> HilbertSpace[Y]:
+        """The space the operator maps into."""
         return self._codomain
 
     @property
@@ -116,6 +118,11 @@ class Operator[X, Y]:
 
     @property
     def has_derivative(self) -> bool:
+        """True when a derivative is available.
+
+        Detected by whether the subclass overrode ``_derivative`` or
+        ``_linearise``; a subclass that decides at runtime overrides this.
+        """
         cls = type(self)
         return (
             cls._derivative is not Operator._derivative
@@ -124,6 +131,7 @@ class Operator[X, Y]:
 
     @property
     def has_second_derivative(self) -> bool:
+        """True when a second derivative is available."""
         return type(self)._second_derivative is not Operator._second_derivative
 
     # ----------------------------------------------------------------- #
@@ -293,10 +301,12 @@ class _CallableOperator[X, Y](Operator[X, Y]):
 
     @property
     def has_derivative(self) -> bool:
+        """True when a derivative or a linearisation callable was supplied."""
         return self._derivative_fn is not None or self._linearise_fn is not None
 
     @property
     def has_second_derivative(self) -> bool:
+        """True when a second-derivative callable was supplied."""
         return self._second_derivative_fn is not None
 
     def _value(self, x: X) -> Y:
@@ -353,6 +363,10 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
     @property
     def traits(self) -> Traits:
+        """The structural properties claimed for this operator.
+
+        Claims, not proofs: verify them with ``testing.check_traits``.
+        """
         return self._traits
 
     def with_traits(self, traits: Traits) -> Self:
@@ -406,10 +420,12 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
     @property
     def has_derivative(self) -> bool:
+        """Always true: a linear operator is its own derivative."""
         return True
 
     @property
     def has_second_derivative(self) -> bool:
+        """Always true: the second derivative of a linear operator is zero."""
         return True
 
     # ----------------------------------------------------------------- #
@@ -540,14 +556,20 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
     @classmethod
     def identity(cls, domain: HilbertSpace[X]) -> LinearOperator[X, X]:
+        """The identity on a space."""
         from .nodes import _Identity
 
         return _Identity(domain)
 
     @classmethod
     def zero(
-        cls, domain: HilbertSpace[X], codomain: HilbertSpace[Y] | None = None
+        cls,
+        domain: HilbertSpace[X],
+        /,
+        *,
+        codomain: HilbertSpace[Y] | None = None,
     ) -> LinearOperator[X, Y]:
+        """The zero operator, into ``codomain`` or back into ``domain``."""
         from .nodes import _Zero
 
         return _Zero(domain, domain if codomain is None else codomain)
@@ -679,6 +701,7 @@ class Functional[X](Operator[X, float]):
         super().__init__(domain, REALS)
 
     def at(self, x: X) -> QuadraticModel[X]:
+        """The value, derivative and Hessian at ``x``, from one evaluation."""
         return self._linearise(x)
 
     def _linearise(self, x: X) -> QuadraticModel[X]:
@@ -690,6 +713,7 @@ class Functional[X](Operator[X, float]):
         return self.at(x).gradient
 
     def hessian(self, x: X) -> LinearOperator[X, X]:
+        """The Hessian at ``x``, a self-adjoint operator on the domain."""
         return self._hessian(x)
 
     def _hessian(self, x: X) -> LinearOperator[X, X]:
@@ -697,6 +721,7 @@ class Functional[X](Operator[X, float]):
 
     @property
     def has_hessian(self) -> bool:
+        """True when a Hessian is available."""
         return type(self)._hessian is not Functional._hessian
 
     @classmethod
@@ -744,10 +769,12 @@ class _CallableFunctional[X](Functional[X]):
 
     @property
     def has_derivative(self) -> bool:
+        """True when a derivative or a gradient callable was supplied."""
         return self._derivative_fn is not None or self._gradient_fn is not None
 
     @property
     def has_hessian(self) -> bool:
+        """True when a Hessian callable was supplied."""
         return self._hessian_fn is not None
 
     def _value(self, x: X) -> float:
@@ -799,6 +826,7 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
 
     @property
     def has_hessian(self) -> bool:
+        """Always true: the Hessian of a linear functional is zero."""
         return True
 
     def _hessian(self, x: X) -> LinearOperator[X, X]:
@@ -858,14 +886,17 @@ class AffineOperator[X, Y](Operator[X, Y]):
 
     @property
     def linear_part(self) -> LinearOperator[X, Y]:
+        """The linear part ``A``."""
         return self._linear_part
 
     @property
     def translation(self) -> Y:
+        """The translation ``b``."""
         return self._translation
 
     @property
     def has_derivative(self) -> bool:
+        """Always true: the derivative is the constant linear part."""
         return True
 
     def _value(self, x: X) -> Y:

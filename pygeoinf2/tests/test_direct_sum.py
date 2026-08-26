@@ -37,7 +37,7 @@ from .doubles import OpaqueSpace
 
 
 def build_sum(labels=None):
-    return DirectSum([make_weighted_space(), EuclideanSpace(3)], labels)
+    return DirectSum([make_weighted_space(), EuclideanSpace(3)], labels=labels)
 
 
 @pytest.fixture
@@ -57,26 +57,26 @@ class TestDirectSumSpace:
         assert len(S) == 2
 
     def test_vectors_are_tuples(self, S, rng):
-        x = S.random(rng)
+        x = S.random(rng=rng)
         assert isinstance(x, tuple)
         assert len(x) == 2
 
     def test_inner_product_is_the_sum_of_the_summands(self, S, rng):
-        x, y = S.random(rng), S.random(rng)
+        x, y = S.random(rng=rng), S.random(rng=rng)
         expected = sum(
             space.inner_product(xi, yi) for space, xi, yi in zip(S.subspaces, x, y)
         )
         assert S.inner_product(x, y) == pytest.approx(expected)
 
     def test_named_access(self, S, rng):
-        x = S.random(rng)
+        x = S.random(rng=rng)
         assert S.component(x, "model") is x[0]
         assert S.component(x, "data") is x[1]
         assert S.subspace("data") == EuclideanSpace(3)
 
     def test_unknown_label(self, S, rng):
         with pytest.raises(KeyError, match="junk"):
-            S.component(S.random(rng), "junk")
+            S.component(S.random(rng=rng), "junk")
 
     def test_labels_are_not_part_of_identity(self):
         """A block operator cannot know what its user called things.
@@ -90,11 +90,11 @@ class TestDirectSumSpace:
 
     def test_duplicate_labels_are_refused(self):
         with pytest.raises(ValueError, match="distinct"):
-            DirectSum([EuclideanSpace(2), EuclideanSpace(3)], ("x", "x"))
+            DirectSum([EuclideanSpace(2), EuclideanSpace(3)], labels=("x", "x"))
 
     def test_wrong_number_of_labels(self):
         with pytest.raises(ValueError, match="labels for"):
-            DirectSum([EuclideanSpace(2), EuclideanSpace(3)], ("only_one",))
+            DirectSum([EuclideanSpace(2), EuclideanSpace(3)], labels=("only_one",))
 
     def test_empty_sums_are_refused(self):
         with pytest.raises(ValueError, match="at least one"):
@@ -143,7 +143,7 @@ class TestProjections:
         assert Traits.POSITIVE_SEMIDEFINITE & (P @ C @ P.adjoint).traits
 
     def test_inclusion_then_projection_is_the_identity(self, S, rng):
-        x = S.subspace("data").random(rng)
+        x = S.subspace("data").random(rng=rng)
         assert np.allclose(S.projection("data")(S.inclusion("data")(x)), x)
 
 
@@ -158,7 +158,7 @@ class TestBlockOperators:
         X, Y, A = pieces
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [A, LinearOperator.identity(Y)],
             ]
         )
@@ -168,7 +168,7 @@ class TestBlockOperators:
         X, Y, A = pieces
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [A, LinearOperator.identity(Y)],
             ]
         )
@@ -189,7 +189,7 @@ class TestBlockOperators:
         X, Y, A = pieces
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [A, LinearOperator.identity(Y)],
             ]
         )
@@ -204,7 +204,7 @@ class TestBlockOperators:
         X, Y, A = pieces
         with pytest.raises(ValueError, match="blocks, but row 0"):
             BlockOperator(
-                [[LinearOperator.identity(X), LinearOperator.zero(Y, X)], [A]]
+                [[LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)], [A]]
             )
 
 
@@ -222,7 +222,7 @@ class TestColumnRowAndDiagonal:
         assert isinstance(op, ColumnLinearOperator)
         assert op.domain == X
         check_operator(op, rng=rng)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert np.allclose(op(x)[0], A(x)) and np.allclose(op(x)[1], B(x))
 
     def test_column_adjoint_is_a_row(self, pieces, rng):
@@ -284,7 +284,7 @@ class TestNonlinearBlocks:
         X, Y, F = pieces
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [F, LinearOperator.identity(Y)],
             ]
         )
@@ -295,11 +295,11 @@ class TestNonlinearBlocks:
         X, Y, F = pieces
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [F, LinearOperator.identity(Y)],
             ]
         )
-        m, e = X.random(rng), Y.random(rng)
+        m, e = X.random(rng=rng), Y.random(rng=rng)
         model, data = op((m, e))
         assert np.allclose(model, m)
         assert np.allclose(data, F(m) + e)
@@ -309,11 +309,11 @@ class TestNonlinearBlocks:
         X, Y, F = pieces
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [F, LinearOperator.identity(Y)],
             ]
         )
-        point = (X.random(rng), Y.random(rng))
+        point = (X.random(rng=rng), Y.random(rng=rng))
         jacobian = op.derivative(point)
         assert isinstance(jacobian, BlockLinearOperator)
         check_operator(jacobian, rng=rng)
@@ -324,7 +324,7 @@ class TestNonlinearBlocks:
         A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
         op = ColumnOperator([F, A])
         assert type(op) is ColumnOperator
-        check_derivative(op, X.random(rng), rng=rng)
+        check_derivative(op, X.random(rng=rng), rng=rng)
 
 
 class TestProductMeasures:
@@ -335,7 +335,7 @@ class TestProductMeasures:
                 GaussianMeasure.from_standard_deviation(X, 1.5),
                 GaussianMeasure.from_standard_deviation(Y, 0.4),
             ],
-            ("model", "noise"),
+            labels=("model", "noise"),
         )
         assert isinstance(joint, GaussianMeasure)
         assert Traits.POSITIVE_DEFINITE & joint.covariance.traits
@@ -351,7 +351,7 @@ class TestProductMeasures:
         joint = product([skewed, GaussianMeasure.from_standard_deviation(Y, 1.0)])
         assert isinstance(joint, ProductMeasure)
         assert not joint.has_covariance  # honestly unavailable
-        draws = joint.samples(200, rng)
+        draws = joint.samples(200, rng=rng)
         assert all(np.all(d[0] >= 0.0) for d in draws)
 
     def test_factors_are_reachable_by_name(self, rng):
@@ -361,7 +361,7 @@ class TestProductMeasures:
                 GaussianMeasure.from_standard_deviation(X, 1.0),
                 GaussianMeasure.from_standard_deviation(Y, 1.0),
             ],
-            ("model", "noise"),
+            labels=("model", "noise"),
         )
         assert joint.factor("noise").domain == Y
 
@@ -378,11 +378,11 @@ class TestJointModel:
 
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [A, LinearOperator.identity(Y)],
             ]
         )
-        joint = op @ product([prior, noise], ("model", "data"))
+        joint = op @ product([prior, noise], labels=("model", "data"))
 
         assert isinstance(joint, GaussianMeasure)
         check_measure(joint, rng=rng, samples=20000, rtol=0.12)
@@ -390,7 +390,7 @@ class TestJointModel:
         # The data block of the joint covariance is A C A* + R.
         data = joint.domain.inclusion(1)
         expected = A @ prior.covariance @ A.adjoint + noise.covariance
-        y = Y.random(rng)
+        y = Y.random(rng=rng)
         assert np.allclose(
             joint.domain.component(joint.covariance(data(y)), 1), expected(y)
         )
@@ -405,7 +405,7 @@ class TestJointModel:
         F = Operator.from_callables(X, Y, value)
         op = BlockOperator(
             [
-                [LinearOperator.identity(X), LinearOperator.zero(Y, X)],
+                [LinearOperator.identity(X), LinearOperator.zero(Y, codomain=X)],
                 [F, LinearOperator.identity(Y)],
             ]
         )
@@ -417,7 +417,7 @@ class TestJointModel:
         )
 
         assert isinstance(joint, PushForwardMeasure)
-        draws = joint.samples(4000, rng)
+        draws = joint.samples(4000, rng=rng)
         # E[d_0] == E[|m|^2] + 0 == 2 for a standard normal on R^2.
         assert np.mean([d[1][0] for d in draws]) == pytest.approx(2.0, rel=0.1)
         # And the model half is untouched by the map.

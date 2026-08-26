@@ -64,7 +64,7 @@ class TestAdaptedSpace:
 
     def test_inner_product_matches_v1(self, X, rng):
         base = X.v1_space
-        x, y = X.random(rng), X.random(rng)
+        x, y = X.random(rng=rng), X.random(rng=rng)
         assert X.inner_product(x, y) == pytest.approx(base.inner_product(x, y))
 
     def test_equality_survives_reconstruction(self):
@@ -112,7 +112,7 @@ class TestDiracAndRepresenters:
         point = POINTS[0]
         f = adapt_form(base.dirac(point), domain=X)
 
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert f(x) == pytest.approx(base.dirac(point)(x))
 
     def test_the_representer_matches_v1s_from_dual(self, X):
@@ -144,13 +144,13 @@ class TestAdaptedOperator:
     def test_forward_values_match_v1(self, X, rng):
         v1_op = X.v1_space.point_evaluation_operator(POINTS)
         A = adapt_operator(v1_op, domain=X)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert np.allclose(A(x), v1_op(x))
 
     def test_adjoint_values_match_v1(self, X, rng):
         v1_op = X.v1_space.point_evaluation_operator(POINTS)
         A = adapt_operator(v1_op, domain=X)
-        y = A.codomain.random(rng)
+        y = A.codomain.random(rng=rng)
         assert np.allclose(
             X.to_components(A.adjoint(y)), X.to_components(v1_op.adjoint(y))
         )
@@ -219,7 +219,7 @@ class TestBayesianNormalOperator:
 
         normal = A @ Q @ A.adjoint + R
         for _ in range(3):
-            y = A.codomain.random(rng)
+            y = A.codomain.random(rng=rng)
             assert np.allclose(normal(y), v1_normal(y))
 
     def test_posterior_mean_matches_v1(self, problem, rng):
@@ -228,7 +228,7 @@ class TestBayesianNormalOperator:
         base = X.v1_space
         normal = A @ Q @ A.adjoint + R
 
-        truth = X.random(rng)
+        truth = X.random(rng=rng)
         data = A(truth)
 
         # v2: solve the normal system densely, then map back through Q A*.
@@ -326,7 +326,7 @@ class TestSolversOnAdaptedSpaces:
         from pygeoinf2.numerics import CGSolver
 
         _, A, _, _, normal = problem
-        b = A.codomain.random(rng)
+        b = A.codomain.random(rng=rng)
         result = CGSolver(rtol=1e-12)(normal).solve(b)
         exact = np.linalg.solve(normal.matrix(form="components"), b)
         assert np.allclose(result.solution, exact, atol=1e-9)
@@ -345,7 +345,7 @@ class TestSolversOnAdaptedSpaces:
             + 0.04 * pygeoinf.EuclideanSpace(len(POINTS)).identity_operator()
         )
 
-        b = A.codomain.random(rng)
+        b = A.codomain.random(rng=rng)
         v2_solution = CGSolver(rtol=1e-12)(normal).solve(b).solution
         v1_solution = pygeoinf.CGSolver(rtol=1e-12)(v1_normal)(b)
         assert np.allclose(v2_solution, v1_solution, atol=1e-8)
@@ -368,7 +368,7 @@ class TestSolversOnAdaptedSpaces:
         shifted = Q + 0.5 * LinearOperator.identity(X)
         assert Traits.POSITIVE_DEFINITE & shifted.traits
 
-        b = X.random(rng)
+        b = X.random(rng=rng)
         solution = CGSolver(rtol=1e-12)(shifted).solve(b).solution
         residual = X.norm(X.subtract(shifted(solution), b))
         assert residual < 1e-8 * X.norm(b)
@@ -377,7 +377,7 @@ class TestSolversOnAdaptedSpaces:
         from pygeoinf2.numerics import CGSolver
 
         X, A, Q, _, normal = problem
-        truth = X.random(rng)
+        truth = X.random(rng=rng)
         data = A(truth)
 
         via_cg = (Q @ A.adjoint)(CGSolver(rtol=1e-12)(normal).solve(data).solution)
@@ -415,7 +415,7 @@ class TestMeasuresOnAdaptedSpaces:
 
     def test_the_covariance_matches_v1(self, X, prior, rng):
         v1_measure, mu, _ = prior
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert np.allclose(mu.covariance(x), v1_measure.covariance(x))
 
     def test_sampled_moments_match_the_declared_covariance(self, X, prior, rng):
@@ -440,7 +440,7 @@ class TestMeasuresOnAdaptedSpaces:
             [base.inner_product(v1_measure.sample(), u) ** 2 for _ in range(4000)]
         )
         v2_moment = np.mean(
-            [X.inner_product(mu.sample(rng), u) ** 2 for _ in range(4000)]
+            [X.inner_product(mu.sample(rng=rng), u) ** 2 for _ in range(4000)]
         )
         exact = X.inner_product(mu.covariance(u), u)
 

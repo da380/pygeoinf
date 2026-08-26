@@ -159,6 +159,7 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
 
     @property
     def solver(self) -> LinearSolver:
+        """The solver that produced this inverse."""
         return self._solver
 
     def solve(self, y: Y, /, *, x0: X | None = None) -> SolveResult[X]:
@@ -234,7 +235,7 @@ class LUSolver(DirectSolver):
 
     form: ClassVar[str] = "components"
 
-    def _factorise(self, matrix):
+    def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
         factor = lu_factor(matrix)
         return lambda c: lu_solve(factor, c)
 
@@ -249,7 +250,7 @@ class CholeskySolver(DirectSolver):
     requires: ClassVar[Traits] = Traits.POSITIVE_DEFINITE
     form: ClassVar[str] = "galerkin"
 
-    def _factorise(self, matrix):
+    def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
         symmetric = 0.5 * (matrix + matrix.T)
         factor = cho_factor(symmetric)
         return lambda c: cho_solve(factor, c)
@@ -264,7 +265,7 @@ class EigenSolver(DirectSolver):
     def __init__(self, /, *, rtol: float = 1e-12) -> None:
         self._rtol = rtol
 
-    def _factorise(self, matrix):
+    def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
         symmetric = 0.5 * (matrix + matrix.T)
         values, vectors = eigh(symmetric)
         largest = np.max(np.abs(values)) if values.size else 0.0
@@ -373,7 +374,7 @@ class IterativeSolver(LinearSolver):
     # -- shared helpers, all coordinate-free ---------------------------
 
     @staticmethod
-    def _initial(operator: LinearOperator, b, x0):
+    def _initial(operator: LinearOperator, b: Any, x0: Any | None) -> tuple[Any, Any]:
         """Return ``(x, r)`` with ``r == b - A x``."""
         domain, codomain = operator.domain, operator.codomain
         if x0 is None:
@@ -381,7 +382,7 @@ class IterativeSolver(LinearSolver):
         x = domain.copy(x0)
         return x, codomain.subtract(b, operator(x))
 
-    def _tolerance(self, codomain: HilbertSpace, b) -> float:
+    def _tolerance(self, codomain: HilbertSpace, b: Any) -> float:
         return max(self._rtol * codomain.norm(b), self._atol)
 
 
@@ -396,7 +397,13 @@ class CGSolver(IterativeSolver):
 
     requires: ClassVar[Traits] = Traits.POSITIVE_DEFINITE
 
-    def _solve(self, operator, preconditioner, b, x0) -> SolveResult:
+    def _solve(
+        self,
+        operator: LinearOperator,
+        preconditioner: LinearOperator | None,
+        b: Any,
+        x0: Any | None,
+    ) -> SolveResult:
         space = operator.domain
         x, r = self._initial(operator, b, x0)
         tolerance = self._tolerance(operator.codomain, b)
@@ -448,7 +455,13 @@ class MinResSolver(IterativeSolver):
 
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
 
-    def _solve(self, operator, preconditioner, b, x0) -> SolveResult:
+    def _solve(
+        self,
+        operator: LinearOperator,
+        preconditioner: LinearOperator | None,
+        b: Any,
+        x0: Any | None,
+    ) -> SolveResult:
         if preconditioner is not None:
             raise NotImplementedError(
                 "Preconditioned MINRES needs a positive-definite preconditioner "
@@ -527,7 +540,13 @@ class MinResSolver(IterativeSolver):
 class BiCGStabSolver(IterativeSolver):
     """BiCGSTAB, for an operator with no symmetry to exploit."""
 
-    def _solve(self, operator, preconditioner, b, x0) -> SolveResult:
+    def _solve(
+        self,
+        operator: LinearOperator,
+        preconditioner: LinearOperator | None,
+        b: Any,
+        x0: Any | None,
+    ) -> SolveResult:
         space = operator.domain
         x, r = self._initial(operator, b, x0)
         tolerance = self._tolerance(operator.codomain, b)
@@ -646,7 +665,7 @@ class LSQRSolver(LeastSquaresSolver):
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.NONE)
 
-    def _solve(self, operator: LinearOperator, b) -> SolveResult:
+    def _solve(self, operator: LinearOperator, b: Any) -> SolveResult:
         domain, codomain = operator.domain, operator.codomain
         limit = self._maxiter if self._maxiter is not None else 4 * max(domain.dim, 1)
 

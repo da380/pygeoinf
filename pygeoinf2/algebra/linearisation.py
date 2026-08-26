@@ -76,6 +76,7 @@ class QuadraticModel[X](Linearisation[X, float]):
 
     @property
     def has_hessian(self) -> bool:
+        """True when a Hessian was supplied."""
         return self.hessian is not None
 
     def __repr__(self) -> str:

@@ -149,7 +149,7 @@ class TestWhiteNoise:
         """Drawing standard normal components gives covariance G, not I."""
 
         class V1StyleSpace(WeightedSpace):
-            def white_noise(self, rng=None):
+            def white_noise(self, *, rng=None):
                 rng = np.random.default_rng() if rng is None else rng
                 return self.from_components(rng.standard_normal(self.dim))
 
@@ -164,7 +164,7 @@ class TestWhiteNoise:
     def test_random_is_not_advertised_as_white_noise(self, rng):
         """random() draws standard normal components and makes no claim."""
         space = make_weighted_space()
-        c = space.to_components(space.random(rng))
+        c = space.to_components(space.random(rng=rng))
         assert c.shape == (space.dim,)
 
 
@@ -191,7 +191,7 @@ class TestReals:
 class TestDerivedOperations:
     def test_gram_schmidt_orthonormalises(self, rng):
         space = make_weighted_space()
-        vectors = [space.random(rng) for _ in range(3)]
+        vectors = [space.random(rng=rng) for _ in range(3)]
         basis = space.gram_schmidt(vectors)
         for i, u in enumerate(basis):
             for j, v in enumerate(basis):
@@ -207,7 +207,7 @@ class TestDerivedOperations:
 
     def test_mean(self, rng):
         space = make_weighted_space()
-        vectors = [space.random(rng) for _ in range(5)]
+        vectors = [space.random(rng=rng) for _ in range(5)]
         expected = np.mean([space.to_components(v) for v in vectors], axis=0)
         assert np.allclose(space.to_components(space.mean(vectors)), expected)
 

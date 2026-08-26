@@ -111,6 +111,7 @@ class _Adjoint[X, Y](LinearOperator[Y, X]):
 
     @property
     def base(self) -> LinearOperator[X, Y]:
+        """The operator whose adjoint this is."""
         return self._base
 
     def _value(self, y: Y) -> X:
@@ -139,10 +140,12 @@ class _Scaled[X, Y](LinearOperator[X, Y]):
 
     @property
     def alpha(self) -> float:
+        """The scalar factor."""
         return self._alpha
 
     @property
     def base(self) -> LinearOperator[X, Y]:
+        """The operator being scaled."""
         return self._base
 
     def _value(self, x: X) -> Y:
@@ -180,6 +183,7 @@ class _Sum[X, Y](LinearOperator[X, Y]):
 
     @property
     def terms(self) -> tuple[LinearOperator[X, Y], ...]:
+        """The summands, flattened."""
         return self._terms
 
     def _value(self, x: X) -> Y:
@@ -260,6 +264,7 @@ class _Composition[X, Y](LinearOperator[X, Y]):
 
     @property
     def factors(self) -> tuple[LinearOperator, ...]:
+        """The factors, flattened, outermost first."""
         return self._factors
 
     def _value(self, x: X) -> Y:
@@ -296,10 +301,12 @@ class _OperatorSum[X, Y](Operator[X, Y]):
 
     @property
     def has_derivative(self) -> bool:
+        """True only when every term carries a derivative."""
         return all(term.has_derivative for term in self._terms)
 
     @property
     def has_second_derivative(self) -> bool:
+        """True only when every term carries a second derivative."""
         return all(term.has_second_derivative for term in self._terms)
 
     def _value(self, x: X) -> Y:
@@ -335,10 +342,12 @@ class _OperatorScaled[X, Y](Operator[X, Y]):
 
     @property
     def has_derivative(self) -> bool:
+        """True when the scaled operator carries a derivative."""
         return self._base.has_derivative
 
     @property
     def has_second_derivative(self) -> bool:
+        """True when the scaled operator carries a second derivative."""
         return self._base.has_second_derivative
 
     def _value(self, x: X) -> Y:
@@ -373,10 +382,16 @@ class _OperatorComposition[X, Y](Operator[X, Y]):
 
     @property
     def has_derivative(self) -> bool:
+        """True when the chain rule can be applied, so both factors have one."""
         return self._outer.has_derivative and self._inner.has_derivative
 
     @property
     def has_second_derivative(self) -> bool:
+        """True when both factors carry first *and* second derivatives.
+
+        The second derivative of a composition needs the first derivatives
+        too, since it differentiates the chain rule.
+        """
         return (
             self._outer.has_second_derivative
             and self._inner.has_second_derivative
@@ -417,12 +432,14 @@ def make_sum(a: Operator, b: Operator) -> Operator:
 
 
 def make_scaled(alpha: float, base: Operator) -> Operator:
+    """A scaling node of the right kind for the operand."""
     if isinstance(base, LinearOperator):
         return base * alpha
     return _OperatorScaled(alpha, base)
 
 
 def make_composition(outer: Operator, inner: Operator) -> Operator:
+    """A composition node of the right kind for the operands."""
     if isinstance(outer, LinearOperator) and isinstance(inner, LinearOperator):
         return _Composition([outer, inner])
     return _OperatorComposition(outer, inner)

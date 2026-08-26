@@ -55,7 +55,43 @@ so a user who wants that does it deliberately and visibly.
 
 ---
 
-## 2. Package layout
+## 2. Code practice
+
+Three house rules, enforced by `tests/test_code_practice.py` rather than
+recorded here and forgotten:
+
+1. **Docstrings on every public class and function.** For an override, the
+   docstring says what is specific to the override rather than repeating the
+   base — "the summands' components, concatenated", not "returns the
+   components".
+2. **Type hints on every parameter and return.** Including private methods:
+   the subclass contract (`_value`, `_adjoint_value`, `_solve`) is where a
+   reader most needs to know what is expected.
+3. **Optional arguments are keyword-only.** An optional positional argument is
+   a compatibility hazard: once callers pass it positionally its position is
+   part of the API, and nothing can be inserted before it. So `random(*, rng)`,
+   `zero(domain, *, codomain)`, `DirectSum(spaces, *, labels)`.
+
+The test parametrises over every module, so a failure names the file, line and
+symbol.
+
+## 2.1 Scope
+
+The focus is the **algebraic structures and numerical methods**, coordinate-free
+wherever possible, with SciPy-backed coordinate implementations available as an
+option rather than as the foundation. The inversion layer is deliberately out of
+scope for now.
+
+Within numerics, the areas that matter:
+
+| area | v1 state | intent |
+|---|---|---|
+| Randomised range finding, low-rank factorisation | partly coordinate-free already | retain that, and finish the job |
+| Functional calculus (`f(A)` via Lanczos) | matrix-free | port and generalise (§5.7) |
+| Nonlinear optimisation | a thin SciPy wrapper that conflates gradients and derivatives | rewrite as bespoke coordinate-free methods, as the linear solvers were |
+| Convex optimisation | entangled with the inversion layer | leave for now |
+
+## 2.2 Package layout
 
 ```
 pygeoinf2/

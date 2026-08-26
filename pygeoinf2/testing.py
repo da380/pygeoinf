@@ -19,6 +19,7 @@ from numpy.random import Generator, default_rng
 
 from .algebra.operators import Functional, LinearOperator, Operator
 from .algebra.spaces import CoordinateSpace, HilbertSpace
+from .probability.base import ProbabilityMeasure
 from .traits import Traits
 
 __all__ = [
@@ -41,8 +42,8 @@ def _fail(axiom: str, detail: str) -> None:
 
 def _assert_close(
     space: HilbertSpace,
-    a,
-    b,
+    a: object,
+    b: object,
     axiom: str,
     *,
     rtol: float = 1e-10,
@@ -109,7 +110,7 @@ def check_space(
         return
 
     for _ in range(trials):
-        x, y, z = space.random(rng), space.random(rng), space.random(rng)
+        x, y, z = space.random(rng=rng), space.random(rng=rng), space.random(rng=rng)
         a, b = float(rng.normal()), float(rng.normal())
 
         # --- vector space axioms -----------------------------------------
@@ -194,7 +195,7 @@ def check_space(
         _assert_close(space, x, original, "copy does not alias its source")
 
     # --- derived helpers ---------------------------------------------------
-    vectors = [space.random(rng) for _ in range(min(3, space.dim))]
+    vectors = [space.random(rng=rng) for _ in range(min(3, space.dim))]
     orthonormal = space.gram_schmidt(vectors)
     for i, u in enumerate(orthonormal):
         for j, v in enumerate(orthonormal):
@@ -204,7 +205,7 @@ def check_space(
                 "gram_schmidt returns an orthonormal set",
             )
 
-    samples = [space.random(rng) for _ in range(4)]
+    samples = [space.random(rng=rng) for _ in range(4)]
     total = space.zero()
     for s in samples:
         total = space.axpy(0.25, s, total)
@@ -246,7 +247,7 @@ def check_coordinates(
         _fail("an orthonormal basis has an identity Gram matrix", "it does not")
 
     for _ in range(trials):
-        x, y = space.random(rng), space.random(rng)
+        x, y = space.random(rng=rng), space.random(rng=rng)
         cx = space.to_components(x)
         cy = space.to_components(y)
         a = float(rng.normal())
@@ -311,7 +312,7 @@ def check_representer(
     v = space.representer(g)
 
     for _ in range(trials):
-        x = space.random(rng)
+        x = space.random(rng=rng)
         _assert_scalar(
             space.inner_product(v, x),
             float(g @ space.to_components(x)),
@@ -344,11 +345,11 @@ def check_white_noise(
     if isinstance(space, CoordinateSpace):
         directions = [space.basis_vector(i) for i in range(min(space.dim, 3))]
     else:
-        directions = [space.random(rng) for _ in range(min(space.dim, 3))]
+        directions = [space.random(rng=rng) for _ in range(min(space.dim, 3))]
 
     projections = np.empty((samples, len(directions)))
     for n in range(samples):
-        x = space.white_noise(rng)
+        x = space.white_noise(rng=rng)
         for k, u in enumerate(directions):
             projections[n, k] = space.inner_product(x, u)
 
@@ -389,7 +390,7 @@ def check_operator(
     domain, codomain = operator.domain, operator.codomain
 
     for _ in range(trials):
-        x, y = domain.random(rng), domain.random(rng)
+        x, y = domain.random(rng=rng), domain.random(rng=rng)
         a, b = float(rng.normal()), float(rng.normal())
 
         combination = domain.add(domain.scale(a, x), domain.scale(b, y))
@@ -412,7 +413,7 @@ def check_operator(
         _fail("the adjoint is an involution", "A.adjoint.adjoint is not A")
 
     for _ in range(trials):
-        x, y = domain.random(rng), codomain.random(rng)
+        x, y = domain.random(rng=rng), codomain.random(rng=rng)
         _assert_scalar(
             codomain.inner_product(operator(x), y),
             domain.inner_product(x, adjoint(y)),
@@ -447,7 +448,7 @@ def check_traits(
         )
 
     for _ in range(trials):
-        x, y = domain.random(rng), domain.random(rng)
+        x, y = domain.random(rng=rng), domain.random(rng=rng)
 
         if claims(Traits.SELF_ADJOINT):
             _assert_scalar(
@@ -512,7 +513,7 @@ def check_traits(
 
 def check_derivative(
     operator: Operator,
-    point,
+    point: object,
     /,
     *,
     rng: Generator | None = None,
@@ -532,7 +533,7 @@ def check_derivative(
     derivative = linearisation.derivative
 
     for _ in range(trials):
-        direction = domain.random(rng)
+        direction = domain.random(rng=rng)
         direction = domain.scale(1.0 / max(domain.norm(direction), 1e-30), direction)
 
         forward = operator(domain.axpy(step, direction, domain.copy(point)))
@@ -553,7 +554,7 @@ def check_derivative(
 
 def check_gradient(
     functional: Functional,
-    point,
+    point: object,
     /,
     *,
     rng: Generator | None = None,
@@ -575,7 +576,7 @@ def check_gradient(
     gradient = functional.at(point).gradient
 
     for _ in range(trials):
-        direction = domain.random(rng)
+        direction = domain.random(rng=rng)
         direction = domain.scale(1.0 / max(domain.norm(direction), 1e-30), direction)
 
         forward = functional(domain.axpy(step, direction, domain.copy(point)))
@@ -595,7 +596,7 @@ def check_gradient(
 
 def check_second_derivative(
     operator: Operator,
-    point,
+    point: object,
     /,
     *,
     rng: Generator | None = None,
@@ -613,9 +614,9 @@ def check_second_derivative(
 
     domain, codomain = operator.domain, operator.codomain
     for _ in range(trials):
-        d = domain.random(rng)
+        d = domain.random(rng=rng)
         d = domain.scale(1.0 / max(domain.norm(d), 1e-30), d)
-        e = domain.random(rng)
+        e = domain.random(rng=rng)
         e = domain.scale(1.0 / max(domain.norm(e), 1e-30), e)
 
         forward = operator.derivative(domain.axpy(step, d, domain.copy(point)))(e)
@@ -640,7 +641,7 @@ def check_second_derivative(
 
 
 def check_measure(
-    measure,
+    measure: ProbabilityMeasure,
     /,
     *,
     rng: Generator | None = None,
@@ -669,9 +670,9 @@ def check_measure(
     if isinstance(space, CoordinateSpace):
         probes = [space.basis_vector(i) for i in range(min(space.dim, directions))]
     else:
-        probes = [space.random(rng) for _ in range(min(space.dim, directions))]
+        probes = [space.random(rng=rng) for _ in range(min(space.dim, directions))]
 
-    draws = measure.samples(samples, rng)
+    draws = measure.samples(samples, rng=rng)
     projections = np.array([[space.inner_product(x, u) for u in probes] for x in draws])
     spread = np.std(projections, axis=0)
 

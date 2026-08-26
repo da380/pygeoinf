@@ -92,7 +92,7 @@ class TestCorrectness:
             traits=Traits.POSITIVE_DEFINITE,
         )
         check_traits(A, rng=rng)
-        b = X.random(rng)
+        b = X.random(rng=rng)
         solution = CGSolver(rtol=1e-12)(A).solve(b).solution
         assert np.allclose(X.to_components(A(solution)), X.to_components(b), atol=1e-8)
 
@@ -155,7 +155,7 @@ class TestCoordinateFreedom:
             ),
             traits=Traits.POSITIVE_DEFINITE,
         )
-        return strict, A, strict.random(rng)
+        return strict, A, strict.random(rng=rng)
 
     def test_cg_is_coordinate_free(self, strict_problem):
         strict, A, b = strict_problem
@@ -193,7 +193,7 @@ class TestInverseOperator:
     def test_the_inverse_inverts(self, spd_problem, rng):
         A, _, _ = spd_problem
         inverse = CholeskySolver()(A)
-        x = A.domain.random(rng)
+        x = A.domain.random(rng=rng)
         assert np.allclose(inverse(A(x)), x, atol=1e-8)
 
     def test_the_adjoint_of_the_inverse_is_the_inverse_of_the_adjoint(self, rng):
@@ -202,15 +202,15 @@ class TestInverseOperator:
         A = LinearOperator.from_component_matrix(X, X, matrix)
         inverse = LUSolver()(A)
         check_operator(inverse, rng=rng)
-        y = X.random(rng)
+        y = X.random(rng=rng)
         assert np.allclose(inverse.adjoint(y), np.linalg.solve(matrix.T, y), atol=1e-8)
 
     def test_it_composes_into_the_algebra(self, spd_problem, rng):
         A, b, exact = spd_problem
         inverse = CholeskySolver()(A)
-        assert np.allclose((inverse @ A)(A.domain.random(rng)) is not None, True)
+        assert np.allclose((inverse @ A)(A.domain.random(rng=rng)) is not None, True)
         identity_like = inverse @ A
-        x = A.domain.random(rng)
+        x = A.domain.random(rng=rng)
         assert np.allclose(identity_like(x), x, atol=1e-8)
 
     def test_solvers_are_stateless(self, rng):

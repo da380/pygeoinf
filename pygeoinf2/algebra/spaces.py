@@ -132,9 +132,11 @@ class HilbertSpace[V](ABC):
         return self.scale(-1.0, x)
 
     def squared_norm(self, x: V) -> float:
+        """The squared norm (x, x)."""
         return self.inner_product(x, x)
 
     def norm(self, x: V) -> float:
+        """The norm sqrt((x, x))."""
         return float(np.sqrt(self.squared_norm(x)))
 
     def mean(self, vectors: Sequence[V]) -> V:
@@ -167,7 +169,7 @@ class HilbertSpace[V](ABC):
     #                             Randomness                            #
     # ----------------------------------------------------------------- #
 
-    def random(self, rng: Generator | None = None) -> V:
+    def random(self, *, rng: Generator | None = None) -> V:
         """An arbitrary random vector, for testing.
 
         This is **not** white noise: no claim is made about its covariance.
@@ -178,7 +180,7 @@ class HilbertSpace[V](ABC):
             f"by the checks in pygeoinf2.testing and by randomised algorithms."
         )
 
-    def white_noise(self, rng: Generator | None = None) -> V:
+    def white_noise(self, *, rng: Generator | None = None) -> V:
         """A sample whose covariance is the identity *on this space*.
 
         That is, ``E[(x, u) (x, v)] == (u, v)`` for all ``u``, ``v``.
@@ -196,13 +198,16 @@ class ArrayVectorMixin:
     """
 
     def copy(self, x: np.ndarray) -> np.ndarray:
+        """An independent copy of the array."""
         return x.copy()
 
     def axpy(self, a: float, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """y += a * x, in place."""
         y += a * x
         return y
 
     def scale_inplace(self, a: float, x: np.ndarray) -> np.ndarray:
+        """x *= a, in place."""
         x *= a
         return x
 
@@ -237,7 +242,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """``G^-1 c``. The identity by default."""
         return c
 
-    def white_noise_components(self, rng: Generator | None = None) -> np.ndarray:
+    def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Components drawn from ``N(0, G^-1)``.
 
         With ``G == L L^T`` the draw is ``c = L^-T xi``, which gives
@@ -276,11 +281,13 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     # ----------------------------------------------------------------- #
 
     def inner_product(self, x: V, y: V) -> float:
+        """``c_x . G c_y``, from the coordinate map and the metric."""
         return float(
             np.dot(self.to_components(x), self.apply_gram(self.to_components(y)))
         )
 
     def zero(self) -> V:
+        """The vector whose components are all zero."""
         return self.from_components(np.zeros(self.dim))
 
     def basis_vector(self, i: int) -> V:
@@ -291,10 +298,15 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         c[i] = 1.0
         return self.from_components(c)
 
-    def random(self, rng: Generator | None = None) -> V:
+    def random(self, *, rng: Generator | None = None) -> V:
+        """A vector with independent standard normal *components*.
+
+        Not white noise: its covariance is ``G``, not the identity. Use
+        :meth:`white_noise` when the distribution matters.
+        """
         return self.from_components(_resolve_rng(rng).standard_normal(self.dim))
 
-    def white_noise(self, rng: Generator | None = None) -> V:
+    def white_noise(self, *, rng: Generator | None = None) -> V:
         """A sample with identity covariance on this space.
 
         The components are drawn from ``N(0, G^-1)``, which is what makes the
@@ -303,7 +315,7 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         gives covariance ``G``, which is the mistake this method exists to
         avoid; see DESIGN.md section 9.
         """
-        return self.from_components(self.white_noise_components(rng))
+        return self.from_components(self.white_noise_components(rng=rng))
 
     # ----------------------------------------------------------------- #
     #                     The functional pairing axiom                  #
@@ -344,19 +356,24 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
 
     @property
     def dim(self) -> int:
+        """The dimension, taken from the metric."""
         return self._metric_values.size
 
     def apply_gram(self, c: np.ndarray) -> np.ndarray:
+        """``G c``, a pointwise multiply."""
         return self._metric_values * c
 
     def solve_gram(self, c: np.ndarray) -> np.ndarray:
+        """``G^-1 c``, a pointwise divide."""
         return c / self._metric_values
 
-    def white_noise_components(self, rng: Generator | None = None) -> np.ndarray:
+    def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
+        """Components drawn from ``N(0, G^-1)``, using the diagonal factor."""
         xi = _resolve_rng(rng).standard_normal(self.dim)
         return xi / self._sqrt_metric_values
 
     def inner_product(self, x: V, y: V) -> float:
+        """``c_x . (g * c_y)``, avoiding a full matrix apply."""
         cx = self.to_components(x)
         cy = self.to_components(y)
         return float(np.dot(cx, self._metric_values * cy))
@@ -367,15 +384,19 @@ class OrthonormalSpace[V](CoordinateSpace[V], ABC):
 
     @property
     def is_orthonormal(self) -> bool:
+        """Always true for this class."""
         return True
 
-    def white_noise_components(self, rng: Generator | None = None) -> np.ndarray:
+    def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
+        """Standard normal components, since ``G`` is the identity here."""
         return _resolve_rng(rng).standard_normal(self.dim)
 
     def gram_matrix(self) -> np.ndarray:
+        """The identity matrix."""
         return np.identity(self.dim)
 
     def inner_product(self, x: V, y: V) -> float:
+        """The plain component dot product."""
         return float(np.dot(self.to_components(x), self.to_components(y)))
 
 
@@ -396,18 +417,22 @@ class EuclideanSpace(ArrayVectorMixin, OrthonormalSpace[np.ndarray]):
 
     @property
     def dim(self) -> int:
+        """The dimension of the space."""
         return self._dim
 
     def _key(self) -> Hashable:
         return self._dim
 
     def to_components(self, x: np.ndarray) -> np.ndarray:
+        """The vector itself: the coordinate map is the identity."""
         return x
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
+        """The array itself, without copying."""
         return c
 
     def zero(self) -> np.ndarray:
+        """A new array of zeros."""
         return np.zeros(self._dim)
 
 
@@ -422,30 +447,38 @@ class Reals(OrthonormalSpace[float]):
 
     @property
     def dim(self) -> int:
+        """One."""
         return 1
 
     def _key(self) -> Hashable:
         return ()
 
     def zero(self) -> float:
+        """Zero."""
         return 0.0
 
     def copy(self, x: float) -> float:
+        """The value itself, floats being immutable."""
         return float(x)
 
     def axpy(self, a: float, x: float, y: float) -> float:
+        """``y + a * x``. Floats are immutable, so this returns a new value."""
         return float(y + a * x)
 
     def scale_inplace(self, a: float, x: float) -> float:
+        """``a * x``, returned rather than mutated."""
         return float(a * x)
 
     def inner_product(self, x: float, y: float) -> float:
+        """The product of two reals."""
         return float(x) * float(y)
 
     def to_components(self, x: float) -> np.ndarray:
+        """The value as a length-one array."""
         return np.array([float(x)])
 
     def from_components(self, c: np.ndarray) -> float:
+        """The single component, as a plain float."""
         return float(np.asarray(c).reshape(-1)[0])
 
     def __repr__(self) -> str:

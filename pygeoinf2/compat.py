@@ -116,6 +116,7 @@ class AdaptedSpace(CoordinateSpace):
 
     @property
     def dim(self) -> int:
+        """The dimension of the wrapped space."""
         return self._space.dim
 
     def _key(self) -> Hashable:
@@ -128,28 +129,38 @@ class AdaptedSpace(CoordinateSpace):
     #                       Delegated vector algebra                    #
     # ----------------------------------------------------------------- #
 
-    def zero(self):
+    def zero(self) -> Any:
+        """The wrapped space's zero vector. v1 exposes it as a property."""
         return self._space.zero
 
-    def copy(self, x):
+    def copy(self, x: Any) -> Any:
+        """An independent copy, delegated to v1."""
         return self._space.copy(x)
 
-    def inner_product(self, x, y) -> float:
+    def inner_product(self, x: Any, y: Any) -> float:
+        """Delegated to v1, not rederived from the Gram matrix."""
         # Delegated rather than rederived from the Gram: v1's implementations
         # are often specialised, and going through the Gram would be slower and
         # would lose whatever accuracy the specialisation buys.
         return float(self._space.inner_product(x, y))
 
-    def axpy(self, a: float, x, y):
+    def axpy(self, a: float, x: Any, y: Any) -> Any:
+        """``y += a * x``. v1 mutates and returns None; v2 returns the result."""
         # v1 mutates and returns None; v2 requires the result.
         self._space.axpy(a, x, y)
         return y
 
-    def scale_inplace(self, a: float, x):
+    def scale_inplace(self, a: float, x: Any) -> Any:
+        """``x *= a``. v1's ``ax``, adapted to return the result."""
         self._space.ax(a, x)
         return x
 
-    def random(self, rng: Generator | None = None):
+    def random(self, *, rng: Generator | None = None) -> Any:
+        """An arbitrary random vector, drawn from an explicit generator.
+
+        Not delegated: v1's ``random`` ignores any generator and uses NumPy's
+        legacy global state.
+        """
         # v1's random() ignores any generator and uses the legacy global state.
         return self._space.from_components(_resolve_rng(rng).standard_normal(self.dim))
 
@@ -157,10 +168,12 @@ class AdaptedSpace(CoordinateSpace):
     #                            Coordinates                            #
     # ----------------------------------------------------------------- #
 
-    def to_components(self, x) -> np.ndarray:
+    def to_components(self, x: Any) -> np.ndarray:
+        """The wrapped space's components."""
         return self._space.to_components(x)
 
-    def from_components(self, c: np.ndarray):
+    def from_components(self, c: np.ndarray) -> Any:
+        """The vector with the given components."""
         return self._space.from_components(c)
 
     def apply_gram(self, c: np.ndarray) -> np.ndarray:
@@ -181,7 +194,7 @@ class AdaptedSpace(CoordinateSpace):
     #                            White noise                            #
     # ----------------------------------------------------------------- #
 
-    def white_noise_components(self, rng: Generator | None = None) -> np.ndarray:
+    def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Components drawn from ``N(0, G^-1)``.
 
         Not delegated to v1, which draws ``N(0, I)`` components and so produces
@@ -201,7 +214,7 @@ class AdaptedSpace(CoordinateSpace):
                 RuntimeWarning,
                 stacklevel=2,
             )
-        return super().white_noise_components(rng)
+        return super().white_noise_components(rng=rng)
 
     def _diagonal_gram(self) -> np.ndarray | None:
         """The Gram diagonal, or None when the Gram is not diagonal.
@@ -223,7 +236,7 @@ class AdaptedSpace(CoordinateSpace):
         self.__dict__["_diagonal_gram_cache"] = diagonal
         return diagonal
 
-    def _probe_is_diagonal(self, diagonal: np.ndarray, probes: int = 2) -> bool:
+    def _probe_is_diagonal(self, diagonal: np.ndarray, /, *, probes: int = 2) -> bool:
         """Test ``G s == diagonal * s`` for random ``s``.
 
         If ``G`` is diagonal this holds for every ``s``. If it is not, the
@@ -272,12 +285,13 @@ class AdaptedOperator(LinearOperator):
 
     @property
     def v1_operator(self) -> Any:
+        """The wrapped v1 operator."""
         return self._operator
 
-    def _value(self, x):
+    def _value(self, x: Any) -> Any:
         return self._operator(x)
 
-    def _adjoint_value(self, y):
+    def _adjoint_value(self, y: Any) -> Any:
         return self._v1_adjoint(y)
 
     def __repr__(self) -> str:

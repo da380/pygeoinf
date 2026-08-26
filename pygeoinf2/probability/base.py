@@ -41,6 +41,7 @@ class ProbabilityMeasure[X](ABC):
 
     @property
     def domain(self) -> HilbertSpace[X]:
+        """The space the measure lives on."""
         return self._domain
 
     def __repr__(self) -> str:
@@ -51,22 +52,22 @@ class ProbabilityMeasure[X](ABC):
     # ----------------------------------------------------------------- #
 
     @abstractmethod
-    def sample(self, rng: Generator | None = None) -> X:
+    def sample(self, *, rng: Generator | None = None) -> X:
         """Draw one sample.
 
         The generator is always explicit. v1 draws from NumPy's legacy global
         state, so no result involving sampling is reproducible.
         """
 
-    def samples(self, n: int, rng: Generator | None = None) -> list[X]:
+    def samples(self, n: int, *, rng: Generator | None = None) -> list[X]:
         """Draw ``n`` independent samples."""
         if n < 0:
             raise ValueError("n must be non-negative.")
-        return [self.sample(rng) for _ in range(n)]
+        return [self.sample(rng=rng) for _ in range(n)]
 
-    def sample_expectation(self, n: int, rng: Generator | None = None) -> X:
+    def sample_expectation(self, n: int, *, rng: Generator | None = None) -> X:
         """The sample mean of ``n`` draws."""
-        return self._domain.mean(self.samples(n, rng))
+        return self._domain.mean(self.samples(n, rng=rng))
 
     # ----------------------------------------------------------------- #
     #                              Moments                              #
@@ -88,10 +89,12 @@ class ProbabilityMeasure[X](ABC):
 
     @property
     def has_expectation(self) -> bool:
+        """True when the mean is available in closed form."""
         return self.expectation is not None
 
     @property
     def has_covariance(self) -> bool:
+        """True when the covariance is available in closed form."""
         return self.covariance is not None
 
     # ----------------------------------------------------------------- #
@@ -116,10 +119,12 @@ class ProbabilityMeasure[X](ABC):
 
     @property
     def has_log_density(self) -> bool:
+        """True when a log density is available."""
         return type(self).log_density is not ProbabilityMeasure.log_density
 
     @property
     def has_grad_log_density(self) -> bool:
+        """True when a log-density gradient is available."""
         return type(self).grad_log_density is not ProbabilityMeasure.grad_log_density
 
     # ----------------------------------------------------------------- #
@@ -127,7 +132,11 @@ class ProbabilityMeasure[X](ABC):
     # ----------------------------------------------------------------- #
 
     def affine_map(
-        self, operator: LinearOperator, translation=None
+        self,
+        operator: LinearOperator,
+        /,
+        *,
+        translation: object | None = None,
     ) -> ProbabilityMeasure:
         """The law of ``A X + b``."""
         if operator.domain != self._domain:
@@ -150,9 +159,11 @@ class ProbabilityMeasure[X](ABC):
         still be sampled, which is the minimum nonlinear inference needs.
         """
         if isinstance(operator, AffineOperator):
-            return self.affine_map(operator.linear_part, operator.translation)
+            return self.affine_map(
+                operator.linear_part, translation=operator.translation
+            )
         if isinstance(operator, LinearOperator):
-            return self.affine_map(operator, None)
+            return self.affine_map(operator)
         if operator.domain != self._domain:
             raise ValueError(
                 f"Cannot push forward: the operator's domain "
@@ -169,7 +180,9 @@ class ProbabilityMeasure[X](ABC):
 
     def translate(self, vector: X) -> ProbabilityMeasure:
         """The law of ``X + v``."""
-        return self.affine_map(LinearOperator.identity(self._domain), vector)
+        return self.affine_map(
+            LinearOperator.identity(self._domain), translation=vector
+        )
 
     # ----------------------------------------------------------------- #
     #                      Specialisation protocol                      #
@@ -182,8 +195,9 @@ class ProbabilityMeasure[X](ABC):
     # divergences and norms that made the family worth having.
 
     def _combine_affine(
-        self, operator: LinearOperator, translation
+        self, operator: LinearOperator, translation: object | None
     ) -> ProbabilityMeasure | None:
+        """Specialise ``A X + b``. Return None to fall back to a pushforward."""
         return None
 
     def _combine_add(self, other: ProbabilityMeasure) -> ProbabilityMeasure | None:
@@ -246,14 +260,17 @@ class PushForwardMeasure[X, Y](ProbabilityMeasure[Y]):
 
     @property
     def base(self) -> ProbabilityMeasure[X]:
+        """The measure being pushed forward."""
         return self._base
 
     @property
     def operator(self) -> Operator:
+        """The map being applied."""
         return self._operator
 
-    def sample(self, rng: Generator | None = None) -> Y:
-        return self._operator(self._base.sample(rng))
+    def sample(self, *, rng: Generator | None = None) -> Y:
+        """Draw from the base measure and apply the map."""
+        return self._operator(self._base.sample(rng=rng))
 
     def __repr__(self) -> str:
         return f"PushForwardMeasure({self._operator!r})"
@@ -269,17 +286,20 @@ class _IndependentSum[X](ProbabilityMeasure[X]):
         self._left = left
         self._right = right
 
-    def sample(self, rng: Generator | None = None) -> X:
-        return self._domain.add(self._left.sample(rng), self._right.sample(rng))
+    def sample(self, *, rng: Generator | None = None) -> X:
+        """Draw from each summand independently and add."""
+        return self._domain.add(self._left.sample(rng=rng), self._right.sample(rng=rng))
 
     @property
     def expectation(self) -> X | None:
+        """The sum of the summands' means, when both are available."""
         if not (self._left.has_expectation and self._right.has_expectation):
             return None
         return self._domain.add(self._left.expectation, self._right.expectation)
 
     @property
     def covariance(self) -> LinearOperator[X, X] | None:
+        """The sum of the summands' covariances, the parts being independent."""
         if not (self._left.has_covariance and self._right.has_covariance):
             return None
         return self._left.covariance + self._right.covariance
@@ -297,23 +317,28 @@ class ProductMeasure[X](ProbabilityMeasure[tuple]):
     def __init__(
         self,
         factors: Sequence[ProbabilityMeasure],
+        /,
+        *,
         labels: Sequence[str] | None = None,
     ) -> None:
         factors = tuple(factors)
         if not factors:
             raise ValueError("A product measure needs at least one factor.")
-        super().__init__(DirectSum([f.domain for f in factors], labels))
+        super().__init__(DirectSum([f.domain for f in factors], labels=labels))
         self._factors = factors
 
     @property
     def factors(self) -> tuple[ProbabilityMeasure, ...]:
+        """The factors, in order."""
         return self._factors
 
-    def sample(self, rng: Generator | None = None) -> tuple:
-        return tuple(factor.sample(rng) for factor in self._factors)
+    def sample(self, *, rng: Generator | None = None) -> tuple:
+        """One independent draw from each factor."""
+        return tuple(factor.sample(rng=rng) for factor in self._factors)
 
     @property
     def expectation(self) -> tuple | None:
+        """The factors' means, when every factor has one."""
         if not all(factor.has_expectation for factor in self._factors):
             return None
         return tuple(factor.expectation for factor in self._factors)
@@ -328,6 +353,7 @@ class ProductMeasure[X](ProbabilityMeasure[tuple]):
         )
 
     def factor(self, key: int | str) -> ProbabilityMeasure:
+        """The factor at a label or index."""
         return self._factors[self._domain.index(key)]
 
     def __repr__(self) -> str:
@@ -336,6 +362,8 @@ class ProductMeasure[X](ProbabilityMeasure[tuple]):
 
 def product(
     measures: Sequence[ProbabilityMeasure],
+    /,
+    *,
     labels: Sequence[str] | None = None,
 ) -> ProbabilityMeasure:
     """The independent product of measures, collapsed where it can be.
@@ -347,5 +375,5 @@ def product(
 
     measures = tuple(measures)
     if measures and all(isinstance(m, GaussianMeasure) for m in measures):
-        return GaussianMeasure.from_product(measures, labels)
-    return ProductMeasure(measures, labels)
+        return GaussianMeasure.from_product(measures, labels=labels)
+    return ProductMeasure(measures, labels=labels)

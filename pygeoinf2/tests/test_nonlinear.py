@@ -55,7 +55,7 @@ class TestFunctional:
         X = make_weighted_space()
         M = rng.normal(size=(X.dim, X.dim))
         phi = quadratic_on(X, M)
-        x = X.random(rng)
+        x = X.random(rng=rng)
 
         model = phi.at(x)
         derivative_components = model.derivative.matrix().ravel()
@@ -81,7 +81,7 @@ class TestFunctional:
 
         phi = Functional.from_callables(X, value, gradient=wrong_gradient)
         with pytest.raises(AssertionError, match="gradient pairs with a direction"):
-            check_gradient(phi, X.random(rng), rng=rng)
+            check_gradient(phi, X.random(rng=rng), rng=rng)
 
     def test_the_error_is_invisible_on_an_orthonormal_space(self, rng):
         """Which is why it survives: the toy case cannot detect it."""
@@ -92,12 +92,12 @@ class TestFunctional:
             return 0.5 * float(x @ M @ x)
 
         phi = Functional.from_callables(X, value, gradient=lambda x: M @ x)
-        check_gradient(phi, X.random(rng), rng=rng)  # passes, correctly
+        check_gradient(phi, X.random(rng=rng), rng=rng)  # passes, correctly
 
     def test_at_returns_a_quadratic_model(self, rng):
         X = make_weighted_space()
         phi = quadratic_on(X, rng.normal(size=(X.dim, X.dim)))
-        model = phi.at(X.random(rng))
+        model = phi.at(X.random(rng=rng))
         assert isinstance(model, QuadraticModel)
         assert model.has_hessian
         assert isinstance(model.value, float)
@@ -105,7 +105,7 @@ class TestFunctional:
     def test_gradient_is_cached(self, rng):
         X = make_weighted_space()
         phi = quadratic_on(X, rng.normal(size=(X.dim, X.dim)))
-        model = phi.at(X.random(rng))
+        model = phi.at(X.random(rng=rng))
         assert model.gradient is model.gradient
 
     def test_hessian_is_absent_unless_supplied(self, rng):
@@ -114,7 +114,7 @@ class TestFunctional:
             X, lambda x: float(x @ x), gradient=lambda x: 2.0 * x
         )
         assert not phi.has_hessian
-        assert phi.at(X.random(rng)).hessian is None
+        assert phi.at(X.random(rng=rng)).hessian is None
 
     def test_derivative_and_gradient_cannot_both_be_given(self):
         X = EuclideanSpace(3)
@@ -141,28 +141,28 @@ class TestLinearFunctional:
         X = make_weighted_space()
         g = rng.normal(size=X.dim)
         f = LinearFunctional.from_derivative_components(X, g)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert f(x) == pytest.approx(float(g @ X.to_components(x)))
 
     def test_from_representer_pairs_by_inner_product(self, rng):
         X = make_weighted_space()
-        v = X.random(rng)
+        v = X.random(rng=rng)
         f = LinearFunctional.from_representer(X, v)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert f(x) == pytest.approx(X.inner_product(v, x))
 
     def test_works_without_coordinates(self, rng):
         """from_representer needs no component map at all."""
         X = OpaqueSpace(np.array([1.0, 2.0, 3.0]))
-        v = X.random(rng)
+        v = X.random(rng=rng)
         f = LinearFunctional.from_representer(X, v)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert f(x) == pytest.approx(X.inner_product(v, x))
 
     def test_hessian_is_zero(self, rng):
         X = EuclideanSpace(3)
         f = LinearFunctional.from_derivative_components(X, np.array([1.0, 2.0, 3.0]))
-        assert np.allclose(f.hessian(X.random(rng))(X.random(rng)), np.zeros(3))
+        assert np.allclose(f.hessian(X.random(rng=rng))(X.random(rng=rng)), np.zeros(3))
 
 
 class TestNonlinearOperator:
@@ -194,12 +194,12 @@ class TestNonlinearOperator:
     def test_derivative(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(2)
         F = self.build(X, Y, rng)
-        check_derivative(F, X.random(rng), rng=rng)
+        check_derivative(F, X.random(rng=rng), rng=rng)
 
     def test_second_derivative(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(2)
         F = self.build(X, Y, rng)
-        check_second_derivative(F, X.random(rng), rng=rng)
+        check_second_derivative(F, X.random(rng=rng), rng=rng)
 
     def test_chain_rule(self, rng):
         X, Y, Z = make_weighted_space(), EuclideanSpace(3), EuclideanSpace(2)
@@ -207,7 +207,7 @@ class TestNonlinearOperator:
         A = LinearOperator.from_component_matrix(Y, Z, rng.normal(size=(2, 3)))
         composed = A @ F
         assert composed.has_derivative
-        check_derivative(composed, X.random(rng), rng=rng)
+        check_derivative(composed, X.random(rng=rng), rng=rng)
 
     def test_second_derivative_survives_composition(self, rng):
         """(F o G)'' needs both factors to carry one."""
@@ -216,7 +216,7 @@ class TestNonlinearOperator:
         G = self.build(Y, Z, rng)
         composed = G @ F
         assert composed.has_second_derivative
-        check_second_derivative(composed, X.random(rng), rng=rng, rtol=1e-3)
+        check_second_derivative(composed, X.random(rng=rng), rng=rng, rtol=1e-3)
 
     def test_second_derivative_absent_when_a_factor_lacks_one(self, rng):
         X, Y, Z = make_weighted_space(), EuclideanSpace(3), EuclideanSpace(2)
@@ -236,7 +236,7 @@ class TestNonlinearOperator:
         F = self.build(X, Y, rng)
         G = self.build(X, Y, rng)
         for op in (F + G, 2.5 * F, F - G):
-            check_derivative(op, X.random(rng), rng=rng)
+            check_derivative(op, X.random(rng=rng), rng=rng)
 
 
 class TestSharedWork:
@@ -256,7 +256,7 @@ class TestSharedWork:
 
         F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
 
-        model = F.at(X.random(rng))
+        model = F.at(X.random(rng=rng))
         _ = model.value, model.derivative
         assert calls["n"] == 1, "at() should linearise once, not once per accessor"
 
@@ -276,7 +276,7 @@ class TestSharedWork:
 
         F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
         for _ in range(20):
-            F(X.random(rng))
+            F(X.random(rng=rng))
         assert calls["n"] == 0
 
 
@@ -284,9 +284,9 @@ class TestAffineOperator:
     def test_value_and_derivative(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)
         A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
-        b = Y.random(rng)
+        b = Y.random(rng=rng)
         F = AffineOperator(A, b)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         assert np.allclose(F(x), A(x) + b)
         assert F.derivative(x) is A
         check_derivative(F, x, rng=rng)
@@ -296,7 +296,7 @@ class TestAffineOperator:
         X, Y = EuclideanSpace(4), EuclideanSpace(3)
         A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
         B = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
-        F = AffineOperator(A, Y.random(rng))
+        F = AffineOperator(A, Y.random(rng=rng))
 
         assert isinstance(F + B, AffineOperator)
         assert isinstance(B + F, AffineOperator)  # the order-independent case
@@ -308,17 +308,17 @@ class TestAffineOperator:
         A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
         C = LinearOperator.from_component_matrix(Y, Z, rng.normal(size=(2, 3)))
         D = LinearOperator.from_component_matrix(Z, X, rng.normal(size=(4, 2)))
-        F = AffineOperator(A, Y.random(rng))
+        F = AffineOperator(A, Y.random(rng=rng))
 
         assert isinstance(C @ F, AffineOperator)
         assert isinstance(F @ D, AffineOperator)
-        x = Z.random(rng)
+        x = Z.random(rng=rng)
         assert np.allclose((C @ F)(D(x)), C(F(D(x))))
 
     def test_linearisation_as_affine(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(2)
         F = TestNonlinearOperator().build(X, Y, rng)
-        x = X.random(rng)
+        x = X.random(rng=rng)
         model = F.at(x)
         affine = model.as_affine()
         assert np.allclose(affine(x), model.value)

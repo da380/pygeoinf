@@ -82,7 +82,7 @@ class TestMomentsMatchSamples:
 
     def test_with_a_nonzero_mean(self, rng):
         X = make_weighted_space()
-        mean = X.random(rng)
+        mean = X.random(rng=rng)
         mu = GaussianMeasure.from_standard_deviation(X, 1.2, expectation=mean)
         check_measure(mu, rng=rng, samples=SAMPLES)
 
@@ -95,7 +95,7 @@ class TestMomentsMatchSamples:
         """The empirical construction is coordinate-free."""
         X = make_weighted_space()
         source = GaussianMeasure.from_standard_deviation(X, 2.0)
-        draws = source.samples(4000, rng)
+        draws = source.samples(4000, rng=rng)
         mu = GaussianMeasure.from_samples(X, draws)
 
         assert X.norm(X.subtract(mu.expectation, X.mean(draws))) < 1e-10
@@ -111,7 +111,7 @@ class TestMomentsMatchSamples:
     def test_from_samples_needs_two(self, rng):
         X = EuclideanSpace(3)
         with pytest.raises(ValueError, match="two samples"):
-            GaussianMeasure.from_samples(X, [X.random(rng)])
+            GaussianMeasure.from_samples(X, [X.random(rng=rng)])
 
 
 class TestWhiteNoiseCorrection:
@@ -122,7 +122,7 @@ class TestWhiteNoiseCorrection:
         X = make_weighted_space()
         sigma = 1.5
         mu = GaussianMeasure.from_standard_deviation(X, sigma)
-        draws = mu.samples(SAMPLES, rng)
+        draws = mu.samples(SAMPLES, rng=rng)
 
         for i in range(X.dim):
             u = X.basis_vector(i)
@@ -141,7 +141,7 @@ class TestWhiteNoiseCorrection:
         X = make_weighted_space()
 
         class V1StyleMeasure(GaussianMeasure):
-            def sample(self, rng=None):
+            def sample(self, *, rng=None):
                 rng = np.random.default_rng() if rng is None else rng
                 return X.from_components(rng.standard_normal(X.dim))
 
@@ -170,7 +170,7 @@ class TestPushForward:
     def test_an_affine_map_shifts_the_mean(self, rng):
         X, Y = EuclideanSpace(4), EuclideanSpace(3)
         A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
-        b = Y.random(rng)
+        b = Y.random(rng=rng)
         mu = GaussianMeasure.from_standard_deviation(X, 1.0)
         nu = AffineOperator(A, b) @ mu
         assert isinstance(nu, GaussianMeasure)
@@ -189,7 +189,7 @@ class TestPushForward:
 
         assert isinstance(nu, PushForwardMeasure)
         assert not nu.has_covariance and not nu.has_expectation
-        draws = nu.samples(2000, rng)
+        draws = nu.samples(2000, rng=rng)
         # E[|x|^2] == 3 for a standard normal on R^3.
         assert np.mean([d[0] for d in draws]) == pytest.approx(3.0, rel=0.1)
 
@@ -227,7 +227,7 @@ class TestAlgebra:
 
     def test_translation(self, rng):
         X = make_weighted_space()
-        shift = X.random(rng)
+        shift = X.random(rng=rng)
         mu = GaussianMeasure.from_standard_deviation(X, 1.0).translate(shift)
         assert np.allclose(X.to_components(mu.expectation), X.to_components(shift))
 
@@ -252,7 +252,7 @@ class TestDensities:
         mu = GaussianMeasure.from_standard_deviation(X, 2.0)
         assert mu.has_log_density and mu.has_grad_log_density
 
-        x = X.random(rng)
+        x = X.random(rng=rng)
         # log p(x) == -|x|^2 / (2 sigma^2), up to a constant.
         assert mu.log_density(x) == pytest.approx(-0.5 * X.squared_norm(x) / 4.0)
         # The gradient is a VECTOR, and equals -x/sigma^2.
@@ -263,13 +263,15 @@ class TestDensities:
     def test_the_gradient_really_is_a_gradient(self, rng):
         """Finite-difference the log density along a direction."""
         X = make_weighted_space()
-        mu = GaussianMeasure.from_standard_deviation(X, 1.7, expectation=X.random(rng))
-        x = X.random(rng)
+        mu = GaussianMeasure.from_standard_deviation(
+            X, 1.7, expectation=X.random(rng=rng)
+        )
+        x = X.random(rng=rng)
         gradient = mu.grad_log_density(x)
 
         step = 1e-6
         for _ in range(3):
-            d = X.random(rng)
+            d = X.random(rng=rng)
             forward = mu.log_density(X.axpy(step, d, X.copy(x)))
             backward = mu.log_density(X.axpy(-step, d, X.copy(x)))
             numerical = (forward - backward) / (2.0 * step)
@@ -285,7 +287,7 @@ class TestDensities:
         )
         assert not mu.has_log_density
         with pytest.raises(NotImplementedError, match="no precision"):
-            mu.log_density(X.random(rng))
+            mu.log_density(X.random(rng=rng))
 
 
 class TestCoordinateFree:
@@ -304,10 +306,10 @@ class TestCoordinateFree:
         """
         base = make_weighted_space()
         strict = StrictSpace(base)
-        draws = [strict.random(rng) for _ in range(500)]
+        draws = [strict.random(rng=rng) for _ in range(500)]
 
         mu = GaussianMeasure.from_samples(strict, draws)
-        u = strict.random(rng)
+        u = strict.random(rng=rng)
         assert strict.inner_product(mu.covariance(u), u) > 0.0
         assert strict.norm(mu.expectation) >= 0.0
 
@@ -321,7 +323,7 @@ class TestCoordinateFree:
         )
         assert not mu.can_sample
         with pytest.raises(NotImplementedError, match="no factor"):
-            mu.sample(rng)
+            mu.sample(rng=rng)
 
 
 class TestReproducibility:
@@ -329,6 +331,6 @@ class TestReproducibility:
         """v1 draws from the legacy global state, so nothing is reproducible."""
         X = make_weighted_space()
         mu = GaussianMeasure.from_standard_deviation(X, 1.0)
-        first = mu.sample(np.random.default_rng(42))
-        second = mu.sample(np.random.default_rng(42))
+        first = mu.sample(rng=np.random.default_rng(42))
+        second = mu.sample(rng=np.random.default_rng(42))
         assert np.allclose(X.to_components(first), X.to_components(second))

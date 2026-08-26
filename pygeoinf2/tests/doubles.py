@@ -114,12 +114,12 @@ class OpaqueSpace(HilbertSpace[Opaque]):
         x.data[:] = a * x.data
         return x
 
-    def random(self, rng: Generator | None = None) -> Opaque:
+    def random(self, *, rng: Generator | None = None) -> Opaque:
         self.calls.record("random")
         rng = default_rng() if rng is None else rng
         return Opaque(rng.standard_normal(self.dim))
 
-    def white_noise(self, rng: Generator | None = None) -> Opaque:
+    def white_noise(self, *, rng: Generator | None = None) -> Opaque:
         self.calls.record("white_noise")
         rng = default_rng() if rng is None else rng
         return Opaque(rng.standard_normal(self.dim) / np.sqrt(self._weights))
@@ -167,8 +167,8 @@ class StrictSpace(CoordinateSpace):
     def scale_inplace(self, a, x):
         return self._base.scale_inplace(a, x)
 
-    def random(self, rng: Generator | None = None):
-        return self._base.random(rng)
+    def random(self, *, rng: Generator | None = None):
+        return self._base.random(rng=rng)
 
     def to_components(self, x):
         raise NoCoordinatesError(
