@@ -2931,3 +2931,107 @@ listed here is deferred, not dropped.
 | `datasets.py`'s live FDSN and USGS downloads | the cached tables ship with the package. A live fetch belongs behind an explicit call, never on the path a test takes |
 | `parallel=`, `n_jobs=` on every operator | **replaced rather than deferred.** The joblib branches doubled the code and each carried its own copy of the adjoint. finufft and pyshtools thread internally, and parallelism over an operator belongs around it, not inside every one of them |
 | `lazy_quadrature=` | **replaced.** An escape hatch for memory the `W E` factorisation does not use |
+
+## 21. Plan of action
+
+From the marked-up `V1_CATALOGUE.md`. Every Open row is now settled, and this
+is the order the answers imply.
+
+### 21.1 The target is the worked examples
+
+Not "empty the catalogue". **Reproduce `work/flexure.py`, `work/tomo.py`,
+`work/dynamic_topography.py` and `work/sphere_dli_example.py` on v2, end to
+end, producing the same figures.** Four real problems, each pulling in a
+different part of what is missing, and each arriving with a test that is a
+result rather than an assertion.
+
+The ordering falls out of what each one needs, and the first surprise is how
+little of it is optional:
+
+| script | needs | inversion |
+|---|---|---|
+| `flexure.py` | field algebra, the flexural operator, plotting | **none** — CG and a forward model |
+| `tomo.py` | fast point evaluation on the sphere, acquisition helpers | M5 stages 5.1, 5.2, 5.4 |
+| `dynamic_topography.py` | correlated invariant measures, resolution transfer | M5 as above |
+| `sphere_dli_example.py` | the convex machinery | M5 stage 5.9 |
+
+So **`flexure.py` is reachable now** and the other three need the Bayesian
+layer. M5 is not the last thing after all; it arrives second.
+
+### 21.2 Work packages
+
+| | contents |
+|---|---|
+| **F** field algebra | `HilbertModule` as a *capability* alongside `CoordinateSpace` — `multiply`, `sqrt`, `multiplication_operator`. Then `flexural_operator` and its inverse. Small, and it unblocks flexure |
+| **S** symmetric-space operators | the sphere point-evaluation speedup; `derivative_operator`, `order_inclusion_operator`, `spectral_projection_operator`, `l2_products_operator`, `gaussian_curvature`, `degree_multiplicity`, `estimate_truncation_degree`, complex coefficient accessors, `cluster_points`, `random_source_receiver_paths` |
+| **P** probability | `kl_divergence` with its O(N) spectral path, `nuclear_norm`, `hilbert_schmidt_norm`, `directional_*`, `rescale_directional_variance`, `two_point_covariance`, `with_regularized_inverse`, `with_sparse_approximation`, `deflated_*`, correlated invariant measures, norm-scaled calibration, `sample_power_measure`, `invariant_covariance_function` |
+| **A** algebra | matrix-element access, a public sparse operator, `coordinate_inclusion`/`projection`, `extract_diagonal(s)` |
+| **N** numerics | GMRES, flexible CG, solver callbacks with richer results, constrained optimisation by projection |
+| **G** geometry | ball and ellipsoid *surfaces*, and `AffineSubspace`'s eight remaining methods |
+| **O8** plotting | the renderer layer |
+| **X** examples and data | the live IRIS and USGS refresh commands, off the import path |
+
+### 21.3 The order
+
+**Phase 1 — `flexure.py` runs.** F in full, `gaussian_curvature` from S, and
+enough of O8 to draw a scalar field on a sphere. Nothing else. It is the only
+target that needs no inversion, so it is the one that proves the space layer
+on its own.
+
+**Phase 2 — M5 stages 5.1 to 5.4, and `tomo.py` runs.** The forward problem,
+the estimator kinds, the point estimators and the posterior. Alongside it, the
+sphere point-evaluation speedup and the acquisition helpers from S. This is the
+largest phase and the one the whole refactor was for.
+
+**Phase 3 — `dynamic_topography.py` runs.** Correlated invariant measures from
+P, resolution transfer and the remaining operators from S, and the rest of O8:
+maps, point sets, geodesic networks, error bounds.
+
+**Phase 4 — the rest of P, A, N, G.** The catalogue's remaining rows, none of
+which blocks an example, so they are done where they fit rather than in a
+block.
+
+**Phase 5 — M5 stages 5.5 to 5.10, and `sphere_dli_example.py` runs.** The
+geometry constructors, the four routes to the feasible property set, and the
+convex solvers. The end of the inference layer.
+
+**Later.** `dynamical_system.py` as a common interface for sequential problems,
+and sequential data assimilation on top of it.
+
+### 21.4 Verification, not porting
+
+Four things to check rather than build, from "so long as the functionality is
+the same":
+
+1. **`DiagonalLinearOperator` against `InvariantLinearAutomorphism`**, method
+   by method, construction included. `invariant_operator` covers
+   `from_function`; there is nothing for `from_index_function`, which is what
+   a degree-band operator wants.
+2. **`GaussianMeasure`'s invariant optimisations.** v1's `kl_divergence` has an
+   `O(N)` path when both measures are invariant on the same domain. v2 has no
+   `kl_divergence` at all, so both it and its fast path are owed.
+3. **`deflated_pointwise_variance`**, which you suspect never worked. Establish
+   what it should give against a dense computation before porting it.
+4. **`distance_localized_preconditioner`**, which never performed as hoped.
+   Measure it against the alternatives before deciding it is worth having.
+
+### 21.5 Decisions taken
+
+- **`from_derivative_matrix` keeps its name.** The alternatives — Galerkin
+  matrix, linear forms, functional rows — all name the object accurately and
+  none of them names the *convention*, which is the thing the design exists to
+  protect. The entries are derivatives, not gradients, and the name should keep
+  saying so.
+- **Pointwise multiplication is a capability, not a base-class assumption.**
+  `HilbertModule` sits alongside `CoordinateSpace`: a space whose vectors are
+  functions declares it, and code that needs it asks. An MFEM space can opt in;
+  nothing in the core assumes fields multiply.
+- **Constrained optimisation is projection onto a convex set**, reusing
+  `ConvexSet.project`. That covers a convex constraint with a non-convex
+  objective, which is the case that comes up. An augmented Lagrangian, for
+  constraints that cannot be projected onto cheaply, waits until M5's convex
+  machinery exists and can be the substrate.
+- **Parallelism stays outside operators.** Recorded with your caveat: the
+  action of a single operator will need parallelising for large problems, and
+  when it does it belongs in the operator's own implementation rather than as a
+  flag threaded through every constructor.
