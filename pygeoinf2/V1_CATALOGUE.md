@@ -145,10 +145,10 @@ addtional information as you suggest will be very useful. |
 |---|---|---|---|
 | `IdentityPreconditioningMethod` | Ported | `IdentityPreconditioner` | |
 | `JacobiPreconditioningMethod` | Ported | `JacobiPreconditioner` | |
-| `BandedPreconditioningMethod` | Planned | M5. Needs `extract_diagonals` | |
+| `BandedPreconditioningMethod` | Ported | M5. Needs `extract_diagonals` | |
 | `ColumnThresholdedPreconditioningMethod` | Planned | M5 | |
-| `ExactBlockPreconditioningMethod` | Planned | M5 | |
-| `SpectralPreconditioningMethod` | Planned | M5; `random_eig` is already there | |
+| `ExactBlockPreconditioningMethod` | Ported | M5 | |
+| `SpectralPreconditioningMethod` | Ported | M5; `random_eig` is already there | |
 | `IterativePreconditioningMethod` | Planned (N) | M5; wants `FCGSolver` | |
 
 ## `functional_calculus.py` → `numerics/functional_calculus.py`

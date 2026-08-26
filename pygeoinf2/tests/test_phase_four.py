@@ -704,3 +704,155 @@ class TestDeflatedDiagonal:
             measure, points, rank=4, samples=300, rng=rng
         )
         assert np.allclose(estimate, exact, rtol=0.25)
+
+
+class TestPreconditioners:
+    """Structural approximations to an inverse, and when each is worth it."""
+
+    @staticmethod
+    def spread(space, rng, decay=0.9):
+        size = space.dim
+        rotation, _ = np.linalg.qr(rng.normal(size=(size, size)))
+        spectrum = np.array([1000.0 * decay**index for index in range(size)]) + 5.0
+        return LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            rotation @ np.diag(spectrum) @ rotation.T,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    @staticmethod
+    def banded_operator(space, rng):
+        from scipy.sparse import diags
+
+        size = space.dim
+        band = diags(
+            [
+                np.full(size - 1, -1.0),
+                np.full(size, 4.0) + 0.01 * np.arange(size),
+                np.full(size - 1, -1.0),
+            ],
+            [-1, 0, 1],
+        ).toarray()
+        matrix = band + 1e-3 * rng.normal(size=(size, size))
+        matrix = 0.5 * (matrix + matrix.T) + 2.0 * np.identity(size)
+        return LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            matrix,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    @staticmethod
+    def sphere(lmax=8):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        return Sobolev(lmax, 2.0, 0.2)
+
+    @staticmethod
+    def iterations(operator, preconditioner, vector):
+        result = CGSolver(rtol=1e-10, preconditioner=preconditioner, strict=False)(
+            operator
+        ).solve(vector)
+        space = operator.domain
+        residual = space.norm(space.subtract(operator(result.solution), vector))
+        return result.iterations, residual / space.norm(vector)
+
+    def test_the_spectral_one_helps_a_decaying_spectrum(self, rng):
+        from pygeoinf2.numerics.preconditioners import SpectralPreconditioner
+
+        space = self.sphere()
+        operator = self.spread(space, rng)
+        vector = space.random(rng=rng)
+        plain, _ = self.iterations(operator, None, vector)
+        for rank in (20, 50):
+            count, residual = self.iterations(
+                operator,
+                SpectralPreconditioner(rank=rank, rng=np.random.default_rng(1)),
+                vector,
+            )
+            assert residual < 1e-8
+            assert count < plain
+        assert (
+            self.iterations(
+                operator,
+                SpectralPreconditioner(rank=50, rng=np.random.default_rng(1)),
+                vector,
+            )[0]
+            < self.iterations(
+                operator,
+                SpectralPreconditioner(rank=20, rng=np.random.default_rng(1)),
+                vector,
+            )[0]
+        )
+
+    def test_the_banded_one_helps_a_banded_operator(self, rng):
+        from pygeoinf2.numerics.preconditioners import BandedPreconditioner
+
+        space = self.sphere()
+        operator = self.banded_operator(space, rng)
+        vector = space.random(rng=rng)
+        plain, _ = self.iterations(operator, None, vector)
+        count, residual = self.iterations(operator, BandedPreconditioner(1), vector)
+        assert residual < 1e-8
+        assert count < plain / 5
+
+    def test_the_fast_probe_agrees_where_it_is_valid(self, rng):
+        """The two probes coincide on a genuinely banded operator."""
+        from pygeoinf2.numerics.preconditioners import BandedPreconditioner
+
+        space = self.sphere()
+        operator = self.banded_operator(space, rng)
+        vector = space.random(rng=rng)
+        exact = self.iterations(operator, BandedPreconditioner(3), vector)
+        fast = self.iterations(
+            operator, BandedPreconditioner(3, probe="banded"), vector
+        )
+        assert exact[0] == fast[0]
+
+    def test_it_can_make_matters_worse_on_a_dense_operator(self, rng):
+        """Recorded, not guarded against: nothing here can detect the structure
+        for you, which is why the bandwidth is a required argument."""
+        from pygeoinf2.numerics.preconditioners import BandedPreconditioner
+
+        space = self.sphere()
+        operator = self.spread(space, rng)
+        vector = space.random(rng=rng)
+        plain, _ = self.iterations(operator, None, vector)
+        count, residual = self.iterations(
+            operator, BandedPreconditioner(3, probe="banded"), vector
+        )
+        assert residual > 1e-3  # it did not converge at all
+
+    def test_the_block_one_partitions_the_components(self, rng):
+        from pygeoinf2.numerics.preconditioners import BlockPreconditioner
+
+        space = self.sphere()
+        operator = self.spread(space, rng)
+        vector = space.random(rng=rng)
+        blocks = [
+            list(range(start, min(start + 9, space.dim)))
+            for start in range(0, space.dim, 9)
+        ]
+        count, residual = self.iterations(operator, BlockPreconditioner(blocks), vector)
+        assert residual < 1e-8
+
+    def test_blocks_that_do_not_partition_are_refused(self, rng):
+        from pygeoinf2.numerics.preconditioners import BlockPreconditioner
+
+        space = self.sphere(4)
+        operator = self.spread(space, rng)
+        with pytest.raises(ValueError, match="partition"):
+            BlockPreconditioner([[0, 1]])(operator)
+
+    def test_a_nonsense_rank_or_bandwidth_is_refused(self):
+        from pygeoinf2.numerics.preconditioners import (
+            BandedPreconditioner,
+            SpectralPreconditioner,
+        )
+
+        with pytest.raises(ValueError, match="rank must be positive"):
+            SpectralPreconditioner(rank=0)
+        with pytest.raises(ValueError, match="bandwidth"):
+            BandedPreconditioner(-1)

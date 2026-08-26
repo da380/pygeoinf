@@ -3506,3 +3506,27 @@ mechanism exactly:
 The widest interval is the cap the rays miss entirely, and the ordering is
 monotone in coverage. A method that reported a number with an error bar would
 have reported a number for cap 0 too.
+
+### 22.5 Preconditioners
+
+`SpectralPreconditioner`, `BandedPreconditioner` and `BlockPreconditioner`,
+beside the identity and Jacobi that were already there. Each is a different
+guess about *why* an operator is ill-conditioned, and each is only worth
+anything when its guess is right.
+
+Measured on a positive-definite operator with a spectrum decaying by `0.9` per
+mode: 125 conjugate-gradient iterations plain, 89 with Jacobi, 62 with rank-20
+spectral, **22** with rank-50. On a genuinely banded operator: 41 plain,
+**4** banded.
+
+**And one that makes things worse, recorded rather than guarded against.** A
+tridiagonal preconditioner applied to a *dense* operator took the same solve
+from 125 iterations to outright failure. Nothing in the library can detect that
+the operator lacks the structure being assumed, which is why the bandwidth is a
+required argument with no default — asking for it is the only place the caller
+is made to state the assumption.
+
+That is also why `BandedPreconditioner` extracts its diagonals with the *exact*
+probe by default. The fast probe of §21.17 sums out-of-band entries into the
+band, which is harmless when the operator is banded — the two agree, and there
+is a test — and compounds the damage when it is not.
