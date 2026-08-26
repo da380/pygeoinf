@@ -2904,6 +2904,23 @@ read the name and passed the other one. Now `_NO_CONDON_SHORTLEY`.
 
 ### 20.8 Still to come from v1
 
+Superseded by **`V1_CATALOGUE.md`**, which inventories all of v1 — 44 modules,
+145 classes, 919 public methods, 84 functions — and gives each one a status:
+Ported, Subsumed, Planned, Dropped, or **Open**, the last meaning there is no
+recommendation and it needs a decision. It exists because the `finufft` path
+of §20.7 was lost without anyone deciding to lose it, and a slow right answer
+passes every test a fast one does. The failure mode to guard against is not a
+decision to drop something; it is an absence nobody made.
+
+Fifty-three rows are Open. Five of them block work that already exists:
+`flexural_operator`, `inverse_flexural_operator`,
+`spatial_multiplication_operator`, `vector_multiply` and `vector_sqrt`, without
+which `work/flexure.py` and `work/dynamic_topography.py` cannot be reproduced
+on v2. `vector_multiply` is the module structure of v1's `HilbertModuleMixin`,
+and v2 has no home for it.
+
+The summary that was here:
+
 **The target is everything v1 does, with improvements — not a subset.** What is
 listed here is deferred, not dropped.
 
