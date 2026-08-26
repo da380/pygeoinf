@@ -18,7 +18,7 @@ v1 draws standard normal components there and so produces covariance
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Callable, Literal, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -26,6 +26,9 @@ from numpy.random import Generator
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, EuclideanSpace, HilbertSpace
 from ..traits import Traits
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..geometry.convex import Ellipsoid
 from .base import ProbabilityMeasure
 
 __all__ = ["GaussianMeasure"]
@@ -323,6 +326,32 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if self._expectation is None:
             return x
         return self._domain.subtract(x, self._expectation)
+
+    def credible_set(self, /, *, level: float = 0.95) -> "Ellipsoid":
+        """The region carrying a given share of the probability, as a set.
+
+        The **hardening** of DESIGN.md section 18.1: a measure becomes a set at
+        a chosen chi-squared level. It is not canonical and it is not
+        reversible — the ellipsoid carries no memory of the distribution it
+        came from — which is why it is a named step rather than something a
+        constructor does quietly.
+
+        Args:
+            level: the probability the region carries, in ``(0, 1)``.
+        """
+        from scipy.stats import chi2
+
+        from ..geometry.convex import Ellipsoid
+
+        if not 0.0 < level < 1.0:
+            raise ValueError(f"A credible level lies in (0, 1), got {level}.")
+        threshold = float(chi2.ppf(level, self.domain.dim))
+        return Ellipsoid(
+            self.domain,
+            self.precision * (1.0 / threshold),
+            centre=self.expectation,
+            covariance=self.covariance * threshold,
+        )
 
     def mahalanobis_squared(self, x: X) -> float:
         """``(x - m, P (x - m))``, the squared Mahalanobis distance."""

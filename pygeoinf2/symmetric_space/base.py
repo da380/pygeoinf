@@ -303,6 +303,14 @@ class SymmetricSpace(
         """
         return LinearFunctional.from_derivative_components(self, self.basis_at(point))
 
+    def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
+        """The basis at many points, as a ``(len(points), dim)`` array.
+
+        The rows of an observation operator's derivative matrix. A space whose
+        transform can do this in a batch should override it; the sphere does.
+        """
+        return np.stack([self.basis_at(point) for point in points])
+
     def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
         """The field's values at several points.
 
@@ -329,13 +337,23 @@ class SymmetricSpace(
                 total += weight * self.basis_at(point)
         return total
 
-    def point_evaluation_operator(self, points: Sequence[Any], /) -> LinearOperator:
+    def point_evaluation_operator(
+        self, points: Sequence[Any], /, *, dense: bool = False
+    ) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
-        Matrix-free: nothing of size ``len(points) x dim`` is formed, so this
-        is usable at the scale real acquisition geometries reach. Call
-        :meth:`~pygeoinf2.algebra.operators.LinearOperator.assembled` on the
-        result when the matrix is small enough to be worth storing.
+        Matrix-free by default: nothing of size ``len(points) x dim`` is
+        formed, so this is usable at the scale real acquisition geometries
+        reach.
+
+        ``dense=True`` assembles the derivative matrix instead, which is worth
+        it whenever the operator will be applied many times and the matrix
+        fits. It is a separate argument rather than a call to
+        :meth:`~pygeoinf2.algebra.operators.LinearOperator.assembled` because
+        the rows are known in closed form — they are :meth:`basis_matrix` —
+        while ``assembled`` would recover them by applying the adjoint once per
+        datum, at a cost quadratic in the data. The adjoint is derived either
+        way, so nothing is duplicated.
 
         Its adjoint returns a weighted sum of Dirac *representers*, which is
         what makes an adjoint-based inversion give a function rather than an
@@ -346,10 +364,15 @@ class SymmetricSpace(
         points = tuple(points)
         if not points:
             raise ValueError("At least one point is needed.")
+        codomain = EuclideanSpace(len(points))
 
+        if dense:
+            return LinearOperator.from_derivative_matrix(
+                self, codomain, self.basis_matrix(points)
+            )
         return LinearOperator.from_derivative_callables(
             self,
-            EuclideanSpace(len(points)),
+            codomain,
             lambda x: self.evaluate(x, points),
             lambda y: self.accumulate(y, points),
         )
@@ -662,6 +685,7 @@ class SymmetricSpace(
         *,
         count: int = 20,
         normalise: bool = True,
+        dense: bool = False,
     ) -> LinearOperator:
         """Averages, or integrals, along a set of geodesic paths.
 
@@ -697,9 +721,15 @@ class SymmetricSpace(
             columns.extend(range(offset, offset + len(path_nodes)))
             values.extend(np.asarray(path_weights, dtype=float).tolist())
 
-        return _weight_operator(
-            len(paths), len(nodes), rows, columns, values
-        ) @ self.point_evaluation_operator(nodes)
+        weights = _weight_operator(len(paths), len(nodes), rows, columns, values)
+        if dense:
+            from ..algebra.spaces import EuclideanSpace
+
+            matrix = weights.matrix(form="components") @ self.basis_matrix(nodes)
+            return LinearOperator.from_derivative_matrix(
+                self, EuclideanSpace(len(paths)), matrix
+            )
+        return weights @ self.point_evaluation_operator(nodes)
 
     def geodesic_ball_average_operator(
         self,
@@ -709,6 +739,7 @@ class SymmetricSpace(
         *,
         count: int = 100,
         normalise: bool = True,
+        dense: bool = False,
     ) -> LinearOperator:
         """Averages, or integrals, over geodesic balls of a common radius.
 
@@ -737,9 +768,15 @@ class SymmetricSpace(
             columns.extend(range(offset, offset + len(ball_nodes)))
             values.extend(np.asarray(ball_weights, dtype=float).tolist())
 
-        return _weight_operator(
-            len(centres), len(nodes), rows, columns, values
-        ) @ self.point_evaluation_operator(nodes)
+        weights = _weight_operator(len(centres), len(nodes), rows, columns, values)
+        if dense:
+            from ..algebra.spaces import EuclideanSpace
+
+            matrix = weights.matrix(form="components") @ self.basis_matrix(nodes)
+            return LinearOperator.from_derivative_matrix(
+                self, EuclideanSpace(len(centres)), matrix
+            )
+        return weights @ self.point_evaluation_operator(nodes)
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """The field obtained by sampling a function on the space's grid."""

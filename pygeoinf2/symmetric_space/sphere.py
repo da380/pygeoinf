@@ -36,6 +36,10 @@ __all__ = ["Sphere", "Lebesgue", "Sobolev"]
 
 # pyshtools' low-level normalisation code for orthonormal harmonics.
 _ORTHONORMAL = 4
+# One basis matrix at a time is held in memory; this bounds its entry count,
+# so a chunk is about 30 MB whatever the truncation.
+_CHUNK_ENTRIES = 4_000_000
+
 # pyshtools spells "leave the Condon-Shortley phase out" as csphase=1.
 _NO_CONDON_SHORTLEY = 1
 
@@ -185,6 +189,14 @@ class Sphere(SymmetricSpace):
         )
 
     @cached_property
+    def _azimuthal(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Which components take a cosine, which a sine, and at which order."""
+        parts, _, orders = self._packing
+        cosine = np.flatnonzero(parts == 0)
+        sine = np.flatnonzero(parts == 1)
+        return cosine, sine, orders[cosine], orders[sine]
+
+    @cached_property
     def _legendre_indices(self) -> np.ndarray:
         """Where each component sits in pyshtools' packed Legendre array.
 
@@ -283,37 +295,76 @@ class Sphere(SymmetricSpace):
         # not on the unit one.
         return harmonics / self._radius
 
-    def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
-        """Field values at scattered points, through one harmonic expansion.
+    def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
+        """The basis evaluated at many points, as a ``(len(points), dim)`` array.
 
-        Overrides the generic route, which builds the whole basis at every
-        point. pyshtools evaluates the whole set in one call, which is the
-        difference between a tomography problem being feasible and not.
+        The batched form of :meth:`basis_at`, and the reason both
+        :meth:`evaluate` and :meth:`accumulate` are usable at the scale a real
+        acquisition geometry reaches. Calling ``basis_at`` in a loop spends
+        almost all of its time in per-point Python: at ``lmax == 64`` the
+        Legendre evaluation itself is 3% of it, and the other 97% is indexing
+        and trigonometry that vectorises.
+
+        Rows are ordered as ``points``, columns as the components.
         """
-        from pyshtools import SHCoeffs
+        from pyshtools.legendre import PlmON
 
         positions = np.asarray([np.asarray(point, dtype=float) for point in points])
         if positions.ndim != 2 or positions.shape[1] != 2:
             raise ValueError("Points are (colatitude, longitude) pairs in radians.")
 
-        coefficients = np.zeros((2, self._lmax + 1, self._lmax + 1))
-        parts, degrees, orders = self._packing
-        coefficients[parts, degrees, orders] = self.to_components(x) / self._radius
-        expansion = SHCoeffs.from_array(
-            coefficients,
-            normalization="ortho",
-            csphase=_NO_CONDON_SHORTLEY,
+        indices = self._legendre_indices
+        count = positions.shape[0]
+        result = np.empty((count, indices.size))
+        for row, colatitude in enumerate(positions[:, 0]):
+            table = PlmON(self._lmax, np.cos(colatitude), csphase=_NO_CONDON_SHORTLEY)
+            result[row] = table[indices]
+
+        # The azimuthal factor depends only on the order m, of which there are
+        # lmax + 1 values rather than dim. Computing cos(m phi) and sin(m phi)
+        # once per order and gathering is the difference between a few hundred
+        # thousand trigonometric evaluations and tens of millions.
+        degrees = np.arange(self._lmax + 1)
+        angles = positions[:, 1][:, None] * degrees[None, :]
+        cosine, sine = np.cos(angles), np.sin(angles)
+        cosine_columns, sine_columns, cosine_orders, sine_orders = self._azimuthal
+        result[:, cosine_columns] *= cosine[:, cosine_orders]
+        result[:, sine_columns] *= sine[:, sine_orders]
+        return result / self._radius
+
+    def _in_chunks(self, points: Sequence[Any], /) -> Any:
+        """Split points so one basis matrix at a time stays a sensible size."""
+        points = tuple(points)
+        per_chunk = max(1, _CHUNK_ENTRIES // max(self.dim, 1))
+        for start in range(0, len(points), per_chunk):
+            yield points[start : start + per_chunk]
+
+    def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
+        """Field values at scattered points.
+
+        One batched Legendre evaluation per chunk of points, rather than one
+        expansion call per point.
+        """
+        components = self.to_components(x)
+        return np.concatenate(
+            [self.basis_matrix(chunk) @ components for chunk in self._in_chunks(points)]
         )
-        return np.atleast_1d(
-            np.asarray(
-                expansion.expand(
-                    lat=90.0 - np.degrees(positions[:, 0]),
-                    lon=np.degrees(positions[:, 1]),
-                    degrees=True,
-                ),
-                dtype=float,
-            )
-        ).ravel()
+
+    def accumulate(self, weights: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
+        """The derivative components of ``x -> sum_i y_i x(r_i)``.
+
+        The transpose of :meth:`evaluate`'s matrix, chunked the same way.
+        """
+        values = np.asarray(weights, dtype=float)
+        total = np.zeros(self.dim)
+        offset = 0
+        for chunk in self._in_chunks(points):
+            end = offset + len(chunk)
+            total += self.basis_matrix(chunk).T @ values[offset:end]
+            offset = end
+        if offset != values.size:
+            raise ValueError(f"Got {values.size} weights for {offset} points.")
+        return total
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """Sample a function on the grid.
@@ -563,6 +614,7 @@ class Sphere(SymmetricSpace):
         *,
         count: int | None = None,
         normalise: bool = True,
+        dense: bool = False,
     ) -> LinearOperator:
         """Cap averages, exactly, as an operator into a Euclidean space.
 
@@ -576,7 +628,7 @@ class Sphere(SymmetricSpace):
             raise ValueError("At least one centre is needed.")
         if count is not None:
             return super().geodesic_ball_average_operator(
-                centres, radius, count=count, normalise=normalise
+                centres, radius, count=count, normalise=normalise, dense=dense
             )
 
         from ..algebra.spaces import EuclideanSpace

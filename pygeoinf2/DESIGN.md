@@ -3111,3 +3111,75 @@ and is overridden there to skip the two transforms.
 
 Phase 2: M5 stages 5.1 to 5.4 and the sphere point-evaluation speedup, with
 `work/tomo.py` as the acceptance test.
+
+### 21.9 Phase 2 as built
+
+`work/tomo.py` runs on v2, as `examples/21_tomography.py`. 882 tests.
+
+```
+inference/problem.py     ForwardProblem, LinearForwardProblem
+inference/estimators.py  Estimator and its three kinds, LinearPointEstimator,
+                         GaussianEstimator
+inference/point.py       LeastSquares, MinimumNorm, choose_formalism
+inference/bayesian.py    Bayesian
+probability/gaussian.py  credible_set
+geometry/convex.py       Ball.translate, Ellipsoid.translate
+symmetric_space/         basis_matrix, dense= on the observation operators
+plotting/sphere.py       plot_points, plot_paths
+```
+
+**The estimator is the mapping**, as §18.7 said it should be. `Bayesian(problem,
+prior)` *is* the map from data to posterior; `LeastSquares(problem)` *is* an
+`AffineOperator` and joins the algebra. `push_forward` is implemented once per
+answer kind, and cell `(measure, P)` is the one line the design promised.
+
+**The formalism chooses itself.** `choose_formalism` takes the smaller of the
+two spaces, and the tests pin that both assemble the same mapping — mean and
+covariance agreeing to machine precision, and both agreeing with a dense
+reference.
+
+### 21.10 Three findings
+
+**A dense reference is easy to write wrongly, in exactly the documented way.**
+The first reference for the posterior used `Q A_c^T (A_c Q A_c^T + R)^-1 d`,
+which disagreed. In components the adjoint is `G^-1 A_c^T`, not `A_c^T`, so the
+right expression carries the inverse metric — §5.6, met while writing the test
+rather than the code. The reference in `test_inference.py` says so, because the
+mistake is the natural one.
+
+**A supplied sampler must be centred.** `GaussianMeasure.sample` adds the
+expectation to whatever a `sample` callable returns, so a randomise-then-
+optimise draw written in the obvious way lands at *twice* the posterior mean.
+Caught by comparing three thousand draws against the mean.
+
+Writing it centred turned out to say something better. The centred draw is
+
+```
+(u - mu) + K(-A(u - mu) - (e - mu_e))
+```
+
+which **never mentions the data**. The posterior *fluctuation* is
+data-independent — the same statement as the covariance being
+data-independent, and the reason this estimator is a pair. So the sampler is
+built once, not per call.
+
+**A tall operator wants assembling by its rows, not by `assembled()`.**
+`matrix(by="rows")` costs one adjoint application per datum, and for a
+tomography operator each of those touches every quadrature node — quadratic in
+the data. But the rows are known in closed form: they are `basis_matrix`. So
+the observation operators take `dense=True`, which is not the `matrix_free`
+flag §20.6 argued against, because it duplicates no adjoint — the same
+derivative components are used either way. Measured: building 60 paths at
+`lmax == 64` takes 153 ms, after which applications are 1.6 ms against 66 ms.
+
+Separately, batching the sphere's `basis_at` gave 2x on the adjoint. The
+azimuthal factor depends only on the order `m`, of which there are `lmax + 1`
+rather than `dim`, so computing `cos(m phi)` once per order and gathering
+replaced tens of millions of trigonometric evaluations with a few hundred
+thousand.
+
+### 21.11 Next
+
+Phase 3: correlated invariant measures, the remaining symmetric-space
+operators, and the rest of the plotting layer, with
+`work/dynamic_topography.py` as the acceptance test.

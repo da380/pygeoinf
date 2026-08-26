@@ -140,6 +140,14 @@ class Ball(ConvexSet):
         self._radius = float(radius)
         self._centre = domain.zero() if centre is None else centre
 
+    def translate(self, vector: Any, /) -> "Ball":
+        """The same ball, moved by a vector."""
+        return Ball(
+            self.domain,
+            radius=self._radius,
+            centre=self.domain.add(self._centre, vector),
+        )
+
     @property
     def radius(self) -> float:
         """The radius."""
@@ -336,6 +344,15 @@ class Ellipsoid(ConvexSet):
         self._precision = precision
         self._covariance = covariance
         self._centre = domain.zero() if centre is None else centre
+
+    def translate(self, vector: Any, /) -> "Ellipsoid":
+        """The same ellipsoid, moved by a vector."""
+        return Ellipsoid(
+            self.domain,
+            self._precision,
+            centre=self.domain.add(self._centre, vector),
+            covariance=self._covariance,
+        )
 
     @property
     def precision(self) -> LinearOperator:

@@ -34,10 +34,11 @@ failing test rather than a surprise later.
 | 18 | `subspaces` | projectors, kernels, and linear constraints |
 | 19 | `observation` | where a function space meets an instrument |
 | 20 | `flexure` | a coefficient that varies in space, and a picture of it |
+| 21 | `tomography` | a Bayesian inversion, end to end |
 
 ## The ones with optional dependencies
 
-Number 16 needs `mfem`, 19 needs `pyshtools`, and 20 needs `cartopy` as well.
+Number 16 needs `mfem`, 19 needs `pyshtools`, and 20 and 21 need `cartopy`.
 Each skips without them.
 
 ```

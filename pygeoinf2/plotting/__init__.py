@@ -16,6 +16,6 @@ See DESIGN.md section 20.5, O8.
 
 from .base import colour_limits, plot, subplots
 from . import fourier as _fourier  # noqa: F401  (registers the box renderer)
-from . import sphere as _sphere  # noqa: F401  (registers the sphere renderer)
+from .sphere import plot_paths, plot_points
 
-__all__ = ["plot", "subplots", "colour_limits"]
+__all__ = ["plot", "subplots", "colour_limits", "plot_points", "plot_paths"]

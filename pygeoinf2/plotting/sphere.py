@@ -14,7 +14,7 @@ import numpy as np
 from ..symmetric_space.sphere import Sphere
 from .base import colour_limits, plot, subplots
 
-__all__: list[str] = []
+__all__ = ["plot_points", "plot_paths"]
 
 
 def _require_cartopy() -> Any:
@@ -128,3 +128,104 @@ def _(
         if colorbar_label is not None:
             bar.set_label(colorbar_label)
     return ax, mappable
+
+
+def plot_points(
+    space: Sphere,
+    points: Any,
+    /,
+    *,
+    ax: Any = None,
+    marker: str = "^",
+    size: float = 20.0,
+    color: str = "black",
+    **kwargs: Any,
+) -> Any:
+    """Scatter a set of points on a map.
+
+    Args:
+        space: the sphere.
+        points: ``(colatitude, longitude)`` pairs in radians.
+        ax: axes to draw on. A new map is made if omitted.
+        marker: matplotlib marker.
+        size: marker area.
+        color: marker colour.
+        **kwargs: passed to ``scatter``.
+
+    Returns:
+        The ``(axes, collection)`` pair.
+    """
+    crs = _require_cartopy()
+    if ax is None:
+        _, ax = subplots(space)
+    positions = np.asarray([np.asarray(point, dtype=float) for point in points])
+    collection = ax.scatter(
+        np.degrees(positions[:, 1]),
+        90.0 - np.degrees(positions[:, 0]),
+        transform=crs.PlateCarree(),
+        marker=marker,
+        s=size,
+        c=color,
+        **kwargs,
+    )
+    return ax, collection
+
+
+def plot_paths(
+    space: Sphere,
+    paths: Any,
+    /,
+    *,
+    ax: Any = None,
+    count: int = 24,
+    color: str = "black",
+    linewidth: float = 0.4,
+    alpha: float = 0.15,
+    **kwargs: Any,
+) -> Any:
+    """Draw great-circle paths on a map.
+
+    Each path is sampled along its geodesic rather than handed to cartopy as
+    two endpoints, so it follows the great circle rather than a straight line
+    in the projection — which for a global network is most of them.
+
+    Args:
+        space: the sphere.
+        paths: ``(start, end)`` pairs of points.
+        ax: axes to draw on.
+        count: samples along each path.
+        color: line colour.
+        linewidth: line width.
+        alpha: opacity, low by default because these overlap heavily.
+        **kwargs: passed to ``plot``.
+
+    Returns:
+        The ``(axes, lines)`` pair.
+    """
+    crs = _require_cartopy()
+    if ax is None:
+        _, ax = subplots(space)
+
+    lines = []
+    for start, end in paths:
+        nodes, _ = space.geodesic_quadrature(start, end, count=count)
+        positions = np.asarray(nodes)
+        longitudes = np.degrees(positions[:, 1])
+        latitudes = 90.0 - np.degrees(positions[:, 0])
+        # A path crossing the dateline would otherwise be drawn straight across
+        # the whole map; splitting it at the jump keeps each piece local.
+        breaks = np.flatnonzero(np.abs(np.diff(longitudes)) > 180.0) + 1
+        for piece in np.split(np.arange(longitudes.size), breaks):
+            if piece.size < 2:
+                continue
+            (line,) = ax.plot(
+                longitudes[piece],
+                latitudes[piece],
+                transform=crs.PlateCarree(),
+                color=color,
+                linewidth=linewidth,
+                alpha=alpha,
+                **kwargs,
+            )
+            lines.append(line)
+    return ax, lines

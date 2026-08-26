@@ -252,14 +252,14 @@ deliberately not started.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `ForwardProblem` | Planned | M5 stage 5.1, taking a measure *or* a convex set as the data uncertainty (§18.1) | |
-| `LinearForwardProblem` | Planned | M5 stage 5.1 | |
+| `ForwardProblem` | Ported | M5 stage 5.1, taking a measure *or* a convex set as the data uncertainty (§18.1) | |
+| `LinearForwardProblem` | Ported | M5 stage 5.1 | |
 | `Inversion`, `LinearInversion` | Subsumed | §18.7's `Estimator` kinds. An inverse problem is an inference problem with `T == identity`, so there is one hierarchy | |
 | `Inference`, `LinearInference` | Subsumed | as above | |
-| `LinearBayesianInversion` | Planned | M5 stage 5.4 as `Bayesian`. Four of its 24 methods are inversion; the rest move to `numerics` (§18.9) | |
-| `LinearLeastSquaresInversion` | Planned | M5 stage 5.3 | |
+| `LinearBayesianInversion` | Ported | M5 stage 5.4 as `Bayesian`. Four of its 24 methods are inversion; the rest move to `numerics` (§18.9) | |
+| `LinearLeastSquaresInversion` | Ported | M5 stage 5.3 | |
 | `ConstrainedLinearLeastSquaresInversion` | Planned | M5 stage 5.3 | |
-| `LinearMinimumNormInversion` | Planned | M5 stage 5.3, with the discrepancy principle on §18.6's root-find primitive | |
+| `LinearMinimumNormInversion` | Ported | M5 stage 5.3, with the discrepancy principle on §18.6's root-find primitive | |
 | `ConstrainedLinearMinimumNormInversion` | Planned | M5 stage 5.3 | |
 | `BackusInference` | Planned | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
 | `DualMasterCostFunction` | Planned | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
@@ -401,7 +401,7 @@ concentration of things to decide about.
 | `from_direct_sum` | Ported | `from_product` | |
 | `affine_mapping` | Ported | `affine_map`, `push_forward`, `translate` | |
 | `zero_expectation` | Ported | `translate` by the negated expectation | |
-| `credible_set` | Planned | M5. This is §18.1's measure-to-set hardening, and `tutorials/gaussian_measure_to_sets_demo.ipynb` is built on it | |
+| `credible_set` | Ported | M5. This is §18.1's measure-to-set hardening, and `tutorials/gaussian_measure_to_sets_demo.ipynb` is built on it | |
 | `ambient_ball`, `weakened_ellipsoid` | Planned | M5, with `credible_set` — the two looser hardenings | |
 | `as_multivariate_normal` | Planned | M5. The bridge to `scipy.stats` | |
 | `with_dense_covariance` | Subsumed | `covariance.assembled()` | |
@@ -524,9 +524,9 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `model_prior_measure`, `data_prior_measure`, `joint_prior_measure` | Planned | M5 stage 5.4 | |
-| `normal_operator`, `get_normal_equations_rhs`, `kalman_operator` | Planned | M5 stage 5.4 | |
-| `model_posterior_measure` | Planned | M5 stage 5.4, but as `Bayesian(problem, prior, solver)(data)` — a mapping, not a method taking both data and configuration (§18.7) | |
+| `model_prior_measure`, `data_prior_measure`, `joint_prior_measure` | Ported | M5 stage 5.4 | |
+| `normal_operator`, `get_normal_equations_rhs`, `kalman_operator` | Ported | M5 stage 5.4 | |
+| `model_posterior_measure` | Ported | M5 stage 5.4, but as `Bayesian(problem, prior, solver)(data)` — a mapping, not a method taking both data and configuration (§18.7) | |
 | `posterior_expectation_operator` | Subsumed | `GaussianEstimator.mean_map` | |
 | `with_formalism` | Subsumed | An argument on the estimator, defaulting to whichever space is smaller (§18.10) | |
 | `log_evidence`, `mahalanobis_evidence_term` | Planned | M5, as a functional on the data | |
@@ -541,8 +541,8 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `from_direct_sum` | Planned | M5 stage 5.1 — joint inversion of several data sets | |
-| `data_measure_from_model`, `data_measure_from_model_measure`, `joint_measure` | Planned | M5 stage 5.1 | |
-| `synthetic_data`, `synthetic_model_and_data` | Planned | M5 stage 5.1 | |
-| `chi_squared`, `chi_squared_from_residual`, `critical_chi_squared`, `chi_squared_test` | Planned | M5 stage 5.1, with the set coming first and the boolean on top (§18.11) | |
-| `parameterized_problem`, `data_reduced_problem` | Planned | M5 stage 5.1 | |
+| `from_direct_sum` | Ported | M5 stage 5.1 — joint inversion of several data sets | |
+| `data_measure_from_model`, `data_measure_from_model_measure`, `joint_measure` | Ported | M5 stage 5.1 | |
+| `synthetic_data`, `synthetic_model_and_data` | Ported | M5 stage 5.1 | |
+| `chi_squared`, `chi_squared_from_residual`, `critical_chi_squared`, `chi_squared_test` | Ported | M5 stage 5.1, with the set coming first and the boolean on top (§18.11) | |
+| `parameterized_problem`, `data_reduced_problem` | Ported | M5 stage 5.1 | |
