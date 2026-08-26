@@ -1265,7 +1265,8 @@ hashes equal to — an independently constructed copy of itself.
 | M2 | **done** — `compat.py` adapter for v1 spaces | met; 161 tests, see §11.4 |
 | M3 | **done** — `numerics/solvers.py`, `numerics/preconditioners.py` | met; 204 tests, see §11.5 |
 | M4 | **done** — `probability/` | met; 242 tests, see §11.5 |
-| M5 | Linear inversion rebuilt on the new core | Parity harness: v1 and v2 side by side on the existing test problems |
+| M5 | The inference layer, on the new core | Parity harness: v1 and v2 side by side on the existing test problems; and the four routes of §18.3 agreeing where they overlap |
+| M6 | The observation layer: the operators the worked examples need | `work/sphere_dli_example.py` and `work/tomo.py` reproduced on v2 |
 
 The packaging decision is what makes M5 cheap — `import pygeoinf as gi` and
 `import pygeoinf2 as gi2` in the same process, same problem, compared
@@ -2614,6 +2615,11 @@ Stages 5.6 to 5.8 are worth doing before 5.9. They are closed-form or
 near-closed-form, they need no convex solver, and they produce the reference
 values that make the bundle-method route testable rather than merely plausible.
 
+**They also need a property operator to exist.** 5.6 and 5.7 are untestable on
+anything but a toy until §20.5's O3 or O4 supplies one, and the end-to-end
+examples need O2, O3 and O6 as well. M6 is independent of the rest of M5 and
+should run alongside it, not after.
+
 The two papers in this directory are the specification for 5.5 onwards, and
 both cite this package as their implementation. Their worked examples —
 spherical-cap averages under a `H^{3/2}(S^2)` Sobolev prior, and a two-field
@@ -2754,3 +2760,46 @@ constructor.
 show what changes and what does not — which is the coordinate-free claim, tested
 by variation rather than by assertion. Worth reproducing once the observation
 layer exists.
+
+### 20.5 Stages for the observation layer
+
+Independent of §18 and worth running alongside it. O1 is algebra and gates
+everything else; O2 to O4 are what a worked example cannot start without.
+
+| | |
+|---|---|
+| **O1** | `LinearOperator.from_derivative_callables`: the matrix-free counterpart of `from_derivative_matrix`, per §20.2. With a **negative control** — the same operator built through `from_callables` with a metric-free adjoint must fail `check_operator` — and a matrix-free `point_evaluation_operator` built through it |
+| **O2** | Geodesics on the sphere: `geodesic_distance`, great-circle quadrature, and `path_average_operator` in dense and matrix-free form. This is the tomography forward map |
+| **O3** | Cap averages: the exact spherical-harmonic form and a quadrature form, each checked against the other. This is BGP's property operator `T` |
+| **O4** | Coefficient operators: `to_coefficient_operator` and `from_coefficient_operator`, which are Al-Attar (2021)'s property operator. On a spectral space this is a selection of components, so it is `from_derivative_matrix` on a sparse selection and nearly free |
+| **O5** | Resolution: `with_degree` and `degree_transfer_operator`, prolongation and restriction as an adjoint pair. Surrogates need it, and so does BGP's convergence-under-refinement claim |
+| **O6** | Acquisition geometry: the IRIS station and USGS event tables, `domain_mask`, `random_domain_points`. Data files, so a packaging question as much as a code one |
+| **O7** | The parameterisations the examples actually use: pointwise-variance calibration on the invariant measures (§20.1), and `geodesic_distance`-based localisation for the sparse preconditioner |
+
+**On O1's signature.** The caller supplies the action and the *derivative
+components* of the pulled-back functional:
+
+```python
+LinearOperator.from_derivative_callables(
+    domain, codomain, value, derivative_components, *, traits=Traits.NONE
+)
+```
+
+where `derivative_components(y)` returns `d(A x, y)_Y / d c_x` — for a
+Euclidean codomain, exactly the `y[i] * basis_at(points[i])` sum v1
+accumulates — and the framework applies `domain.representer` once. Only the
+**domain** needs coordinates, which is the right way round: the model space is
+where matrix-freeness matters, and it is the space whose metric is not the
+identity.
+
+A fully coordinate-free variant would take a callable returning a
+`LinearFunctional` instead of components. Nothing needs it yet, and it costs a
+functional object per adjoint application, so it waits for a caller.
+
+**On O3 and O4 being the same shape.** Both are property operators into a small
+Euclidean space, both are rows of derivative components, and both are therefore
+`from_derivative_matrix` with `dim(P)` rows. The difference is only how a row is
+computed — a cap integral against each basis function, or a single one — which
+is why O4 is nearly free once O3 exists and why neither needs the matrix-free
+path. It is the *forward* operators, O2 in particular, that need O1.
+
