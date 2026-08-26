@@ -2005,7 +2005,53 @@ The examples are excluded from the code-practice checks of §2. They are
 teaching material, and annotating a three-line helper written to illustrate one
 idea makes the illustration worse; their test is that they run.
 
-## 15. Open questions
+## 15. Foreign backends
+
+`pygeoinf2/backends/` adapts vector and matrix types the library does not own.
+Both are optional extras (`mfem`, `petsc`) and both are skipped when absent.
+They settle the question §11.8 leaves open: `OpaqueSpace` shows the core does
+not *need* components, but only a real backend shows it works when the vectors
+belong to someone else.
+
+### 15.1 MFEM, which is the case the design was built for
+
+In a finite element space the inner product is `(u, v) == u^T M v`. So the mass
+matrix **is** the Gram matrix of §3.2, and three things a practitioner
+otherwise writes out by hand fall out of the general machinery:
+
+| MFEM object | what it is here |
+|---|---|
+| an assembled `BilinearForm` | the **Galerkin matrix** of its operator: `a(u,v) == u^T K v` and `(Au, v) == (Au)^T M v` give `K == M A_c`, so it goes straight into `from_derivative_matrix` |
+| an assembled `LinearForm` | a **derivative**, not a gradient: entries `l(phi_i)`, whose representer is `M^-1 b` |
+| a mass solve | `solve_gram`, the only place the inverse metric appears |
+
+Verified against a direct solve: `A x == M^-1 K x` to `1e-13`, and CG on the FE
+operator matches `np.linalg.solve` to `7e-13`. Vectors are `mfem.Vector`
+objects rather than arrays, and nothing in the core notices.
+
+**One real hazard found.** `GetDataArray` returns a NumPy view into memory MFEM
+owns, and that view does not keep its owner alive. In
+`to_components(from_components(c))` the temporary vector is collected and the
+view is left pointing at freed memory — giving plausible wrong numbers rather
+than an error. `to_components` therefore returns a **copy**, and a test pins
+it. Any backend that owns its own memory needs the same care.
+
+### 15.2 PETSc, and the adjoint that is not a transpose
+
+`PetscSpace` is `R^n` over `PETSc.Vec`; `PetscWeightedSpace` carries a mass
+matrix. The difference between them is §5.6 exactly: on the first, an
+operator's adjoint *is* its transpose and `multTranspose` is right; on the
+second the adjoint is `M^-1 A^T M` and `multTranspose` is wrong. PETSc offers
+the transpose and does not offer the adjoint, so this is the setting where the
+substitution is most tempting — and the two agree whenever the metric is
+trivial, which is why it survives.
+
+Written and tested against the API, but **not exercised here**: petsc4py has no
+binary wheel and builds PETSc from source, which is a substantial operation
+rather than a quick install. The tests skip accordingly. That is worth saying
+plainly rather than implying coverage that does not exist.
+
+## 16. Open questions
 
 1. ~~**`DirectSum` vector type.**~~ **Settled**: tuples, with optional labels
    on the space, and labels excluded from the space's identity. See §11.6.

@@ -21,14 +21,21 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 15
+    assert len(example_scripts()) >= 17
+
+
+# Examples that need an optional dependency, and the module that provides it.
+OPTIONAL = {
+    "16_mfem_backend": "mfem",
+    "17_petsc_backend": "petsc4py",
+}
 
 
 @pytest.mark.parametrize("script", example_scripts(), ids=lambda p: p.stem)
 def test_the_example_runs(script, capsys):
     """Run the script and require that it produces output without raising."""
-    if "sphere" in script.stem:
-        pytest.importorskip("pyshtools")
+    if script.stem in OPTIONAL:
+        pytest.importorskip(OPTIONAL[script.stem])
     runpy.run_path(str(script), run_name="__main__")
     assert capsys.readouterr().out.strip(), f"{script.name} printed nothing"
 

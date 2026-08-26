@@ -29,6 +29,24 @@ failing test rather than a surprise later.
 | 13 | `convex` | proximal operators as geometry |
 | 14 | `fields` | circles, tori, boxes, spheres |
 | 15 | `worked_example` | all of it, on a small inverse problem |
+| 16 | `mfem_backend` | a finite element space, where the mass matrix is the metric |
+| 17 | `petsc_backend` | opaque distributed vectors, and the adjoint that is not a transpose |
+
+## The backend examples
+
+The last two need optional dependencies and are skipped without them:
+
+```
+poetry install --extras mfem     # a wheel exists; quick
+poetry install --extras petsc    # PETSc builds from source; slow
+```
+
+They answer the question the rest of the suite cannot: whether the
+coordinate-free design really holds up when the vectors belong to somebody
+else. MFEM is the more instructive of the two, because a finite element space
+is the case the design was built for -- the mass matrix *is* the Gram matrix,
+an assembled bilinear form *is* a Galerkin matrix, and an assembled linear form
+*is* a derivative rather than a gradient.
 
 ## If you read only one
 
