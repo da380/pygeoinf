@@ -1598,7 +1598,68 @@ recognised as a congruence. Projections are now memoised per index. Anything
 that participates in the algebra and can be *rebuilt* needs this; it is the
 third time it has come up.
 
-### 11.7 Testing the abstract framework
+### 11.7 Numerics as built
+
+The three areas of §2.1, ported and improved. 449 tests.
+
+```
+pygeoinf2/algebra/diagonal.py             DiagonalLinearOperator
+pygeoinf2/numerics/functional_calculus.py Lanczos, f(A), quadratic forms
+pygeoinf2/numerics/randomised.py          range finding, low rank, estimators
+pygeoinf2/numerics/line_search.py         Armijo, strong Wolfe
+pygeoinf2/numerics/optimisation.py        descent methods, Newton, trust region
+```
+
+**Functional calculus** was already fully coordinate-free in v1 — zero
+component uses in 509 lines — so the port added trait gating and the §5.7
+dispatch rather than restructuring. `DiagonalLinearOperator` is the v2 home for
+`InvariantLinearAutomorphism`: eigenvalues stored, algebra closed through the
+specialisation protocol, calculus exact. It claims self-adjointness only when
+the space's metric is also diagonal, since `diag(d)` commutes with a general
+Gram matrix only if that matrix is diagonal too — hence
+`CoordinateSpace.has_diagonal_metric`. A test asserts the diagonal and Lanczos
+paths agree, so the dispatch is an optimisation and not a different answer.
+
+**Randomised linear algebra** kept v1's coordinate-free structure and fixed the
+distribution feeding it. `random_svd` avoids forming `Q* A` by assembling the
+`k x k` Gram matrix `C_ij == (A* q_i, A* q_j)` from inner products alone. Only
+`random_diagonal` needs components. Factors are built with
+`LinearOperator.from_vectors`, which claims `ISOMETRY` for an orthonormal
+family — so `U D U*` is recognised as PSD by the palindrome rule, and a
+`LowRankCholesky` factor drops straight into `GaussianMeasure`.
+
+**Optimisation** is written rather than wrapped, and §5.6 is why. Verified in
+v1: the `jac` handed to SciPy is `G^-1 dJ/dc` — the ratio to the true
+derivative is exactly the Gram diagonal — while the `hess` is the Galerkin
+matrix and so correct. The two are in different conventions in one call, and a
+Newton-CG step therefore solves `H p == -G^-1 g`. Here a gradient is a vector,
+a direction is a vector, and the slope is their inner product: there is no
+array to put in the wrong convention.
+
+`truncated_cg` is Steihaug's method, and its relationship to `CGSolver` is
+worth stating: that solver *refuses* an indefinite operator and raises on
+negative curvature, which is right for a linear system and wrong for an
+optimiser, where negative curvature says where to move rather than that
+something failed.
+
+Three things the tests caught that reading would not have:
+
+1. **The steepest-descent initial step was `1/||g||` with a backtracking-only
+   search.** Armijo can never take a *larger* step than it is offered, so the
+   method crawled — destroying precisely the conditioning advantage that
+   working in the metric is supposed to buy. Found by a test asserting the
+   iteration count is stable as the metric spread runs over four orders of
+   magnitude; it read `[3, 7, 311]`. The default is now a strong Wolfe search
+   with the slope-ratio heuristic.
+2. **`white_noise` on a `CoordinateSpace` is legitimately a coordinate
+   operation**, since `G^(-1/2)` is a statement about a basis. So `StrictSpace`
+   cannot test the randomised methods; `OpaqueSpace` can, and is stronger — it
+   is not a `CoordinateSpace` at all, so a component map does not merely raise,
+   it does not exist.
+3. A Rosenbrock test asserted the Hessian is indefinite at `(-1.2, 1)`, where
+   it is in fact positive definite with eigenvalues near 24 and 1506.
+
+### 11.8 Testing the abstract framework
 
 Every NumPy-backed test space has vectors that *are* their own components, so
 code reaching for array arithmetic or for a coordinate map works by accident.
