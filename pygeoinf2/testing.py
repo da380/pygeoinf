@@ -31,6 +31,7 @@ __all__ = [
     "check_derivative",
     "check_gradient",
     "check_second_derivative",
+    "check_measure",
 ]
 
 
@@ -631,3 +632,79 @@ def check_second_derivative(
                 "the second derivative agrees with finite differences",
                 f"residual {residual:g} against scale {scale:g}",
             )
+
+
+# --------------------------------------------------------------------- #
+#                               Measures                                #
+# --------------------------------------------------------------------- #
+
+
+def check_measure(
+    measure,
+    /,
+    *,
+    rng: Generator | None = None,
+    samples: int = 20000,
+    rtol: float = 0.08,
+    directions: int = 3,
+) -> None:
+    """Check that a measure's samples match the moments it declares.
+
+    Compares the sample mean against ``expectation`` and the sample second
+    moments against ``covariance``, along a few probe directions. A moment the
+    measure does not claim is not checked: ``None`` is not a failure.
+
+    The tolerances are statistical, not fixed fractions. The sample covariance
+    estimator has standard error of order ``sqrt(C_ii C_jj / n)``, so an
+    off-diagonal entry is judged against ``sqrt(C_ii C_jj)`` rather than
+    against 1 — otherwise an entry that is exactly zero in expectation gets
+    compared against an absolute floor that has nothing to do with the scale of
+    the problem.
+    """
+    rng = default_rng() if rng is None else rng
+    space = measure.domain
+    if space.dim == 0:
+        return
+
+    if isinstance(space, CoordinateSpace):
+        probes = [space.basis_vector(i) for i in range(min(space.dim, directions))]
+    else:
+        probes = [space.random(rng) for _ in range(min(space.dim, directions))]
+
+    draws = measure.samples(samples, rng)
+    projections = np.array([[space.inner_product(x, u) for u in probes] for x in draws])
+    spread = np.std(projections, axis=0)
+
+    if measure.has_expectation:
+        for i, u in enumerate(probes):
+            observed = float(projections[:, i].mean())
+            expected = space.inner_product(measure.expectation, u)
+            # Six standard errors of the mean: a false alarm is far worse than
+            # a missed one in a check that runs on every test invocation.
+            allowance = 6.0 * spread[i] / np.sqrt(samples) + 1e-12
+            if abs(observed - expected) > allowance:
+                _fail(
+                    "the sample mean matches the declared expectation",
+                    f"E[(X, u_{i})] == {observed:g} but "
+                    f"(m, u_{i}) == {expected:g}, beyond {allowance:g}",
+                )
+
+    if not measure.has_covariance:
+        return
+
+    covariance = measure.covariance
+    centred = projections - projections.mean(axis=0, keepdims=True)
+    empirical = centred.T @ centred / (samples - 1)
+    diagonal = [space.inner_product(covariance(u), u) for u in probes]
+
+    for i, u in enumerate(probes):
+        for j, v in enumerate(probes):
+            expected = space.inner_product(covariance(u), v)
+            scale = np.sqrt(max(diagonal[i], 0.0) * max(diagonal[j], 0.0))
+            allowance = rtol * max(scale, 1e-12)
+            if abs(empirical[i, j] - expected) > allowance:
+                _fail(
+                    "the sample covariance matches the declared covariance",
+                    f"Cov[(X,u_{i}), (X,u_{j})] == {empirical[i, j]:g} but "
+                    f"(C u_{i}, u_{j}) == {expected:g}, beyond {allowance:g}",
+                )

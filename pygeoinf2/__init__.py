@@ -29,6 +29,8 @@ from .algebra.spaces import (
     OrthonormalSpace,
     Reals,
 )
+from .probability.base import ProbabilityMeasure, PushForwardMeasure
+from .probability.gaussian import GaussianMeasure
 from .traits import Traits
 
 __all__ = [
@@ -50,6 +52,10 @@ __all__ = [
     # algebra.linearisation
     "Linearisation",
     "QuadraticModel",
+    # probability
+    "GaussianMeasure",
+    "ProbabilityMeasure",
+    "PushForwardMeasure",
     # traits
     "Traits",
 ]

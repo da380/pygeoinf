@@ -387,3 +387,98 @@ class TestSolversOnAdaptedSpaces:
         assert np.allclose(
             X.to_components(via_cg), X.to_components(via_dense), atol=1e-9
         )
+
+
+class TestMeasuresOnAdaptedSpaces:
+    """M4 acceptance: sampling, pushforward and moments against v1."""
+
+    @pytest.fixture
+    def prior(self, X):
+        """A v1 invariant covariance, wrapped and made into a v2 measure."""
+        from pygeoinf2.probability import GaussianMeasure
+
+        base = X.v1_space
+        v1_measure = base.sobolev_kernel_gaussian_measure(2.0, 0.3)
+        covariance = adapt_operator(
+            v1_measure.covariance,
+            domain=X,
+            codomain=X,
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        # An InvariantGaussianMeasure exposes no factor, but its covariance is
+        # spectrally diagonal and carries a functional calculus, so the square
+        # root is one: C == L L* with L self-adjoint. The factor's domain is the
+        # Sobolev space itself, so sampling draws white noise with respect to
+        # its inner product -- exactly the case DESIGN.md section 9 is about.
+        factor = adapt_operator(v1_measure.covariance.sqrt, domain=X, codomain=X)
+        return v1_measure, GaussianMeasure(X, covariance_factor=factor), covariance
+
+    def test_the_covariance_matches_v1(self, X, prior, rng):
+        v1_measure, mu, _ = prior
+        x = X.random(rng)
+        assert np.allclose(mu.covariance(x), v1_measure.covariance(x))
+
+    def test_sampled_moments_match_the_declared_covariance(self, X, prior, rng):
+        from pygeoinf2.testing import check_measure
+
+        _, mu, _ = prior
+        check_measure(mu, rng=rng, samples=6000, rtol=0.12, directions=2)
+
+    def test_v1_agrees_on_this_measure(self, X, prior, rng):
+        """Where v1 is right, v2 must match it, not merely be self-consistent.
+
+        The symmetric-space measures compensate for the metric separately, with
+        their own 1/sqrt(metric_values) factor, so this path in v1 is correct
+        and is a fair reference.
+        """
+        v1_measure, mu, _ = prior
+        base = X.v1_space
+        u = base.basis_vector(2)
+
+        np.random.seed(7)
+        v1_moment = np.mean(
+            [base.inner_product(v1_measure.sample(), u) ** 2 for _ in range(4000)]
+        )
+        v2_moment = np.mean(
+            [X.inner_product(mu.sample(rng), u) ** 2 for _ in range(4000)]
+        )
+        exact = X.inner_product(mu.covariance(u), u)
+
+        assert v1_moment == pytest.approx(exact, rel=0.12)
+        assert v2_moment == pytest.approx(exact, rel=0.12)
+
+    def test_pushforward_to_the_data_space(self, X, prior, rng):
+        """A C A* on a real forward operator, recognised and verified."""
+        from pygeoinf2.testing import check_measure, check_traits
+
+        _, mu, _ = prior
+        A = adapt_operator(X.v1_space.point_evaluation_operator(POINTS), domain=X)
+        data_measure = A @ mu
+
+        assert Traits.POSITIVE_SEMIDEFINITE & data_measure.covariance.traits
+        check_traits(data_measure.covariance, rng=rng)
+        check_measure(data_measure, rng=rng, samples=8000, rtol=0.12)
+
+    def test_the_pushforward_matches_v1s_affine_mapping(self, X, prior, rng):
+        v1_measure, mu, _ = prior
+        base = X.v1_space
+        v1_A = base.point_evaluation_operator(POINTS)
+
+        v1_pushed = v1_measure.affine_mapping(operator=v1_A)
+        v2_pushed = adapt_operator(v1_A, domain=X) @ mu
+
+        y = np.array([1.0, 0.0, 0.0, 0.0])
+        assert np.allclose(v2_pushed.covariance(y), v1_pushed.covariance(y))
+
+    def test_a_noisy_data_measure(self, X, prior, rng):
+        """mu_d = A C A* + R, the object a Bayesian inversion starts from."""
+        from pygeoinf2.probability import GaussianMeasure
+
+        _, mu, _ = prior
+        A = adapt_operator(X.v1_space.point_evaluation_operator(POINTS), domain=X)
+        Y = A.codomain
+        noise = GaussianMeasure.from_standard_deviation(Y, 0.2)
+
+        total = (A @ mu) + noise
+        assert Traits.POSITIVE_DEFINITE & total.covariance.traits
+        assert total.can_sample

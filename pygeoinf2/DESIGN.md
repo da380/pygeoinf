@@ -1228,7 +1228,7 @@ hashes equal to — an independently constructed copy of itself.
 | M1 | **done** — `operators.py`, `nodes.py`, `linearisation.py`, `Functional`, `AffineOperator` | met; 135 tests, see §11.2 |
 | M2 | **done** — `compat.py` adapter for v1 spaces | met; 161 tests, see §11.4 |
 | M3 | **done** — `numerics/solvers.py`, `numerics/preconditioners.py` | met; 204 tests, see §11.5 |
-| M4 | `probability/` | Gaussian sampling, pushforward, and moments match v1 where v1 is correct |
+| M4 | **done** — `probability/` | met; 242 tests, see §11.5 |
 | M5 | Linear inversion rebuilt on the new core | Parity harness: v1 and v2 side by side on the existing test problems |
 
 The packaging decision is what makes M5 cheap — `import pygeoinf as gi` and
@@ -1450,7 +1450,60 @@ have carried the coordinate-free claim further than expected — every Krylov
 method is verified against a space that refuses coordinates — so a real backend
 is now about ergonomics and distributed vectors rather than about correctness.
 
-### 11.5 Testing the abstract framework
+### 11.5 M4 as built
+
+```
+pygeoinf2/probability/
+  base.py      ProbabilityMeasure, PushForwardMeasure
+  gaussian.py  GaussianMeasure
+```
+
+Acceptance met: sampled moments agree with the declared covariance, the
+pushforward under a real point-evaluation operator is verified, and v1's own
+`InvariantGaussianMeasure` and v2's measure agree on the same second moments
+to sampling tolerance. 242 tests.
+
+**The base class asks for very little**: a way to draw a sample. An
+expectation, a covariance, a log density and its gradient are all optional. A
+measure that can only be sampled is still a measure, and that is what nonlinear
+inference actually presents.
+
+**`grad_log_density` returns a vector.** For a Gaussian it is `-P (x - m)`,
+and no Riesz map appears anywhere — the precision maps the space to itself, so
+its output already *is* a vector. That is section 5.6 in its most agreeable
+form, and it is what MALA and HMC step along. A finite-difference test checks
+it against the log density, which would catch a metric applied in the wrong
+place.
+
+**The covariance carries its structure for free.** Building from a factor gives
+`L L*`, which the palindrome rule recognises as self-adjoint and positive
+semidefinite — positive *definite* when `L` is invertible — with nothing
+claimed. The pushforward `A C A*` is likewise recognised. A covariance passed
+in directly must claim those traits, and the error names `check_traits` as the
+remedy; that is a cheap structural check, with numerical verification left to
+the testing module where it belongs.
+
+**Sampling is where the white-noise correction pays.** A draw is
+`m + L xi` with `xi` white noise **on the factor's own domain**. For the
+isotropic construction that domain is the space itself, so the noise must be
+white with respect to the space's inner product. `from_standard_deviation` on a
+mass-weighted space is exactly where v1 produces `sigma^2 G` instead of
+`sigma^2 I`.
+
+One thing the first draft of §7 missed: **derived measures must stay
+samplable**. The sum of two Gaussians has a covariance but no factor, and the
+pushforward under an operator has a factor only if the base did — so both
+initially came out unsamplable. Both now carry a composed sampler instead
+(draw from each and add; draw and map), which is what v1 does and is obviously
+right in hindsight. Found by `check_measure`, not by reading the code.
+
+A tolerance bug in `check_measure` was worth fixing carefully: an off-diagonal
+covariance entry that is zero in expectation was being judged against an
+absolute floor of 1, while the diagonal entries were of order 36, so ordinary
+sampling noise failed the check. Tolerances are now scaled by
+`sqrt(C_ii C_jj)`, which is the actual standard error of the estimator.
+
+### 11.6 Testing the abstract framework
 
 Every NumPy-backed test space has vectors that *are* their own components, so
 code reaching for array arithmetic or for a coordinate map works by accident.
