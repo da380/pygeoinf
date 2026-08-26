@@ -1659,7 +1659,74 @@ Three things the tests caught that reading would not have:
 3. A Rosenbrock test asserted the Hessian is indefinite at `(-1.2, 1)`, where
    it is in fact positive definite with eigenvalues near 24 and 1506.
 
-### 11.8 Testing the abstract framework
+### 11.8 Convex analysis and methods
+
+The review asked for in §2.1, followed by the part of it that belongs here.
+
+**What is entangled with inversion, and stays there.** Measured by references
+to forward problems, model and data spaces:
+
+| class | inversion references |
+|---|---|
+| `ChambollePockSolver` | 31 |
+| `PrimalKKTSolver` | 9 |
+| `SmoothedDualMaster` | 4 |
+| `SubgradientDescent`, `Bundle`, `ProximalBundleMethod`, `LevelBundleMethod`, `SmoothedLBFGSSolver` | **0** |
+| all of `convex_analysis.py` | **0** |
+
+So the support-function layer and the generic non-smooth solvers are core
+numerics; the KKT, Chambolle-Pock and support-value machinery is not, and is
+left where it is.
+
+**On coordinates.** The observation that the practical convex problems are
+finite-dimensional and canonically Euclidean is right, and it splits cleanly:
+
+- The *proximal operators* that matter are coordinate-free anyway, because
+  they are written with a norm and a direction rather than with components —
+  `prox` of a norm is `max(0, 1 - t w/||x||) x`, and projection onto a ball is
+  `min(1, r/||x||) x`. Both are metric-aware for free and mean the same thing
+  under refinement.
+- The *subproblem* a bundle method solves over its cut coefficients lives in
+  `R^k` for a handful of cuts, has no metric of its own, and is exactly where a
+  SciPy- or OSQP-backed quadratic programme behind a protocol is the right
+  shape. Coordinates are not a constraint there.
+
+**Brought across so far** (`numerics/convex.py`): `SquaredDistance`,
+`NormFunctional`, `BallIndicator`, the `SupportFunction` family with its closed
+algebra (Minkowski sum, positive scaling, linear image), and three methods —
+`SubgradientDescent`, `ProximalGradient` with FISTA acceleration, and
+`ProximalPoint`. `Functional` gained the convex interface the design promised
+but the implementation lacked: `subgradient` (defaulting to the gradient, which
+is correct for a convex differentiable function), `prox`, and `conjugate`.
+
+v1's `SubgradientDescent` uses a *constant* step and says in its own docstring
+that convergence is not guaranteed — which is true, and means it is not a
+usable method. The port supplies the rules that do converge, including Polyak's
+when the optimal value is known.
+
+Two bugs the tests found:
+
+1. **`compose_with` had its domains backwards.** For `K` in `X` and
+   `A: X -> Y`, the image `A K` lives in `Y` and `h_{AK}(y) == h_K(A* y)`, so
+   the result is a functional on the *codomain* and the operator must map *out
+   of* the set's space. The implementation required the opposite and built the
+   result on the wrong space.
+2. **The proximal-gradient step ran away.** Doubling it each iteration looks
+   like sensible adaptivity, but as the gradient vanishes the
+   sufficient-decrease test degenerates and accepts any step; the step reached
+   `1e12` and the proximal operator then slammed the iterate onto the minimiser
+   of the non-smooth part alone, so the objective *rose* by seven orders of
+   magnitude. Beck and Teboulle keep the step monotonically non-increasing for
+   exactly this reason, which is what it now does — with an initial step from a
+   two-point Lipschitz estimate, since a step that only decreases had better
+   start somewhere sensible.
+
+**Still to bring**, in rough order of value: the bundle machinery
+(`Cut`, `Bundle`, `ProximalBundleMethod`, `LevelBundleMethod`) together with
+the `QPSolver` protocol and its SciPy, OSQP and Clarabel backends; and the
+convex *sets* of `subsets.py`, which pair with the support functions.
+
+### 11.9 Testing the abstract framework
 
 Every NumPy-backed test space has vectors that *are* their own components, so
 code reaching for array arithmetic or for a coordinate map works by accident.

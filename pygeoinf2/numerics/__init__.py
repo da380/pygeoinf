@@ -1,5 +1,14 @@
 """Numerical methods built on the algebraic core."""
 
+from .convex import (
+    BallIndicator,
+    NormFunctional,
+    ProximalGradient,
+    ProximalPoint,
+    SquaredDistance,
+    SubgradientDescent,
+    SupportFunction,
+)
 from .functional_calculus import (
     OperatorFunction,
     apply_operator_function,
@@ -63,6 +72,13 @@ from .solvers import (
 
 __all__ = [
     "ArmijoLineSearch",
+    "BallIndicator",
+    "NormFunctional",
+    "ProximalGradient",
+    "ProximalPoint",
+    "SquaredDistance",
+    "SubgradientDescent",
+    "SupportFunction",
     "BiCGStabSolver",
     "LBFGS",
     "LineSearch",

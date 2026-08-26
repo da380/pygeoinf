@@ -795,6 +795,60 @@ class Functional[X](Operator[X, float]):
         """True when a Hessian is available."""
         return type(self)._hessian is not Functional._hessian
 
+    # ----------------------------------------------------------------- #
+    #                         The convex interface                      #
+    # ----------------------------------------------------------------- #
+
+    def subgradient(self, x: X) -> X:
+        """An element of the subdifferential at ``x``, as a **vector**.
+
+        For a convex differentiable functional the subdifferential is the
+        single point ``{grad f(x)}``, so the default defers to the gradient.
+        A non-smooth functional overrides this.
+
+        Like the gradient, this is a vector rather than a functional, so the
+        metric is applied exactly once and in one place.
+        """
+        if self.has_derivative:
+            return self.gradient(x)
+        raise NotImplementedError(
+            f"{type(self).__name__} provides neither a gradient nor a " f"subgradient."
+        )
+
+    @property
+    def has_subgradient(self) -> bool:
+        """True when a subgradient is available, by gradient or otherwise."""
+        return (
+            self.has_derivative or type(self).subgradient is not Functional.subgradient
+        )
+
+    def prox(self, x: X, step: float, /) -> X:
+        """The proximal operator ``argmin_y f(y) + ||y - x||^2 / (2 step)``.
+
+        The norm is the **space's**, so the proximal step is taken in the
+        geometry the modeller chose rather than in a coordinate basis. That is
+        what makes a proximal method mesh-independent, and it is why the
+        closed forms in the convex module are written with norms and
+        directions rather than with components.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} provides no proximal operator."
+        )
+
+    @property
+    def has_prox(self) -> bool:
+        """True when a proximal operator is available."""
+        return type(self).prox is not Functional.prox
+
+    def conjugate(self) -> Functional[X]:
+        """The Fenchel conjugate ``f*(y) == sup_x (y, x) - f(x)``.
+
+        A functional on the *same* space, which is a small dividend of Riesz
+        identification: without it the conjugate would live on the dual and
+        every duality argument would carry a transport map.
+        """
+        raise NotImplementedError(f"{type(self).__name__} provides no conjugate.")
+
     @classmethod
     def from_callables(
         cls,
@@ -805,6 +859,8 @@ class Functional[X](Operator[X, float]):
         derivative: Callable[[X], LinearFunctional[X]] | None = None,
         gradient: Callable[[X], X] | None = None,
         hessian: Callable[[X], LinearOperator[X, X]] | None = None,
+        subgradient: Callable[[X], X] | None = None,
+        prox: Callable[[X, float], X] | None = None,
     ) -> Functional[X]:
         """Build a functional from functions.
 
@@ -817,7 +873,13 @@ class Functional[X](Operator[X, float]):
         if derivative is not None and gradient is not None:
             raise ValueError("Supply either derivative or gradient, not both.")
         return _CallableFunctional(
-            domain, value, derivative=derivative, gradient=gradient, hessian=hessian
+            domain,
+            value,
+            derivative=derivative,
+            gradient=gradient,
+            hessian=hessian,
+            subgradient=subgradient,
+            prox=prox,
         )
 
 
@@ -831,12 +893,16 @@ class _CallableFunctional[X](Functional[X]):
         derivative: Callable[[X], LinearFunctional[X]] | None = None,
         gradient: Callable[[X], X] | None = None,
         hessian: Callable[[X], LinearOperator[X, X]] | None = None,
+        subgradient: Callable[[X], X] | None = None,
+        prox: Callable[[X, float], X] | None = None,
     ) -> None:
         super().__init__(domain)
         self._value_fn = value
         self._derivative_fn = derivative
         self._gradient_fn = gradient
         self._hessian_fn = hessian
+        self._subgradient_fn = subgradient
+        self._prox_fn = prox
 
     @property
     def has_derivative(self) -> bool:
@@ -862,6 +928,28 @@ class _CallableFunctional[X](Functional[X]):
         if self._hessian_fn is None:
             raise NotImplementedError("No Hessian was supplied.")
         return self._hessian_fn(x)
+
+    @property
+    def has_subgradient(self) -> bool:
+        """True when a subgradient or a gradient was supplied."""
+        return self._subgradient_fn is not None or self.has_derivative
+
+    def subgradient(self, x: X) -> X:
+        """The supplied subgradient, or the gradient when there is none."""
+        if self._subgradient_fn is not None:
+            return self._subgradient_fn(x)
+        return super().subgradient(x)
+
+    @property
+    def has_prox(self) -> bool:
+        """True when a proximal operator was supplied."""
+        return self._prox_fn is not None
+
+    def prox(self, x: X, step: float, /) -> X:
+        """The supplied proximal operator."""
+        if self._prox_fn is None:
+            raise NotImplementedError("No proximal operator was supplied.")
+        return self._prox_fn(x, step)
 
 
 class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
