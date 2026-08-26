@@ -140,7 +140,10 @@ class PetscSpace(CoordinateSpace):
         if values.shape != (self._dim,):
             raise ValueError(f"Expected {self._dim} components, got {values.shape}.")
         vector = self.zero()
-        vector.getArray()[:] = values
+        # setArray rather than writing through getArray: the latter hands back
+        # a view whose lifetime and restore semantics are petsc4py's business,
+        # and the explicit setter states the intent.
+        vector.setArray(values)
         return vector
 
 

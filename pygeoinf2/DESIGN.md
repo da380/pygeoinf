@@ -75,7 +75,7 @@ recorded here and forgotten:
 The test parametrises over every module, so a failure names the file, line and
 symbol.
 
-## 2.1 Scope
+### 2.1 Scope
 
 The focus is the **algebraic structures and numerical methods**, coordinate-free
 wherever possible, with SciPy-backed coordinate implementations available as an
@@ -91,7 +91,7 @@ Within numerics, the areas that matter:
 | Nonlinear optimisation | a thin SciPy wrapper that conflates gradients and derivatives | rewrite as bespoke coordinate-free methods, as the linear solvers were |
 | Convex optimisation | entangled with the inversion layer | leave for now |
 
-## 2.2 Package layout
+### 2.2 Package layout
 
 ```
 pygeoinf2/
@@ -2046,10 +2046,37 @@ the transpose and does not offer the adjoint, so this is the setting where the
 substitution is most tempting — and the two agree whenever the metric is
 trivial, which is why it survives.
 
-Written and tested against the API, but **not exercised here**: petsc4py has no
-binary wheel and builds PETSc from source, which is a substantial operation
-rather than a quick install. The tests skip accordingly. That is worth saying
-plainly rather than implying coverage that does not exist.
+Exercised, against a source build of PETSc 3.25.4. `check_space`,
+`check_coordinates` and `check_operator` all pass over `PETSc.Vec` objects, CG
+converges over them to a residual of `2e-16`, and the adjoint on a weighted
+space is confirmed to be `M^-1 A^T M` and confirmed **not** to be `A^T`.
+
+Getting there needed three attempts, and the obstacles are worth recording for
+anyone repeating it:
+
+1. **`mpicc` was present but its libraries were not** — the OpenMPI compiler
+   wrapper is installed on this machine while `libmpi` and friends are missing,
+   so PETSc's configure step failed on a compiler that appears to exist.
+   Building serially with `--with-mpi=0` avoids needing MPI at all, and PETSc
+   supplies its own serial stub for the communicator.
+2. **The `petsc` PyPI package rejects `--with-cc`** in
+   `PETSC_CONFIGURE_OPTIONS` and wants compilers through the `MPICC` and
+   `MPICXX` environment variables instead.
+3. **Cython 3.3 cannot compile petsc4py 3.25**, failing on `Invalid index type
+   'int'` in `PC.pyx`. Pinning `cython<3.1` and building with
+   `--no-build-isolation` gets past it. Installing `petsc` and `petsc4py` as
+   separate steps also matters, since a single failing transaction rolls back
+   the PETSc build that succeeded.
+
+The whole sequence:
+
+```
+export MPICC=/usr/bin/gcc MPICXX=/usr/bin/g++
+export PETSC_CONFIGURE_OPTIONS="--with-mpi=0 --with-fc=0 --with-debugging=0 --with-shared-libraries=1"
+pip install "cython<3.1"
+pip install petsc
+pip install --no-build-isolation petsc4py
+```
 
 ## 16. Open questions
 
