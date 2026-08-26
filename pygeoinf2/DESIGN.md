@@ -1978,7 +1978,34 @@ fixed points contribute one real component, pairs contribute a real and an
 imaginary one — and to *test* the result rather than trust the derivation:
 round-trip, Parseval, and orthonormality of the explicit basis functions.
 
-## 14. Open questions
+## 14. Examples
+
+`pygeoinf2/examples/` holds fifteen short scripts, one idea each, meant to be
+read in order. They are run by the test suite, so an example that has stopped
+working is a failing test rather than something discovered later by a reader.
+
+The sequence: spaces, coordinates, operators and adjoints, traits, **the
+derivative-and-gradient distinction**, nonlinear operators and `at()`, solvers,
+functional calculus, randomised methods, measures, direct sums and the joint
+model, optimisation, convex methods, concrete fields, and a worked inverse
+problem.
+
+Number 5 is the one that matters. The distinction between a derivative and a
+gradient is why most of the rest of the design looks as it does, and the
+example shows all three faces of it: the two readings of one functional, the
+fact that they coincide on an orthonormal basis — which is why the mistake
+survives — and `check_gradient` failing on the wrong one.
+
+Number 15 is the argument for the whole thing: a complete Bayesian inversion
+with no Galerkin flag, no mass matrix written out and no conversion between
+derivatives and gradients anywhere in it. Each of those is handled where it
+belongs, so none of them has to be remembered at the call site.
+
+The examples are excluded from the code-practice checks of §2. They are
+teaching material, and annotating a three-line helper written to illustrate one
+idea makes the illustration worse; their test is that they run.
+
+## 15. Open questions
 
 1. ~~**`DirectSum` vector type.**~~ **Settled**: tuples, with optional labels
    on the space, and labels excluded from the space's identity. See §11.6.

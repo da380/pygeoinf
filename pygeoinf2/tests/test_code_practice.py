@@ -5,8 +5,12 @@ Docstrings, type hints and keyword-only optional arguments are house rules for
 this package. A rule that is not checked drifts, so it is checked here rather
 than recorded in a document nobody re-reads.
 
-Scope is the package itself, not the tests: test functions document themselves
-by their names, and pytest fixtures take positional arguments by design.
+Scope is the package itself. The tests are excluded because test functions
+document themselves by their names and pytest fixtures take positional
+arguments by design. The examples are excluded because they are teaching
+material: annotating a three-line helper written to illustrate one idea makes
+the illustration worse, and the examples have their own test, which is that
+they run.
 """
 
 import ast
@@ -15,7 +19,7 @@ import pathlib
 import pytest
 
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent
-SKIP_DIRS = {"tests", "__pycache__"}
+SKIP_DIRS = {"tests", "examples", "__pycache__"}
 
 
 def source_files() -> list[pathlib.Path]:
