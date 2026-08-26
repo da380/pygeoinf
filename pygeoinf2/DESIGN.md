@@ -1226,7 +1226,7 @@ hashes equal to — an independently constructed copy of itself.
 |---|---|---|
 | M0 | **done** — `traits.py`, `algebra/spaces.py`, `testing.py` | met; 67 tests, see §11.1 |
 | M1 | **done** — `operators.py`, `nodes.py`, `linearisation.py`, `Functional`, `AffineOperator` | met; 135 tests, see §11.2 |
-| M2 | `compat.py` adapter for v1 spaces | An existing sphere/circle problem runs against the v2 core |
+| M2 | **done** — `compat.py` adapter for v1 spaces | met; 161 tests, see §11.4 |
 | M3 | `numerics/solvers.py` | Coordinate-free CG on an adapted Sobolev space matches v1 to tolerance |
 | M4 | `probability/` | Gaussian sampling, pushforward, and moments match v1 where v1 is correct |
 | M5 | Linear inversion rebuilt on the new core | Parity harness: v1 and v2 side by side on the existing test problems |
@@ -1332,7 +1332,60 @@ Deviations:
    elsewhere without rebuilding it.
 4. `_Inverse` is deferred to M3: it comes from a solver, not from the algebra.
 
-### 11.3 Testing the abstract framework
+### 11.3 M2 as built
+
+`pygeoinf2/compat.py`, plus `tests/test_compat.py`. Circle and sphere Sobolev
+spaces, point evaluation, Dirac functionals and invariant covariances all run
+against the v2 core, with results checked against v1 where v1 is right and
+against the mathematics where it is not. 161 tests.
+
+The adapter is short, because the two designs agree on more than they differ:
+
+| v1 | v2 |
+|---|---|
+| `to_components` | `to_components` |
+| `to_dual`, then its components | `apply_gram` |
+| `from_dual` | `solve_gram` |
+| `inner_product` | delegated, not rederived |
+| `operator.adjoint` | `adjoint` |
+| `LinearForm.components` | `from_derivative_components` |
+| `space.random` | `random`, but **not** `white_noise` |
+
+**The mass matrix was already there under another name.** v1's duality pairing
+is `<xp, x> == dot(dual.to_components(xp), to_components(x))` and its inner
+product is `(x, y) == <to_dual(x), y>`, so the components of `to_dual(x)` are
+by definition `G c_x`. No introspection of the space is needed to recover the
+Gram matrix; `to_dual` *is* the Gram apply. That single observation is most of
+the adapter.
+
+Three things that needed care:
+
+1. **v1 spaces are unhashable**, so they cannot be a `_key` directly. A
+   `_V1SpaceKey` wrapper compares exactly, by delegating to v1's `__eq__`, and
+   hashes coarsely on the dimension. That satisfies the hash contract — equal
+   objects hash equally, and equal spaces necessarily share a dimension —
+   while distinct spaces of the same dimension merely collide, which costs
+   nothing when a program holds a handful of spaces.
+2. **`white_noise` is deliberately not delegated.** Delegating would import the
+   defect of §9. `test_v1_white_noise_is_not` pins the failure quantitatively:
+   on a circle Sobolev space, v1 gives `E[(x,u)^2] == (u,u)^2` where the
+   identity covariance requires `(u,u)`. The adapted space passes
+   `check_white_noise`.
+3. **Forming the Gram matrix is not an option on a real space** — a Sobolev
+   space on the sphere at degree 128 has `dim` above 16000, so an `O(dim^2)`
+   build is out. The adapter instead *probes* for diagonality: it computes
+   `G 1`, then checks `G s == (G 1) * s` for two random `s`. If `G` is diagonal
+   this holds identically; if it is not, the probes would have to lie in the
+   kernel of `G - diag(G 1)`, which for random vectors has probability zero.
+   Two Gram applications instead of `dim`. The strategy is overridable with
+   `gram="diagonal" | "dense"`.
+
+The end-to-end test computes a posterior mean two ways — assembled with the v2
+algebra, and assembled with v1's — and agrees to `1e-10`. The v2 side never
+mentions a Galerkin flag: `normal.matrix()` picks its representation from the
+traits, and the result is symmetric positive definite.
+
+### 11.4 Testing the abstract framework
 
 Every NumPy-backed test space has vectors that *are* their own components, so
 code reaching for array arithmetic or for a coordinate map works by accident.
