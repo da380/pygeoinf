@@ -17,13 +17,13 @@ See DESIGN.md section 5.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal, Self
+from typing import TYPE_CHECKING, Callable, Literal, Self, Sequence
 
 import numpy as np
 
 from ..traits import Traits
 from .linearisation import Linearisation, QuadraticModel
-from .spaces import CoordinateSpace, HilbertSpace, Reals
+from .spaces import CoordinateSpace, EuclideanSpace, HilbertSpace, Reals
 
 if TYPE_CHECKING:
     pass
@@ -573,6 +573,77 @@ class LinearOperator[X, Y](Operator[X, Y]):
         from .nodes import _Zero
 
         return _Zero(domain, domain if codomain is None else codomain)
+
+    @classmethod
+    def from_vectors(
+        cls,
+        codomain: HilbertSpace[Y],
+        vectors: Sequence[Y],
+        /,
+        *,
+        orthonormal: bool = False,
+    ) -> LinearOperator[np.ndarray, Y]:
+        """The map ``c -> sum_i c_i v_i`` from coefficients into the space.
+
+        Its adjoint is ``y -> [(v_i, y)]``, so an orthonormal family gives an
+        isometry — a trait worth claiming, because it is what makes
+        ``U D U*`` recognisable as positive semidefinite when ``D`` is.
+
+        Entirely coordinate-free: only the codomain's inner product and
+        ``axpy`` are used, so this is how a low-rank factor is represented on a
+        space with no component map.
+
+        Args:
+            codomain: the space the vectors live in.
+            vectors: the family, as a sequence.
+            orthonormal: claim that the family is orthonormal. Verified by
+                ``testing.check_traits``, not here.
+        """
+        vectors = tuple(vectors)
+        if not vectors:
+            raise ValueError("At least one vector is needed.")
+        domain = EuclideanSpace(len(vectors))
+
+        def value(c: np.ndarray) -> Y:
+            result = codomain.zero()
+            for weight, vector in zip(c, vectors):
+                result = codomain.axpy(float(weight), vector, result)
+            return result
+
+        def adjoint(y: Y) -> np.ndarray:
+            return np.array([codomain.inner_product(v, y) for v in vectors])
+
+        return _CallableLinearOperator(
+            domain,
+            codomain,
+            value,
+            adjoint=adjoint,
+            traits=Traits.ISOMETRY if orthonormal else Traits.NONE,
+        )
+
+    @classmethod
+    def from_tensor_product(
+        cls, u: Y, v: X, /, *, domain: HilbertSpace[X], codomain: HilbertSpace[Y]
+    ) -> LinearOperator[X, Y]:
+        """The rank-one outer product ``x -> (v, x) u``.
+
+        Not a tensor product of *spaces* — see DESIGN.md 3.3 — but the operator
+        construction that shares the name, and the building block of every
+        low-rank representation.
+        """
+
+        def value(x: X) -> Y:
+            return codomain.scale(domain.inner_product(v, x), u)
+
+        def adjoint(y: Y) -> X:
+            return domain.scale(codomain.inner_product(u, y), v)
+
+        traits = Traits.NONE
+        if domain == codomain and u is v:
+            traits = Traits.POSITIVE_SEMIDEFINITE
+        return _CallableLinearOperator(
+            domain, codomain, value, adjoint=adjoint, traits=traits
+        )
 
     @classmethod
     def from_component_matrix(

@@ -14,6 +14,18 @@ from .functional_calculus import (
     operator_sqrt,
 )
 
+from .randomised import (
+    Estimate,
+    LowRankCholesky,
+    LowRankEig,
+    LowRankSVD,
+    random_cholesky,
+    random_diagonal,
+    random_eig,
+    random_range,
+    random_svd,
+    random_trace,
+)
 from .preconditioners import IdentityPreconditioner, JacobiPreconditioner
 from .solvers import (
     BiCGStabSolver,
@@ -34,6 +46,16 @@ from .solvers import (
 
 __all__ = [
     "BiCGStabSolver",
+    "Estimate",
+    "LowRankCholesky",
+    "LowRankEig",
+    "LowRankSVD",
+    "random_cholesky",
+    "random_diagonal",
+    "random_eig",
+    "random_range",
+    "random_svd",
+    "random_trace",
     "OperatorFunction",
     "apply_operator_function",
     "iter_lanczos_tridiagonalise",
