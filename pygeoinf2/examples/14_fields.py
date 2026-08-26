@@ -9,7 +9,7 @@ metric -- so an invariant operator on it is still diagonal.
 
 import numpy as np
 
-from pygeoinf2.spaces import Interval, Sobolev
+from pygeoinf2.symmetric_space import Interval, Sobolev
 
 rng = np.random.default_rng(0)
 

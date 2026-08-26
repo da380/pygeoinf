@@ -12,7 +12,7 @@ differ from a dot product.
 import numpy as np
 
 from pygeoinf2 import CoordinateSpace, EuclideanSpace
-from pygeoinf2.spaces import Lebesgue, Sobolev
+from pygeoinf2.symmetric_space import Lebesgue, Sobolev
 
 rng = np.random.default_rng(0)
 

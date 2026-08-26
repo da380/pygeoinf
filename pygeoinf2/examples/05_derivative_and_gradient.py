@@ -13,7 +13,7 @@ the adjoint is where that happens, and it is the only place it happens.
 import numpy as np
 
 from pygeoinf2 import LinearFunctional
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import check_gradient
 from pygeoinf2.algebra.operators import Functional
 

@@ -14,7 +14,7 @@ import numpy as np
 
 from pygeoinf2 import GaussianMeasure
 from pygeoinf2.numerics import CGSolver
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 
 rng = np.random.default_rng(3)
 

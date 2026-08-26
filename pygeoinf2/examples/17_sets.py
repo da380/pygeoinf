@@ -15,7 +15,7 @@ import numpy as np
 
 from pygeoinf2.geometry import Ball, HalfSpace, Hyperplane, UniversalSet
 from pygeoinf2.numerics.convex import ProximalGradient, SquaredDistance
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import check_projection
 
 rng = np.random.default_rng(0)

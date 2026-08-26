@@ -10,7 +10,7 @@ is why there is a check for it.
 import numpy as np
 
 from pygeoinf2 import EuclideanSpace, LinearOperator
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import check_operator
 
 rng = np.random.default_rng(0)

@@ -19,7 +19,7 @@ from pygeoinf2.numerics.convex import (
     SquaredDistance,
     SupportFunction,
 )
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 
 rng = np.random.default_rng(0)
 X = Sobolev((16,), 2.0, 0.3)

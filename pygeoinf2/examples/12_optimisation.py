@@ -17,7 +17,7 @@ from pygeoinf2 import (
 )
 from pygeoinf2.numerics import LBFGS, NewtonCG, SteepestDescent
 from pygeoinf2.numerics.convex import SquaredDistance
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 
 rng = np.random.default_rng(0)
 

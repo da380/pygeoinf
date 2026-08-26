@@ -16,7 +16,7 @@ import numpy as np
 from pygeoinf2 import EuclideanSpace, LinearOperator
 from pygeoinf2.geometry import AffineSubspace, LinearSubspace, OrthogonalProjector
 from pygeoinf2.numerics.convex import ProximalGradient, SquaredDistance
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import check_operator, check_projection, check_traits
 
 rng = np.random.default_rng(0)

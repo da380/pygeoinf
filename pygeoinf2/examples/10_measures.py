@@ -9,7 +9,7 @@ with ``A C A*`` recognised as positive semidefinite.
 import numpy as np
 
 from pygeoinf2 import EuclideanSpace, GaussianMeasure, LinearOperator
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import check_measure
 
 rng = np.random.default_rng(0)

@@ -28,7 +28,7 @@ import numpy as np
 from numpy.random import Generator
 from scipy.fft import irfftn, rfftn
 
-from .invariant import InvariantSpace
+from .base import SymmetricSpace
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
 
@@ -93,7 +93,7 @@ class _FourierPacking:
         )
 
 
-class PeriodicBox(InvariantSpace):
+class PeriodicBox(SymmetricSpace):
     """A field on a periodic box, in any number of dimensions.
 
     Vectors are real grid arrays of shape ``shape``; components are

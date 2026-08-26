@@ -130,11 +130,11 @@ CORE_VECTOR_API = frozenset(
 def concrete_spaces() -> list[type]:
     """Every concrete HilbertSpace subclass the package defines."""
     import pygeoinf2
-    import pygeoinf2.spaces
+    import pygeoinf2.symmetric_space
     from pygeoinf2.algebra.spaces import HilbertSpace
 
     seen: dict[str, type] = {}
-    for module in (pygeoinf2, pygeoinf2.spaces):
+    for module in (pygeoinf2, pygeoinf2.symmetric_space):
         for name in dir(module):
             value = getattr(module, name)
             if isinstance(value, type) and issubclass(value, HilbertSpace):

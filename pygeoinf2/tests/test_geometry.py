@@ -18,7 +18,7 @@ from pygeoinf2.geometry import (
     UniversalSet,
 )
 from pygeoinf2.numerics.convex import ProximalGradient, SquaredDistance, SupportFunction
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 from pygeoinf2.testing import (
     check_operator,
     check_projection,

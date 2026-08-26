@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from pygeoinf2 import Traits
-from pygeoinf2.spaces import Box, Interval, lift_formal_adjoint
-from pygeoinf2.spaces.box import Box as BoxClass
+from pygeoinf2.symmetric_space import Box, Interval, lift_formal_adjoint
+from pygeoinf2.symmetric_space.box import Box as BoxClass
 from pygeoinf2.testing import (
     check_coordinates,
     check_measure,
@@ -17,7 +17,7 @@ from pygeoinf2.testing import (
 
 pyshtools = pytest.importorskip("pyshtools")
 
-from pygeoinf2.spaces import sphere as sphere_module  # noqa: E402
+from pygeoinf2.symmetric_space import sphere as sphere_module  # noqa: E402
 
 
 class TestBoundedDomains:

@@ -5,7 +5,12 @@ import pytest
 
 from pygeoinf2 import LinearOperator, Traits
 from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
-from pygeoinf2.spaces import Lebesgue, PeriodicBox, Sobolev, lift_formal_adjoint
+from pygeoinf2.symmetric_space import (
+    Lebesgue,
+    PeriodicBox,
+    Sobolev,
+    lift_formal_adjoint,
+)
 from pygeoinf2.testing import (
     check_coordinates,
     check_measure,

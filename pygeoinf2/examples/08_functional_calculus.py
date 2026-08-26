@@ -17,7 +17,7 @@ from pygeoinf2.numerics import (
     operator_quadratic_form,
     operator_sqrt,
 )
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 
 rng = np.random.default_rng(0)
 

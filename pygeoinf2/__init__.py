@@ -54,7 +54,7 @@ from .geometry import (
     Subset,
     UniversalSet,
 )
-from .spaces import Box, Interval, Lebesgue, PeriodicBox, Sobolev
+from .symmetric_space import Box, Interval, Lebesgue, PeriodicBox, Sobolev
 from .probability.base import (
     ProbabilityMeasure,
     ProductMeasure,

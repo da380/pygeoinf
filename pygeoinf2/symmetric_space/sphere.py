@@ -6,7 +6,7 @@ harmonic transform is not an FFT and there is no way to obtain it from the
 periodic box. Everything downstream of the transform is shared, though — the
 Laplacian is diagonal, invariant operators are
 :class:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator`, and invariant
-measures come from :class:`~pygeoinf2.spaces.invariant.InvariantSpace` — so
+measures come from :class:`~pygeoinf2.symmetric_space.base.SymmetricSpace` — so
 what is written here is the transform, the spectrum and the geometry, and
 nothing else.
 
@@ -28,7 +28,7 @@ from typing import Any, Callable, Hashable
 import numpy as np
 from numpy.random import Generator
 
-from .invariant import InvariantSpace
+from .base import SymmetricSpace
 
 __all__ = ["Sphere", "Lebesgue", "Sobolev"]
 
@@ -49,7 +49,7 @@ def _require_pyshtools() -> object:
     return pyshtools
 
 
-class Sphere(InvariantSpace):
+class Sphere(SymmetricSpace):
     """A field on a sphere, expanded in spherical harmonics.
 
     Vectors are grid arrays of shape ``(n, 2n)`` with ``n == 2 (lmax + 1)``,

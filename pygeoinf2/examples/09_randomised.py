@@ -10,7 +10,7 @@ import numpy as np
 
 from pygeoinf2 import EuclideanSpace, LinearOperator, Traits
 from pygeoinf2.numerics import random_eig, random_range, random_trace
-from pygeoinf2.spaces import Sobolev
+from pygeoinf2.symmetric_space import Sobolev
 
 rng = np.random.default_rng(0)
 

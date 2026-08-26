@@ -1,8 +1,10 @@
 """
 Spaces whose basis diagonalises the Laplacian.
 
-An invariant space is a coordinate space with a distinguished spectral basis:
-one in which the Laplace-Beltrami operator is diagonal. Everything that makes
+A symmetric space is a coordinate space with a distinguished spectral basis:
+one in which the Laplace-Beltrami operator is diagonal. The space is symmetric;
+the operators that respect its structure are *invariant*, which is why
+:meth:`SymmetricSpace.invariant_operator` keeps that word. Everything that makes
 these spaces pleasant to compute with follows from that single fact, and most
 of it is already general machinery elsewhere in the package:
 
@@ -36,10 +38,10 @@ from ..algebra.spaces import ArrayVectorMixin, DiagonalMetricSpace
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 
-__all__ = ["InvariantSpace", "lift_formal_adjoint"]
+__all__ = ["SymmetricSpace", "lift_formal_adjoint"]
 
 
-class InvariantSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
+class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
     """A coordinate space whose basis diagonalises the Laplacian.
 
     Subclasses supply :meth:`to_components`, :meth:`from_components`,
@@ -255,10 +257,10 @@ class InvariantSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
 
 def lift_formal_adjoint(
     operator: LinearOperator,
-    domain: InvariantSpace,
+    domain: SymmetricSpace,
     /,
     *,
-    codomain: InvariantSpace | None = None,
+    codomain: SymmetricSpace | None = None,
     traits: Traits = Traits.NONE,
 ) -> LinearOperator:
     """Reuse an operator defined on one metric under another.

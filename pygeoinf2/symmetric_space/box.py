@@ -194,7 +194,7 @@ class Box(PeriodicBox):
 
         On a **Sobolev** space it is neither: multiplying by a discontinuous
         mask does not commute with the metric. Lifting it there with
-        :func:`~pygeoinf2.spaces.invariant.lift_formal_adjoint` gives the right
+        :func:`~pygeoinf2.symmetric_space.base.lift_formal_adjoint` gives the right
         adjoint and claims nothing about symmetry, which is the honest outcome
         and the same point as DESIGN.md 3.5.
         """

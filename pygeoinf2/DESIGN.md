@@ -1925,10 +1925,10 @@ Out of scope for the core: plotting, which is v1's `plot.py` and the
 All four stages are done. 630 tests.
 
 ```
-pygeoinf2/spaces/invariant.py  InvariantSpace, lift_formal_adjoint
-pygeoinf2/spaces/fourier.py    PeriodicBox in any dimension, Lebesgue, Sobolev
-pygeoinf2/spaces/box.py        Box, Interval -- bounded domains by embedding
-pygeoinf2/spaces/sphere.py     Sphere, behind the pyshtools extra
+pygeoinf2/symmetric_space/base.py     SymmetricSpace, lift_formal_adjoint
+pygeoinf2/symmetric_space/fourier.py  PeriodicBox in any dimension, Lebesgue, Sobolev
+pygeoinf2/symmetric_space/box.py      Box, Interval -- bounded domains by embedding
+pygeoinf2/symmetric_space/sphere.py   Sphere, behind the pyshtools extra
 ```
 
 **S3, bounded domains**, is a subclass of the periodic box rather than a
