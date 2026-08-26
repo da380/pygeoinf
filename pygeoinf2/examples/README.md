@@ -31,6 +31,8 @@ failing test rather than a surprise later.
 | 15 | `worked_example` | all of it, on a small inverse problem |
 | 16 | `mfem_backend` | a finite element space, where the mass matrix is the metric |
 | 17 | `petsc_backend` | opaque distributed vectors, and the adjoint that is not a transpose |
+| 18 | `sets` | a convex set, its indicator and its support function as one object |
+| 19 | `subspaces` | projectors, kernels, and linear constraints |
 
 ## The backend examples
 

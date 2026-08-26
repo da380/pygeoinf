@@ -1987,8 +1987,8 @@ working is a failing test rather than something discovered later by a reader.
 The sequence: spaces, coordinates, operators and adjoints, traits, **the
 derivative-and-gradient distinction**, nonlinear operators and `at()`, solvers,
 functional calculus, randomised methods, measures, direct sums and the joint
-model, optimisation, convex methods, concrete fields, and a worked inverse
-problem.
+model, optimisation, convex methods, concrete fields, a worked inverse problem,
+the two foreign backends, and the geometry of sets and subspaces.
 
 Number 5 is the one that matters. The distinction between a derivative and a
 gradient is why most of the rest of the design looks as it does, and the

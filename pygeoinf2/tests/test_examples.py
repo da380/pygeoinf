@@ -21,7 +21,7 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 17
+    assert len(example_scripts()) >= 19
 
 
 # Examples that need an optional dependency, and the module that provides it.
