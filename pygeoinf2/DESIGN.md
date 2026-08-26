@@ -1918,8 +1918,10 @@ which is §3.5's `M_X^-1 A*_U M_Y` with `M == G_U^-1 G_V` read off the diagonals
 | **S3** | non-periodic domains by embedding in a larger box, which is how v1 builds the line and the plane |
 | **S4** | the sphere, behind the existing `pyshtools` extra; it is the one space that is genuinely its own implementation |
 
-Out of scope for the core: plotting, which is v1's `plot.py` and the
-`matplotlib` imports in every space file.
+Deferred, not dropped: plotting, which is v1's `plot.py` (2164 lines) and the
+`matplotlib` imports scattered through every space file. It leaves the space
+classes for now so that they carry no rendering, and comes back as its own
+layer — see §20.5, O8. **The target is everything v1 does, improved.**
 
 ### 13.4 As built
 
@@ -2775,6 +2777,7 @@ everything else; O2 to O4 are what a worked example cannot start without.
 | **O5** | Resolution: `with_degree` and `degree_transfer_operator`, prolongation and restriction as an adjoint pair. Surrogates need it, and so does BGP's convergence-under-refinement claim |
 | **O6** | Acquisition geometry: the IRIS station and USGS event tables, `domain_mask`, `random_domain_points`. Data files, so a packaging question as much as a code one |
 | **O7** | The parameterisations the examples actually use: pointwise-variance calibration on the invariant measures (§20.1), and `geodesic_distance`-based localisation for the sparse preconditioner |
+| **O8** | Plotting, as its own layer rather than methods on the spaces: v1's `plot.py`, `create_map_figure`, `plot`, `plot_points`, `plot_geodesic_network`. A space should say how to sample itself, not how to draw itself, so the natural shape is a renderer that dispatches on the space type — which also keeps `matplotlib` and `cartopy` out of the import path of anything headless |
 
 **On O1's signature.** The caller supplies the action and the *derivative
 components* of the pulled-back functional:
@@ -2805,12 +2808,12 @@ path. It is the *forward* operators, O2 in particular, that need O1.
 
 ### 20.6 As built
 
-O1 to O7 are done. 769 tests.
+O1 to O7 are done; O8 (plotting) remains. 783 tests.
 
 ```
 algebra/operators.py   from_derivative_callables, matrix(by=...), assembled(),
                        LinearFunctional.derivative_components
-symmetric_space/base.py  evaluate, point_evaluation_operator (matrix-free),
+symmetric_space/base.py  evaluate, accumulate, point_evaluation_operator,
                        geodesic_distance/quadrature, geodesic_ball_quadrature,
                        path_average_operator, geodesic_ball_average_operator,
                        reference_point, pointwise_variance, pointwise_std=
@@ -2818,8 +2821,17 @@ symmetric_space/sphere.py  the spherical implementations of all of the above,
                        plus spherical_cap_integral/average, coefficient_operator,
                        with_degree, degree_transfer_operator, stations,
                        earthquakes, domain_mask, pairs_within_distance
+symmetric_space/fourier.py  evaluate and accumulate by non-uniform FFT
 data/                  gsn_stations.csv, usgs_event_cache.csv
 ```
+
+**Scattered evaluation on a periodic box goes through finufft**, as v1's torus
+does. A type-2 transform evaluates and a type-1 transform accumulates, and the
+second is *literally* the adjoint of the first — so `evaluate` and `accumulate`
+are one algorithm run both ways rather than two implementations to keep in
+step. Measured at 655x the direct sum on a 256x256 grid with 3000 points, and
+the gap grows with both. finufft handles up to three dimensions; above that,
+and when it is not installed, the direct sum still answers.
 
 **No operator has a `matrix_free` flag.** v1 carries one on
 `point_evaluation_operator` and `path_average_operator`, each with its own
@@ -2873,21 +2885,32 @@ and turned the adjoint of a realistic tomography operator from minutes into a
 second. Nothing about the mathematics changed; the loop was simply in the wrong
 place.
 
+**The fast path was missed on the periodic box.** v1 evaluates on the torus
+and plane through `finufft`, and the first version of this layer used the
+direct sum there — correct, and 655 times slower than it needed to be. Caught
+by review rather than by a test, because a slow right answer passes every test
+a fast one does. The padding it needs is the subtle part: a Nyquist wavenumber
+is `+n/2`, outside the mode range finufft indexes, and folding it to `-n/2`
+flips its phase on that axis alone. That is wrong at every point *off* the
+grid and right at every point on it, so a grid-only test would have passed.
+Widening the spectrum by two along each axis removes the case entirely, and
+there is a test on the modes that would move without it.
+
 **The Condon-Shortley constant was misnamed.** pyshtools spells "leave the
 phase out" as `csphase=1`, and the constant was called `_CONDON_SHORTLEY` with
 a docstring saying the phase was included. The *value* was consistent
 everywhere, so nothing was wrong, but the next person to add a call would have
 read the name and passed the other one. Now `_NO_CONDON_SHORTLEY`.
 
-### 20.8 What is still v1-only
+### 20.8 Still to come from v1
 
-Deliberately not ported, with reasons:
+**The target is everything v1 does, with improvements — not a subset.** What is
+listed here is deferred, not dropped.
 
-| v1 | why not |
+| v1 | status |
 |---|---|
-| `plot.py`, `create_map_figure`, `plot_points`, `plot_geodesic_network` | plotting is out of scope for the core, per §13.3 |
-| `parallel=`, `n_jobs=` on every operator | joblib branches doubled the code and each one carried its own copy of the adjoint. Parallelism belongs around an operator, not inside every one of them |
-| `lazy_quadrature=` | an escape hatch for the memory the `W E` factorisation no longer uses |
+| `plot.py`, `create_map_figure`, `plot_points`, `plot_geodesic_network` | **O8.** Its own layer, dispatching on the space type, rather than rendering methods on the space classes. Deferred so the spaces stay free of `matplotlib` and `cartopy` in the meantime, not because plotting is out of scope |
 | `sample_power_measure`, `invariant_covariance_function` | reachable from `invariant_measure` and the diagonal calculus; port when something needs them |
-| `datasets.py`'s live FDSN and USGS downloads | the cached tables ship with the package; fetching at runtime in a test suite is a flake waiting to happen |
-
+| `datasets.py`'s live FDSN and USGS downloads | the cached tables ship with the package. A live fetch belongs behind an explicit call, never on the path a test takes |
+| `parallel=`, `n_jobs=` on every operator | **replaced rather than deferred.** The joblib branches doubled the code and each carried its own copy of the adjoint. finufft and pyshtools thread internally, and parallelism over an operator belongs around it, not inside every one of them |
+| `lazy_quadrature=` | **replaced.** An escape hatch for memory the `W E` factorisation does not use |

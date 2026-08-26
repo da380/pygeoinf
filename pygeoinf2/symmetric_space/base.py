@@ -301,6 +301,20 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
             [float(np.dot(self.basis_at(point), components)) for point in points]
         )
 
+    def accumulate(self, weights: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
+        """The derivative components of ``x -> sum_i y_i x(r_i)``.
+
+        The adjoint of :meth:`evaluate`, and the two must stay in step. The
+        generic route sums the basis at each point; a space whose transform has
+        a scattered-point adjoint should override this, as the periodic box
+        does with a type-1 NUFFT.
+        """
+        total = np.zeros(self.dim)
+        for weight, point in zip(np.asarray(weights, dtype=float), points):
+            if weight != 0.0:
+                total += weight * self.basis_at(point)
+        return total
+
     def point_evaluation_operator(self, points: Sequence[Any], /) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
@@ -319,18 +333,11 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
         if not points:
             raise ValueError("At least one point is needed.")
 
-        def derivative_components(y: np.ndarray) -> np.ndarray:
-            total = np.zeros(self.dim)
-            for weight, point in zip(np.asarray(y, dtype=float), points):
-                if weight != 0.0:
-                    total += weight * self.basis_at(point)
-            return total
-
         return LinearOperator.from_derivative_callables(
             self,
             EuclideanSpace(len(points)),
             lambda x: self.evaluate(x, points),
-            derivative_components,
+            lambda y: self.accumulate(y, points),
         )
 
     # ----------------------------------------------------------------- #

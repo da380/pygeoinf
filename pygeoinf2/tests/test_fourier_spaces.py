@@ -5,6 +5,7 @@ import pytest
 
 from pygeoinf2 import LinearOperator, Traits
 from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+from pygeoinf2.symmetric_space.base import SymmetricSpace
 from pygeoinf2.symmetric_space import (
     Lebesgue,
     PeriodicBox,
@@ -259,6 +260,104 @@ class TestPointEvaluation:
     def test_no_points_is_refused(self):
         with pytest.raises(ValueError, match="At least one"):
             Lebesgue((8,)).point_evaluation_operator([])
+
+
+class TestNonUniformFFT:
+    """Scattered evaluation, and its adjoint, through finufft.
+
+    Every test compares the transform route against the direct sum over the
+    basis. The direct route is obviously right and unusably slow; the fast one
+    is neither, so it is only ever trusted where the two agree.
+    """
+
+    SHAPES = [
+        ((64,), (1.0,)),
+        ((65,), (2.0,)),  # odd, so the Nyquist mode is absent
+        ((32, 32), (1.0, 2.0)),
+        ((8, 9), (1.0, 1.0)),  # mixed parity
+        ((16, 16, 16), (1.0, 1.0, 1.0)),
+    ]
+
+    @pytest.mark.parametrize("shape,lengths", SHAPES, ids=lambda v: str(v))
+    def test_evaluation_matches_the_direct_sum(self, shape, lengths, rng):
+        X = Sobolev(shape, 2.0, 0.05, lengths=lengths)
+        points = [
+            rng.uniform(0.0, 1.0, len(shape)) * np.asarray(lengths) for _ in range(40)
+        ]
+        x = X.random(rng=rng)
+        assert np.allclose(
+            X.evaluate(x, points),
+            SymmetricSpace.evaluate(X, x, points),
+            atol=1e-9,
+        )
+
+    @pytest.mark.parametrize("shape,lengths", SHAPES, ids=lambda v: str(v))
+    def test_accumulation_matches_the_direct_sum(self, shape, lengths, rng):
+        X = Sobolev(shape, 2.0, 0.05, lengths=lengths)
+        points = [
+            rng.uniform(0.0, 1.0, len(shape)) * np.asarray(lengths) for _ in range(40)
+        ]
+        weights = rng.normal(size=40)
+        assert np.allclose(
+            X.accumulate(weights, points),
+            SymmetricSpace.accumulate(X, weights, points),
+            atol=1e-9,
+        )
+
+    def test_a_nyquist_leading_mode_survives_the_round_trip(self, rng):
+        """The reason the spectrum is padded, tested on its own.
+
+        A paired mode may sit at ``+n/2`` on a leading axis, which is outside
+        the range finufft indexes. Folding it to ``-n/2`` flips the sign of its
+        phase on that axis alone, which is wrong for every point off the grid
+        and right for every point on it — so a grid-only test would pass.
+        """
+        X = Lebesgue((8, 8), lengths=(1.0, 1.0))
+        wavenumbers = X._packing.wavenumbers
+        offending = np.flatnonzero(wavenumbers[0] == 4)
+        assert offending.size, "this shape was chosen to have such a mode"
+
+        # Non-vacuous: at least one of these really would move if folded.
+        point = np.array([0.137, 0.421])
+        angles = 2.0 * np.pi * point
+        folds = [
+            abs(
+                np.cos(wavenumbers[:, i] @ angles)
+                - np.cos(-wavenumbers[0, i] * angles[0] + wavenumbers[1, i] * angles[1])
+            )
+            for i in offending
+        ]
+        assert max(folds) > 0.5
+
+        for index in offending:
+            components = np.zeros(X.dim)
+            components[index] = 1.0
+            field = X.from_components(components)
+            points = [rng.uniform(0.0, 1.0, 2) for _ in range(12)]
+            direct = np.array([float(X.basis_at(point)[index]) for point in points])
+            assert np.allclose(X.evaluate(field, points), direct, atol=1e-9)
+
+    def test_the_operator_agrees_with_the_assembled_one(self, rng):
+        X = Sobolev((32, 32), 2.0, 0.05, lengths=(1.0, 1.0))
+        points = [rng.uniform(0.0, 1.0, 2) for _ in range(6)]
+        A = X.point_evaluation_operator(points)
+        check_operator(A, rng=rng)
+        x = X.random(rng=rng)
+        assert np.allclose(A(x), A.assembled()(x), atol=1e-9)
+
+    def test_four_dimensions_fall_back(self, rng):
+        """finufft stops at three; the answer must not."""
+        X = Lebesgue((6, 6, 6, 6))
+        assert X._nufft_layout is None
+        points = [rng.uniform(0.0, 1.0, 4) for _ in range(5)]
+        x = X.random(rng=rng)
+        assert np.allclose(X.evaluate(x, points), SymmetricSpace.evaluate(X, x, points))
+        check_operator(X.point_evaluation_operator(points), rng=rng)
+
+    def test_a_wrong_point_shape_is_refused(self):
+        X = Lebesgue((16, 16))
+        with pytest.raises(ValueError, match="coordinates each"):
+            X.evaluate(X.zero(), [np.array([0.1, 0.2, 0.3])])
 
 
 class TestFormalAdjointLift:

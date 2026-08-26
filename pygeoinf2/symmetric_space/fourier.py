@@ -304,6 +304,151 @@ class PeriodicBox(SymmetricSpace):
         values[count + 1 :: 2] = -pair_amplitude * np.sin(phase[count + 1 :: 2])
         return values
 
+    # ----------------------------------------------------------------- #
+    #                     Evaluation by non-uniform FFT                 #
+    # ----------------------------------------------------------------- #
+
+    @cached_property
+    def _nufft_layout(
+        self,
+    ) -> tuple[tuple[int, ...], np.ndarray, np.ndarray, np.ndarray, int] | None:
+        """Where each component sits in a full complex spectrum, and its size.
+
+        ``None`` above three dimensions, which is as far as finufft goes, and
+        also ``None`` when finufft is not installed. Both send
+        :meth:`evaluate` back to the direct sum, which is slower but identical.
+
+        The spectrum is **two larger than the grid along every axis**. That is
+        not padding for accuracy: a Nyquist wavenumber is ``+n/2``, which lies
+        outside the mode range ``[-N/2, N/2-1]`` that finufft indexes, and
+        folding it back to ``-n/2`` changes the sign of its phase on every axis
+        it appears. Widening the spectrum instead lets ``+k`` and ``-k`` be
+        distinct slots for every mode, so fixed points of conjugation and
+        genuine pairs need no separate handling at all.
+        """
+        dimension = self.spatial_dimension
+        if dimension > 3:
+            return None
+        try:
+            import finufft  # noqa: F401
+        except ImportError:  # pragma: no cover - depends on the install
+            return None
+
+        packing = self._packing
+        sizes = tuple(n + 2 for n in self._shape)
+        offsets = [n // 2 for n in sizes]
+        fixed = packing.fixed_indices.size
+        unique = np.concatenate([np.arange(fixed), np.arange(fixed, packing.dim, 2)])
+        wavenumbers = packing.wavenumbers[:, unique]
+
+        plus = np.ravel_multi_index(
+            [wavenumbers[axis] + offsets[axis] for axis in range(dimension)], sizes
+        )
+        minus = np.ravel_multi_index(
+            [offsets[axis] - wavenumbers[axis] for axis in range(dimension)], sizes
+        )
+        amplitude = np.concatenate(
+            [
+                np.full(fixed, 1.0 / np.sqrt(self._volume)),
+                np.full(unique.size - fixed, np.sqrt(2.0 / self._volume)),
+            ]
+        )
+        return sizes, plus, minus, amplitude, fixed
+
+    def _angles(self, points: Sequence[Any]) -> list[np.ndarray]:
+        """Points as one contiguous array of angles per axis."""
+        positions = np.asarray(
+            [np.atleast_1d(np.asarray(point, dtype=float)) for point in points]
+        )
+        if positions.ndim != 2 or positions.shape[1] != self.spatial_dimension:
+            raise ValueError(
+                f"Points need {self.spatial_dimension} coordinates each, got "
+                f"shape {positions.shape}."
+            )
+        return [
+            np.ascontiguousarray(2.0 * np.pi * positions[:, axis] / self._lengths[axis])
+            for axis in range(self.spatial_dimension)
+        ]
+
+    def evaluate(
+        self, x: np.ndarray, points: Sequence[Any], /, *, eps: float = 1.0e-12
+    ) -> np.ndarray:
+        """Field values at scattered points, by type-2 non-uniform FFT.
+
+        The direct sum costs one basis evaluation per point, so ``len(points)``
+        times the dimension. The NUFFT costs a padded FFT plus a local spread,
+        which is what makes a tomography problem on a fine grid tractable.
+
+        Falls back to the direct sum above three dimensions or without finufft.
+        """
+        import finufft
+
+        layout = self._nufft_layout
+        if layout is None:
+            return super().evaluate(x, points)
+        sizes, plus, minus, amplitude, fixed = layout
+
+        components = self.to_components(x)
+        real = np.concatenate([components[:fixed], components[fixed::2]])
+        imaginary = np.concatenate([np.zeros(fixed), components[fixed + 1 :: 2]])
+        weights = amplitude * (real + 1j * imaginary)
+
+        spectrum = np.zeros(int(np.prod(sizes)), dtype=complex)
+        np.add.at(spectrum, plus, 0.5 * weights)
+        np.add.at(spectrum, minus, 0.5 * np.conj(weights))
+
+        transform = (finufft.nufft1d2, finufft.nufft2d2, finufft.nufft3d2)[
+            self.spatial_dimension - 1
+        ]
+        values = transform(
+            *self._angles(points),
+            spectrum.reshape(sizes),
+            isign=+1,
+            eps=eps,
+        )
+        return np.ascontiguousarray(np.atleast_1d(values).real)
+
+    def accumulate(
+        self,
+        weights: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float = 1.0e-12,
+    ) -> np.ndarray:
+        """The derivative components of ``x -> sum_i y_i x(r_i)``.
+
+        The adjoint of :meth:`evaluate`, and a type-1 NUFFT is *literally* the
+        adjoint of the type-2 one — so this is the same transform run the other
+        way rather than a second implementation to keep in step.
+        """
+        import finufft
+
+        layout = self._nufft_layout
+        if layout is None:
+            return super().accumulate(weights, points)
+        sizes, plus, _, amplitude, fixed = layout
+
+        transform = (finufft.nufft1d1, finufft.nufft2d1, finufft.nufft3d1)[
+            self.spatial_dimension - 1
+        ]
+        spectrum = transform(
+            *self._angles(points),
+            np.ascontiguousarray(np.asarray(weights, dtype=complex)),
+            sizes,
+            isign=-1,
+            eps=eps,
+        )
+        at_plus = spectrum.reshape(-1)[plus]
+
+        components = np.empty(self.dim)
+        components[:fixed] = amplitude[:fixed] * at_plus[:fixed].real
+        components[fixed::2] = amplitude[fixed:] * at_plus[fixed:].real
+        # phi carries -sin, and a type-1 transform returns -sum y sin as its
+        # imaginary part, so the two negations cancel.
+        components[fixed + 1 :: 2] = amplitude[fixed:] * at_plus[fixed:].imag
+        return components
+
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """Sample a function on the grid."""
         mesh = np.meshgrid(*self.grid_axes, indexing="ij")
