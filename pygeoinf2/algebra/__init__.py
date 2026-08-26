@@ -1,5 +1,6 @@
 """The algebraic core: spaces and operators."""
 
+from .diagonal import DiagonalLinearOperator
 from .direct_sum import (
     BlockDiagonalLinearOperator,
     BlockDiagonalOperator,
@@ -33,6 +34,7 @@ from .spaces import (
 __all__ = [
     "AffineOperator",
     "BlockDiagonalLinearOperator",
+    "DiagonalLinearOperator",
     "BlockDiagonalOperator",
     "BlockLinearOperator",
     "BlockOperator",

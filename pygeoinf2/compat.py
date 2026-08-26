@@ -194,6 +194,15 @@ class AdaptedSpace(CoordinateSpace):
     #                            White noise                            #
     # ----------------------------------------------------------------- #
 
+    @property
+    def has_diagonal_metric(self) -> bool:
+        """Whether the wrapped space's Gram matrix is diagonal.
+
+        Detected by the same probe as :meth:`_diagonal_gram`, so it costs a
+        couple of Gram applications rather than forming the matrix.
+        """
+        return self._diagonal_gram() is not None
+
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Components drawn from ``N(0, G^-1)``.
 

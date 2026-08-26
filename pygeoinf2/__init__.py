@@ -11,6 +11,7 @@ Both may be imported side by side for comparison testing:
     import pygeoinf2 as gi2
 """
 
+from .algebra.diagonal import DiagonalLinearOperator
 from .algebra.direct_sum import (
     BlockDiagonalLinearOperator,
     BlockDiagonalOperator,
@@ -65,6 +66,8 @@ __all__ = [
     "LinearOperator",
     "Operator",
     "require_coordinates",
+    # algebra.diagonal
+    "DiagonalLinearOperator",
     # algebra.direct_sum
     "BlockDiagonalLinearOperator",
     "BlockDiagonalOperator",

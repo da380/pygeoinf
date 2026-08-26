@@ -33,6 +33,10 @@ __all__ = [
 
 _DEFAULT_RNG = default_rng()
 
+# Reorthogonalise when a projection loses more than this fraction of the norm.
+# The classical Daniel-Gragg-Kaufman-Stewart criterion, with the usual value.
+_REORTHOGONALISATION_THRESHOLD = 1.0 / np.sqrt(2.0)
+
 
 def _resolve_rng(rng: Generator | None) -> Generator:
     return _DEFAULT_RNG if rng is None else rng
@@ -149,21 +153,62 @@ class HilbertSpace[V](ABC):
             result = self.axpy(1.0 / n, x, result)
         return result
 
-    def gram_schmidt(self, vectors: Sequence[V], /, *, tol: float = 1e-12) -> list[V]:
-        """Orthonormalise a sequence of linearly independent vectors."""
+    def gram_schmidt(self, vectors: Sequence[V], /, *, rtol: float = 1e-12) -> list[V]:
+        """Orthonormalise a sequence of linearly independent vectors.
+
+        Raises if the vectors are dependent. Use :meth:`orthonormal_basis` when
+        a rank-deficient set should be reduced rather than rejected.
+        """
         result: list[V] = []
         for i, vector in enumerate(vectors):
-            v = self.copy(vector)
-            for w in result:
-                v = self.axpy(-self.inner_product(v, w), w, v)
-            norm = self.norm(v)
-            if norm <= tol:
+            v, norm, original = self._orthogonalise_against(vector, result)
+            if norm <= rtol * original:
                 raise ValueError(
                     f"Vector {i} is linearly dependent on its predecessors "
-                    f"(residual norm {norm:g})."
+                    f"(residual norm {norm:g} against {original:g})."
                 )
             result.append(self.scale_inplace(1.0 / norm, v))
         return result
+
+    def orthonormal_basis(
+        self, vectors: Sequence[V], /, *, rtol: float = 1e-10
+    ) -> list[V]:
+        """An orthonormal basis for the span, dropping dependent vectors.
+
+        What a rank-revealing method wants: a randomised range finder feeds in
+        blocks of probes that may well be numerically dependent, and needs the
+        independent part rather than an exception.
+        """
+        result: list[V] = []
+        for vector in vectors:
+            v, norm, original = self._orthogonalise_against(vector, result)
+            if norm > rtol * original:
+                result.append(self.scale_inplace(1.0 / norm, v))
+        return result
+
+    def _orthogonalise_against(
+        self, vector: V, basis: Sequence[V]
+    ) -> tuple[V, float, float]:
+        """Project a vector off an orthonormal basis, reorthogonalising once.
+
+        A single modified Gram-Schmidt pass loses orthogonality when the new
+        vector is nearly in the span, which is exactly the regime a
+        rank-revealing method works in. The classical remedy is to repeat the
+        projection when the norm drops sharply -- "twice is enough" -- which
+        costs one extra pass only in the cases that need it.
+
+        Returns the projected vector, its norm, and the norm it started with.
+        """
+        original = self.norm(vector)
+        v = self.copy(vector)
+        for w in basis:
+            v = self.axpy(-self.inner_product(v, w), w, v)
+        norm = self.norm(v)
+        if norm < _REORTHOGONALISATION_THRESHOLD * original:
+            for w in basis:
+                v = self.axpy(-self.inner_product(v, w), w, v)
+            norm = self.norm(v)
+        return v, norm, max(original, 1e-300)
 
     # ----------------------------------------------------------------- #
     #                             Randomness                            #
@@ -266,6 +311,18 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         """True when the basis is orthonormal, so that ``G`` is the identity."""
         return False
 
+    @property
+    def has_diagonal_metric(self) -> bool:
+        """True when the Gram matrix is diagonal in this space's basis.
+
+        This is what decides whether an operator that is diagonal in the same
+        basis is self-adjoint: ``A`` with component matrix ``diag(d)`` has
+        Galerkin matrix ``G diag(d)``, which is symmetric exactly when ``G``
+        and ``diag(d)`` commute -- so, for a general ``d``, exactly when ``G``
+        is itself diagonal.
+        """
+        return False
+
     def gram_matrix(self) -> np.ndarray:
         """The Gram matrix, formed column by column. Costs ``dim`` applications."""
         matrix = np.zeros((self.dim, self.dim))
@@ -355,6 +412,11 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
         return self._metric_values
 
     @property
+    def has_diagonal_metric(self) -> bool:
+        """True by construction."""
+        return True
+
+    @property
     def dim(self) -> int:
         """The dimension, taken from the metric."""
         return self._metric_values.size
@@ -385,6 +447,11 @@ class OrthonormalSpace[V](CoordinateSpace[V], ABC):
     @property
     def is_orthonormal(self) -> bool:
         """Always true for this class."""
+        return True
+
+    @property
+    def has_diagonal_metric(self) -> bool:
+        """True: the identity is diagonal."""
         return True
 
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:

@@ -285,6 +285,15 @@ class _CoordinateDirectSum(DirectSum, CoordinateSpace):
         """True only when every summand has an orthonormal basis."""
         return all(space.is_orthonormal for space in self._spaces)
 
+    @property
+    def has_diagonal_metric(self) -> bool:
+        """True only when every summand's metric is diagonal.
+
+        The Gram matrix is block diagonal, so it is diagonal exactly when
+        every block is.
+        """
+        return all(space.has_diagonal_metric for space in self._spaces)
+
 
 # --------------------------------------------------------------------- #
 #                            Block operators                            #

@@ -1,5 +1,19 @@
 """Numerical methods built on the algebraic core."""
 
+from .functional_calculus import (
+    OperatorFunction,
+    apply_operator_function,
+    iter_lanczos_tridiagonalise,
+    lanczos_tridiagonalise,
+    operator_exp,
+    operator_function,
+    operator_inverse_sqrt,
+    operator_log,
+    operator_power,
+    operator_quadratic_form,
+    operator_sqrt,
+)
+
 from .preconditioners import IdentityPreconditioner, JacobiPreconditioner
 from .solvers import (
     BiCGStabSolver,
@@ -20,6 +34,17 @@ from .solvers import (
 
 __all__ = [
     "BiCGStabSolver",
+    "OperatorFunction",
+    "apply_operator_function",
+    "iter_lanczos_tridiagonalise",
+    "lanczos_tridiagonalise",
+    "operator_exp",
+    "operator_function",
+    "operator_inverse_sqrt",
+    "operator_log",
+    "operator_power",
+    "operator_quadratic_form",
+    "operator_sqrt",
     "CGSolver",
     "CholeskySolver",
     "ConvergenceError",
