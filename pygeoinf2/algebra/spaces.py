@@ -417,6 +417,16 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
         return True
 
     @property
+    def is_orthonormal(self) -> bool:
+        """True when every metric value is one.
+
+        Worth detecting rather than assuming false: a space built through this
+        class may still have a trivial metric, and saying so lets the faster
+        paths be taken.
+        """
+        return bool(np.all(self._metric_values == 1.0))
+
+    @property
     def dim(self) -> int:
         """The dimension, taken from the metric."""
         return self._metric_values.size

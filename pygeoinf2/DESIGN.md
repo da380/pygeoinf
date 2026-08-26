@@ -1853,7 +1853,84 @@ No trait in §4 is unused, and none was found missing.
 
 ---
 
-## 13. Open questions
+## 13. Symmetric spaces: the port plan
+
+v1's `symmetric_space/` is about 9.5k lines across six files. The port is much
+smaller than that number suggests, for two reasons.
+
+### 13.1 Most of the machinery is already general
+
+| v1 | v2 | status |
+|---|---|---|
+| `SymmetricHilbertSpace` (orthogonal metric) | `DiagonalMetricSpace` | built |
+| `InvariantLinearAutomorphism` | `DiagonalLinearOperator` | built |
+| its functional calculus | `apply_function`, `sqrt`, `log`, ... | built |
+| its closed algebra | the specialisation protocol | built |
+| `InvariantGaussianMeasure` | `GaussianMeasure` with a diagonal covariance | built |
+| its `1/sqrt(metric_values)` sampling factor | falls out of `white_noise` | built |
+| `MassWeightedHilbertModule` for Sobolev | *not needed* — see §13.2 | — |
+
+That last row and the one above it are the interesting ones.
+`InvariantGaussianMeasure._kl_sample` hand-codes a
+`sqrt(spectral_variances / metric_values)` correction. In v2 the covariance is a
+`DiagonalLinearOperator`, its square root is exact, and sampling draws
+`white_noise` on a `DiagonalMetricSpace` — which is `xi / sqrt(g)` by
+construction. The correction is *derived* rather than written down, which is why
+the generic `white_noise_measure` path in v1 could be wrong while this one was
+right.
+
+### 13.2 Four spaces become one
+
+v1 implements the circle (1D, `rfft`), the torus (2D, `rfft2`), the line (1D,
+built on the circle) and the plane (2D, built on the torus) — roughly 4.1k
+lines. All four are the same construction at different dimensions, so v2
+implements an **N-dimensional periodic box** via `rfftn` and gets 1D, 2D and 3D
+from it. The 3D case is then free rather than a fifth file.
+
+Two simplifications follow:
+
+- **The Lebesgue space gets an orthonormal spectral basis**, so its Gram matrix
+  is the identity and v1's factor-of-two bookkeeping
+  (`laplacian_eigenvector_squared_norm` returning 1 or 2) disappears. The
+  invariant to hold, and to test, is Parseval: `||x||^2 == sum(c^2)`.
+- **The Sobolev space is not a mass-weighted space.** It is the *same*
+  coordinate map with a different diagonal metric, `g_k == (1 + s^2 lambda_k)^order`.
+  So both variants are `DiagonalMetricSpace` and no `MassWeightedSpace` is
+  needed for them at all.
+
+What is still needed from §3.5 is the **formal-adjoint lift**: define an
+operator on L2, where its adjoint is easy, and reuse it on the Sobolev space.
+For two diagonal metrics over a shared coordinate map that is cheap,
+
+```
+A*_V == (G_VX^-1 G_UX) . A*_U . (G_UY^-1 G_VY)
+```
+
+which is §3.5's `M_X^-1 A*_U M_Y` with `M == G_U^-1 G_V` read off the diagonals.
+
+### 13.3 Stages
+
+| stage | contents |
+|---|---|
+| **S1** | `spaces/invariant.py`: the shared abstraction — a coordinate space whose basis diagonalises the Laplacian, with invariant operators, invariant measures, Sobolev symbols, Dirac functionals and the formal-adjoint lift |
+| **S2** | `spaces/fourier.py`: `PeriodicBox` in any dimension via `rfftn`, giving circle, torus and the 3D box |
+| **S3** | non-periodic domains by embedding in a larger box, which is how v1 builds the line and the plane |
+| **S4** | the sphere, behind the existing `pyshtools` extra; it is the one space that is genuinely its own implementation |
+
+Out of scope for the core: plotting, which is v1's `plot.py` and the
+`matplotlib` imports in every space file.
+
+### 13.4 Where the packing is delicate
+
+The one genuinely fiddly part is packing `rfftn` output into real components
+in more than one dimension. A mode and its conjugate must be counted once, and
+which modes are self-conjugate depends on the parity of every axis length.
+The design here is to enumerate the conjugate orbits once at construction —
+fixed points contribute one real component, pairs contribute a real and an
+imaginary one — and to *test* the result rather than trust the derivation:
+round-trip, Parseval, and orthonormality of the explicit basis functions.
+
+## 14. Open questions
 
 1. ~~**`DirectSum` vector type.**~~ **Settled**: tuples, with optional labels
    on the space, and labels excluded from the space's identity. See §11.6.

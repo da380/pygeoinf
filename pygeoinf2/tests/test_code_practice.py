@@ -100,3 +100,67 @@ class TestCodePractice:
             if node.returns is None and node.name != "__init__":
                 offenders.append(f"{where} (return)")
         assert not offenders, "missing annotations:\n  " + "\n  ".join(offenders)
+
+
+CORE_VECTOR_API = frozenset(
+    {
+        "add",
+        "axpy",
+        "copy",
+        "dim",
+        "inner_product",
+        "mean",
+        "negative",
+        "norm",
+        "random",
+        "scale",
+        "scale_inplace",
+        "squared_norm",
+        "subtract",
+        "white_noise",
+        "zero",
+    }
+)
+
+
+def concrete_spaces() -> list[type]:
+    """Every concrete HilbertSpace subclass the package defines."""
+    import pygeoinf2
+    import pygeoinf2.spaces
+    from pygeoinf2.algebra.spaces import HilbertSpace
+
+    seen: dict[str, type] = {}
+    for module in (pygeoinf2, pygeoinf2.spaces):
+        for name in dir(module):
+            value = getattr(module, name)
+            if isinstance(value, type) and issubclass(value, HilbertSpace):
+                seen[value.__qualname__] = value
+    return sorted(seen.values(), key=lambda c: c.__qualname__)
+
+
+@pytest.mark.parametrize("space_class", concrete_spaces(), ids=lambda c: c.__name__)
+def test_space_attributes_do_not_shadow_the_vector_api(space_class):
+    """A space's own attributes share a namespace with the whole vector API.
+
+    A ``PeriodicBox`` given a ``scale`` property for its Sobolev length shadows
+    ``HilbertSpace.scale(a, x)``, and every vector operation that routes
+    through it fails with ``'float' object is not callable`` somewhere far from
+    the cause. Cheap to check, and not obvious until it happens.
+    """
+    from pygeoinf2.algebra.spaces import HilbertSpace
+
+    offenders = []
+    for name in CORE_VECTOR_API:
+        base = getattr(HilbertSpace, name, None)
+        override = getattr(space_class, name, None)
+        if base is None or override is None or override is base:
+            continue
+        # A method may be overridden by a method; only a value shadowing a
+        # callable, or the reverse, is a mistake.
+        if callable(base) and isinstance(override, property):
+            offenders.append(f"{name}: method shadowed by a property")
+        elif isinstance(base, property) and callable(override):
+            offenders.append(f"{name}: property shadowed by a method")
+    assert not offenders, f"{space_class.__name__} shadows the vector API:\n  " + (
+        "\n  ".join(offenders)
+    )
