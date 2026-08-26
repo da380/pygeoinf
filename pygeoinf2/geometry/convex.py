@@ -79,6 +79,17 @@ class ConvexSet(Subset):
             f"{type(self).__name__} does not provide a support function."
         )
 
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """The point of the set attaining ``h(direction)``.
+
+        A *subgradient* of the support function, and the reason it is worth
+        having: a nonsmooth minimisation of a support function needs one at
+        every step, and for the sets that have closed forms so does this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide a support maximiser."
+        )
+
     def indicator(self) -> Functional:
         """The functional that is zero on the set and infinite off it.
 
@@ -428,6 +439,15 @@ class Ball(ConvexSet):
         self._radius = float(radius)
         self._centre = domain.zero() if centre is None else centre
 
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """``centre + radius * direction / ||direction||``."""
+        length = self.domain.norm(direction)
+        if length == 0.0:
+            return self._centre
+        return self.domain.add(
+            self._centre, self.domain.scale(self._radius / length, direction)
+        )
+
     def translate(self, vector: Any, /) -> "Ball":
         """The same ball, moved by a vector."""
         return Ball(
@@ -632,6 +652,19 @@ class Ellipsoid(ConvexSet):
         self._precision = precision
         self._covariance = covariance
         self._centre = domain.zero() if centre is None else centre
+
+    def support_maximiser(self, direction: Any, /) -> Any:
+        """``centre + C q / sqrt((C q, q))``, which needs the covariance."""
+        if self._covariance is None:
+            raise AttributeError(
+                "This ellipsoid was built without a covariance, so it cannot "
+                "exhibit the point attaining its support."
+            )
+        image = self._covariance(direction)
+        scale = np.sqrt(self.domain.inner_product(image, direction))
+        if scale == 0.0:
+            return self._centre
+        return self.domain.add(self._centre, self.domain.scale(1.0 / scale, image))
 
     def translate(self, vector: Any, /) -> "Ellipsoid":
         """The same ellipsoid, moved by a vector."""

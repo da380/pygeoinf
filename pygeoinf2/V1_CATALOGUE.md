@@ -149,7 +149,7 @@ addtional information as you suggest will be very useful. |
 | `ColumnThresholdedPreconditioningMethod` | Planned | M5 | |
 | `ExactBlockPreconditioningMethod` | Ported | M5 | |
 | `SpectralPreconditioningMethod` | Ported | M5; `random_eig` is already there | |
-| `IterativePreconditioningMethod` | Planned (N) | M5; wants `FCGSolver` | |
+| `IterativePreconditioningMethod` | Ported | M5; wants `FCGSolver` | |
 
 ## `functional_calculus.py` → `numerics/functional_calculus.py`
 
@@ -206,16 +206,16 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
 | `SubgradientDescent`, `SubgradientResult` | Ported | `SubgradientDescent`, `_ConvexResult` | |
-| `Cut`, `Bundle` | Planned | M5 stage 5.9 | |
-| `ProximalBundleMethod`, `LevelBundleMethod`, `BundleResult` | Planned | M5 stage 5.9 — the dual route for a general convex prior | |
+| `Cut`, `Bundle` | Ported | M5 stage 5.9 | |
+| `ProximalBundleMethod`, `LevelBundleMethod`, `BundleResult` | Ported (proximal) | M5 stage 5.9 — the dual route for a general convex prior | |
 | `QPSolver`, `QPResult` | Planned | M5 stage 5.9 | |
 | `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Planned | M5 stage 5.9. Coordinates are fine here: the QP lives in a finite-dimensional, canonically Euclidean space | |
 | `best_available_qp_solver` | Planned | M5 stage 5.9 | |
 | `PrimalKKTSolver`, `KKTResult` | Ported | M5 stage 5.9 — this is `work/sphere_dli_example.py`'s solver, so it gates reproducing that example | |
 | `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Planned | M5 stage 5.9 | |
 | `ChambollePockSolver`, `ChambollePockResult` | Planned | M5 stage 5.9 | |
-| `solve_support_values` | Planned | M5 stage 5.9; becomes support-function evaluation on a `ConvexSet` | |
-| `solve_primal_feasibility` | Planned | M5 stage 5.8 — the inclusion test of §18.5 | |
+| `solve_support_values` | Ported | M5 stage 5.9; becomes support-function evaluation on a `ConvexSet` | |
+| `solve_primal_feasibility` | Ported | M5 stage 5.8 — the inclusion test of §18.5 | |
 
 ## `subsets.py` → `geometry/sets.py`, `geometry/convex.py`
 
@@ -262,7 +262,7 @@ deliberately not started.
 | `LinearMinimumNormInversion` | Ported | M5 stage 5.3, with the discrepancy principle on §18.6's root-find primitive | |
 | `ConstrainedLinearMinimumNormInversion` | Planned | M5 stage 5.3 | |
 | `BackusInference` | Ported | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
-| `DualMasterCostFunction` | Planned | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
+| `DualMasterCostFunction` | Ported | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
 
 ## `symmetric_space/`
 

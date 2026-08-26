@@ -325,3 +325,179 @@ class TestOuterApproximation:
         inner = Polytope(space, [plane], outer=False)
         with pytest.raises(ValueError, match="bound nothing"):
             outer & inner
+
+
+class TestBundleMethod:
+    """The minimiser route (d) is built on."""
+
+    def test_it_minimises_a_nonsmooth_convex_function(self):
+        """``|x - a|_1 + |x|^2/2``, whose minimiser is ``clip(a, -1, 1)``.
+
+        Not soft-thresholding, which is the answer to a different problem and
+        was the first reference tried here.
+        """
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        space = EuclideanSpace(4)
+        anchor = np.random.default_rng(0).normal(size=4)
+        functional = Functional.from_callables(
+            space,
+            lambda x: float(np.abs(x - anchor).sum() + 0.5 * x @ x),
+            gradient=lambda x: np.sign(x - anchor) + x,
+        )
+        result = ProximalBundleMethod(tolerance=1e-10, iterations=400).minimise(
+            functional, space.zero()
+        )
+        best = np.clip(anchor, -1.0, 1.0)
+        assert result.converged
+        assert result.minimum == pytest.approx(
+            float(np.abs(best - anchor).sum() + 0.5 * best @ best), abs=1e-6
+        )
+        assert np.allclose(result.minimiser, best, atol=1e-5)
+
+    def test_the_gap_certifies_the_answer(self):
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        space = EuclideanSpace(4)
+        rng = np.random.default_rng(1)
+        root = rng.normal(size=(4, 4))
+        matrix = root @ root.T + 4.0 * np.identity(4)
+        offset = rng.normal(size=4)
+        functional = Functional.from_callables(
+            space,
+            lambda x: float(0.5 * x @ matrix @ x - offset @ x),
+            gradient=lambda x: matrix @ x - offset,
+        )
+        result = ProximalBundleMethod(tolerance=1e-12, iterations=600).minimise(
+            functional, space.zero()
+        )
+        best = np.linalg.solve(matrix, offset)
+        assert result.minimum == pytest.approx(
+            float(0.5 * best @ matrix @ best - offset @ best), abs=1e-7
+        )
+        assert result.gap >= 0.0
+
+    def test_a_nonsense_descent_fraction_is_refused(self):
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        with pytest.raises(ValueError, match="descent fraction"):
+            ProximalBundleMethod(descent=1.5)
+
+
+class TestDualRoute:
+    def test_it_agrees_with_the_primal_route(self, setting):
+        """Routes (c) and (d), with nothing in common.
+
+        A bisection over two Lagrange multipliers against a nonsmooth convex
+        minimisation in the data space. They agree to nine figures.
+        """
+        from pygeoinf2.inference import DualFeasibleProperty
+
+        model, forward, target, truth, data = setting
+        prior = Ball(model, radius=3.0)
+        for radius in (0.3, 0.05):
+            problem = LinearForwardProblem(
+                forward, error=Ball(forward.codomain, radius=radius)
+            )
+            primal = FeasibleProperty(problem, target, prior)
+            dual = DualFeasibleProperty(problem, target, prior)
+            for direction in directions(target.codomain):
+                assert dual.support(direction, data) == pytest.approx(
+                    primal.support(direction, data), rel=1e-6
+                )
+
+    def test_it_accepts_a_prior_the_other_routes_cannot(self, setting, rng):
+        """Which is the whole reason it exists.
+
+        An anisotropic prior has no radius, so routes (a) and (b) refuse it by
+        name; this one needs only a support function and a maximiser.
+        """
+        from pygeoinf2.geometry.convex import Ellipsoid
+        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.traits import Traits
+
+        model, forward, target, truth, data = setting
+        scale = np.diag(np.array([36.0, 16.0, 16.0, 9.0])[: model.dim])
+        gram = model.gram_matrix()
+        covariance = LinearOperator.from_derivative_matrix(
+            model,
+            model,
+            gram @ scale,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        precision = LinearOperator.from_derivative_matrix(
+            model,
+            model,
+            gram @ np.linalg.inv(scale),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        prior = Ellipsoid(model, precision, covariance=covariance)
+        assert prior.contains(truth)
+
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.1)
+        )
+        dual = DualFeasibleProperty(problem, target, prior)
+        for direction in directions(target.codomain):
+            assert np.isfinite(dual.support(direction, data))
+
+        with pytest.raises(TypeError, match="must be a Ball"):
+            BackusGilbert(problem, target, prior)
+
+    def test_a_ball_written_as_an_ellipsoid_gives_the_same_answer(self, setting):
+        from pygeoinf2.geometry.convex import Ellipsoid
+        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.traits import Traits
+
+        model, forward, target, truth, data = setting
+        radius = 3.0
+        covariance = LinearOperator.self_adjoint(
+            model,
+            lambda v: model.scale(radius**2, v),
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        precision = LinearOperator.self_adjoint(
+            model,
+            lambda v: model.scale(1.0 / radius**2, v),
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.1)
+        )
+        as_ball = DualFeasibleProperty(problem, target, Ball(model, radius=radius))
+        as_ellipsoid = DualFeasibleProperty(
+            problem, target, Ellipsoid(model, precision, covariance=covariance)
+        )
+        for direction in directions(target.codomain):
+            assert as_ellipsoid.support(direction, data) == pytest.approx(
+                as_ball.support(direction, data), rel=1e-7
+            )
+
+    def test_an_empty_feasible_set_is_reported(self, setting):
+        """An unbounded dual is a statement about the problem, and a large
+        negative number is a perfectly plausible-looking support value."""
+        from pygeoinf2.inference import DualFeasibleProperty
+
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=1e-6)
+        )
+        dual = DualFeasibleProperty(problem, target, Ball(model, radius=0.01))
+        with pytest.raises(ValueError, match="no model lies"):
+            dual.support(target.codomain.basis_vector(0), data)
+
+    def test_the_certificate_is_a_weighting_of_the_data(self, setting):
+        from pygeoinf2.inference import DualFeasibleProperty
+
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.1)
+        )
+        dual = DualFeasibleProperty(problem, target, Ball(model, radius=3.0))
+        direction = target.codomain.basis_vector(0)
+        certificate = dual.certificate(direction, data)
+        # any certificate gives a valid bound; this one is the best
+        cost = dual.dual_cost(direction, data)
+        assert cost(certificate) <= cost(forward.codomain.zero()) + 1e-9

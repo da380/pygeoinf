@@ -3530,3 +3530,49 @@ That is also why `BandedPreconditioner` extracts its diagonals with the *exact*
 probe by default. The fast probe of §21.17 sums out-of-band entries into the
 band, which is harmless when the operator is banded — the two agree, and there
 is a test — and compounds the damage when it is not.
+
+### 22.6 Route (d), the general one
+
+`DualFeasibleProperty`, on a `ProximalBundleMethod`. This is BGP eq. (28) —
+
+```
+h(q) == inf over lambda of  (lambda, d) + h_prior(T* q - A* lambda) + h_noise(-lambda)
+```
+
+— and it is exactly what v1's `DualMasterCostFunction` writes down without
+naming it as the support function of an image.
+
+**It asks for nothing but a support function and a maximiser.** Routes (a),
+(b) and (c) all need norm balls and say so by name; this one accepts an
+ellipsoid, a box, an intersection — anything convex that can exhibit the point
+attaining its own support. That is the whole reason for its expense, and the
+tests demonstrate it: an anisotropic prior, which the other three refuse, runs
+here, and a ball *written as* an ellipsoid gives the same numbers as the ball.
+
+**Against route (c): agreement to nine figures.** A nested bisection over two
+Lagrange multipliers against a nonsmooth convex minimisation in the data space,
+with no code in common. That is the parity §18.2 was written to make possible.
+
+**An unbounded dual is an answer, not a failure**, and a dangerous one to
+return: with no model both inside the prior and fitting the data, the primal
+supremum is over an empty set and the dual falls away without limit — to
+`-2e8` in the case that first showed it up. A number that size is a perfectly
+plausible-looking support value, so it is raised with the reason named instead.
+
+### 22.7 Two findings in the bundle method
+
+**A bundle method must carry the linearisation error.** A cut taken at ``x_i``
+bounds ``f`` from below everywhere, but its offset *at the current centre* is
+``f(x_i) + (g_i, c - x_i)``, not ``f(x_i)``. Dropping the second term makes
+every cut look tight, the predicted decrease collapses, and the method reports
+convergence immediately — at `0.65` for a problem whose minimum is `0.23`, with
+a gap of `1e-11` to say how sure it was. Each cut now stores the point it was
+taken at.
+
+**And the subproblem does not want a general solver.** The dual of the model is
+a quadratic program on the unit simplex in the number of cuts — a few dozen
+variables. Handing it to `scipy.optimize.minimize` cost **50 seconds** per
+minimisation, essentially all of it in setting up problems that small.
+Projected gradient with a closed-form simplex projection does the same job in
+**0.6 seconds**, an eighty-fold speed-up, and the whole test module went from
+189 seconds to 26.

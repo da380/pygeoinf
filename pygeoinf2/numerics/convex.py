@@ -37,6 +37,8 @@ from ..algebra.spaces import HilbertSpace
 from .optimisation import OptimisationResult, Optimiser
 
 __all__ = [
+    "ProximalBundleMethod",
+    "BundleResult",
     "SquaredDistance",
     "NormFunctional",
     "BallIndicator",
@@ -763,3 +765,199 @@ class ProximalPoint(Optimiser):
             "iteration limit reached",
             history,
         )
+
+
+@dataclass(frozen=True)
+class BundleResult:
+    """The outcome of a bundle minimisation."""
+
+    minimum: float
+    minimiser: Any
+    iterations: int
+    converged: bool
+    gap: float
+
+    def __repr__(self) -> str:
+        return (
+            f"BundleResult(minimum={self.minimum:.6g}, "
+            f"iterations={self.iterations}, converged={self.converged})"
+        )
+
+
+class ProximalBundleMethod:
+    """Minimise a convex function from values and subgradients alone.
+
+    A subgradient is a *lower* bound on a convex function everywhere, not just
+    near where it was taken. A bundle method keeps the ones it has seen and
+    minimises their upper envelope — the best piecewise-linear model the
+    information so far supports — with a proximal term to stop it running away
+    from where the model is trustworthy.
+
+    That is what makes it the right method for a support function: subgradient
+    descent needs a step-size schedule chosen in advance and converges at
+    ``1/sqrt(k)``, while here the model's own gap gives a stopping criterion
+    that means something. The gap is a genuine bound on the distance to the
+    minimum, which for a dual formulation is a genuine bound on the primal
+    answer.
+    """
+
+    def __init__(
+        self,
+        /,
+        *,
+        weight: float = 1.0,
+        tolerance: float = 1e-8,
+        iterations: int = 200,
+        capacity: int = 40,
+        descent: float = 0.1,
+    ) -> None:
+        """
+        Args:
+            weight: the proximal weight. Larger keeps steps shorter.
+            tolerance: stop when the model's gap falls below this.
+            iterations: the cap.
+            capacity: how many cuts to keep; the oldest are dropped.
+            descent: the fraction of the predicted decrease a step must
+                deliver to be accepted as a serious step.
+        """
+        if not 0.0 < descent < 1.0:
+            raise ValueError(f"The descent fraction lies in (0, 1), got {descent}.")
+        self._weight = weight
+        self._tolerance = tolerance
+        self._iterations = iterations
+        self._capacity = capacity
+        self._descent = descent
+
+    def minimise(
+        self,
+        functional: Functional,
+        start: Any,
+        /,
+        *,
+        subgradient: Any = None,
+    ) -> BundleResult:
+        """Minimise a convex functional from a starting point.
+
+        Args:
+            functional: convex, and able to supply a subgradient.
+            start: where to begin.
+            subgradient: an override, called with a point and returning a
+                subgradient. Defaults to the functional's own.
+
+        Returns:
+            The minimum, a minimiser, and the gap that certifies it.
+        """
+        space = functional.domain
+        slope = subgradient or functional.subgradient
+
+        centre = space.copy(start)
+        best = float(functional(centre))
+        # Each cut is (gradient, value, point). The point matters: a cut taken
+        # elsewhere bounds f from below everywhere, but its offset *at the
+        # current centre* is f(x_i) + (g_i, c - x_i), and dropping the second
+        # term makes every cut look tight and the method stop at once.
+        cuts: list[tuple[Any, float, Any]] = []
+        weight = self._weight
+        gap = float("inf")
+
+        for iteration in range(1, self._iterations + 1):
+            gradient = slope(centre)
+            cuts.append((space.copy(gradient), best, space.copy(centre)))
+            if len(cuts) > self._capacity:
+                cuts.pop(0)
+
+            candidate, gap = self._solve_model(space, centre, best, cuts, weight)
+            if gap <= self._tolerance * max(abs(best), 1.0):
+                return BundleResult(best, centre, iteration, True, gap)
+
+            value = float(functional(candidate))
+            if best - value >= self._descent * gap:
+                centre, best = candidate, value  # a serious step
+                weight = max(weight * 0.5, 1e-8)
+            else:
+                weight = min(weight * 2.0, 1e12)  # a null step: trust less
+
+        return BundleResult(best, centre, self._iterations, False, gap)
+
+    def _solve_model(
+        self,
+        space: Any,
+        centre: Any,
+        value: float,
+        cuts: Any,
+        weight: float,
+    ) -> tuple[Any, float]:
+        """Minimise the cutting-plane model plus a proximal term.
+
+        The dual of that quadratic program is a simplex-constrained least
+        squares in the *number of cuts*, which is small — so it is solved
+        there rather than in the space, whose dimension is the data's.
+
+        Returns the candidate and the predicted decrease, which is the model's
+        gap: a genuine lower bound on how much is left to gain, and the only
+        stopping criterion here that means anything.
+        """
+        count = len(cuts)
+        gram = np.empty((count, count))
+        for i, (first, _, _) in enumerate(cuts):
+            for j, (second, _, _) in enumerate(cuts):
+                gram[i, j] = space.inner_product(first, second)
+
+        errors = np.array(
+            [
+                max(
+                    value
+                    - taken
+                    - space.inner_product(gradient, space.subtract(centre, point)),
+                    0.0,
+                )
+                for gradient, taken, point in cuts
+            ]
+        )
+
+        step_size = 1.0 / weight
+        weights = _minimise_on_simplex(step_size * gram, -errors)
+
+        combination = space.zero()
+        for coefficient, (gradient, _, _) in zip(weights, cuts):
+            combination = space.axpy(coefficient, gradient, combination)
+        candidate = space.add(centre, space.scale(-step_size, combination))
+        decrease = 0.5 * step_size * space.squared_norm(combination) + float(
+            weights @ errors
+        )
+        return candidate, max(decrease, 0.0)
+
+
+def _project_on_simplex(vector: np.ndarray) -> np.ndarray:
+    """The nearest point of the unit simplex, in closed form.
+
+    Sort, take a running mean, and find where it stops being feasible. Exact,
+    and ``O(k log k)`` -- which matters because a bundle method solves a
+    simplex-constrained problem at every single iteration.
+    """
+    size = vector.size
+    ordered = np.sort(vector)[::-1]
+    running = (np.cumsum(ordered) - 1.0) / np.arange(1, size + 1)
+    count = int(np.nonzero(ordered - running > 0)[0][-1]) + 1
+    return np.clip(vector - running[count - 1], 0.0, None)
+
+
+def _minimise_on_simplex(
+    quadratic: np.ndarray, linear: np.ndarray, /, *, iterations: int = 400
+) -> np.ndarray:
+    """Minimise ``w' Q w / 2 - l' w`` over the unit simplex.
+
+    Projected gradient with a step from the largest eigenvalue, which for a
+    problem of a few dozen variables is both fast and enough. Handing this to a
+    general nonlinear solver instead cost fifty seconds per bundle
+    minimisation, almost all of it in setting up problems this small.
+    """
+    size = linear.size
+    step = 1.0 / max(float(np.linalg.eigvalsh(quadratic).max()), 1e-12)
+    weights = np.full(size, 1.0 / size)
+    for _ in range(iterations):
+        moved = _project_on_simplex(weights - step * (quadratic @ weights - linear))
+        if np.max(np.abs(moved - weights)) < 1e-14:
+            return moved
+        weights = moved
+    return weights

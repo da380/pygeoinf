@@ -31,7 +31,16 @@ from .problem import LinearForwardProblem
 # that a null direction contributes nothing rather than dividing by noise.
 _SPECTRUM_FLOOR = 1.0e-13
 
-__all__ = ["BackusGilbert", "BackusInference", "FeasibleProperty"]
+# Below this, a non-converged dual infimum is read as unbounded rather than as
+# an answer. Support values of a bounded set are of the size of the set.
+_UNBOUNDED = 1.0e6
+
+__all__ = [
+    "BackusGilbert",
+    "BackusInference",
+    "DualFeasibleProperty",
+    "FeasibleProperty",
+]
 
 
 def _ball_radius(candidate: Any, name: str) -> float:
@@ -661,4 +670,155 @@ class FeasibleProperty(SetEstimator):
             noise=Ball(self.data_space, radius=self._noise_radius),
             solver=self._solver,
             iterations=self._iterations,
+        )
+
+
+class DualFeasibleProperty(SetEstimator):
+    """The feasible property set for *any* convex prior and noise sets.
+
+    Route (d) of §18.3, and the general one. Duality turns the supremum over an
+    infinite-dimensional model set into an infimum over the finite-dimensional
+    data space,
+
+    .. code-block:: text
+
+        h(q) == inf over lambda of
+                (lambda, d) + h_prior(T* q - A* lambda) + h_noise(-lambda)
+
+    which is BGP eq. (28), and which is exactly what v1's
+    ``DualMasterCostFunction`` docstring writes down without naming it as a
+    support function of an image.
+
+    It uses only the two sets' *support functions*, so it accepts anything
+    convex — an ellipsoid, a box, an intersection — where routes (a) and (c)
+    accept norm balls. What it costs is a nonsmooth convex minimisation per
+    direction, which is why the cheaper routes exist at all.
+    """
+
+    def __init__(
+        self,
+        problem: LinearForwardProblem,
+        target: LinearOperator,
+        prior: ConvexSet,
+        /,
+        *,
+        noise: ConvexSet | None = None,
+        method: Any = None,
+    ) -> None:
+        """
+        Args:
+            problem: the forward problem.
+            target: the property operator ``T``.
+            prior: any convex set on the model space with a support function
+                and a support maximiser.
+            noise: likewise on the data space; taken from the problem if
+                omitted.
+            method: the minimiser. A proximal bundle method by default.
+        """
+        from ..numerics.convex import ProximalBundleMethod
+
+        if target.domain != problem.model_space:
+            raise ValueError("The property operator must act on the model space.")
+        self._problem = problem
+        self._target = target
+        self._prior = prior
+        if noise is None:
+            if not problem.has_error or not isinstance(problem.error, ConvexSet):
+                raise ValueError(
+                    "This route needs a convex noise set; pass noise= or give "
+                    "the problem a set-valued error."
+                )
+            noise = problem.error
+        self._noise = noise
+        self._method = method or ProximalBundleMethod(tolerance=1e-10, iterations=300)
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The problem's data space."""
+        return self._problem.data_space
+
+    @property
+    def target_space(self) -> HilbertSpace:
+        """The property space."""
+        return self._target.codomain
+
+    def dual_cost(self, direction: Any, data: Any, /) -> Any:
+        """The functional whose infimum is the support value.
+
+        A convex function of the certificate ``lambda``, built from the two
+        support functions and nothing else. Its subgradient is
+        ``d - A x_prior - x_noise`` with each ``x`` the point of its set
+        attaining the corresponding support — so a set that can exhibit its own
+        maximiser is all this route ever asks for.
+        """
+        from ..algebra.operators import Functional
+
+        space = self.data_space
+        model_space = self._problem.model_space
+        forward = self._problem.forward_operator
+        pulled = self._target.adjoint(direction)
+        prior_support = self._prior.support_function()
+        noise_support = self._noise.support_function()
+
+        def value(certificate: Any) -> float:
+            residual = model_space.subtract(pulled, forward.adjoint(certificate))
+            return (
+                space.inner_product(certificate, data)
+                + prior_support(residual)
+                + noise_support(space.scale(-1.0, certificate))
+            )
+
+        def gradient(certificate: Any) -> Any:
+            residual = model_space.subtract(pulled, forward.adjoint(certificate))
+            from_prior = forward(self._prior.support_maximiser(residual))
+            from_noise = self._noise.support_maximiser(space.scale(-1.0, certificate))
+            return space.subtract(space.subtract(data, from_prior), from_noise)
+
+        return Functional.from_callables(space, value, gradient=gradient)
+
+    def support(self, direction: Any, data: Any, /, *, start: Any = None) -> float:
+        """The support value in one direction, by minimising the dual cost.
+
+        **An unbounded infimum means the feasible set is empty**, not that the
+        minimisation failed: with no model both inside the prior and fitting
+        the data, the primal supremum is over nothing and the dual falls away
+        without limit. That is reported rather than returned, because a large
+        negative number is a perfectly plausible-looking support value.
+        """
+        cost = self.dual_cost(direction, data)
+        origin = self.data_space.zero() if start is None else start
+        result = self._method.minimise(cost, origin)
+        if not result.converged and result.minimum < -_UNBOUNDED:
+            raise ValueError(
+                f"The dual fell to {result.minimum:.3g} without converging, "
+                "which means no model lies both inside the prior set and "
+                "within the noise set of the data. Check the two against each "
+                "other before checking this."
+            )
+        return result.minimum
+
+    def certificate(self, direction: Any, data: Any, /) -> Any:
+        """The optimal ``lambda``: the linear combination of data that bounds.
+
+        Interpretable in its own right — it is the weighting of the
+        observations that certifies the bound, and any ``lambda`` at all gives
+        a valid one (§18.3(b)). This is the best of them.
+        """
+        cost = self.dual_cost(direction, data)
+        return self._method.minimise(cost, self.data_space.zero()).minimiser
+
+    def __call__(self, data: Any) -> ConvexSet:
+        """The feasible property set, as a support-function oracle."""
+        return ConvexSet.from_support_function(
+            self.target_space, lambda direction: self.support(direction, data)
+        )
+
+    def push_forward(self, operator: LinearOperator, /) -> "DualFeasibleProperty":
+        """The same inference about a further property."""
+        return DualFeasibleProperty(
+            self._problem,
+            operator @ self._target,
+            self._prior,
+            noise=self._noise,
+            method=self._method,
         )
