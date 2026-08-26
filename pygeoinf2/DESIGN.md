@@ -1227,7 +1227,7 @@ hashes equal to — an independently constructed copy of itself.
 | M0 | **done** — `traits.py`, `algebra/spaces.py`, `testing.py` | met; 67 tests, see §11.1 |
 | M1 | **done** — `operators.py`, `nodes.py`, `linearisation.py`, `Functional`, `AffineOperator` | met; 135 tests, see §11.2 |
 | M2 | **done** — `compat.py` adapter for v1 spaces | met; 161 tests, see §11.4 |
-| M3 | `numerics/solvers.py` | Coordinate-free CG on an adapted Sobolev space matches v1 to tolerance |
+| M3 | **done** — `numerics/solvers.py`, `numerics/preconditioners.py` | met; 204 tests, see §11.5 |
 | M4 | `probability/` | Gaussian sampling, pushforward, and moments match v1 where v1 is correct |
 | M5 | Linear inversion rebuilt on the new core | Parity harness: v1 and v2 side by side on the existing test problems |
 
@@ -1339,6 +1339,13 @@ spaces, point evaluation, Dirac functionals and invariant covariances all run
 against the v2 core, with results checked against v1 where v1 is right and
 against the mathematics where it is not. 161 tests.
 
+**This module is scaffolding with an expiry date.** The end state is that v1 is
+gone and every concrete space is written natively against the v2 core — the
+adapter exists so that the core is exercised on real problems while it is still
+cheap to change, not so that v1 survives inside v2. Nothing else in `pygeoinf2`
+imports it, and nothing should come to depend on it. When the concrete spaces
+are rewritten, `compat.py` and `tests/test_compat.py` are deleted outright.
+
 The adapter is short, because the two designs agree on more than they differ:
 
 | v1 | v2 |
@@ -1385,7 +1392,65 @@ algebra, and assembled with v1's — and agrees to `1e-10`. The v2 side never
 mentions a Galerkin flag: `normal.matrix()` picks its representation from the
 traits, and the result is symmetric positive definite.
 
-### 11.4 Testing the abstract framework
+### 11.4 M3 as built
+
+```
+pygeoinf2/numerics/
+  solvers.py          LinearSolver, InverseOperator, SolveResult,
+                      CG, MINRES, BiCGStab (coordinate-free),
+                      LU, Cholesky, Eigen (coordinate-requiring),
+                      LeastSquaresSolver + LSQR
+  preconditioners.py  Identity, Jacobi
+```
+
+Acceptance met: coordinate-free CG on an adapted circle Sobolev space agrees
+with v1's own `CGSolver` to `1e-8`, and with a dense solve to `1e-9`. 204 tests.
+
+**The coordinate split is real, and tested as such.** `StrictSpace` raises if a
+component map is touched, and CG, MINRES, BiCGStab and LSQR all solve against
+it; a negative control confirms `CholeskySolver` *does* trip the guard. So the
+claim that the iterative solvers run against a PETSc-backed space is now
+mechanically checked rather than asserted.
+
+**Preconditions are declared and validated, and both halves matter.**
+`CGSolver.requires` is `POSITIVE_DEFINITE`, so an operator that has not earned
+the trait is refused at `__call__` with a message naming what is missing.
+Separately, CG detects a *false* claim during the solve — a non-positive
+curvature direction — and its error points at `testing.check_traits`. v1 has
+neither check: it writes `assert operator.is_automorphism`, which says nothing
+about symmetry or definiteness and is deleted by `python -O`.
+
+**Solvers are stateless.** Diagnostics come back from
+`InverseOperator.solve(y)` as a `SolveResult`, so one solver instance can serve
+many operators. v1 keeps `iterations` on the solver, where it belongs to
+whichever solve ran last.
+
+Two bugs found while writing this, both caught by testing against dense linear
+algebra rather than by inspection:
+
+1. **The default iteration cap was `dim`.** Krylov methods terminate within
+   `dim` steps in exact arithmetic, but rounding routinely costs an extra step,
+   so MINRES failed on an indefinite system that it had in fact solved. The
+   default is now `max(2 dim, 20)`.
+2. **LSQR discarded a sign.** `np.hypot(rho_bar, 0)` returns `|rho_bar|`, but
+   the recurrence carries `rho_bar` signed when there is no damping. The
+   iteration converged confidently to the wrong point — error `7e-1` while
+   reporting success. Damping now takes its own branch, and the undamped path
+   uses the signed value. Verified against `numpy.linalg.lstsq` for
+   over-determined, under-determined and square systems, and against the
+   normal equations for the damped case.
+
+Deviations from §6: `InverseOperator` does not expose `last_solve`. Recording
+the most recent solve on the operator would have made "stateless" only half
+true; `solve()` returns the diagnostics with the answer instead.
+
+Still open for M3's original brief: a matrix-free SciPy wrapper for `matrix()`,
+which nothing yet needs, and the **petsc4py** question of §11.4. The doubles
+have carried the coordinate-free claim further than expected — every Krylov
+method is verified against a space that refuses coordinates — so a real backend
+is now about ergonomics and distributed vectors rather than about correctness.
+
+### 11.5 Testing the abstract framework
 
 Every NumPy-backed test space has vectors that *are* their own components, so
 code reaching for array arithmetic or for a coordinate map works by accident.

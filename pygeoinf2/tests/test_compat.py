@@ -291,3 +291,99 @@ class TestSphere:
         normal = A @ Q @ A.adjoint + R
         assert Traits.POSITIVE_DEFINITE & normal.traits
         check_traits(normal, rng=rng)
+
+
+class TestSolversOnAdaptedSpaces:
+    """M3 acceptance: coordinate-free CG on a real Sobolev space, against v1."""
+
+    @pytest.fixture
+    def problem(self, X, rng):
+        from pygeoinf2.numerics import CGSolver  # noqa: F401
+
+        base = X.v1_space
+        A = adapt_operator(base.point_evaluation_operator(POINTS), domain=X)
+        Q = adapt_operator(
+            base.sobolev_kernel_gaussian_measure(2.0, 0.3).covariance,
+            domain=X,
+            codomain=X,
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        Y = A.codomain
+        R = LinearOperator.from_component_matrix(
+            Y, Y, 0.04 * np.identity(len(POINTS)), traits=Traits.POSITIVE_DEFINITE
+        )
+        return X, A, Q, R, A @ Q @ A.adjoint + R
+
+    def test_cg_is_admitted_by_its_declared_precondition(self, problem):
+        """No assertion needed: the traits were earned structurally."""
+        from pygeoinf2.numerics import CGSolver, InverseOperator
+
+        *_, normal = problem
+        assert Traits.POSITIVE_DEFINITE & normal.traits
+        assert isinstance(CGSolver()(normal), InverseOperator)
+
+    def test_cg_matches_a_dense_solve(self, problem, rng):
+        from pygeoinf2.numerics import CGSolver
+
+        _, A, _, _, normal = problem
+        b = A.codomain.random(rng)
+        result = CGSolver(rtol=1e-12)(normal).solve(b)
+        exact = np.linalg.solve(normal.matrix(form="components"), b)
+        assert np.allclose(result.solution, exact, atol=1e-9)
+
+    def test_cg_matches_v1s_own_solver(self, problem, rng):
+        """The same system, solved by v1's CG and by v2's, to tolerance."""
+        from pygeoinf2.numerics import CGSolver
+
+        X, A, Q, _, normal = problem
+        base = X.v1_space
+
+        v1_A = base.point_evaluation_operator(POINTS)
+        v1_Q = base.sobolev_kernel_gaussian_measure(2.0, 0.3).covariance
+        v1_normal = (
+            v1_A @ v1_Q @ v1_A.adjoint
+            + 0.04 * pygeoinf.EuclideanSpace(len(POINTS)).identity_operator()
+        )
+
+        b = A.codomain.random(rng)
+        v2_solution = CGSolver(rtol=1e-12)(normal).solve(b).solution
+        v1_solution = pygeoinf.CGSolver(rtol=1e-12)(v1_normal)(b)
+        assert np.allclose(v2_solution, v1_solution, atol=1e-8)
+
+    def test_a_model_space_solve_on_the_sobolev_space_itself(self, X, rng):
+        """CG in the model space, where the mass matrix actually bites.
+
+        The operator acts on the Sobolev space, so every inner product inside
+        CG carries the metric. Nothing here touches a component array.
+        """
+        from pygeoinf2.numerics import CGSolver
+
+        base = X.v1_space
+        Q = adapt_operator(
+            base.sobolev_kernel_gaussian_measure(2.0, 0.3).covariance,
+            domain=X,
+            codomain=X,
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        shifted = Q + 0.5 * LinearOperator.identity(X)
+        assert Traits.POSITIVE_DEFINITE & shifted.traits
+
+        b = X.random(rng)
+        solution = CGSolver(rtol=1e-12)(shifted).solve(b).solution
+        residual = X.norm(X.subtract(shifted(solution), b))
+        assert residual < 1e-8 * X.norm(b)
+
+    def test_the_posterior_mean_via_cg_matches_the_dense_route(self, problem, rng):
+        from pygeoinf2.numerics import CGSolver
+
+        X, A, Q, _, normal = problem
+        truth = X.random(rng)
+        data = A(truth)
+
+        via_cg = (Q @ A.adjoint)(CGSolver(rtol=1e-12)(normal).solve(data).solution)
+        via_dense = (Q @ A.adjoint)(
+            np.linalg.solve(normal.matrix(form="components"), data)
+        )
+        assert np.allclose(
+            X.to_components(via_cg), X.to_components(via_dense), atol=1e-9
+        )
