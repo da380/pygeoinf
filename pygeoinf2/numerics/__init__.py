@@ -26,6 +26,23 @@ from .randomised import (
     random_svd,
     random_trace,
 )
+from .line_search import (
+    ArmijoLineSearch,
+    LineSearch,
+    LineSearchResult,
+    StrongWolfeLineSearch,
+)
+from .optimisation import (
+    LBFGS,
+    NewtonCG,
+    NonlinearCG,
+    OptimisationResult,
+    Optimiser,
+    SteepestDescent,
+    TrustRegionNewton,
+    gauss_newton_hessian,
+    truncated_cg,
+)
 from .preconditioners import IdentityPreconditioner, JacobiPreconditioner
 from .solvers import (
     BiCGStabSolver,
@@ -45,7 +62,20 @@ from .solvers import (
 )
 
 __all__ = [
+    "ArmijoLineSearch",
     "BiCGStabSolver",
+    "LBFGS",
+    "LineSearch",
+    "LineSearchResult",
+    "NewtonCG",
+    "NonlinearCG",
+    "OptimisationResult",
+    "Optimiser",
+    "SteepestDescent",
+    "StrongWolfeLineSearch",
+    "TrustRegionNewton",
+    "gauss_newton_hessian",
+    "truncated_cg",
     "Estimate",
     "LowRankCholesky",
     "LowRankEig",
