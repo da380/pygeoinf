@@ -3402,3 +3402,82 @@ they coincide. It is tested on a weighted one.
 `pointwise_variance_at` is the general counterpart of `pointwise_variance`:
 exact at one covariance application per point, or deflated when there are many.
 The invariant case has a closed form, which is what it is checked against.
+
+## 22. Phase 5: the set-theoretic layer
+
+### 22.1 As built so far
+
+Stages 5.5 to 5.8, and route (c) of 5.9. 1031 tests.
+
+```
+geometry/convex.py     ConvexSet.from_support_function, Minkowski sums,
+                       translation, Polytope
+inference/backus.py    BackusGilbert, BackusInference, FeasibleProperty
+```
+
+**A set given only by its support function** is the shape §18.3(d) forces, so
+it is a first-class object. What it can do is bounded by what a support
+function determines: it gives a certified outer `Polytope` and a one-sided
+certificate of non-membership, and it refuses `contains` and `project` rather
+than approximating them. `Polytope` carries whether it is an inner or an outer
+bound, because BGP's Figure 4 is about exactly the mistake of reporting the
+first as the answer, and the two cannot be intersected with each other.
+
+**Three routes to the feasible property set are now here, and they agree.**
+
+- `BackusInference` — route (a), the closed-form ellipsoid for error-free data
+  and a ball prior. Its `prior_only()` is the bracket the data are meant to
+  improve on.
+- `BackusGilbert` — route (b), the linear certificate. Its `error_bars` split
+  the bound into a resolution term and a noise term, because more data narrows
+  the second and better coverage the first, and one number cannot say which is
+  wanted.
+- `FeasibleProperty` — route (c), the primal bisection, which returns the
+  **extremal model** attaining each bound as well as the bound.
+
+### 22.2 The parity tests, which are the point
+
+- Route (c) against route (a), as the noise ball shrinks: the disagreement
+  *tracks the noise radius*, `5.7e-4` at a radius of `1e-3` and `5.6e-7` at
+  `1e-6`. That is what says the difference is the problem rather than the
+  method.
+- Route (b) bounds both, in every direction tested. Validity is free by weak
+  duality; only sharpness is lost.
+- The **inclusion test** against the closed-form ellipsoid: 400 candidate
+  values, 400 agreements. One is a minimum-norm solve on Parker's joint map
+  ``C == (A, T)``; the other is a projection and an eigen-shape. They have no
+  code in common.
+- Every model sampled *from* the feasible set lands inside the reported set.
+
+### 22.3 Four numerical findings, all in route (c)
+
+The primal bisection is the most delicate thing in the package so far, and it
+was wrong four times before it was right. Each failure is worth recording
+because each looked like success.
+
+**The bracket must widen at both ends.** Widening only upwards leaves the
+search converging to whatever the lower end happened to be — a wrong answer
+that has converged, with a residual that looks fine.
+
+**`(s, t)` is the wrong parameterisation.** With the multiplier `s` itself, the
+model's norm is a ratio of two large numbers as the data weight grows and the
+whole expression cancels. BGP writes it with `gamma == s / t`, and that is not
+a stylistic choice: with `gamma`, the ``1/t`` multiplies the *small* term and
+everything stays bounded.
+
+**The misfit has an exact form with no cancellation at all.** Woodbury gives
+``m* == (1/gamma)(w' - A* z)``, but ``A m* == (gamma I + A A*)^-1 A w'``
+identically — the difference cancels analytically. So the residual is stable at
+every damping, and only the norm needs care.
+
+**And the norm needs its kernel part computed directly.** Taking it as *the
+whole minus the range part* subtracts two quantities of order one to get one of
+order ``1e-16``. At a data weight of ``1e8`` that returned `2.8` for a model
+whose norm was `0.85` — and the bisection then converged, confidently, on
+nothing. Since ``A* d`` lies entirely in the range of ``A*``, the kernel part
+of ``w'`` comes only from ``(1/t) T* q``, and can be had at its own scale.
+
+**The honest limit.** With all four fixed, route (c) tracks route (a) down to a
+noise radius of about ``1e-7`` and degrades below it — a double-precision limit
+of a Woodbury-based bisection, and not a problem, since the noise-free case is
+exactly what route (a) is for.

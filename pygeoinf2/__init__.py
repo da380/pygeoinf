@@ -53,6 +53,7 @@ from .geometry import (
     Hyperplane,
     LinearSubspace,
     OrthogonalProjector,
+    Polytope,
     Subset,
     UniversalSet,
 )
@@ -109,6 +110,7 @@ __all__ = [
     "Hyperplane",
     "LinearSubspace",
     "OrthogonalProjector",
+    "Polytope",
     "Subset",
     "UniversalSet",
     # spaces

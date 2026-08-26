@@ -40,6 +40,7 @@ from ..traits import Traits
 from .sets import Subset
 
 __all__ = [
+    "Polytope",
     "BallSurface",
     "EllipsoidSurface",
     "ConvexSet",
@@ -85,6 +86,291 @@ class ConvexSet(Subset):
         constraint enters ``ProximalGradient`` or any other proximal method.
         """
         return _SetIndicator(self)
+
+    @classmethod
+    def from_support_function(
+        cls,
+        domain: HilbertSpace,
+        oracle: Any,
+        /,
+        *,
+        maximiser: Any = None,
+    ) -> "ConvexSet":
+        """A convex set given only by its support function.
+
+        A closed convex set is *determined* by its support function
+        (Rockafellar 13.1-13.2), so this loses nothing in principle. What it
+        loses in practice is cheapness: every question has to go through the
+        oracle, and one call may be an optimisation.
+
+        This is how the feasible property set of §18.3 arrives. Its support
+        function is a dual minimisation and there is no other description of
+        it, so the set is the oracle.
+
+        Args:
+            domain: the space.
+            oracle: called with a direction, returning ``h(q)``.
+            maximiser: optionally, called with a direction and returning the
+                point of the set attaining the supremum. Supplying it is what
+                makes an *inner* approximation available as well as an outer
+                one.
+        """
+        return _OracleSet(domain, oracle, maximiser=maximiser)
+
+    def __add__(self, other: Any) -> Any:
+        """The Minkowski sum, whose support function is the sum of theirs.
+
+        ``h_{A+B} == h_A + h_B``, exactly, which is the one operation on convex
+        sets that support functions make trivial. Route (b) of §18.3 returns a
+        sum of two ellipsoids and has no simpler description.
+        """
+        if not isinstance(other, ConvexSet):
+            return NotImplemented
+        if other.domain != self.domain:
+            raise ValueError("Both sets must live on the same space.")
+        return _MinkowskiSum(self, other)
+
+    def translate(self, vector: Any, /) -> "ConvexSet":
+        """The set moved by a vector."""
+        return _Translated(self, vector)
+
+
+class _Translated(ConvexSet):
+    """A convex set moved by a vector."""
+
+    def __init__(self, base: ConvexSet, vector: Any, /) -> None:
+        super().__init__(base.domain)
+        self._base = base
+        self._vector = vector
+
+    def project(self, x: Any, /) -> Any:
+        """Move in, project, move back."""
+        inner = self._base.project(self.domain.subtract(x, self._vector))
+        return self.domain.add(inner, self._vector)
+
+    def support_function(self) -> SupportFunction:
+        """``h_{K+v}(q) == h_K(q) + (v, q)``."""
+        return _ShiftedSupport(self._base.support_function(), self._vector)
+
+    def __repr__(self) -> str:
+        return f"Translated({self._base!r})"
+
+
+class _ShiftedSupport(SupportFunction):
+    """The support function of a translated set."""
+
+    def __init__(self, base: SupportFunction, vector: Any, /) -> None:
+        super().__init__(base.domain)
+        self._base = base
+        self._vector = vector
+
+    def _value(self, y: Any) -> float:
+        return self._base(y) + self.domain.inner_product(self._vector, y)
+
+
+class _OracleSet(ConvexSet):
+    """A convex set known only through its support function."""
+
+    def __init__(self, domain: HilbertSpace, oracle: Any, /, *, maximiser: Any) -> None:
+        super().__init__(domain)
+        self._oracle = oracle
+        self._maximiser = maximiser
+
+    @property
+    def has_maximiser(self) -> bool:
+        """Whether a point attaining the supremum can be produced."""
+        return self._maximiser is not None
+
+    def maximiser(self, direction: Any, /) -> Any:
+        """The point of the set furthest along a direction."""
+        if self._maximiser is None:
+            raise AttributeError(
+                "This set was given a support function but no maximiser, so it "
+                "can bound itself from outside but not exhibit a point."
+            )
+        return self._maximiser(direction)
+
+    def support_function(self) -> SupportFunction:
+        """The oracle, as a functional."""
+        return _OracleSupport(self.domain, self._oracle)
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """Not decidable from a support function alone.
+
+        ``(q, x) <= h(q)`` for *every* ``q`` is membership, and no finite
+        number of directions establishes it. What can be had is a certificate
+        of *non*-membership — see :meth:`outside`.
+        """
+        raise NotImplementedError(
+            "Membership needs every direction. Use outside() for a "
+            "certificate of exclusion, or polytope() for an outer bound."
+        )
+
+    def outside(self, x: Any, directions: Any, /, *, rtol: float = 1e-9) -> bool:
+        """True when some direction proves the point is not in the set.
+
+        One-sided, and honestly so: a ``True`` is a proof, and a ``False`` is
+        only the absence of one among the directions tried.
+        """
+        for direction in directions:
+            pairing = self.domain.inner_product(direction, x)
+            if pairing > self._oracle(direction) * (1.0 + rtol) + rtol:
+                return True
+        return False
+
+    def project(self, x: Any, /) -> Any:
+        """Not available from a support function alone."""
+        raise NotImplementedError(
+            "A support function does not give a projection. Bound the set with "
+            "polytope() and project onto that."
+        )
+
+    def polytope(self, directions: Any, /) -> "Polytope":
+        """A certified outer bound, one half-space per direction (§18.4)."""
+        return Polytope(
+            self.domain,
+            [
+                HalfSpace(self.domain, direction, offset=self._oracle(direction))
+                for direction in directions
+            ],
+            outer=True,
+        )
+
+    def __repr__(self) -> str:
+        return f"ConvexSet.from_support_function({self.domain!r})"
+
+
+class _OracleSupport(SupportFunction):
+    """A support function that is whatever the oracle says."""
+
+    def __init__(self, domain: HilbertSpace, oracle: Any, /) -> None:
+        super().__init__(domain)
+        self._oracle = oracle
+
+    def _value(self, y: Any) -> float:
+        return float(self._oracle(y))
+
+
+class _MinkowskiSum(ConvexSet):
+    """``A + B``, known through the sum of their support functions."""
+
+    def __init__(self, first: ConvexSet, second: ConvexSet, /) -> None:
+        super().__init__(first.domain)
+        self._first = first
+        self._second = second
+
+    @property
+    def summands(self) -> tuple[ConvexSet, ConvexSet]:
+        """The two sets being added."""
+        return self._first, self._second
+
+    def support_function(self) -> SupportFunction:
+        """``h_A + h_B``, exactly."""
+        return self._first.support_function() + self._second.support_function()
+
+    def project(self, x: Any, /) -> Any:
+        """Not generally available: the sum of two projections is not one."""
+        raise NotImplementedError(
+            "A Minkowski sum has no projection in closed form, even when its "
+            "summands do. Bound it with a polytope from its support function."
+        )
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """Not generally decidable without an optimisation."""
+        raise NotImplementedError(
+            "Membership of a Minkowski sum needs an optimisation over the "
+            "splitting of the point between the summands."
+        )
+
+    def __repr__(self) -> str:
+        return f"MinkowskiSum({self._first!r}, {self._second!r})"
+
+
+class Polytope(ConvexSet):
+    """An intersection of half-spaces, which remembers which side it is on.
+
+    §18.4's requirement made into a type. A polytope built from support
+    function values *contains* the set it approximates; one built as the convex
+    hull of feasible points is *contained* in it. Reporting the second as
+    though it were the answer is the mistake BGP's Figure 4 is about, and the
+    two are not interchangeable — so ``outer`` is not optional.
+    """
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        half_spaces: Any,
+        /,
+        *,
+        outer: bool,
+    ) -> None:
+        """
+        Args:
+            domain: the space.
+            half_spaces: the constraints, as :class:`HalfSpace` objects.
+            outer: ``True`` if this contains the set it approximates,
+                ``False`` if it is contained in it.
+        """
+        super().__init__(domain)
+        self._half_spaces = tuple(half_spaces)
+        if not self._half_spaces:
+            raise ValueError("A polytope needs at least one half-space.")
+        if any(plane.domain != domain for plane in self._half_spaces):
+            raise ValueError("Every half-space must live on the same space.")
+        self._outer = bool(outer)
+
+    @property
+    def half_spaces(self) -> tuple:
+        """The constraints."""
+        return self._half_spaces
+
+    @property
+    def is_outer(self) -> bool:
+        """Whether this contains the set it approximates, or is contained by it."""
+        return self._outer
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """Whether the point satisfies every constraint."""
+        return all(
+            plane.contains(x, rtol=rtol) if hasattr(plane, "contains") else False
+            for plane in self._half_spaces
+        )
+
+    def project(self, x: Any, /, *, iterations: int = 200) -> Any:
+        """The nearest point, by cyclic projection onto the half-spaces.
+
+        Dykstra's algorithm would be needed for the exact nearest point;
+        alternating projection converges to *a* point of the intersection,
+        which is what a feasibility question wants. The distinction is named
+        rather than hidden.
+        """
+        current = x
+        for _ in range(iterations):
+            previous = current
+            for plane in self._half_spaces:
+                current = plane.project(current)
+            if self.domain.norm(self.domain.subtract(current, previous)) <= 1e-12 * max(
+                self.domain.norm(current), 1.0
+            ):
+                break
+        return current
+
+    def __and__(self, other: "Polytope") -> "Polytope":
+        """Both sets of constraints, which tightens an outer bound."""
+        if self._outer != other.is_outer:
+            raise ValueError(
+                "An outer and an inner polytope cannot be intersected: the "
+                "result would bound nothing."
+            )
+        return Polytope(
+            self.domain,
+            self._half_spaces + other.half_spaces,
+            outer=self._outer,
+        )
+
+    def __repr__(self) -> str:
+        side = "outer" if self._outer else "inner"
+        return f"Polytope({len(self._half_spaces)} half-spaces, {side})"
 
 
 class _SetIndicator(Functional):

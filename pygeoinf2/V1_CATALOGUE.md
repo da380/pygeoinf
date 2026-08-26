@@ -199,7 +199,7 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `LinearImageSupportFunction` | Ported | `_ImageSupport`; v1's domain/codomain were the wrong way round (§9) | |
 | `MinkowskiSumSupportFunction` | Ported | `_MinkowskiSupport` | |
 | `ScaledSupportFunction` | Ported | `_ScaledSupport` | |
-| `CallableSupportFunction` | Planned | §18.12: `ConvexSet.from_support_function`, the oracle case M5 route (d) needs | |
+| `CallableSupportFunction` | Ported | §18.12: `ConvexSet.from_support_function`, the oracle case M5 route (d) needs | |
 
 ## `convex_optimisation.py` → `numerics/convex.py`
 
@@ -211,7 +211,7 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `QPSolver`, `QPResult` | Planned | M5 stage 5.9 | |
 | `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Planned | M5 stage 5.9. Coordinates are fine here: the QP lives in a finite-dimensional, canonically Euclidean space | |
 | `best_available_qp_solver` | Planned | M5 stage 5.9 | |
-| `PrimalKKTSolver`, `KKTResult` | Planned | M5 stage 5.9 — this is `work/sphere_dli_example.py`'s solver, so it gates reproducing that example | |
+| `PrimalKKTSolver`, `KKTResult` | Ported | M5 stage 5.9 — this is `work/sphere_dli_example.py`'s solver, so it gates reproducing that example | |
 | `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Planned | M5 stage 5.9 | |
 | `ChambollePockSolver`, `ChambollePockResult` | Planned | M5 stage 5.9 | |
 | `solve_support_values` | Planned | M5 stage 5.9; becomes support-function evaluation on a `ConvexSet` | |
@@ -234,8 +234,8 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `_EllipsoidalGeometry` | Subsumed | `_EllipsoidSupport` | |
 | `Sphere` | Ported | The *surface* of a ball. Not convex, so it has no support function; used for sampling on a shell. Worth keeping? | Worth keeping with an eye to constrained optimiseation. Same for ellipsoid below.|
 | `EllipsoidSurface` | Ported | As above | |
-| `LevelSet`, `SublevelSet` | Planned | Sets defined by a functional. §18.5's inclusion test produces exactly a sublevel set, so this arrives with M5 stage 5.8 | |
-| `PolyhedralSet` | Planned | §18.12: `Polytope`, with a recorded inner/outer status so §18.4's sandwich is a type rather than a convention | |
+| `LevelSet`, `SublevelSet` | Ported | Sets defined by a functional. §18.5's inclusion test produces exactly a sublevel set, so this arrives with M5 stage 5.8 | |
+| `PolyhedralSet` | Ported | §18.12: `Polytope`, with a recorded inner/outer status so §18.4's sandwich is a type rather than a convention | |
 
 ## `subspaces.py` → `geometry/subspaces.py`
 
@@ -261,7 +261,7 @@ deliberately not started.
 | `ConstrainedLinearLeastSquaresInversion` | Planned | M5 stage 5.3 | |
 | `LinearMinimumNormInversion` | Ported | M5 stage 5.3, with the discrepancy principle on §18.6's root-find primitive | |
 | `ConstrainedLinearMinimumNormInversion` | Planned | M5 stage 5.3 | |
-| `BackusInference` | Planned | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
+| `BackusInference` | Ported | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
 | `DualMasterCostFunction` | Planned | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
 
 ## `symmetric_space/`

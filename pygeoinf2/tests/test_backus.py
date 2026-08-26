@@ -1,0 +1,327 @@
+"""
+Set-valued inference: the feasible property set, computed three ways.
+
+Routes (a), (b) and (c) of DESIGN.md §18.3 compute the same object, so every
+test here is a comparison rather than an assertion. The strongest are the two
+that cross a method boundary: route (c) must agree with route (a) as the noise
+vanishes, and the primal inclusion test must agree with the closed-form
+ellipsoid on every candidate value.
+"""
+
+import numpy as np
+import pytest
+
+from pygeoinf2.algebra.operators import LinearOperator
+from pygeoinf2.algebra.spaces import EuclideanSpace
+from pygeoinf2.geometry.convex import Ball, ConvexSet, HalfSpace, Polytope
+from pygeoinf2.inference import (
+    BackusGilbert,
+    BackusInference,
+    FeasibleProperty,
+    LinearForwardProblem,
+)
+
+from .conftest import make_weighted_space
+
+
+@pytest.fixture
+def setting(rng):
+    """A model space, an under-determined map, a property, and a feasible truth."""
+    model = make_weighted_space()
+    data = EuclideanSpace(2)
+    target_space = EuclideanSpace(2)
+    forward = LinearOperator.from_derivative_matrix(
+        model, data, rng.normal(size=(data.dim, model.dim))
+    )
+    target = LinearOperator.from_derivative_matrix(
+        model, target_space, rng.normal(size=(target_space.dim, model.dim))
+    )
+    raw = model.random(rng=rng)
+    truth = model.scale(2.0 / model.norm(raw), raw)  # one vector, scaled
+    return model, forward, target, truth, forward(truth)
+
+
+def directions(space):
+    return [
+        space.scale(sign, space.basis_vector(index))
+        for index in range(space.dim)
+        for sign in (1.0, -1.0)
+    ]
+
+
+class TestClosedForm:
+    def test_the_truth_is_in_the_set(self, setting):
+        model, forward, target, truth, data = setting
+        assert model.norm(truth) <= 3.0
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )
+        assert inference(data).contains(target(truth))
+
+    def test_the_centre_is_the_minimum_norm_property(self, setting):
+        model, forward, target, truth, data = setting
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )
+        assert np.allclose(
+            inference(data).centre, target(inference.minimum_norm_model(data))
+        )
+
+    def test_every_feasible_model_lands_inside(self, setting, rng):
+        """Sampled from the feasible set itself, so a miss would be a defect."""
+        model, forward, target, truth, data = setting
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )
+        answer = inference(data)
+        anchor = inference.minimum_norm_model(data)
+        budget = np.sqrt(inference.budget(data))
+        for _ in range(300):
+            offset = inference._kernel(model.random(rng=rng))
+            length = model.norm(offset)
+            if length == 0.0:
+                continue
+            candidate = model.add(
+                anchor,
+                model.scale(budget * rng.uniform(0.0, 1.0) / length, offset),
+            )
+            if model.norm(candidate) <= 3.0:
+                assert answer.contains(target(candidate))
+
+    def test_the_prior_alone_brackets_the_answer(self, setting):
+        model, forward, target, truth, data = setting
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )
+        answer, before = inference(data), inference.prior_only()
+        assert before.contains(answer.centre)
+        space = inference.target_space
+        for direction in directions(space):
+            assert (
+                before.support_function()(direction)
+                >= answer.support_function()(direction) - 1e-8
+            )
+
+    def test_data_the_prior_cannot_fit_are_refused(self, setting):
+        model, forward, target, truth, data = setting
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=0.01)
+        )
+        with pytest.raises(ValueError, match="fits these data"):
+            inference(data)
+
+    def test_the_shape_does_not_depend_on_the_data(self, setting, rng):
+        """Only the centre and the size do -- the same structure as a Gaussian
+        estimator's data-independent covariance."""
+        model, forward, target, truth, data = setting
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )
+        assert inference.shape is inference.shape
+
+
+class TestInclusionTest:
+    def test_it_agrees_with_the_closed_form_everywhere(self, setting, rng):
+        """Two entirely different computations of one statement.
+
+        The set comes from a projection and an eigen-shape; the test comes from
+        a minimum-norm solve on Parker's joint map. They must agree on every
+        candidate, and a disagreement would name which is wrong.
+        """
+        model, forward, target, truth, data = setting
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )
+        answer = inference(data)
+        space = inference.target_space
+        inside = 0
+        for _ in range(200):
+            candidate = space.from_components(
+                space.to_components(answer.centre) + rng.normal(size=space.dim) * 1.5
+            )
+            by_set = answer.contains(candidate)
+            inside += by_set
+            assert inference.admits(candidate, data) == by_set
+        assert 20 < inside < 180  # the sample straddles the boundary
+
+    def test_the_truth_is_admitted_at_its_own_norm(self, setting):
+        model, forward, target, truth, data = setting
+        inference = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )
+        assert inference.inclusion_norm(target(truth), data) <= model.norm(truth) + 1e-8
+        assert inference.admits(target(truth), data)
+
+
+class TestPrimalRoute:
+    @pytest.mark.parametrize("noise", [1e-3, 1e-6])
+    def test_it_agrees_with_the_closed_form_as_the_noise_vanishes(self, setting, noise):
+        """The parity test between route (c) and route (a).
+
+        Two methods with nothing in common — a bisection over two multipliers
+        against a projection and an eigen-shape — converging on the same
+        numbers as the noise ball shrinks. The agreement tracks the noise
+        radius, which is what says the difference is the problem and not the
+        method.
+        """
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(forward)
+        prior = Ball(model, radius=3.0)
+        exact = BackusInference(problem, target, prior)(data).support_function()
+        primal = FeasibleProperty(
+            problem, target, prior, noise=Ball(forward.codomain, radius=noise)
+        )
+        for direction in directions(target.codomain):
+            assert primal.support(direction, data) == pytest.approx(
+                exact(direction), rel=10.0 * noise
+            )
+
+    def test_the_extremal_model_saturates_the_prior(self, setting):
+        """Both constraints are active at the optimum, so the norm is the
+        radius exactly -- which is the bisection's own convergence test seen
+        from outside."""
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(forward)
+        primal = FeasibleProperty(
+            problem,
+            target,
+            Ball(model, radius=3.0),
+            noise=Ball(forward.codomain, radius=1e-4),
+        )
+        for direction in directions(target.codomain):
+            extremal = primal.extremal_model(direction, data)
+            assert model.norm(extremal) == pytest.approx(3.0, rel=1e-6)
+
+    def test_the_extremal_model_is_feasible_and_attains_the_bound(self, setting, rng):
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.2)
+        problem = LinearForwardProblem(forward, error=noise)
+        primal = FeasibleProperty(problem, target, Ball(model, radius=3.0))
+        for direction in directions(target.codomain):
+            extremal = primal.extremal_model(direction, data)
+            assert model.norm(extremal) <= 3.0 + 1e-6
+            residual = forward.codomain.subtract(data, forward(extremal))
+            assert forward.codomain.norm(residual) <= 0.2 + 1e-6
+            assert target.codomain.inner_product(
+                target(extremal), direction
+            ) == pytest.approx(primal.support(direction, data))
+
+    def test_a_slack_data_constraint_gives_the_prior_bound(self, setting):
+        """When the prior's own support point already fits, there is nothing
+        to solve and the answer is ``M ||T* q||``."""
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=1e6)
+        )
+        primal = FeasibleProperty(problem, target, Ball(model, radius=3.0))
+        direction = target.codomain.basis_vector(0)
+        assert primal.support(direction, data) == pytest.approx(
+            3.0 * model.norm(target.adjoint(direction))
+        )
+
+
+class TestLinearCertificate:
+    def test_it_bounds_the_exact_set(self, setting):
+        """Validity is free; only sharpness is lost. That is weak duality, and
+        it is the property that makes route (b) safe to use."""
+        model, forward, target, truth, data = setting
+        noise = Ball(forward.codomain, radius=0.2)
+        problem = LinearForwardProblem(forward, error=noise)
+        prior = Ball(model, radius=3.0)
+        exact = FeasibleProperty(problem, target, prior)(data).support_function()
+        certificate = (
+            BackusGilbert(problem, target, prior).uncertainty(data).support_function()
+        )
+        for direction in directions(target.codomain):
+            assert certificate(direction) >= exact(direction) - 1e-6
+
+    def test_the_error_bars_split_into_two_causes(self, setting):
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.05)
+        )
+        estimator = BackusGilbert(problem, target, Ball(model, radius=3.0))
+        estimate, resolution, noise = estimator.error_bars(data)
+        assert np.all(resolution > 0.0)
+        assert np.all(noise > 0.0)
+        assert np.all(np.abs(target(truth) - estimate) <= resolution + noise + 1e-8)
+
+    def test_less_noise_narrows_only_the_noise_term(self, setting):
+        model, forward, target, truth, data = setting
+        prior = Ball(model, radius=3.0)
+        wide = BackusGilbert(
+            LinearForwardProblem(forward),
+            target,
+            prior,
+            noise=Ball(forward.codomain, radius=0.5),
+        ).error_bars(data)
+        narrow = BackusGilbert(
+            LinearForwardProblem(forward),
+            target,
+            prior,
+            noise=Ball(forward.codomain, radius=0.05),
+        ).error_bars(data)
+        assert np.all(narrow[2] < wide[2])
+
+    def test_the_unresolved_operator_complements_the_resolution(self, setting):
+        model, forward, target, truth, data = setting
+        estimator = BackusGilbert(
+            LinearForwardProblem(forward),
+            target,
+            Ball(model, radius=3.0),
+            noise=Ball(forward.codomain, radius=0.1),
+        )
+        x = model.random(rng=np.random.default_rng(0))
+        assert np.allclose(
+            estimator.unresolved(x),
+            target.codomain.subtract(target(x), estimator.resolution(x)),
+        )
+
+    def test_a_general_convex_prior_is_refused_by_this_route(self, setting):
+        from pygeoinf2.geometry.convex import Ellipsoid
+        from pygeoinf2.traits import Traits
+
+        model, forward, target, truth, data = setting
+        shape = LinearOperator.self_adjoint(
+            model, lambda v: v, traits=Traits.POSITIVE_DEFINITE
+        )
+        with pytest.raises(TypeError, match="must be a Ball"):
+            BackusGilbert(
+                LinearForwardProblem(forward), target, Ellipsoid(model, shape)
+            )
+
+
+class TestOuterApproximation:
+    def test_a_polytope_from_support_values_contains_the_set(self, setting):
+        model, forward, target, truth, data = setting
+        problem = LinearForwardProblem(
+            forward, error=Ball(forward.codomain, radius=0.2)
+        )
+        answer = FeasibleProperty(problem, target, Ball(model, radius=3.0))(data)
+        polytope = answer.polytope(directions(target.codomain))
+        assert polytope.is_outer
+        assert polytope.contains(target(truth))
+
+    def test_more_directions_only_tighten_it(self, setting):
+        model, forward, target, truth, data = setting
+        answer = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=3.0)
+        )(data)
+        space = target.codomain
+        few = directions(space)
+        many = few + [
+            space.from_components(np.array([np.cos(angle), np.sin(angle)]))
+            for angle in np.linspace(0.0, 2.0 * np.pi, 12, endpoint=False)
+        ]
+        oracle = ConvexSet.from_support_function(space, answer.support_function())
+        assert len(oracle.polytope(many).half_spaces) > len(
+            oracle.polytope(few).half_spaces
+        )
+
+    def test_an_outer_and_an_inner_bound_cannot_be_intersected(self):
+        space = EuclideanSpace(2)
+        plane = HalfSpace(space, np.array([1.0, 0.0]), offset=1.0)
+        outer = Polytope(space, [plane], outer=True)
+        inner = Polytope(space, [plane], outer=False)
+        with pytest.raises(ValueError, match="bound nothing"):
+            outer & inner

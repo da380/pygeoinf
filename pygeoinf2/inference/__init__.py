@@ -18,6 +18,7 @@ operator is the identity, so there is one code path.
 See DESIGN.md section 18.
 """
 
+from .backus import BackusGilbert, BackusInference, FeasibleProperty
 from .bayesian import Bayesian
 from .estimators import (
     Estimator,
@@ -31,7 +32,10 @@ from .point import LeastSquares, MinimumNorm, choose_formalism
 from .problem import ForwardProblem, LinearForwardProblem
 
 __all__ = [
+    "BackusGilbert",
+    "BackusInference",
     "Bayesian",
+    "FeasibleProperty",
     "Estimator",
     "ForwardProblem",
     "GaussianEstimator",
