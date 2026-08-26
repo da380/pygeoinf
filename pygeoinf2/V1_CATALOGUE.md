@@ -95,9 +95,9 @@ spectral path is missing along with `kl_divergence` itself;
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
 | `LinearOperator` | Ported | `LinearOperator`, with traits and memoised adjoints | |
-| `MatrixLinearOperator` | Subsumed | `from_component_matrix` / `from_derivative_matrix` | A point of this specialisation is to have easy access to the matrix elements which can be useful. Same with the other specialisation below. So we don't need the classes, but that aspect is helpful. |
-| `DenseMatrixLinearOperator` | Subsumed | as above, plus `assembled()` | |
-| `SparseMatrixLinearOperator` | Planned (A) | No sparse-backed operator in v2. `_weight_operator` in `symmetric_space/base.py` does it privately for one case; it probably wants to be public | Yes, this form is useful in practice. |
+| `MatrixLinearOperator` | Ported | `from_component_matrix` / `from_derivative_matrix` | A point of this specialisation is to have easy access to the matrix elements which can be useful. Same with the other specialisation below. So we don't need the classes, but that aspect is helpful. |
+| `DenseMatrixLinearOperator` | Ported | as above, plus `assembled()` | |
+| `SparseMatrixLinearOperator` | Ported | No sparse-backed operator in v2. `_weight_operator` in `symmetric_space/base.py` does it privately for one case; it probably wants to be public | Yes, this form is useful in practice. |
 | `DiagonalSparseMatrixLinearOperator` | Ported | `DiagonalLinearOperator`, with a closed algebra and exact functional calculus | |
 
 ## `linear_forms.py`, `nonlinear_forms.py`, `nonlinear_operators.py`, `affine_operators.py`
@@ -132,11 +132,11 @@ spectral path is missing along with `kl_divergence` itself;
 | `BICGStabSolver` | Ported | `BiCGStabSolver`, coordinate-free | |
 | `LSQRSolver` | Ported | `LSQRSolver`; v1's sign bug in the damped branch is fixed (§9) | |
 | `LUSolver`, `CholeskySolver`, `EigenSolver` | Ported | same names, coordinate-backed | |
-| `FCGSolver` | Planned (N) | Flexible CG, for a preconditioner that changes between iterations. Not ported. Needed if the localised preconditioners come back | I've not really used it, but it would be nice to keep |
+| `FCGSolver` | Ported | Flexible CG, for a preconditioner that changes between iterations. Not ported. Needed if the localised preconditioners come back | I've not really used it, but it would be nice to keep |
 | `ScipyIterativeSolver` | Dropped | The point of v2's Krylov methods is that they run coordinate-free against PETSc or MFEM. A SciPy wrapper cannot | I'm happy to drop this, though my sense was when components are available this might be preferable to the hand written forms. But maybe not. |
 | `CGMatrixSolver`, `BICGMatrixSolver`, `BICGStabMatrixSolver`, `GMRESMatrixSolver` | Dropped | Matrix-only convenience wrappers around SciPy, superseded as above. **GMRES itself is missing** and is the one gap — see Open below | |
-| *(GMRES, coordinate-free)* | Planned (N) | v2 has no solver for a non-symmetric operator other than BiCGStab. Worth adding? | Yes, if it's doable. Most invers methods lead to symmetric problems, but for completeness if nothing else. |
-| `ProgressCallback`, `ResidualTrackingCallback`, `SolutionTrackingCallback` | Planned (N) | v2 returns a `SolveResult` with the residual history instead. Live callbacks are still wanted for long solves — no stage yet | Yes, I think this feature is useful, especially in debugging. Adding in
+| *(GMRES, coordinate-free)* | Ported | v2 has no solver for a non-symmetric operator other than BiCGStab. Worth adding? | Yes, if it's doable. Most invers methods lead to symmetric problems, but for completeness if nothing else. |
+| `ProgressCallback`, `ResidualTrackingCallback`, `SolutionTrackingCallback` | Ported | v2 returns a `SolveResult` with the residual history instead. Live callbacks are still wanted for long solves — no stage yet | Yes, I think this feature is useful, especially in debugging. Adding in
 addtional information as you suggest will be very useful. |
 
 ## `preconditioners.py` → `numerics/preconditioners.py`
@@ -232,8 +232,8 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `HalfSpace` | Ported | `HalfSpace` | |
 | `HyperPlane` | Ported | `Hyperplane` | |
 | `_EllipsoidalGeometry` | Subsumed | `_EllipsoidSupport` | |
-| `Sphere` | Planned (G) | The *surface* of a ball. Not convex, so it has no support function; used for sampling on a shell. Worth keeping? | Worth keeping with an eye to constrained optimiseation. Same for ellipsoid below.|
-| `EllipsoidSurface` | Planned (G) | As above | |
+| `Sphere` | Ported | The *surface* of a ball. Not convex, so it has no support function; used for sampling on a shell. Worth keeping? | Worth keeping with an eye to constrained optimiseation. Same for ellipsoid below.|
+| `EllipsoidSurface` | Ported | As above | |
 | `LevelSet`, `SublevelSet` | Planned | Sets defined by a functional. §18.5's inclusion test produces exactly a sublevel set, so this arrives with M5 stage 5.8 | |
 | `PolyhedralSet` | Planned | §18.12: `Polytope`, with a recorded inner/outer status so §18.4's sandwich is a type rather than a convention | |
 
@@ -362,7 +362,7 @@ methods, and a class marked *Ported* above can still have shed half of them.
 | `identity_operator`, `zero_operator` | Ported | `LinearOperator.identity`, `LinearOperator.zero` | |
 | `riesz`, `inverse_riesz`, `to_dual`, `from_dual`, `dual`, `duality_product` | Dropped | No dual spaces. `representer` and `apply_gram`/`solve_gram` do this work, and the metric enters in exactly one place (§1, §5.6) | |
 | `is_element` | Dropped | Duck typing. v1's implementations mostly checked an array shape, which caught nothing worth catching | |
-| `coordinate_inclusion`, `coordinate_projection` | Planned (A) | Operators between a space and its component space. Not ported; reachable through `from_component_matrix` on the identity, but clumsily | I think this is useful on the appropriate spaces. |
+| `coordinate_inclusion`, `coordinate_projection` | Ported | Operators between a space and its component space. Not ported; reachable through `from_component_matrix` on the identity, but clumsily | I think this is useful on the appropriate spaces. |
 | — | *(new)* | `orthonormal_basis`, `white_noise`, `representer`, `gram_matrix` | |
 
 ## `LinearOperator` (19 methods)
@@ -381,7 +381,7 @@ methods, and a class marked *Ported* above can still have shed half of them.
 | `from_formally_self_adjoint` | Ported | `lift_formal_adjoint(..., traits=...)`. It no longer claims self-adjointness for you: a formally self-adjoint operator is self-adjoint under the new metric only if it commutes with the ratio of the two (§9) | |
 | `linear` | Dropped | Type-level in v2 | |
 | `dual`, `self_dual` | Dropped | No dual spaces | |
-| `extract_diagonal`, `extract_diagonals` | Planned (A) | Not ported. `random_diagonal` covers the stochastic case; the exact one is what the banded preconditioner needs | This has been useful in the past, so I'd want a reason or a replacement. |
+| `extract_diagonal`, `extract_diagonals` | Ported | Not ported. `random_diagonal` covers the stochastic case; the exact one is what the banded preconditioner needs | This has been useful in the past, so I'd want a reason or a replacement. |
 | — | *(new)* | `traits`, `with_traits`, `from_derivative_callables`, `has_derivative`, `has_second_derivative` | |
 
 ## `GaussianMeasure` (41 methods)
@@ -406,13 +406,13 @@ concentration of things to decide about.
 | `as_multivariate_normal` | Planned | M5. The bridge to `scipy.stats` | |
 | `with_dense_covariance` | Subsumed | `covariance.assembled()` | |
 | `low_rank_approximation` | Subsumed | `random_eig` on the covariance | |
-| `with_regularized_inverse` | Planned (P) | Precision of a rank-deficient covariance, with a floor. Not ported | Has been used, so probably worth keeping. |
-| `with_sparse_approximation` | Planned (P) | Thresholded sparse covariance. Wanted by the localised preconditioners | Has been used, so probably worth keeping.  |
+| `with_regularized_inverse` | Ported | Precision of a rank-deficient covariance, with a floor. Not ported | Has been used, so probably worth keeping. |
+| `with_sparse_approximation` | Ported | Thresholded sparse covariance. Wanted by the localised preconditioners | Has been used, so probably worth keeping.  |
 | `sample_pointwise_variance`, `sample_pointwise_std` | Subsumed | `pointwise_variance` on a `SymmetricSpace` computes this exactly, without sampling — but only for an *invariant* measure. The sampled version is still the general answer | |
 | `deflated_pointwise_variance`, `deflated_pointwise_std` | Planned (P) | Pointwise variance with a low-rank part removed. Needs `deflated_diagonal` | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
 | `two_point_covariance` | Ported | `C(x, y)` as a function of two points. Not ported | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
 | `directional_statistics`, `directional_covariance`, `directional_variance` | Ported | Statistics of `(x, u)` along given directions. Cheap and useful; no v2 home | Yes. useful. |
-| `rescale_directional_variance` | Planned (P) | as above | Again, useful|
+| `rescale_directional_variance` | Ported | as above | Again, useful|
 | `kl_divergence` | Ported | Between two Gaussians. Needs `estimate_log_determinant`, which is in `numerics` | Definitely needed, and possibly improvable.|
 | `nuclear_norm`, `hilbert_schmidt_norm` | Ported | Trace-class and Hilbert–Schmidt norms of the covariance. `random_trace` gives the first stochastically | yes, useful |
 | — | *(new)* | `mahalanobis_squared`, `log_density`, `grad_log_density`, `precision` | |
@@ -458,7 +458,7 @@ different metric. So the union of method names is the honest comparison.
 | `with_order` | Ported | same name | |
 | `order_inclusion_operator` | Ported | The embedding `H^s -> H^t`. Not ported | This is useful |
 | `spectral_projection_operator` | Ported | Projection onto a band of degrees. `coefficient_operator` gives the map *out*; this is the projector *within* | Useful |
-| `derivative_operator` | Planned (S) | `d/dx` on the circle and line. Diagonal in the basis, so nearly free | Useful |
+| `derivative_operator` | Ported | `d/dx` on the circle and line. Diagonal in the basis, so nearly free | Useful |
 | `flexural_operator`, `inverse_flexural_operator` | Ported | Not ported. `work/flexure.py` and `work/dynamic_topography.py` are built on these, so they gate reproducing two of the worked examples | Useful |
 | `spatial_multiplication_operator` | Ported | Multiplication by a field. Needed for a spatially varying coefficient, so it gates the same two examples | Needed and simple |
 | `l2_products_operator` | Ported | Inner products against a set of fields | Needed|
@@ -473,12 +473,12 @@ different metric. So the union of method names is the honest comparison.
 | `heat_kernel_gaussian_measure` | Ported | `heat_measure` | |
 | `sobolev_kernel_gaussian_measure` | Ported | `sobolev_measure` | |
 | `point_value_scaled_*_gaussian_measure` (three) | Ported | `pointwise_std=` on each of the above, which is one keyword rather than three methods (§20.7) | |
-| `norm_scaled_*_gaussian_measure` (three) | Planned (P) | Calibration by the *norm* rather than the pointwise value. Not ported; the same one-keyword treatment would work | Worth it|
+| `norm_scaled_*_gaussian_measure` (three) | Ported | Calibration by the *norm* rather than the pointwise value. Not ported; the same one-keyword treatment would work | Worth it|
 | `correlated_invariant_gaussian_measure` | Planned (P) | See `CorrelatedInvariantGaussianMeasure` in Part 1 | Needed in some form. See comments above |
 | `heat_kernel`, `sobolev_kernel`, `sobolev_function` | Subsumed | `heat_symbol`, `sobolev_symbol` | |
 | `invariant_automorphism` | Ported | `invariant_operator` | |
-| `invariant_covariance_function` | Planned (P) | The covariance as a function of geodesic distance. Not ported | Worth having, I thought. Need a reason to drop. |
-| `sample_power_measure` | Planned (P) | Sampling from a prescribed power spectrum | Needed |
+| `invariant_covariance_function` | Ported | The covariance as a function of geodesic distance. Not ported | Worth having, I thought. Need a reason to drop. |
+| `sample_power_measure` | Ported | Sampling from a prescribed power spectrum | Needed |
 | `vector_multiply`, `vector_sqrt` | Ported | Pointwise algebra on fields. `work/flexure.py` builds its rigidity field with these. No v2 home — see `HilbertModuleMixin` in Part 1 | Needed in some form|
 | `from_covariance`, `from_heat_kernel_prior`, `from_sobolev_kernel_prior`, `from_sobolev_parameters` | Subsumed | Constructors on the measures rather than on the space | |
 
@@ -490,8 +490,8 @@ different metric. So the union of method names is the honest comparison.
 | `iris_stations`, `random_earthquakes` | Ported | `stations`, `earthquakes` | |
 | `domain_mask`, `random_domain_points` | Ported | `domain_mask`; `random_domain_points` is **Open** | |
 | `pairs_within_distance` | Ported | same name, with the chord formula so a point is in its own neighbourhood (§20.7) | |
-| `cluster_points` | Planned (S) | Not ported | Useful for some preconditioners |
-| `random_source_receiver_paths` | Planned (S) | Not ported. `stations` and `earthquakes` give the ingredients, so this is convenience — but it is convenience every tomography script writes | Yes, needed somewhere |
+| `cluster_points` | Ported | Not ported | Useful for some preconditioners |
+| `random_source_receiver_paths` | Ported | Not ported. `stations` and `earthquakes` give the ingredients, so this is convenience — but it is convenience every tomography script writes | Yes, needed somewhere |
 
 ## `HilbertSpaceDirectSum` (21 methods)
 
@@ -509,11 +509,11 @@ different metric. So the union of method names is the honest comparison.
 |---|---|---|---|
 | `translation`, `projector`, `project`, `from_linear_equation` | Ported | same names | |
 | `tangent_space`, `get_tangent_basis` | Ported | `tangent` | |
-| `from_tangent_basis`, `from_complement_basis` | Planned (G) | Not ported; `OrthogonalProjector.from_basis` is the ingredient | All these methods below have been useful, and so they are either needed or the functionality provided elsewhere |
-| `from_hyperplanes`, `to_hyperplanes` | Planned (G) | Not ported | |
-| `constraint_operator`, `constraint_value`, `has_explicit_equation` | Planned (G) | Whether the subspace remembers the equation that defined it | |
-| `pseudo_inverse`, `projection_operator`, `boundary` | Planned (G) | Not ported | |
-| `with_translation`, `with_constraint_value` | Planned (G) | Not ported | |
+| `from_tangent_basis`, `from_complement_basis` | Ported | Not ported; `OrthogonalProjector.from_basis` is the ingredient | All these methods below have been useful, and so they are either needed or the functionality provided elsewhere |
+| `from_hyperplanes`, `to_hyperplanes` | Ported | Not ported | |
+| `constraint_operator`, `constraint_value`, `has_explicit_equation` | Ported | Whether the subspace remembers the equation that defined it | |
+| `pseudo_inverse`, `projection_operator`, `boundary` | Ported | Not ported | |
+| `with_translation`, `with_constraint_value` | Ported | Not ported | |
 | `solver`, `preconditioner` | Subsumed | Passed in where needed rather than stored on the subspace | |
 | `is_element` | Ported | `contains` on `Subset` | |
 | `condition_gaussian_measure` | Planned | M5 — conditioning a measure on a linear constraint is a small Bayesian update | |

@@ -313,6 +313,7 @@ class SymmetricSpace(
         *,
         expectation: np.ndarray | None = None,
         pointwise_std: float | None = None,
+        norm_std: float | None = None,
     ) -> GaussianMeasure:
         """A Gaussian whose covariance is diagonal in the spectral basis.
 
@@ -324,8 +325,25 @@ class SymmetricSpace(
         ``pointwise_std`` rescales the whole spectrum so that
         :meth:`pointwise_variance` comes out as its square, leaving the shape
         of the spectrum — and so the correlation length — untouched.
+        ``norm_std`` does the same against ``E||x||^2`` instead, which is the
+        total rather than the local size. They are alternatives; asking for
+        both is a contradiction and is refused.
         """
         variances = self._resolve_variances(spectral_variances)
+        if pointwise_std is not None and norm_std is not None:
+            raise ValueError(
+                "Give pointwise_std or norm_std, not both: they scale the same "
+                "spectrum to two different targets."
+            )
+        if norm_std is not None:
+            if norm_std <= 0.0:
+                raise ValueError("norm_std must be positive.")
+            # E||x||^2 is the trace of the covariance, which for a diagonal
+            # covariance is the sum of its eigenvalues.
+            current = float(np.sum(variances))
+            if current <= 0.0:
+                raise ValueError("A measure with no variance cannot be scaled.")
+            variances = variances * (norm_std**2 / current)
         if pointwise_std is not None:
             if pointwise_std <= 0.0:
                 raise ValueError("pointwise_std must be positive.")
@@ -363,6 +381,7 @@ class SymmetricSpace(
         amplitude: float = 1.0,
         expectation: np.ndarray | None = None,
         pointwise_std: float | None = None,
+        norm_std: float | None = None,
     ) -> GaussianMeasure:
         """A Gaussian prior whose covariance is a Sobolev symbol.
 
@@ -375,6 +394,7 @@ class SymmetricSpace(
             amplitude**2 * self.sobolev_symbol(-order, scale),
             expectation=expectation,
             pointwise_std=pointwise_std,
+            norm_std=norm_std,
         )
 
     def heat_measure(
@@ -385,17 +405,71 @@ class SymmetricSpace(
         amplitude: float = 1.0,
         expectation: np.ndarray | None = None,
         pointwise_std: float | None = None,
+        norm_std: float | None = None,
     ) -> GaussianMeasure:
         """A Gaussian prior with a heat-kernel covariance."""
         return self.invariant_measure(
             amplitude**2 * self.heat_symbol(time),
             expectation=expectation,
             pointwise_std=pointwise_std,
+            norm_std=norm_std,
         )
 
     # ----------------------------------------------------------------- #
     #                        Point evaluation                           #
     # ----------------------------------------------------------------- #
+
+    def power_measure(
+        self,
+        power: np.ndarray | Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        expectation: np.ndarray | None = None,
+    ) -> GaussianMeasure:
+        """A Gaussian with a prescribed power *per degree*.
+
+        The spectrum a geophysicist actually writes down: how much variance
+        each degree holds in total, rather than how much each component holds.
+        The two differ by the multiplicity, and dividing by it is the whole of
+        this method.
+
+        Args:
+            power: total variance at each degree, indexed from zero, or a
+                callable applied to the array of degrees.
+            expectation: the mean. Defaults to zero.
+        """
+        degrees = self.degrees
+        if callable(power):
+            per_degree = np.asarray(power(degrees.astype(float)), dtype=float)
+        else:
+            values = np.asarray(power, dtype=float)
+            if values.size <= degrees.max():
+                raise ValueError(
+                    f"Power is needed up to degree {degrees.max()}, got "
+                    f"{values.size} values."
+                )
+            per_degree = values[degrees]
+        counts = np.array([np.count_nonzero(degrees == d) for d in degrees])
+        return self.invariant_measure(per_degree / counts, expectation=expectation)
+
+    def covariance_function(
+        self, measure: GaussianMeasure, distances: np.ndarray, /
+    ) -> np.ndarray:
+        """An invariant measure's covariance as a function of distance.
+
+        Homogeneity is what makes this well defined: the two-point covariance
+        depends on the pair of points only through the distance between them,
+        so one anchor and a walk away from it gives the whole function.
+        """
+        anchor = self.reference_point
+        field = measure.two_point_covariance(anchor)
+        return self.evaluate(field, self.walk_from(anchor, distances))
+
+    def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
+        """Points at given geodesic distances from a point, along one direction."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement walk_from."
+        )
 
     def dirac(self, point: Any, /) -> LinearFunctional:
         """The evaluation functional at a point.

@@ -3293,3 +3293,71 @@ and so the traction, on its own — which leaves the geoid constraining the
 density alone. Dropping the topography restores the coupling to `0.0836`. The
 example now demonstrates that rather than asserting the opposite, and it is the
 better result: it says what the second observable was worth.
+
+### 21.16 Phase 4 as built
+
+The catalogue's remaining algebra, numerics, probability and geometry — the
+rows that block nothing, which is why they came last. 993 tests.
+
+```
+algebra/operators.py    sparse matrices in the matrix constructors, diagonals()
+algebra/spaces.py       coordinate_projection, coordinate_inclusion
+numerics/solvers.py     GMRESSolver, FlexibleCGSolver, callbacks and history
+probability/gaussian.py with_regularized_inverse, with_sparse_approximation,
+                        rescale_directional_variance
+symmetric_space/        norm_std=, power_measure, covariance_function,
+                        derivative_operator, cluster_points,
+                        source_receiver_paths
+geometry/convex.py      BallSurface, EllipsoidSurface
+geometry/subspaces.py   from_tangent_basis, from_complement_basis,
+                        from_hyperplanes, to_hyperplanes, pseudo_inverse,
+                        projection_operator, boundary, with_translation,
+                        with_constraint_value, the remembered equation
+```
+
+**Sparse matrices needed no new constructor.** A `scipy.sparse` matrix supports
+`@` and `.T`, which is all `from_component_matrix` and `from_derivative_matrix`
+ever use, so the only change was to stop calling `np.asarray` on it. v1 has two
+classes for this; v2 has one branch in one helper.
+
+**A subspace now remembers the equation it was built from**, and says so. One
+built from a basis knows its tangent space but not which particular `A x == b`
+a caller had in mind, so `constraint_operator` raises rather than inventing one
+with the same solution set. `to_hyperplanes` is the honest alternative: *an*
+equation, from an arbitrary orthonormal basis of the complement.
+
+### 21.17 Three findings
+
+**GMRES was silently restarting every step.** The Givens rotation zeroes the
+subdiagonal entry it acts on — that is the point of it — and I then used that
+same entry as the breakdown test and as the next basis vector's normalisation.
+So the test `== 0.0` was always true, the inner loop broke after one column,
+and the algorithm was GMRES(1) wearing GMRES(30)'s name. It converged, slowly
+and geometrically, which is exactly how a correct restarted GMRES on a hard
+problem also looks. What caught it was not the residual but the *count*: a
+twelve-dimensional system must be solved exactly in twelve steps, and it was
+taking twenty-four to reach `4e-5`. Now it is `5e-16` in twelve.
+
+**Thresholding a covariance usually leaves a covariance, which is why it needs
+checking.** Dropping small entries from a positive semidefinite matrix
+preserves positivity often enough that a spot check would pass. It is not a
+theorem: `with_sparse_approximation` verifies and refuses, and the test carries
+a specific four-by-four covariance that goes to a smallest eigenvalue of
+`-0.41` at a tenth of its largest entry.
+
+**An exact diagonal costs one application per column; a banded one need not.**
+v1 extracts diagonals with `dim` applications of the operator. For an operator
+that really is banded, probing with vectors that are one on a whole residue
+class of columns gets every requested diagonal in one application per *offset
+span*, independent of dimension. That is exact only for a banded operator and
+sums in the out-of-band entries otherwise — so it is a named option rather than
+the default, and there is a negative control showing it give a different answer
+on a full operator.
+
+### 21.18 What is left
+
+Four rows, all in package P, and two of them are one thing:
+
+- **`CorrelatedInvariantGaussianMeasure`** and `correlated_invariant_gaussian_measure`. Not needed by any worked example — `work/dynamic_topography.py` uses a *product* measure — so the design question it raises is unforced: your note says the reason to keep it is the extended Karhunen-Loeve expansion it makes samplable, which is a statement about sampling rather than about covariance, and worth settling before writing it.
+- **`deflated_diagonal`**, and `deflated_pointwise_variance` with it. Your note says you are not sure it ever worked properly. That makes it a verification task before it is a porting one: establish what it should give against a dense computation, then decide.
+- Plus the two live download commands in package X, and `IterativePreconditioningMethod`, which belongs with M5's other preconditioners.

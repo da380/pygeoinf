@@ -44,8 +44,10 @@ from .algebra.spaces import (
 from .geometry import (
     AffineSubspace,
     Ball,
+    BallSurface,
     ConvexSet,
     Ellipsoid,
+    EllipsoidSurface,
     EmptySet,
     HalfSpace,
     Hyperplane,
@@ -98,8 +100,10 @@ __all__ = [
     # geometry
     "AffineSubspace",
     "Ball",
+    "BallSurface",
     "ConvexSet",
     "Ellipsoid",
+    "EllipsoidSurface",
     "EmptySet",
     "HalfSpace",
     "Hyperplane",

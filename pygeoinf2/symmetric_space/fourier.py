@@ -28,7 +28,8 @@ import numpy as np
 from numpy.random import Generator
 from scipy.fft import irfftn, rfftn
 
-from .base import SymmetricSpace
+from ..algebra.operators import LinearOperator
+from .base import SymmetricSpace, lift_formal_adjoint
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
 
@@ -500,6 +501,57 @@ class PeriodicBox(SymmetricSpace):
         but it means a product is less accurate than either factor.
         """
         return x * y
+
+    def derivative_operator(self, /, *, axis: int = 0) -> LinearOperator:
+        r"""``d/dx`` along one axis.
+
+        Diagonal in the *complex* Fourier basis and block-diagonal in the real
+        one this space uses: differentiating turns a cosine into a sine and
+        back, so each conjugate pair rotates into itself with a factor of the
+        wavenumber.
+
+        **Modes fixed by conjugation are annihilated.** A Nyquist cosine's
+        derivative is a sine that the truncation cannot hold, and the constant
+        mode's derivative is zero. Dropping the first rather than aliasing it
+        is the usual convention and the only one that stays in the space.
+
+        Formally anti-self-adjoint in ``L2``, and lifted through the metric on
+        a Sobolev space -- where it is not anti-self-adjoint, since
+        differentiation does not commute with the Sobolev weight.
+        """
+        if not 0 <= axis < self.spatial_dimension:
+            raise ValueError(
+                f"This box has {self.spatial_dimension} axes, got axis {axis}."
+            )
+        if self.order != 0.0:
+            return lift_formal_adjoint(
+                self.with_order(0.0).derivative_operator(axis=axis), self
+            )
+
+        packing = self._packing
+        fixed = packing.fixed_indices.size
+        rate = (
+            2.0
+            * np.pi
+            * packing.wavenumbers[axis][fixed::2].astype(float)
+            / self._lengths[axis]
+        )
+
+        def apply(components: np.ndarray, sign: float) -> np.ndarray:
+            result = np.zeros(self.dim)
+            cosines = components[fixed::2]
+            sines = components[fixed + 1 :: 2]
+            result[fixed::2] = -sign * rate * sines
+            result[fixed + 1 :: 2] = sign * rate * cosines
+            return result
+
+        def value(x: np.ndarray) -> np.ndarray:
+            return self.from_components(apply(self.to_components(x), 1.0))
+
+        def adjoint(y: np.ndarray) -> np.ndarray:
+            return self.from_components(apply(self.to_components(y), -1.0))
+
+        return LinearOperator.from_callables(self, self, value, adjoint=adjoint)
 
     def with_order(
         self, order: float, /, *, length_scale: float | None = None

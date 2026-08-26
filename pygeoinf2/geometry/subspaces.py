@@ -23,9 +23,11 @@ Three constructions, in increasing order of what they need:
 
 from __future__ import annotations
 
+import numpy as np
+
 from typing import Any, Sequence
 
-from ..algebra.operators import LinearOperator
+from ..algebra.operators import require_coordinates, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..numerics.solvers import CGSolver, LinearSolver
 from ..traits import Traits
@@ -72,6 +74,20 @@ class OrthogonalProjector(LinearOperator):
 
     def _adjoint_value(self, y: Any) -> Any:
         return self._mapping(y)
+
+    def basis(self) -> list[Any]:
+        """An orthonormal basis for the range, in the ambient space.
+
+        Recovered by projecting the ambient basis and orthonormalising, which
+        needs coordinates. It is *an* orthonormal basis, not *the* one: a
+        subspace has many, and every question a projector answers is
+        independent of the choice.
+        """
+        require_coordinates(self.domain)
+        projected = [
+            self(self.domain.basis_vector(index)) for index in range(self.domain.dim)
+        ]
+        return self.domain.orthonormal_basis(projected)
 
     def complement(self) -> OrthogonalProjector:
         """The projector onto the orthogonal complement, ``I - P``.
@@ -184,6 +200,8 @@ class AffineSubspace(ConvexSet):
         self._translation = (
             projector.domain.zero() if translation is None else translation
         )
+        self._equation: tuple[LinearOperator, Any] | None = None
+        self._solver: LinearSolver | None = None
 
     @property
     def projector(self) -> OrthogonalProjector:
@@ -247,10 +265,177 @@ class AffineSubspace(ConvexSet):
         normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
         inverse = (solver or CGSolver(rtol=1e-12))(normal)
         translation = operator.adjoint(inverse(value))
-        return cls(
+        subspace = cls(
             OrthogonalProjector.onto_kernel(operator, solver=solver),
             translation=translation,
         )
+        subspace._equation = (operator, value)
+        subspace._solver = solver
+        return subspace
+
+    @classmethod
+    def from_tangent_basis(
+        cls,
+        domain: HilbertSpace,
+        vectors: Sequence[Any],
+        /,
+        *,
+        translation: Any = None,
+    ) -> AffineSubspace:
+        """The subspace spanned by given vectors, offset by a translation.
+
+        The vectors need not be orthonormal;
+        :meth:`OrthogonalProjector.from_basis` orthonormalises them and drops
+        any that were dependent, so the dimension is the rank rather than the
+        count.
+        """
+        return cls(
+            OrthogonalProjector.from_basis(domain, vectors), translation=translation
+        )
+
+    @classmethod
+    def from_complement_basis(
+        cls,
+        domain: HilbertSpace,
+        vectors: Sequence[Any],
+        /,
+        *,
+        translation: Any = None,
+    ) -> AffineSubspace:
+        """The subspace *orthogonal* to given vectors.
+
+        The other way of describing the same object: by what it excludes rather
+        than by what it contains. Which is natural depends on whether there are
+        few constraints or few degrees of freedom.
+        """
+        return cls(
+            OrthogonalProjector.from_basis(domain, vectors).complement(),
+            translation=translation,
+        )
+
+    @classmethod
+    def from_hyperplanes(cls, hyperplanes: Sequence[Any], /) -> AffineSubspace:
+        """The intersection of a set of hyperplanes.
+
+        Each hyperplane is one linear equation, so this is
+        :meth:`from_linear_equation` with the equations stacked — and it is
+        written that way rather than by intersecting sets, because the
+        intersection of hyperplanes has a translation and a tangent space that
+        the general intersection of sets does not.
+        """
+        from ..algebra.operators import LinearOperator
+
+        hyperplanes = tuple(hyperplanes)
+        if not hyperplanes:
+            raise ValueError("At least one hyperplane is needed.")
+        domain = hyperplanes[0].domain
+        if any(plane.domain != domain for plane in hyperplanes):
+            raise ValueError("The hyperplanes must live on a common space.")
+
+        # from_vectors builds c -> sum c_i n_i, out of a Euclidean space; its
+        # adjoint is x -> [(n_i, x)], which is the constraint operator.
+        operator = LinearOperator.from_vectors(
+            domain, [plane.normal for plane in hyperplanes]
+        ).adjoint
+        values = np.array([float(plane.offset) for plane in hyperplanes])
+        return cls.from_linear_equation(operator, values)
+
+    def to_hyperplanes(self) -> list[Any]:
+        """The subspace as a list of hyperplanes, one per constraint.
+
+        The inverse of :meth:`from_hyperplanes`, up to the choice of basis for
+        the complement: any orthonormal basis of it gives the same set.
+        """
+        from .convex import Hyperplane
+
+        complement = self._projector.complement()
+        normals = complement.basis()
+        return [
+            Hyperplane(
+                self._domain,
+                normal,
+                offset=self._domain.inner_product(normal, self._translation),
+            )
+            for normal in normals
+        ]
+
+    @property
+    def has_explicit_equation(self) -> bool:
+        """Whether the subspace remembers the equation that defined it.
+
+        It does only when it was built from one. A subspace built from a basis
+        knows its tangent space but not which particular ``A x == b`` a caller
+        had in mind, and inventing one would be a different equation with the
+        same solution set.
+        """
+        return self._equation is not None
+
+    @property
+    def constraint_operator(self) -> LinearOperator:
+        """The ``A`` of the equation this subspace was built from."""
+        if self._equation is None:
+            raise AttributeError(
+                "This subspace was not built from an explicit equation, so it "
+                "has no constraint operator. Use to_hyperplanes() for an "
+                "equation with the same solution set."
+            )
+        return self._equation[0]
+
+    @property
+    def constraint_value(self) -> Any:
+        """The ``b`` of the equation this subspace was built from."""
+        if self._equation is None:
+            raise AttributeError("This subspace was not built from an equation.")
+        return self._equation[1]
+
+    def with_translation(self, translation: Any, /) -> AffineSubspace:
+        """The same tangent space, through a different point."""
+        return AffineSubspace(self._projector, translation=translation)
+
+    def with_constraint_value(self, value: Any, /) -> AffineSubspace:
+        """The same constraint operator, set equal to a different value.
+
+        Needs the equation, since it is the equation that is being changed.
+        The translation moves to the new minimum-norm solution and the tangent
+        space, being the kernel, does not move at all.
+        """
+        operator = self.constraint_operator
+        return AffineSubspace.from_linear_equation(operator, value, solver=self._solver)
+
+    def pseudo_inverse(self) -> LinearOperator:
+        """``A* (A A*)^-1``: the map from a constraint value to its subspace.
+
+        The minimum-norm right inverse of the constraint operator, so
+        ``pseudo_inverse()(b)`` is the translation of the subspace ``A x == b``
+        and composing it with the constraint operator gives the projection onto
+        the orthogonal complement of the kernel.
+        """
+        operator = self.constraint_operator
+        normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
+        return operator.adjoint @ (self._solver or CGSolver(rtol=1e-12))(normal)
+
+    def projection_operator(self) -> Any:
+        """The projection onto the subspace, as an affine operator.
+
+        ``x -> P x + (I - P) t``. Distinct from :attr:`projector`, which is the
+        *linear* projection onto the tangent space: this one lands on the
+        subspace itself, and is affine exactly when the translation is nonzero.
+        """
+        from ..algebra.operators import AffineOperator
+
+        offset = self._domain.subtract(
+            self._translation, self._projector(self._translation)
+        )
+        return AffineOperator(self._projector, offset)
+
+    def boundary(self) -> "AffineSubspace":
+        """The subspace itself: an affine subspace is its own boundary.
+
+        It has empty interior in the ambient space whenever it is proper, so
+        every one of its points is a boundary point. Provided because the
+        question is reasonable and the answer is easy to get wrong.
+        """
+        return self
 
     def __repr__(self) -> str:
         return f"AffineSubspace({self._domain!r})"

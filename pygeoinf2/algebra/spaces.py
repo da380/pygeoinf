@@ -383,6 +383,41 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
     #                     The functional pairing axiom                  #
     # ----------------------------------------------------------------- #
 
+    def coordinate_projection(self) -> "LinearOperator[V, np.ndarray]":
+        """The map to this space's components, as an operator.
+
+        ``x -> c_x`` into a Euclidean space. Its adjoint is
+        :meth:`representer`, which is the whole reason it is worth having as an
+        operator rather than a function: it carries the metric with it, and a
+        composition involving it stays correct.
+        """
+        from .operators import LinearOperator
+
+        codomain = EuclideanSpace(self.dim)
+        return LinearOperator.from_callables(
+            self,
+            codomain,
+            self.to_components,
+            adjoint=self.representer,
+        )
+
+    def coordinate_inclusion(self) -> "LinearOperator[np.ndarray, V]":
+        """The map from components into this space, as an operator.
+
+        ``c -> from_components(c)``. Its adjoint is ``G c_x``, the *derivative*
+        components — not the components themselves, which is the distinction of
+        DESIGN.md section 5.6 in its smallest possible setting.
+        """
+        from .operators import LinearOperator
+
+        domain = EuclideanSpace(self.dim)
+        return LinearOperator.from_callables(
+            domain,
+            self,
+            self.from_components,
+            adjoint=lambda x: self.apply_gram(self.to_components(x)),
+        )
+
     def representer(self, derivative_components: np.ndarray) -> V:
         """The Riesz representer of the functional with the given derivative.
 

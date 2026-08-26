@@ -298,3 +298,79 @@ class TestBoxSpectral:
         check_operator(X.spectral_projection_operator(lmax=4), rng=rng)
         check_operator(X.order_inclusion_operator(X.with_order(1.0)), rng=rng)
         check_operator(X.l2_products_operator([X.random(rng=rng)]), rng=rng)
+
+
+class TestNormCalibration:
+    def test_norm_std_hits_the_total_size(self):
+        X = Sobolev(16, 2.0, 0.2)
+        measure = X.sobolev_measure(2.0, 0.2, norm_std=3.0)
+        # E||x||^2 is the trace of the covariance
+        assert np.sqrt(measure.nuclear_norm()) == pytest.approx(3.0)
+
+    def test_norm_std_shows_up_in_samples(self, rng):
+        X = Sobolev(12, 2.0, 0.2)
+        measure = X.sobolev_measure(2.0, 0.2, norm_std=3.0)
+        draws = [measure.sample(rng=rng) for _ in range(400)]
+        root_mean_square = np.sqrt(np.mean([X.squared_norm(x) for x in draws]))
+        assert root_mean_square == pytest.approx(3.0, rel=0.1)
+
+    def test_the_two_calibrations_are_alternatives(self):
+        X = Sobolev(8, 2.0, 0.2)
+        with pytest.raises(ValueError, match="not both"):
+            X.sobolev_measure(2.0, 0.2, norm_std=1.0, pointwise_std=1.0)
+
+    def test_a_non_positive_norm_is_refused(self):
+        X = Sobolev(8, 2.0, 0.2)
+        with pytest.raises(ValueError, match="must be positive"):
+            X.heat_measure(0.01, norm_std=0.0)
+
+
+class TestPowerMeasure:
+    def test_each_degree_holds_the_power_it_was_given(self):
+        """The spectrum a modeller writes down is per degree, not per mode.
+
+        The two differ by the multiplicity, which is the whole of the method.
+        """
+        X = Lebesgue(12)
+        power = np.array([(1.0 + degree) ** -3.0 for degree in range(X.lmax + 1)])
+        measure = X.power_measure(power)
+        eigenvalues = measure.covariance.eigenvalues
+        for degree in (0, 2, 5, 12):
+            held = eigenvalues[X.degrees == degree].sum()
+            assert held == pytest.approx(power[degree])
+
+    def test_a_callable_spectrum_works_too(self):
+        X = Lebesgue(8)
+        measure = X.power_measure(lambda degree: (1.0 + degree) ** -2.0)
+        eigenvalues = measure.covariance.eigenvalues
+        assert eigenvalues[X.degrees == 3].sum() == pytest.approx(4.0**-2.0)
+
+    def test_too_short_a_spectrum_is_refused(self):
+        X = Lebesgue(8)
+        with pytest.raises(ValueError, match="degree"):
+            X.power_measure(np.ones(3))
+
+
+class TestCovarianceFunction:
+    def test_it_starts_at_the_pointwise_variance(self):
+        X = Sobolev(24, 2.0, 0.05)
+        symbol = X.sobolev_symbol(-2.0, 0.05)
+        measure = X.invariant_measure(symbol)
+        values = X.covariance_function(measure, np.array([0.0, 0.1]))
+        assert values[0] == pytest.approx(X.pointwise_variance(symbol))
+
+    def test_it_falls_away_from_the_origin(self):
+        X = Sobolev(48, 2.0, 0.05)
+        values = X.covariance_function(
+            X.heat_measure(0.002), np.array([0.0, 0.05, 0.2, 0.6])
+        )
+        assert values[0] > values[1] > values[2]
+
+    def test_a_longer_correlation_length_decays_more_slowly(self):
+        X = Sobolev(48, 2.0, 0.05)
+        distance = np.array([0.3])
+        short = X.covariance_function(X.heat_measure(0.002), distance)
+        long = X.covariance_function(X.heat_measure(0.02), distance)
+        assert long[0] / X.pointwise_variance(X.heat_symbol(0.02)) > short[
+            0
+        ] / X.pointwise_variance(X.heat_symbol(0.002))

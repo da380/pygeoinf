@@ -17,7 +17,7 @@ See DESIGN.md section 5.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal, Self, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, Self, Sequence
 
 import numpy as np
 
@@ -39,6 +39,20 @@ __all__ = [
 
 
 REALS = Reals()
+
+
+def _as_matrix(matrix: Any) -> Any:
+    """A dense array, or a sparse matrix left alone.
+
+    Both support ``@`` and ``.T``, which is all the matrix constructors need,
+    so a sparse forward operator needs no separate constructor — and a sparse
+    one is what an observation operator with local support naturally is.
+    """
+    from scipy.sparse import issparse
+
+    if issparse(matrix):
+        return matrix
+    return np.asarray(matrix, dtype=float)
 
 
 def require_coordinates(*spaces: HilbertSpace) -> None:
@@ -499,6 +513,72 @@ class LinearOperator[X, Y](Operator[X, Y]):
             )
         return matrix
 
+    def diagonals(
+        self,
+        /,
+        *,
+        offsets: Sequence[int] = (0,),
+        form: Literal["auto", "components", "galerkin"] = "auto",
+        probe: Literal["exact", "banded"] = "exact",
+    ) -> np.ndarray:
+        """Selected diagonals of the operator's matrix, without forming it.
+
+        Returned as one row per offset, padded to the operator's dimension and
+        aligned as ``scipy.sparse.spdiags`` expects, so the result can be handed
+        straight to a banded preconditioner.
+
+        ``probe="exact"`` costs one application per column, which is what an
+        exact answer costs for a general operator. ``probe="banded"`` costs one
+        application per *offset span* instead — independent of dimension — by
+        probing with vectors that are one on a whole residue class of columns.
+        That is exact when the operator really is banded within ``offsets``,
+        and sums in the out-of-band entries when it is not: an approximation,
+        and named as one.
+
+        Args:
+            offsets: which diagonals, ``0`` being the main one.
+            form: which matrix representation to read.
+            probe: how to obtain the entries.
+        """
+        require_coordinates(self.domain, self.codomain)
+        offsets = tuple(int(offset) for offset in offsets)
+        if not offsets:
+            raise ValueError("At least one offset is needed.")
+        if form == "auto":
+            form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
+        if probe not in ("exact", "banded"):
+            raise ValueError(f"Unknown probe {probe!r}.")
+
+        size = min(self.domain.dim, self.codomain.dim)
+        result = np.zeros((len(offsets), size))
+
+        def read(image: Y) -> np.ndarray:
+            components = self.codomain.to_components(image)
+            if form == "galerkin":
+                return self.codomain.apply_gram(components)
+            return components
+
+        if probe == "exact":
+            for column in range(size):
+                entries = read(self(self.domain.basis_vector(column)))
+                for index, offset in enumerate(offsets):
+                    row = column - offset
+                    if 0 <= row < size:
+                        result[index, column] = entries[row]
+            return result
+
+        width = max(offsets) - min(offsets) + 1
+        for residue in range(width):
+            probe_components = np.zeros(self.domain.dim)
+            probe_components[residue::width] = 1.0
+            entries = read(self(self.domain.from_components(probe_components)))
+            for index, offset in enumerate(offsets):
+                columns = np.arange(residue, size, width)
+                rows = columns - offset
+                keep = (rows >= 0) & (rows < size)
+                result[index, columns[keep]] = entries[rows[keep]]
+        return result
+
     def assembled(self) -> LinearOperator[X, Y]:
         """The same operator, with its matrix formed once and stored.
 
@@ -705,7 +785,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
     ) -> LinearOperator[X, Y]:
         """From ``M`` with ``c_{Ax} == M c_x``."""
         require_coordinates(domain, codomain)
-        matrix = np.asarray(matrix, dtype=float)
+        matrix = _as_matrix(matrix)
         expected = (codomain.dim, domain.dim)
         if matrix.shape != expected:
             raise ValueError(f"Matrix has shape {matrix.shape}, expected {expected}.")
@@ -740,7 +820,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         section 5.6.
         """
         require_coordinates(domain, codomain)
-        matrix = np.asarray(matrix, dtype=float)
+        matrix = _as_matrix(matrix)
         expected = (codomain.dim, domain.dim)
         if matrix.shape != expected:
             raise ValueError(f"Matrix has shape {matrix.shape}, expected {expected}.")

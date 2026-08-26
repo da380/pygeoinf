@@ -18,7 +18,7 @@ v1 draws standard normal components there and so produces covariance
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -429,6 +429,107 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             raise ValueError("Both covariances must be positive definite.")
         return 0.5 * (
             float(np.trace(solved)) + quadratic - dimension + log_theirs - log_mine
+        )
+
+    def rescale_directional_variance(
+        self, direction: X, standard_deviation: float, /
+    ) -> "GaussianMeasure[X]":
+        """The same measure with ``Var((x, direction))`` set to a given value.
+
+        A whole-measure rescaling, as v1 does it, not a rank-one update: the
+        covariance is multiplied by a scalar chosen so that one direction comes
+        out right. Every other variance moves by the same factor, which is what
+        makes it a recalibration rather than a change of shape.
+        """
+        current = self.directional_variance(direction)
+        if current <= 0.0:
+            raise ValueError(
+                "The variance along this direction is not positive, so it "
+                "cannot be rescaled."
+            )
+        factor = float(standard_deviation) / np.sqrt(current)
+        centred = self.translate(self._domain.negative(self.expectation))
+        return (factor * centred).translate(self.expectation)
+
+    def with_regularized_inverse(
+        self,
+        solver: Any,
+        /,
+        *,
+        damping: float = 0.0,
+    ) -> "GaussianMeasure[X]":
+        """The same measure, given a precision by inverting ``C + damping I``.
+
+        A covariance with a decaying spectrum is singular in practice long
+        before it is in theory, so its precision does not exist and anything
+        needing one — a Mahalanobis distance, a log density, a KL divergence —
+        is unavailable. Damping supplies one, at the cost of saying that the
+        smallest variances are no smaller than ``damping``.
+
+        The covariance itself is left alone. Only the precision is regularised,
+        so the two are deliberately *not* inverses of each other and the
+        measure says so by construction.
+        """
+        if damping < 0.0:
+            raise ValueError(f"The damping must be non-negative, got {damping}.")
+        from ..algebra.operators import LinearOperator
+        from ..traits import Traits as _Traits
+
+        operator = self._covariance
+        if damping > 0.0:
+            operator = operator + damping * LinearOperator.identity(self._domain)
+        precision = solver(operator.with_traits(_Traits.POSITIVE_DEFINITE))
+        return GaussianMeasure(
+            self._domain,
+            expectation=self._expectation,
+            covariance=self._covariance,
+            covariance_factor=self._covariance_factor,
+            precision=precision.with_traits(_Traits.POSITIVE_DEFINITE),
+            sample=self._sample_fn,
+        )
+
+    def with_sparse_approximation(
+        self, /, *, threshold: float = 1e-3, form: str = "galerkin"
+    ) -> "GaussianMeasure[X]":
+        """The same measure with entries below a relative threshold dropped.
+
+        For a covariance with genuinely local correlations, most of the matrix
+        is noise-level and storing it is waste. Thresholding is the crudest
+        localisation there is and it does not preserve positive definiteness —
+        so the result is checked, and refused if it has stopped being a
+        covariance rather than being returned as one.
+        """
+        require_coordinates(self._domain)
+        if not 0.0 <= threshold < 1.0:
+            raise ValueError(f"The threshold lies in [0, 1), got {threshold}.")
+        from scipy.sparse import csr_matrix
+
+        from ..algebra.operators import LinearOperator
+        from ..traits import Traits as _Traits
+
+        matrix = self._covariance.matrix(form=form)
+        matrix = 0.5 * (matrix + matrix.T)
+        matrix[np.abs(matrix) < threshold * np.abs(matrix).max()] = 0.0
+        if np.linalg.eigvalsh(matrix).min() < -1e-10 * np.abs(matrix).max():
+            raise ValueError(
+                f"Thresholding at {threshold} left an operator that is no "
+                "longer positive semidefinite, so it is not a covariance. Use "
+                "a smaller threshold."
+            )
+        sparse = csr_matrix(matrix)
+        builder = (
+            LinearOperator.from_derivative_matrix
+            if form == "galerkin"
+            else LinearOperator.from_component_matrix
+        )
+        covariance = builder(
+            self._domain,
+            self._domain,
+            sparse,
+            traits=_Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE,
+        )
+        return GaussianMeasure(
+            self._domain, expectation=self._expectation, covariance=covariance
         )
 
     def credible_set(self, /, *, level: float = 0.95) -> "Ellipsoid":

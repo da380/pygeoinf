@@ -568,6 +568,19 @@ class Sphere(SymmetricSpace):
             ]
         )
 
+    def walk_from(self, point: Any, distances: np.ndarray, /) -> list[np.ndarray]:
+        """Points at given distances from a point, along a meridian.
+
+        Any direction would do, the sphere being homogeneous *and* isotropic;
+        a meridian is the one that needs no tangent frame.
+        """
+        position = np.asarray(point, dtype=float)
+        angles = np.asarray(distances, dtype=float) / self._radius
+        return [
+            np.array([float(position[0] + angle), float(position[1])])
+            for angle in angles
+        ]
+
     def random_points(
         self, count: int, /, *, rng: Generator | None = None
     ) -> list[np.ndarray]:
@@ -920,6 +933,60 @@ class Sphere(SymmetricSpace):
             return float(on_land != ocean)
 
         return self.project_function(indicator)
+
+    def cluster_points(
+        self, points: Sequence[Any], radius: float, /
+    ) -> list[list[int]]:
+        """Group points into clusters no wider than a radius, greedily.
+
+        What a block preconditioner needs: a partition of the data into
+        groups that see overlapping parts of the model. Greedy rather than
+        optimal, because the blocks only have to be *reasonable* — a
+        preconditioner is never the answer, only a way of getting to it faster.
+
+        Returns index lists, in the order the clusters were formed.
+        """
+        if radius <= 0.0:
+            raise ValueError(f"The radius must be positive, got {radius}.")
+        vectors = np.stack([self._to_vector(point) for point in points])
+        remaining = set(range(len(vectors)))
+        clusters: list[list[int]] = []
+        while remaining:
+            seed = min(remaining)
+            chords = np.linalg.norm(vectors - vectors[seed], axis=1)
+            distances = 2.0 * self._radius * np.arcsin(np.clip(0.5 * chords, 0.0, 1.0))
+            members = sorted(index for index in remaining if distances[index] <= radius)
+            clusters.append(members)
+            remaining.difference_update(members)
+        return clusters
+
+    def source_receiver_paths(
+        self,
+        /,
+        *,
+        sources: int = 20,
+        receivers: int = 10,
+        minimum_magnitude: float = 5.5,
+        minimum_separation: float = 0.0,
+        rng: Generator | None = None,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Every source-receiver pair, as paths, from the shipped catalogues.
+
+        The convenience every tomography script writes for itself.
+        ``minimum_separation`` drops pairs too close together to carry
+        information, which in a real network is a noticeable fraction of them.
+        """
+        generator = np.random.default_rng() if rng is None else rng
+        origins = self.earthquakes(
+            count=sources, minimum_magnitude=minimum_magnitude, rng=generator
+        )
+        stations = self.stations(count=receivers, rng=generator)
+        return [
+            (origin, station)
+            for origin in origins
+            for station in stations
+            if self.geodesic_distance(origin, station) > minimum_separation
+        ]
 
     def pairs_within_distance(
         self, points: Sequence[Any], distance: float, /

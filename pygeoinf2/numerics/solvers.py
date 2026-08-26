@@ -73,6 +73,7 @@ class SolveResult[X]:
     iterations: int
     residual_norm: float
     converged: bool
+    history: tuple[float, ...] = ()
 
     def __repr__(self) -> str:
         return (
@@ -300,6 +301,7 @@ class IterativeSolver(LinearSolver):
         maxiter: int | None = None,
         preconditioner: LinearSolver | LinearOperator | None = None,
         strict: bool = True,
+        callback: Callable[[int, float], None] | None = None,
     ) -> None:
         """
         Args:
@@ -311,12 +313,17 @@ class IterativeSolver(LinearSolver):
                 known.
             strict: raise :class:`ConvergenceError` on failure to converge
                 rather than warning.
+            callback: called with ``(iteration, residual_norm)`` after each
+                step. For watching a long solve, and for finding out *where* a
+                stalled one stalled — which the final residual alone cannot
+                say.
         """
         self._rtol = rtol
         self._atol = atol
         self._maxiter = maxiter
         self._preconditioner = preconditioner
         self._strict = strict
+        self._callback = callback
 
     def with_preconditioner(
         self, preconditioner: LinearSolver | LinearOperator, /
@@ -356,6 +363,12 @@ class IterativeSolver(LinearSolver):
         if self._maxiter is not None:
             return self._maxiter
         return max(2 * operator.domain.dim, 20)
+
+    def _record(self, iteration: int, residual: float, history: list) -> None:
+        """Note one step's residual, and tell the callback about it."""
+        history.append(float(residual))
+        if self._callback is not None:
+            self._callback(iteration, float(residual))
 
     def _finish(self, result: SolveResult) -> SolveResult:
         if not result.converged:
@@ -426,9 +439,11 @@ class CGSolver(IterativeSolver):
         x, r = self._initial(operator, b, x0)
         tolerance = self._tolerance(operator.codomain, b)
 
+        history: list[float] = []
         residual = space.norm(r)
+        self._record(0, residual, history)
         if residual <= tolerance:
-            return SolveResult(x, 0, residual, True)
+            return SolveResult(x, 0, residual, True, tuple(history))
 
         z = r if preconditioner is None else preconditioner(r)
         p = space.copy(z)
@@ -449,8 +464,9 @@ class CGSolver(IterativeSolver):
             r = space.axpy(-alpha, ap, r)
 
             residual = space.norm(r)
+            self._record(iteration, residual, history)
             if residual <= tolerance:
-                return SolveResult(x, iteration, residual, True)
+                return SolveResult(x, iteration, residual, True, tuple(history))
 
             z = r if preconditioner is None else preconditioner(r)
             rz_next = space.inner_product(r, z)
@@ -460,7 +476,194 @@ class CGSolver(IterativeSolver):
             p = space.scale_inplace(beta, p)
             p = space.axpy(1.0, z, p)
 
-        return SolveResult(x, self._limit(operator), residual, False)
+        return SolveResult(x, self._limit(operator), residual, False, tuple(history))
+
+
+class FlexibleCGSolver(IterativeSolver):
+    """Conjugate gradients for a preconditioner that changes between steps.
+
+    Ordinary CG assumes a fixed preconditioner; its short recurrence relies on
+    it. When the preconditioner is itself an iterative solve — or is rebuilt as
+    the iteration proceeds, which is what a localised preconditioner does — the
+    recurrence no longer produces conjugate directions and CG stalls.
+
+    The fix is one term: Polak-Ribiere in place of Fletcher-Reeves, so that
+    ``beta`` measures the *change* in the residual rather than assuming
+    orthogonality it no longer has. That costs one extra inner product and one
+    extra stored vector, which is why it is not simply the default.
+    """
+
+    requires: ClassVar[Traits] = Traits.POSITIVE_DEFINITE
+
+    def _solve(
+        self,
+        operator: LinearOperator,
+        preconditioner: LinearOperator | None,
+        b: Any,
+        x0: Any | None,
+    ) -> SolveResult:
+        space = operator.domain
+        x, r = self._initial(operator, b, x0)
+        tolerance = self._tolerance(operator.codomain, b)
+
+        history: list[float] = []
+        residual = space.norm(r)
+        self._record(0, residual, history)
+        if residual <= tolerance:
+            return SolveResult(x, 0, residual, True, tuple(history))
+
+        z = r if preconditioner is None else preconditioner(r)
+        p = space.copy(z)
+        rz = space.inner_product(r, z)
+
+        for iteration in range(1, self._limit(operator) + 1):
+            ap = operator(p)
+            curvature = space.inner_product(p, ap)
+            if curvature <= 0.0:
+                raise ConvergenceError(
+                    f"Flexible CG met a non-positive curvature direction "
+                    f"((p, A p) == {curvature:g}) at iteration {iteration}."
+                )
+            alpha = rz / curvature
+            x = space.axpy(alpha, p, x)
+            previous = space.copy(r)
+            r = space.axpy(-alpha, ap, r)
+
+            residual = space.norm(r)
+            self._record(iteration, residual, history)
+            if residual <= tolerance:
+                return SolveResult(x, iteration, residual, True, tuple(history))
+
+            z = r if preconditioner is None else preconditioner(r)
+            # Polak-Ribiere: (r_new - r_old, z_new) rather than (r_new, z_new).
+            # The two agree when the preconditioner is fixed, because then the
+            # residuals are conjugate; they differ exactly when it is not.
+            change = space.subtract(r, previous)
+            rz_next = space.inner_product(r, z)
+            beta = space.inner_product(change, z) / rz
+            rz = rz_next
+            p = space.scale_inplace(beta, p)
+            p = space.axpy(1.0, z, p)
+
+        return SolveResult(x, self._limit(operator), residual, False, tuple(history))
+
+
+class GMRESSolver(IterativeSolver):
+    """Generalised minimal residual, for an operator with no symmetry at all.
+
+    The only solver here that asks nothing of its operator. Arnoldi builds an
+    orthonormal Krylov basis and the residual is minimised over it by a small
+    least-squares problem, kept triangular by Givens rotations applied as each
+    column arrives — so the residual norm is known at every step without
+    forming the iterate.
+
+    Restarted, because the cost and storage of a step grow with the step
+    number: ``restart`` vectors are held, then the basis is discarded and the
+    iteration begins again from the current residual.
+    """
+
+    requires: ClassVar[Traits] = Traits.NONE
+
+    def __init__(self, /, *, restart: int = 30, **kwargs: Any) -> None:
+        """
+        Args:
+            restart: how many Arnoldi vectors to keep before restarting.
+            **kwargs: as for :class:`IterativeSolver`.
+        """
+        if restart < 1:
+            raise ValueError(f"The restart length must be positive, got {restart}.")
+        super().__init__(**kwargs)
+        self._restart = restart
+
+    def _solve(
+        self,
+        operator: LinearOperator,
+        preconditioner: LinearOperator | None,
+        b: Any,
+        x0: Any | None,
+    ) -> SolveResult:
+        space = operator.domain
+        x, r = self._initial(operator, b, x0)
+        tolerance = self._tolerance(operator.codomain, b)
+        if preconditioner is not None:
+            r = preconditioner(r)
+            tolerance = max(self._rtol * space.norm(preconditioner(b)), self._atol)
+
+        history: list[float] = []
+        residual = space.norm(r)
+        self._record(0, residual, history)
+        if residual <= tolerance:
+            return SolveResult(x, 0, residual, True, tuple(history))
+
+        limit = self._limit(operator)
+        total = 0
+        while total < limit:
+            width = min(self._restart, limit - total)
+            basis = [space.scale(1.0 / residual, r)]
+            hessenberg = np.zeros((width + 1, width))
+            cosines, sines = np.zeros(width), np.zeros(width)
+            rhs = np.zeros(width + 1)
+            rhs[0] = residual
+            used = 0
+
+            for column in range(width):
+                total += 1
+                used = column + 1
+                w = operator(basis[column])
+                if preconditioner is not None:
+                    w = preconditioner(w)
+                for row in range(column + 1):
+                    hessenberg[row, column] = space.inner_product(basis[row], w)
+                    w = space.axpy(-hessenberg[row, column], basis[row], w)
+                # Kept aside: the rotations below overwrite the subdiagonal
+                # entry with zero, which is the point of them, and it is still
+                # needed both as the breakdown test and as the next basis
+                # vector's normalisation.
+                subdiagonal = space.norm(w)
+                hessenberg[column + 1, column] = subdiagonal
+
+                # Apply the rotations already accumulated, then make a new one
+                # that zeroes the subdiagonal entry this column introduced.
+                for row in range(column):
+                    upper = hessenberg[row, column]
+                    lower = hessenberg[row + 1, column]
+                    hessenberg[row, column] = cosines[row] * upper + sines[row] * lower
+                    hessenberg[row + 1, column] = (
+                        -sines[row] * upper + cosines[row] * lower
+                    )
+                denominator = np.hypot(
+                    hessenberg[column, column], hessenberg[column + 1, column]
+                )
+                if denominator == 0.0:
+                    cosines[column], sines[column] = 1.0, 0.0
+                else:
+                    cosines[column] = hessenberg[column, column] / denominator
+                    sines[column] = hessenberg[column + 1, column] / denominator
+                hessenberg[column, column] = denominator
+                hessenberg[column + 1, column] = 0.0
+                rhs[column + 1] = -sines[column] * rhs[column]
+                rhs[column] = cosines[column] * rhs[column]
+
+                residual = abs(rhs[column + 1])
+                self._record(total, residual, history)
+                if residual <= tolerance or subdiagonal == 0.0:
+                    break
+                if total >= limit:
+                    break
+                basis.append(space.scale(1.0 / subdiagonal, w))
+
+            weights = np.linalg.solve(hessenberg[:used, :used], rhs[:used])
+            for index in range(used):
+                x = space.axpy(weights[index], basis[index], x)
+
+            if residual <= tolerance:
+                return SolveResult(x, total, residual, True, tuple(history))
+            _, r = self._initial(operator, b, x)
+            if preconditioner is not None:
+                r = preconditioner(r)
+            residual = space.norm(r)
+
+        return SolveResult(x, total, residual, False, tuple(history))
 
 
 class MinResSolver(IterativeSolver):

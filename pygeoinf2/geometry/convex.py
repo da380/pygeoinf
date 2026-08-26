@@ -40,6 +40,8 @@ from ..traits import Traits
 from .sets import Subset
 
 __all__ = [
+    "BallSurface",
+    "EllipsoidSurface",
     "ConvexSet",
     "Ball",
     "HalfSpace",
@@ -424,3 +426,127 @@ class _EllipsoidSupport(SupportFunction):
         if norm == 0.0:
             return space.copy(self._centre)
         return space.axpy(1.0 / norm, mapped, space.copy(self._centre))
+
+
+class BallSurface(Subset):
+    """The *surface* of a ball: ``{ x : ||x - c|| == r }``.
+
+    Not convex, so it has no support function and no projection in the sense
+    :class:`ConvexSet` means — but the nearest point on it is still well
+    defined everywhere except the centre, and it is what a norm constraint of
+    the form ``||x|| == r`` describes. Constrained optimisation is where this
+    is wanted: an equality constraint, not an inequality.
+    """
+
+    def __init__(
+        self, domain: HilbertSpace, /, *, radius: float = 1.0, centre: Any = None
+    ) -> None:
+        """
+        Args:
+            domain: the space.
+            radius: the radius, which must be positive.
+            centre: the centre. Defaults to zero.
+        """
+        super().__init__(domain)
+        if radius <= 0.0:
+            raise ValueError(f"The radius must be positive, got {radius}.")
+        self._radius = float(radius)
+        self._centre = domain.zero() if centre is None else centre
+
+    @property
+    def radius(self) -> float:
+        """The radius."""
+        return self._radius
+
+    @property
+    def centre(self) -> Any:
+        """The centre."""
+        return self._centre
+
+    def contains(self, x: Any, /, *, tolerance: float = 1e-9) -> bool:
+        """Whether a point lies on the surface, to a relative tolerance.
+
+        Unlike a solid set, membership here is a measure-zero condition, so it
+        is only ever meaningful up to a tolerance and the tolerance is a named
+        argument rather than a hidden constant.
+        """
+        distance = self.domain.norm(self.domain.subtract(x, self._centre))
+        return abs(distance - self._radius) <= tolerance * self._radius
+
+    def project(self, x: Any, /) -> Any:
+        """The nearest point on the surface.
+
+        Undefined at the centre, where every point of the surface is equally
+        near, and that is raised rather than resolved by an arbitrary choice.
+        """
+        offset = self.domain.subtract(x, self._centre)
+        distance = self.domain.norm(offset)
+        if distance == 0.0:
+            raise ValueError(
+                "The centre is equidistant from the whole surface, so it has "
+                "no nearest point."
+            )
+        return self.domain.add(
+            self._centre, self.domain.scale(self._radius / distance, offset)
+        )
+
+    def sample(self, /, *, rng: Any = None) -> Any:
+        """A point drawn uniformly over the surface.
+
+        White noise projected outward: the standard construction, and the
+        reason it is white noise rather than ``random`` is that only the former
+        is isotropic in a space with a non-trivial metric.
+        """
+        return self.project(
+            self.domain.add(self._centre, self.domain.white_noise(rng=rng))
+        )
+
+    def __repr__(self) -> str:
+        return f"BallSurface({self.domain!r}, radius={self._radius})"
+
+
+class EllipsoidSurface(Subset):
+    """The boundary of an ellipsoid: ``{ x : (P (x - c), x - c) == 1 }``."""
+
+    def __init__(
+        self,
+        domain: HilbertSpace,
+        precision: LinearOperator,
+        /,
+        *,
+        centre: Any = None,
+    ) -> None:
+        """
+        Args:
+            domain: the space.
+            precision: a positive definite operator on it.
+            centre: the centre. Defaults to zero.
+        """
+        super().__init__(domain)
+        required = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        if required & precision.traits != required:
+            raise ValueError(
+                f"The precision must claim {required!s}; it claims "
+                f"{precision.traits!s}."
+            )
+        self._precision = precision
+        self._centre = domain.zero() if centre is None else centre
+
+    @property
+    def precision(self) -> LinearOperator:
+        """The shape operator."""
+        return self._precision
+
+    @property
+    def centre(self) -> Any:
+        """The centre."""
+        return self._centre
+
+    def contains(self, x: Any, /, *, tolerance: float = 1e-9) -> bool:
+        """Whether a point lies on the surface, to a relative tolerance."""
+        offset = self.domain.subtract(x, self._centre)
+        value = self.domain.inner_product(self._precision(offset), offset)
+        return abs(value - 1.0) <= tolerance
+
+    def __repr__(self) -> str:
+        return f"EllipsoidSurface({self.domain!r})"
