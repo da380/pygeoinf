@@ -27,21 +27,26 @@ See DESIGN.md section 13.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 import numpy as np
 from numpy.random import Generator
 
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearFunctional, LinearOperator
-from ..algebra.spaces import ArrayVectorMixin, DiagonalMetricSpace
+from ..algebra.spaces import ArrayVectorMixin, DiagonalMetricSpace, HilbertModule
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..numerics.solvers import IterativeSolver
 
 __all__ = ["SymmetricSpace", "lift_formal_adjoint"]
 
 
-class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
+class SymmetricSpace(
+    ArrayVectorMixin, HilbertModule[np.ndarray], DiagonalMetricSpace[np.ndarray]
+):
     """A coordinate space whose basis diagonalises the Laplacian.
 
     Subclasses supply :meth:`to_components`, :meth:`from_components`,
@@ -61,6 +66,15 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
     # ----------------------------------------------------------------- #
     #                         Subclass interface                        #
     # ----------------------------------------------------------------- #
+
+    @property
+    @abstractmethod
+    def order(self) -> float:
+        """The Sobolev order. Zero means the inner product is the ``L2`` one."""
+
+    @abstractmethod
+    def with_order(self, order: float, /) -> "SymmetricSpace":
+        """The same coordinate map, viewed with a different Sobolev order."""
 
     @property
     @abstractmethod
@@ -339,6 +353,269 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
             lambda x: self.evaluate(x, points),
             lambda y: self.accumulate(y, points),
         )
+
+    # ----------------------------------------------------------------- #
+    #                          Pointwise algebra                        #
+    # ----------------------------------------------------------------- #
+
+    def truncate(self, x: np.ndarray, /) -> np.ndarray:
+        """The vector of this space with the same components as ``x``.
+
+        The identity whenever the grid has exactly as many points as the space
+        has dimensions, which is the case for a periodic box. It is *not* the
+        identity on a sphere: the Driscoll-Healy grid is oversampled, so many
+        grid arrays share a set of components and only one of them is in the
+        span of the basis.
+
+        That matters as soon as anything leaves the space. A pointwise product
+        of two band-limited functions is not band-limited, so its grid array is
+        one of those non-canonical representatives, and an operation that
+        round-trips through components — the formal-adjoint lift does — would
+        silently disagree with one that does not.
+        """
+        return self.from_components(self.to_components(x))
+
+    def multiply(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """The pointwise product, truncated back into the space.
+
+        Truncated rather than left on the grid so that the result depends only
+        on the two vectors and not on which grid array happens to represent
+        them; see :meth:`truncate`. The aliasing is still there — it is
+        inherent to multiplying band-limited functions — but it is now
+        committed to once, consistently, rather than resolved differently by
+        each caller.
+        """
+        return self.truncate(np.asarray(x) * np.asarray(y))
+
+    def sqrt(self, x: np.ndarray) -> np.ndarray:
+        """The pointwise square root, truncated back into the space."""
+        return self.truncate(np.sqrt(np.asarray(x)))
+
+    def multiplication_operator(self, f: np.ndarray, /) -> LinearOperator:
+        """The operator ``u -> f u``, with the metric handled.
+
+        Multiplication is self-adjoint for the ``L2`` inner product, and a
+        Sobolev space does not have that inner product — so on one, this builds
+        the operator where it *is* self-adjoint and lifts it with
+        :func:`lift_formal_adjoint`. The lifted operator is **not** claimed
+        self-adjoint, because a formally self-adjoint operator is self-adjoint
+        under the new metric only if it commutes with the ratio of the two, and
+        multiplication by a varying field does not (§3.5).
+        """
+        if self.order == 0.0:
+            return LinearOperator.self_adjoint(self, lambda u: self.multiply(f, u))
+        base = self.with_order(0.0)
+        return lift_formal_adjoint(base.multiplication_operator(f), self)
+
+    # ----------------------------------------------------------------- #
+    #                              Curvature                            #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def gaussian_curvature(self) -> float:
+        """The Gaussian curvature of the domain, constant by homogeneity."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not state its Gaussian curvature."
+        )
+
+    def gradient_dot_product(self, f: np.ndarray, g: np.ndarray, /) -> np.ndarray:
+        """``grad f . grad g``, pointwise, without ever forming a gradient.
+
+        From the product rule for the Laplacian, with ``L == -div grad`` the
+        *positive* Laplacian this package uses throughout:
+
+        .. code-block:: text
+
+            grad f . grad g == (f L(g) + g L(f) - L(f g)) / 2
+
+        Every term is a pointwise product or a diagonal spectral multiply, so
+        this costs three transforms and no differentiation of the grid. It is
+        what makes the variable-coefficient flexure operator writable without a
+        tangent frame.
+
+        **The sign is the whole content of this method.** v1 has it the other
+        way round, which is verifiable against ``grad sin . grad cos`` on a
+        circle: its answer is exactly ``-1`` times the analytic one. It went
+        unnoticed because every use is inside a variable-coefficient term, and
+        those vanish identically when the coefficient is constant — so the
+        constant-coefficient case, which is the one with a closed form to check
+        against, cannot see it.
+        """
+        laplacian = self.laplacian
+        result = self.multiply(f, laplacian(g))
+        result = self.add(result, self.multiply(g, laplacian(f)))
+        result = self.subtract(result, laplacian(self.multiply(f, g)))
+        return self.scale(0.5, result)
+
+    # ----------------------------------------------------------------- #
+    #                               Flexure                             #
+    # ----------------------------------------------------------------- #
+
+    def _as_field(self, value: np.ndarray | float, /) -> np.ndarray:
+        """A scalar as a constant field, or a field unchanged."""
+        if isinstance(value, (int, float, np.floating, np.integer)):
+            return self.project_function(lambda _: float(value))
+        return np.asarray(value)
+
+    def flexural_operator(
+        self,
+        rigidity: np.ndarray | float,
+        poisson_ratio: np.ndarray | float,
+        buoyancy: np.ndarray | float,
+        /,
+    ) -> LinearOperator:
+        r"""The variable-coefficient flexure operator for a floating plate.
+
+        The covariant fourth-order operator on a surface of Gaussian curvature
+        ``K``, with ``D_eff == D (1 - nu)``:
+
+        .. code-block:: text
+
+            Op(w) = L(D L w)                        principal bending
+                  - L(D_eff) L w                    rigidity-gradient coupling
+                  + tr(Hess D_eff  Hess w)          twist coupling
+                  + 2 K grad D_eff . grad w         curvature commutator
+                  - K D_eff L w                     covariant softening
+                  + rho_g w                         hydrostatic restoring force
+
+        The two middle terms are produced together, coordinate-free, by
+        subtracting a Bochner block built from :meth:`gradient_dot_product`;
+        neither a Hessian nor a tangent frame is ever formed.
+
+        Self-adjoint with respect to the ``L2`` inner product. On a Sobolev
+        space it is built where that is true and lifted, as
+        :meth:`multiplication_operator` is.
+
+        Args:
+            rigidity: the flexural rigidity ``D``, a field or a constant.
+            poisson_ratio: ``nu``, a field or a constant.
+            buoyancy: the restoring coefficient ``rho_g``, a field or a
+                constant.
+        """
+        if self.order != 0.0:
+            base = self.with_order(0.0)
+            return lift_formal_adjoint(
+                base.flexural_operator(rigidity, poisson_ratio, buoyancy), self
+            )
+
+        laplacian = self.laplacian
+        curvature = self.gaussian_curvature
+        rigidity_field = self._as_field(rigidity)
+        effective = self.multiply(
+            rigidity_field,
+            self.subtract(self._as_field(1.0), self._as_field(poisson_ratio)),
+        )
+        buoyancy_field = self._as_field(buoyancy)
+        laplacian_effective = laplacian(effective)
+
+        def value(w: np.ndarray) -> np.ndarray:
+            laplacian_w = laplacian(w)
+
+            result = laplacian(self.multiply(rigidity_field, laplacian_w))
+
+            # Bochner block: -bochner == tr(Hess D_eff Hess w) + 2 K grad.grad
+            gradients = self.gradient_dot_product(effective, w)
+            bochner = self.scale(0.5, laplacian(gradients))
+            bochner = self.subtract(
+                bochner,
+                self.scale(0.5, self.gradient_dot_product(laplacian_effective, w)),
+            )
+            bochner = self.subtract(
+                bochner,
+                self.scale(0.5, self.gradient_dot_product(effective, laplacian_w)),
+            )
+            bochner = self.subtract(bochner, self.scale(curvature, gradients))
+
+            result = self.subtract(result, bochner)
+            result = self.subtract(
+                result, self.multiply(laplacian_effective, laplacian_w)
+            )
+            if curvature != 0.0:
+                result = self.subtract(
+                    result,
+                    self.scale(curvature, self.multiply(effective, laplacian_w)),
+                )
+            return self.add(result, self.multiply(buoyancy_field, w))
+
+        return LinearOperator.self_adjoint(self, value)
+
+    def inverse_flexural_operator(
+        self,
+        rigidity: np.ndarray | float,
+        poisson_ratio: np.ndarray | float,
+        buoyancy: np.ndarray | float,
+        /,
+        *,
+        baseline_rigidity: float | None = None,
+        baseline_buoyancy: float | None = None,
+        solver: "IterativeSolver | None" = None,
+    ) -> LinearOperator:
+        r"""The inverse of :meth:`flexural_operator`.
+
+        With constant coefficients the operator is invariant, so its inverse is
+        exact and diagonal — the symbol is
+        ``1 / (D lambda^2 - K D_eff lambda + rho_g)``. With varying
+        coefficients that same symbol, built from the spatial averages, is an
+        excellent preconditioner, and the solve is a preconditioned CG.
+
+        Args:
+            baseline_rigidity: the constant rigidity used for the
+                preconditioner. Defaults to the spatial average.
+            baseline_buoyancy: likewise for the restoring coefficient.
+            solver: the iterative solver. Defaults to ``CGSolver()``.
+        """
+        constant = all(
+            isinstance(value, (int, float, np.floating, np.integer))
+            for value in (rigidity, poisson_ratio, buoyancy)
+        )
+        curvature = self.gaussian_curvature
+
+        def symbol(D: float, nu: float, rho: float):
+            effective = D * (1.0 - nu)
+            return lambda eigenvalue: 1.0 / (
+                D * eigenvalue**2 - curvature * effective * eigenvalue + rho
+            )
+
+        if constant:
+            return self.invariant_operator(
+                symbol(float(rigidity), float(poisson_ratio), float(buoyancy))
+            )
+
+        def average(value: np.ndarray | float) -> float:
+            if isinstance(value, (int, float, np.floating, np.integer)):
+                return float(value)
+            one = self._as_field(1.0)
+            return float(self.inner_product(value, one) / self.squared_norm(one))
+
+        preconditioner = self.invariant_operator(
+            symbol(
+                average(rigidity) if baseline_rigidity is None else baseline_rigidity,
+                average(poisson_ratio),
+                average(buoyancy) if baseline_buoyancy is None else baseline_buoyancy,
+            )
+        )
+
+        from ..numerics.solvers import CGSolver, IterativeSolver
+
+        if solver is None:
+            solver = CGSolver()
+        if not isinstance(solver, IterativeSolver):
+            raise TypeError(
+                "A varying-coefficient flexure operator is inverted "
+                f"iteratively; {type(solver).__name__} is not an "
+                "IterativeSolver."
+            )
+        # CG needs the operator to be positive definite, and the flexure
+        # operator is -- its quadratic form is the plate's bending plus
+        # restoring energy -- provided D > 0 and rho_g > 0. That is a claim
+        # about the *arguments*, so it is made here, by the routine choosing to
+        # use CG, rather than by the operator itself. With an unphysical
+        # rigidity CG will fail loudly instead of silently converging to
+        # nothing.
+        operator = self.flexural_operator(
+            rigidity, poisson_ratio, buoyancy
+        ).with_traits(Traits.POSITIVE_DEFINITE)
+        return solver.with_preconditioner(preconditioner)(operator)
 
     # ----------------------------------------------------------------- #
     #                              Geodesics                            #

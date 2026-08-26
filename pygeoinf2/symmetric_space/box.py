@@ -154,6 +154,23 @@ class Box(PeriodicBox):
             [generator.uniform(lower, upper) for lower, upper in self._bounds]
         )
 
+    def with_order(
+        self, order: float, /, *, length_scale: float | None = None
+    ) -> "Box":
+        """The same box, viewed with a different Sobolev order.
+
+        Overridden so the result is still a ``Box``: the base class would give
+        back the enclosing periodic domain, which has the same components but
+        not the same idea of where the boundary is.
+        """
+        return Box(
+            self._shape,
+            bounds=self._bounds,
+            padding=self._padding,
+            order=order,
+            length_scale=(self._length_scale if length_scale is None else length_scale),
+        )
+
     # ----------------------------------------------------------------- #
     #                              Support                              #
     # ----------------------------------------------------------------- #

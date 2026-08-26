@@ -9,6 +9,10 @@ little.
 import pathlib
 import runpy
 
+import matplotlib
+
+matplotlib.use("Agg")
+
 import pytest
 
 EXAMPLES = pathlib.Path(__file__).resolve().parent.parent / "examples"
@@ -21,14 +25,40 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 19
+    assert len(example_scripts()) >= 20
 
 
 # Examples that need an optional dependency, and the module that provides it.
 OPTIONAL = {
     "16_mfem_backend": "mfem",
     "19_observation": "pyshtools",
+    "20_flexure": "cartopy",
 }
+
+
+# Examples that draw coastlines. Cartopy fetches the Natural Earth shapefile on
+# first use, and a test suite that reaches the network is a test suite that
+# fails for reasons unconnected to the code.
+NEEDS_COASTLINES = {"20_flexure"}
+
+
+def _coastlines_are_cached() -> bool:
+    """True when cartopy already has the land shapefile on disk."""
+    try:
+        from cartopy.io import shapereader
+    except ImportError:
+        return False
+    import unittest.mock
+
+    with unittest.mock.patch("cartopy.io.Downloader.acquire_resource") as blocked:
+        blocked.side_effect = AssertionError("would download")
+        try:
+            shapereader.natural_earth(
+                resolution="110m", category="physical", name="land"
+            )
+        except Exception:
+            return False
+    return True
 
 
 @pytest.mark.parametrize("script", example_scripts(), ids=lambda p: p.stem)
@@ -36,6 +66,8 @@ def test_the_example_runs(script, capsys):
     """Run the script and require that it produces output without raising."""
     if script.stem in OPTIONAL:
         pytest.importorskip(OPTIONAL[script.stem])
+    if script.stem in NEEDS_COASTLINES and not _coastlines_are_cached():
+        pytest.skip("the Natural Earth coastline data is not cached locally")
     runpy.run_path(str(script), run_name="__main__")
     assert capsys.readouterr().out.strip(), f"{script.name} printed nothing"
 

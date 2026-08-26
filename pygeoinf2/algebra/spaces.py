@@ -13,17 +13,22 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import Hashable, Sequence
+from typing import TYPE_CHECKING, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator, default_rng
 from scipy.linalg import solve_triangular
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .operators import LinearOperator
 
 __all__ = [
     "HilbertSpace",
     "ArrayVectorMixin",
     "CoordinateSpace",
     "DiagonalMetricSpace",
+    "HilbertModule",
+    "require_module",
     "OrthonormalSpace",
     "EuclideanSpace",
     "Reals",
@@ -387,6 +392,67 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         step is the classic adjoint-method error; see DESIGN.md section 5.6.
         """
         return self.from_components(self.solve_gram(np.asarray(derivative_components)))
+
+
+class HilbertModule[V](HilbertSpace[V], ABC):
+    """A space whose vectors can also be multiplied together, pointwise.
+
+    A capability, in the same sense as :class:`CoordinateSpace`: spaces whose
+    vectors are *functions* have it, and code that needs a pointwise product
+    asks for it rather than the core assuming every vector is one. A finite
+    element space can opt in; a space of abstract coefficients cannot, and
+    should not have to pretend.
+
+    What it buys is a coefficient that varies in space. Multiplication by a
+    field is a linear operator, and the operators built from it — a variable
+    wave speed, a variable rigidity, a mask — are where a physical model stops
+    being invariant.
+
+    **The product of two band-limited functions is not band-limited.** Both
+    implementations here multiply on the grid, so the result is the exact
+    product sampled and then projected back, which aliases whatever lies above
+    the truncation. That is inherent rather than a defect, but it means the
+    truncation has to be chosen with the products in mind and not just the
+    fields.
+    """
+
+    @abstractmethod
+    def multiply(self, x: V, y: V) -> V:
+        """The pointwise product of two vectors."""
+
+    @abstractmethod
+    def sqrt(self, x: V) -> V:
+        """The pointwise square root of a vector."""
+
+    def multiplication_operator(self, f: V, /) -> "LinearOperator[V, V]":
+        """The operator ``u -> f u``.
+
+        **No self-adjointness is claimed here.** Multiplication is self-adjoint
+        with respect to the ``L2`` inner product, and a space that weights its
+        modes — a Sobolev space — has a different one. A subclass that knows
+        its inner product is the ``L2`` one should override and say so; see
+        :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.multiplication_operator`,
+        which lifts the ``L2`` operator through its metric instead.
+        """
+        from .operators import LinearOperator
+
+        return LinearOperator.from_callables(self, self, lambda u: self.multiply(f, u))
+
+
+def require_module(*spaces: HilbertSpace) -> None:
+    """Raise unless every space supports pointwise multiplication.
+
+    The counterpart of :func:`~pygeoinf2.algebra.operators.require_coordinates`,
+    so an operation that needs fields to multiply fails by name rather than by
+    ``AttributeError``.
+    """
+    for space in spaces:
+        if not isinstance(space, HilbertModule):
+            raise TypeError(
+                f"{type(space).__name__} does not support pointwise "
+                f"multiplication, and this operation requires it. Its vectors "
+                f"are not functions on a common domain."
+            )
 
 
 class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):

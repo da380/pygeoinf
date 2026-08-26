@@ -3035,3 +3035,79 @@ the same":
   action of a single operator will need parallelising for large problems, and
   when it does it belongs in the operator's own implementation rather than as a
   flag threaded through every constructor.
+
+### 21.6 Phase 1 as built
+
+`work/flexure.py` runs on v2, as `examples/20_flexure.py`. 836 tests.
+
+```
+algebra/spaces.py       HilbertModule, require_module
+symmetric_space/base.py truncate, multiply, sqrt, multiplication_operator,
+                        gaussian_curvature, gradient_dot_product,
+                        flexural_operator, inverse_flexural_operator
+numerics/solvers.py     IterativeSolver.with_preconditioner
+plotting/               base.py dispatch, sphere.py, fourier.py
+```
+
+**Pointwise multiplication is a capability.** `HilbertModule` sits beside
+`CoordinateSpace`: a space whose vectors are functions declares it, and
+`require_module` names it when something needs it. Nothing in the core assumes
+fields multiply, so an MFEM space can opt in and a space of abstract
+coefficients is not asked to pretend.
+
+**Multiplication by a field is not self-adjoint on a Sobolev space.** It is
+self-adjoint for the `L2` inner product, and a space that weights its modes does
+not have that inner product. So `multiplication_operator` builds the operator
+where the claim is true and lifts it through `lift_formal_adjoint`, and the
+lifted operator claims nothing — §3.5 again, in the place it is easiest to get
+wrong, since the *action* is identical either way.
+
+**The flexure operator needed the Bochner identity**, which produces
+`tr(Hess D_eff Hess w) + 2 K grad D_eff . grad w` as a unit from three calls to
+`gradient_dot_product`. No Hessian and no tangent frame is ever formed. That
+matters beyond flexure: it is the general route to a second-order
+variable-coefficient operator on a symmetric space.
+
+### 21.7 Three findings
+
+**v1's `gradient_dot_product` has the wrong sign.** With the positive
+Laplacian this package and v1 both use, `grad f . grad g == (f L g + g L f -
+L(f g)) / 2`; v1 computes the negative of that. Verified against
+`grad sin . grad cos` on a circle, where the ratio to the analytic answer is
+exactly `-1`.
+
+It propagates into `flexural_operator`, and the reason it survived is worth
+recording: **every use of it is inside a term proportional to the gradient of a
+coefficient, and those vanish identically when the coefficient is constant.**
+So the constant-coefficient case — the one with a closed-form spectral symbol
+to check against — cannot see it. Measured against the exact one-dimensional
+beam operator `(D w'')'' + rho w` with a varying `D`, the corrected version is
+right to `6e-9` relative and v1's sign is wrong by 36%. With a constant `D`,
+both agree to `4.5e-4`.
+
+**Self-adjointness does not pin the curvature term.** The first check tried was
+whether `2 K grad D_eff . grad w` is constrained by the operator being
+symmetric. It is not: dropping, doubling and negating `K` all leave the
+operator self-adjoint to machine precision. The term is live — it is 0.6% of
+the operator — so `check_operator` passing said nothing about it. What does pin
+it is a closed form: a degree-one harmonic on the unit sphere is the
+restriction of a linear function, so `Hess f == -f g_ab` and therefore
+`tr(Hess f Hess g) == 2 f g` exactly. The Bochner block matches that to
+`7e-11`, and is 50% to 100% wrong with the curvature coefficient dropped,
+doubled or negated.
+
+**A product on a sphere has no canonical grid representative.** The
+Driscoll-Healy grid is oversampled — eight grid points per dimension of the
+space — so `from_components(to_components(x))` is a projection rather than the
+identity, and many grid arrays share a set of components. A pointwise product
+leaves the space, so its raw grid array is one of those non-canonical
+representatives, and the formal-adjoint lift, which round-trips through
+components, disagreed with a direct application by 8%. `multiply` now
+truncates, so the product depends only on its factors. `truncate` is the
+identity on a periodic box, where `rfftn` gives one component per grid point,
+and is overridden there to skip the two transforms.
+
+### 21.8 Next
+
+Phase 2: M5 stages 5.1 to 5.4 and the sphere point-evaluation speedup, with
+`work/tomo.py` as the acceptance test.

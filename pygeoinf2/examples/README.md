@@ -33,10 +33,12 @@ failing test rather than a surprise later.
 | 17 | `sets` | a convex set, its indicator and its support function as one object |
 | 18 | `subspaces` | projectors, kernels, and linear constraints |
 | 19 | `observation` | where a function space meets an instrument |
+| 20 | `flexure` | a coefficient that varies in space, and a picture of it |
 
 ## The ones with optional dependencies
 
-Number 16 needs `mfem` and number 19 needs `pyshtools`; both skip without them.
+Number 16 needs `mfem`, 19 needs `pyshtools`, and 20 needs `cartopy` as well.
+Each skips without them.
 
 ```
 poetry install --extras mfem

@@ -169,6 +169,20 @@ class PeriodicBox(SymmetricSpace):
         return self._lengths
 
     @property
+    def gaussian_curvature(self) -> float:
+        """Zero: a periodic box is flat."""
+        return 0.0
+
+    def truncate(self, x: np.ndarray, /) -> np.ndarray:
+        """The identity: ``rfftn`` packing gives one component per grid point.
+
+        Overridden to skip two transforms per pointwise product. The base
+        class's round trip would return the same array; on this grid there is
+        nothing above the truncation to remove.
+        """
+        return np.asarray(x)
+
+    @property
     def spatial_dimension(self) -> int:
         """The number of axes: one for a circle, two for a torus."""
         return len(self._shape)

@@ -318,6 +318,24 @@ class IterativeSolver(LinearSolver):
         self._preconditioner = preconditioner
         self._strict = strict
 
+    def with_preconditioner(
+        self, preconditioner: LinearSolver | LinearOperator, /
+    ) -> "IterativeSolver":
+        """The same solver, with a preconditioner attached.
+
+        Exists so that a caller can hand in a configured solver — tolerances,
+        iteration cap, callbacks — and a library routine can still supply the
+        preconditioner it knows how to build. An explicit preconditioner on the
+        original is kept; the caller knows something the routine does not.
+        """
+        if self._preconditioner is not None:
+            return self
+        import copy
+
+        clone = copy.copy(self)
+        clone._preconditioner = preconditioner
+        return clone
+
     def _resolve_preconditioner(
         self, operator: LinearOperator
     ) -> LinearOperator | None:

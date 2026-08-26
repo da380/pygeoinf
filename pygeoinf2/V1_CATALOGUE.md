@@ -88,7 +88,7 @@ spectral path is missing along with `kl_divergence` itself;
 | `DualHilbertSpace` | Dropped | No dual spaces in v2. Riesz identification throughout, so a functional is a `LinearFunctional` on the space itself (§1) | |
 | `MassWeightedHilbertSpace` | Subsumed | Any `CoordinateSpace` with a non-trivial Gram matrix. The mass matrix *is* the Gram matrix (§3.2, §15.1) | |
 | `MassWeightedHilbertModule` | Subsumed | As above; the module structure is `vector_multiply`, which is **Open** below | |
-| `HilbertModuleMixin` | Planned (F) | Pointwise multiplication of fields. `work/flexure.py` needs it for a spatially varying rigidity. No v2 home yet — see Part 2 | We do want this functionality in some form|
+| `HilbertModuleMixin` | Ported | Pointwise multiplication of fields. `work/flexure.py` needs it for a spatially varying rigidity. No v2 home yet — see Part 2 | We do want this functionality in some form|
 
 ## `linear_operators.py` → `algebra/operators.py`, `nodes.py`, `diagonal.py`
 
@@ -280,7 +280,7 @@ deliberately not started.
 | `line.Lebesgue/Sobolev` | Ported | `Interval` | |
 | `sphere.Lebesgue/Sobolev` | Ported | `Sphere` | |
 | *(3D periodic box)* | *(new)* | Free, from the N-dimensional `rfftn` construction | |
-| `plot`, `plot_error_bounds`, `plot_geodesic`, `plot_geodesic_network`, `plot_points`, `create_map_figure` | Planned | **O8**. Its own layer dispatching on space type, not methods on the spaces | yes, we need this. create_map_figure can probably be replaced by writing a kind of overload for plt.subplots adapted to cartopy, and hence allowing for mutliple panels etc.|
+| `plot`, `plot_error_bounds`, `plot_geodesic`, `plot_geodesic_network`, `plot_points`, `create_map_figure` | Ported (O8, in part) | **O8**. Its own layer dispatching on space type, not methods on the spaces | yes, we need this. create_map_figure can probably be replaced by writing a kind of overload for plt.subplots adapted to cartopy, and hence allowing for mutliple panels etc.|
 
 ## `checks/` → `testing.py`
 
@@ -440,7 +440,7 @@ different metric. So the union of method names is the honest comparison.
 | `degree_multiplicity` | Planned (S) | Not ported. Trivial to add | Used in the past, say for traces|
 | `fft_factor`, `inverse_fft_factor` | Subsumed | Internal to the transform | |
 | `angle_to_point`, `point_to_angle`, `angle_to_point_x/y`, `circle_space`, `torus_space` | Subsumed | `Box`/`Interval` subclass `PeriodicBox` rather than wrapping it, so there is no conversion (§13.4) | |
-| `gaussian_curvature` | Planned (S) | Not ported | Needed for flexure, and harmless. |
+| `gaussian_curvature` | Ported | Not ported | Needed for flexure, and harmless. |
 | `is_element`, `ax`, `axpy`, `zero`, `inner_product`, `norm` | Ported | on `HilbertSpace` | |
 
 ### Operators
@@ -459,8 +459,8 @@ different metric. So the union of method names is the honest comparison.
 | `order_inclusion_operator` | Planned (S) | The embedding `H^s -> H^t`. Not ported | This is useful |
 | `spectral_projection_operator` | Planned (S) | Projection onto a band of degrees. `coefficient_operator` gives the map *out*; this is the projector *within* | Useful |
 | `derivative_operator` | Planned (S) | `d/dx` on the circle and line. Diagonal in the basis, so nearly free | Useful |
-| `flexural_operator`, `inverse_flexural_operator` | Planned (F) | Not ported. `work/flexure.py` and `work/dynamic_topography.py` are built on these, so they gate reproducing two of the worked examples | Useful |
-| `spatial_multiplication_operator` | Planned (F) | Multiplication by a field. Needed for a spatially varying coefficient, so it gates the same two examples | Needed and simple |
+| `flexural_operator`, `inverse_flexural_operator` | Ported | Not ported. `work/flexure.py` and `work/dynamic_topography.py` are built on these, so they gate reproducing two of the worked examples | Useful |
+| `spatial_multiplication_operator` | Ported | Multiplication by a field. Needed for a spatially varying coefficient, so it gates the same two examples | Needed and simple |
 | `l2_products_operator` | Planned (S) | Inner products against a set of fields | Needed|
 | `estimate_truncation_degree` | Planned (S) | Choosing `lmax` from a target accuracy | These are useful |
 | `distance_localized_preconditioner` | Planned | M5, with the other preconditioners; needs `pairs_within_distance`, which is ported | This was never as good as I hoped -- so check the implementation -- but should be useful |
@@ -479,7 +479,7 @@ different metric. So the union of method names is the honest comparison.
 | `invariant_automorphism` | Ported | `invariant_operator` | |
 | `invariant_covariance_function` | Planned (P) | The covariance as a function of geodesic distance. Not ported | Worth having, I thought. Need a reason to drop. |
 | `sample_power_measure` | Planned (P) | Sampling from a prescribed power spectrum | Needed |
-| `vector_multiply`, `vector_sqrt` | Planned (F) | Pointwise algebra on fields. `work/flexure.py` builds its rigidity field with these. No v2 home — see `HilbertModuleMixin` in Part 1 | Needed in some form|
+| `vector_multiply`, `vector_sqrt` | Ported | Pointwise algebra on fields. `work/flexure.py` builds its rigidity field with these. No v2 home — see `HilbertModuleMixin` in Part 1 | Needed in some form|
 | `from_covariance`, `from_heat_kernel_prior`, `from_sobolev_kernel_prior`, `from_sobolev_parameters` | Subsumed | Constructors on the measures rather than on the space | |
 
 ### Geometry and data

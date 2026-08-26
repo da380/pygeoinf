@@ -139,6 +139,11 @@ class Sphere(SymmetricSpace):
         return 4.0 * np.pi * self._radius**2
 
     @property
+    def gaussian_curvature(self) -> float:
+        """``1 / radius^2``, constant over the sphere."""
+        return 1.0 / self._radius**2
+
+    @property
     def laplacian_eigenvalues(self) -> np.ndarray:
         """``l (l + 1) / radius^2`` for each component."""
         return self._laplacian_eigenvalues
