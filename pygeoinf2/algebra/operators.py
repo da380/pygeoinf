@@ -437,6 +437,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         /,
         *,
         form: Literal["auto", "components", "galerkin"] = "auto",
+        by: Literal["auto", "columns", "rows"] = "auto",
     ) -> np.ndarray:
         """A dense matrix representation. Requires coordinates on both sides.
 
@@ -450,25 +451,72 @@ class LinearOperator[X, Y](Operator[X, Y]):
         *extraction* only: on construction the caller must say which
         representation their array is in, since no trait implies it. See
         DESIGN.md section 5.3.
+
+        ``by`` chooses which way the matrix is filled in. Columns costs
+        ``dim(X)`` applications of the operator; rows costs ``dim(Y)``
+        applications of its adjoint. For an observation operator — a few
+        hundred data from a model space of many thousands — the difference is
+        two orders of magnitude, so ``"auto"`` takes whichever side is smaller.
         """
         require_coordinates(self.domain, self.codomain)
         if form == "auto":
             form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
         if form not in ("components", "galerkin"):
             raise ValueError(f"Unknown matrix form {form!r}.")
+        if by == "auto":
+            by = "rows" if self.codomain.dim < self.domain.dim else "columns"
+        if by not in ("columns", "rows"):
+            raise ValueError(f"Unknown fill direction {by!r}.")
 
-        columns = np.zeros((self.codomain.dim, self.domain.dim))
-        for j in range(self.domain.dim):
-            image = self(self.domain.basis_vector(j))
-            columns[:, j] = self.codomain.to_components(image)
-        if form == "galerkin":
-            columns = np.column_stack(
-                [
-                    self.codomain.apply_gram(columns[:, j])
-                    for j in range(self.domain.dim)
-                ]
+        if by == "columns":
+            matrix = np.zeros((self.codomain.dim, self.domain.dim))
+            for j in range(self.domain.dim):
+                image = self(self.domain.basis_vector(j))
+                matrix[:, j] = self.codomain.to_components(image)
+            if form == "galerkin":
+                matrix = np.column_stack(
+                    [
+                        self.codomain.apply_gram(matrix[:, j])
+                        for j in range(self.domain.dim)
+                    ]
+                )
+            return matrix
+
+        # Row i of the Galerkin matrix holds the derivative components of
+        # x -> (A x, e_i)_Y == (x, A* e_i)_X, which is G_X applied to the
+        # components of the adjoint's image. See DESIGN.md section 5.6.
+        adjoint = self.adjoint
+        matrix = np.zeros((self.codomain.dim, self.domain.dim))
+        for i in range(self.codomain.dim):
+            representer = adjoint(self.codomain.basis_vector(i))
+            matrix[i, :] = self.domain.apply_gram(
+                self.domain.to_components(representer)
             )
-        return columns
+        if form == "components":
+            # A_c == G_Y^-1 M, so the inverse metric acts down each column.
+            matrix = np.column_stack(
+                [self.codomain.solve_gram(matrix[:, j]) for j in range(self.domain.dim)]
+            )
+        return matrix
+
+    def assembled(self) -> LinearOperator[X, Y]:
+        """The same operator, with its matrix formed once and stored.
+
+        Trades memory for repeated application. Nothing else changes: the
+        matrix is extracted in Galerkin form and handed back to
+        :meth:`from_derivative_matrix`, so the metric still enters exactly
+        once, inside the adjoint, and the traits are carried across.
+
+        This is why no observation operator needs a ``matrix_free`` flag. Build
+        it matrix-free, and assemble it here if it is small enough to be worth
+        assembling.
+        """
+        return LinearOperator.from_derivative_matrix(
+            self.domain,
+            self.codomain,
+            self.matrix(form="galerkin"),
+            traits=self._traits,
+        )
 
     # ----------------------------------------------------------------- #
     #                               Algebra                             #
@@ -705,6 +753,54 @@ class LinearOperator[X, Y](Operator[X, Y]):
         def adjoint(y: Y) -> X:
             cy = codomain.to_components(y)
             return domain.from_components(domain.solve_gram(matrix.T @ cy))
+
+        return _CallableLinearOperator(
+            domain, codomain, value, adjoint=adjoint, traits=traits
+        )
+
+    @classmethod
+    def from_derivative_callables(
+        cls,
+        domain: CoordinateSpace[X],
+        codomain: HilbertSpace[Y],
+        value: Callable[[X], Y],
+        derivative_components: Callable[[Y], np.ndarray],
+        /,
+        *,
+        traits: Traits = Traits.NONE,
+    ) -> LinearOperator[X, Y]:
+        """Matrix-free, from the action and the *derivative* of its pullback.
+
+        The counterpart of :meth:`from_derivative_matrix` for an operator too
+        large to assemble. ``derivative_components(y)`` returns
+
+        .. code-block:: text
+
+            d (A x, y)_Y / d c_x
+
+        the components of the functional ``x -> (A x, y)_Y`` in the domain's
+        basis — which for a Euclidean codomain is just the weighted sum of rows
+        that a numerical adjoint method accumulates. The inverse metric is
+        applied here, once, by :meth:`~pygeoinf2.algebra.spaces.CoordinateSpace.representer`.
+
+        Only the **domain** needs coordinates. That is the right way round: the
+        model space is the one worth keeping matrix-free, and the one whose
+        metric is not the identity.
+
+        Passing an adjoint to :meth:`from_callables` instead means passing a
+        *gradient*-valued map, and getting that wrong is the error of DESIGN.md
+        section 5.6 in the setting where it is hardest to see. Prefer this.
+        """
+        require_coordinates(domain)
+
+        def adjoint(y: Y) -> X:
+            g = np.asarray(derivative_components(y), dtype=float)
+            if g.shape != (domain.dim,):
+                raise ValueError(
+                    f"derivative_components returned shape {g.shape}, "
+                    f"expected {(domain.dim,)}."
+                )
+            return domain.representer(g)
 
         return _CallableLinearOperator(
             domain, codomain, value, adjoint=adjoint, traits=traits
@@ -992,6 +1088,18 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
         from .nodes import _Zero
 
         return _Zero(self.domain, self.domain)
+
+    @property
+    def derivative_components(self) -> np.ndarray:
+        """The components of the derivative, ``g`` with ``f(x) == g . c_x``.
+
+        The other half of :meth:`from_derivative_components`, and the form a
+        functional has to be in before it can become a row of a Galerkin
+        matrix. ``G c_representer``, so the metric is applied here and not
+        anywhere the caller has to remember.
+        """
+        require_coordinates(self.domain)
+        return self.domain.apply_gram(self.domain.to_components(self.representer))
 
     @classmethod
     def from_representer(cls, domain: HilbertSpace[X], v: X) -> LinearFunctional[X]:

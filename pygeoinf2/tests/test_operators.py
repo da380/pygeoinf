@@ -16,7 +16,7 @@ from pygeoinf2.testing import (
 from pygeoinf2.traits import Traits
 
 from .conftest import make_dense_metric_space, make_weighted_space
-from .doubles import OpaqueSpace
+from .doubles import Opaque, OpaqueSpace
 
 
 def spd_matrix(rng, n):
@@ -305,6 +305,135 @@ class TestMatrixRepresentations:
         # ...and the adjoint of a basis covector is that row's representer.
         e0 = np.array([1.0, 0.0])
         assert np.allclose(X.to_components(A.adjoint(e0)), X.solve_gram(M[0]))
+
+    def test_derivative_callables_match_the_assembled_operator(self, rng):
+        """The matrix-free path must agree with the one it stands in for."""
+        X, Y = make_weighted_space(), EuclideanSpace(2)
+        M = rng.normal(size=(2, X.dim))
+        assembled = LinearOperator.from_derivative_matrix(X, Y, M)
+        matrix_free = LinearOperator.from_derivative_callables(
+            X,
+            Y,
+            lambda x: M @ X.to_components(x),
+            lambda y: M.T @ y,
+        )
+        check_operator(matrix_free, rng=rng)
+
+        x, y = X.random(rng=rng), Y.random(rng=rng)
+        assert np.allclose(matrix_free(x), assembled(x))
+        assert np.allclose(
+            X.to_components(matrix_free.adjoint(y)),
+            X.to_components(assembled.adjoint(y)),
+        )
+
+    def test_a_metric_free_adjoint_is_caught(self, rng):
+        """The negative control: the guard must be watched to fail.
+
+        Building the same operator through ``from_callables`` and handing it
+        the derivative components *as if* they were a gradient is the mistake
+        ``from_derivative_callables`` exists to prevent. If ``check_operator``
+        passed here too, the guard would be proving nothing.
+        """
+        X, Y = make_weighted_space(), EuclideanSpace(2)
+        M = rng.normal(size=(2, X.dim))
+        wrong = LinearOperator.from_callables(
+            X,
+            Y,
+            lambda x: M @ X.to_components(x),
+            adjoint=lambda y: X.from_components(M.T @ y),  # no inverse metric
+        )
+        with pytest.raises(AssertionError):
+            check_operator(wrong, rng=rng)
+
+    def test_derivative_callables_needs_domain_coordinates_only(self, rng):
+        """The codomain may be opaque; the domain is where the metric lives.
+
+        The codomain weight appears in ``derivative_components`` because that
+        callable is the derivative of ``(A x, y)_Y``, so the caller owns the
+        codomain side of the inner product. Only the domain metric is applied
+        for them.
+        """
+        X = make_weighted_space()
+        weights = np.array([2.0, 3.0])
+        Y = OpaqueSpace(weights)
+        M = rng.normal(size=(2, X.dim))
+        A = LinearOperator.from_derivative_callables(
+            X,
+            Y,
+            lambda x: Opaque(M @ X.to_components(x)),
+            lambda y: M.T @ (weights * y.data),
+        )
+        check_operator(A, rng=rng)
+
+        with pytest.raises(TypeError, match="no coordinate map"):
+            LinearOperator.from_derivative_callables(
+                Y, X, lambda y: X.zero, lambda x: np.zeros(2)
+            )
+
+    def test_derivative_callables_checks_the_component_shape(self, rng):
+        X, Y = make_weighted_space(), EuclideanSpace(2)
+        A = LinearOperator.from_derivative_callables(
+            X, Y, lambda x: np.zeros(2), lambda y: np.zeros(X.dim + 1)
+        )
+        with pytest.raises(ValueError, match="expected"):
+            A.adjoint(np.ones(2))
+
+    def test_the_two_fill_directions_agree(self, rng):
+        """Rows cost dim(Y) adjoint applications, columns cost dim(X)."""
+        X, Y = make_weighted_space(), make_dense_metric_space()
+        M = rng.normal(size=(Y.dim, X.dim))
+        A = LinearOperator.from_component_matrix(X, Y, M)
+        for form in ("components", "galerkin"):
+            by_columns = A.matrix(form=form, by="columns")
+            by_rows = A.matrix(form=form, by="rows")
+            assert np.allclose(by_columns, by_rows)
+        assert np.allclose(A.matrix(form="components", by="rows"), M)
+
+    def test_auto_fills_a_tall_operator_by_rows(self, rng):
+        """The cheap direction is taken without being asked for.
+
+        Counted rather than asserted: an observation operator has far fewer
+        data than model components, and filling it by columns would apply the
+        forward map once per component.
+        """
+        X, Y = make_weighted_space(), EuclideanSpace(2)
+        assert Y.dim < X.dim
+        M = rng.normal(size=(Y.dim, X.dim))
+        forward, backward = 0, 0
+
+        def value(x):
+            nonlocal forward
+            forward += 1
+            return M @ X.to_components(x)
+
+        def derivative(y):
+            nonlocal backward
+            backward += 1
+            return M.T @ y
+
+        A = LinearOperator.from_derivative_callables(X, Y, value, derivative)
+        assert np.allclose(A.matrix(form="galerkin"), M)
+        assert (forward, backward) == (0, Y.dim)
+
+    def test_assembled_reproduces_the_operator(self, rng):
+        X, Y = make_weighted_space(), EuclideanSpace(3)
+        M = rng.normal(size=(3, X.dim))
+        A = LinearOperator.from_derivative_callables(
+            X, Y, lambda x: M @ X.to_components(x), lambda y: M.T @ y
+        )
+        B = A.assembled()
+        check_operator(B, rng=rng)
+        x, y = X.random(rng=rng), Y.random(rng=rng)
+        assert np.allclose(A(x), B(x))
+        assert np.allclose(X.to_components(A.adjoint(y)), X.to_components(B.adjoint(y)))
+
+    def test_assembled_carries_the_traits(self, rng):
+        X = make_weighted_space()
+        S = spd_matrix(rng, X.dim)
+        A = LinearOperator.self_adjoint(
+            X, lambda x: X.solve_gram(S @ X.to_components(x))
+        )
+        assert Traits.SELF_ADJOINT & A.assembled().traits
 
     def test_matrix_requires_coordinates(self, rng):
         X = OpaqueSpace(np.array([1.0, 2.0, 3.0]))

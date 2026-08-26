@@ -32,13 +32,15 @@ failing test rather than a surprise later.
 | 16 | `mfem_backend` | a finite element space, where the mass matrix is the metric |
 | 17 | `sets` | a convex set, its indicator and its support function as one object |
 | 18 | `subspaces` | projectors, kernels, and linear constraints |
+| 19 | `observation` | where a function space meets an instrument |
 
-## The backend example
+## The ones with optional dependencies
 
-Number 16 needs an optional dependency and is skipped without it:
+Number 16 needs `mfem` and number 19 needs `pyshtools`; both skip without them.
 
 ```
 poetry install --extras mfem
+poetry install --extras sphere
 ```
 
 It answers the question the rest of the suite cannot: whether the

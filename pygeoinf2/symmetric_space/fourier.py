@@ -267,6 +267,11 @@ class PeriodicBox(SymmetricSpace):
             np.arange(n) * length / n for n, length in zip(self._shape, self._lengths)
         )
 
+    @property
+    def reference_point(self) -> np.ndarray:
+        """The origin. Any point would do; the box is homogeneous."""
+        return np.zeros(self.spatial_dimension)
+
     def basis_at(self, point: Any, /) -> np.ndarray:
         """The value of each orthonormal basis function at a point.
 

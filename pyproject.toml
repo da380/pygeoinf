@@ -32,7 +32,10 @@ mfem = ["mfem>=4.8.0"]
 
 [tool.poetry]
 packages = [{ include = "pygeoinf" }]
-include = [{ path = "pygeoinf/data/*.csv", format = ["sdist", "wheel"] }]
+include = [
+    { path = "pygeoinf/data/*.csv", format = ["sdist", "wheel"] },
+    { path = "pygeoinf2/data/*.csv", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.group.dev]
 optional = true

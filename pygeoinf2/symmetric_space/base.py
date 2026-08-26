@@ -132,20 +132,46 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
     #                         Invariant measures                        #
     # ----------------------------------------------------------------- #
 
-    def invariant_measure(
+    @property
+    def reference_point(self) -> Any:
+        """Any point of the domain. The space is homogeneous, so any will do.
+
+        Used where a quantity is provably the same everywhere and one place has
+        to be picked to evaluate it — the pointwise variance of an invariant
+        measure being the case that matters.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not name a reference point."
+        )
+
+    def pointwise_variance(
         self,
         spectral_variances: np.ndarray | Callable[[np.ndarray], np.ndarray],
         /,
-        *,
-        expectation: np.ndarray | None = None,
-    ) -> GaussianMeasure:
-        """A Gaussian whose covariance is diagonal in the spectral basis.
+    ) -> float:
+        """The variance of ``x(p)`` under the corresponding invariant measure.
 
-        The factor is the exact square root of the covariance, so sampling is a
-        single spectral multiply of white noise — and the white noise carries
-        the ``1/sqrt(g)`` that a non-trivial metric demands, rather than that
-        correction being written out here.
+        This is the number a modeller actually has an opinion about: nobody
+        knows what spectral amplitude they want, and everybody knows roughly
+        how big the field should be.
+
+        The value is ``(C u, u)`` with ``u`` the representer of evaluation at
+        ``p``, which comes out as ``sum_k s_k phi_k(p)^2 / g_k``. The metric
+        appears because the spectral variances are the covariance *operator's*
+        eigenvalues, while a sample's components carry the ``1/sqrt(g)`` of
+        white noise. Dropping it is the error of DESIGN.md section 5.6 once
+        more, and it is invisible on a Lebesgue space where ``g == 1``.
         """
+        variances = self._resolve_variances(spectral_variances)
+        basis = self.basis_at(self.reference_point)
+        return float(np.sum(variances * basis**2 / self.metric_values))
+
+    def _resolve_variances(
+        self,
+        spectral_variances: np.ndarray | Callable[[np.ndarray], np.ndarray],
+        /,
+    ) -> np.ndarray:
+        """Validate a spectrum given either directly or as a symbol."""
         if callable(spectral_variances):
             variances = np.asarray(
                 spectral_variances(self.laplacian_eigenvalues), dtype=float
@@ -158,6 +184,39 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
             )
         if np.any(variances < 0.0):
             raise ValueError("Spectral variances must be non-negative.")
+        return variances
+
+    def invariant_measure(
+        self,
+        spectral_variances: np.ndarray | Callable[[np.ndarray], np.ndarray],
+        /,
+        *,
+        expectation: np.ndarray | None = None,
+        pointwise_std: float | None = None,
+    ) -> GaussianMeasure:
+        """A Gaussian whose covariance is diagonal in the spectral basis.
+
+        The factor is the exact square root of the covariance, so sampling is a
+        single spectral multiply of white noise — and the white noise carries
+        the ``1/sqrt(g)`` that a non-trivial metric demands, rather than that
+        correction being written out here.
+
+        ``pointwise_std`` rescales the whole spectrum so that
+        :meth:`pointwise_variance` comes out as its square, leaving the shape
+        of the spectrum — and so the correlation length — untouched.
+        """
+        variances = self._resolve_variances(spectral_variances)
+        if pointwise_std is not None:
+            if pointwise_std <= 0.0:
+                raise ValueError("pointwise_std must be positive.")
+            current = self.pointwise_variance(variances)
+            if current <= 0.0:
+                raise ValueError(
+                    "A measure with zero pointwise variance cannot be scaled "
+                    "to a given standard deviation."
+                )
+
+            variances = variances * (pointwise_std**2 / current)
 
         factor = DiagonalLinearOperator(self, np.sqrt(variances))
         # A precision exists only when every variance is strictly positive; a
@@ -183,6 +242,7 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
         *,
         amplitude: float = 1.0,
         expectation: np.ndarray | None = None,
+        pointwise_std: float | None = None,
     ) -> GaussianMeasure:
         """A Gaussian prior whose covariance is a Sobolev symbol.
 
@@ -194,6 +254,7 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
         return self.invariant_measure(
             amplitude**2 * self.sobolev_symbol(-order, scale),
             expectation=expectation,
+            pointwise_std=pointwise_std,
         )
 
     def heat_measure(
@@ -203,10 +264,13 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
         *,
         amplitude: float = 1.0,
         expectation: np.ndarray | None = None,
+        pointwise_std: float | None = None,
     ) -> GaussianMeasure:
         """A Gaussian prior with a heat-kernel covariance."""
         return self.invariant_measure(
-            amplitude**2 * self.heat_symbol(time), expectation=expectation
+            amplitude**2 * self.heat_symbol(time),
+            expectation=expectation,
+            pointwise_std=pointwise_std,
         )
 
     # ----------------------------------------------------------------- #
@@ -225,8 +289,25 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
         """
         return LinearFunctional.from_derivative_components(self, self.basis_at(point))
 
+    def evaluate(self, x: np.ndarray, points: Sequence[Any], /) -> np.ndarray:
+        """The field's values at several points.
+
+        The generic route sums the basis at each point, which costs one
+        ``basis_at`` call per point. A space whose transform can evaluate at
+        scattered points directly should override this; the sphere does.
+        """
+        components = self.to_components(x)
+        return np.array(
+            [float(np.dot(self.basis_at(point), components)) for point in points]
+        )
+
     def point_evaluation_operator(self, points: Sequence[Any], /) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
+
+        Matrix-free: nothing of size ``len(points) x dim`` is formed, so this
+        is usable at the scale real acquisition geometries reach. Call
+        :meth:`~pygeoinf2.algebra.operators.LinearOperator.assembled` on the
+        result when the matrix is small enough to be worth storing.
 
         Its adjoint returns a weighted sum of Dirac *representers*, which is
         what makes an adjoint-based inversion give a function rather than an
@@ -237,10 +318,144 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
         points = tuple(points)
         if not points:
             raise ValueError("At least one point is needed.")
-        matrix = np.stack([self.basis_at(point) for point in points])
-        return LinearOperator.from_derivative_matrix(
-            self, EuclideanSpace(len(points)), matrix
+
+        def derivative_components(y: np.ndarray) -> np.ndarray:
+            total = np.zeros(self.dim)
+            for weight, point in zip(np.asarray(y, dtype=float), points):
+                if weight != 0.0:
+                    total += weight * self.basis_at(point)
+            return total
+
+        return LinearOperator.from_derivative_callables(
+            self,
+            EuclideanSpace(len(points)),
+            lambda x: self.evaluate(x, points),
+            derivative_components,
         )
+
+    # ----------------------------------------------------------------- #
+    #                              Geodesics                            #
+    # ----------------------------------------------------------------- #
+
+    def geodesic_distance(self, start: Any, end: Any, /) -> float:
+        """The distance between two points along a shortest path."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement geodesic_distance."
+        )
+
+    def geodesic_quadrature(
+        self, start: Any, end: Any, /, *, count: int
+    ) -> tuple[list[Any], np.ndarray]:
+        """Nodes and weights integrating along the geodesic between two points.
+
+        The weights carry the arc-length element, so they sum to the distance
+        between the endpoints and integrating the constant one gives that
+        distance.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement geodesic_quadrature."
+        )
+
+    def geodesic_ball_quadrature(
+        self, centre: Any, radius: float, /, *, count: int
+    ) -> tuple[list[Any], np.ndarray]:
+        """Nodes and weights integrating over a geodesic ball.
+
+        The weights carry the area element, so they sum to the ball's measure.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement geodesic_ball_quadrature."
+        )
+
+    # ----------------------------------------------------------------- #
+    #                         Averaging operators                       #
+    # ----------------------------------------------------------------- #
+
+    def path_average_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        /,
+        *,
+        count: int = 20,
+        normalise: bool = True,
+    ) -> LinearOperator:
+        """Averages, or integrals, along a set of geodesic paths.
+
+        The tomographic forward map. Built as ``W E``: point evaluation at the
+        pooled quadrature nodes, then a sparse matrix of weights. Writing it
+        this way means the adjoint is derived by the algebra rather than
+        written out, which is where the metric is usually dropped.
+
+        Args:
+            paths: ``(start, end)`` pairs.
+            count: quadrature nodes per path.
+            normalise: divide by the path length, giving an average rather
+                than an integral.
+        """
+        paths = tuple(paths)
+        if not paths:
+            raise ValueError("At least one path is needed.")
+
+        nodes: list[Any] = []
+        rows, columns, values = [], [], []
+        for index, (start, end) in enumerate(paths):
+            path_nodes, path_weights = self.geodesic_quadrature(start, end, count=count)
+            if normalise:
+                total = float(np.sum(path_weights))
+                if total <= 0.0:
+                    raise ValueError(
+                        f"Path {index} has zero length, so it has no average."
+                    )
+                path_weights = path_weights / total
+            offset = len(nodes)
+            nodes.extend(path_nodes)
+            rows.extend([index] * len(path_nodes))
+            columns.extend(range(offset, offset + len(path_nodes)))
+            values.extend(np.asarray(path_weights, dtype=float).tolist())
+
+        return _weight_operator(
+            len(paths), len(nodes), rows, columns, values
+        ) @ self.point_evaluation_operator(nodes)
+
+    def geodesic_ball_average_operator(
+        self,
+        centres: Sequence[Any],
+        radius: float,
+        /,
+        *,
+        count: int = 100,
+        normalise: bool = True,
+    ) -> LinearOperator:
+        """Averages, or integrals, over geodesic balls of a common radius.
+
+        The property operator of an inference problem: a handful of local
+        averages, which is what a set of data can actually constrain. Same
+        ``W E`` construction as :meth:`path_average_operator`.
+        """
+        centres = tuple(centres)
+        if not centres:
+            raise ValueError("At least one centre is needed.")
+
+        nodes: list[Any] = []
+        rows, columns, values = [], [], []
+        for index, centre in enumerate(centres):
+            ball_nodes, ball_weights = self.geodesic_ball_quadrature(
+                centre, radius, count=count
+            )
+            if normalise:
+                total = float(np.sum(ball_weights))
+                if total <= 0.0:
+                    raise ValueError(f"Ball {index} has zero measure.")
+                ball_weights = ball_weights / total
+            offset = len(nodes)
+            nodes.extend(ball_nodes)
+            rows.extend([index] * len(ball_nodes))
+            columns.extend(range(offset, offset + len(ball_nodes)))
+            values.extend(np.asarray(ball_weights, dtype=float).tolist())
+
+        return _weight_operator(
+            len(centres), len(nodes), rows, columns, values
+        ) @ self.point_evaluation_operator(nodes)
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """The field obtained by sampling a function on the space's grid."""
@@ -253,6 +468,67 @@ class SymmetricSpace(ArrayVectorMixin, DiagonalMetricSpace[np.ndarray]):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement random_point."
         )
+
+
+def _distribute(total: int, weights: np.ndarray) -> np.ndarray:
+    """Split a budget of points across rings in proportion to their weights.
+
+    Every ring gets at least one point, and the total is exact, so a rule built
+    from this integrates the constant one to the right answer regardless of how
+    the rounding falls.
+    """
+    if total <= 0:
+        raise ValueError("The point budget must be positive.")
+    rings = np.asarray(weights, dtype=float).size
+    counts = np.ones(rings, dtype=int)
+    remaining = total - rings
+    if remaining <= 0:
+        return counts
+
+    positive = np.clip(np.asarray(weights, dtype=float), 0.0, None)
+    if not np.any(positive > 0.0):
+        counts[:remaining] += 1
+        return counts
+
+    scaled = remaining * positive / positive.sum()
+    increments = np.floor(scaled).astype(int)
+    counts += increments
+    leftover = remaining - int(increments.sum())
+    if leftover > 0:
+        order = np.argsort(-(scaled - increments))
+        counts[order[:leftover]] += 1
+    return counts
+
+
+def _weight_operator(
+    rows: int,
+    columns: int,
+    row_indices: Sequence[int],
+    column_indices: Sequence[int],
+    values: Sequence[float],
+) -> LinearOperator:
+    """A sparse matrix between Euclidean spaces, as a linear operator.
+
+    Both spaces are orthonormal, so the adjoint *is* the transpose and there is
+    no metric to get wrong. That is the only place in this module where that is
+    true, and it is why the ``W E`` factorisation is worth having: all the
+    metric lives in ``E``, which is built from derivative components.
+    """
+    from scipy.sparse import coo_matrix
+
+    from ..algebra.spaces import EuclideanSpace
+
+    matrix = coo_matrix(
+        (np.asarray(values, dtype=float), (row_indices, column_indices)),
+        shape=(rows, columns),
+    ).tocsr()
+    transpose = matrix.T.tocsr()
+    return LinearOperator.from_callables(
+        EuclideanSpace(columns),
+        EuclideanSpace(rows),
+        lambda v: matrix @ v,
+        adjoint=lambda y: transpose @ y,
+    )
 
 
 def lift_formal_adjoint(

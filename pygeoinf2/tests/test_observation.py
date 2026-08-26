@@ -1,0 +1,376 @@
+"""
+The observation layer: the operators that connect a space to real data.
+
+Everything here is a linear operator built from *derivative components*, so
+every test ends up asking the same question in a different setting — does the
+metric enter exactly once, in the adjoint? Where an operator has two routes to
+the same answer, the two are compared rather than one being trusted.
+
+See DESIGN.md sections 20.1 and 20.5.
+"""
+
+import numpy as np
+import pytest
+
+from pygeoinf2.algebra.operators import LinearOperator
+from pygeoinf2.algebra.spaces import EuclideanSpace
+from pygeoinf2.testing import check_operator
+
+pyshtools = pytest.importorskip("pyshtools")
+
+from pygeoinf2.symmetric_space import Sobolev as BoxSobolev  # noqa: E402
+from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev  # noqa: E402
+
+RADIUS = 2.0
+
+
+@pytest.fixture
+def space():
+    return Sobolev(24, 2.0, 0.2, radius=RADIUS)
+
+
+@pytest.fixture
+def lebesgue():
+    return Lebesgue(24, radius=RADIUS)
+
+
+class TestEvaluation:
+    def test_the_fast_route_matches_the_generic_one(self, space, rng):
+        """The sphere expands once; the base class sums the basis per point."""
+        points = space.random_points(9, rng=rng)
+        x = space.random(rng=rng)
+        components = space.to_components(x)
+        generic = np.array(
+            [float(np.dot(space.basis_at(point), components)) for point in points]
+        )
+        assert np.allclose(space.evaluate(x, points), generic)
+
+    def test_point_evaluation_is_matrix_free_and_assembles(self, space, rng):
+        points = space.random_points(5, rng=rng)
+        A = space.point_evaluation_operator(points)
+        check_operator(A, rng=rng)
+
+        assembled = A.assembled()
+        x, y = space.random(rng=rng), np.arange(1.0, 6.0)
+        assert np.allclose(A(x), assembled(x))
+        assert np.allclose(
+            space.to_components(A.adjoint(y)),
+            space.to_components(assembled.adjoint(y)),
+        )
+
+    def test_the_adjoint_returns_a_sum_of_representers(self, space, rng):
+        points = space.random_points(3, rng=rng)
+        A = space.point_evaluation_operator(points)
+        weights = np.array([2.0, -1.0, 0.5])
+        expected = space.representer(
+            sum(w * space.basis_at(p) for w, p in zip(weights, points))
+        )
+        assert np.allclose(
+            space.to_components(A.adjoint(weights)), space.to_components(expected)
+        )
+
+
+class TestGeodesics:
+    def test_pole_to_equator_is_a_quarter_circumference(self, space):
+        pole = np.array([0.0, 0.0])
+        equator = np.array([np.pi / 2.0, 1.3])
+        assert space.geodesic_distance(pole, equator) == pytest.approx(
+            np.pi * RADIUS / 2.0
+        )
+
+    def test_distance_is_symmetric_and_vanishes(self, space, rng):
+        a, b = space.random_point(rng=rng), space.random_point(rng=rng)
+        assert space.geodesic_distance(a, b) == pytest.approx(
+            space.geodesic_distance(b, a)
+        )
+        assert space.geodesic_distance(a, a) == pytest.approx(0.0, abs=1e-12)
+
+    def test_arc_weights_sum_to_the_arc_length(self, space, rng):
+        a, b = space.random_point(rng=rng), space.random_point(rng=rng)
+        _, weights = space.geodesic_quadrature(a, b, count=12)
+        assert weights.sum() == pytest.approx(space.geodesic_distance(a, b))
+
+    def test_arc_nodes_lie_on_the_sphere_and_between_the_ends(self, space, rng):
+        a, b = space.random_point(rng=rng), space.random_point(rng=rng)
+        separation = space.geodesic_distance(a, b)
+        nodes, _ = space.geodesic_quadrature(a, b, count=8)
+        for node in nodes:
+            along = space.geodesic_distance(a, node) + space.geodesic_distance(node, b)
+            assert along == pytest.approx(separation)
+
+    def test_close_points_keep_their_precision(self, space):
+        """The negative control for atan2 over arccos.
+
+        The cosine is flat near zero separation, so ``acos(u . v)`` throws away
+        half its digits exactly where a localisation radius needs them.
+        """
+        pole = np.array([0.0, 0.0])
+        nearby = np.array([1.0e-6, 0.0])
+        exact = RADIUS * 1.0e-6
+        assert space.geodesic_distance(pole, nearby) == pytest.approx(exact, rel=1e-12)
+
+        first, second = space._to_vector(pole), space._to_vector(nearby)
+        by_arccos = RADIUS * np.arccos(np.clip(np.dot(first, second), -1.0, 1.0))
+        assert abs(by_arccos - exact) > 1.0e-6 * exact
+
+    def test_antipodal_endpoints_are_refused(self, space):
+        pole = np.array([0.0, 0.0])
+        other = np.array([np.pi, 0.0])
+        with pytest.raises(ValueError, match="antipodal"):
+            space.geodesic_quadrature(pole, other, count=4)
+
+    def test_ball_weights_sum_to_the_cap_area(self, space, rng):
+        centre = space.random_point(rng=rng)
+        radius = 0.3 * RADIUS
+        _, weights = space.geodesic_ball_quadrature(centre, radius, count=200)
+        exact = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(radius / RADIUS))
+        assert weights.sum() == pytest.approx(exact, rel=1e-12)
+
+
+class TestAverages:
+    """Constant fields are the calibration: an average of one must be one."""
+
+    def test_the_cap_average_of_one_is_one(self, lebesgue, rng):
+        one = lebesgue.project_function(lambda point: 1.0)
+        centre = lebesgue.random_point(rng=rng)
+        assert lebesgue.spherical_cap_average(centre, 0.15)(one) == pytest.approx(1.0)
+
+    def test_the_cap_integral_of_one_is_the_area(self, lebesgue, rng):
+        one = lebesgue.project_function(lambda point: 1.0)
+        centre = lebesgue.random_point(rng=rng)
+        angular = 0.15
+        area = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(angular))
+        assert lebesgue.spherical_cap_integral(centre, angular)(one) == pytest.approx(
+            area
+        )
+
+    def test_exact_and_quadrature_cap_averages_agree(self, lebesgue, rng):
+        """The whole reason for the exact route is that it is cheaper."""
+        centre = lebesgue.random_point(rng=rng)
+        radius = 0.2 * RADIUS
+        field = lebesgue.random(rng=rng)
+        exact = lebesgue.geodesic_ball_average_operator([centre], radius)
+        quadrature = lebesgue.geodesic_ball_average_operator(
+            [centre], radius, count=4000
+        )
+        assert exact(field)[0] == pytest.approx(quadrature(field)[0], rel=1e-4)
+
+    def test_the_path_average_of_one_is_one(self, lebesgue, rng):
+        one = lebesgue.project_function(lambda point: 1.0)
+        a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
+        A = lebesgue.path_average_operator([(a, b)], count=12)
+        assert A(one)[0] == pytest.approx(1.0)
+
+    def test_the_path_integral_of_one_is_the_arc_length(self, lebesgue, rng):
+        one = lebesgue.project_function(lambda point: 1.0)
+        a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
+        A = lebesgue.path_average_operator([(a, b)], count=12, normalise=False)
+        assert A(one)[0] == pytest.approx(lebesgue.geodesic_distance(a, b))
+
+    def test_the_path_average_is_the_quadrature_sum(self, space, rng):
+        """The W E factorisation must agree with doing it by hand."""
+        a, b = space.random_point(rng=rng), space.random_point(rng=rng)
+        nodes, weights = space.geodesic_quadrature(a, b, count=10)
+        field = space.random(rng=rng)
+        by_hand = float(np.dot(weights, space.evaluate(field, nodes))) / weights.sum()
+        A = space.path_average_operator([(a, b)], count=10)
+        assert A(field)[0] == pytest.approx(by_hand)
+
+    def test_the_averaging_operators_have_working_adjoints(self, space, rng):
+        a, b = space.random_point(rng=rng), space.random_point(rng=rng)
+        centre = space.random_point(rng=rng)
+        check_operator(space.path_average_operator([(a, b)], count=8), rng=rng)
+        check_operator(
+            space.geodesic_ball_average_operator([centre], 0.2 * RADIUS), rng=rng
+        )
+        check_operator(
+            space.geodesic_ball_average_operator([centre], 0.2 * RADIUS, count=120),
+            rng=rng,
+        )
+
+    def test_an_empty_set_of_paths_is_refused(self, space):
+        with pytest.raises(ValueError, match="At least one path"):
+            space.path_average_operator([])
+
+
+class TestCoefficients:
+    def test_the_operator_reads_off_the_components(self, space, rng):
+        A = space.coefficient_operator(lmax=3)
+        x = space.random(rng=rng)
+        degrees = space._packing[1]
+        assert np.allclose(A(x), space.to_components(x)[degrees <= 3])
+
+    def test_a_degree_band_selects_the_right_count(self, space):
+        A = space.coefficient_operator(lmin=2, lmax=4)
+        assert A.codomain.dim == 5 + 7 + 9
+
+    def test_the_adjoint_is_a_representer(self, space, rng):
+        A = space.coefficient_operator(lmax=1)
+        check_operator(A, rng=rng)
+        y = np.array([1.0, 0.0, 0.0, 0.0])
+        representer = space.to_components(A.adjoint(y))
+        assert representer[0] == pytest.approx(1.0 / space.metric_values[0])
+        assert np.allclose(representer[1:], 0.0)
+
+    def test_degrees_outside_the_space_are_refused(self, space):
+        with pytest.raises(ValueError, match="Degrees must satisfy"):
+            space.coefficient_operator(lmax=space.lmax + 1)
+
+
+class TestResolution:
+    def test_truncation_keeps_the_low_degrees(self, space, rng):
+        coarse = space.with_degree(8)
+        P = space.degree_transfer_operator(coarse)
+        x = space.random(rng=rng)
+        kept = space._packing[1] <= 8
+        assert np.allclose(coarse.to_components(P(x)), space.to_components(x)[kept])
+
+    def test_prolongation_pads_with_zeros(self, space, rng):
+        fine = space.with_degree(32)
+        P = space.degree_transfer_operator(fine)
+        x = space.random(rng=rng)
+        components = fine.to_components(P(x))
+        assert np.allclose(components[: space.dim], space.to_components(x))
+        assert np.allclose(components[space.dim :], 0.0)
+
+    def test_the_transfer_operators_have_working_adjoints(self, space, rng):
+        check_operator(space.degree_transfer_operator(space.with_degree(8)), rng=rng)
+        check_operator(space.degree_transfer_operator(space.with_degree(32)), rng=rng)
+
+    def test_truncation_and_prolongation_are_adjoint(self, space, rng):
+        """True because the two spaces share a metric on their common degrees.
+
+        Derived rather than asserted: the adjoint comes from the derivative
+        components, so it stays right when the metrics differ and this identity
+        does not.
+        """
+        coarse = space.with_degree(8)
+        restrict = space.degree_transfer_operator(coarse)
+        prolong = coarse.degree_transfer_operator(space)
+        y = coarse.random(rng=rng)
+        assert np.allclose(
+            space.to_components(restrict.adjoint(y)),
+            space.to_components(prolong(y)),
+        )
+
+    def test_a_different_radius_is_refused(self, space):
+        with pytest.raises(ValueError, match="common radius"):
+            space.degree_transfer_operator(Sobolev(8, 2.0, 0.2, radius=1.0))
+
+
+class TestAcquisitionGeometry:
+    def test_the_station_table_loads(self, space):
+        stations = space.stations()
+        assert len(stations) > 100
+        for point in stations:
+            assert 0.0 <= point[0] <= np.pi
+            assert 0.0 <= point[1] <= 2.0 * np.pi
+
+    def test_a_named_station_lands_where_it_should(self, space):
+        """AAK is in Kyrgyzstan: 42.6 N, 74.5 E."""
+        first = space.stations()[0]
+        assert 90.0 - np.degrees(first[0]) == pytest.approx(42.6375)
+        assert np.degrees(first[1]) == pytest.approx(74.4942)
+
+    def test_the_catalogue_filters_by_magnitude(self, space):
+        assert len(space.earthquakes(minimum_magnitude=6.0)) < len(space.earthquakes())
+
+    def test_a_subsample_is_without_replacement(self, space, rng):
+        points = space.stations(count=20, rng=rng)
+        assert len({tuple(point) for point in points}) == 20
+
+    def test_asking_for_too_many_is_refused(self, space, rng):
+        with pytest.raises(ValueError, match="from a table of"):
+            space.stations(count=100000, rng=rng)
+
+    def test_pairs_within_distance_finds_the_diagonal_and_no_more(self, space, rng):
+        points = space.random_points(30, rng=rng)
+        rows, columns = space.pairs_within_distance(points, 0.0)
+        assert np.array_equal(rows, np.arange(30))
+        assert np.array_equal(columns, np.arange(30))
+
+    def test_pairs_within_distance_is_symmetric(self, space, rng):
+        points = space.random_points(25, rng=rng)
+        rows, columns = space.pairs_within_distance(points, 0.6 * RADIUS)
+        found = set(zip(rows.tolist(), columns.tolist()))
+        assert all((j, i) in found for i, j in found)
+
+
+class TestPointwiseVariance:
+    """The parameterisation a modeller actually has an opinion about."""
+
+    def test_it_matches_the_covariance_of_a_dirac(self, space):
+        """Independent computation: (C u, u) with u the Dirac's representer."""
+        variances = space.sobolev_symbol(-2.0, 0.15)
+        measure = space.invariant_measure(variances)
+        representer = space.dirac(space.reference_point).representer
+        direct = space.inner_product(measure.covariance(representer), representer)
+        assert space.pointwise_variance(variances) == pytest.approx(direct)
+
+    def test_it_is_the_same_at_every_point(self, space, rng):
+        """Homogeneity, which is why naming one reference point is honest."""
+        variances = space.sobolev_symbol(-2.0, 0.15)
+        elsewhere = space.dirac(space.random_point(rng=rng)).representer
+        direct = space.inner_product(
+            space.invariant_measure(variances).covariance(elsewhere), elsewhere
+        )
+        assert space.pointwise_variance(variances) == pytest.approx(direct)
+
+    def test_dropping_the_metric_would_give_a_different_answer(self, space):
+        """The negative control for the 1/g factor in pointwise_variance.
+
+        On a Lebesgue space the metric is the identity and the mistake is
+        invisible, which is exactly why it needs pinning on a Sobolev one.
+        """
+        variances = space.sobolev_symbol(-2.0, 0.15)
+        basis = space.basis_at(space.reference_point)
+        naive = float(np.dot(variances, basis**2))
+        assert not np.isclose(naive, space.pointwise_variance(variances))
+
+    def test_calibration_hits_the_requested_standard_deviation(self, space):
+        measure = space.sobolev_measure(2.0, 0.15, pointwise_std=0.05)
+        representer = space.dirac(space.reference_point).representer
+        variance = space.inner_product(measure.covariance(representer), representer)
+        assert np.sqrt(variance) == pytest.approx(0.05)
+
+    def test_calibration_shows_up_in_samples(self, space, rng):
+        measure = space.sobolev_measure(2.0, 0.15, pointwise_std=0.05)
+        point = [space.reference_point]
+        draws = np.array(
+            [space.evaluate(measure.sample(rng=rng), point)[0] for _ in range(600)]
+        )
+        assert draws.std() == pytest.approx(0.05, rel=0.15)
+
+    def test_calibration_leaves_the_spectrum_shape_alone(self, space):
+        """Only the amplitude moves, so the correlation length is untouched."""
+        plain = space.sobolev_measure(2.0, 0.15)
+        scaled = space.sobolev_measure(2.0, 0.15, pointwise_std=0.05)
+        first = plain.covariance.eigenvalues
+        second = scaled.covariance.eigenvalues
+        ratios = second[first > 0] / first[first > 0]
+        assert np.allclose(ratios, ratios[0])
+
+    def test_it_works_on_a_periodic_box_too(self):
+        """Nothing in the calculation is spherical."""
+        box = BoxSobolev((64,), 2.0, 0.05, lengths=(1.0,))
+        measure = box.heat_measure(0.001, pointwise_std=3.0)
+        representer = box.dirac(box.reference_point).representer
+        variance = box.inner_product(measure.covariance(representer), representer)
+        assert np.sqrt(variance) == pytest.approx(3.0)
+
+    def test_a_non_positive_standard_deviation_is_refused(self, space):
+        with pytest.raises(ValueError, match="must be positive"):
+            space.sobolev_measure(2.0, 0.15, pointwise_std=0.0)
+
+
+class TestWeightOperator:
+    """The sparse half of the W E factorisation."""
+
+    def test_it_is_its_own_transpose_adjoint(self, rng):
+        from pygeoinf2.symmetric_space.base import _weight_operator
+
+        W = _weight_operator(2, 4, [0, 0, 1, 1], [0, 1, 2, 3], [1.0, 2.0, 3.0, 4.0])
+        check_operator(W, rng=rng)
+        assert isinstance(W, LinearOperator)
+        assert W.domain == EuclideanSpace(4)
+        assert np.allclose(W(np.array([1.0, 1.0, 1.0, 1.0])), [3.0, 7.0])

@@ -2803,3 +2803,91 @@ computed — a cap integral against each basis function, or a single one — whi
 is why O4 is nearly free once O3 exists and why neither needs the matrix-free
 path. It is the *forward* operators, O2 in particular, that need O1.
 
+### 20.6 As built
+
+O1 to O7 are done. 769 tests.
+
+```
+algebra/operators.py   from_derivative_callables, matrix(by=...), assembled(),
+                       LinearFunctional.derivative_components
+symmetric_space/base.py  evaluate, point_evaluation_operator (matrix-free),
+                       geodesic_distance/quadrature, geodesic_ball_quadrature,
+                       path_average_operator, geodesic_ball_average_operator,
+                       reference_point, pointwise_variance, pointwise_std=
+symmetric_space/sphere.py  the spherical implementations of all of the above,
+                       plus spherical_cap_integral/average, coefficient_operator,
+                       with_degree, degree_transfer_operator, stations,
+                       earthquakes, domain_mask, pairs_within_distance
+data/                  gsn_stations.csv, usgs_event_cache.csv
+```
+
+**No operator has a `matrix_free` flag.** v1 carries one on
+`point_evaluation_operator` and `path_average_operator`, each with its own
+parallel branches and its own hand-written adjoint. v2 builds matrix-free
+always and adds `assembled()` to the algebra, so the choice is made once, in
+one place, by whoever knows whether the matrix fits.
+
+For that to be the right default, `matrix()` had to stop filling column by
+column. An observation operator is short and wide — a few hundred data from
+thousands of components — and filling it by columns costs one *forward*
+application per component. Filling it by rows costs one adjoint application per
+datum, and row `i` of the Galerkin matrix is `G_X c_{A* e_i}`. `matrix(by=...)`
+takes the smaller side by default, and the two directions are tested to agree.
+
+**No operator writes down an adjoint either.** Each is
+`from_derivative_callables` or a composition of things that are, so the inverse
+metric is applied once by the framework. Two consequences worth recording:
+
+- `path_average_operator` is `W E` — point evaluation at the pooled quadrature
+  nodes, then a sparse weight matrix between two Euclidean spaces. All the
+  metric lives in `E`; `W`'s adjoint really is its transpose. v1 writes about
+  120 lines of adjoint for this operator, and it is right, but its correctness
+  rests on remembering `from_dual` in the middle of them.
+- `degree_transfer_operator`'s adjoint is the *other* transfer only when the
+  two spaces carry the same metric on their shared degrees. Derived, it stays
+  right when they do not. That identity is tested rather than assumed.
+
+### 20.7 Four findings
+
+**The chosen quantity was calibrated wrongly, and only on a Sobolev space.**
+`pointwise_variance` is `sum_k s_k phi_k(p)^2 / g_k`. The metric appears because
+the spectral variances are the covariance *operator's* eigenvalues while a
+sample's components carry white noise's `1/sqrt(g)`. Written without it, the
+calibration was out by a factor of 2.9 on `H^2` — and exactly right on every
+Lebesgue space, which is where it would have been tested first. The measured
+sample standard deviation is what caught it, and there is now a negative
+control pinning that the naive expression differs.
+
+**`arccos(u . v)` is the wrong great-circle formula.** The cosine is flat near
+zero separation, so the arccosine loses about half its digits exactly where a
+localisation radius needs them: at `1e-6` radians the relative error is `4e-5`,
+and a point against itself does not come out as zero. `pairs_within_distance`
+was dropping points from their own neighbourhood. `geodesic_distance` now uses
+`atan2(|u x v|, u . v)`, which is accurate at both ends, and the pairwise
+version uses the chord form, which is exactly zero on the diagonal.
+
+**`basis_at` was quadratic in the truncation.** It rebuilt pyshtools' packed
+Legendre index array on every call — a Python loop of length `dim` — making one
+call cost 21 ms at `lmax == 48`. Caching it made that 0.094 ms, a factor of 223,
+and turned the adjoint of a realistic tomography operator from minutes into a
+second. Nothing about the mathematics changed; the loop was simply in the wrong
+place.
+
+**The Condon-Shortley constant was misnamed.** pyshtools spells "leave the
+phase out" as `csphase=1`, and the constant was called `_CONDON_SHORTLEY` with
+a docstring saying the phase was included. The *value* was consistent
+everywhere, so nothing was wrong, but the next person to add a call would have
+read the name and passed the other one. Now `_NO_CONDON_SHORTLEY`.
+
+### 20.8 What is still v1-only
+
+Deliberately not ported, with reasons:
+
+| v1 | why not |
+|---|---|
+| `plot.py`, `create_map_figure`, `plot_points`, `plot_geodesic_network` | plotting is out of scope for the core, per §13.3 |
+| `parallel=`, `n_jobs=` on every operator | joblib branches doubled the code and each one carried its own copy of the adjoint. Parallelism belongs around an operator, not inside every one of them |
+| `lazy_quadrature=` | an escape hatch for the memory the `W E` factorisation no longer uses |
+| `sample_power_measure`, `invariant_covariance_function` | reachable from `invariant_measure` and the diagonal calculus; port when something needs them |
+| `datasets.py`'s live FDSN and USGS downloads | the cached tables ship with the package; fetching at runtime in a test suite is a flake waiting to happen |
+
