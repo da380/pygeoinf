@@ -1503,7 +1503,66 @@ absolute floor of 1, while the diagonal entries were of order 36, so ordinary
 sampling noise failed the check. Tolerances are now scaled by
 `sqrt(C_ii C_jj)`, which is the actual standard error of the estimator.
 
-### 11.6 Testing the abstract framework
+### 11.6 Direct sums, built out of order
+
+Built ahead of M5, because the joint structure the nonlinear work needs lives
+here rather than in the inversion layer. 282 tests.
+
+```
+pygeoinf2/algebra/direct_sum.py   DirectSum, BlockOperator/BlockLinearOperator,
+                                  Column/Row/BlockDiagonal and their linear forms
+pygeoinf2/probability/base.py     ProductMeasure, product()
+```
+
+**The joint model is already the nonlinear bridge.** v1 builds the joint law of
+model and data (forward_problem.py:209) not by assembling a covariance but as a
+pushforward of a product measure through a block operator:
+
+```
+mu    = model_measure (x) noise_measure       on X (+) Y
+op    = [[I, 0], [A, I]]
+joint = op @ mu                               the law of (m, A m + e)
+```
+
+Putting a nonlinear `F` where `A` is gives the law of `(m, F(m) + e)`, which
+`op @ mu` returns as a `PushForwardMeasure` — samplable, no closed density,
+which is prior predictive sampling. And `op.derivative(x)` is
+`[[I, 0], [F'(m), I]]`, so the linearised joint model comes from the same
+object rather than from a separate construction. That is why block operators
+are nonlinear by default here, with the linear case dispatched to as a
+specialisation.
+
+**One gap in v1 closed.** The product measure existed only for Gaussians
+(`GaussianMeasure.from_direct_sum`), but the independent product of *any*
+samplable measures is samplable — which is precisely the case a non-Gaussian
+prior presents. `product()` collapses to a Gaussian when every factor is one
+and returns a `ProductMeasure` otherwise.
+
+Decisions taken:
+
+- **Vectors are tuples**, with optional labels on the space. The container is
+  fixed-length and should not be restructured; the components stay mutable so
+  `axpy` still updates in place. Labels give named access to the `(model,
+  data)` split without the vector wrapper rejected everywhere else.
+- **Labels are not part of a space's identity.** Two sums over the same
+  summands are the same space whatever their parts are called. Making labels
+  structural put a block operator — which cannot know what its user chose to
+  call things — on a space that compared unequal to the one its own vectors
+  came from. Found immediately, by `product()` failing to construct.
+- **`DirectSum` dispatches on construction** to a coordinate-providing subclass
+  when every summand provides coordinates, so `isinstance(X, CoordinateSpace)`
+  stays a reliable answer. A sum containing one coordinate-free summand is
+  itself coordinate-free, which is the honest answer and the one
+  `require_coordinates` depends on.
+
+**The M1 lesson recurred, in a new place.** `projection(i)` rebuilt its
+operator on every call, so `P.adjoint is inclusion(i)` never held — and since
+the palindrome rule compares factors by identity, `P @ C @ P.adjoint` was not
+recognised as a congruence. Projections are now memoised per index. Anything
+that participates in the algebra and can be *rebuilt* needs this; it is the
+third time it has come up.
+
+### 11.7 Testing the abstract framework
 
 Every NumPy-backed test space has vectors that *are* their own components, so
 code reaching for array arithmetic or for a coordinate map works by accident.
@@ -1632,11 +1691,8 @@ No trait in §4 is unused, and none was found missing.
 
 ## 13. Open questions
 
-1. **`DirectSum` vector type.** Whether the vectors stay `list[V]` (v1) or
-   become tuples / a small dedicated type. Deferred to M1; it only affects
-   mutability and equality semantics.
-
-    Response: Not sure about this. 
+1. ~~**`DirectSum` vector type.**~~ **Settled**: tuples, with optional labels
+   on the space, and labels excluded from the space's identity. See §11.6.
 
 2. **In-place API surface.** `axpy` and `scale_inplace` are the minimum Krylov
    needs. Whether to expose more (`dot_into`, `copy_into`) should be driven by

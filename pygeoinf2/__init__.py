@@ -11,6 +11,17 @@ Both may be imported side by side for comparison testing:
     import pygeoinf2 as gi2
 """
 
+from .algebra.direct_sum import (
+    BlockDiagonalLinearOperator,
+    BlockDiagonalOperator,
+    BlockLinearOperator,
+    BlockOperator,
+    ColumnLinearOperator,
+    ColumnOperator,
+    DirectSum,
+    RowLinearOperator,
+    RowOperator,
+)
 from .algebra.linearisation import Linearisation, QuadraticModel
 from .algebra.operators import (
     AffineOperator,
@@ -29,7 +40,12 @@ from .algebra.spaces import (
     OrthonormalSpace,
     Reals,
 )
-from .probability.base import ProbabilityMeasure, PushForwardMeasure
+from .probability.base import (
+    ProbabilityMeasure,
+    ProductMeasure,
+    PushForwardMeasure,
+    product,
+)
 from .probability.gaussian import GaussianMeasure
 from .traits import Traits
 
@@ -49,13 +65,25 @@ __all__ = [
     "LinearOperator",
     "Operator",
     "require_coordinates",
+    # algebra.direct_sum
+    "BlockDiagonalLinearOperator",
+    "BlockDiagonalOperator",
+    "BlockLinearOperator",
+    "BlockOperator",
+    "ColumnLinearOperator",
+    "ColumnOperator",
+    "DirectSum",
+    "RowLinearOperator",
+    "RowOperator",
     # algebra.linearisation
     "Linearisation",
     "QuadraticModel",
     # probability
     "GaussianMeasure",
     "ProbabilityMeasure",
+    "ProductMeasure",
     "PushForwardMeasure",
+    "product",
     # traits
     "Traits",
 ]

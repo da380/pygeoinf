@@ -167,6 +167,51 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return cls(domain, expectation=mean, covariance_factor=factor)
 
     @classmethod
+    def from_product(
+        cls,
+        measures: Sequence[GaussianMeasure],
+        labels: Sequence[str] | None = None,
+        /,
+    ) -> GaussianMeasure:
+        """The independent product of Gaussians, on the direct sum of domains.
+
+        The covariance is block diagonal, and the block-diagonal operator gives
+        it the right traits by intersecting the blocks': the whole is positive
+        definite exactly when every factor is.
+        """
+        from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
+
+        measures = tuple(measures)
+        if not measures:
+            raise ValueError("A product measure needs at least one factor.")
+        domain = DirectSum([m.domain for m in measures], labels)
+
+        covariance = None
+        factor = None
+        if all(m.covariance_factor is not None for m in measures):
+            factor = BlockDiagonalLinearOperator(
+                [m.covariance_factor for m in measures]
+            )
+        elif all(m.covariance is not None for m in measures):
+            covariance = BlockDiagonalLinearOperator([m.covariance for m in measures])
+        else:
+            raise ValueError("Every factor needs a covariance or a covariance factor.")
+
+        sample = None
+        if factor is None and all(m.can_sample for m in measures):
+
+            def sample(rng, _measures=measures):
+                return tuple(m.sample(rng) for m in _measures)
+
+        return cls(
+            domain,
+            expectation=tuple(m.expectation for m in measures),
+            covariance=covariance,
+            covariance_factor=factor,
+            sample=sample,
+        )
+
+    @classmethod
     def from_covariance_matrix(
         cls,
         domain: CoordinateSpace[X],

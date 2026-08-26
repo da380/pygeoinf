@@ -1,0 +1,608 @@
+"""
+Direct sums of Hilbert spaces, and block operators between them.
+
+A vector in a direct sum is a **tuple** of component vectors. The container is
+fixed-length and should never be restructured, and a tuple says so; the
+components themselves stay mutable, so ``axpy`` still updates in place. The
+space may carry labels, which gives named access without the vector wrapper
+that was rejected everywhere else — worth having chiefly for the ``(model,
+data)`` case, where indexing a joint vector by position is how sign errors get
+made.
+
+Block operators are **nonlinear by default**, with the linear case as a
+specialisation. That is not speculative generality: v1 already builds the joint
+law of model and data as a pushforward of a product measure through a block
+operator,
+
+    mu    = model_measure (x) noise_measure        on X (+) Y
+    op    = [[I, 0], [A, I]]
+    joint = op @ mu                                the law of (m, A m + e)
+
+and the same shape with a nonlinear ``F`` in place of ``A`` gives the law of
+``(m, F(m) + e)`` — a samplable measure, and a linearisation
+``[[I, 0], [F'(m), I]]`` that comes from the same object rather than from a
+separate construction.
+
+See DESIGN.md section 3.3.
+"""
+
+from __future__ import annotations
+
+from typing import Hashable, Sequence
+
+import numpy as np
+from numpy.random import Generator
+
+from ..traits import Traits, close
+from .operators import LinearOperator, Operator
+from .spaces import CoordinateSpace, HilbertSpace
+
+__all__ = [
+    "DirectSum",
+    "BlockOperator",
+    "BlockLinearOperator",
+    "ColumnOperator",
+    "ColumnLinearOperator",
+    "RowOperator",
+    "RowLinearOperator",
+    "BlockDiagonalOperator",
+    "BlockDiagonalLinearOperator",
+]
+
+
+class DirectSum[V](HilbertSpace[tuple]):
+    """The direct sum of Hilbert spaces, with the summed inner product.
+
+    Instantiating this returns a coordinate-providing subclass when every
+    summand provides coordinates, so that ``isinstance(X, CoordinateSpace)``
+    stays a reliable answer to "can this be given to a direct solver". A sum
+    containing one coordinate-free summand is itself coordinate-free, which is
+    the honest answer.
+    """
+
+    def __new__(cls, spaces: Sequence[HilbertSpace], labels=None):
+        if cls is DirectSum and all(isinstance(s, CoordinateSpace) for s in spaces):
+            return object.__new__(_CoordinateDirectSum)
+        return object.__new__(cls)
+
+    def __init__(
+        self,
+        spaces: Sequence[HilbertSpace],
+        labels: Sequence[str] | None = None,
+    ) -> None:
+        spaces = tuple(spaces)
+        if not spaces:
+            raise ValueError("A direct sum needs at least one summand.")
+        if labels is not None:
+            labels = tuple(labels)
+            if len(labels) != len(spaces):
+                raise ValueError(
+                    f"Got {len(labels)} labels for {len(spaces)} summands."
+                )
+            if len(set(labels)) != len(labels):
+                raise ValueError("Labels must be distinct.")
+        self._spaces = spaces
+        self._labels = labels
+        self._dim = sum(space.dim for space in spaces)
+
+    # ----------------------------------------------------------------- #
+    #                             Structure                             #
+    # ----------------------------------------------------------------- #
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    @property
+    def subspaces(self) -> tuple[HilbertSpace, ...]:
+        return self._spaces
+
+    @property
+    def labels(self) -> tuple[str, ...] | None:
+        return self._labels
+
+    def __len__(self) -> int:
+        return len(self._spaces)
+
+    def _key(self) -> Hashable:
+        """Identity is the summands alone.
+
+        Labels are deliberately excluded. Two direct sums over the same
+        summands are the same space whatever their components are called, and
+        making labels part of identity would mean a block operator — which
+        cannot know what its user chose to call things — lands on a space that
+        compares unequal to the one its vectors came from.
+        """
+        return self._spaces
+
+    def index(self, key: int | str) -> int:
+        """Resolve a label or index to a position."""
+        if isinstance(key, str):
+            if self._labels is None:
+                raise KeyError(f"This direct sum has no labels, so no {key!r}.")
+            if key not in self._labels:
+                raise KeyError(f"No summand labelled {key!r}; have {self._labels}.")
+            return self._labels.index(key)
+        if not 0 <= key < len(self._spaces):
+            raise IndexError(f"Index {key} out of range for {len(self._spaces)}.")
+        return key
+
+    def subspace(self, key: int | str) -> HilbertSpace:
+        return self._spaces[self.index(key)]
+
+    def component(self, x: tuple, key: int | str):
+        """The named or indexed component of a vector."""
+        return x[self.index(key)]
+
+    def __repr__(self) -> str:
+        if self._labels is not None:
+            inner = ", ".join(
+                f"{label}={space!r}" for label, space in zip(self._labels, self._spaces)
+            )
+        else:
+            inner = ", ".join(repr(space) for space in self._spaces)
+        return f"DirectSum({inner})"
+
+    # ----------------------------------------------------------------- #
+    #                          Vector operations                        #
+    # ----------------------------------------------------------------- #
+
+    def zero(self) -> tuple:
+        return tuple(space.zero() for space in self._spaces)
+
+    def copy(self, x: tuple) -> tuple:
+        return tuple(space.copy(xi) for space, xi in zip(self._spaces, x))
+
+    def inner_product(self, x: tuple, y: tuple) -> float:
+        return float(
+            sum(
+                space.inner_product(xi, yi) for space, xi, yi in zip(self._spaces, x, y)
+            )
+        )
+
+    def axpy(self, a: float, x: tuple, y: tuple) -> tuple:
+        return tuple(space.axpy(a, xi, yi) for space, xi, yi in zip(self._spaces, x, y))
+
+    def scale_inplace(self, a: float, x: tuple) -> tuple:
+        return tuple(space.scale_inplace(a, xi) for space, xi in zip(self._spaces, x))
+
+    def random(self, rng: Generator | None = None) -> tuple:
+        return tuple(space.random(rng) for space in self._spaces)
+
+    def white_noise(self, rng: Generator | None = None) -> tuple:
+        """Independent white noise on each summand.
+
+        Correct because the summands are orthogonal: the covariance of the
+        whole is block diagonal, and each block is the identity on its summand.
+        """
+        return tuple(space.white_noise(rng) for space in self._spaces)
+
+    # ----------------------------------------------------------------- #
+    #                            Projections                            #
+    # ----------------------------------------------------------------- #
+
+    def projection(self, key: int | str) -> LinearOperator:
+        """The orthogonal projection onto one summand, as an operator.
+
+        Memoised per index, for the same reason ``adjoint`` is: the palindrome
+        rule compares factors by identity, so a rebuilt projection would make
+        ``P @ C @ P.adjoint`` unrecognisable as a congruence.
+        """
+        i = self.index(key)
+        cache = self.__dict__.setdefault("_projection_cache", {})
+        if i in cache:
+            return cache[i]
+        space = self._spaces[i]
+        spaces = self._spaces
+
+        def value(x: tuple):
+            return x[i]
+
+        def adjoint(y):
+            return tuple(
+                y if j == i else other.zero() for j, other in enumerate(spaces)
+            )
+
+        operator = LinearOperator.from_callables(self, space, value, adjoint=adjoint)
+        cache[i] = operator
+        return operator
+
+    def inclusion(self, key: int | str) -> LinearOperator:
+        """The isometric inclusion of one summand into the sum."""
+        return self.projection(key).adjoint
+
+
+class _CoordinateDirectSum(DirectSum, CoordinateSpace):
+    """A direct sum all of whose summands provide coordinates.
+
+    Components are the summands' components concatenated, so the Gram matrix is
+    block diagonal and every metric operation splits.
+    """
+
+    def __init__(self, spaces, labels=None) -> None:
+        DirectSum.__init__(self, spaces, labels)
+        bounds = np.cumsum([0] + [space.dim for space in self._spaces])
+        self._slices = tuple(
+            slice(int(bounds[i]), int(bounds[i + 1])) for i in range(len(self._spaces))
+        )
+
+    def to_components(self, x: tuple) -> np.ndarray:
+        return np.concatenate(
+            [space.to_components(xi) for space, xi in zip(self._spaces, x)]
+        )
+
+    def from_components(self, c: np.ndarray) -> tuple:
+        return tuple(
+            space.from_components(c[s]) for space, s in zip(self._spaces, self._slices)
+        )
+
+    def apply_gram(self, c: np.ndarray) -> np.ndarray:
+        return np.concatenate(
+            [space.apply_gram(c[s]) for space, s in zip(self._spaces, self._slices)]
+        )
+
+    def solve_gram(self, c: np.ndarray) -> np.ndarray:
+        return np.concatenate(
+            [space.solve_gram(c[s]) for space, s in zip(self._spaces, self._slices)]
+        )
+
+    def white_noise_components(self, rng: Generator | None = None) -> np.ndarray:
+        return np.concatenate(
+            [space.white_noise_components(rng) for space in self._spaces]
+        )
+
+    @property
+    def is_orthonormal(self) -> bool:
+        return all(space.is_orthonormal for space in self._spaces)
+
+
+# --------------------------------------------------------------------- #
+#                            Block operators                            #
+# --------------------------------------------------------------------- #
+
+
+def _check_grid(blocks) -> tuple[tuple, tuple]:
+    """Validate a rectangular grid of operators; return its domains and codomains."""
+    if not blocks or not blocks[0]:
+        raise ValueError("A block operator needs at least one block.")
+    width = len(blocks[0])
+    domains = tuple(operator.domain for operator in blocks[0])
+    codomains = []
+    for i, row in enumerate(blocks):
+        if len(row) != width:
+            raise ValueError(f"Row {i} has {len(row)} blocks, but row 0 has {width}.")
+        for j, operator in enumerate(row):
+            if operator.domain != domains[j]:
+                raise ValueError(
+                    f"Block ({i}, {j}) has domain {operator.domain!r}, but "
+                    f"column {j} is {domains[j]!r}."
+                )
+        codomain = row[0].codomain
+        for j, operator in enumerate(row):
+            if operator.codomain != codomain:
+                raise ValueError(
+                    f"Block ({i}, {j}) has codomain {operator.codomain!r}, but "
+                    f"row {i} is {codomain!r}."
+                )
+        codomains.append(codomain)
+    return domains, tuple(codomains)
+
+
+def _block_traits(blocks, domains, codomains) -> Traits:
+    """A block operator is self-adjoint when its grid is its own adjoint transpose."""
+    if domains != codomains or len(blocks) != len(blocks[0]):
+        return Traits.NONE
+    n = len(blocks)
+    for i in range(n):
+        for j in range(n):
+            if blocks[i][j].adjoint is not blocks[j][i]:
+                return Traits.NONE
+    return close(Traits.SELF_ADJOINT)
+
+
+class BlockOperator(Operator):
+    """An operator between direct sums, given as a grid of operators.
+
+    Nonlinear by default. The derivative is the block operator of the blocks'
+    derivatives, which is what makes a linearised joint model fall out of the
+    joint model itself.
+    """
+
+    def __new__(cls, blocks):
+        if cls is BlockOperator and all(
+            isinstance(operator, LinearOperator) for row in blocks for operator in row
+        ):
+            return object.__new__(BlockLinearOperator)
+        return object.__new__(cls)
+
+    def __init__(self, blocks) -> None:
+        self._blocks = tuple(tuple(row) for row in blocks)
+        self._domains, self._codomains = _check_grid(self._blocks)
+        Operator.__init__(self, DirectSum(self._domains), DirectSum(self._codomains))
+
+    @property
+    def blocks(self) -> tuple[tuple[Operator, ...], ...]:
+        return self._blocks
+
+    @property
+    def row_dim(self) -> int:
+        return len(self._blocks)
+
+    @property
+    def col_dim(self) -> int:
+        return len(self._blocks[0])
+
+    def block(self, i: int, j: int) -> Operator:
+        return self._blocks[i][j]
+
+    @property
+    def has_derivative(self) -> bool:
+        return all(operator.has_derivative for row in self._blocks for operator in row)
+
+    def _value(self, x: tuple) -> tuple:
+        result = []
+        for i, row in enumerate(self._blocks):
+            codomain = self._codomains[i]
+            y = codomain.zero()
+            for j, operator in enumerate(row):
+                y = codomain.axpy(1.0, operator(x[j]), y)
+            result.append(y)
+        return tuple(result)
+
+    def _derivative(self, x: tuple) -> LinearOperator:
+        return BlockLinearOperator(
+            [
+                [operator.derivative(x[j]) for j, operator in enumerate(row)]
+                for row in self._blocks
+            ]
+        )
+
+    def __repr__(self) -> str:
+        return f"BlockOperator({self.row_dim}x{self.col_dim})"
+
+
+class BlockLinearOperator(BlockOperator, LinearOperator):
+    """A block operator whose every block is linear."""
+
+    def __init__(self, blocks) -> None:
+        self._blocks = tuple(tuple(row) for row in blocks)
+        self._domains, self._codomains = _check_grid(self._blocks)
+        LinearOperator.__init__(
+            self,
+            DirectSum(self._domains),
+            DirectSum(self._codomains),
+            traits=_block_traits(self._blocks, self._domains, self._codomains),
+        )
+
+    def _adjoint_value(self, y: tuple) -> tuple:
+        result = []
+        for j, domain in enumerate(self._domains):
+            x = domain.zero()
+            for i in range(self.row_dim):
+                x = domain.axpy(1.0, self._blocks[i][j].adjoint(y[i]), x)
+            result.append(x)
+        return tuple(result)
+
+    def _make_adjoint(self) -> LinearOperator:
+        """The adjoint of a block operator is the transposed grid of adjoints."""
+        result = BlockLinearOperator(
+            [
+                [self._blocks[i][j].adjoint for i in range(self.row_dim)]
+                for j in range(self.col_dim)
+            ]
+        )
+        result.__dict__["_adjoint_cache"] = self
+        return result
+
+    def __repr__(self) -> str:
+        return f"BlockLinearOperator({self.row_dim}x{self.col_dim})"
+
+
+class ColumnOperator(Operator):
+    """``x -> (F_1(x), ..., F_n(x))``, from one space into a direct sum.
+
+    Distinct from a one-column ``BlockOperator``, whose domain would be
+    ``DirectSum([X])`` rather than ``X``.
+    """
+
+    def __new__(cls, operators):
+        if cls is ColumnOperator and all(
+            isinstance(operator, LinearOperator) for operator in operators
+        ):
+            return object.__new__(ColumnLinearOperator)
+        return object.__new__(cls)
+
+    def __init__(self, operators) -> None:
+        self._operators = tuple(operators)
+        if not self._operators:
+            raise ValueError("A column operator needs at least one block.")
+        domain = self._operators[0].domain
+        for i, operator in enumerate(self._operators):
+            if operator.domain != domain:
+                raise ValueError(
+                    f"Block {i} has domain {operator.domain!r}, expected {domain!r}."
+                )
+        Operator.__init__(
+            self, domain, DirectSum([op.codomain for op in self._operators])
+        )
+
+    @property
+    def operators(self) -> tuple[Operator, ...]:
+        return self._operators
+
+    @property
+    def has_derivative(self) -> bool:
+        return all(operator.has_derivative for operator in self._operators)
+
+    def _value(self, x) -> tuple:
+        return tuple(operator(x) for operator in self._operators)
+
+    def _derivative(self, x) -> LinearOperator:
+        return ColumnLinearOperator(
+            [operator.derivative(x) for operator in self._operators]
+        )
+
+
+class ColumnLinearOperator(ColumnOperator, LinearOperator):
+    """A column operator whose every block is linear."""
+
+    def __init__(self, operators) -> None:
+        self._operators = tuple(operators)
+        domain = self._operators[0].domain
+        for i, operator in enumerate(self._operators):
+            if operator.domain != domain:
+                raise ValueError(
+                    f"Block {i} has domain {operator.domain!r}, expected {domain!r}."
+                )
+        LinearOperator.__init__(
+            self, domain, DirectSum([op.codomain for op in self._operators])
+        )
+
+    def _adjoint_value(self, y: tuple):
+        domain = self.domain
+        x = domain.zero()
+        for operator, yi in zip(self._operators, y):
+            x = domain.axpy(1.0, operator.adjoint(yi), x)
+        return x
+
+    def _make_adjoint(self) -> LinearOperator:
+        result = RowLinearOperator([op.adjoint for op in self._operators])
+        result.__dict__["_adjoint_cache"] = self
+        return result
+
+
+class RowOperator(Operator):
+    """``(x_1, ..., x_n) -> F_1(x_1) + ... + F_n(x_n)``, from a direct sum."""
+
+    def __new__(cls, operators):
+        if cls is RowOperator and all(
+            isinstance(operator, LinearOperator) for operator in operators
+        ):
+            return object.__new__(RowLinearOperator)
+        return object.__new__(cls)
+
+    def __init__(self, operators) -> None:
+        self._operators = tuple(operators)
+        if not self._operators:
+            raise ValueError("A row operator needs at least one block.")
+        codomain = self._operators[0].codomain
+        for i, operator in enumerate(self._operators):
+            if operator.codomain != codomain:
+                raise ValueError(
+                    f"Block {i} has codomain {operator.codomain!r}, "
+                    f"expected {codomain!r}."
+                )
+        Operator.__init__(
+            self, DirectSum([op.domain for op in self._operators]), codomain
+        )
+
+    @property
+    def operators(self) -> tuple[Operator, ...]:
+        return self._operators
+
+    @property
+    def has_derivative(self) -> bool:
+        return all(operator.has_derivative for operator in self._operators)
+
+    def _value(self, x: tuple):
+        codomain = self.codomain
+        y = codomain.zero()
+        for operator, xi in zip(self._operators, x):
+            y = codomain.axpy(1.0, operator(xi), y)
+        return y
+
+    def _derivative(self, x: tuple) -> LinearOperator:
+        return RowLinearOperator(
+            [operator.derivative(xi) for operator, xi in zip(self._operators, x)]
+        )
+
+
+class RowLinearOperator(RowOperator, LinearOperator):
+    """A row operator whose every block is linear."""
+
+    def __init__(self, operators) -> None:
+        self._operators = tuple(operators)
+        codomain = self._operators[0].codomain
+        for i, operator in enumerate(self._operators):
+            if operator.codomain != codomain:
+                raise ValueError(
+                    f"Block {i} has codomain {operator.codomain!r}, "
+                    f"expected {codomain!r}."
+                )
+        LinearOperator.__init__(
+            self, DirectSum([op.domain for op in self._operators]), codomain
+        )
+
+    def _adjoint_value(self, y) -> tuple:
+        return tuple(operator.adjoint(y) for operator in self._operators)
+
+    def _make_adjoint(self) -> LinearOperator:
+        result = ColumnLinearOperator([op.adjoint for op in self._operators])
+        result.__dict__["_adjoint_cache"] = self
+        return result
+
+
+class BlockDiagonalOperator(Operator):
+    """``(x_i) -> (F_i(x_i))``, acting on each summand independently."""
+
+    def __new__(cls, operators):
+        if cls is BlockDiagonalOperator and all(
+            isinstance(operator, LinearOperator) for operator in operators
+        ):
+            return object.__new__(BlockDiagonalLinearOperator)
+        return object.__new__(cls)
+
+    def __init__(self, operators) -> None:
+        self._operators = tuple(operators)
+        if not self._operators:
+            raise ValueError("A block diagonal operator needs at least one block.")
+        Operator.__init__(
+            self,
+            DirectSum([op.domain for op in self._operators]),
+            DirectSum([op.codomain for op in self._operators]),
+        )
+
+    @property
+    def operators(self) -> tuple[Operator, ...]:
+        return self._operators
+
+    @property
+    def has_derivative(self) -> bool:
+        return all(operator.has_derivative for operator in self._operators)
+
+    def _value(self, x: tuple) -> tuple:
+        return tuple(operator(xi) for operator, xi in zip(self._operators, x))
+
+    def _derivative(self, x: tuple) -> LinearOperator:
+        return BlockDiagonalLinearOperator(
+            [operator.derivative(xi) for operator, xi in zip(self._operators, x)]
+        )
+
+
+class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
+    """A block diagonal operator whose every block is linear.
+
+    Traits are the intersection of the blocks' own, which is exactly right: the
+    whole is self-adjoint iff every block is, positive definite iff every block
+    is, and so on.
+    """
+
+    def __init__(self, operators) -> None:
+        self._operators = tuple(operators)
+        traits = self._operators[0].traits
+        for operator in self._operators[1:]:
+            traits = traits & operator.traits
+        LinearOperator.__init__(
+            self,
+            DirectSum([op.domain for op in self._operators]),
+            DirectSum([op.codomain for op in self._operators]),
+            traits=close(traits),
+        )
+
+    def _adjoint_value(self, y: tuple) -> tuple:
+        return tuple(operator.adjoint(yi) for operator, yi in zip(self._operators, y))
+
+    def _make_adjoint(self) -> LinearOperator:
+        result = BlockDiagonalLinearOperator([op.adjoint for op in self._operators])
+        result.__dict__["_adjoint_cache"] = self
+        return result

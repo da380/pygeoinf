@@ -19,17 +19,18 @@ See DESIGN.md section 7.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 from numpy.random import Generator
 
+from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
 from ..algebra.operators import AffineOperator, LinearOperator, Operator
 from ..algebra.spaces import HilbertSpace
 
 if TYPE_CHECKING:
     pass
 
-__all__ = ["ProbabilityMeasure", "PushForwardMeasure"]
+__all__ = ["ProbabilityMeasure", "ProductMeasure", "PushForwardMeasure", "product"]
 
 
 class ProbabilityMeasure[X](ABC):
@@ -282,3 +283,69 @@ class _IndependentSum[X](ProbabilityMeasure[X]):
         if not (self._left.has_covariance and self._right.has_covariance):
             return None
         return self._left.covariance + self._right.covariance
+
+
+class ProductMeasure[X](ProbabilityMeasure[tuple]):
+    """Independent factors on a direct sum.
+
+    v1 has this only for Gaussians (``GaussianMeasure.from_direct_sum``), but
+    the independent product of *any* samplable measures is samplable — which is
+    what the joint model needs when the prior is not Gaussian, and so is
+    exactly the case the nonlinear work runs into.
+    """
+
+    def __init__(
+        self,
+        factors: Sequence[ProbabilityMeasure],
+        labels: Sequence[str] | None = None,
+    ) -> None:
+        factors = tuple(factors)
+        if not factors:
+            raise ValueError("A product measure needs at least one factor.")
+        super().__init__(DirectSum([f.domain for f in factors], labels))
+        self._factors = factors
+
+    @property
+    def factors(self) -> tuple[ProbabilityMeasure, ...]:
+        return self._factors
+
+    def sample(self, rng: Generator | None = None) -> tuple:
+        return tuple(factor.sample(rng) for factor in self._factors)
+
+    @property
+    def expectation(self) -> tuple | None:
+        if not all(factor.has_expectation for factor in self._factors):
+            return None
+        return tuple(factor.expectation for factor in self._factors)
+
+    @property
+    def covariance(self) -> LinearOperator | None:
+        """Block diagonal, because the factors are independent."""
+        if not all(factor.has_covariance for factor in self._factors):
+            return None
+        return BlockDiagonalLinearOperator(
+            [factor.covariance for factor in self._factors]
+        )
+
+    def factor(self, key: int | str) -> ProbabilityMeasure:
+        return self._factors[self._domain.index(key)]
+
+    def __repr__(self) -> str:
+        return f"ProductMeasure({len(self._factors)} factors)"
+
+
+def product(
+    measures: Sequence[ProbabilityMeasure],
+    labels: Sequence[str] | None = None,
+) -> ProbabilityMeasure:
+    """The independent product of measures, collapsed where it can be.
+
+    A product of Gaussians is Gaussian, with block-diagonal covariance; anything
+    else is a :class:`ProductMeasure`.
+    """
+    from .gaussian import GaussianMeasure
+
+    measures = tuple(measures)
+    if measures and all(isinstance(m, GaussianMeasure) for m in measures):
+        return GaussianMeasure.from_product(measures, labels)
+    return ProductMeasure(measures, labels)

@@ -1,5 +1,16 @@
 """The algebraic core: spaces and operators."""
 
+from .direct_sum import (
+    BlockDiagonalLinearOperator,
+    BlockDiagonalOperator,
+    BlockLinearOperator,
+    BlockOperator,
+    ColumnLinearOperator,
+    ColumnOperator,
+    DirectSum,
+    RowLinearOperator,
+    RowOperator,
+)
 from .linearisation import Linearisation, QuadraticModel
 from .operators import (
     AffineOperator,
@@ -21,6 +32,15 @@ from .spaces import (
 
 __all__ = [
     "AffineOperator",
+    "BlockDiagonalLinearOperator",
+    "BlockDiagonalOperator",
+    "BlockLinearOperator",
+    "BlockOperator",
+    "ColumnLinearOperator",
+    "ColumnOperator",
+    "DirectSum",
+    "RowLinearOperator",
+    "RowOperator",
     "ArrayVectorMixin",
     "CoordinateSpace",
     "DiagonalMetricSpace",
