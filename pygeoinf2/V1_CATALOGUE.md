@@ -532,8 +532,9 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `log_evidence`, `mahalanobis_evidence_term` | Ported | M5, as a functional on the data | |
 | `estimate_log_determinant` | Ported | `numerics.functional_calculus` | |
 | `low_rank_surrogate` | Ported | `numerics.randomised` | |
-| `diagonal_normal_preconditioner`, `sparse_localized_preconditioner`, `woodbury_data_preconditioner`, `woodbury_model_preconditioner` | Planned | `numerics.preconditioners`, M5 | |
-| `surrogate_inversion`, `surrogate_normal_preconditioner`, `surrogate_woodbury_data_preconditioner`, `surrogate_woodbury_model_preconditioner` | Subsumed | A surrogate is a transformed *problem*; the preconditioner then follows from it, so these four collapse into the four above | |
+| `woodbury_data_preconditioner`, `woodbury_model_preconditioner` | Ported | `WoodburyPreconditioner.data_form` / `.model_form`, one class that picks the identity from the space it is asked to invert (DESIGN §22.12) | |
+| `diagonal_normal_preconditioner`, `sparse_localized_preconditioner` | Planned | `numerics.preconditioners`, M5 | |
+| `surrogate_inversion`, `surrogate_normal_preconditioner`, `surrogate_woodbury_data_preconditioner`, `surrogate_woodbury_model_preconditioner` | Subsumed | A surrogate is a transformed *problem*; the preconditioner then follows from it. `WoodburyPreconditioner` takes `A`, `Q`, `R` as arguments, so passing cheap ones *is* the surrogate case and needs no separate entry point | |
 | `parameterized_inversion`, `data_reduced_inversion` | Dropped | They forward to the `ForwardProblem` methods of the same name (§18.9) | |
 | `normal_residual_callback` | Subsumed | With the solver callbacks above | |
 

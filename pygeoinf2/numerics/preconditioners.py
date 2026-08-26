@@ -15,7 +15,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
-from ..algebra.spaces import CoordinateSpace
+from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..traits import Traits
 from .solvers import InverseOperator, LinearSolver, SolveResult
 
@@ -25,6 +25,7 @@ __all__ = [
     "SpectralPreconditioner",
     "BandedPreconditioner",
     "BlockPreconditioner",
+    "WoodburyPreconditioner",
 ]
 
 
@@ -261,5 +262,196 @@ class BlockPreconditioner(LinearSolver):
             for block, inverse in zip(self._blocks, factors):
                 result[block] = inverse @ components[block]
             return SolveResult(space.from_components(result), 1, 0.0, True)
+
+        return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+
+class WoodburyPreconditioner(LinearSolver):
+    """Invert a normal operator through the *other* space.
+
+    The two normal operators of a linear Gaussian problem are
+
+    .. code-block:: text
+
+        N_m == Q^-1 + A* R^-1 A        on the model space
+        N_d == A Q A* + R              on the data space
+
+    and the Woodbury identity writes each inverse in terms of a solve in the
+    opposite space:
+
+    .. code-block:: text
+
+        N_m^-1 == Q - Q A* (R + A Q A*)^-1 A Q
+        N_d^-1 == R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1
+
+    This is the same trade as :func:`~pygeoinf2.inference.point.choose_formalism`
+    — solve wherever the dimension is smaller — but used as a *preconditioner*
+    rather than as the solve itself, which is what makes it useful when neither
+    space is small enough to settle the matter outright.
+
+    Two things turn it from an identity into a preconditioner:
+
+    * **The inner solve is cheap.** A few iterations, or a spectral
+      approximation, in place of an exact inverse.
+    * **The pieces are surrogates.** A smoother forward operator, a stationary
+      prior standing in for a non-stationary one, a diagonal noise covariance
+      standing in for a correlated one. Pass the cheap versions here and use
+      the result on the true operator; the closer they are, the better it
+      works, and correctness never depends on how close they are.
+
+    The model form needs only *applications* of ``Q`` and ``R``, never their
+    inverses, which is why it survives priors whose inverse is unbounded — a
+    Sobolev covariance, say. The data form needs ``Q^-1`` and ``R^-1``, so it
+    wants covariances that are already given in inverse form.
+
+    Which identity is used is decided by the operator handed to
+    :meth:`__call__`: one acts on the model space and the other on the data
+    space, and their dimensions say which is which.
+
+    Note:
+        With an inexact inner solve the result is no longer exactly symmetric,
+        and ordinary conjugate gradients relies on a symmetric preconditioner.
+        Use :class:`~pygeoinf2.numerics.solvers.FlexibleCGSolver` when the
+        inner solver is itself iterative, or tighten the inner tolerance until
+        the asymmetry is below the outer one.
+    """
+
+    requires: ClassVar[Traits] = Traits.NONE
+    requires_coordinates: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        forward: LinearOperator,
+        prior_covariance: LinearOperator,
+        noise_covariance: LinearOperator,
+        /,
+        *,
+        solver: LinearSolver | None = None,
+        prior_solver: LinearSolver | None = None,
+        noise_solver: LinearSolver | None = None,
+        prior_inverse: LinearOperator | None = None,
+        noise_inverse: LinearOperator | None = None,
+    ) -> None:
+        """
+        Args:
+            forward: the forward operator ``A``, possibly a cheap surrogate.
+            prior_covariance: the prior covariance ``Q`` on the model space.
+            noise_covariance: the data error covariance ``R``.
+            solver: inverts the inner operator. This is the one that should be
+                cheap; it defaults to conjugate gradients, which assumes the
+                inner operator is positive definite, as both are.
+            prior_solver: inverts ``Q``, for the data form only. Defaults to
+                *solver*. Ignored when *prior_inverse* is given.
+            noise_solver: inverts ``R``, for the data form only. Defaults to
+                *solver*. Ignored when *noise_inverse* is given.
+            prior_inverse: ``Q^-1`` when it is known in closed form, which is
+                usually cheaper and always better conditioned than solving.
+            noise_inverse: ``R^-1`` likewise — a diagonal noise covariance
+                inverts by hand.
+        """
+        if forward.domain.dim != prior_covariance.domain.dim:
+            raise ValueError(
+                f"The prior covariance acts on a space of dimension "
+                f"{prior_covariance.domain.dim}, but the forward operator has "
+                f"a model space of dimension {forward.domain.dim}."
+            )
+        if forward.codomain.dim != noise_covariance.domain.dim:
+            raise ValueError(
+                f"The noise covariance acts on a space of dimension "
+                f"{noise_covariance.domain.dim}, but the forward operator has "
+                f"a data space of dimension {forward.codomain.dim}."
+            )
+        self._forward = forward
+        self._prior = prior_covariance
+        self._noise = noise_covariance
+        self._solver = solver
+        self._prior_solver = prior_solver
+        self._noise_solver = noise_solver
+        self._prior_inverse = prior_inverse
+        self._noise_inverse = noise_inverse
+
+    @property
+    def model_space(self) -> HilbertSpace:
+        """The space ``N_m`` acts on."""
+        return self._forward.domain
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The space ``N_d`` acts on."""
+        return self._forward.codomain
+
+    def _inner_solver(self) -> LinearSolver:
+        if self._solver is not None:
+            return self._solver
+        from .solvers import CGSolver
+
+        return CGSolver()
+
+    def _resolve(
+        self,
+        inverse: LinearOperator | None,
+        operator: LinearOperator,
+        solver: LinearSolver | None,
+    ) -> LinearOperator:
+        if inverse is not None:
+            return inverse
+        chosen = solver if solver is not None else self._inner_solver()
+        return chosen(operator.with_traits(Traits.POSITIVE_DEFINITE))
+
+    def model_form(self) -> LinearOperator:
+        """``Q - Q A* (R + A Q A*)^-1 A Q``, an approximate ``N_m^-1``.
+
+        Built without ever inverting ``Q`` or ``R``.
+        """
+        forward, prior, noise = self._forward, self._prior, self._noise
+        inner = noise + forward @ prior @ forward.adjoint
+        inverse = self._inner_solver()(inner.with_traits(Traits.POSITIVE_DEFINITE))
+        cross = prior @ forward.adjoint
+        return (prior - cross @ inverse @ cross.adjoint).with_traits(
+            Traits.SELF_ADJOINT
+        )
+
+    def data_form(self) -> LinearOperator:
+        """``R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1``, an approximate ``N_d^-1``.
+
+        Needs ``Q^-1`` and ``R^-1``, so it wants covariances given in inverse
+        form; see the class docstring.
+        """
+        forward = self._forward
+        prior_inverse = self._resolve(
+            self._prior_inverse, self._prior, self._prior_solver
+        )
+        noise_inverse = self._resolve(
+            self._noise_inverse, self._noise, self._noise_solver
+        )
+        inner = prior_inverse + forward.adjoint @ noise_inverse @ forward
+        inverse = self._inner_solver()(inner.with_traits(Traits.POSITIVE_DEFINITE))
+        cross = noise_inverse @ forward
+        return (noise_inverse - cross @ inverse @ cross.adjoint).with_traits(
+            Traits.SELF_ADJOINT
+        )
+
+    def _validate(self, operator: LinearOperator) -> None:
+        super()._validate(operator)
+        dim = operator.domain.dim
+        if dim not in (self.model_space.dim, self.data_space.dim):
+            raise ValueError(
+                f"WoodburyPreconditioner was built for a model space of "
+                f"dimension {self.model_space.dim} and a data space of "
+                f"dimension {self.data_space.dim}; it was asked to invert an "
+                f"operator on a space of dimension {dim}, which is neither."
+            )
+
+    def _invert(self, operator: LinearOperator) -> InverseOperator:
+        dim = operator.domain.dim
+        if dim == self.model_space.dim and dim == self.data_space.dim:
+            # Ambiguous by dimension alone, so ask the spaces themselves.
+            model = operator.domain == self.model_space
+        else:
+            model = dim == self.model_space.dim
+        approximate = self.model_form() if model else self.data_form()
+
+        def solve_fn(y, x0):
+            return SolveResult(approximate(y), 1, 0.0, True)
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)

@@ -3650,11 +3650,144 @@ Porting them is worthwhile for speed on particular shapes, and is not
 worthwhile merely for completeness — the question is which of them earns its
 place, and that is a judgement about workloads rather than about code.
 
-**The rest of the preconditioners** — `ColumnThresholded`, the localised and
-Woodbury ones from `linear_bayesian.py`. Mechanical, and each needs a problem
-of the right shape to show it is worth anything, which §22.5's measurements
-argue is the only honest way to add one.
+**The rest of the preconditioners** — `ColumnThresholded` and the localised one
+from `linear_bayesian.py`. Mechanical, and each needs a problem of the right
+shape to show it is worth anything, which §22.5's measurements argue is the
+only honest way to add one. The Woodbury one is done: §22.12.
 
 **Plotting and the tail** — `SubspaceSlicePlotter`, `plot_slice`, the corner
 plots, `config.py`, the live download commands, and the `dynamical_system`
 family, which was marked *later* deliberately.
+
+### 22.11 Set inclusion with errors, as a constrained optimisation
+
+Route (a) as first written did only the error-free case: the ellipsoid of
+Al-Attar (2021) eq. (2.84), and an `inclusion_norm` built on Parker's joint map
+`C = (A, T)` answering `min { ||m|| : A m = d, T m = p }`. The paper also does
+the case *with* errors, and §3.3 is the reduction: replace the data constraint
+`A m = d` by `||d - A m|| <= D` and the problem becomes, in eq. (3.28), the
+same one restricted to `ker T`.
+
+The reduction is worth writing out, because it is what makes the computation
+stable. Split `m = m~ + u` with `m~ = T*(TT*)^-1 p` the smallest model having
+the proposed property and `u ∈ ker T`. The two are orthogonal, so the norms
+separate: `||m||^2 = ||m~||^2 + ||u||^2`, and `T m = p` holds for every `u`.
+What is left is a pure discrepancy problem — the smallest `u` in the kernel
+bringing the residual `r = d - A m~` inside the noise ball — and with
+`P` the orthogonal projector onto `ker T` and `K = A P A*` its data-space
+form, the solution at damping `γ` is `u = P A* z` with `z = (γI + K)^-1 r`.
+Then
+
+```
+misfit(γ) = ||r - A u|| = γ ||z||        ||u||^2 = (K z, z)
+```
+
+both monotone in `γ` and both free of cancellation, so the bisection on the
+misfit is a bisection on a quantity computed at its own scale. This is the same
+lesson as §22.3's kernel norm, where computing a small quantity as
+*whole minus range* returned 2.8 for a model of norm 0.85.
+
+Two consequences are worth naming. The answer is `inf` when the part of `r`
+outside the range of `A P` exceeds the noise radius — no model with that
+property fits the data however large it is allowed to be. That is a *proof* of
+inadmissibility, the constructive half of the paper's Lemma 3.1, not a failure
+to converge, and the tests assert it as such.
+
+And it is the complement of the support function, exactly as the sandwich of
+§18.4 needs. A support function bounds the set from outside, one direction at a
+time; the inclusion test decides membership exactly, one point at a time, and
+is the only one of the two that can produce an *inner* bound — `inner_hull`
+takes the convex hull of the admitted candidates. The two are computed by
+completely different routes and must agree about every point they both have an
+opinion on, which is the parity test: of 120 probes, none admitted lay outside
+the outer polytope and none the support function certified outside was
+admitted. Against route (a) with the noise ball shrunk, the difference tracks
+the radius — 1.46e-2 at 1e-2, 1.24e-4 at 1e-4, 1.02e-6 at 1e-6.
+
+**A singular normal operator, found by the new fixture.** The error-free
+`inclusion_norm` solved `C C* x = t` with conjugate gradients and a
+`POSITIVE_DEFINITE` claim, while its own docstring said positive
+*semi*definite. Both are right: `C C*` acts on `D ⊕ P`, and once
+`dim(D) + dim(P)` exceeds `dim(M)` it is genuinely singular, because a model
+cannot generically match more numbers than it has. Every existing fixture had
+`dim(D) + dim(P) <= dim(M)`, so it had never been seen; the with-errors tests
+introduced a 3 + 2 against 4 and CG broke down at iteration 6.
+
+The fix is the same reasoning as the reduction above rather than a wider
+tolerance: go through the spectrum, and the unreachable part of the joint
+target is by definition the part in the kernel. If it is non-zero the answer is
+`inf`. So `inclusion_norm` became total, and for the same reason.
+
+That needed a metric-correct eigendecomposition, `_self_adjoint_spectrum`. The
+*Galerkin* matrix `G N_c` is the symmetric one (§5.6), not the component
+matrix, so the eigenproblem is the generalised `M v = λ G v`, whose vectors are
+orthonormal in the space's own inner product. The previous code symmetrised the
+component matrix by hand, which is right on a Euclidean space and wrong
+anywhere else — the same class of error as the `credible_set` bug in §21.11,
+and again invisible until a weighted space was used. The tests now run the
+whole construction on a weighted model space for that reason.
+
+The property pseudo-inverse `T*(TT*)^-1` is factored, not iterated. The
+property space is small — that is what makes it a property space (§18.1) — so
+CG runs out of Krylov space before it runs out of tolerance and reports the
+round-off as a non-positive curvature direction. A `2 x 2` system does not want
+an iterative solver.
+
+### 22.12 The Woodbury preconditioner
+
+Marked in §22.10 as mechanical; it is, but it was asked for by name as the one
+that has been useful in practice, and it is. The two normal operators
+
+```
+N_m = Q^-1 + A* R^-1 A     N_d = A Q A* + R
+```
+
+each have an inverse written in terms of a solve in the *other* space:
+
+```
+N_m^-1 = Q - Q A* (R + A Q A*)^-1 A Q
+N_d^-1 = R^-1 - R^-1 A (Q^-1 + A* R^-1 A)^-1 A* R^-1
+```
+
+which is the same trade as `choose_formalism` (§18.6) — solve wherever the
+dimension is smaller — but used as a *preconditioner* rather than as the solve
+itself, which is what makes it useful when neither space is small enough to
+settle the matter outright.
+
+Two things turn an identity into a preconditioner: the inner solve is cheap, or
+the pieces are surrogates — a smoother forward operator, a stationary prior
+standing in for a non-stationary one, a diagonal noise covariance standing in
+for a correlated one. v1 exposed the surrogate case as
+`surrogate_woodbury_data_preconditioner`; here it needs no separate entry point,
+because the pieces are constructor arguments and passing cheap ones is the
+whole of it. Correctness never depends on how close they are, only the
+iteration count does.
+
+`WoodburyPreconditioner` is a `LinearSolver` like the others, and works out
+which of the two identities to use from the space the operator it is handed
+acts on. The model form needs only *applications* of `Q` and `R`, never their
+inverses, which is why it survives a prior whose inverse is unbounded — a
+Sobolev covariance. The data form needs `Q^-1` and `R^-1`, so it wants
+covariances given in inverse form, and takes them directly when they are known.
+
+**How it is tested.** Woodbury is an identity, so the decisive test is not that
+it helps but that it is *exactly right* when nothing is approximated: with
+exact inner solves, `wood.model_form()(N_m x)` must return `x`. It does, to
+1e-14, on a Euclidean space, a weighted model space and a weighted data space —
+the metric variants included because the whole construction is written in
+Hilbert adjoints and a components-for-Galerkin slip would show up there and
+nowhere else. An iteration-count improvement would not have revealed such a
+slip at all; it would just have preconditioned slightly worse.
+
+The practical claim is measured separately. Against `N_m` of condition 1.5e4
+with an exponentially decaying prior, a deliberately crude surrogate — that
+decay replaced by a ten-step staircase, and cruder noise — took CG from 262
+iterations to 23, with the two answers agreeing to 6e-12.
+
+One caveat is documented on the class rather than guarded: with an inexact
+inner solve the preconditioner is no longer exactly symmetric, and ordinary CG
+relies on a symmetric preconditioner. `FlexibleCGSolver` (§22.5) exists for
+precisely that, and is the answer when the inner solver is itself iterative.
+
+While adding it, the package `__init__` was found to export only two of the
+five preconditioners. All six are exported now.

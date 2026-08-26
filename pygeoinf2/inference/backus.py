@@ -17,12 +17,13 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
+import scipy.linalg
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..geometry.convex import Ball, ConvexSet, Ellipsoid
 from ..geometry.subspaces import OrthogonalProjector
-from ..numerics.solvers import CGSolver, LinearSolver
+from ..numerics.solvers import CGSolver, CholeskySolver, LinearSolver
 from ..traits import Traits
 from .estimators import LinearPointEstimator, SetEstimator
 from .problem import LinearForwardProblem
@@ -34,6 +35,39 @@ _SPECTRUM_FLOOR = 1.0e-13
 # Below this, a non-converged dual infimum is read as unbounded rather than as
 # an answer. Support values of a bounded set are of the size of the set.
 _UNBOUNDED = 1.0e6
+
+
+def _self_adjoint_spectrum(operator: LinearOperator) -> tuple[np.ndarray, np.ndarray]:
+    """Eigenvalues, and eigenvectors orthonormal in the space's own metric.
+
+    The *Galerkin* matrix ``G N_c`` is the symmetric one (§5.6), not the
+    component matrix, so the eigenproblem is the generalised ``M v == lambda G
+    v``. Its vectors satisfy ``v_j^T G v_k == delta_jk`` — orthonormal in the
+    inner product of the space rather than in whichever coordinates happen to
+    be in use. On a Euclidean space this is the ordinary symmetric
+    eigenproblem, which is why the distinction stays invisible until it isn't.
+
+    Used where a self-adjoint operator is *singular* and a solver cannot be:
+    with the spectrum in hand, the range and the kernel can be told apart, so
+    "no solution exists" becomes an answer rather than a breakdown.
+    """
+    space = operator.domain
+    gram = space.gram_matrix()
+    galerkin = operator.matrix(form="galerkin")
+    values, vectors = scipy.linalg.eigh(0.5 * (galerkin + galerkin.T), gram)
+    return np.clip(values, 0.0, None), vectors
+
+
+def _spectral_components(
+    space: HilbertSpace, vectors: np.ndarray, vector: Any
+) -> np.ndarray:
+    """The coefficients of *vector* in a metric-orthonormal eigenbasis.
+
+    ``beta_k == (v_k, x)`` in the space's inner product, which in components is
+    ``v_k^T G x_c``.
+    """
+    return vectors.T @ space.apply_gram(space.to_components(vector))
+
 
 __all__ = [
     "BackusGilbert",
@@ -324,14 +358,19 @@ class BackusInference(SetEstimator):
         Al-Attar (2021) eq. (2.46).
 
         ``C C*`` acts on ``D (+) P``, so the solve is Parker's square system of
-        size ``dim(D) + dim(P)`` — and it is positive semidefinite by the
-        palindrome rule, so nothing has to be claimed about it.
+        size ``dim(D) + dim(P)``. It is positive *semi*definite — the palindrome
+        rule gives no more than that, and once ``dim(D) + dim(P)`` exceeds
+        ``dim(M)`` it is genuinely singular, because a model cannot generically
+        match more numbers than it has. So this goes through the spectrum
+        rather than a solver: the unreachable part of the joint target is the
+        part in the kernel, and if it is non-zero the answer is ``inf``, which
+        is a statement about the value and not a failure to converge.
         """
         from ..algebra.direct_sum import ColumnLinearOperator
 
         joint = ColumnLinearOperator([self._problem.forward_operator, self._target])
-        normal = (joint @ joint.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
-        target = joint.codomain.from_components(
+        space = joint.codomain
+        target = space.from_components(
             np.concatenate(
                 [
                     self.data_space.to_components(data),
@@ -339,8 +378,15 @@ class BackusInference(SetEstimator):
                 ]
             )
         )
-        model = joint.adjoint(self._solver(normal)(target))
-        return self._problem.model_space.norm(model)
+        values, vectors = _self_adjoint_spectrum(joint @ joint.adjoint)
+        beta = _spectral_components(space, vectors, target)
+        live = values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
+        if float(np.linalg.norm(beta[~live])) > _SPECTRUM_FLOOR * max(
+            float(np.linalg.norm(beta)), 1.0
+        ):
+            return float("inf")
+        # ||m||^2 == (C C* x, x) == (t, x) == sum beta_k^2 / lambda_k.
+        return float(np.sqrt(np.sum(beta[live] ** 2 / values[live])))
 
     def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
         """Whether a property value is consistent with the data and the prior.
@@ -660,6 +706,132 @@ class FeasibleProperty(SetEstimator):
                 self.extremal_model(direction, data)
             ),
         )
+
+    # ----------------------------------------------------------------- #
+    #                          Set inclusion                            #
+    # ----------------------------------------------------------------- #
+
+    @cached_property
+    def _reduced(self) -> tuple[Any, np.ndarray, np.ndarray]:
+        """The kernel projector and the spectrum of ``A P A*``.
+
+        Al-Attar (2021) §3.3: fixing a property value confines the model to
+        ``m~ + ker T``, and asking whether any such model fits the data is *the
+        same problem again* in that subspace — with ``A*`` replaced by
+        ``P_ker(T) A*`` throughout, which is eq. (3.28).
+
+        Everything the reduced problem needs is the spectrum of
+        ``(A P)(A P)* == A P A*`` on the data space, formed once.
+        """
+        kernel = OrthogonalProjector.onto_kernel(self._target, solver=self._solver)
+        forward = self._problem.forward_operator
+        reduced = forward @ kernel @ forward.adjoint
+        values, vectors = _self_adjoint_spectrum(reduced)
+        return kernel, values, vectors
+
+    @cached_property
+    def _property_pseudo_inverse(self) -> LinearOperator:
+        """``T* (T T*)^-1``: the smallest model with a given property.
+
+        Factored rather than iterated. The property space is finite-dimensional
+        and small — that is what makes it a *property* space (§18.1) — so ``T
+        T*`` is a handful of rows, and conjugate gradients on it runs out of
+        Krylov space before it runs out of tolerance and reports the round-off
+        as a non-positive curvature direction.
+        """
+        normal = (self._target @ self._target.adjoint).with_traits(
+            Traits.POSITIVE_DEFINITE
+        )
+        return self._target.adjoint @ CholeskySolver()(normal)
+
+    def inclusion_norm(self, value: Any, data: Any, /) -> float:
+        """``min { ||m|| : T m == value, ||d - A m|| <= D }``.
+
+        The set-inclusion question reduced to a constrained optimisation, which
+        is the complement of the support-function machinery: a support function
+        bounds the feasible set from *outside*, one direction at a time, and
+        this decides membership *exactly*, one point at a time. The two together
+        are §18.4's sandwich — and only this one can produce the inner bound.
+
+        The reduction is Al-Attar (2021) §3.3. Writing ``m == m~ + u`` with
+        ``m~`` the minimum-norm model having the property and ``u`` in the
+        kernel of ``T``, the norms separate and what is left is a discrepancy
+        problem in the subspace. In the data space that has a closed form:
+        with ``z == (gamma + A P A*)^-1 v``, the misfit is exactly
+        ``gamma ||z||`` and the model's norm is ``(A P A* z, z)``, both
+        monotone in ``gamma`` and neither involving a cancellation.
+
+        Returns infinity when no model at all can fit the data with this
+        property — which is a *proof* that the value is inadmissible, not a
+        failure to find one, and is the constructive part of Lemma 3.1.
+        """
+        space = self._problem.model_space
+        forward = self._problem.forward_operator
+        _, values, vectors = self._reduced
+
+        anchor = self._property_pseudo_inverse(value)
+        anchor_norm = space.norm(anchor)
+        residual = self.data_space.subtract(data, forward(anchor))
+        projected = _spectral_components(self.data_space, vectors, residual)
+
+        # Already within the noise set with no help from the kernel.
+        if self.data_space.norm(residual) <= self._noise_radius:
+            return float(anchor_norm)
+
+        # The best the kernel can do: whatever of the residual lies outside the
+        # range of A P is unreachable however large the model is allowed to be.
+        live = values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
+        unreachable = float(np.linalg.norm(projected[~live]))
+        if unreachable > self._noise_radius:
+            return float("inf")
+
+        def misfit(damping: float) -> float:
+            return float(damping * np.linalg.norm(projected / (damping + values)))
+
+        damping = self._bisect(lambda g: -misfit(g), -self._noise_radius)
+        correction = float(np.sum(values * projected**2 / (damping + values) ** 2))
+        return float(np.sqrt(anchor_norm**2 + correction))
+
+    def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
+        """Whether a property value is consistent with the data and the prior."""
+        return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
+
+    def inner_hull(self, values: Any, data: Any, /) -> Any:
+        """The convex hull of whichever candidate values are admissible.
+
+        The *inner* bound of §18.4, and the only thing that produces one: a
+        support function can never exhibit a point of the set. Returned as an
+        inner :class:`~pygeoinf2.geometry.convex.Polytope`, so it cannot be
+        mistaken for the outer one — reporting a hull of feasible samples as
+        though it were the answer is what BGP's Figure 4 is about, and it is
+        always an undercount.
+        """
+        from scipy.spatial import ConvexHull
+
+        from ..geometry.convex import HalfSpace, Polytope
+
+        space = self.target_space
+        inside = [
+            space.to_components(value) for value in values if self.admits(value, data)
+        ]
+        if len(inside) <= space.dim:
+            raise ValueError(
+                f"Only {len(inside)} of the candidates are admissible, which "
+                f"is not enough to bound a hull in {space.dim} dimensions. "
+                "Sample nearer the minimum-norm property."
+            )
+        hull = ConvexHull(np.stack(inside))
+        planes = []
+        for equation in hull.equations:
+            normal, offset = equation[:-1], -equation[-1]
+            planes.append(
+                HalfSpace(
+                    space,
+                    space.representer(normal),
+                    offset=float(offset),
+                )
+            )
+        return Polytope(space, planes, outer=False)
 
     def push_forward(self, operator: LinearOperator, /) -> "FeasibleProperty":
         """The same inference about a further property."""

@@ -1045,3 +1045,159 @@ class TestConditioning:
         )
         conditioned = measure.condition(operator, np.array([0.5, -1.0]))
         assert conditioned.nuclear_norm() < measure.nuclear_norm()
+
+
+class TestWoodburyPreconditioner:
+    """Invert a normal operator through the other space.
+
+    Woodbury is an *identity*, so the decisive test is not that the
+    preconditioner helps but that it is exactly right when nothing is
+    approximated. Anything less than machine precision there is a bug, and no
+    amount of iteration-count improvement would reveal it.
+    """
+
+    @staticmethod
+    def psd(space, rng, scale=1.0):
+        root = rng.normal(size=(space.dim, space.dim))
+        matrix = scale * (root @ root.T + space.dim * np.identity(space.dim))
+        return LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            matrix,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    @pytest.fixture(params=["euclidean", "weighted-model", "weighted-data"])
+    def pieces(self, request, rng):
+        """A forward problem, on spaces whose metric is not the identity.
+
+        The whole construction is written in Hilbert adjoints, so a
+        non-trivial metric is where a components-for-Galerkin slip would show.
+        """
+        if request.param == "euclidean":
+            model, data = EuclideanSpace(5), EuclideanSpace(3)
+        elif request.param == "weighted-model":
+            model, data = make_weighted_space(), EuclideanSpace(3)
+        else:
+            model, data = EuclideanSpace(5), make_weighted_space()
+        forward = LinearOperator.from_derivative_matrix(
+            model, data, rng.normal(size=(data.dim, model.dim))
+        )
+        return forward, self.psd(model, rng), self.psd(data, rng, 0.3)
+
+    def test_exact_pieces_give_the_exact_inverse(self, pieces, rng):
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        forward, prior, noise = pieces
+        model, data = forward.domain, forward.codomain
+        exact = CholeskySolver()
+        prior_inverse, noise_inverse = exact(prior), exact(noise)
+        wood = WoodburyPreconditioner(
+            forward,
+            prior,
+            noise,
+            solver=exact,
+            prior_inverse=prior_inverse,
+            noise_inverse=noise_inverse,
+        )
+        normal_model = (
+            prior_inverse + forward.adjoint @ noise_inverse @ forward
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+        normal_data = (noise + forward @ prior @ forward.adjoint).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+
+        for approximate, normal, space in [
+            (wood.model_form(), normal_model, model),
+            (wood.data_form(), normal_data, data),
+            # Through the solver interface, which must pick the right identity
+            # from the space the operator acts on.
+            (wood(normal_model), normal_model, model),
+            (wood(normal_data), normal_data, data),
+        ]:
+            for _ in range(5):
+                vector = space.random(rng=rng)
+                back = approximate(normal(vector))
+                assert space.norm(space.subtract(back, vector)) == pytest.approx(
+                    0.0, abs=1e-10 * space.norm(vector)
+                )
+
+    def test_the_model_form_never_inverts_the_covariances(self, pieces, rng):
+        """Which is what lets it survive a prior whose inverse is unbounded.
+
+        The prior and noise are given with no inverse and no solver for one,
+        and the model form still has to work.
+        """
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        forward, prior, noise = pieces
+        wood = WoodburyPreconditioner(forward, prior, noise, solver=CholeskySolver())
+        approximate = wood.model_form()
+        vector = forward.domain.random(rng=rng)
+        assert np.isfinite(forward.domain.norm(approximate(vector)))
+
+    def test_a_surrogate_prior_still_preconditions(self, rng):
+        """The practical case: cheap stand-in pieces, exact outer problem.
+
+        Correctness never depends on how good the surrogate is — only the
+        iteration count does, which is the property being measured here.
+        """
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        model, data = EuclideanSpace(120), EuclideanSpace(8)
+        forward = LinearOperator.from_derivative_matrix(
+            model, data, rng.normal(size=(8, 120))
+        )
+        decay = np.exp(-np.arange(120) / 6.0) + 1e-4
+
+        def diagonal(space, values):
+            return LinearOperator.from_derivative_matrix(
+                space,
+                space,
+                np.diag(values),
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            )
+
+        noise_inverse = diagonal(data, np.full(8, 100.0))
+        normal = (
+            diagonal(model, 1.0 / decay) + forward.adjoint @ noise_inverse @ forward
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+        vector = model.random(rng=rng)
+
+        plain = CGSolver(rtol=1e-10, maxiter=2000)(normal).solve(vector)
+        # A coarse staircase in place of the true exponential decay.
+        staircase = np.exp(-(np.arange(120) // 10) * 10 / 6.0) + 1e-4
+        surrogate = WoodburyPreconditioner(
+            forward,
+            diagonal(model, staircase),
+            diagonal(data, np.full(8, 0.01)),
+            solver=CholeskySolver(),
+        )
+        helped = (
+            CGSolver(rtol=1e-10, maxiter=2000)
+            .with_preconditioner(surrogate)(normal)
+            .solve(vector)
+        )
+        assert helped.iterations < plain.iterations / 4
+        assert model.norm(
+            model.subtract(plain.solution, helped.solution)
+        ) == pytest.approx(0.0, abs=1e-8 * model.norm(plain.solution))
+
+    def test_mismatched_pieces_are_refused(self, rng):
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        model, data = EuclideanSpace(5), EuclideanSpace(3)
+        forward = LinearOperator.from_derivative_matrix(
+            model, data, rng.normal(size=(3, 5))
+        )
+        with pytest.raises(ValueError, match="prior covariance"):
+            WoodburyPreconditioner(forward, self.psd(data, rng), self.psd(data, rng))
+        with pytest.raises(ValueError, match="noise covariance"):
+            WoodburyPreconditioner(forward, self.psd(model, rng), self.psd(model, rng))
+
+        wood = WoodburyPreconditioner(
+            forward, self.psd(model, rng), self.psd(data, rng)
+        )
+        other = EuclideanSpace(7)
+        with pytest.raises(ValueError, match="which is neither"):
+            wood(LinearOperator.identity(other))

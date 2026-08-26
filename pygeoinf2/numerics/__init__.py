@@ -52,7 +52,14 @@ from .optimisation import (
     gauss_newton_hessian,
     truncated_cg,
 )
-from .preconditioners import IdentityPreconditioner, JacobiPreconditioner
+from .preconditioners import (
+    BandedPreconditioner,
+    BlockPreconditioner,
+    IdentityPreconditioner,
+    JacobiPreconditioner,
+    SpectralPreconditioner,
+    WoodburyPreconditioner,
+)
 from .solvers import (
     BiCGStabSolver,
     CGSolver,
@@ -122,6 +129,10 @@ __all__ = [
     "InverseOperator",
     "IterativeSolver",
     "JacobiPreconditioner",
+    "SpectralPreconditioner",
+    "BandedPreconditioner",
+    "BlockPreconditioner",
+    "WoodburyPreconditioner",
     "LSQRSolver",
     "LUSolver",
     "LeastSquaresSolver",

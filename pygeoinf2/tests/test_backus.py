@@ -501,3 +501,142 @@ class TestDualRoute:
         # any certificate gives a valid bound; this one is the best
         cost = dual.dual_cost(direction, data)
         assert cost(certificate) <= cost(forward.codomain.zero()) + 1e-9
+
+
+class TestInclusionWithErrors:
+    """Set inclusion as a constrained optimisation, with noisy data.
+
+    The complement of the support-function machinery: a support function bounds
+    the set from outside one direction at a time, and this decides membership
+    exactly one point at a time. Only the second can produce an inner bound,
+    and the two must agree about every point they both have an opinion on.
+    """
+
+    @pytest.fixture
+    def noisy(self, rng):
+        model = make_weighted_space()
+        data_space = EuclideanSpace(3)
+        target_space = EuclideanSpace(2)
+        forward = LinearOperator.from_derivative_matrix(
+            model, data_space, rng.normal(size=(3, model.dim))
+        )
+        target = LinearOperator.from_derivative_matrix(
+            model, target_space, rng.normal(size=(2, model.dim))
+        )
+        raw = model.random(rng=rng)
+        truth = model.scale(2.0 / model.norm(raw), raw)
+        radius = 0.15
+        noise = data_space.random(rng=rng)
+        data = data_space.add(
+            forward(truth),
+            data_space.scale(0.6 * radius / data_space.norm(noise), noise),
+        )
+        problem = LinearForwardProblem(forward, error=Ball(data_space, radius=radius))
+        estimator = FeasibleProperty(problem, target, Ball(model, radius=3.0))
+        return model, forward, target, truth, data, estimator
+
+    def test_the_truth_is_admitted(self, noisy):
+        model, forward, target, truth, data, estimator = noisy
+        assert estimator.admits(target(truth), data)
+        assert estimator.inclusion_norm(target(truth), data) <= model.norm(truth) + 1e-6
+
+    def test_it_reduces_to_the_error_free_test(self, noisy, rng):
+        """As the noise ball shrinks, with the difference tracking its radius.
+
+        Al-Attar (2021) §3.3 against §2.3: the second is the first with the
+        confidence set collapsed to a point.
+        """
+        model, forward, target, truth, data, _ = noisy
+        prior = Ball(model, radius=3.0)
+        exact = BackusInference(LinearForwardProblem(forward), target, prior)
+        space = target.codomain
+        for radius in (1e-2, 1e-4):
+            noisy_estimator = FeasibleProperty(
+                LinearForwardProblem(
+                    forward, error=Ball(forward.codomain, radius=radius)
+                ),
+                target,
+                prior,
+            )
+            for _ in range(8):
+                value = space.from_components(
+                    space.to_components(target(truth)) + rng.normal(size=space.dim)
+                )
+                assert noisy_estimator.inclusion_norm(value, data) == pytest.approx(
+                    exact.inclusion_norm(value, data), rel=10.0 * radius
+                )
+
+    def test_it_never_admits_what_the_support_function_excludes(self, noisy, rng):
+        """The two descriptions of one set, checked against each other.
+
+        A primal minimum-norm computation against a directional bound. Neither
+        can be adjusted to agree with the other, so an inconsistency would name
+        which is wrong.
+        """
+        model, forward, target, truth, data, estimator = noisy
+        space = target.codomain
+        answer = estimator(data)
+        angles = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
+        probes = [
+            space.from_components(np.array([np.cos(angle), np.sin(angle)]))
+            for angle in angles
+        ]
+        outer = answer.polytope(probes)
+
+        admitted = excluded = 0
+        for _ in range(120):
+            value = space.from_components(
+                space.to_components(target(truth)) + rng.normal(size=2) * 2.0
+            )
+            if estimator.admits(value, data):
+                admitted += 1
+                assert outer.contains(value)
+            if answer.outside(value, probes):
+                excluded += 1
+                assert not estimator.admits(value, data)
+        assert admitted > 0
+        assert excluded > 0
+
+    def test_an_unreachable_value_is_proved_unreachable(self, noisy):
+        """Infinity is a proof, not a failure to converge: whatever of the
+        residual lies outside the range of ``A P`` cannot be fitted however
+        large the model is allowed to be."""
+        model, forward, target, truth, data, estimator = noisy
+        space = target.codomain
+        far = space.from_components(
+            space.to_components(target(truth)) + np.array([1e4, 0.0])
+        )
+        assert estimator.inclusion_norm(far, data) == float("inf")
+        assert not estimator.admits(far, data)
+
+    def test_the_inner_hull_sits_inside_the_outer_bound(self, noisy, rng):
+        """§18.4's sandwich, with both sides real for the first time."""
+        model, forward, target, truth, data, estimator = noisy
+        space = target.codomain
+        candidates = [
+            space.from_components(
+                space.to_components(target(truth)) + rng.normal(size=2) * 2.0
+            )
+            for _ in range(400)
+        ]
+        hull = estimator.inner_hull(candidates, data)
+        assert not hull.is_outer
+        assert hull.contains(target(truth))
+
+        answer = estimator(data)
+        angles = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
+        probes = [
+            space.from_components(np.array([np.cos(angle), np.sin(angle)]))
+            for angle in angles
+        ]
+        outer = answer.polytope(probes)
+        for candidate in candidates:
+            if hull.contains(candidate):
+                assert outer.contains(candidate)
+
+    def test_too_few_admissible_candidates_is_refused(self, noisy):
+        model, forward, target, truth, data, estimator = noisy
+        space = target.codomain
+        far = [space.from_components(np.array([1e4, 1e4])) for _ in range(10)]
+        with pytest.raises(ValueError, match="admissible"):
+            estimator.inner_hull(far, data)
