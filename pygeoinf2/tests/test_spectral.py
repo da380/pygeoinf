@@ -209,6 +209,57 @@ class TestMeasureStatistics:
             first.kl_divergence(second, method="dense")
         )
 
+    def test_the_stochastic_route_agrees_with_the_dense_one(self, pair):
+        """Nothing is formed on this route, so it is the one that survives a
+        space too large to hold two covariance matrices. It is checked in
+        units of its own standard error, which is the only tolerance a
+        Hutchinson estimate has."""
+        _, first, second = pair
+        exact = first.kl_divergence(second, method="dense")
+        estimate = first.kl_divergence_estimate(
+            second,
+            method="stochastic",
+            samples=6000,
+            rng=np.random.default_rng(7),
+            max_iterations=60,
+            rtol=1e-10,
+        )
+        assert estimate.standard_error > 0.0
+        assert abs(estimate.value - exact) < 4.0 * estimate.standard_error
+
+    def test_the_exact_routes_report_no_error(self, pair):
+        """So a caller can treat all three uniformly and still see which it
+        got, which is the whole reason an Estimate comes back."""
+        _, first, second = pair
+        for method in ("dense",):
+            assert (
+                first.kl_divergence_estimate(second, method=method).standard_error
+                == 0.0
+            )
+
+    def test_auto_takes_the_spectral_route_when_it_can(self):
+        X = Sobolev(6, 2.0, 0.2)
+        first = X.sobolev_measure(2.0, 0.2)
+        second = X.heat_measure(0.02)
+        assert first.kl_divergence_estimate(second).standard_error == 0.0
+        forced = first.kl_divergence_estimate(
+            second,
+            method="stochastic",
+            samples=4000,
+            rng=np.random.default_rng(9),
+            max_iterations=60,
+            rtol=1e-10,
+        )
+        exact = first.kl_divergence(second)
+        assert abs(forced.value - exact) < 4.0 * forced.standard_error
+
+    def test_a_bad_method_is_refused_and_so_is_a_route_that_does_not_apply(self, pair):
+        _, first, second = pair
+        with pytest.raises(ValueError, match="'auto', 'spectral'"):
+            first.kl_divergence(second, method="lanczos")
+        with pytest.raises(ValueError, match="both covariances diagonal"):
+            first.kl_divergence(second, method="spectral")
+
     def test_measures_on_different_spaces_are_refused(self, pair):
         space, first, _ = pair
         other = GaussianMeasure.from_standard_deviation(EuclideanSpace(2), 1.0)

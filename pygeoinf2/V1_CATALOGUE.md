@@ -413,7 +413,7 @@ concentration of things to decide about.
 | `two_point_covariance` | Ported | `C(x, y)` as a function of two points. Not ported | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
 | `directional_statistics`, `directional_covariance`, `directional_variance` | Ported | Statistics of `(x, u)` along given directions. Cheap and useful; no v2 home | Yes. useful. |
 | `rescale_directional_variance` | Ported | as above | Again, useful|
-| `kl_divergence` | Ported | Between two Gaussians. Needs `estimate_log_determinant`, which is in `numerics` | Definitely needed, and possibly improvable.|
+| `kl_divergence` | Ported | Three routes — spectral for diagonal covariances, dense, and stochastic Lanczos with nothing formed — plus `kl_divergence_estimate` carrying the error (DESIGN §29) | Definitely needed, and possibly improvable.|
 | `nuclear_norm`, `hilbert_schmidt_norm` | Ported | Trace-class and Hilbert–Schmidt norms of the covariance. `random_trace` gives the first stochastically | yes, useful |
 | — | *(new)* | `mahalanobis_squared`, `log_density`, `grad_log_density`, `precision` | |
 

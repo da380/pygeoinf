@@ -4599,3 +4599,75 @@ estimator.normal_operator`, not an equal one — and that all three routes land
 on the same answer as a direct factorisation to 1e-13. A factory returning
 something that is not a solver, and a solver that is neither, are refused where
 they are given rather than several calls deeper.
+
+## 29. The KL divergence, and what was already wrong in it
+
+The last dense-only calculation. It is often used on low-dimensional spaces,
+where dense is right, so the point is flexibility rather than a change of
+default.
+
+```
+2 D(P||Q) == tr(C_q^-1 C_p) + (m_q - m_p, C_q^-1 (m_q - m_p))
+             - dim + log det C_q - log det C_p
+```
+
+Three routes, differing only in how the trace and the two determinants are
+reached: **spectral** when both covariances are diagonal in the space's own
+basis, which is `O(dim)` and exact and covers every invariant measure on a
+symmetric space; **dense**, which forms both matrices; and **stochastic**,
+which forms nothing — Hutchinson for the trace, stochastic Lanczos for the
+determinants (§26.1). `"auto"` takes them in that order, falling to stochastic
+above a dimension it will not assemble at.
+
+`kl_divergence` still returns a float. `kl_divergence_estimate` returns an
+`Estimate`, because a stochastic answer without its error is uninterpretable
+and the exact routes can report an error of zero rather than being a different
+shape.
+
+### 29.1 Cruft found on the way in
+
+The spectral branch computed its quadratic term twice. The first computation
+was dead — overwritten on the next line — and the replacement carried a term
+reading
+
+```python
+float(other.mahalanobis_squared(other.expectation) * 0.0) + ...
+```
+
+which is identically zero twice over: the Mahalanobis distance of a measure's
+own mean is zero, and it was then multiplied by zero. What remained was a call
+to `other.precision(shift)`, which requires a precision the branch never said
+it needed. Replaced by `other._weighted_squared(shift)`, which is the same
+quantity, is what the dense branch already used, and falls back when there is
+no precision.
+
+### 29.2 The metric, again, and a test that was wrong before the code was
+
+Checked against a reference written directly from the definition, on a
+Euclidean space and a weighted one:
+
+```
+euclidean  reference 2.10245 | dense 2.10245 (0.0e+00) | stochastic 2.09800 +/- 0.167 (0.0 sigma)
+weighted   reference 5.77116 | dense 5.77116 (8.9e-16) | stochastic 5.80805 +/- 0.049 (0.7 sigma)
+```
+
+and the spectral route equal to the dense one to `0.0e+00` on diagonal
+covariances.
+
+The first version of that reference disagreed by a factor of five, and the code
+was right both times. Two mistakes, both mine and both instructive.
+
+The reference dropped the metric from the quadratic term. `tr(C_q^-1 C_p)` and
+the *difference* of the log-determinants are both metric-free — `G` cancels in
+each, in the second because it is a difference — but the quadratic is an inner
+product on the space and carries `G`. Two of the three terms not needing it is
+exactly what makes the third easy to forget.
+
+And the measures were not valid. Building a covariance with
+`from_component_matrix` and a symmetric matrix does not give a self-adjoint
+operator on a space whose metric is not the identity: self-adjointness wants
+`G C_c` symmetric, and a symmetric `C_c` with a non-constant `G` is not. The
+stochastic route reported `nan` and a `log` of a negative eigenvalue — which
+was the operator telling the truth about itself. `from_derivative_matrix` with a
+symmetric matrix is the construction that gives a symmetric Galerkin matrix,
+and it is the one used everywhere else for this reason.

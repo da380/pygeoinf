@@ -28,6 +28,7 @@ from ..algebra.spaces import CoordinateSpace, EuclideanSpace, HilbertSpace
 from ..traits import Traits
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ..numerics.randomised import Estimate
     from ..geometry.convex import Ellipsoid
 from .base import ProbabilityMeasure
 
@@ -378,58 +379,186 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return 0.5 * (matrix + matrix.T)
 
     def kl_divergence(
-        self, other: "GaussianMeasure", /, *, method: str = "auto"
+        self,
+        other: "GaussianMeasure",
+        /,
+        *,
+        method: str = "auto",
+        solver: Any = None,
+        samples: int = 100,
+        rng: Generator | None = None,
+        dense_limit: int = 512,
+        **kwargs: Any,
     ) -> float:
         """``D(self || other)`` between two Gaussians on the same space.
 
-        When both covariances are diagonal in the space's own basis the whole
-        thing reduces to sums over the spectrum, which is ``O(dim)`` rather
-        than a pair of dense factorisations. That is the case for every
-        invariant measure on a symmetric space, so it is the common one.
+        The value alone. :meth:`kl_divergence_estimate` returns it with the
+        uncertainty, which is the thing to use when the route is stochastic.
+        """
+        return self.kl_divergence_estimate(
+            other,
+            method=method,
+            solver=solver,
+            samples=samples,
+            rng=rng,
+            dense_limit=dense_limit,
+            **kwargs,
+        ).value
+
+    def kl_divergence_estimate(
+        self,
+        other: "GaussianMeasure",
+        /,
+        *,
+        method: str = "auto",
+        solver: Any = None,
+        samples: int = 100,
+        rng: Generator | None = None,
+        dense_limit: int = 512,
+        **kwargs: Any,
+    ) -> "Estimate":
+        r"""``D(self || other)``, with the uncertainty of however it was got.
+
+        .. code-block:: text
+
+            2 D == tr(C_o^-1 C_s) + (m_o - m_s, C_o^-1 (m_o - m_s))
+                   - dim + log det C_o - log det C_s
+
+        Three routes, and they differ only in how the trace and the two
+        determinants are reached.
+
+        ``"spectral"``
+            Both covariances diagonal in the space's own basis, so everything
+            is a sum over the spectrum: ``O(dim)``, exact, and no factorisation
+            at all. Every invariant measure on a symmetric space is of this
+            kind, so it is the common case and the one ``"auto"`` takes first.
+        ``"dense"``
+            Form both matrices and factorise. Exact, and confined to a space
+            small enough to hold two of them.
+        ``"stochastic"``
+            Hutchinson for the trace and stochastic Lanczos for the
+            determinants, so nothing is ever formed. The route for a space too
+            large to assemble, at the cost of an answer with an error bar.
 
         Args:
-            other: the reference measure.
-            method: ``"auto"`` takes the spectral route when it is available,
-                ``"dense"`` forces the general one.
+            other: the reference measure. The divergence is not symmetric.
+            method: ``"auto"``, ``"spectral"``, ``"dense"`` or ``"stochastic"``.
+                ``"auto"`` takes the spectral route when both covariances are
+                diagonal, then the dense one when the space has coordinates and
+                is no larger than *dense_limit*, and the stochastic one
+                otherwise.
+            solver: how to invert the reference covariance, for the stochastic
+                route. Conjugate gradients by default; a factory taking the
+                operator is also accepted.
+            samples: Hutchinson probes for the trace and each determinant.
+            rng: the generator for those probes.
+            dense_limit: the dimension above which ``"auto"`` stops forming
+                matrices.
+            kwargs: passed to
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`.
+
+        Returns:
+            An :class:`~pygeoinf2.numerics.randomised.Estimate`. The exact
+            routes report a standard error of zero.
         """
+        from ..numerics.functional_calculus import log_determinant
+        from ..numerics.randomised import Estimate, random_trace
+        from ..numerics.solvers import resolve_solver
+
         if other.domain != self._domain:
             raise ValueError("Both measures must live on the same space.")
+        if method not in ("auto", "spectral", "dense", "stochastic"):
+            raise ValueError(
+                f"The method is 'auto', 'spectral', 'dense' or 'stochastic', "
+                f"got {method!r}."
+            )
         dimension = self._domain.dim
         shift = self._domain.subtract(other.expectation, self.expectation)
 
         mine = self._diagonal_eigenvalues()
         theirs = other._diagonal_eigenvalues()
-        if method == "auto" and mine is not None and theirs is not None:
+        spectral = mine is not None and theirs is not None
+        if method == "spectral" and not spectral:
+            raise ValueError(
+                "The spectral route needs both covariances diagonal in the "
+                "space's own basis, and at least one of these is not."
+            )
+        if method == "auto":
+            if spectral:
+                method = "spectral"
+            elif isinstance(self._domain, CoordinateSpace) and dimension <= dense_limit:
+                method = "dense"
+            else:
+                method = "stochastic"
+
+        if method == "spectral":
             if np.any(theirs <= 0.0):
                 raise ValueError(
                     "The reference measure is singular, so the divergence from "
                     "it is infinite."
                 )
-            components = self._domain.to_components(shift)
-            metric = self._domain.apply_gram(components)
-            quadratic = float(
-                np.sum(components * metric**2 / theirs / metric.clip(min=1e-300))
-            )
-            quadratic = float(
-                other.mahalanobis_squared(other.expectation) * 0.0
-            ) + float(self._domain.inner_product(other.precision(shift), shift))
+            quadratic = other._weighted_squared(shift)
             trace = float(np.sum(mine / theirs))
             logs = float(
                 np.sum(np.log(theirs)) - np.sum(np.log(np.clip(mine, 1e-300, None)))
             )
-            return 0.5 * (trace + quadratic - dimension + logs)
+            return Estimate(0.5 * (trace + quadratic - dimension + logs), 0.0, 0)
 
-        mine_matrix = self._symmetric_matrix()
-        theirs_matrix = other._symmetric_matrix()
-        solved = np.linalg.solve(theirs_matrix, mine_matrix)
-        quadratic = other._weighted_squared(shift)
-        sign_mine, log_mine = np.linalg.slogdet(mine_matrix)
-        sign_theirs, log_theirs = np.linalg.slogdet(theirs_matrix)
-        if sign_mine <= 0 or sign_theirs <= 0:
-            raise ValueError("Both covariances must be positive definite.")
-        return 0.5 * (
-            float(np.trace(solved)) + quadratic - dimension + log_theirs - log_mine
+        if method == "dense":
+            mine_matrix = self._symmetric_matrix()
+            theirs_matrix = other._symmetric_matrix()
+            sign_mine, log_mine = np.linalg.slogdet(mine_matrix)
+            sign_theirs, log_theirs = np.linalg.slogdet(theirs_matrix)
+            if sign_mine <= 0 or sign_theirs <= 0:
+                raise ValueError("Both covariances must be positive definite.")
+            trace = float(np.trace(np.linalg.solve(theirs_matrix, mine_matrix)))
+            quadratic = other._weighted_squared(shift)
+            return Estimate(
+                0.5 * (trace + quadratic - dimension + log_theirs - log_mine),
+                0.0,
+                0,
+            )
+
+        # Stochastic: nothing is formed. The trace operator C_o^-1 C_s is not
+        # self-adjoint, which costs nothing here -- Hutchinson estimates the
+        # trace of any endomorphism, self-adjoint or not.
+        definite = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        if self._covariance is None or other._covariance is None:
+            raise ValueError(
+                "The stochastic route needs both covariances as operators, and "
+                "at least one of these measures was given only a precision."
+            )
+        reference = other._covariance.with_traits(definite)
+        inverse = (
+            other._precision
+            if other._precision is not None
+            else resolve_solver(solver, reference)(reference)
         )
+        trace = random_trace(inverse @ self._covariance, samples=samples, rng=rng)
+        quadratic = self._domain.inner_product(inverse(shift), shift)
+        log_theirs = log_determinant(
+            reference, method="stochastic", samples=samples, rng=rng, **kwargs
+        )
+        log_mine = log_determinant(
+            self._covariance.with_traits(definite),
+            method="stochastic",
+            samples=samples,
+            rng=rng,
+            **kwargs,
+        )
+        value = 0.5 * (
+            trace.value + quadratic - dimension + log_theirs.value - log_mine.value
+        )
+        # Three independent estimates, so the errors add in quadrature and the
+        # halving outside carries through.
+        error = 0.5 * float(
+            np.sqrt(
+                trace.standard_error**2
+                + log_theirs.standard_error**2
+                + log_mine.standard_error**2
+            )
+        )
+        return Estimate(float(value), error, samples)
 
     def rescale_directional_variance(
         self, direction: X, standard_deviation: float, /
