@@ -4053,3 +4053,176 @@ the only sane reading of "keep the largest, and the diagonal". Both run on a
 weighted space as well as a Euclidean one.
 
 With this, every preconditioner row in the catalogue is closed.
+
+## 24. The point estimators, and the kernel they all share
+
+The point estimators were the thinnest thing in the library: 292 lines against
+v1's 1330. Some of that is genuine compression — v1 repeats the surrogate and
+preconditioner family across four classes — but most of it was loss, and one
+piece of it was a bug.
+
+### 24.1 The bug
+
+`MinimumNorm.for_data` returned the wrong end of its bracket. The discrepancy
+principle wants the *largest* damping whose misfit still reaches the threshold;
+when no damping is large enough to miss it — when the data are consistent with
+noise and every model fits — the answer is therefore the largest damping and
+the smallest model. It returned the smallest damping, and its docstring stated
+the correct reasoning immediately before doing so.
+
+```
+data that anything fits:
+   for_data chose damping 1.0e-12  ->  model norm 3.1e-06
+   largest damping that fits: 1.0e+12  ->  model norm 4.5e-15
+```
+
+Nine orders of magnitude, and in the worst possible direction: for data
+supporting no structure it returned the *most* structured answer available.
+v1 handles this correctly and directly — `if chi_squared <= critical: return
+zero`.
+
+The fix is not a corrected branch but the primitive below, which reports which
+end it ran out at and returns that end's value. The correct behaviour is then
+the default rather than a case someone has to remember.
+
+### 24.2 One kernel, four users — finally
+
+§18.6 already said it:
+
+> a damped least-squares solve inside a monotone scalar root find. One
+> primitive, four users... That primitive belongs in `numerics`, not in the
+> inference layer.
+
+It was listed in stage 5.3 and never built. What existed instead was two
+ad-hoc copies — `backus.py`'s `_bisect` and an inline loop in `for_data` — and
+`InverseOperator.solve` had taken an `x0` all along that **no caller in the
+package passed**.
+
+`numerics/root_find.py` now holds `monotone_root`, and `backus.py`'s `_bisect`
+delegates to it. All thirty-five Backus tests pass unchanged, parity between
+routes (a), (c) and (d) included, which is what makes the retrofit safe to
+claim.
+
+Three things belong to the primitive rather than to any of its users.
+
+**Bracketing at both ends**, which §22.3 already learned the hard way.
+
+**Saturation as an answer.** Failing to bracket is not an error: the
+non-existence of a root is the answer to a feasibility question. It is reported
+with the endpoint reached, and getting that endpoint right is §24.1.
+
+**Warm starting.** Consecutive multipliers in a bisection converge on each
+other, so each solve is a correction to the last. On a 300-dimensional
+ill-conditioned system with 24 probes:
+
+```
+cold          6504 inner iterations   0.54 s
+warm-started  4892 inner iterations   0.36 s     (identical damping)
+```
+
+A second saving is separate and larger where it applies: a preconditioner
+supplied as a `LinearSolver` is otherwise rebuilt against *every member of the
+family*, which for a Woodbury surrogate with its own inner factorisation costs
+more than the solves it accelerates. `DampedSolves` builds it once and rebuilds
+only when the multiplier has moved by more than a set factor. A preconditioner
+is an approximation, so reuse costs accuracy, not correctness — the threshold
+is where that stops being a good trade.
+
+The cost is reported rather than hidden. Without the iteration count there is
+no way to tell a warm start that is working from one that silently is not,
+which is the failure mode of an optimisation nobody can see.
+
+### 24.3 Tikhonov as a family, not an assembly
+
+Tikhonov least squares **is** the Gaussian case with an isotropic prior, and
+exactly so: `Q^-1 == t I` in the model space, `Q == (1/t) I` in the data space,
+where the two factors of `1/t` cancel between the gain and the operator. The
+test asserts it at machine precision rather than leaving it as a remark.
+
+They are still separate classes. Not because the identity is doubtful, but
+because a `NormalOperator` is one assembly of one problem and `N(t)` is a
+*family* whose whole purpose is to be walked along — by a discrepancy search,
+by an L-curve. An object whose point is the sweep should say so in its type,
+and warm starting has nowhere to live on a single assembly. Reading `t` as a
+prior variance is also a claim about what regularisation means, and a damping
+does not have to make it.
+
+`TikhonovNormalOperator` carries its factors, so every structure-aware
+preconditioner of §23 applies to the point estimators unchanged. The estimators
+gained what §23 gave the Gaussian one: `normal_operator`, `right_hand_side`,
+`with_solver`, `with_formalism`, `with_damping`, `surrogate`, `parameterised`,
+`data_reduced`, and `residual_callback` for v1's progress tracking.
+
+### 24.4 The derivative of a damping found from the data
+
+v1's `minimum_norm_operator` returns a non-linear operator with an exact
+analytic Fréchet derivative *and its adjoint*. v2 had replaced it with "fix a
+damping, hand back a linear estimator", which has the wrong derivative with
+respect to the data and cannot sit in a differentiable chain.
+
+The formula was derived here independently rather than ported on trust.
+Differentiating `H(t) u == A* R^-1 d` and `chi^2(u, d) == target` together
+gives `du/dd == L - h (x) dt/dd` with `h == H^-1 u`, and
+
+```
+dt/dd == (L* A* R^-1 r - R^-1 r) / (R^-1 r, A h)
+```
+
+which is not v1's expression. The normal equations themselves supply the
+missing step: `A* R^-1 A u + t u == A* R^-1 d` gives **`A* R^-1 r == -t u`**,
+and with it both numerator and denominator come out as `-t` times v1's, so the
+factors cancel and the two agree. v1's formula is correct.
+
+`DiscrepancyPrinciple` is an `Operator`, not a `LinearPointEstimator`, because
+the map genuinely is not affine — two data vectors needing different dampings
+are related by no fixed matrix. The correction for the damping moving is
+rank one, which is why the derivative costs one extra solve rather than a new
+problem.
+
+**Verified two ways, and the first attempt looked like a failure.** Central
+differences disagreed by 2.5e-2 — until the damping search was tightened. The
+map is only as differentiable as its damping is converged, and at the default
+`rtol` of 1e-6 with a finite-difference step of 1e-6 the difference quotient is
+all noise:
+
+```
+search rtol 1e-06, FD step 1e-06  ->  2.48e-02
+search rtol 1e-14, FD step 1e-06  ->  5.57e-10
+search rtol 1e-14, FD step 1e-04  ->  7.43e-10
+search rtol 1e-14, FD step 1e-03  ->  6.98e-08
+```
+
+The last line rising is truncation error behaving as it should, which is how
+one can tell the middle rows are the real agreement. The adjoint dot-product
+test — the check that catches a right formula with a wrong adjoint, which is
+the more likely error and the one that stays invisible until something upstream
+calls it — passes at 7e-17 independently.
+
+**A saturated search has no such term.** When no damping brings the misfit to
+its target, the damping in force is pinned by the end of its range rather than
+chosen by the data, so it does not move when the data do and the rank-one
+correction is not merely unnecessary but wrong. This was found by the
+finite-difference test on a constrained problem with a two-dimensional subspace
+and eight data, which cannot fit them at any damping. The derivative there is
+the fixed-damping estimator alone.
+
+Reaching that case also broke the primitive: the bracket walked down to a
+damping of `1e-200`, where the normal operator is numerically singular and the
+factorisation fails. That is not a bug either — it is the edge of the usable
+range — so a breakdown during bracketing now ends the walk and reports the last
+multiplier that worked, which is exactly the saturated answer.
+
+### 24.5 The constrained pair
+
+`ConstrainedMinimumNorm` had no v2 counterpart, and `constraint_value_mapping`
+— how the answer moves when the constraint value does, at fixed data — is the
+question a constrained inversion invites.
+
+Porting it produced one error worth recording, because it is the kind that
+looks right. The mapping adds the unconstrained solution to a point of the
+subspace; using the *unconstrained* method there walks straight off the
+constraint, and only the **reduced** method — the one built on `A P` — has
+answers in the tangent space. v1 does this correctly and the reason is not
+obvious from its code, since its "unconstrained inversion" attribute is already
+the reduced one. The test that caught it simply asks whether `B u == w` still
+holds; it did not, by 130%.

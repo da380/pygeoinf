@@ -23,6 +23,7 @@ from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..geometry.convex import Ball, ConvexSet, Ellipsoid
 from ..geometry.subspaces import OrthogonalProjector
+from ..numerics.root_find import Evaluation, monotone_root
 from ..numerics.solvers import CGSolver, CholeskySolver, LinearSolver
 from ..traits import Traits
 from .estimators import LinearPointEstimator, SetEstimator
@@ -626,35 +627,34 @@ class FeasibleProperty(SetEstimator):
             adjoint(self.data_space.from_components(vectors @ weighted)),
         )
 
-    def _bisect(self, decreasing: Any, target: float) -> float:
-        """The positive argument at which a decreasing function hits a target.
+    def _bisect(
+        self, quantity: Any, target: float, /, *, decreasing: bool = True
+    ) -> float:
+        """The positive multiplier at which a monotone quantity hits a target.
 
-        Both bisections here are on a quantity that falls as its multiplier
-        rises, so the same routine does both. **The bracket is widened at both
-        ends**: widening only upwards leaves the search converging to whatever
-        the lower end happened to be, which is a wrong answer that looks like a
-        converged one.
+        Delegates to :func:`~pygeoinf2.numerics.root_find.monotone_root`, which
+        is DESIGN §18.6's one kernel: the same search the discrepancy principle
+        runs, and the reason it is written once. The probes here are closed
+        form — the spectral reduction of :attr:`_data_gram` has already turned
+        each into an ``O(dim(D))`` expression — so there is no solve to warm
+        start, and the primitive reports zero inner iterations accordingly.
+
+        The tolerance is zero so that the full iteration count is always taken:
+        these searches are nested, and an inner search that stopped early would
+        put a step in the outer one's function.
         """
-        low, high = 1.0, 1.0
-        for _ in range(200):
-            if decreasing(high) <= target:
-                break
-            high *= 10.0
-        else:  # pragma: no cover - the function is unbounded above
+        result = monotone_root(
+            lambda multiplier, _: Evaluation(quantity(multiplier)),
+            target,
+            decreasing=decreasing,
+            iterations=self._iterations,
+            rtol=0.0,
+            atol=0.0,
+            warm_start=False,
+        )
+        if result.exhausted is not None:
             raise ValueError("The bisection could not bracket its target.")
-        for _ in range(200):
-            if decreasing(low) >= target:
-                break
-            low /= 10.0
-        else:  # pragma: no cover
-            raise ValueError("The bisection could not bracket its target.")
-        for _ in range(self._iterations):
-            middle = np.sqrt(low * high)
-            if decreasing(middle) > target:
-                low = middle
-            else:
-                high = middle
-        return float(np.sqrt(low * high))
+        return result.argument
 
     def _fit_norm(self, prepared: dict, weight: float) -> float:
         """The damping at which the model's norm is the prior radius."""
@@ -788,7 +788,7 @@ class FeasibleProperty(SetEstimator):
         def misfit(damping: float) -> float:
             return float(damping * np.linalg.norm(projected / (damping + values)))
 
-        damping = self._bisect(lambda g: -misfit(g), -self._noise_radius)
+        damping = self._bisect(misfit, self._noise_radius, decreasing=False)
         correction = float(np.sum(values * projected**2 / (damping + values) ** 2))
         return float(np.sqrt(anchor_norm**2 + correction))
 

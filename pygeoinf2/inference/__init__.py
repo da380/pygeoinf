@@ -40,8 +40,11 @@ from .estimators import (
     PointEstimator,
     SetEstimator,
 )
+from .tikhonov import TikhonovFamily, TikhonovNormalOperator
 from .point import (
     ConstrainedLeastSquares,
+    ConstrainedMinimumNorm,
+    DiscrepancyPrinciple,
     LeastSquares,
     MinimumNorm,
     choose_formalism,
@@ -58,6 +61,10 @@ __all__ = [
     "InvariantDistancePreconditioner",
     "gaspari_cohn",
     "ConstrainedLeastSquares",
+    "ConstrainedMinimumNorm",
+    "DiscrepancyPrinciple",
+    "TikhonovFamily",
+    "TikhonovNormalOperator",
     "DualFeasibleProperty",
     "FeasibleProperty",
     "Estimator",

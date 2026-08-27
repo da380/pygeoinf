@@ -257,10 +257,10 @@ deliberately not started.
 | `Inversion`, `LinearInversion` | Subsumed | §18.7's `Estimator` kinds. An inverse problem is an inference problem with `T == identity`, so there is one hierarchy | |
 | `Inference`, `LinearInference` | Subsumed | as above | |
 | `LinearBayesianInversion` | Ported | M5 stage 5.4 as `Bayesian`. Four of its 24 methods are inversion; the rest move to `numerics` (§18.9) | |
-| `LinearLeastSquaresInversion` | Ported | M5 stage 5.3 | |
-| `ConstrainedLinearLeastSquaresInversion` | Ported | M5 stage 5.3 | |
-| `LinearMinimumNormInversion` | Ported | M5 stage 5.3, with the discrepancy principle on §18.6's root-find primitive | |
-| `ConstrainedLinearMinimumNormInversion` | Ported | M5 stage 5.3 | |
+| `LinearLeastSquaresInversion` | Ported | `LeastSquares`, on `TikhonovNormalOperator` so it exposes `normal_operator`, `right_hand_side`, `with_formalism`/`with_solver`/`with_damping`, `surrogate`, `parameterised`, `data_reduced` (DESIGN §24.3) | |
+| `ConstrainedLinearLeastSquaresInversion` | Ported | `ConstrainedLeastSquares`, with the same entry points on the reduced problem | |
+| `LinearMinimumNormInversion` | Ported | `MinimumNorm` for a chosen damping; `DiscrepancyPrinciple` for one found from the data, as a non-linear operator with the exact Fréchet derivative *and adjoint*. §18.6's primitive is now real and warm-started (DESIGN §24.2, §24.4) | |
+| `ConstrainedLinearMinimumNormInversion` | Ported | `ConstrainedMinimumNorm`, with `constraint_value_mapping` and its derivative (DESIGN §24.5) | |
 | `BackusInference` | Ported | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
 | `DualMasterCostFunction` | Ported | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
 
@@ -528,7 +528,7 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `normal_operator`, `get_normal_equations_rhs`, `kalman_operator` | Ported | M5 stage 5.4 | |
 | `model_posterior_measure` | Ported | M5 stage 5.4, but as `Bayesian(problem, prior, solver)(data)` — a mapping, not a method taking both data and configuration (§18.7) | |
 | `posterior_expectation_operator` | Subsumed | `GaussianEstimator.mean_map` | |
-| `with_formalism` | Subsumed | An argument on the estimator, defaulting to whichever space is smaller (§18.10) | |
+| `with_formalism` | Ported | A constructor argument defaulting to whichever space is smaller, *and* a `with_formalism` method on every estimator | |
 | `log_evidence`, `mahalanobis_evidence_term` | Ported | M5, as a functional on the data | |
 | `estimate_log_determinant` | Ported | `numerics.functional_calculus` | |
 | `low_rank_surrogate` | Ported | `LinearGaussianInversion.low_rank_surrogate`, on top of the new `GaussianMeasure.low_rank_approximation` (DESIGN §23.7) | |
@@ -538,7 +538,7 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `surrogate_inversion` | Ported | `LinearGaussianInversion.surrogate` / `NormalOperator.surrogate`. Returns the surrogate *normal operator*, which is the only part of a surrogate problem ever used, and may live on a different model space (DESIGN §23.2) | |
 | `surrogate_normal_preconditioner`, `surrogate_woodbury_data_preconditioner`, `surrogate_woodbury_model_preconditioner` | Subsumed | Passing cheap factors *is* the surrogate case: `WoodburyPreconditioner.from_normal(inversion.surrogate(...))` | |
 | `parameterized_inversion`, `data_reduced_inversion` | Dropped | They forward to the `ForwardProblem` methods of the same name (§18.9) | |
-| `normal_residual_callback` | Subsumed | With the solver callbacks above | |
+| `normal_residual_callback` | Ported | `LeastSquares.residual_callback`, wired to *these* normal equations so the number reported is the one the solve is driving down | |
 
 ## `LinearForwardProblem` (12 methods)
 
