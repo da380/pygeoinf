@@ -37,7 +37,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import AffineOperator, LinearOperator
 from ..numerics.randomised import random_svd
-from ..numerics.solvers import CGSolver, LinearSolver
+from ..numerics.solvers import LinearSolver, resolve_solver
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .estimators import GaussianEstimator
@@ -67,12 +67,18 @@ class LinearGaussianInversion(GaussianEstimator):
             problem: the forward problem, whose forward operator must be
                 linear and whose error measure, if any, must be Gaussian.
             prior: a Gaussian measure on the model space.
-            solver: how to invert the normal operator. Cholesky by default.
-                To precondition, pass an iterative solver carrying one:
-                ``CGSolver().with_preconditioner(...)``. The preconditioner is
-                handed the normal operator, so a generic one needs nothing
-                further; a structure-aware one is built from
-                :attr:`normal_operator` or a :meth:`surrogate` of it.
+            solver: how to invert the normal operator. Conjugate gradients by
+                default, since matrix-free is the right default and a direct
+                solver forms the matrix. To precondition, pass an iterative
+                solver carrying one: ``CGSolver().with_preconditioner(...)``.
+                A preconditioner that is itself a ``LinearSolver`` is handed
+                the normal operator at solve time, so most need nothing
+                further. For one built from *other* factors — a surrogate on a
+                coarser space — pass a **callable** here instead: it receives
+                the assembled normal operator and returns the solver, so the
+                preconditioner can be built from the very thing it will
+                precondition. See
+                :func:`~pygeoinf2.numerics.solvers.resolve_solver`.
             formalism: which space to assemble in; ``"auto"`` takes the
                 smaller, which for an underdetermined problem is the data
                 space and for an overdetermined one the model space.
@@ -92,13 +98,17 @@ class LinearGaussianInversion(GaussianEstimator):
                 f"pygeoinf2.inference.backus."
             )
 
-        solver = CGSolver() if solver is None else solver
+        # The normal operator needs no solver — a solver only inverts it — so
+        # it is built first and the solver resolved against it. That is what
+        # lets a caller hand in a factory and precondition with something built
+        # from the very operator about to be inverted.
         normal = NormalOperator(
             problem.forward_operator,
             prior,
             error=problem.error_measure if problem.has_error else None,
             formalism=formalism,
         )
+        solver = resolve_solver(solver, normal)
         inverse = solver(normal)
         gain = normal.gain(inverse)
         covariance = normal.posterior_covariance(inverse, gain)
@@ -166,7 +176,7 @@ class LinearGaussianInversion(GaussianEstimator):
         """How the normal operator is inverted."""
         return self._solver
 
-    def with_solver(self, solver: LinearSolver, /) -> "LinearGaussianInversion":
+    def with_solver(self, solver: Any, /) -> "LinearGaussianInversion":
         """The same inversion, solved a different way.
 
         The whole point of a preconditioner: build one against

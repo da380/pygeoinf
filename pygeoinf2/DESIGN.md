@@ -4516,3 +4516,86 @@ problem. 85 seconds, and the same numbers.
 Worth noticing for its own sake: a dense diagnostic on an iterative inversion
 is exactly what `with_solver` is for, and it would not have been expressible
 before §23 gave the estimators one.
+
+## 28. Handing an inversion its solver
+
+The solver is a constructor argument, and the good preconditioners are built
+*from* the operator being inverted — which does not exist until the inversion
+is constructed. That looks circular, and the question was whether it needs a
+two-phase construction, or a mutable solver set after the fact.
+
+It needs neither, and the reason is worth stating before the machinery:
+**the normal operator does not depend on the solver.** A solver only inverts
+it. So the two phases already exist, and the only question is how to reach the
+first one conveniently.
+
+Measured, on what actually works today:
+
+```
+1. Generic preconditioner, deferred -- needs nothing built first:
+   Jacobi                              OK
+   Spectral(rank=10)                   OK
+   NormalDiagonal (structure-aware)    OK
+2. WoodburyPreconditioner(A, Q, R) directly                OK
+3. NormalOperator(...) built by hand, then from_normal     OK
+4. Build an estimator, read .normal_operator, with_solver  OK  (0.59 ms)
+```
+
+### 28.1 Three routes, and which case each is for
+
+**A preconditioner that is itself a `LinearSolver` is already deferred.**
+`with_preconditioner` applies it to the operator at solve time, so it is handed
+the normal operator without anyone arranging it. That covers every generic
+preconditioner and every structure-aware one that reads its factors off the
+operator it is given — which is most of them, `NormalDiagonalPreconditioner`
+and `LocalisedPreconditioner` included. No sequencing problem exists in this
+case, and it is the common case.
+
+**The operator can be built alone.** `NormalOperator(forward, prior, error=...)`
+takes no solver, so anything can be built against it before an inversion
+exists. The cost is repeating the formalism, which is a chance to get out of
+step with the inversion that follows.
+
+**A factory closes the remaining gap.** A preconditioner built from *other*
+factors — a surrogate on a coarser space, the tomography case of §23.1 —
+cannot be derived from the operator, so it genuinely needs the operator first.
+The `solver` argument now also accepts a callable taking the assembled normal
+operator and returning the solver:
+
+```python
+inversion = LinearGaussianInversion(
+    problem,
+    prior,
+    solver=lambda normal: CGSolver().with_preconditioner(
+        WoodburyPreconditioner.from_normal(
+            normal.surrogate(forward=coarse_operator, prior=coarse_prior)
+        )
+    ),
+)
+```
+
+One expression, no throwaway object, and the preconditioner is built from the
+very operator it will precondition. `with_solver` takes the same, so a solver
+can still be chosen after looking at the operator.
+
+### 28.2 Why not a mutable solver
+
+A `set_solver` would have been the obvious answer and is the wrong one here.
+Everything else in this library returns a new object rather than mutating —
+`with_traits`, `with_formalism`, `with_damping`, `with_preconditioner` — and an
+inversion whose solver can change underneath it is an inversion whose
+`covariance` and `gain`, both already handed out as operators, quietly refer to
+a solve that is no longer the one being performed. The estimator is an operator
+(§18.7); operators here do not change.
+
+The two-phase construction was the other candidate. It is what route 4 above
+already is, it costs 0.59 ms, and it needs no new API — so it is documented as
+an idiom rather than built as a mechanism.
+
+### 28.3 What the factory is checked against
+
+That it receives the operator the inversion actually uses — `seen[0] is
+estimator.normal_operator`, not an equal one — and that all three routes land
+on the same answer as a direct factorisation to 1e-13. A factory returning
+something that is not a solver, and a solver that is neither, are refused where
+they are given rather than several calls deeper.

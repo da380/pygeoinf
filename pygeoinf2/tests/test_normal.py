@@ -545,3 +545,148 @@ class TestGaspariCohn:
 
         with pytest.raises(ValueError, match="taper length"):
             gaspari_cohn(np.zeros(1), 0.0)
+
+
+class TestSolverSequencing:
+    """Handing an inversion its solver when the preconditioner needs the
+    operator that inversion is about to build.
+
+    Three routes, and the point of testing all three is that they are not
+    alternatives to each other — each is the right one for a different case,
+    and the first covers most of them.
+    """
+
+    @pytest.fixture
+    def setup(self, rng):
+        model, data = EuclideanSpace(30), EuclideanSpace(18)
+        forward = LinearOperator.from_derivative_matrix(
+            model, data, rng.normal(size=(18, 30))
+        )
+        chol = CholeskySolver()
+        covariance = positive(model, rng)
+        prior = GaussianMeasure(
+            model, covariance=covariance, precision=chol(covariance)
+        )
+        noise = GaussianMeasure.from_standard_deviation(data, 0.05)
+        problem = LinearForwardProblem(forward, error=noise)
+        observed = data.random(rng=rng)
+        reference = LinearGaussianInversion(problem, prior, solver=chol)(
+            observed
+        ).expectation
+        return problem, prior, observed, reference
+
+    def test_a_deferred_preconditioner_needs_nothing_built_first(self, setup):
+        """The common case: a preconditioner that is itself a LinearSolver is
+        handed the normal operator at solve time. No sequencing problem
+        exists here, which is worth pinning down before adding machinery for
+        one."""
+        problem, prior, observed, reference = setup
+        model = problem.model_space
+        for preconditioner in (
+            JacobiPreconditioner(),
+            NormalDiagonalPreconditioner(),
+        ):
+            solved = LinearGaussianInversion(
+                problem,
+                prior,
+                solver=CGSolver(rtol=1e-12).with_preconditioner(preconditioner),
+            )(observed).expectation
+            assert model.norm(model.subtract(solved, reference)) == pytest.approx(
+                0.0, abs=1e-8 * model.norm(reference)
+            )
+
+    def test_the_normal_operator_can_be_built_without_a_solver(self, setup):
+        """Because it never needed one — a solver only inverts it. So the
+        two phases are already separable, whatever else is offered."""
+        problem, prior, observed, reference = setup
+        model = problem.model_space
+        normal = NormalOperator(
+            problem.forward_operator,
+            prior,
+            error=problem.error_measure,
+            formalism="data_space",
+        )
+        preconditioner = WoodburyPreconditioner.from_normal(
+            normal, solver=CholeskySolver()
+        )
+        solved = LinearGaussianInversion(
+            problem,
+            prior,
+            solver=CGSolver(rtol=1e-12).with_preconditioner(preconditioner),
+        )(observed).expectation
+        assert model.norm(model.subtract(solved, reference)) == pytest.approx(
+            0.0, abs=1e-8 * model.norm(reference)
+        )
+
+    def test_a_factory_receives_the_operator_it_will_invert(self, setup, rng):
+        """The case the other two do not cover: a preconditioner built from
+        *other* factors — here a surrogate prior — which cannot be derived
+        from the operator and so needs it in hand."""
+        problem, prior, observed, reference = setup
+        model = problem.model_space
+        coarse = GaussianMeasure(
+            model,
+            covariance=dense(
+                model, np.diag(np.diag(prior.covariance.matrix(form="galerkin")))
+            ),
+        )
+
+        seen = []
+
+        def precondition(normal):
+            seen.append(normal)
+            return CGSolver(rtol=1e-12).with_preconditioner(
+                WoodburyPreconditioner.from_normal(
+                    normal.surrogate(prior=coarse), solver=CholeskySolver()
+                )
+            )
+
+        estimator = LinearGaussianInversion(problem, prior, solver=precondition)
+        assert len(seen) == 1
+        assert seen[0] is estimator.normal_operator
+        solved = estimator(observed).expectation
+        assert model.norm(model.subtract(solved, reference)) == pytest.approx(
+            0.0, abs=1e-8 * model.norm(reference)
+        )
+
+    def test_a_factory_works_through_with_solver_too(self, setup):
+        problem, prior, observed, reference = setup
+        model = problem.model_space
+        solved = (
+            LinearGaussianInversion(problem, prior)
+            .with_solver(
+                lambda normal: CGSolver(rtol=1e-12).with_preconditioner(
+                    WoodburyPreconditioner.from_normal(normal, solver=CholeskySolver())
+                )
+            )(observed)
+            .expectation
+        )
+        assert model.norm(model.subtract(solved, reference)) == pytest.approx(
+            0.0, abs=1e-8 * model.norm(reference)
+        )
+
+    def test_the_point_estimators_take_a_factory_as_well(self, setup):
+        from pygeoinf2.inference import LeastSquares
+
+        problem, prior, observed, _ = setup
+        model = problem.model_space
+        expected = LeastSquares(problem, damping=1.0, solver=CholeskySolver())(observed)
+        solved = LeastSquares(
+            problem,
+            damping=1.0,
+            solver=lambda normal: CGSolver(rtol=1e-12).with_preconditioner(
+                NormalDiagonalPreconditioner()
+            ),
+        )(observed)
+        assert model.norm(model.subtract(solved, expected)) == pytest.approx(
+            0.0, abs=1e-8 * model.norm(expected)
+        )
+
+    def test_nonsense_is_refused_where_it_is_given(self, setup):
+        problem, prior, _, _ = setup
+        with pytest.raises(TypeError, match="must return a LinearSolver"):
+            LinearGaussianInversion(
+                problem, prior, solver=lambda normal: "not a solver"
+            )
+        with pytest.raises(TypeError, match="must be a LinearSolver"):
+            LinearGaussianInversion(problem, prior, solver="cholesky")

@@ -35,7 +35,7 @@ from typing import Any, Literal
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..numerics.root_find import DampedSolves
-from ..numerics.solvers import CGSolver, LinearSolver
+from ..numerics.solvers import LinearSolver, resolve_solver
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .normal import FactoredNormalOperator, Formalism, choose_formalism
@@ -327,13 +327,22 @@ class TikhonovFamily:
         """
         self._forward = forward
         self._error = error
-        self._solver = CGSolver() if solver is None else solver
         self._formalism = choose_formalism(
             forward.domain, forward.codomain, formalism=formalism
         )
         # Built once, at zero damping, to obtain the two fixed pieces.
         self._template = TikhonovNormalOperator(
             forward, 0.0, error=error, formalism=self._formalism
+        )
+        # A factory is resolved against a *representative* member. For a sweep
+        # a deferred preconditioner is usually better — DampedSolves rebuilds
+        # one as the damping moves, and a preconditioner fixed at one damping
+        # need not be any good at another.
+        self._solver = resolve_solver(
+            solver,
+            TikhonovNormalOperator(
+                forward, 1.0, error=error, formalism=self._formalism
+            ),
         )
         self._solves = DampedSolves(
             self._template.base,

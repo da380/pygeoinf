@@ -26,7 +26,7 @@ from ..algebra.operators import LinearOperator, Operator
 from ..geometry.subspaces import AffineSubspace
 from ..probability.gaussian import GaussianMeasure
 from ..numerics.root_find import Evaluation, RootResult, monotone_root
-from ..numerics.solvers import CGSolver, LinearSolver
+from ..numerics.solvers import LinearSolver, resolve_solver
 from .estimators import LinearPointEstimator
 from .normal import Formalism
 from .normal import choose_formalism as _choose
@@ -81,20 +81,25 @@ class LeastSquares(LinearPointEstimator):
             problem: the forward problem.
             damping: the Tikhonov parameter. Must be positive unless the
                 normal operator is invertible without it.
-            solver: how to invert the normal operator. A Cholesky factorisation
-                by default, since the operator is positive definite. To
-                precondition, pass an iterative solver carrying one; the
-                preconditioner is handed :attr:`normal_operator`, which still
-                knows its factors.
+            solver: how to invert the normal operator. Conjugate gradients by
+                default. To precondition, pass an iterative solver carrying
+                one; a preconditioner that is itself a ``LinearSolver`` is
+                handed :attr:`normal_operator`, which still knows its factors.
+                For one built from *other* factors, pass a callable taking the
+                normal operator and returning the solver — see
+                :func:`~pygeoinf2.numerics.solvers.resolve_solver`.
             formalism: which space to solve in; see :func:`choose_formalism`.
         """
-        solver = CGSolver() if solver is None else solver
+        # Built before the solver, because it never needed one: a solver only
+        # inverts it. So a caller may pass a factory and precondition with
+        # something derived from the operator about to be inverted.
         normal = TikhonovNormalOperator(
             problem.forward_operator,
             damping,
             error=_error_measure(problem),
             formalism=formalism,
         )
+        solver = resolve_solver(solver, normal)
         inverse = solver(normal)
 
         if normal.formalism == "model_space":
@@ -168,7 +173,7 @@ class LeastSquares(LinearPointEstimator):
     #                          The same, but                            #
     # ----------------------------------------------------------------- #
 
-    def with_solver(self, solver: LinearSolver, /) -> "LeastSquares":
+    def with_solver(self, solver: Any, /) -> "LeastSquares":
         """The same estimator, solved a different way."""
         return type(self)(
             self._problem,
@@ -446,7 +451,7 @@ class DiscrepancyPrinciple(Operator):
         super().__init__(problem.data_space, problem.model_space)
         self._problem = problem
         self._level = level
-        self._solver = CGSolver() if solver is None else solver
+        self._solver = solver
         self._formalism = formalism
         self._iterations = iterations
         self._rtol = rtol
@@ -669,7 +674,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         """Which space the reduced normal equations were assembled in."""
         return self._inner.formalism
 
-    def with_solver(self, solver: LinearSolver, /) -> "ConstrainedLeastSquares":
+    def with_solver(self, solver: Any, /) -> "ConstrainedLeastSquares":
         """The same estimator, solved a different way."""
         return type(self)(
             self._problem,

@@ -41,6 +41,8 @@ from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..traits import Traits, inverse_traits
 
 __all__ = [
+    "SolverLike",
+    "resolve_solver",
     "ConvergenceError",
     "SolveResult",
     "LinearSolver",
@@ -123,6 +125,63 @@ class LinearSolver(ABC):
     @abstractmethod
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         """Build the inverse, having passed validation."""
+
+
+SolverLike = "LinearSolver | Callable[[LinearOperator], LinearSolver]"
+"""A solver, or a function that builds one once the operator is known."""
+
+
+def resolve_solver(
+    solver: Any,
+    operator: LinearOperator,
+    /,
+    *,
+    default: LinearSolver | None = None,
+) -> LinearSolver:
+    """A solver, from a solver or from a function of what it will invert.
+
+    Preconditioning has a sequencing problem: the good preconditioners are
+    built *from* the operator being inverted, and the operator does not exist
+    until the problem is set up. Three things resolve it, and they suit
+    different cases.
+
+    * A preconditioner that is itself a :class:`LinearSolver` is already
+      deferred — :meth:`IterativeSolver.with_preconditioner` applies it to the
+      operator at solve time. That covers every generic preconditioner and the
+      structure-aware ones that read their factors off the operator they are
+      given, which is most of them, and it needs nothing from this function.
+    * A preconditioner built from *different* factors — a surrogate on a
+      coarser space — cannot be derived from the operator, so it needs the
+      operator in hand first. That is what passing a callable here is for: it
+      receives the assembled operator and returns the solver to use.
+    * Failing both, the operator can be built on its own and inspected, since
+      it never needed a solver in the first place.
+
+    Args:
+        solver: a :class:`LinearSolver`, a callable taking *operator* and
+            returning one, or None for *default*.
+        operator: what the solver will be asked to invert.
+        default: what None means. Conjugate gradients if not given.
+
+    Returns:
+        A :class:`LinearSolver`.
+    """
+    if solver is None:
+        return CGSolver() if default is None else default
+    if isinstance(solver, LinearSolver):
+        return solver
+    if callable(solver):
+        resolved = solver(operator)
+        if not isinstance(resolved, LinearSolver):
+            raise TypeError(
+                f"A solver factory must return a LinearSolver, but this one "
+                f"returned {type(resolved).__name__}."
+            )
+        return resolved
+    raise TypeError(
+        f"The solver must be a LinearSolver, or a callable taking the operator "
+        f"to be inverted and returning one. Got {type(solver).__name__}."
+    )
 
 
 class InverseOperator[X, Y](LinearOperator[Y, X]):
