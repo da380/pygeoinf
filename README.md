@@ -201,6 +201,23 @@ continuous integration runs:
 poetry install --with dev --all-extras
 ```
 
+## Version 2.0, in development
+
+A substantial refactor is underway in `pygeoinf2/`, developed alongside the released library rather than in place of it. Nothing in `pygeoinf/` has changed, and `import pygeoinf` continues to behave exactly as it did; the two packages can be imported side by side, which is how the new work is checked against the old.
+
+The design is recorded in [`pygeoinf2/DESIGN.md`](pygeoinf2/DESIGN.md), and [`pygeoinf2/V1_CATALOGUE.md`](pygeoinf2/V1_CATALOGUE.md) tracks every class and method of the current library against its 2.0 disposition — ported, subsumed, dropped with a reason, or still planned.
+
+What is different, in brief:
+
+* **No dual spaces.** Riesz identification is applied once and consistently, so operators carry an adjoint and nothing else. The distinction that replaces it is between a *derivative*, which is what an adjoint solve naturally produces, and a *gradient*, which is the derivative with the metric applied — a distinction the old interface left it to the caller to get right.
+* **Structural traits.** Self-adjointness, positive definiteness and the rest are claims attached to an operator and propagated through the algebra, so that a composition such as `A A*` is recognised as positive semidefinite without anyone saying so. Claims are verified numerically by `testing.check_traits`, never assumed.
+* **Matrix-free by default.** Solvers are iterative unless a direct one is asked for, and the calculations that used to require assembling a matrix — log-determinants, evidence, KL divergence — have stochastic Lanczos routes that form nothing. Where a stochastic estimate is returned, its standard error comes with it.
+* **Preconditioning that keeps the structure.** A normal operator remembers the factors it was assembled from, so a preconditioner can exploit the fact that it is `A Q A* + R` rather than merely some positive definite operator. Surrogates may live on a coarser space entirely.
+* **Gaussian mixtures**, for prior knowledge that is genuinely multimodal, with an exact posterior under a linear Gaussian likelihood.
+* **[Twenty-six worked examples](pygeoinf2/examples/), each introducing one idea**, in reading order and runnable as scripts.
+
+This is a development tree: interfaces are still moving, and it is not published to PyPI. Use `pygeoinf` for anything real.
+
 ## Documentation
 
 The full documentation for the library, including the API reference and tutorials, is available at **[pygeoinf.readthedocs.io](https://pygeoinf.readthedocs.io)**.
