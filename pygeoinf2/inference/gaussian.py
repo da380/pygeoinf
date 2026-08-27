@@ -29,7 +29,7 @@ mapping is a pair and only the mean moves. See DESIGN.md sections 18.7 and 23.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -39,9 +39,13 @@ from ..algebra.operators import AffineOperator, LinearOperator
 from ..numerics.randomised import random_svd
 from ..numerics.solvers import CholeskySolver, LinearSolver
 from ..probability.gaussian import GaussianMeasure
+from ..traits import Traits
 from .estimators import GaussianEstimator
 from .normal import Formalism, NormalOperator
 from .problem import LinearForwardProblem
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..numerics.randomised import Estimate
 
 __all__ = ["LinearGaussianInversion"]
 
@@ -278,7 +282,104 @@ class LinearGaussianInversion(GaussianEstimator):
             reduced, self._prior, solver=self._solver, formalism=self._formalism
         )
 
-    def evidence_terms(self, data: Any, /) -> tuple[float, float]:
+    def mahalanobis(self, data: Any, /) -> float:
+        """``<v, N_d^-1 v>``, the misfit half of the evidence.
+
+        The optimal, penalty-balanced data misfit: the unnormalised log
+        posterior at the posterior mean. Computed **matrix-free**, through the
+        solver and preconditioner this estimator was given, so it costs one
+        solve of the normal equations and never assembles anything.
+
+        In the model-space formalism the data-space inverse is avoided
+        entirely, by Woodbury:
+
+        .. code-block:: text
+
+            <v, N_d^-1 v> == <v, R^-1 v> - <A* R^-1 v, N_m^-1 A* R^-1 v>
+
+        which is the whole point of that formalism — the data space is the
+        large one there, and it is never inverted.
+        """
+        if not self._problem.has_error:
+            raise ValueError(
+                "The evidence needs a data error measure: without one the "
+                "data-space covariance A Q A* is singular and p(d) is not a "
+                "density."
+            )
+        space = self.data_space
+        residual = space.subtract(data, self._data_shift(self._problem, self._prior))
+        right_hand_side = self._normal.right_hand_side(residual)
+        solved = self._inverse(right_hand_side)
+        if self._formalism == "data_space":
+            return float(space.inner_product(residual, solved))
+        precision = self._problem.error_measure.precision
+        if precision is None:
+            raise ValueError(
+                "The model-space formalism needs the error precision R^-1 to "
+                "reduce the misfit through Woodbury."
+            )
+        base = space.inner_product(residual, precision(residual))
+        reduction = self._problem.model_space.inner_product(right_hand_side, solved)
+        return float(base - reduction)
+
+    def normal_log_determinant(
+        self,
+        /,
+        *,
+        method: str = "auto",
+        samples: int = 100,
+        rng: Generator | None = None,
+        **kwargs: Any,
+    ) -> "Estimate":
+        """``log |A Q A* + R|``, the volume half of the evidence.
+
+        Densely when the space is small enough to afford it, and by stochastic
+        Lanczos quadrature otherwise — see
+        :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`. A
+        log-determinant is the one part of an evidence calculation that looks
+        like it needs the matrix, and it does not; without this the whole
+        calculation is confined to problems small enough to assemble, which is
+        not where model comparison is interesting.
+
+        In the model-space formalism it is reached by Sylvester's identity,
+
+        .. code-block:: text
+
+            |A Q A* + R| == |Q| |R| |Q^-1 + A* R^-1 A|
+
+        so the data-space operator is never formed even to take its
+        determinant. That costs two further log-determinants, of ``Q`` and
+        ``R``, which are usually the cheap ones: a prior with a known spectrum
+        and a diagonal noise covariance.
+        """
+        from ..numerics.functional_calculus import log_determinant
+
+        if not self._problem.has_error:
+            raise ValueError("The evidence needs a data error measure.")
+        settings = dict(method=method, samples=samples, rng=rng, **kwargs)
+        if self._formalism == "data_space":
+            return log_determinant(self._normal, **settings)
+
+        from ..numerics.randomised import Estimate
+
+        # Positive definiteness is claimed here rather than deduced: in this
+        # formalism Q and R are inverted anyway, so a caller who has got this
+        # far has already asserted it.
+        definite = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        parts = [
+            log_determinant(self._normal, **settings),
+            log_determinant(self._prior.covariance.with_traits(definite), **settings),
+            log_determinant(
+                self._problem.error_measure.covariance.with_traits(definite),
+                **settings,
+            ),
+        ]
+        total = sum(part.value for part in parts)
+        # Independent estimates, so the errors add in quadrature.
+        error = float(np.sqrt(sum(part.standard_error**2 for part in parts)))
+        return Estimate(float(total), error, min(part.samples for part in parts))
+
+    def evidence_terms(self, data: Any, /, **kwargs: Any) -> tuple[float, float]:
         """The two halves of the log evidence: misfit and volume.
 
         ``log p(d) == -(mahalanobis + log det N + dim log 2pi) / 2`` with ``N``
@@ -286,47 +387,19 @@ class LinearGaussianInversion(GaussianEstimator):
         they answer different questions: the first says whether the data are
         surprising under this model, the second penalises a model flexible
         enough that they would not have been.
+
+        Keyword arguments go to :meth:`normal_log_determinant`; pass
+        ``method="stochastic"`` to keep the calculation matrix-free.
         """
-        prior_data = self._problem.data_measure_from_model_measure(self._prior)
-        residual = self.data_space.subtract(data, prior_data.expectation)
+        return self.mahalanobis(data), self.normal_log_determinant(**kwargs).value
 
-        # One assembly serves both terms. The volume term needs the Galerkin
-        # matrix's determinant, so the matrix exists either way; taking the
-        # misfit from the same factorisation is why this does not ask the
-        # measure for a Mahalanobis distance it has no precision to supply.
-        matrix = prior_data.covariance.matrix(form="galerkin")
-        symmetric = 0.5 * (matrix + matrix.T)
-        sign, logarithm = np.linalg.slogdet(symmetric)
-        if sign <= 0:
-            raise ValueError(
-                "The data prior covariance is singular, so the evidence is "
-                "not defined. Regularise it first."
-            )
-
-        if prior_data.precision is not None:
-            mahalanobis = self.data_space.inner_product(
-                prior_data.precision(residual), residual
-            )
-        else:
-            # In Galerkin form the quadratic is g^T M^-1 g with g == G c: the
-            # metric appears on both sides because the operator being inverted
-            # is G C_c, not C_c.
-            weighted = self.data_space.apply_gram(
-                self.data_space.to_components(residual)
-            )
-            mahalanobis = float(weighted @ np.linalg.solve(symmetric, weighted))
-
-        gram = self.data_space.gram_matrix()
-        _, gram_logarithm = np.linalg.slogdet(gram)
-        return float(mahalanobis), float(logarithm - gram_logarithm)
-
-    def log_evidence(self, data: Any, /) -> float:
+    def log_evidence(self, data: Any, /, **kwargs: Any) -> float:
         """``log p(d)``: how well this model explains the data at all.
 
         The quantity model comparison needs, and the one a posterior cannot
         supply — a posterior is conditional on the model being right.
         """
-        mahalanobis, volume = self.evidence_terms(data)
+        mahalanobis, volume = self.evidence_terms(data, **kwargs)
         dimension = self.data_space.dim
         return -0.5 * (mahalanobis + volume + dimension * np.log(2.0 * np.pi))
 

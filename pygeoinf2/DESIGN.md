@@ -4309,3 +4309,83 @@ Left as it is, and worth a decision rather than a drift: the top-level
 `pygeoinf2/__init__` exports algebra, geometry, symmetric spaces, probability
 and traits, but not `inference` or `numerics`, so an inversion is reached as
 `from pygeoinf2.inference import ...`. v1 exported everything flat.
+
+## 26. Evidence without assembling anything
+
+The evidence calculation was dense throughout: `evidence_terms` formed the
+Galerkin matrix of `A Q A* + R`, took its `slogdet`, and solved against it with
+`np.linalg.solve`. That confines model comparison to problems small enough to
+assemble, which is not where model comparison is interesting. v1 was
+matrix-free on both halves and v2 had lost it.
+
+### 26.1 The two halves come apart differently
+
+**The misfit** needs no new machinery, only the solver the estimator already
+has. `<v, N_d^-1 v>` is one solve of the normal equations, read off as an inner
+product — so it inherits whatever preconditioner was supplied, for free. In the
+model-space formalism the data-space inverse is avoided outright by Woodbury:
+
+```
+<v, N_d^-1 v> == <v, R^-1 v> - <A* R^-1 v, N_m^-1 A* R^-1 v>
+```
+
+which is the point of that formalism, since the data space is the large one
+there.
+
+**The log-determinant** is the part that looks as though it needs the matrix.
+It does not: `log det A == tr(log A)`, `log(A) z` is a Lanczos iteration on the
+Krylov space of `z`, and Hutchinson's estimator turns a handful of those into
+the trace. `numerics.functional_calculus.log_determinant` does both routes
+behind one signature and returns an `Estimate`, so the dense route reports a
+standard error of zero and a caller can treat them uniformly while still seeing
+which it got.
+
+**Which determinant** is the usual question in this library, and has the usual
+answer: the *component* matrix's, since `det(G A_c) == det G det A_c` and only
+the first factor out is a property of the operator. The dense route subtracts
+the metric's own determinant; the stochastic route needs no correction at all,
+because `random_trace` probes with white noise *on the space* and so estimates
+`tr A_c` already. The two agreeing on a weighted and a dense-metric space is
+what pins that, and neither route can be adjusted to match the other.
+
+### 26.2 Sylvester, so the model space stays in the model space
+
+Estimating `log|N_d|` by Lanczos still applies `N_d`, which in the model-space
+formalism is the operator that formalism exists to avoid. Sylvester's identity
+removes it:
+
+```
+|A Q A* + R| == |Q| |R| |Q^-1 + A* R^-1 A|
+```
+
+taking `X == R^-1 A` and `Y == Q A*` in `det(I + XY) == det(I + YX)`. So the
+data-space operator is never formed even to take its determinant. The cost is
+two further log-determinants, of `Q` and `R`, which are usually the cheap ones:
+a prior with a known spectrum, a diagonal noise covariance. Their errors add in
+quadrature, which the returned `Estimate` reports.
+
+### 26.3 What was checked
+
+Four routes to one number — two formalisms times two determinant routes —
+against a dense `scipy.stats.multivariate_normal` reference built
+independently, with the `sqrt(det G)` that turns a density in components into a
+density on the space:
+
+```
+                     dense reference  -18.538149
+  data_space   dense  -18.538149      stochastic  -18.416331   (logdet +/- 0.163)
+  model_space  dense  -18.538149      stochastic  -18.510830   (logdet +/- 0.113)
+```
+
+The dense routes agree with the reference and with each other to every digit
+printed, which is Sylvester's identity and the metric handling together. The
+stochastic routes agree within a standard error.
+
+The stochastic tests are written in units of the estimator's own standard
+error — four of them — rather than in a fixed tolerance. A Hutchinson estimate
+converges as `1/sqrt(n)`, so `4 sigma` is a statement about the estimator and
+`1e-6` would be a statement about the seed.
+
+And the misfit through a preconditioned conjugate-gradient solve equals the
+misfit through a Cholesky factorisation to eight figures, which is the whole of
+the matrix-free claim on that half.

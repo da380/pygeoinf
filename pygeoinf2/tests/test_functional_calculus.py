@@ -331,3 +331,91 @@ class TestCoordinateFreedom:
         A = DiagonalLinearOperator(strict, np.array([1.0, 2.0, 3.0, 4.0]))
         with pytest.raises(NoCoordinatesError):
             A(strict.random(rng=rng))
+
+
+class TestLogDeterminant:
+    """``log det A == tr(log A)``, densely and by stochastic Lanczos.
+
+    The two routes share no code: one forms the matrix and factorises it, the
+    other never forms anything and reaches the answer through a Krylov
+    iteration and Hutchinson's estimator. They must agree, and on a space whose
+    metric is not the identity they must agree about *which* determinant — the
+    component matrix's, since ``det(G A_c)`` is a property of the metric as
+    much as of the operator.
+    """
+
+    @pytest.fixture(params=["euclidean", "weighted", "dense-metric"])
+    def operator(self, request, rng):
+        from .conftest import make_dense_metric_space, make_weighted_space
+
+        space = {
+            "euclidean": lambda: EuclideanSpace(24),
+            "weighted": make_weighted_space,
+            "dense-metric": make_dense_metric_space,
+        }[request.param]()
+        root = rng.normal(size=(space.dim, space.dim))
+        return LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            root @ root.T + space.dim * np.identity(space.dim),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    def test_the_dense_route_is_the_operators_own_determinant(self, operator):
+        from pygeoinf2.numerics.functional_calculus import log_determinant
+
+        expected = float(np.linalg.slogdet(operator.matrix(form="components"))[1])
+        estimate = log_determinant(operator, method="dense")
+        assert estimate.value == pytest.approx(expected, abs=1e-9)
+        assert estimate.standard_error == 0.0
+
+    def test_the_stochastic_route_agrees_within_its_error(self, operator):
+        """A stochastic estimate without its error is uninterpretable, so the
+        test is written in units of that error rather than in a fixed
+        tolerance: four standard errors is a real statement about a Hutchinson
+        estimator, and 1e-6 would not be."""
+        from pygeoinf2.numerics.functional_calculus import log_determinant
+
+        exact = log_determinant(operator, method="dense").value
+        estimate = log_determinant(
+            operator,
+            method="stochastic",
+            samples=4000,
+            rng=np.random.default_rng(1),
+            max_iterations=60,
+            rtol=1e-10,
+        )
+        assert estimate.standard_error > 0.0
+        assert abs(estimate.value - exact) < 4.0 * estimate.standard_error
+
+    def test_auto_goes_dense_only_when_it_can_afford_to(self, operator):
+        from pygeoinf2.numerics.functional_calculus import log_determinant
+
+        exact = log_determinant(operator, method="dense")
+        assert log_determinant(operator, method="auto").standard_error == 0.0
+        stochastic = log_determinant(
+            operator,
+            method="auto",
+            dense_limit=1,
+            samples=2000,
+            rng=np.random.default_rng(2),
+            max_iterations=60,
+            rtol=1e-10,
+        )
+        assert stochastic.standard_error > 0.0
+        assert abs(stochastic.value - exact.value) < 4.0 * stochastic.standard_error
+
+    def test_it_refuses_what_it_cannot_do(self, operator, rng):
+        from pygeoinf2.numerics.functional_calculus import log_determinant
+
+        with pytest.raises(ValueError, match="'auto', 'dense' or 'stochastic'"):
+            log_determinant(operator, method="lanczos")
+        space = operator.domain
+        indefinite = LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            -np.identity(space.dim),
+            traits=Traits.SELF_ADJOINT,
+        )
+        with pytest.raises(ValueError, match="POSITIVE_DEFINITE"):
+            log_determinant(indefinite, method="dense")

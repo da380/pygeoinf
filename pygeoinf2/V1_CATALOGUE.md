@@ -529,8 +529,8 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `model_posterior_measure` | Ported | M5 stage 5.4, but as `Bayesian(problem, prior, solver)(data)` — a mapping, not a method taking both data and configuration (§18.7) | |
 | `posterior_expectation_operator` | Subsumed | `GaussianEstimator.mean_map` | |
 | `with_formalism` | Ported | A constructor argument defaulting to whichever space is smaller, *and* a `with_formalism` method on every estimator | |
-| `log_evidence`, `mahalanobis_evidence_term` | Ported | M5, as a functional on the data | |
-| `estimate_log_determinant` | Ported | `numerics.functional_calculus` | |
+| `log_evidence`, `mahalanobis_evidence_term` | Ported | `LinearGaussianInversion.log_evidence` / `.mahalanobis`, both matrix-free: the misfit through whatever solver and preconditioner the estimator holds, the volume through SLQ, with Sylvester's identity in the model-space formalism (DESIGN §26) | |
+| `estimate_log_determinant`, `_trace_log_slq` | Ported | `numerics.functional_calculus.log_determinant`, dense or stochastic Lanczos behind one signature, returning an `Estimate` so the error is never dropped | |
 | `low_rank_surrogate` | Ported | `LinearGaussianInversion.low_rank_surrogate`, on top of the new `GaussianMeasure.low_rank_approximation` (DESIGN §23.7) | |
 | `woodbury_data_preconditioner`, `woodbury_model_preconditioner` | Ported | `WoodburyPreconditioner.data_form` / `.model_form`, one class that picks the identity from the space it is asked to invert (DESIGN §22.12) | |
 | `diagonal_normal_preconditioner` | Ported | `inference.NormalDiagonalPreconditioner`, a free-standing LinearSolver taking a `NormalOperator` rather than a method on the inversion (DESIGN §23.4) | |

@@ -28,6 +28,7 @@ from pygeoinf2.inference import (
     choose_formalism,
 )
 from pygeoinf2.probability.gaussian import GaussianMeasure
+from pygeoinf2.traits import Traits
 
 from .conftest import make_weighted_space
 
@@ -446,3 +447,112 @@ class TestConstrainedLeastSquares:
         )
         with pytest.raises(ValueError, match="model space"):
             ConstrainedLeastSquares(problem, subspace)
+
+
+class TestEvidenceWithoutAssembling:
+    """The evidence for a problem too large to form a matrix for.
+
+    A log-determinant is the one part of the calculation that looks as though
+    it needs the matrix, and the reason a dense-only evidence is confined to
+    problems where model comparison is not the interesting question. Both
+    halves are matrix-free here, and both are checked against the dense route
+    they must reproduce.
+    """
+
+    @pytest.fixture
+    def gaussian(self, rng):
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        model, data = make_weighted_space(), EuclideanSpace(9)
+        forward = LinearOperator.from_derivative_matrix(
+            model, data, rng.normal(size=(data.dim, model.dim))
+        )
+
+        def positive(space, scale=1.0):
+            root = rng.normal(size=(space.dim, space.dim))
+            return LinearOperator.from_derivative_matrix(
+                space,
+                space,
+                scale * (root @ root.T + space.dim * np.identity(space.dim)),
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            )
+
+        chol = CholeskySolver()
+        prior_covariance = positive(model)
+        error_covariance = positive(data, 0.2)
+        prior = GaussianMeasure(
+            model, covariance=prior_covariance, precision=chol(prior_covariance)
+        )
+        error = GaussianMeasure(
+            data, covariance=error_covariance, precision=chol(error_covariance)
+        )
+        return LinearForwardProblem(forward, error=error), prior
+
+    def test_sylvesters_identity_gives_the_same_evidence(self, gaussian, rng):
+        """The model-space formalism never forms ``A Q A* + R``, even to take
+        its determinant: ``|A Q A* + R| == |Q| |R| |Q^-1 + A* R^-1 A|``. Two
+        different operators on two different spaces, and one answer."""
+        problem, prior = gaussian
+        data = problem.data_space.random(rng=rng)
+        values = {
+            name: LinearGaussianInversion(problem, prior, formalism=name).log_evidence(
+                data, method="dense"
+            )
+            for name in ("data_space", "model_space")
+        }
+        assert values["model_space"] == pytest.approx(values["data_space"], rel=1e-9)
+
+    @pytest.mark.parametrize("formalism", ["data_space", "model_space"])
+    def test_the_stochastic_route_agrees_with_the_dense_one(self, gaussian, formalism):
+        problem, prior = gaussian
+        estimator = LinearGaussianInversion(problem, prior, formalism=formalism)
+        exact = estimator.normal_log_determinant(method="dense")
+        estimate = estimator.normal_log_determinant(
+            method="stochastic",
+            samples=4000,
+            rng=np.random.default_rng(3),
+            max_iterations=60,
+            rtol=1e-10,
+        )
+        assert estimate.standard_error > 0.0
+        assert abs(estimate.value - exact.value) < 4.0 * estimate.standard_error
+
+    def test_the_misfit_is_matrix_free(self, gaussian, rng):
+        """It goes through whatever solver the estimator was given, so an
+        iterative preconditioned solve must land in the same place as a
+        factorisation — that is the whole claim."""
+        from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
+        from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
+
+        problem, prior = gaussian
+        data = problem.data_space.random(rng=rng)
+        direct = LinearGaussianInversion(
+            problem, prior, formalism="data_space", solver=CholeskySolver()
+        ).mahalanobis(data)
+        iterative = LinearGaussianInversion(
+            problem,
+            prior,
+            formalism="data_space",
+            solver=CGSolver(rtol=1e-12).with_preconditioner(JacobiPreconditioner()),
+        ).mahalanobis(data)
+        assert iterative == pytest.approx(direct, rel=1e-8)
+
+    def test_the_two_formalisms_agree_on_the_misfit(self, gaussian, rng):
+        """The model-space route reaches it by Woodbury, avoiding the
+        data-space inverse entirely."""
+        problem, prior = gaussian
+        data = problem.data_space.random(rng=rng)
+        values = [
+            LinearGaussianInversion(problem, prior, formalism=name).mahalanobis(data)
+            for name in ("data_space", "model_space")
+        ]
+        assert values[0] == pytest.approx(values[1], rel=1e-8)
+
+    def test_evidence_needs_a_data_error_measure(self, gaussian, rng):
+        problem, prior = gaussian
+        without = LinearForwardProblem(problem.forward_operator)
+        estimator = LinearGaussianInversion(without, prior, formalism="model_space")
+        with pytest.raises(ValueError, match="data error measure"):
+            estimator.mahalanobis(problem.data_space.random(rng=rng))
+        with pytest.raises(ValueError, match="data error measure"):
+            estimator.normal_log_determinant()

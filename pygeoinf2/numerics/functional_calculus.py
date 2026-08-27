@@ -25,17 +25,22 @@ and the general entry point takes the caller's word.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, Sequence
 
 import numpy as np
+from numpy.random import Generator
 from scipy.linalg import eigh_tridiagonal
 
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .randomised import Estimate
 from ..traits import Traits, close
 
 __all__ = [
+    "log_determinant",
     "lanczos_tridiagonalise",
     "iter_lanczos_tridiagonalise",
     "apply_operator_function",
@@ -396,3 +401,82 @@ def _require(operator: LinearOperator, needed: Traits, what: str) -> None:
         raise ValueError(
             f"{what} requires {needed!s}; this operator claims " f"{operator.traits!s}."
         )
+
+
+def log_determinant(
+    operator: LinearOperator,
+    /,
+    *,
+    method: Literal["auto", "dense", "stochastic"] = "auto",
+    samples: int = 100,
+    rng: Generator | None = None,
+    dense_limit: int = 512,
+    max_iterations: int = 40,
+    rtol: float = 1e-3,
+) -> "Estimate":
+    """``log det A``, densely or by stochastic Lanczos quadrature.
+
+    The identity is ``log det A == tr(log A)``, and the second form needs
+    neither the matrix nor its eigenvalues: ``log(A) z`` comes from a Lanczos
+    iteration on the Krylov space of ``z``, and Hutchinson's estimator turns
+    a handful of those into the trace. Both cost only applications of ``A``,
+    which is what makes an evidence calculation possible at all on a data space
+    too large to assemble — the case a log-determinant otherwise rules out.
+
+    **Which determinant.** The *component* matrix's, not the Galerkin matrix's:
+    ``det(G A_c) == det G det A_c``, so only the first is a property of the
+    operator rather than of the metric. The dense route subtracts the metric's
+    own determinant to get there; the stochastic route needs no correction,
+    because ``random_trace`` probes with white noise on the space and so
+    estimates ``tr A_c`` already. That the two agree is the parity test.
+
+    Args:
+        operator: a positive definite self-adjoint operator.
+        method: ``"dense"`` forms the matrix; ``"stochastic"`` never does;
+            ``"auto"`` takes the dense route when the space is small enough to
+            afford it and has a component map, and the stochastic one
+            otherwise.
+        samples: Hutchinson probes, for the stochastic route.
+        rng: the generator for those probes.
+        dense_limit: the dimension above which ``"auto"`` goes stochastic.
+        max_iterations, rtol: the Lanczos budget for each ``log(A) z``.
+
+    Returns:
+        An :class:`~pygeoinf2.numerics.randomised.Estimate`. The dense route
+        reports a standard error of zero, so a caller can treat the two
+        uniformly and still see which it got.
+    """
+    from .randomised import Estimate, random_trace
+
+    _require(operator, Traits.POSITIVE_DEFINITE, "A log determinant")
+    if not operator.is_endomorphism:
+        raise ValueError("A determinant needs an operator from a space to itself.")
+
+    space = operator.domain
+    if method not in ("auto", "dense", "stochastic"):
+        raise ValueError(
+            f"The method is 'auto', 'dense' or 'stochastic', got {method!r}."
+        )
+    if method == "auto":
+        from ..algebra.spaces import CoordinateSpace
+
+        affordable = isinstance(space, CoordinateSpace) and space.dim <= dense_limit
+        method = "dense" if affordable else "stochastic"
+
+    if method == "dense":
+        matrix = operator.matrix(form="galerkin")
+        sign, logarithm = np.linalg.slogdet(0.5 * (matrix + matrix.T))
+        if sign <= 0:
+            raise ValueError(
+                "The operator's matrix is singular or indefinite, so it has no "
+                "log determinant. It was claimed POSITIVE_DEFINITE; verify that "
+                "with testing.check_traits()."
+            )
+        _, metric = np.linalg.slogdet(space.gram_matrix())
+        return Estimate(float(logarithm - metric), 0.0, 0)
+
+    return random_trace(
+        operator_log(operator, max_iterations=max_iterations, rtol=rtol),
+        samples=samples,
+        rng=rng,
+    )
