@@ -4960,15 +4960,18 @@ is the source, a function on the same space as the solution.
 
 Three things it exercises that example 16 did not.
 
-**The forward operator is a PDE solve**, `sensors @ inverse_of_the_stiffness`,
-and is never assembled. Applying it solves the PDE; applying its adjoint solves
-it again, and the adjoint is derived rather than written down.
+**MFEM solves the PDE.** The forward operator is `sensors @ pde_solve`, and the
+solve is MFEM's own conjugate gradients on MFEM's own assembled system. This
+library never sees a matrix: `solver_from_bilinear_form` wraps the solve as a
+`LinearOperator`, which then composes and has an adjoint like anything else.
+Assembly, preconditioning and the solve stay on MFEM's side; the inverse
+problem is what this side supplies. See §33.4.
 
 **Each sensor is a linear form**, so its natural output is a derivative and the
-mass solve that turns one into a function stays inside the operator. The rows
-of the observation operator are load vectors, handed to
-`from_derivative_matrix` — which is §5.6 in the setting where it is most often
-got wrong.
+mass solve that turns one into a function stays inside the operator.
+`operator_from_linear_forms` stacks the load vectors into an observation
+operator through `from_derivative_matrix` — which is §5.6 in the setting where
+it is most often got wrong.
 
 **The prior is a differential operator.** With `S` the operator of
 `a(u,v) = uv + l^2 grad u . grad v`, the covariance is `sigma^2 S^-1`: smoothing,
@@ -5004,3 +5007,53 @@ therefore certain do not exist, so the discretisation is acting as a prior
 nobody wrote down. The first draft of the text claimed all three agreed; the
 numbers did not, and the honest reading is the better lesson — this whole
 arrangement exists to make an implicit prior visible, and here it is visible.
+
+### 33.4 Wrapping MFEM's solve instead of doing our own
+
+The first version of §33.2 used `operator_from_bilinear_form` and then this
+library's own conjugate gradients. That works, and it is the wrong division of
+labour: `operator_from_bilinear_form` calls `.toarray()`, so a real finite
+element problem is densified before anything else happens, and MFEM's solvers
+and preconditioners — which are the reason to use MFEM — go unused.
+
+`solver_from_bilinear_form` inverts that. MFEM's solver solves MFEM's system,
+and what comes back is a `LinearOperator`. Nothing else changes: it composes,
+it has an adjoint, and it lives in the right metric. `operator_from_linear_forms`
+does the same for observations, which were already load vectors and only needed
+a home in the backend rather than in the example. Sparsity now survives
+`restrict` and `operator_from_bilinear_form` as well.
+
+The example gives identical answers and runs in **3.4 seconds instead of 14.9**.
+
+**The metric is the whole content of the wrapper.** The operator of a form has
+Galerkin matrix `K`, so its component matrix is `M^-1 K` and the inverse's is
+`K^-1 M`. Applying the wrapped solve therefore means: components, multiply by
+the mass matrix to get a *load vector*, solve, read components back. The mass
+multiply is what turns a function into the right-hand side of a weak form.
+Omitting it gives an answer that is smooth, plausible and wrong by a mass
+matrix, which is §5.6 in its most convincing disguise.
+
+### 33.5 Three ways MFEM segfaults, and what to do about them
+
+None of these raise. They terminate the interpreter with no traceback, which
+makes them worth writing down.
+
+**`FormSystemMatrix` takes ownership of the form's matrix.** It is MFEM's own
+way to impose essential conditions, and after calling it, reading `SpMat()`
+from the same form is a use-after-free. The first version of the wrapper used
+it and the crash looked like a bug in the solve. It is not used at all now: the
+space's *free block* already is the constrained system, so nothing is
+eliminated and no object the caller passed in is modified. A test asserts the
+form is unchanged.
+
+**An unfinalised matrix has no CSR arrays.** Before `Finalize` an MFEM sparse
+matrix is held as linked lists, so `GetIArray` and friends return pointers into
+nothing. `_to_scipy` now checks `Finalized()` and raises a sentence instead.
+This one cost the most time, because the failing script was mine rather than
+the library's and the crash pointed at the wrong place.
+
+**A solver does not own its preconditioner.** `SetPreconditioner` stores a raw
+pointer, so a smoother built inline is collected as soon as the constructing
+function returns and the next solve reads freed memory. The default solver
+keeps explicit references to its matrix and smoother, and the docstring for
+`make_solver` warns any caller supplying their own.

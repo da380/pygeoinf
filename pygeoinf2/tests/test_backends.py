@@ -25,6 +25,8 @@ mfem = pytest.importorskip("mfem.ser")
 
 from pygeoinf2.backends.mfem import (  # noqa: E402
     essential_dofs_of,
+    operator_from_linear_forms,
+    solver_from_bilinear_form,
     MfemSpace,
     _to_scipy,
     functional_from_linear_form,
@@ -268,3 +270,131 @@ class TestEssentialBoundaryConditions:
             MfemSpace(elements, essential_dofs=range(elements.GetTrueVSize()))
         with pytest.raises(ValueError, match="out of range"):
             essential_dofs_of(elements, attributes=[99])
+
+
+class TestSolvingWithMfem:
+    """The PDE solve left to MFEM and wrapped as one of our operators.
+
+    The division of labour: MFEM assembles, preconditions and solves; this
+    library says what the result *is* — an operator in the right metric, with
+    an adjoint, that composes. So the tests are that it really is the inverse,
+    that it really is in the metric, and that MFEM's objects come back
+    unharmed.
+    """
+
+    @pytest.fixture
+    def constrained(self):
+        elements = square()
+        space = MfemSpace(elements, essential_dofs=essential_dofs_of(elements))
+        form = mfem.BilinearForm(elements)
+        form.AddDomainIntegrator(mfem.DiffusionIntegrator())
+        form.Assemble()
+        form.Finalize()
+        return elements, space, form
+
+    def test_it_inverts_the_operator_the_form_defines(self, constrained, rng):
+        _, space, form = constrained
+        operator = operator_from_bilinear_form(
+            space, form, traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        inverse = solver_from_bilinear_form(space, form, rtol=1e-12)
+        for _ in range(4):
+            vector = space.random(rng=rng)
+            recovered = inverse(operator(vector))
+            assert space.norm(space.subtract(recovered, vector)) == pytest.approx(
+                0.0, abs=1e-8 * space.norm(vector)
+            )
+
+    def test_it_agrees_with_solving_the_same_operator_here(self, constrained, rng):
+        """Two solvers, two libraries, one operator. Neither can be adjusted to
+        match the other, so agreement is evidence that the metric bookkeeping —
+        the mass multiply turning a function into a load vector — is right."""
+        _, space, form = constrained
+        operator = operator_from_bilinear_form(
+            space, form, traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        theirs = solver_from_bilinear_form(space, form, rtol=1e-12)
+        ours = CGSolver(rtol=1e-12)(operator)
+        for _ in range(4):
+            vector = space.random(rng=rng)
+            expected = ours(vector)
+            assert space.norm(
+                space.subtract(theirs(vector), expected)
+            ) == pytest.approx(0.0, abs=1e-8 * space.norm(expected))
+
+    def test_it_is_an_operator_like_any_other(self, constrained, rng):
+        _, space, form = constrained
+        inverse = solver_from_bilinear_form(space, form, rtol=1e-12)
+        check_operator(inverse, rng=rng)
+        check_traits(inverse, rng=rng)
+
+    def test_the_form_it_was_given_is_left_alone(self, constrained):
+        """MFEM's own ``FormSystemMatrix`` takes ownership of the form's
+        matrix, so reading it afterwards is a use-after-free — a segfault, not
+        an exception. This route does not use it, and the test says so."""
+        _, space, form = constrained
+        before = _to_scipy(form.SpMat()).toarray().copy()
+        solver_from_bilinear_form(space, form, rtol=1e-12)
+        assert np.allclose(_to_scipy(form.SpMat()).toarray(), before)
+
+    def test_an_unfinalised_form_is_refused_rather_than_crashing(self):
+        """Before ``Finalize`` there are no CSR arrays to read, and reading
+        them anyway segfaults with no traceback."""
+        elements = square()
+        space = MfemSpace(elements)
+        form = mfem.BilinearForm(elements)
+        form.AddDomainIntegrator(mfem.MassIntegrator())
+        form.Assemble()
+        assert not form.SpMat().Finalized()
+        with pytest.raises(ValueError, match="not been finalised"):
+            operator_from_bilinear_form(space, form)
+
+    def test_a_solve_that_does_not_converge_is_reported(self, constrained, rng):
+        """An unconverged solve inside an operator is an operator that is
+        quietly not the one it claims to be."""
+        _, space, form = constrained
+        inverse = solver_from_bilinear_form(space, form, rtol=1e-16, max_iterations=1)
+        with pytest.raises(RuntimeError, match="did not converge"):
+            inverse(space.random(rng=rng))
+
+
+class TestObservationOperators:
+    """Linear forms stacked into an observation operator."""
+
+    def test_the_rows_are_the_functionals_they_came_from(self, rng):
+        elements = square()
+        space = MfemSpace(elements, essential_dofs=essential_dofs_of(elements))
+        forms = []
+        for value in (1.0, 2.5):
+            form = mfem.LinearForm(elements)
+            form.AddDomainIntegrator(
+                mfem.DomainLFIntegrator(mfem.ConstantCoefficient(value))
+            )
+            form.Assemble()
+            forms.append(form)
+
+        operator = operator_from_linear_forms(space, forms)
+        assert operator.codomain.dim == 2
+        vector = space.random(rng=rng)
+        observed = operator.codomain.to_components(operator(vector))
+        for index, form in enumerate(forms):
+            functional = functional_from_linear_form(space, form)
+            assert observed[index] == pytest.approx(functional(vector))
+
+    def test_its_adjoint_carries_the_metric(self, rng):
+        """The whole reason the rows are derivative components. An adjoint that
+        forgot the mass solve would still be a linear map, still have the right
+        shape, and be wrong."""
+        elements = square()
+        space = MfemSpace(elements, essential_dofs=essential_dofs_of(elements))
+        form = mfem.LinearForm(elements)
+        form.AddDomainIntegrator(mfem.DomainLFIntegrator(mfem.ConstantCoefficient(1.0)))
+        form.Assemble()
+        operator = operator_from_linear_forms(space, [form])
+        check_operator(operator, rng=rng)
+
+    def test_nonsense_is_refused(self):
+        elements = square()
+        space = MfemSpace(elements)
+        with pytest.raises(ValueError, match="At least one"):
+            operator_from_linear_forms(space, [])

@@ -40,7 +40,7 @@ import scipy.sparse.linalg as spla
 from numpy.random import Generator
 
 from ..algebra.operators import LinearFunctional, LinearOperator
-from ..algebra.spaces import CoordinateSpace, _resolve_rng
+from ..algebra.spaces import CoordinateSpace, EuclideanSpace, _resolve_rng
 from ..traits import Traits
 
 __all__ = [
@@ -63,7 +63,21 @@ def _require_mfem() -> Any:
 
 
 def _to_scipy(matrix: Any) -> sp.csr_matrix:
-    """An MFEM sparse matrix as a SciPy one, sharing nothing."""
+    """An MFEM sparse matrix as a SciPy one, sharing nothing.
+
+    Refuses an unfinalised matrix. Before ``Finalize`` an MFEM sparse matrix is
+    held as linked lists and has no CSR arrays at all, so asking for them does
+    not return something wrong — it returns pointers into nothing, and reading
+    them segfaults the interpreter with no traceback. A check costs one call
+    and turns the worst failure mode available into a sentence.
+    """
+    if hasattr(matrix, "Finalized") and not matrix.Finalized():
+        raise ValueError(
+            "This MFEM matrix has not been finalised, so it has no CSR arrays "
+            "to read. Call Finalize() on the form after Assemble(). (Reading "
+            "them anyway segfaults rather than raising, which is why this is "
+            "checked.)"
+        )
     size = matrix.Height()
     return sp.csr_matrix(
         (
@@ -331,7 +345,7 @@ class MfemSpace(CoordinateSpace):
         full = _to_scipy(self._mass)
         if not self.is_constrained:
             return full
-        return sp.csr_matrix(full.toarray()[np.ix_(self._free, self._free)])
+        return sp.csr_matrix(full[self._free][:, self._free])
 
     @cached_property
     def _mass_factorisation(self) -> Any:
@@ -392,6 +406,138 @@ def operator_from_bilinear_form(
     )
 
 
+def _to_mfem(matrix: Any) -> Any:
+    """A SciPy sparse matrix as an ``mfem.SparseMatrix``.
+
+    Built entry by entry, which is not elegant and is not the bottleneck: it
+    happens once per operator, against a solve that happens many times.
+
+    The alternative was ``BilinearForm.FormSystemMatrix``, MFEM's own way of
+    imposing essential conditions. It is not used here because it **takes
+    ownership of the form's matrix**: after calling it, reading ``SpMat()``
+    from the same form is a use-after-free, which does not raise — it
+    segfaults, and did. Building the constrained operator from the free block
+    instead leaves every MFEM object the caller passed in exactly as it was.
+    """
+    mfem = _require_mfem()
+    coordinates = matrix.tocoo()
+    built = mfem.SparseMatrix(int(matrix.shape[0]), int(matrix.shape[1]))
+    for row, column, value in zip(coordinates.row, coordinates.col, coordinates.data):
+        built.Add(int(row), int(column), float(value))
+    built.Finalize()
+    return built
+
+
+def _default_mfem_solver(matrix: Any, rtol: float, max_iterations: int) -> Any:
+    """Conjugate gradients with a Gauss-Seidel smoother, MFEM's own.
+
+    A reasonable default for a symmetric positive definite finite element
+    system, and the point is that it is MFEM's: the mesh, the assembly and the
+    solve all stay on one side of the boundary, and this library only says what
+    the result *is*.
+    """
+    mfem = _require_mfem()
+    solver = mfem.CGSolver()
+    smoother = mfem.GSSmoother(matrix)
+    solver.SetOperator(matrix)
+    solver.SetPreconditioner(smoother)
+    solver.SetRelTol(float(rtol))
+    solver.SetMaxIter(int(max_iterations))
+    solver.SetPrintLevel(-1)
+    # MFEM's solver holds raw pointers to its operator and preconditioner and
+    # owns neither. Without these references Python is free to collect the
+    # smoother the moment this function returns, and the next solve reads freed
+    # memory — which does not raise, it segfaults.
+    solver._pygeoinf_keepalive = (matrix, smoother)
+    return solver
+
+
+def solver_from_bilinear_form(
+    space: MfemSpace,
+    form: Any,
+    /,
+    *,
+    make_solver: Any = None,
+    rtol: float = 1e-12,
+    max_iterations: int = 1000,
+    traits: Traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+    strict: bool = True,
+) -> LinearOperator:
+    """The *inverse* of the operator a bilinear form defines, solved by MFEM.
+
+    Where :func:`operator_from_bilinear_form` hands over the assembled matrix
+    and lets this library invert it, this hands over nothing: MFEM's solver
+    solves MFEM's system, and what comes back is a :class:`LinearOperator` that
+    happens to be a PDE solve. Assembly, preconditioning and the solve stay
+    where they belong; the result still composes, still has an adjoint, and
+    still lives in the right metric.
+
+    The metric is the part worth spelling out. The operator of the form has
+    Galerkin matrix ``K``, so its component matrix is ``M^-1 K`` and the
+    inverse's is ``K^-1 M``. Applying it therefore means: take the function's
+    components, multiply by the mass matrix to get a **load vector**, solve,
+    and read the solution's components back. The mass multiply is what turns a
+    function into the right-hand side of a weak form, and omitting it is the
+    error of DESIGN.md section 5.6 in its most convincing disguise — the answer
+    comes back smooth, plausible, and wrong by a mass matrix.
+
+    Essential boundary conditions come from *space*: its free block already is
+    the constrained system, so nothing is eliminated and no object the caller
+    passed in is modified.
+
+    Args:
+        space: the finite element space, carrying any essential conditions.
+        form: an assembled ``mfem.BilinearForm``.
+        make_solver: ``matrix -> solver``, returning a configured MFEM solver
+            with ``SetOperator`` already called. Conjugate gradients with a
+            Gauss-Seidel smoother if omitted. This is where an application
+            supplies something better — a multigrid cycle, a direct
+            factorisation — without anything else changing. Keep a reference to
+            anything the solver does not own; MFEM will not.
+        rtol, max_iterations: for the default solver; ignored when
+            *make_solver* is given.
+        traits: claims about the *inverse*. A symmetric form gives a
+            self-adjoint operator whose inverse is self-adjoint too, which is
+            the usual case and the default.
+        strict: raise when the solver reports it did not converge. A silently
+            unconverged solve inside an operator is an operator that is quietly
+            not the one it claims to be.
+    """
+    mfem = _require_mfem()
+    system = _to_mfem(sp.csr_matrix(space.restrict(form.SpMat())))
+    solver = (
+        _default_mfem_solver(system, rtol, max_iterations)
+        if make_solver is None
+        else make_solver(system)
+    )
+    retained = (system, solver)
+    size = space.dim
+
+    def solve(x: Any, _retained: Any = retained) -> Any:
+        # Components -> load vector. The mass multiply is the whole difference
+        # between solving with a function and solving with its coefficients.
+        load = space.apply_gram(space.to_components(x))
+
+        right_hand_side = mfem.Vector(size)
+        right_hand_side.GetDataArray()[:] = load
+        solution = mfem.Vector(size)
+        solution.Assign(0.0)
+        solver.Mult(right_hand_side, solution)
+        if strict and hasattr(solver, "GetConverged") and not solver.GetConverged():
+            raise RuntimeError(
+                f"The MFEM solver did not converge in "
+                f"{solver.GetNumIterations()} iterations. Loosen rtol, raise "
+                f"max_iterations, or supply a better preconditioner through "
+                f"make_solver."
+            )
+        return space.from_components(np.array(solution.GetDataArray(), copy=True))
+
+    adjoint = solve if Traits.SELF_ADJOINT & traits else None
+    return LinearOperator.from_callables(
+        space, space, solve, adjoint=adjoint, traits=traits
+    )
+
+
 def functional_from_linear_form(space: MfemSpace, form: Any, /) -> LinearFunctional:
     """The functional a linear form defines.
 
@@ -406,3 +552,43 @@ def functional_from_linear_form(space: MfemSpace, form: Any, /) -> LinearFunctio
     return LinearFunctional.from_derivative_components(
         space, space.restrict_vector(form.GetDataArray())
     )
+
+
+def operator_from_linear_forms(
+    space: MfemSpace,
+    forms: Any,
+    /,
+    *,
+    codomain: Any = None,
+) -> LinearOperator:
+    """Several linear forms stacked into one observation operator.
+
+    An observation is a linear form — a sensor integrates the field against its
+    footprint, and MFEM assembles exactly that. So an observation operator is a
+    stack of load vectors, and because each row is a set of *derivative*
+    components rather than a function, the whole thing is
+    ``from_derivative_matrix`` and the mass solve that its adjoint needs stays
+    inside the operator.
+
+    Getting this wrong is the standard way to break a finite element inverse
+    problem: treat the load vectors as though they were the sensors' kernels,
+    and the adjoint comes back off by a mass matrix — smooth, plausible and
+    wrong, the same disguise as in :func:`solver_from_bilinear_form`.
+
+    Args:
+        space: the finite element space, carrying any essential conditions.
+        forms: assembled ``mfem.LinearForm`` objects, one per observation.
+        codomain: the data space. A Euclidean space of the right size if
+            omitted, which is what a list of numbers is.
+    """
+    rows = [space.restrict_vector(form.GetDataArray()) for form in forms]
+    if not rows:
+        raise ValueError("At least one linear form is needed.")
+    if codomain is None:
+        codomain = EuclideanSpace(len(rows))
+    elif codomain.dim != len(rows):
+        raise ValueError(
+            f"{len(rows)} linear forms for a data space of dimension "
+            f"{codomain.dim}."
+        )
+    return LinearOperator.from_derivative_matrix(space, codomain, np.array(rows))

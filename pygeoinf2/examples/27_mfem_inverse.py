@@ -21,10 +21,12 @@ what ``MfemSpace(fes, essential_dofs=...)`` builds. The Laplacian is *singular*
 on the unconstrained space — constants are in its kernel — and positive
 definite on this one, which ``check_traits`` verifies rather than assumes.
 
-**The forward operator is a PDE solve** and is never assembled. It is
-``sensors @ inverse_of_the_stiffness``, so applying it solves the PDE and
-applying its adjoint solves it again, and the adjoint is derived rather than
-written down.
+**The PDE is solved by MFEM.** The forward operator is
+``sensors @ pde_solve``, where the solve is MFEM's own conjugate gradients on
+MFEM's own assembled system. This library never sees a matrix: it wraps the
+solve as an operator, composes it, and takes the adjoint. Assembly,
+preconditioning and the solve stay on MFEM's side of the boundary, which is
+where they belong; what this side supplies is the inverse problem.
 
 **Nothing converts between a load vector and a function.** Each sensor is a
 linear form, so its natural output is a *derivative*; the mass solve that turns
@@ -38,15 +40,15 @@ import numpy as np
 
 import mfem.ser as mfem
 
-from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.backends.mfem import (
     MfemSpace,
     essential_dofs_of,
     operator_from_bilinear_form,
+    operator_from_linear_forms,
+    solver_from_bilinear_form,
 )
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
-from pygeoinf2.numerics import CGSolver
 from pygeoinf2.numerics.functional_calculus import operator_inverse_sqrt
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import check_traits
@@ -83,32 +85,36 @@ print(f"  boundary, so the constrained space has dimension {V.dim}")
 print()
 
 
-def bilinear(space, *integrators):
-    """Assemble a bilinear form and hand back the operator it defines."""
+def assemble(space, *integrators):
+    """Assemble a bilinear form. MFEM's job, in MFEM's terms."""
     form = mfem.BilinearForm(space.finite_element_space)
     for integrator in integrators:
         form.AddDomainIntegrator(integrator)
     form.Assemble()
     form.Finalize()
-    return operator_from_bilinear_form(
-        space, form, traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
-    )
+    return form
+
+
+DEFINITE = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
 
 
 # ---------------------------------------------------------------------------
 # The physics: a stiffness operator that is invertible only because of the BC.
 # ---------------------------------------------------------------------------
 
-stiffness = bilinear(
+stiffness_form = assemble(
     V, mfem.DiffusionIntegrator(mfem.ConstantCoefficient(CONDUCTIVITY))
 )
+stiffness = operator_from_bilinear_form(V, stiffness_form, traits=DEFINITE)
 check_traits(stiffness, rng=rng)
 print("the pure Laplacian is positive definite here, and check_traits says so.")
 print("  On the unconstrained space it would not be: constants are in its")
 print("  kernel, and the boundary condition is exactly what removes them.")
 
-solve_pde = CGSolver(rtol=1e-10, maxiter=2000)(stiffness)
-print("  its inverse is a conjugate gradient solve, never a matrix")
+# MFEM solves it, and the result is one of our operators.
+solve_pde = solver_from_bilinear_form(V, stiffness_form, rtol=1e-10)
+print("  and MFEM inverts it: solver_from_bilinear_form hands back a")
+print("  LinearOperator that happens to be a PDE solve, with an adjoint")
 print()
 
 
@@ -134,21 +140,21 @@ class Bump(mfem.PyCoefficient):
 
 
 def sensor_operator(space, centres, width):
-    """Local averages at each centre, as one operator into a Euclidean space.
+    """Local averages at each centre, assembled by MFEM and wrapped as one
+    operator.
 
-    Each row is a *load vector* — the derivative components of the functional
-    ``u -> integral of u against the window`` — so the whole thing is built with
-    ``from_derivative_matrix`` and the mass solve stays inside the operator.
+    A sensor is a linear form, so MFEM assembles it exactly as it assembles
+    anything else; ``operator_from_linear_forms`` stacks the load vectors into
+    an observation operator. Again nothing is converted by hand: the rows are
+    *derivative* components, and the mass solve the adjoint needs stays inside.
     """
-    rows = []
+    forms = []
     for centre in centres:
         form = mfem.LinearForm(space.finite_element_space)
         form.AddDomainIntegrator(mfem.DomainLFIntegrator(Bump(centre, width)))
         form.Assemble()
-        rows.append(space.restrict_vector(form.GetDataArray()))
-    return LinearOperator.from_derivative_matrix(
-        space, EuclideanSpace(len(rows)), np.array(rows)
-    )
+        forms.append(form)
+    return operator_from_linear_forms(space, forms)
 
 
 positions = [(x, y) for x in np.linspace(0.2, 0.8, 4) for y in np.linspace(0.2, 0.8, 4)]
@@ -157,8 +163,9 @@ print(f"{len(positions)} sensors, each averaging over a small window")
 
 # The forward operator: put in a source, solve the PDE, read the sensors.
 forward = sensors @ solve_pde
-print("forward operator = sensors @ (stiffness inverse):")
-print(f"  {V.dim} -> {forward.codomain.dim}, and nothing was assembled")
+print("forward operator = sensors @ (MFEM's PDE solve):")
+print(f"  {V.dim} -> {forward.codomain.dim}, composed from two wrapped MFEM")
+print("  objects, and this library assembles nothing of its own")
 print()
 
 
@@ -172,12 +179,13 @@ print()
 # in closed form, which is unusual and useful — no factorisation is needed for
 # the model-space formalism — and a factor for sampling comes from a Lanczos
 # inverse square root rather than from a dense decomposition.
-shift = bilinear(
+shift_form = assemble(
     V,
     mfem.MassIntegrator(),
     mfem.DiffusionIntegrator(mfem.ConstantCoefficient(CORRELATION**2)),
 )
-covariance = (SOURCE_STRENGTH**2) * CGSolver(rtol=1e-10, maxiter=2000)(shift)
+shift = operator_from_bilinear_form(V, shift_form, traits=DEFINITE)
+covariance = (SOURCE_STRENGTH**2) * solver_from_bilinear_form(V, shift_form, rtol=1e-10)
 prior = GaussianMeasure(
     V,
     covariance=covariance,
@@ -239,9 +247,7 @@ class Region(mfem.PyCoefficient):
 total = mfem.LinearForm(elements)
 total.AddDomainIntegrator(mfem.DomainLFIntegrator(Region()))
 total.Assemble()
-property_operator = LinearOperator.from_derivative_matrix(
-    V, EuclideanSpace(1), np.array([V.restrict_vector(total.GetDataArray())])
-)
+property_operator = operator_from_linear_forms(V, [total])
 
 answer = inversion.push_forward(property_operator)(data)
 estimate = float(EuclideanSpace(1).to_components(answer.expectation)[0])
@@ -265,13 +271,13 @@ print()
 print("the same property, at three polynomial orders:")
 for order in (1, 2, 3):
     _, order_elements, space, _ = build_space(order, DIVISIONS)
-    order_stiffness = bilinear(
+    order_stiffness = assemble(
         space, mfem.DiffusionIntegrator(mfem.ConstantCoefficient(CONDUCTIVITY))
     )
-    order_forward = sensor_operator(space, positions, 0.06) @ CGSolver(
-        rtol=1e-10, maxiter=4000
-    )(order_stiffness)
-    order_shift = bilinear(
+    order_forward = sensor_operator(space, positions, 0.06) @ solver_from_bilinear_form(
+        space, order_stiffness, rtol=1e-10
+    )
+    order_shift_form = assemble(
         space,
         mfem.MassIntegrator(),
         mfem.DiffusionIntegrator(mfem.ConstantCoefficient(CORRELATION**2)),
@@ -279,8 +285,9 @@ for order in (1, 2, 3):
     order_prior = GaussianMeasure(
         space,
         covariance=(SOURCE_STRENGTH**2)
-        * CGSolver(rtol=1e-10, maxiter=4000)(order_shift),
-        precision=(1.0 / SOURCE_STRENGTH**2) * order_shift,
+        * solver_from_bilinear_form(space, order_shift_form, rtol=1e-10),
+        precision=(1.0 / SOURCE_STRENGTH**2)
+        * operator_from_bilinear_form(space, order_shift_form, traits=DEFINITE),
     )
     order_problem = LinearForwardProblem(
         order_forward,
@@ -289,11 +296,7 @@ for order in (1, 2, 3):
     order_region = mfem.LinearForm(order_elements)
     order_region.AddDomainIntegrator(mfem.DomainLFIntegrator(Region()))
     order_region.Assemble()
-    order_property = LinearOperator.from_derivative_matrix(
-        space,
-        EuclideanSpace(1),
-        np.array([space.restrict_vector(order_region.GetDataArray())]),
-    )
+    order_property = operator_from_linear_forms(space, [order_region])
     # The *same* data, inverted on a different discretisation.
     order_answer = LinearGaussianInversion(order_problem, order_prior).push_forward(
         order_property
