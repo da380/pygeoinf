@@ -4913,3 +4913,94 @@ Marked at parametrisation for the examples, rather than skipped inside the
 test — a skip written against the `-m` string cannot be selected *by* `-m`, and
 the first attempt got it backwards anyway, since `"not slow".endswith("slow")`
 is true and nothing was skipped at all.
+
+## 33. Boundary conditions, and an inverse problem on a finite element space
+
+Example 16 showed that a finite element space *is* a Hilbert space once the
+mass matrix is the metric. It did nothing with that: one dimension, no boundary
+condition, no inverse problem. This is the elaborated version.
+
+### 33.1 A boundary condition is a subspace
+
+The backend had no support for essential conditions at all, which is the gap
+that had to close first. The functions vanishing on part of the boundary form a
+Hilbert space in their own right, and building *that* is the whole of what a
+homogeneous Dirichlet condition does:
+
+* the Gram matrix is the mass matrix's free-free block;
+* a bilinear form restricted to the same block is the Galerkin matrix of the
+  operator on the subspace;
+* a load vector restricted to the free entries is the functional's derivative
+  components there.
+
+So `MfemSpace(elements, essential_dofs=...)` and `essential_dofs_of(elements,
+attributes=...)`, and everything else in the library applies unchanged —
+`check_space`, `check_coordinates`, `check_operator` and `check_traits` all
+pass on the constrained space with nothing special done for it.
+
+Vectors stay the length MFEM expects and simply hold zero on the constrained
+degrees of freedom. That costs a little memory and buys the thing that matters:
+a vector of this space goes straight into a `GridFunction` and can be drawn,
+which a vector of free values alone could not. The boundary condition is then
+not enforced anywhere — there is nowhere for a non-zero boundary value to be
+*stored*, because it is not a coordinate of the space. The example's recovered
+source vanishes on the boundary to `0.0e+00` exactly.
+
+The sharpest statement of why this matters is a trait. The pure Laplacian is
+**singular** on the unconstrained space — constants are in its kernel — and
+positive definite on the constrained one. `check_traits` verifies that rather
+than taking it on trust, and the test asserts the smallest eigenvalue on both
+sides of the restriction.
+
+### 33.2 The inverse problem
+
+Steady-state diffusion on the unit square with `u = 0` on the boundary, and the
+inverse question: given sixteen sensors, where was the heat put in? The unknown
+is the source, a function on the same space as the solution.
+
+Three things it exercises that example 16 did not.
+
+**The forward operator is a PDE solve**, `sensors @ inverse_of_the_stiffness`,
+and is never assembled. Applying it solves the PDE; applying its adjoint solves
+it again, and the adjoint is derived rather than written down.
+
+**Each sensor is a linear form**, so its natural output is a derivative and the
+mass solve that turns one into a function stays inside the operator. The rows
+of the observation operator are load vectors, handed to
+`from_derivative_matrix` — which is §5.6 in the setting where it is most often
+got wrong.
+
+**The prior is a differential operator.** With `S` the operator of
+`a(u,v) = uv + l^2 grad u . grad v`, the covariance is `sigma^2 S^-1`: smoothing,
+self-adjoint, positive definite, and with its *precision* known in closed form,
+which almost no covariance is. A factor for sampling comes from a Lanczos
+inverse square root, so nothing is ever factorised densely.
+
+The relative error of the recovered field is 0.87, and the example says plainly
+that this is not a failure: sixteen numbers cannot determine a field with 361
+degrees of freedom. What they determine is a *property* — the total source over
+a central square — which comes out at `1.428 +/- 0.136` against a truth of
+`1.517`, seven tenths of a standard deviation.
+
+### 33.3 What the order refinement found
+
+The same property, from the same data, at three polynomial orders:
+
+```
+order 1:    81 free dofs   +1.4804 +/- 0.0782
+order 2:   361 free dofs   +1.4278 +/- 0.1364
+order 3:   841 free dofs   +1.4259 +/- 0.1402
+```
+
+Orders 2 and 3 agree, which is the claim: the answer is a statement about the
+problem rather than about the mesh, and it *can* be, because the mass matrix is
+the metric — a norm, an inner product and a covariance mean the same thing on
+both spaces, so the prior is the same prior rather than a rescaled one.
+
+Order 1 is the interesting row, and it was not what the example was written to
+show. It differs, and its error bar is **smaller** than the finer spaces'. That
+is not better information: a coarse space cannot represent the sources it is
+therefore certain do not exist, so the discretisation is acting as a prior
+nobody wrote down. The first draft of the text claimed all three agreed; the
+numbers did not, and the honest reading is the better lesson — this whole
+arrangement exists to make an implicit prior visible, and here it is visible.

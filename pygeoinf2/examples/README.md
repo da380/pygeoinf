@@ -40,6 +40,7 @@ failing test rather than a surprise later.
 | 24 | `preconditioning` | making a large solve finish, with a surrogate |
 | 25 | `distributions` | looking at the answer: marginals and corner plots |
 | 26 | `mixture` | a prior that cannot make up its mind, and a bimodal posterior |
+| 27 | `mfem_inverse` | an inverse problem on a finite element space, with boundary conditions |
 
 ## The ones with optional dependencies
 

@@ -75,6 +75,54 @@ def _to_scipy(matrix: Any) -> sp.csr_matrix:
     )
 
 
+def _as_indices(dofs: Any) -> Any:
+    """Index values from an ``mfem.intArray`` or any ordinary sequence."""
+    return dofs.ToList() if hasattr(dofs, "ToList") else dofs
+
+
+def essential_dofs_of(
+    finite_element_space: Any,
+    /,
+    *,
+    attributes: Any = None,
+) -> np.ndarray:
+    """The true degrees of freedom on an essential boundary.
+
+    A homogeneous Dirichlet condition says a function vanishes on part of the
+    boundary, and in a finite element space that is a statement about which
+    degrees of freedom are held at zero. This asks MFEM which they are, so that
+    :class:`MfemSpace` can be built on the subspace where they already are.
+
+    Args:
+        finite_element_space: an ``mfem.FiniteElementSpace``.
+        attributes: the boundary attributes to constrain. All of them if
+            omitted, which is the usual case; give a sequence of attribute
+            numbers for a mixed problem where only part of the boundary is
+            essential.
+
+    Returns:
+        The true-dof indices, sorted.
+    """
+    mfem = _require_mfem()
+    mesh = finite_element_space.GetMesh()
+    count = mesh.bdr_attributes.Max()
+    marker = mfem.intArray(count)
+    if attributes is None:
+        marker.Assign(1)
+    else:
+        marker.Assign(0)
+        for attribute in attributes:
+            if not 1 <= int(attribute) <= count:
+                raise ValueError(
+                    f"Boundary attribute {attribute} is out of range; this "
+                    f"mesh has attributes 1 to {count}."
+                )
+            marker[int(attribute) - 1] = 1
+    dofs = mfem.intArray()
+    finite_element_space.GetEssentialTrueDofs(marker, dofs)
+    return np.unique(np.asarray(dofs.ToList(), dtype=int))
+
+
 class MfemSpace(CoordinateSpace):
     """A finite element space, with its mass matrix as the metric.
 
@@ -85,14 +133,48 @@ class MfemSpace(CoordinateSpace):
     norm computed here mean the same thing under mesh refinement.
     """
 
-    def __init__(self, finite_element_space: Any, /) -> None:
+    def __init__(
+        self,
+        finite_element_space: Any,
+        /,
+        *,
+        essential_dofs: Any = None,
+    ) -> None:
         """
         Args:
             finite_element_space: an ``mfem.FiniteElementSpace``.
+            essential_dofs: true degrees of freedom held at zero — the ones an
+                essential (Dirichlet) boundary condition fixes. Given, the
+                space becomes the *subspace* of functions vanishing there, of
+                dimension ``GetTrueVSize() - len(essential_dofs)``, and every
+                matrix taken from a form is restricted to the free block. See
+                :func:`essential_dofs_of`, which produces the list from a set
+                of boundary attributes.
         """
         mfem = _require_mfem()
         self._fes = finite_element_space
-        self._dim = int(finite_element_space.GetTrueVSize())
+        self._size = int(finite_element_space.GetTrueVSize())
+
+        constrained = (
+            np.empty(0, dtype=int)
+            if essential_dofs is None
+            else np.unique(np.asarray(_as_indices(essential_dofs), dtype=int))
+        )
+        if constrained.size and (
+            constrained.min() < 0 or constrained.max() >= self._size
+        ):
+            raise ValueError(
+                f"Essential degrees of freedom must lie in [0, {self._size}); "
+                f"got indices from {constrained.min()} to {constrained.max()}."
+            )
+        self._essential = constrained
+        self._free = np.setdiff1d(np.arange(self._size), constrained)
+        self._dim = int(self._free.size)
+        if self._dim == 0:
+            raise ValueError(
+                "Every degree of freedom is constrained, leaving a space of "
+                "dimension zero."
+            )
 
         form = mfem.BilinearForm(finite_element_space)
         form.AddDomainIntegrator(mfem.MassIntegrator())
@@ -117,14 +199,54 @@ class MfemSpace(CoordinateSpace):
 
     @property
     def mass_matrix(self) -> Any:
-        """The assembled mass matrix, which is this space's Gram matrix."""
+        """The assembled mass matrix over *all* degrees of freedom.
+
+        The space's Gram matrix is its free block; see :meth:`restrict`.
+        """
         return self._mass
+
+    @property
+    def essential_dofs(self) -> np.ndarray:
+        """The true degrees of freedom held at zero. Empty when unconstrained."""
+        return self._essential.copy()
+
+    @property
+    def free_dofs(self) -> np.ndarray:
+        """The true degrees of freedom this space actually varies."""
+        return self._free.copy()
+
+    @property
+    def is_constrained(self) -> bool:
+        """Whether an essential boundary condition has been imposed."""
+        return self._essential.size > 0
+
+    def restrict(self, matrix: Any, /) -> np.ndarray:
+        """The free-free block of a matrix assembled over all degrees of freedom.
+
+        A bilinear form assembled on the full space is the Galerkin matrix of
+        an operator on the full space. Restricted to the functions vanishing on
+        the essential boundary, it is the Galerkin matrix of the operator on
+        *that* space — which is what the constrained problem is, and why
+        eliminating rows and columns is the whole of what a homogeneous
+        Dirichlet condition does.
+        """
+        dense = (
+            matrix if isinstance(matrix, np.ndarray) else _to_scipy(matrix).toarray()
+        )
+        if not self.is_constrained:
+            return dense
+        return dense[np.ix_(self._free, self._free)]
+
+    def restrict_vector(self, values: Any, /) -> np.ndarray:
+        """The free entries of a vector assembled over all degrees of freedom."""
+        array = np.asarray(values, dtype=float)
+        return array if not self.is_constrained else array[self._free]
 
     def _key(self) -> Hashable:
         # Two spaces built on the same FiniteElementSpace object are the same
         # space; two built on separately meshed but identical geometries are
         # not, because MFEM gives no cheap way to tell that they agree.
-        return id(self._fes)
+        return (id(self._fes), self._essential.tobytes())
 
     def __repr__(self) -> str:
         return f"MfemSpace(dofs={self._dim})"
@@ -134,9 +256,15 @@ class MfemSpace(CoordinateSpace):
     # ----------------------------------------------------------------- #
 
     def zero(self) -> Any:
-        """A new zero ``mfem.Vector``."""
+        """A new zero ``mfem.Vector``, of full degree-of-freedom length.
+
+        Vectors stay the size MFEM expects even when the space is constrained,
+        and simply hold zero on the essential degrees of freedom. So a vector
+        of this space can be handed straight to a ``GridFunction`` and drawn,
+        which a vector of free values alone could not.
+        """
         mfem = _require_mfem()
-        vector = mfem.Vector(self._dim)
+        vector = mfem.Vector(self._size)
         vector.Assign(0.0)
         return vector
 
@@ -146,7 +274,12 @@ class MfemSpace(CoordinateSpace):
         return mfem.Vector(x)
 
     def inner_product(self, x: Any, y: Any) -> float:
-        """``x^T M y``, the ``L2`` inner product of the underlying functions."""
+        """``x^T M y``, the ``L2`` inner product of the underlying functions.
+
+        Correct on a constrained space without restricting anything: the
+        vectors are zero on the essential degrees of freedom, so the full
+        quadratic form already equals the free one.
+        """
         return float(self._mass.InnerProduct(x, y))
 
     def axpy(self, a: float, x: Any, y: Any) -> Any:
@@ -168,7 +301,7 @@ class MfemSpace(CoordinateSpace):
     # ----------------------------------------------------------------- #
 
     def to_components(self, x: Any) -> np.ndarray:
-        """The degree-of-freedom values, as an array.
+        """The *free* degree-of-freedom values, as an array.
 
         A **copy**, deliberately. ``GetDataArray`` hands back a view into
         memory MFEM owns, and that view does not keep its owner alive: in an
@@ -178,22 +311,27 @@ class MfemSpace(CoordinateSpace):
         copy is not negotiable, and the cost of one array copy per call is the
         price of a foreign backend owning its own memory.
         """
-        return np.array(x.GetDataArray(), copy=True)
+        values = np.array(x.GetDataArray(), copy=True)
+        return values if not self.is_constrained else values[self._free]
 
     def from_components(self, c: np.ndarray) -> Any:
-        """An ``mfem.Vector`` with the given degree-of-freedom values."""
+        """An ``mfem.Vector``, zero on the essential degrees of freedom."""
         mfem = _require_mfem()
         values = np.asarray(c, dtype=float)
         if values.shape != (self._dim,):
             raise ValueError(f"Expected {self._dim} components, got {values.shape}.")
-        vector = mfem.Vector(self._dim)
-        vector.GetDataArray()[:] = values
+        vector = mfem.Vector(self._size)
+        vector.Assign(0.0)
+        vector.GetDataArray()[self._free] = values
         return vector
 
     @cached_property
     def _scipy_mass(self) -> sp.csr_matrix:
-        """The mass matrix in SciPy form, for factorisation."""
-        return _to_scipy(self._mass)
+        """The Gram matrix in SciPy form: the mass matrix's free block."""
+        full = _to_scipy(self._mass)
+        if not self.is_constrained:
+            return full
+        return sp.csr_matrix(full.toarray()[np.ix_(self._free, self._free)])
 
     @cached_property
     def _mass_factorisation(self) -> Any:
@@ -250,7 +388,7 @@ def operator_from_bilinear_form(
             it.
     """
     return LinearOperator.from_derivative_matrix(
-        space, space, _to_scipy(form.SpMat()).toarray(), traits=traits
+        space, space, space.restrict(form.SpMat()), traits=traits
     )
 
 
@@ -266,5 +404,5 @@ def functional_from_linear_form(space: MfemSpace, form: Any, /) -> LinearFunctio
     error of DESIGN.md 5.6, in the setting where it is most often made.
     """
     return LinearFunctional.from_derivative_components(
-        space, np.asarray(form.GetDataArray(), dtype=float)
+        space, space.restrict_vector(form.GetDataArray())
     )

@@ -24,6 +24,7 @@ from pygeoinf2.traits import Traits
 mfem = pytest.importorskip("mfem.ser")
 
 from pygeoinf2.backends.mfem import (  # noqa: E402
+    essential_dofs_of,
     MfemSpace,
     _to_scipy,
     functional_from_linear_form,
@@ -133,3 +134,137 @@ class TestMfemForms:
         stiffness = _to_scipy(form.SpMat()).toarray()
         direct = np.linalg.solve(stiffness, V.gram_matrix() @ V.to_components(b))
         assert np.allclose(V.to_components(result.solution), direct, atol=1e-8)
+
+
+def square(order=2, divisions=6):
+    """A 2-D H1 space, which is where boundary conditions become interesting."""
+    mesh = mfem.Mesh.MakeCartesian2D(divisions, divisions, mfem.Element.QUADRILATERAL)
+    collection = mfem.H1_FECollection(order, mesh.Dimension())
+    return mfem.FiniteElementSpace(mesh, collection)
+
+
+class TestEssentialBoundaryConditions:
+    """A homogeneous Dirichlet condition as a *subspace*, not a special case.
+
+    The functions vanishing on the boundary form a Hilbert space in their own
+    right, and building it is the whole of what the condition does: the mass
+    matrix restricted to the free degrees of freedom is its Gram matrix, and a
+    bilinear form restricted to the same block is the Galerkin matrix of the
+    operator on it. So everything else in the library applies unchanged, which
+    is what these tests check.
+    """
+
+    @pytest.fixture
+    def constrained(self):
+        elements = square()
+        dofs = essential_dofs_of(elements)
+        return elements, dofs, MfemSpace(elements, essential_dofs=dofs)
+
+    def test_the_dimension_drops_by_the_constrained_dofs(self, constrained):
+        elements, dofs, space = constrained
+        assert dofs.size > 0
+        assert space.dim == elements.GetTrueVSize() - dofs.size
+        assert space.is_constrained
+
+    def test_it_is_a_hilbert_space_in_its_own_right(self, constrained, rng):
+        _, _, space = constrained
+        check_space(space, rng=rng)
+        check_coordinates(space, rng=rng)
+
+    def test_every_vector_vanishes_on_the_boundary(self, constrained, rng):
+        """Not enforced afterwards — there is nowhere for a non-zero boundary
+        value to be stored, because it is not a coordinate of this space."""
+        elements, dofs, space = constrained
+        for vector in (space.zero(), space.random(rng=rng)):
+            values = np.asarray(vector.GetDataArray())
+            assert values.size == elements.GetTrueVSize()
+            assert np.abs(values[dofs]).max() == 0.0
+
+    def test_vectors_stay_the_length_mfem_expects(self, constrained, rng):
+        """So that a vector of this space can go straight into a GridFunction,
+        which a vector of free values alone could not."""
+        elements, _, space = constrained
+        vector = space.random(rng=rng)
+        function = mfem.GridFunction(elements)
+        function.Assign(vector)
+        assert function.Size() == elements.GetTrueVSize()
+
+    def test_the_laplacian_is_definite_only_once_constrained(self, constrained, rng):
+        """The point of the boundary condition, stated as an operator property:
+        constants are in the Laplacian's kernel, and removing them is what the
+        condition does. ``check_traits`` verifies the claim rather than taking
+        it."""
+        elements, _, space = constrained
+        form = mfem.BilinearForm(elements)
+        form.AddDomainIntegrator(mfem.DiffusionIntegrator())
+        form.Assemble()
+        form.Finalize()
+
+        operator = operator_from_bilinear_form(
+            space, form, traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        check_operator(operator, rng=rng)
+        check_traits(operator, rng=rng)
+
+        # Unconstrained, the same form is singular: a constant function is in
+        # its kernel, so the smallest eigenvalue of the Galerkin matrix is zero.
+        whole = MfemSpace(elements)
+        matrix = whole.restrict(form.SpMat())
+        assert np.linalg.eigvalsh(0.5 * (matrix + matrix.T)).min() < 1e-10
+        restricted = space.restrict(form.SpMat())
+        assert np.linalg.eigvalsh(0.5 * (restricted + restricted.T)).min() > 1e-6
+
+    def test_a_load_vector_is_restricted_too(self, constrained):
+        elements, dofs, space = constrained
+        form = mfem.LinearForm(elements)
+        form.AddDomainIntegrator(mfem.DomainLFIntegrator(mfem.ConstantCoefficient(1.0)))
+        form.Assemble()
+        functional = functional_from_linear_form(space, form)
+        assert functional.derivative_components.size == space.dim
+        # And it still evaluates correctly: the constrained entries multiply
+        # coefficients that are zero anyway.
+        vector = space.random(rng=np.random.default_rng(1))
+        assert functional(vector) == pytest.approx(
+            float(np.asarray(form.GetDataArray()) @ np.asarray(vector.GetDataArray()))
+        )
+
+    def test_only_some_of_the_boundary_can_be_constrained(self):
+        """A mixed problem: essential on part of the boundary, natural on the
+        rest, which is the usual case and not an exotic one."""
+        elements = square()
+        every = essential_dofs_of(elements)
+        one_side = essential_dofs_of(elements, attributes=[1])
+        assert 0 < one_side.size < every.size
+        assert set(one_side.tolist()) <= set(every.tolist())
+        assert (
+            MfemSpace(elements, essential_dofs=one_side).dim
+            > MfemSpace(elements, essential_dofs=every).dim
+        )
+
+    def test_the_unconstrained_space_is_unchanged(self, rng):
+        """The default is exactly what it was before boundary conditions
+        existed, so nothing that did not ask for one is affected."""
+        elements = square()
+        space = MfemSpace(elements)
+        assert not space.is_constrained
+        assert space.dim == elements.GetTrueVSize()
+        assert space.essential_dofs.size == 0
+        check_space(space, rng=rng)
+
+    def test_two_boundary_conditions_are_two_spaces(self):
+        """They must not compare equal, or an operator built for one would be
+        accepted by the other."""
+        elements = square()
+        whole = MfemSpace(elements)
+        part = MfemSpace(elements, essential_dofs=essential_dofs_of(elements))
+        assert whole != part
+        assert MfemSpace(elements) == whole
+
+    def test_nonsense_is_refused(self):
+        elements = square()
+        with pytest.raises(ValueError, match="must lie in"):
+            MfemSpace(elements, essential_dofs=[elements.GetTrueVSize()])
+        with pytest.raises(ValueError, match="dimension zero"):
+            MfemSpace(elements, essential_dofs=range(elements.GetTrueVSize()))
+        with pytest.raises(ValueError, match="out of range"):
+            essential_dofs_of(elements, attributes=[99])
