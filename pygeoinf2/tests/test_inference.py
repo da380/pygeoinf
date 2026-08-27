@@ -27,6 +27,7 @@ from pygeoinf2.inference import (
     PointEstimator,
     choose_formalism,
 )
+from pygeoinf2.numerics.solvers import CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
@@ -556,3 +557,89 @@ class TestEvidenceWithoutAssembling:
             estimator.mahalanobis(problem.data_space.random(rng=rng))
         with pytest.raises(ValueError, match="data error measure"):
             estimator.normal_log_determinant()
+
+
+class TestPosteriorSampling:
+    """Randomise-then-optimise, and that it survives a push-forward.
+
+    v1 attaches the sampler when it builds the posterior measure. v2 did the
+    same, in an override of ``__call__`` — which ``push_forward`` then threw
+    away, so the *property* posterior could not be drawn from even though the
+    model posterior could and the draw is one operator application away. The
+    sampler is now carried by the estimator, which is what makes it travel.
+    """
+
+    @pytest.fixture
+    def setup(self, rng):
+        from pygeoinf2.numerics.functional_calculus import operator_sqrt
+
+        model, data = make_weighted_space(), EuclideanSpace(6)
+        forward = LinearOperator.from_derivative_matrix(
+            model, data, rng.normal(size=(6, model.dim))
+        )
+        root = rng.normal(size=(model.dim, model.dim))
+        covariance = LinearOperator.from_derivative_matrix(
+            model,
+            model,
+            root @ root.T + model.dim * np.identity(model.dim),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        prior = GaussianMeasure(
+            model,
+            covariance=covariance,
+            covariance_factor=operator_sqrt(covariance),
+        )
+        problem = LinearForwardProblem(
+            forward, error=GaussianMeasure.from_standard_deviation(data, 0.05)
+        )
+        return problem, prior
+
+    def test_the_property_posterior_can_be_sampled(self, setup, rng):
+        problem, prior = setup
+        target = EuclideanSpace(2)
+        operator = LinearOperator.from_derivative_matrix(
+            problem.model_space, target, rng.normal(size=(2, problem.model_space.dim))
+        )
+        estimator = LinearGaussianInversion(
+            problem, prior, solver=CholeskySolver()
+        ).push_forward(operator)
+        assert estimator.can_sample
+        posterior = estimator(problem.data_space.random(rng=rng))
+        assert posterior.can_sample
+
+    def test_the_draws_have_the_posterior_covariance(self, setup, rng):
+        """The check that the sampler is the *right* sampler and not merely
+        present: randomise-then-optimise never forms a factor of the posterior
+        covariance, so nothing about the draw makes this true by construction.
+        """
+        problem, prior = setup
+        target = EuclideanSpace(2)
+        operator = LinearOperator.from_derivative_matrix(
+            problem.model_space, target, rng.normal(size=(2, problem.model_space.dim))
+        )
+        estimator = LinearGaussianInversion(
+            problem, prior, solver=CholeskySolver()
+        ).push_forward(operator)
+        posterior = estimator(problem.data_space.random(rng=rng))
+        draws = np.array(
+            [target.to_components(posterior.sample(rng=rng)) for _ in range(40000)]
+        )
+        stated = posterior.as_multivariate_normal()
+        scale = np.abs(stated.cov).max()
+        assert np.abs(draws.mean(axis=0) - stated.mean).max() < 0.05 * np.sqrt(scale)
+        assert np.abs(np.cov(draws.T) - stated.cov).max() < 0.05 * scale
+
+    def test_a_prior_that_cannot_be_sampled_gives_a_posterior_that_cannot(self, setup):
+        """The sampler needs a draw of the prior and a draw of the noise. A
+        covariance with no factor supplies neither, and the estimator says so
+        rather than failing at the point of use."""
+        problem, prior = setup
+        unsamplable = GaussianMeasure(problem.model_space, covariance=prior.covariance)
+        assert not unsamplable.can_sample
+        estimator = LinearGaussianInversion(
+            problem, unsamplable, solver=CholeskySolver()
+        )
+        assert not estimator.can_sample
+        assert not estimator.push_forward(
+            LinearOperator.identity(problem.model_space)
+        ).can_sample

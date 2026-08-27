@@ -333,7 +333,8 @@ Seven classes and 37 functions across `core.py` and the pendulum examples.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `plot.py` — `SubspaceSlicePlotter`, `plot_slice`, `plot_1d_distributions`, `plot_corner_distributions` | Planned | **O8** | |
+| `plot.py` — `plot_1d_distributions`, `plot_corner_distributions` | Ported | `plotting.plot_densities` and `plotting.plot_corner`, taking a Gaussian *or* any measure that can be sampled, so a non-linear push-forward is drawn as what it is (DESIGN §30) | |
+| `plot.py` — `SubspaceSlicePlotter`, `plot_slice` | Planned | The larger and more independent half of O8: slicing a `Subset` along a 1/2/3-D affine subspace. v2 has `Subset`, `ConvexSet`, `Ball`, `Ellipsoid`, `Polytope`, `HalfSpace` with `contains` and `support_function`, so all three of v1's rendering paths have something to stand on | |
 | `parallel.py` — `parallel_mat_mat`, `parallel_compute_dense_matrix_from_scipy_op` | Dropped | The joblib branches doubled every operator and each carried its own copy of the adjoint. finufft and pyshtools thread internally; parallelism belongs around an operator, not inside it (§20.8) | I'm happy to take your lead here, but I think it is viable for the action of some operators to be parallelised. And indeed, for large problems this will almost certainly be the case, though that will be implemented elsewhere.  |
 | `utils.py` — `configure_threading` | Dropped | Thread-count control. Still wanted, but as a package-level setting rather than a call every script makes? | This basically doesn't work. In practice I just end up setting environement variables at run time. So this can go.  |
 | `auxiliary.py` — `empirical_data_error_measure` | Dropped | M5 stage 5.1: a data error measure estimated from repeat observations | Cut, it doesn't get used as is. but the idea might be worth revisiting and rehousing. |

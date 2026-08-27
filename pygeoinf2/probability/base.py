@@ -51,6 +51,20 @@ class ProbabilityMeasure[X](ABC):
     #                             Sampling                              #
     # ----------------------------------------------------------------- #
 
+    @property
+    def can_sample(self) -> bool:
+        """Whether the measure can be drawn from.
+
+        True here, because :meth:`sample` is abstract and so every concrete
+        measure implements it. :class:`~pygeoinf2.probability.gaussian.GaussianMeasure`
+        overrides it: a covariance without a factor defines a measure that
+        cannot be sampled, which is a real state and not an oversight.
+
+        Declared on the base so that a caller can ask any measure the question
+        rather than asking only the ones that happen to answer.
+        """
+        return True
+
     @abstractmethod
     def sample(self, *, rng: Generator | None = None) -> X:
         """Draw one sample.
@@ -303,6 +317,17 @@ class PushForwardMeasure[X, Y](ProbabilityMeasure[Y]):
     def __repr__(self) -> str:
         return f"PushForwardMeasure({self._operator!r})"
 
+    @property
+    def can_sample(self) -> bool:
+        """Only if the measure being pushed forward can be.
+
+        The base says True because ``sample`` is abstract there. A measure
+        built on another cannot make that promise on its own behalf: a
+        covariance with no factor gives a Gaussian that cannot be drawn from,
+        and pushing it through an operator does not change that.
+        """
+        return self._base.can_sample
+
 
 class _IndependentSum[X](ProbabilityMeasure[X]):
     """The law of ``X + Y`` for independent measures with no shared structure."""
@@ -313,6 +338,11 @@ class _IndependentSum[X](ProbabilityMeasure[X]):
         super().__init__(left.domain)
         self._left = left
         self._right = right
+
+    @property
+    def can_sample(self) -> bool:
+        """Only if both summands can be."""
+        return self._left.can_sample and self._right.can_sample
 
     def sample(self, *, rng: Generator | None = None) -> X:
         """Draw from each summand independently and add."""
@@ -359,6 +389,11 @@ class ProductMeasure[X](ProbabilityMeasure[tuple]):
     def factors(self) -> tuple[ProbabilityMeasure, ...]:
         """The factors, in order."""
         return self._factors
+
+    @property
+    def can_sample(self) -> bool:
+        """Only if every factor can be."""
+        return all(factor.can_sample for factor in self._factors)
 
     def sample(self, *, rng: Generator | None = None) -> tuple:
         """One independent draw from each factor."""

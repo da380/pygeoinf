@@ -170,11 +170,26 @@ class GaussianEstimator(MeasureEstimator):
     operator is one line.
     """
 
-    def __init__(self, mean_map: AffineOperator, covariance: LinearOperator, /) -> None:
+    def __init__(
+        self,
+        mean_map: AffineOperator,
+        covariance: LinearOperator,
+        /,
+        *,
+        centred_sample: Any = None,
+    ) -> None:
         """
         Args:
             mean_map: data to the posterior mean.
             covariance: the posterior covariance, on the target space.
+            centred_sample: a callable taking a generator and returning one
+                draw of the *fluctuation* about the mean. Supplied when the
+                posterior can be sampled without a covariance factor — which
+                for a linear Gaussian inversion it can, by
+                randomise-then-optimise. Carried here rather than attached by a
+                subclass's ``__call__`` so that :meth:`push_forward` can map it
+                through; a sampler that only exists on the way out is a
+                sampler ``push_forward`` silently drops.
         """
         if covariance.domain != mean_map.codomain:
             raise ValueError(
@@ -182,6 +197,7 @@ class GaussianEstimator(MeasureEstimator):
             )
         self._mean_map = mean_map
         self._covariance = covariance
+        self._centred_sample = centred_sample
 
     @property
     def mean_map(self) -> AffineOperator:
@@ -203,12 +219,25 @@ class GaussianEstimator(MeasureEstimator):
         """The space the posterior lives on."""
         return self._mean_map.codomain
 
+    @property
+    def can_sample(self) -> bool:
+        """Whether the posteriors this produces can be drawn from."""
+        return self._centred_sample is not None
+
     def __call__(self, data: Any) -> GaussianMeasure:
-        """The posterior measure for this data."""
+        """The posterior measure for this data.
+
+        Samplable whenever the estimator is, which for a linear Gaussian
+        inversion is whenever the prior and the data errors are — the draw is
+        randomise-then-optimise and needs no factor of the posterior
+        covariance, which is just as well, since forming one on a model space
+        is exactly what the whole arrangement avoids.
+        """
         return GaussianMeasure(
             self.target_space,
             expectation=self._mean_map(data),
             covariance=self._covariance,
+            sample=self._centred_sample,
         )
 
     def push_forward(self, operator: LinearOperator, /) -> "GaussianEstimator":
@@ -217,8 +246,19 @@ class GaussianEstimator(MeasureEstimator):
         Worth reaching for even when the model-space posterior is available,
         since ``T C T*`` on a small property space is cheaper than forming
         ``C`` on the model space at all.
+
+        The sampler travels with it: a draw of ``T m`` is ``T`` applied to a
+        draw of ``m``. So a property posterior can be sampled exactly when the
+        model posterior can, which is what a non-linear property of it needs.
         """
+        pushed = None
+        if self._centred_sample is not None:
+
+            def pushed(rng: Any, _sample: Any = self._centred_sample) -> Any:
+                return operator(_sample(rng))
+
         return GaussianEstimator(
             operator @ self._mean_map,
             operator @ self._covariance @ operator.adjoint,
+            centred_sample=pushed,
         )

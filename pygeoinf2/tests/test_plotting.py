@@ -107,3 +107,160 @@ class TestSphereRenderer:
         X = SphereLebesgue(12)
         with pytest.raises(ValueError, match="has shape"):
             plotting.plot(X, np.zeros((3, 3)))
+
+
+class TestDistributions:
+    """Marginals and corner plots.
+
+    Not much can be asserted about a picture, so the tests are about the
+    arithmetic that happens before matplotlib sees anything: whether the
+    moments are the right ones, whether the two routes to them agree, and
+    whether the frame is opened wide enough to contain what it is meant to
+    show.
+    """
+
+    @staticmethod
+    def gaussian(space, rng, expectation=True):
+        from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.numerics.functional_calculus import operator_sqrt
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+        from pygeoinf2.traits import Traits
+
+        root = rng.normal(size=(space.dim, space.dim))
+        covariance = LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            root @ root.T + space.dim * np.identity(space.dim),
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        return GaussianMeasure(
+            space,
+            covariance=covariance,
+            covariance_factor=operator_sqrt(covariance),
+            expectation=space.random(rng=rng) if expectation else None,
+        )
+
+    @pytest.fixture(params=["euclidean", "weighted", "dense-metric"])
+    def measure(self, request, rng):
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        from .conftest import make_dense_metric_space, make_weighted_space
+
+        space = {
+            "euclidean": lambda: EuclideanSpace(4),
+            "weighted": make_weighted_space,
+            "dense-metric": make_dense_metric_space,
+        }[request.param]()
+        return space, self.gaussian(space, rng)
+
+    def test_the_moments_are_the_components_covariance(self, measure):
+        """``G^-1 C_gal G^-1``, not the covariance operator's component matrix
+        — a different thing by 75% on the weighted space here, and the reason
+        this asks the measure rather than reading a diagonal."""
+        space, gaussian = measure
+        mean, covariance, draws = plotting.moments(gaussian)
+        assert draws is None
+        gram = space.gram_matrix()
+        galerkin = gaussian.covariance.matrix(form="galerkin")
+        expected = np.linalg.solve(gram, np.linalg.solve(gram, galerkin).T)
+        assert np.allclose(covariance, expected, atol=1e-10)
+        assert np.allclose(mean, space.to_components(gaussian.expectation))
+
+    def test_the_sampled_route_agrees_with_the_exact_one(self, measure):
+        """On one measure, so the two must give the same answer. A linear
+        push-forward of a Gaussian is Gaussian, but wrapping the operator as a
+        general one hides that and forces the sampling branch."""
+        from pygeoinf2.algebra.operators import LinearOperator, Operator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        space, gaussian = measure
+        target = EuclideanSpace(3)
+        rng = np.random.default_rng(4)
+        forward = LinearOperator.from_derivative_matrix(
+            space, target, rng.normal(size=(3, space.dim))
+        )
+        exact_mean, exact_covariance, _ = plotting.moments(
+            gaussian.push_forward(forward)
+        )
+        hidden = gaussian.push_forward(
+            Operator.from_callables(space, target, lambda x: forward(x))
+        )
+        samples = 60000
+        mean, covariance, draws = plotting.moments(
+            hidden, samples=samples, rng=np.random.default_rng(5)
+        )
+        assert draws.shape == (samples, 3)
+        # A covariance from n draws is good to about 1/sqrt(n), which here is
+        # 0.4%; the tolerance is that, not a number chosen to pass.
+        scale = np.abs(exact_covariance).max()
+        tolerance = 10.0 / np.sqrt(samples)
+        assert np.abs(mean - exact_mean).max() < tolerance * np.sqrt(scale)
+        assert np.abs(covariance - exact_covariance).max() < tolerance * scale
+
+    def test_a_non_gaussian_measure_is_drawn_from_draws(self, measure):
+        from pygeoinf2.algebra.operators import Operator
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        space, gaussian = measure
+        target = EuclideanSpace(3)
+
+        def squash(x):
+            c = space.to_components(x)
+            return target.from_components(
+                np.array([np.tanh(c[0]), c[1] ** 2, c[2] - c[0]])
+            )
+
+        pushed = gaussian.push_forward(Operator.from_callables(space, target, squash))
+        assert pushed.can_sample
+        axes = plotting.plot_corner(pushed, samples=4000, rng=np.random.default_rng(6))
+        assert axes.shape == (3, 3)
+
+    def test_the_frame_opens_to_contain_the_truth(self, measure):
+        """A truth marker outside the frame says the fit is good by not being
+        visible, so the window widens until it is inside."""
+        space, gaussian = measure
+        mean, covariance, _ = plotting.moments(gaussian)
+        deviation = np.sqrt(np.diag(covariance))
+        far = mean + 9.0 * deviation
+        axes = plotting.plot_corner(gaussian, truth=far, width=3.0)
+        for index in range(mean.size):
+            lower, upper = axes[index, index].get_xlim()
+            assert lower <= far[index] <= upper
+
+    def test_the_corner_is_lower_triangular(self, measure):
+        """Which is the point of the shape: every pair once, and the empty
+        half says so."""
+        space, gaussian = measure
+        size = space.dim
+        axes = plotting.plot_corner(gaussian)
+        for row in range(size):
+            for column in range(size):
+                # `axison`, not `get_frame_on`: set_axis_off turns off the
+                # axis, which leaves the frame flag alone.
+                assert axes[row, column].axison == (column <= row), (row, column)
+
+    def test_densities_put_priors_on_their_own_axis(self, measure, rng):
+        space, gaussian = measure
+        prior = self.gaussian(space, rng)
+        alone = plotting.plot_densities(gaussian)
+        assert not isinstance(alone, tuple)
+        import matplotlib.pyplot as plt
+
+        plt.close("all")
+        both = plotting.plot_densities(gaussian, prior=prior)
+        assert isinstance(both, tuple) and len(both) == 2
+        plt.close("all")
+
+    def test_what_cannot_be_drawn_is_refused(self, measure):
+        space, gaussian = measure
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        with pytest.raises(ValueError, match="at least two components"):
+            plotting.plot_corner(
+                self.gaussian(EuclideanSpace(1), np.random.default_rng(1))
+            )
+        mean, _, _ = plotting.moments(gaussian)
+        with pytest.raises(ValueError, match="true values for"):
+            plotting.plot_corner(gaussian, truth=mean[:-1])
+        with pytest.raises(IndexError, match="out of range"):
+            plotting.plot_densities(gaussian, index=space.dim)

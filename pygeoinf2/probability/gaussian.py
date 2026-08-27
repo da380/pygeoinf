@@ -788,16 +788,23 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         from scipy.stats import multivariate_normal
 
         require_coordinates(self._domain)
+
         # The covariance *of the components* is G^-1 C_gal G^-1, which is
         # symmetric; the operator's component matrix is not, on a space whose
         # basis is not orthonormal, and scipy rightly refuses it.
+        #
+        # Applied one column at a time, deliberately. `solve_gram` takes a
+        # vector; handing it a matrix and relying on broadcasting gives
+        # `M / g` row-wise on a space with a diagonal metric and a genuine
+        # `G^-1 M` on one without, so an expression built that way can be
+        # right on the first and wrong on the second — which is what this was.
+        def divide(matrix: np.ndarray) -> np.ndarray:
+            return np.column_stack(
+                [self._domain.solve_gram(column) for column in matrix.T]
+            )
+
         galerkin = self._covariance.matrix(form="galerkin")
-        components = np.stack(
-            [
-                self._domain.solve_gram(row)
-                for row in self._domain.solve_gram(galerkin).T
-            ]
-        )
+        components = divide(divide(galerkin).T)
         return multivariate_normal(
             mean=self._domain.to_components(self.expectation),
             cov=0.5 * (components + components.T),

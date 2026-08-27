@@ -23,7 +23,7 @@ from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import check_operator
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
 
 
 def nonsymmetric(space, rng):
@@ -923,7 +923,15 @@ class TestHardening:
     @pytest.fixture
     def measures(self, rng):
         pairs = []
-        for space in (EuclideanSpace(4), make_weighted_space()):
+        # A dense metric as well as diagonal ones. Every metric bug found in
+        # this library so far has been an expression that is right when G is
+        # diagonal and wrong when it is not, and a fixture of Euclidean and
+        # weighted spaces cannot tell the two apart.
+        for space in (
+            EuclideanSpace(4),
+            make_weighted_space(),
+            make_dense_metric_space(),
+        ):
             root = rng.normal(size=(space.dim, space.dim))
             pairs.append(
                 (
@@ -977,7 +985,29 @@ class TestHardening:
                 differing += ball.contains(point) != region.contains(point)
             assert differing > 0
 
+    def test_the_scipy_view_is_the_covariance_of_the_components(self, measures):
+        """``G^-1 C_gal G^-1``, exactly, and symmetric.
+
+        Asserted against the formula rather than against samples: this was
+        wrong by 18% on a dense metric and the sampling check that was here
+        allowed 35%, so it could not have failed. The expression applied
+        ``solve_gram`` to a *matrix* and relied on broadcasting, which divides
+        row-wise on a space with a diagonal metric and genuinely solves on one
+        without — right in the first case, and not even symmetric in the
+        second.
+        """
+        for space, measure in measures:
+            gram = space.gram_matrix()
+            galerkin = measure.covariance.matrix(form="galerkin")
+            expected = np.linalg.solve(gram, np.linalg.solve(gram, galerkin).T)
+            frozen = measure.as_multivariate_normal()
+            assert np.allclose(frozen.cov, expected, atol=1e-10)
+            assert np.allclose(frozen.cov, frozen.cov.T, atol=1e-12)
+
     def test_the_scipy_view_has_the_sampled_covariance(self, measures, rng):
+        """Independent corroboration of the above, from draws rather than
+        algebra. Loose, because 5000 samples is loose — which is why it is the
+        corroboration and not the test."""
         for space, measure in measures:
             frozen = measure.as_multivariate_normal()
             draws = np.array(

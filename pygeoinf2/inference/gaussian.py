@@ -115,7 +115,17 @@ class LinearGaussianInversion(GaussianEstimator):
 
         shift = self._data_shift(problem, prior)
         translation = problem.model_space.subtract(prior.expectation, gain(shift))
-        super().__init__(AffineOperator(gain, translation), covariance)
+        # The sampler is passed *in* rather than attached on the way out, so
+        # that push_forward carries it to the property posterior too.
+        super().__init__(
+            AffineOperator(gain, translation),
+            covariance,
+            centred_sample=(
+                self._draw_fluctuation
+                if self._prior_and_noise_can_be_drawn(problem, prior)
+                else None
+            ),
+        )
 
         self._problem = problem
         self._prior = prior
@@ -135,8 +145,34 @@ class LinearGaussianInversion(GaussianEstimator):
 
     @property
     def gain(self) -> LinearOperator:
-        """The Kalman gain: data residuals to model updates."""
+        """The Kalman gain: data residuals to model updates.
+
+        v1's ``kalman_operator``, as a property rather than a method because
+        the solver it needs was given at construction. ``Q A* N^-1`` in the
+        data-space formalism and ``N^-1 A* R^-1`` in the model-space one, which
+        are the same operator written two ways; the test suite checks it
+        against both formulae.
+        """
         return self._gain
+
+    @property
+    def data_prior(self) -> GaussianMeasure:
+        """The prior predictive ``A Q A* + R``: the data before observing them.
+
+        v1's ``data_prior_measure``. What the evidence is a density under, and
+        what a synthetic dataset is drawn from.
+        """
+        return self._problem.data_measure_from_model_measure(self._prior)
+
+    @property
+    def joint_prior(self) -> Any:
+        """The joint law of model and data before observing anything.
+
+        v1's ``joint_prior_measure``. Sampling it gives a consistent
+        ``(model, data)`` pair, which is how a synthetic test is set up
+        without smuggling in knowledge of the answer.
+        """
+        return self._problem.joint_measure(self._prior)
 
     @property
     def normal_operator(self) -> NormalOperator:
@@ -413,14 +449,22 @@ class LinearGaussianInversion(GaussianEstimator):
         dimension = self.data_space.dim
         return -0.5 * (mahalanobis + volume + dimension * np.log(2.0 * np.pi))
 
-    @property
-    def can_sample(self) -> bool:
-        """Whether the posterior can be drawn from."""
-        if not self._prior.can_sample:
-            return False
-        return not self._problem.has_error or self._problem.error_measure.can_sample
+    @staticmethod
+    def _prior_and_noise_can_be_drawn(
+        problem: LinearForwardProblem, prior: GaussianMeasure
+    ) -> bool:
+        """Whether randomise-then-optimise has anything to randomise.
 
-    def _centred_sample(self, rng: Generator | None, /) -> Any:
+        The draw needs a sample of the prior and a sample of the noise; the
+        posterior covariance itself is never factorised, which is the point.
+        A static check because it is asked during construction, before the
+        attributes it would otherwise read have been set.
+        """
+        if not prior.can_sample:
+            return False
+        return not problem.has_error or problem.error_measure.can_sample
+
+    def _draw_fluctuation(self, rng: Generator | None, /) -> Any:
         """One draw of the posterior *fluctuation*, by randomise-then-optimise.
 
         Draw a model and a noise vector, form the residual they would have
@@ -443,16 +487,3 @@ class LinearGaussianInversion(GaussianEstimator):
             noise = data_space.subtract(error.sample(rng=rng), error.expectation)
             residual = data_space.subtract(residual, noise)
         return model_space.add(drawn, gain(residual))
-
-    def __call__(self, data: Any) -> Any:
-        """The posterior measure, with a sampler when one is available."""
-        posterior = super().__call__(data)
-        if not self.can_sample:
-            return posterior
-
-        return GaussianMeasure(
-            self.target_space,
-            expectation=posterior.expectation,
-            covariance=posterior.covariance,
-            sample=self._centred_sample,
-        )

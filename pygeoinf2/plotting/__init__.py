@@ -15,7 +15,17 @@ See DESIGN.md section 20.5, O8.
 """
 
 from .base import colour_limits, plot, subplots
+from .distributions import moments, plot_corner, plot_densities
 from . import fourier as _fourier  # noqa: F401  (registers the box renderer)
 from .sphere import plot_paths, plot_points
 
-__all__ = ["plot", "subplots", "colour_limits", "plot_points", "plot_paths"]
+__all__ = [
+    "plot",
+    "subplots",
+    "colour_limits",
+    "plot_points",
+    "plot_paths",
+    "plot_densities",
+    "plot_corner",
+    "moments",
+]

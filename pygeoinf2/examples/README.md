@@ -38,6 +38,7 @@ failing test rather than a surprise later.
 | 22 | `coupled_fields` | two unknowns, one shared physical chain |
 | 23 | `feasible_set` | the third kind of answer: what the data cannot rule out |
 | 24 | `preconditioning` | making a large solve finish, with a surrogate |
+| 25 | `distributions` | looking at the answer: marginals and corner plots |
 
 ## The ones with optional dependencies
 

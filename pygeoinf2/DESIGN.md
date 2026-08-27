@@ -4671,3 +4671,128 @@ stochastic route reported `nan` and a `log` of a negative eigenvalue — which
 was the operator telling the truth about itself. `from_derivative_matrix` with a
 symmetric matrix is the construction that gives a symmetric Galerkin matrix,
 and it is the one used everywhere else for this reason.
+
+## 30. Drawing a measure
+
+v1's `plot.py` is 2164 lines and none of it had been ported. What v2 had was
+*field* plotting — which in v1 lived in `symmetric_space/sphere.py`, not in
+`plot.py` — so `plot(space, field)`, `subplots`, `plot_points`, `plot_paths`.
+The distribution and slice plotting was the O8 row, still Planned.
+
+This is the first half: `plot_densities` and `plot_corner`, from v1's
+`plot_1d_distributions` (213 lines) and `plot_corner_distributions` (377).
+`SubspaceSlicePlotter` (1467) and `plot_slice` follow separately, being the
+larger and more independent piece.
+
+### 30.1 What they take
+
+Both accept a Gaussian, drawn exactly from its mean and covariance, **or any
+measure that can be sampled**, drawn from draws by histogram and kernel
+density. v1 took a Gaussian and refused everything else.
+
+The addition is not decoration. `push_forward` through a *non-linear* property
+map produces a `PushForwardMeasure` — the largest of four cap averages, the
+spread between them — which has no covariance however Gaussian the model
+posterior is, and whose marginals are visibly skewed. A Gaussian summary of it
+would throw away the thing worth looking at. The same applies to a
+randomise-then-optimise posterior (§18.7), which has a sampler and nothing else.
+
+The two routes are checked against each other on *one measure*: a linear
+push-forward is Gaussian, so both apply, and wrapping the operator as a general
+one hides that and forces the sampling branch. They agree to 0.17%, which is
+what sixty thousand draws are worth.
+
+### 30.2 The metric, a fifth time
+
+The covariance that a marginal is about is the covariance **of the
+components**, `G^-1 C_gal G^-1` — not the covariance operator's component
+matrix, which is a different thing by 75% on the weighted space in the test
+suite. `as_multivariate_normal` already computed it, so this asks for that
+rather than doing it again.
+
+**And it was wrong.** The expression was
+
+```python
+np.stack([solve_gram(row) for row in solve_gram(galerkin).T])
+```
+
+`solve_gram` takes a *vector*. Handed a matrix it broadcasts, and what it does
+then depends on the space: a diagonal metric divides row-wise and the double
+application happens to land on `M_ij / (g_i g_j)`, which is right; a dense
+metric performs a genuine solve and the same expression produces `M G^-1 G^-1`,
+which is 8% wrong and **not even symmetric** — scipy rejected it outright on
+one of the two spaces I tried.
+
+The test that should have caught it compared against 5000 samples with a
+tolerance of 35%, and the fixture held a Euclidean space and a weighted one —
+both diagonal. It could not have failed. It now asserts the formula exactly, on
+a dense-metric space as well, with the sampling check kept as independent
+corroboration rather than as the test.
+
+That is the fifth metric bug in this library of exactly one kind: an expression
+that is right when `G` is diagonal and wrong when it is not. §21.11's
+`credible_set`, §22.11's eigendecomposition, §23.4's preconditioner diagonals,
+§29.2's KL reference, and now this. The lesson has been learned once per
+occurrence and is worth stating as a rule: **a fixture of Euclidean and
+weighted spaces cannot tell a metric-correct expression from a metric-naive
+one.** Only a non-diagonal Gram matrix can.
+
+### 30.3 Two things worth keeping from v1
+
+**Contours that open until the truth is inside one.** v1 computes the 2-D
+Mahalanobis distance to the true value over every pair and draws enough sigma
+contours to enclose the furthest. Without it a truth outside every contour
+looks the same whether it missed by two sigma or by nine, and the picture reads
+as a worse fit than it is — or a better one. Kept, and the same idea widens the
+axis limits.
+
+**Priors on their own y-axis.** A prior is usually far wider than the posterior
+it is being compared with, so sharing an axis makes the posterior a spike. The
+comparison worth seeing is of shape and position, not of height.
+
+### 30.4 A regression I had documented as a design fact
+
+The example first said, in a comment, that the property posterior "is a
+covariance with no factor and so cannot be drawn from". That was true of the
+code and false of the design, and writing it down as though it were a fact
+about the mathematics is the worse of the two mistakes.
+
+v1 attaches a randomise-then-optimise sampler when it builds the posterior
+measure, and v2 does too — `_draw_fluctuation` is v1's algorithm written
+centred, the fluctuation rather than the draw, with the measure adding the
+mean. But it was attached in an override of `LinearGaussianInversion.__call__`,
+and `push_forward` builds a plain `GaussianEstimator` from the mean map and the
+covariance — so the property posterior lost it. A draw of `T m` is `T` applied
+to a draw of `m`; nothing was in the way except where the sampler was kept.
+
+It is now carried *by the estimator*, passed to `GaussianEstimator.__init__`
+rather than attached on the way out, and `push_forward` maps it through. A
+sampler that only exists on the way out is a sampler `push_forward` silently
+drops.
+
+Worth noting what this costs: randomise-then-optimise is **one solve per
+draw** — a prior sample, a noise sample, one application of the Kalman gain.
+Four thousand draws are four thousand solves, which is §27.5's criterion
+arriving from a third direction, and why example 25 factorises.
+
+While checking against v1: `.gain` reproduces v1's `kalman_operator` exactly in
+both formalisms, and `.mean_map` is v1's `posterior_expectation_operator`.
+v1's `data_prior_measure` and `joint_prior_measure` had no counterpart on the
+inversion — they existed on the forward problem — and are now `.data_prior` and
+`.joint_prior` as well.
+
+### 30.5 One small addition to the measures
+
+`can_sample` was a `GaussianMeasure` property, so asking any other measure the
+question raised `AttributeError` — and a `PushForwardMeasure` answered nothing.
+It is now on `ProbabilityMeasure` and returns True there, since `sample` is
+abstract on the base and every concrete measure implements it. `GaussianMeasure`
+overrides it: a covariance without a factor defines a measure that genuinely
+cannot be sampled.
+
+And so do the measures built *on* others. `PushForwardMeasure`,
+`_IndependentSum` and `ProductMeasure` delegate to what they wrap, because a
+default of True is a promise none of them can make on its own behalf — the
+first version of this said True unconditionally, claimed a
+`PushForwardMeasure` of an unsamplable Gaussian could be drawn from, and then
+raised when asked to do it.
