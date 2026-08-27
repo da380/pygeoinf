@@ -32,7 +32,7 @@ extra.
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Any, Hashable
+from typing import TYPE_CHECKING, Any, Hashable
 
 import numpy as np
 import scipy.sparse as sp
@@ -42,6 +42,9 @@ from numpy.random import Generator
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import CoordinateSpace, EuclideanSpace, _resolve_rng
 from ..traits import Traits
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..probability.gaussian import GaussianMeasure
 
 __all__ = [
     "MfemSpace",
@@ -252,8 +255,15 @@ class MfemSpace(CoordinateSpace):
         return dense[np.ix_(self._free, self._free)]
 
     def restrict_vector(self, values: Any, /) -> np.ndarray:
-        """The free entries of a vector assembled over all degrees of freedom."""
-        array = np.asarray(values, dtype=float)
+        """The free entries of a vector assembled over all degrees of freedom.
+
+        A copy, for the reason :meth:`to_components` gives at length: an array
+        handed over by MFEM is a view into memory MFEM owns and does not keep
+        its owner alive. Fancy indexing copies anyway, so only the
+        unconstrained path needed saying — which is exactly the path where the
+        bug is invisible until the owning form goes out of scope.
+        """
+        array = np.array(values, dtype=float, copy=True)
         return array if not self.is_constrained else array[self._free]
 
     def _key(self) -> Hashable:
@@ -371,10 +381,16 @@ class MfemSpace(CoordinateSpace):
         Which is what makes the covariance the identity on the space rather
         than the mass matrix — the correction that is easy to omit and hard to
         notice, since it is invisible whenever the metric is trivial.
+
+        Done by MFEM. Its ``WhiteGaussianNoiseDomainLFIntegrator`` assembles a
+        *load vector* whose covariance is the mass matrix, element by element
+        and with no factorisation at all; one mass solve then turns that into
+        components with covariance ``M^-1``. The obvious alternative — factor
+        ``M`` and solve against a standard normal — needs a Cholesky of the
+        mass matrix, which for a real finite element space means densifying it,
+        and that is not a thing to do in a sampler.
         """
-        factor = np.linalg.cholesky(self._scipy_mass.toarray())
-        noise = _resolve_rng(rng).standard_normal(self._dim)
-        return spla.spsolve_triangular(sp.csr_matrix(factor.T), noise, lower=False)
+        return self.solve_gram(white_noise_load(self, rng=rng))
 
 
 def operator_from_bilinear_form(
@@ -592,3 +608,243 @@ def operator_from_linear_forms(
             f"{codomain.dim}."
         )
     return LinearOperator.from_derivative_matrix(space, codomain, np.array(rows))
+
+
+def _white_noise_integrator(seed: int) -> Any:
+    """MFEM's white-noise integrator, around a broken binding.
+
+    ``WhiteGaussianNoiseDomainLFIntegrator.__init__`` in PyMFEM ends with
+    ``self._coeff = QG``, and ``QG`` is not defined anywhere — so the
+    constructor raises ``NameError`` every time, after the underlying C++
+    object has already been made. This does the SWIG initialisation directly
+    and skips the line that fails.
+
+    A workaround for an upstream bug, and narrow on purpose: if PyMFEM fixes
+    it, the plain constructor will work and this can go.
+    """
+    _require_mfem()
+    from mfem._ser import _lininteg, lininteg
+
+    integrator = lininteg.WhiteGaussianNoiseDomainLFIntegrator.__new__(
+        lininteg.WhiteGaussianNoiseDomainLFIntegrator
+    )
+    _lininteg.WhiteGaussianNoiseDomainLFIntegrator_swiginit(
+        integrator,
+        _lininteg.new_WhiteGaussianNoiseDomainLFIntegrator(int(seed)),
+    )
+    return integrator
+
+
+def white_noise_load(
+    space: MfemSpace, /, *, rng: Generator | None = None
+) -> np.ndarray:
+    """A load vector whose covariance is the mass matrix.
+
+    The finite element discretisation of white noise: the right-hand side of
+    ``(W, phi_i)`` for white noise ``W``, whose covariance is
+    ``(phi_i, phi_j) == M``. MFEM assembles it directly, which is the reason to
+    ask MFEM rather than to build one here — no factorisation of ``M`` is
+    involved anywhere.
+
+    Args:
+        space: the finite element space; a constrained one gets the free
+            entries, whose covariance is its own Gram matrix.
+        rng: the generator. Only a seed reaches MFEM, drawn from this, so a run
+            is reproducible from a NumPy generator like everything else here.
+    """
+    mfem = _require_mfem()
+    seed = int(_resolve_rng(rng).integers(1, 2**31 - 1))
+    # Bound to a name, not passed inline. AddDomainIntegrator does not take
+    # ownership of an object built the way _white_noise_integrator has to build
+    # it, so a temporary is collected before Assemble runs and the form
+    # integrates freed memory — which produces a load vector containing 1e130
+    # rather than an error.
+    integrator = _white_noise_integrator(seed)
+    form = mfem.LinearForm(space.finite_element_space)
+    form.AddDomainIntegrator(integrator)
+    form.Assemble()
+    values = space.restrict_vector(form.GetDataArray())
+    del integrator
+    return values
+
+
+def matern_measure(
+    space: MfemSpace,
+    /,
+    *,
+    smoothness: float = 1.0,
+    correlation_length: Any = 0.1,
+    rotation: float = 0.0,
+    amplitude: float = 1.0,
+    solver: Any = None,
+    rtol: float = 1e-10,
+    max_iterations: int = 1000,
+) -> "GaussianMeasure":
+    """A Matern random field on a finite element space, by the SPDE method.
+
+    Lindgren, Rue and Lindstrom (2011) observed that a Gaussian field with a
+    Matern covariance is the solution of a stochastic PDE,
+
+    .. code-block:: text
+
+        (I - div Theta grad)^a u = eta W,    a = (nu + d/2) / 2
+
+    with ``W`` white noise. That is worth far more than a change of formula: a
+    Matern covariance *matrix* is dense and needs a factorisation to sample
+    from, while the differential operator is sparse and local, so a field on a
+    million-cell mesh costs a few elliptic solves and never an eigenvalue.
+
+    Everything expensive here is MFEM's. The operator is a bilinear form it
+    assembles, the solves are its own conjugate gradients
+    (:func:`solver_from_bilinear_form`), and the white noise is its
+    ``WhiteGaussianNoiseDomainLFIntegrator`` — which is the piece worth
+    borrowing rather than rebuilding, since the right-hand side of a weak form
+    driven by white noise has covariance ``M`` rather than the identity, and
+    assembling it directly avoids factorising the mass matrix at all.
+
+    This layer supplies the composition and says what the result *is*: with
+    ``S`` the solve and ``A`` the operator,
+
+    .. code-block:: text
+
+        factor      eta S^a          covariance  eta^2 A^-2a
+        precision   A^2a / eta^2
+
+    all three of which the measure is given, so it can be sampled, conditioned
+    and used in a model-space formalism without anything being formed.
+
+    Args:
+        space: the finite element space, carrying any essential conditions.
+        smoothness: the Matern parameter ``nu``. ``(nu + d/2) / 2`` must be a
+            positive integer, which in two dimensions means odd ``nu``; the
+            fractional case needs a rational approximation that PyMFEM does not
+            expose (see the note below).
+        correlation_length: one length, or one per dimension for an
+            anisotropic field.
+        rotation: the anisotropy's rotation angle, in radians. Two dimensions
+            only.
+        amplitude: a scale on the field. At 1.0 the pointwise standard
+            deviation is 1.0 away from the boundary.
+        solver: a ``matrix -> solver`` factory, passed to
+            :func:`solver_from_bilinear_form` as ``make_solver``.
+        rtol, max_iterations: for the default solver.
+
+    Note:
+        **The field is not stationary near the boundary.** The SPDE is posed on
+        a bounded domain, so the boundary condition — whichever *space* carries
+        — distorts the covariance within roughly one correlation length of it.
+        This is inherent to the method rather than to this implementation, and
+        the usual remedy is a domain padded by a few correlation lengths.
+
+    Note:
+        MFEM handles a fractional exponent with an AAA rational approximation,
+        which its Python bindings do not expose
+        (``ComputePartialFractionApproximation`` is absent). Rather than
+        reimplement it here — badly, and duplicating what MFEM already
+        does well — this refuses a non-integer exponent and says so.
+    """
+    mfem = _require_mfem()
+    from ..probability.gaussian import GaussianMeasure
+
+    dimension = space.finite_element_space.GetMesh().Dimension()
+    lengths = np.atleast_1d(np.asarray(correlation_length, dtype=float))
+    if lengths.size == 1:
+        lengths = np.full(dimension, float(lengths[0]))
+    if lengths.size != dimension:
+        raise ValueError(
+            f"{lengths.size} correlation lengths for a {dimension}-dimensional "
+            f"mesh."
+        )
+    if np.any(lengths <= 0.0):
+        raise ValueError("Every correlation length must be positive.")
+    if smoothness <= 0.0:
+        raise ValueError(f"The smoothness must be positive, got {smoothness}.")
+
+    exponent = (smoothness + dimension / 2.0) / 2.0
+    order = int(round(exponent))
+    if abs(exponent - order) > 1e-9 or order < 1:
+        raise ValueError(
+            f"(nu + d/2)/2 == {exponent:.4g} is not a positive integer. MFEM "
+            f"reaches the fractional case with a rational approximation that "
+            f"its Python bindings do not expose, so only the integer case is "
+            f"available here. In {dimension} dimensions, try nu = "
+            f"{', '.join(str(2 * k - dimension / 2) for k in (1, 2, 3))}."
+        )
+
+    theta = _anisotropy(lengths, rotation, smoothness, dimension)
+    normalisation = _matern_normalisation(smoothness, lengths, dimension)
+
+    form = mfem.BilinearForm(space.finite_element_space)
+    form.AddDomainIntegrator(
+        mfem.DiffusionIntegrator(mfem.MatrixConstantCoefficient(theta))
+    )
+    form.AddDomainIntegrator(mfem.MassIntegrator())
+    form.Assemble()
+    form.Finalize()
+
+    definite = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+    operator = operator_from_bilinear_form(space, form, traits=definite)
+    solve = solver_from_bilinear_form(
+        space, form, make_solver=solver, rtol=rtol, max_iterations=max_iterations
+    )
+
+    scale = float(amplitude) * normalisation
+    factor = solve
+    powered = operator
+    for _ in range(order - 1):
+        factor = factor @ solve
+        powered = powered @ operator
+    covariance = (scale**2) * (factor @ factor)
+    return GaussianMeasure(
+        space,
+        covariance=covariance.with_traits(definite),
+        covariance_factor=scale * factor,
+        precision=((1.0 / scale**2) * (powered @ powered)).with_traits(definite),
+    )
+
+
+def _anisotropy(
+    lengths: np.ndarray, rotation: float, smoothness: float, dimension: int
+) -> np.ndarray:
+    """``R^T diag(l^2) R / (2 nu)``, MFEM's Theta.
+
+    The correlation lengths enter squared and divided by twice the smoothness,
+    which is what makes ``correlation_length`` the distance at which the
+    correlation has fallen to about 0.14 rather than an arbitrary scale.
+    """
+    scaled = lengths**2 / (2.0 * smoothness)
+    if dimension == 2 and rotation != 0.0:
+        cosine, sine = np.cos(rotation), np.sin(rotation)
+        rotate = np.array([[cosine, sine], [-sine, cosine]])
+        return rotate @ np.diag(scaled) @ rotate.T
+    if rotation != 0.0:
+        raise ValueError(
+            f"A rotation is only defined for a two-dimensional mesh; this one "
+            f"is {dimension}-dimensional."
+        )
+    return np.diag(scaled)
+
+
+def _matern_normalisation(
+    smoothness: float, lengths: np.ndarray, dimension: int
+) -> float:
+    """The ``eta`` that makes the pointwise variance one.
+
+    MFEM's ``ConstructNormalizationCoefficient``, which is where the Matern
+    constants live:
+
+    .. code-block:: text
+
+        eta = sqrt( (2 pi)^(d/2) prod(l) Gamma(nu + d/2)
+                    / ( Gamma(nu) nu^(d/2) ) )
+    """
+    from math import gamma
+
+    return float(
+        np.sqrt(
+            (2.0 * np.pi) ** (dimension / 2.0)
+            * float(np.prod(lengths))
+            * gamma(smoothness + dimension / 2.0)
+            / (gamma(smoothness) * smoothness ** (dimension / 2.0))
+        )
+    )

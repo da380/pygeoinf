@@ -5057,3 +5057,106 @@ pointer, so a smoother built inline is collected as soon as the constructing
 function returns and the next solve reads freed memory. The default solver
 keeps explicit references to its matrix and smoother, and the docstring for
 `make_solver` warns any caller supplying their own.
+
+## 34. Gaussian random fields by the SPDE method
+
+Lindgren, Rue and Lindström (2011) observed that a Gaussian field with a Matérn
+covariance is the solution of a stochastic PDE,
+
+```
+(I - div Theta grad)^a u = eta W,     a = (nu + d/2) / 2
+```
+
+with `W` white noise. The consequence is the point: a Matérn covariance
+*matrix* is dense and needs a factorisation to sample from, while the
+differential operator is sparse and local, so a field on a large mesh costs a
+few elliptic solves and never an eigenvalue.
+
+MFEM implements this in `miniapps/spde`. `matern_measure` is that method
+wrapped rather than rebuilt.
+
+### 34.1 What is borrowed and what is supplied
+
+Everything expensive is MFEM's. The operator is a bilinear form it assembles;
+the solves are its own conjugate gradients through §33.4's wrapper; and the
+white noise is its `WhiteGaussianNoiseDomainLFIntegrator`, which is the piece
+most worth borrowing — the right-hand side of a weak form driven by white noise
+has covariance `M` rather than the identity, and MFEM assembles it directly,
+element by element, with no factorisation of the mass matrix anywhere.
+
+What this side supplies is the composition and the statement of what the result
+*is*. With `S` the solve and `A` the operator:
+
+```
+factor      eta S^a          covariance   eta^2 A^-2a
+precision   A^2a / eta^2
+```
+
+All three go to the measure, so it can be sampled, conditioned, and used in a
+model-space formalism without anything being formed. The constants — `Theta`
+as `R^T diag(l^2) R / (2 nu)` and `eta` as MFEM's normalisation coefficient —
+are read from the miniapp source rather than rederived.
+
+A useful side effect: `MfemSpace.white_noise_components` now goes through the
+same integrator. It used to take a **dense** Cholesky of the mass matrix, which
+is not a thing to do in a sampler on a finite element space; it is now one
+sparse mass solve against a load MFEM assembled.
+
+### 34.2 What was checked
+
+The pointwise variance and the correlation function, against the analytic
+Matérn formula that nothing in the implementation knows:
+
+```
+nu = 1, correlation length 0.15, interior variance 1.024 +/- 0.022
+
+  distance   empirical   Matern
+   0.035      +0.893     +0.904
+   0.070      +0.733     +0.754
+   0.110      +0.581     +0.586
+   0.155      +0.428     +0.429
+   0.215      +0.277     +0.274
+   0.285      +0.158     +0.158
+```
+
+Also: `nu = 3`, where the exponent is 2 and each sample costs two solves,
+giving variance 1.012; an anisotropic field with lengths `[0.30, 0.05]`,
+correlating 0.82 along the long axis against 0.13 along the short at the same
+separation; and the precision against the covariance, which are built from
+opposite ends — one from the assembled operator, the other from MFEM's solve —
+so their agreeing is a statement about the wrapper rather than an identity.
+
+### 34.3 Two things it will not do
+
+**Fractional exponents.** MFEM reaches them with an AAA rational
+approximation, and `ComputePartialFractionApproximation` is not in the Python
+bindings. Reimplementing it here would be exactly what this section is not for,
+so a non-integer `(nu + d/2)/2` is refused with a message saying which values
+of `nu` do work.
+
+**Stationarity near the boundary.** The SPDE is posed on a bounded domain, so
+the boundary condition distorts the covariance within about one correlation
+length of it. That is inherent to the method, is why every measurement above is
+taken in the interior, and is noted on the function rather than left for
+someone to discover.
+
+### 34.4 A third way MFEM segfaults
+
+Adding to §33.5, and this one is an outright bug in PyMFEM rather than a
+misuse. `WhiteGaussianNoiseDomainLFIntegrator.__init__` ends with
+`self._coeff = QG`, and `QG` is not defined anywhere in the module — so the
+constructor raises `NameError` every time, *after* the C++ object has been
+built. `_white_noise_integrator` performs the SWIG initialisation directly and
+skips the line that fails. It is narrow on purpose: if PyMFEM fixes this, the
+plain constructor works and the workaround can go.
+
+Working around it exposed the segfault. `AddDomainIntegrator` does not take
+ownership of an object built that way, so passing one inline lets Python
+collect it before `Assemble` runs — and the load vector comes back containing
+`1.8e130` rather than raising. It is bound to a name now.
+
+And in the course of that, a bug of my own from §33: `restrict_vector` returned
+`np.asarray` of an MFEM array, which is a *view* into memory MFEM owns and does
+not keep alive — the exact hazard `to_components` documents at length two
+methods above it. It copies now. It had been safe only because its one caller
+happened to stack the results into a new array immediately.

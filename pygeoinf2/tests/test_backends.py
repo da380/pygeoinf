@@ -25,8 +25,10 @@ mfem = pytest.importorskip("mfem.ser")
 
 from pygeoinf2.backends.mfem import (  # noqa: E402
     essential_dofs_of,
+    matern_measure,
     operator_from_linear_forms,
     solver_from_bilinear_form,
+    white_noise_load,
     MfemSpace,
     _to_scipy,
     functional_from_linear_form,
@@ -398,3 +400,169 @@ class TestObservationOperators:
         space = MfemSpace(elements)
         with pytest.raises(ValueError, match="At least one"):
             operator_from_linear_forms(space, [])
+
+
+class TestWhiteNoise:
+    """White noise through MFEM rather than through a factorisation."""
+
+    def test_the_load_has_the_mass_matrix_as_its_covariance(self):
+        """Which is the whole content of a finite element white noise: the
+        right-hand side of ``(W, phi_i)`` has covariance ``(phi_i, phi_j)``,
+        not the identity. Slow because it is a Monte Carlo statement."""
+        elements = square(order=1, divisions=4)
+        space = MfemSpace(elements)
+        rng = np.random.default_rng(0)
+        draws = np.stack([white_noise_load(space, rng=rng) for _ in range(20000)])
+        mass = _to_scipy(space.mass_matrix).toarray()
+        scale = np.abs(mass).max()
+        assert np.abs(np.cov(draws.T) - mass).max() < 0.08 * scale
+        # And emphatically not the identity, which is the mistake it prevents.
+        assert np.abs(np.cov(draws.T) - np.identity(space.dim)).max() > scale
+
+    def test_the_load_is_a_copy_and_survives_its_form(self, rng):
+        """The form that assembled it is long gone by the time the caller sees
+        the array, and MFEM does not keep it alive."""
+        space = MfemSpace(square(order=1, divisions=4))
+        first = white_noise_load(space, rng=rng)
+        for _ in range(50):
+            white_noise_load(space, rng=rng)
+        assert np.isfinite(first).all()
+        assert np.abs(first).max() < 10.0
+
+    @pytest.mark.parametrize("constrained", [False, True])
+    def test_components_are_white_noise_on_the_space(self, constrained):
+        elements = square(order=1, divisions=4)
+        space = (
+            MfemSpace(elements, essential_dofs=essential_dofs_of(elements))
+            if constrained
+            else MfemSpace(elements)
+        )
+        check_white_noise(space, rng=np.random.default_rng(1), samples=20000, rtol=0.2)
+
+
+class TestMaternMeasure:
+    """The Lindgren SPDE method, wrapped from MFEM's own pieces."""
+
+    @pytest.fixture(scope="class")
+    def field(self):
+        mesh = mfem.Mesh.MakeCartesian2D(32, 32, mfem.Element.QUADRILATERAL)
+        elements = mfem.FiniteElementSpace(mesh, mfem.H1_FECollection(1, 2))
+        space = MfemSpace(elements)
+        coordinates = np.array(mesh.GetVertexArray())
+        interior = np.all((coordinates > 0.3) & (coordinates < 0.7), axis=1)
+        return space, coordinates, interior
+
+    def test_it_is_a_gaussian_measure_with_all_three_pieces(self, field):
+        """Covariance, factor *and* precision — so it can be sampled, and used
+        in a model-space formalism, without anything being formed."""
+        space, _, _ = field
+        measure = matern_measure(space, smoothness=1.0, correlation_length=0.2)
+        assert measure.domain == space
+        assert measure.can_sample
+        assert measure.covariance is not None
+        assert measure.precision is not None
+
+    def test_the_precision_inverts_the_covariance(self, field, rng):
+        """They are built from opposite ends — the precision from the assembled
+        operator, the covariance from MFEM's solve — so agreement is a
+        statement about the wrapper rather than an identity by construction."""
+        space, _, _ = field
+        measure = matern_measure(space, smoothness=1.0, correlation_length=0.2)
+        for _ in range(3):
+            vector = space.random(rng=rng)
+            recovered = measure.precision(measure.covariance(vector))
+            assert space.norm(space.subtract(recovered, vector)) == pytest.approx(
+                0.0, abs=1e-6 * space.norm(vector)
+            )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("smoothness", [1.0, 3.0])
+    def test_the_pointwise_variance_is_one_away_from_the_boundary(
+        self, field, smoothness
+    ):
+        """MFEM's normalisation coefficient, checked rather than trusted. Away
+        from the boundary, because the SPDE on a bounded domain is not
+        stationary near it — which the docstring says and this respects."""
+        space, _, interior = field
+        measure = matern_measure(space, smoothness=smoothness, correlation_length=0.15)
+        rng = np.random.default_rng(0)
+        draws = np.stack(
+            [space.to_components(measure.sample(rng=rng)) for _ in range(2000)]
+        )
+        assert draws[:, interior].var(axis=0).mean() == pytest.approx(1.0, abs=0.1)
+
+    @pytest.mark.slow
+    def test_the_correlation_is_the_matern_one(self, field):
+        """Against the analytic formula, Bessel function and all. Nothing in
+        the implementation knows that formula, so this is independent."""
+        from scipy.special import gamma, kv
+
+        space, coordinates, interior = field
+        smoothness, length = 1.0, 0.15
+        measure = matern_measure(
+            space, smoothness=smoothness, correlation_length=length
+        )
+        rng = np.random.default_rng(0)
+        draws = np.stack(
+            [space.to_components(measure.sample(rng=rng)) for _ in range(3000)]
+        )
+
+        chosen = np.flatnonzero(interior)[:150]
+        correlation = np.corrcoef(draws[:, chosen].T)
+        separation = np.linalg.norm(
+            coordinates[chosen][:, None, :] - coordinates[chosen][None, :, :],
+            axis=-1,
+        )
+        upper = np.triu_indices(len(chosen), 1)
+        distances, values = separation[upper], correlation[upper]
+
+        def matern(radius):
+            scaled = np.sqrt(2.0 * smoothness) / length * radius
+            return (
+                2.0 ** (1 - smoothness)
+                / gamma(smoothness)
+                * scaled**smoothness
+                * kv(smoothness, scaled)
+            )
+
+        for low, high in [(0.05, 0.09), (0.09, 0.13), (0.15, 0.21)]:
+            band = (distances >= low) & (distances < high)
+            assert band.sum() > 30
+            middle = 0.5 * (low + high)
+            assert values[band].mean() == pytest.approx(matern(middle), abs=0.06)
+
+    @pytest.mark.slow
+    def test_anisotropy_stretches_the_field(self, field):
+        space, coordinates, interior = field
+        measure = matern_measure(space, smoothness=1.0, correlation_length=[0.30, 0.05])
+        rng = np.random.default_rng(1)
+        draws = np.stack(
+            [space.to_components(measure.sample(rng=rng)) for _ in range(2500)]
+        )
+        chosen = np.flatnonzero(interior)
+        correlation = np.corrcoef(draws[:, chosen].T)
+        offsets = coordinates[chosen][:, None, :] - coordinates[chosen][None, :, :]
+        upper = np.triu_indices(len(chosen), 1)
+        across = np.abs(offsets[..., 0][upper])
+        along = np.abs(offsets[..., 1][upper])
+        values = correlation[upper]
+        horizontal = (along < 0.02) & (across > 0.08) & (across < 0.13)
+        vertical = (across < 0.02) & (along > 0.08) & (along < 0.13)
+        assert values[horizontal].mean() > 0.6
+        assert values[vertical].mean() < 0.3
+
+    def test_a_fractional_exponent_is_refused_with_a_reason(self, field):
+        """MFEM reaches it with a rational approximation its Python bindings do
+        not expose. Refusing beats reimplementing it badly."""
+        space, _, _ = field
+        with pytest.raises(ValueError, match="not a positive integer"):
+            matern_measure(space, smoothness=2.0)
+
+    def test_bad_parameters_are_refused(self, field):
+        space, _, _ = field
+        with pytest.raises(ValueError, match="must be positive"):
+            matern_measure(space, smoothness=-1.0)
+        with pytest.raises(ValueError, match="must be positive"):
+            matern_measure(space, correlation_length=0.0)
+        with pytest.raises(ValueError, match="correlation lengths for"):
+            matern_measure(space, correlation_length=[0.1, 0.2, 0.3])

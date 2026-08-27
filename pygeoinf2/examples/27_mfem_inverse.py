@@ -43,13 +43,13 @@ import mfem.ser as mfem
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.backends.mfem import (
     MfemSpace,
+    matern_measure,
     essential_dofs_of,
     operator_from_bilinear_form,
     operator_from_linear_forms,
     solver_from_bilinear_form,
 )
 from pygeoinf2.inference import LinearForwardProblem, LinearGaussianInversion
-from pygeoinf2.numerics.functional_calculus import operator_inverse_sqrt
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.testing import check_traits
 from pygeoinf2.traits import Traits
@@ -173,29 +173,18 @@ print()
 # The prior: smooth sources, through a differential operator.
 # ---------------------------------------------------------------------------
 
-# A Whittle-Matern-style prior. With S the operator of
-# ``a(u,v) = uv + l^2 grad u . grad v``, the covariance is ``sigma^2 S^-1``:
-# self-adjoint, positive definite, and smoothing. Its *precision* is available
-# in closed form, which is unusual and useful — no factorisation is needed for
-# the model-space formalism — and a factor for sampling comes from a Lanczos
-# inverse square root rather than from a dense decomposition.
-shift_form = assemble(
-    V,
-    mfem.MassIntegrator(),
-    mfem.DiffusionIntegrator(mfem.ConstantCoefficient(CORRELATION**2)),
+# A Matern field by the Lindgren SPDE method, which MFEM implements and this
+# wraps: the covariance is never formed, sampling is one elliptic solve, and
+# the parameters are the ones a person has an opinion about — a correlation
+# length and a smoothness — rather than a matrix.
+prior = SOURCE_STRENGTH * matern_measure(
+    V, smoothness=1.0, correlation_length=CORRELATION
 )
-shift = operator_from_bilinear_form(V, shift_form, traits=DEFINITE)
-covariance = (SOURCE_STRENGTH**2) * solver_from_bilinear_form(V, shift_form, rtol=1e-10)
-prior = GaussianMeasure(
-    V,
-    covariance=covariance,
-    precision=(1.0 / SOURCE_STRENGTH**2) * shift,
-    covariance_factor=SOURCE_STRENGTH
-    * operator_inverse_sqrt(shift, max_iterations=80, rtol=1e-11),
-)
-print(f"prior: correlation length {CORRELATION}, pointwise scale {SOURCE_STRENGTH}")
-print("  its precision is a differential operator, known exactly;")
-print("  its sampling factor is a Lanczos inverse square root")
+print(f"prior: Matern, correlation length {CORRELATION}, smoothness 1")
+print(f"  amplitude {SOURCE_STRENGTH}, since the method normalises the")
+print("  pointwise variance to one away from the boundary")
+print("  covariance, sampling factor and precision are all elliptic solves;")
+print("  nothing about it is ever assembled")
 print()
 
 
@@ -277,17 +266,8 @@ for order in (1, 2, 3):
     order_forward = sensor_operator(space, positions, 0.06) @ solver_from_bilinear_form(
         space, order_stiffness, rtol=1e-10
     )
-    order_shift_form = assemble(
-        space,
-        mfem.MassIntegrator(),
-        mfem.DiffusionIntegrator(mfem.ConstantCoefficient(CORRELATION**2)),
-    )
-    order_prior = GaussianMeasure(
-        space,
-        covariance=(SOURCE_STRENGTH**2)
-        * solver_from_bilinear_form(space, order_shift_form, rtol=1e-10),
-        precision=(1.0 / SOURCE_STRENGTH**2)
-        * operator_from_bilinear_form(space, order_shift_form, traits=DEFINITE),
+    order_prior = SOURCE_STRENGTH * matern_measure(
+        space, smoothness=1.0, correlation_length=CORRELATION
     )
     order_problem = LinearForwardProblem(
         order_forward,
