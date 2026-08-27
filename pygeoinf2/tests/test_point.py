@@ -412,6 +412,7 @@ class TestDiscrepancyPrinciple:
         assert result.inner_iterations > 0
         assert result.warm_started
 
+    @pytest.mark.slow
     def test_warm_starting_costs_fewer_iterations(self, rng):
         """On a system large enough that conjugate gradients cannot simply
         exhaust its Krylov space, which a small one can and does."""

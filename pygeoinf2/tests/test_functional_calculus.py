@@ -369,6 +369,7 @@ class TestLogDeterminant:
         assert estimate.value == pytest.approx(expected, abs=1e-9)
         assert estimate.standard_error == 0.0
 
+    @pytest.mark.slow
     def test_the_stochastic_route_agrees_within_its_error(self, operator):
         """A stochastic estimate without its error is uninterpretable, so the
         test is written in units of that error rather than in a fixed
@@ -388,6 +389,7 @@ class TestLogDeterminant:
         assert estimate.standard_error > 0.0
         assert abs(estimate.value - exact) < 4.0 * estimate.standard_error
 
+    @pytest.mark.slow
     def test_auto_goes_dense_only_when_it_can_afford_to(self, operator):
         from pygeoinf2.numerics.functional_calculus import log_determinant
 

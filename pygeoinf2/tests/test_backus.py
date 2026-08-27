@@ -566,6 +566,7 @@ class TestInclusionWithErrors:
                     exact.inclusion_norm(value, data), rel=10.0 * radius
                 )
 
+    @pytest.mark.slow
     def test_it_never_admits_what_the_support_function_excludes(self, noisy, rng):
         """The two descriptions of one set, checked against each other.
 
@@ -609,6 +610,7 @@ class TestInclusionWithErrors:
         assert estimator.inclusion_norm(far, data) == float("inf")
         assert not estimator.admits(far, data)
 
+    @pytest.mark.slow
     def test_the_inner_hull_sits_inside_the_outer_bound(self, noisy, rng):
         """§18.4's sandwich, with both sides real for the first time."""
         model, forward, target, truth, data, estimator = noisy

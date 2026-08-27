@@ -209,6 +209,7 @@ class TestMeasureStatistics:
             first.kl_divergence(second, method="dense")
         )
 
+    @pytest.mark.slow
     def test_the_stochastic_route_agrees_with_the_dense_one(self, pair):
         """Nothing is formed on this route, so it is the one that survives a
         space too large to hold two covariance matrices. It is checked in
@@ -237,6 +238,7 @@ class TestMeasureStatistics:
                 == 0.0
             )
 
+    @pytest.mark.slow
     def test_auto_takes_the_spectral_route_when_it_can(self):
         X = Sobolev(6, 2.0, 0.2)
         first = X.sobolev_measure(2.0, 0.2)

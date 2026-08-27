@@ -25,6 +25,7 @@ from .backus import (
     FeasibleProperty,
 )
 from .gaussian import LinearGaussianInversion
+from .mixture import LinearGaussianMixtureInversion
 from .normal import NormalOperator
 from .preconditioners import (
     InvariantDistancePreconditioner,
@@ -55,6 +56,7 @@ __all__ = [
     "BackusGilbert",
     "BackusInference",
     "LinearGaussianInversion",
+    "LinearGaussianMixtureInversion",
     "NormalOperator",
     "NormalDiagonalPreconditioner",
     "LocalisedPreconditioner",

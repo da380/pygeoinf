@@ -39,6 +39,7 @@ failing test rather than a surprise later.
 | 23 | `feasible_set` | the third kind of answer: what the data cannot rule out |
 | 24 | `preconditioning` | making a large solve finish, with a surrogate |
 | 25 | `distributions` | looking at the answer: marginals and corner plots |
+| 26 | `mixture` | a prior that cannot make up its mind, and a bimodal posterior |
 
 ## The ones with optional dependencies
 

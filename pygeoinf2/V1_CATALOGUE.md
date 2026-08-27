@@ -550,3 +550,10 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `synthetic_data`, `synthetic_model_and_data` | Ported | M5 stage 5.1 | |
 | `chi_squared`, `chi_squared_from_residual`, `critical_chi_squared`, `chi_squared_test` | Ported | M5 stage 5.1, with the set coming first and the boolean on top (§18.11) | |
 | `parameterized_problem`, `data_reduced_problem` | Ported | M5 stage 5.1 | |
+
+## Additions beyond v1
+
+| v2 | Why | Your notes |
+|---|---|---|
+| `probability.GaussianMixture` | A parameterised Gaussian coupled with a measure on its parameter, which is how multimodal prior knowledge is stated. Closed forms for the moments, the density and affine maps (DESIGN §31.1) | |
+| `inference.LinearGaussianMixtureInversion` | The posterior of a mixture prior under a linear Gaussian likelihood: components updated by the usual Kalman formulas, weights rescored by each component's evidence. Exact, and almost entirely built out of pieces that already existed (DESIGN §31.2) | |

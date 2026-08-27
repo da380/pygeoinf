@@ -25,7 +25,7 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 25
+    assert len(example_scripts()) >= 26
 
 
 # Examples that need an optional dependency, and the module that provides it.
@@ -71,7 +71,35 @@ def _coastlines_are_cached() -> bool:
     return True
 
 
-@pytest.mark.parametrize("script", example_scripts(), ids=lambda p: p.stem)
+# Examples whose *cost is the point*: an iteration count on a badly-scaled
+# problem, a posterior covariance formed block by block. Shrinking them would
+# make them demonstrate something else, so they are marked slow instead and run
+# occasionally rather than on every invocation.
+SLOW = {
+    "22_coupled_fields",
+    "24_preconditioning",
+}
+
+
+def _parametrised() -> list:
+    """Every example, with the expensive ones carrying the slow marker.
+
+    Marked at parametrisation rather than skipped inside the test, so that
+    ``-m slow`` selects them and ``-m ""`` runs everything — which a skip
+    written against the ``-m`` string cannot do, and got backwards the first
+    time: ``"not slow".endswith("slow")`` is true.
+    """
+    return [
+        pytest.param(
+            script,
+            id=script.stem,
+            marks=pytest.mark.slow if script.stem in SLOW else (),
+        )
+        for script in example_scripts()
+    ]
+
+
+@pytest.mark.parametrize("script", _parametrised())
 def test_the_example_runs(script, capsys):
     """Run the script and require that it produces output without raising."""
     if script.stem in OPTIONAL:

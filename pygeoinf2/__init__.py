@@ -65,6 +65,7 @@ from .probability.base import (
     product,
 )
 from .probability.gaussian import GaussianMeasure
+from .probability.mixture import GaussianMixture
 from .traits import Traits
 
 __all__ = [
@@ -121,6 +122,7 @@ __all__ = [
     "Sobolev",
     # probability
     "GaussianMeasure",
+    "GaussianMixture",
     "ProbabilityMeasure",
     "ProductMeasure",
     "PushForwardMeasure",

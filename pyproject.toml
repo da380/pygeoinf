@@ -82,3 +82,18 @@ exclude = ["work"]
 "pygeoinf/symmetric_space_new/sphere.py" = ["E741"]
 "pygeoinf/symmetric_space_new/sh_tools.py" = ["E741"]
 "pygeoinf/rough_work/*" = ["E741"]
+
+[tool.pytest.ini_options]
+# The default run excludes `slow`. Those tests are not less important — several
+# are the parity checks the design record leans on — but they are the ones
+# whose cost is the *point* (an iteration count on a badly-scaled problem, a
+# Monte Carlo estimate against its own standard error), so they are worth
+# minutes rather than seconds and are worth them occasionally.
+#
+#     pytest pygeoinf2                 the fast suite
+#     pytest pygeoinf2 -m slow         only the expensive ones
+#     pytest pygeoinf2 -m ""           everything
+addopts = "-m 'not slow'"
+markers = [
+    "slow: takes tens of seconds or more; excluded from the default run",
+]

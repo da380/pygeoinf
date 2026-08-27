@@ -607,6 +607,7 @@ class TestPosteriorSampling:
         posterior = estimator(problem.data_space.random(rng=rng))
         assert posterior.can_sample
 
+    @pytest.mark.slow
     def test_the_draws_have_the_posterior_covariance(self, setup, rng):
         """The check that the sampler is the *right* sampler and not merely
         present: randomise-then-optimise never forms a factor of the posterior

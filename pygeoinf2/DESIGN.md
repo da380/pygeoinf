@@ -4796,3 +4796,120 @@ default of True is a promise none of them can make on its own behalf — the
 first version of this said True unconditionally, claimed a
 `PushForwardMeasure` of an unsamplable Gaussian could be drawn from, and then
 raised when asked to do it.
+
+## 31. Gaussian mixtures
+
+A parameterised Gaussian, ``theta -> N(m(theta), C(theta))``, coupled with a
+measure on the parameter. The parameter space is low-dimensional in practice
+and often finite, and that finiteness is what makes everything closed form.
+
+What it buys is **multimodality**, which a single Gaussian cannot express at
+all. "Either the structure is smooth or it is rough, and I do not know which"
+is a two-component mixture; a single Gaussian can only say "somewhere between",
+which is a statement about a model neither scenario considers likely.
+
+### 31.1 The measure
+
+`GaussianMixture` holds components and weights. Sampling is exact — choose a
+component by its weight, draw from it — which is what makes a mixture easy to
+sample even where it is awkward to write down. The expectation is the weighted
+mean; the covariance is the law of total covariance,
+
+```
+C = sum_k w_k C_k  +  sum_k w_k (m_k - mbar) (m_k - mbar)*
+```
+
+whose second term is the spread *between* components and is where the
+multimodality lives. It has rank at most `K - 1`, so it is built as a low-rank
+factor rather than assembled. On the two-component example its leading entry is
+an order of magnitude larger than either component's own variance, and dropping
+it would turn a mixture into a blur without any error being raised — so the
+test asserts both the sampled covariance and that inequality.
+
+The density is a log-sum-exp rather than a sum of exponentials, because the
+whole point of a mixture is that one component may be many orders of magnitude
+more likely than another at a given point. `marginal_probabilities` answers
+"which component did this come from", which is how a mixture does
+classification.
+
+Two constructors match the two ways a parameter measure arrives.
+`from_family(build, parameters, weights)` takes a finite support directly.
+`from_parameter_samples(build, measure, count)` discretises a continuous one by
+sampling — a Monte Carlo approximation to an integral, named as one, and
+affordable exactly because the parameter space is small.
+
+### 31.2 The inversion, which needed almost nothing new
+
+Under a linear Gaussian likelihood the posterior of a mixture prior is again a
+mixture:
+
+```
+posterior  sum_k w'_k N(m_k^post, C_k^post)
+w'_k       proportional to  w_k p(d | k)
+```
+
+Each component is updated by the usual Kalman formulas — one
+`LinearGaussianInversion` per component, inheriting everything §23 to §28 gave
+them, preconditioning and solver factories included — and the weights are
+rescored by each component's *evidence*, which §26 already computes
+matrix-free. The whole class is a loop and a softmax.
+
+`LinearGaussianMixtureInversion` is deliberately **not** a `GaussianEstimator`.
+That class is a pair of a moving mean and a fixed covariance, and the whole
+point here is that the weights depend on the data, so the *shape* of the
+posterior does too. A mixture posterior can change which mode it prefers when
+the data change; a data-independent covariance is precisely what cannot.
+
+`push_forward` leaves the weights alone. They are decided by the data through
+the evidence, and a property map is applied afterwards.
+
+### 31.3 What was checked
+
+Almost everything, against a reference written independently in plain numpy
+from the definitions — component posteriors by the Kalman formulas, weights by
+each component's marginal likelihood through `scipy.stats.multivariate_normal`.
+Agreement is to machine precision rather than to a tolerance: weights to
+4.7e-20, means to 1e-15, covariances to 1.7e-16, and the mixture's own evidence
+exact to every digit printed. On a weighted model space as well as a Euclidean
+one, with the reference reading component covariances as `G^-1 C_gal G^-1`
+(§30.2).
+
+The law of total covariance is the one part with no closed-form reference, so
+it is checked against three hundred thousand draws, and marked slow.
+
+### 31.4 An example that had to be retuned to be honest
+
+Example 26 first used two scenarios the data could separate outright, and the
+posterior weights came out `(0.000, 1.000)` — while the closing text claimed a
+visible second mode. A mixture that collapses to one component is a mixture
+doing nothing a single Gaussian could not, so the scenarios are now two that
+predict nearly the same datum by different means, and the weights come out
+`(0.639, 0.361)` with the modes well separated.
+
+That retuning exposed something better than the original point. The truth lies
+in the *less* favoured component: scenario 0 has the tighter prior, so it earns
+more evidence for the fit it achieves. That is Occam's razor arithmetic
+behaving correctly, and it is the argument for keeping both components rather
+than choosing — the mixture mean sits between the two lobes, at a point neither
+considers likely, which is why the mean of a multimodal posterior is the wrong
+thing to quote.
+
+## 32. Slow tests
+
+The suite had reached nine minutes, most of it in a handful of tests whose cost
+*is* the point: an iteration count on a badly-scaled problem, a Monte Carlo
+estimate checked against its own standard error, a posterior covariance formed
+block by block. Shrinking those would make them demonstrate something else.
+
+So they carry a `slow` marker, and the default run excludes it:
+
+```
+pytest pygeoinf2            the fast suite       2m57s
+pytest pygeoinf2 -m slow    only the expensive   
+pytest pygeoinf2 -m ""      everything           9m09s
+```
+
+Marked at parametrisation for the examples, rather than skipped inside the
+test — a skip written against the `-m` string cannot be selected *by* `-m`, and
+the first attempt got it backwards anyway, since `"not slow".endswith("slow")`
+is true and nothing was skipped at all.

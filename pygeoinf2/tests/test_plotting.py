@@ -166,6 +166,7 @@ class TestDistributions:
         assert np.allclose(covariance, expected, atol=1e-10)
         assert np.allclose(mean, space.to_components(gaussian.expectation))
 
+    @pytest.mark.slow
     def test_the_sampled_route_agrees_with_the_exact_one(self, measure):
         """On one measure, so the two must give the same answer. A linear
         push-forward of a Gaussian is Gaussian, but wrapping the operator as a
@@ -197,6 +198,7 @@ class TestDistributions:
         assert np.abs(mean - exact_mean).max() < tolerance * np.sqrt(scale)
         assert np.abs(covariance - exact_covariance).max() < tolerance * scale
 
+    @pytest.mark.slow
     def test_a_non_gaussian_measure_is_drawn_from_draws(self, measure):
         from pygeoinf2.algebra.operators import Operator
         from pygeoinf2.algebra.spaces import EuclideanSpace
