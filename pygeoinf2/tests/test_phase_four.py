@@ -1009,7 +1009,7 @@ class TestConditioning:
     def test_a_noisy_constraint_is_the_bayesian_posterior(self, rng):
         """Two routes to one answer: a statement about a measure, and a
         statement about an inverse problem."""
-        from pygeoinf2.inference import Bayesian, LinearForwardProblem
+        from pygeoinf2.inference import LinearGaussianInversion, LinearForwardProblem
 
         space = make_weighted_space()
         root = rng.normal(size=(space.dim, space.dim))
@@ -1024,7 +1024,9 @@ class TestConditioning:
         value = np.array([0.5, -1.0])
 
         conditioned = prior.condition(operator, value, noise=noise)
-        posterior = Bayesian(LinearForwardProblem(operator, error=noise), prior)(value)
+        posterior = LinearGaussianInversion(
+            LinearForwardProblem(operator, error=noise), prior
+        )(value)
         assert np.allclose(
             space.to_components(conditioned.expectation),
             space.to_components(posterior.expectation),
@@ -1201,3 +1203,103 @@ class TestWoodburyPreconditioner:
         other = EuclideanSpace(7)
         with pytest.raises(ValueError, match="which is neither"):
             wood(LinearOperator.identity(other))
+
+
+class TestColumnThresholdedPreconditioner:
+    """Keep the large entries wherever they are, rather than assuming a band."""
+
+    @staticmethod
+    def scattered(space, rng):
+        """Sparse in this basis, but not banded: the couplings are geometric."""
+        positions = rng.uniform(0.0, 1.0, size=(space.dim, 2))
+        separations = np.linalg.norm(
+            positions[:, None, :] - positions[None, :, :], axis=-1
+        )
+        matrix = np.exp(-((separations / 0.15) ** 2)) + space.dim * np.identity(
+            space.dim
+        )
+        return LinearOperator.from_derivative_matrix(
+            space,
+            space,
+            matrix,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    @pytest.fixture(params=["euclidean", "weighted"])
+    def operator(self, request, rng):
+        space = (
+            EuclideanSpace(40)
+            if request.param == "euclidean"
+            else make_weighted_space()
+        )
+        return self.scattered(space, rng)
+
+    def test_a_zero_threshold_keeps_everything_and_is_exact(self, operator, rng):
+        """The boundary case, which pins the metric handling: with nothing
+        dropped this is a sparse *exact* inverse, so it must be one."""
+        from pygeoinf2.numerics.preconditioners import ColumnThresholdedPreconditioner
+
+        space = operator.domain
+        inverse = ColumnThresholdedPreconditioner(0.0)(operator)
+        for _ in range(5):
+            vector = space.random(rng=rng)
+            assert space.norm(
+                space.subtract(inverse(operator(vector)), vector)
+            ) == pytest.approx(0.0, abs=1e-9 * space.norm(vector))
+
+    def test_the_thresholded_operator_stays_symmetric(self, operator, rng):
+        """Column-wise dropping does not, on its own, produce a symmetric
+        matrix, and conjugate gradients needs one."""
+        from pygeoinf2.numerics.preconditioners import ColumnThresholdedPreconditioner
+
+        space = operator.domain
+        inverse = ColumnThresholdedPreconditioner(0.05)(operator)
+        worst = 0.0
+        for _ in range(10):
+            left, right = space.random(rng=rng), space.random(rng=rng)
+            difference = abs(
+                space.inner_product(left, inverse(right))
+                - space.inner_product(inverse(left), right)
+            )
+            worst = max(worst, difference / (space.norm(left) * space.norm(right)))
+        assert worst < 1e-10
+
+    def test_it_reduces_the_iteration_count(self, operator, rng):
+        from pygeoinf2.numerics.preconditioners import ColumnThresholdedPreconditioner
+
+        space = operator.domain
+        vector = space.random(rng=rng)
+        plain = CGSolver(rtol=1e-12)(operator).solve(vector)
+        helped = (
+            CGSolver(rtol=1e-12)
+            .with_preconditioner(ColumnThresholdedPreconditioner(0.05))(operator)
+            .solve(vector)
+        )
+        assert helped.iterations <= plain.iterations
+        assert space.norm(
+            space.subtract(plain.solution, helped.solution)
+        ) == pytest.approx(0.0, abs=1e-8 * space.norm(plain.solution))
+
+    def test_a_cap_keeps_the_diagonal(self, operator, rng):
+        """With one entry per column allowed it must be exactly Jacobi, which
+        is the only sane reading of 'keep the largest, and the diagonal'."""
+        from pygeoinf2.numerics.preconditioners import (
+            ColumnThresholdedPreconditioner,
+            JacobiPreconditioner,
+        )
+
+        space = operator.domain
+        capped = ColumnThresholdedPreconditioner(0.0, max_per_column=1)(operator)
+        jacobi = JacobiPreconditioner()(operator)
+        vector = space.random(rng=rng)
+        assert space.norm(
+            space.subtract(capped(vector), jacobi(vector))
+        ) == pytest.approx(0.0, abs=1e-10 * space.norm(jacobi(vector)))
+
+    def test_bad_arguments_are_refused(self):
+        from pygeoinf2.numerics.preconditioners import ColumnThresholdedPreconditioner
+
+        with pytest.raises(ValueError, match="non-negative"):
+            ColumnThresholdedPreconditioner(-1.0)
+        with pytest.raises(ValueError, match="the diagonal"):
+            ColumnThresholdedPreconditioner(0.1, max_per_column=0)

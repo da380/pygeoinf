@@ -3791,3 +3791,265 @@ precisely that, and is the answer when the inner solver is itself iterative.
 
 While adding it, the package `__init__` was found to export only two of the
 five preconditioners. All six are exported now.
+
+## 23. The inversion classes: solvers, preconditioners and names
+
+Adding `WoodburyPreconditioner` in §22.12 built the preconditioner and left no
+way for an inversion to use it, which is most of what made it useful. Looking
+at the inversion classes properly showed the gap was wider than that one class,
+and in three distinct places.
+
+### 23.1 What had been lost
+
+**The normal operator was a local variable.** In `Bayesian.__init__`, and in
+`LeastSquares`, `MinimumNorm` and `ConstrainedLeastSquares`, it was assembled,
+inverted and discarded. v1 exposed it as a property. Nothing could be built
+against it and nothing could be measured about it — its condition number, which
+is the number that says whether a solve will be hard, was unobtainable.
+
+**Exposing it would not have been enough.** v1's `diagonal_normal_preconditioner`
+uses `<v, A Q A* v> == <A* v, Q A* v>`, and `sparse_localized_preconditioner`
+takes sub-blocks of `A Q A*` before the noise is added. Both need `A` and `Q`
+*apart*. Woodbury needs all three. Assembling `N` into a single operator
+destroys exactly the structure they run on — which is the real reason they were
+methods on the inversion class in v1, and not an accident of organisation. It
+is the only place that still held the parts.
+
+**The surrogate case had no expression at all.** And reading `work/tomo.py`
+showed that it needs something I had not allowed for: the surrogate lives on a
+*different model space*, a sphere of a sixth the degree with its own prior and
+its own path-average operator. Only the data space is shared. That is precisely
+why `A Q A* + R` is the formalism that survives the substitution — it acts on
+the data space whatever the model space is — and why the model-space form has no
+surrogate story.
+
+### 23.2 The normal operator carries its factors
+
+So `NormalOperator` is a `LinearOperator` that remembers what it was assembled
+from: `formalism`, `forward`, `prior`, `error`, and the covariances and
+precisions taken off them. It behaves as the assembled operator everywhere an
+operator is wanted.
+
+Generic preconditioners — Jacobi, spectral, banded, block — see a
+`LinearOperator` and are unchanged; v2's `with_preconditioner` already hands
+them the operator being inverted, which is better than v1, where the caller had
+to fetch `normal_operator` and build one by hand. Structure-aware
+preconditioners take a `NormalOperator` and read the factors off it.
+
+The gain over v1 is that preconditioners stay free-standing. In v1 each was a
+method on `LinearBayesianInversion`, so it could not be used with any other
+inversion, and every new inversion class would need the whole family added to
+it again. Here they are ordinary `LinearSolver` objects, and the inversion
+exposes one property instead of eight methods.
+
+`NormalOperator` also owns the formalism-dependent algebra that was inline in
+`Bayesian`: `gain`, `posterior_covariance`, `right_hand_side`,
+`weighted_adjoint`. That is the right place for it, because the formalism *is*
+the normal operator, and it makes `LinearGaussianInversion` thin.
+
+The surrogate is a method on it. It returns a normal operator rather than a
+whole inversion — v1 returned a `LinearBayesianInversion` — because the normal
+operator is the only part of a surrogate problem that is ever used. v1's four
+`surrogate_woodbury_*` entry points collapse into passing cheap arguments.
+
+### 23.3 The name
+
+`Bayesian` claimed a paradigm and delivered one closed form. The class computes
+the conjugate Gaussian update: the forward operator must be linear, the prior
+must be Gaussian, and the error measure must be Gaussian. Nothing else is
+covered, and the name said none of it. Its `prior` argument was typed
+`ProbabilityMeasure` while the code read `.covariance` and `.precision` off it,
+so a non-Gaussian measure failed somewhere inside rather than at the door.
+
+It is now `LinearGaussianInversion`, keeping v1's `Inversion` suffix, and both
+the prior and the error measure are checked to be Gaussian at construction with
+an error that says why.
+
+### 23.4 The two structure-aware preconditioners
+
+`NormalDiagonalPreconditioner` computes the Galerkin diagonal of `A Q A* + R`
+through `<v, A Q A* v> == <A* v, Q A* v>` — one adjoint application and one
+prior application per entry, never an application of the assembled operator and
+never the forward operator at all. Given blocks it uses each block's normalised
+indicator as the probe, so a block shares one adjoint application.
+
+`LocalisedPreconditioner` keeps the sub-blocks of `A Q A*` that couple, each by
+a randomised Nystrom decomposition at a fixed rank, assembles them sparsely,
+adds the noise diagonal and factorises once with a sparse LU. Blocks may
+overlap, unlike the diagonal one, because this approximates the operator rather
+than partitioning it.
+
+**How they are tested.** Three kinds of statement, chosen because most of what
+can be said about a preconditioner is a matter of degree and these are not:
+
+* *An identity that must hold exactly.* Woodbury with exact inner solves is the
+  inverse, and `from_normal` must not change that. A single full-rank block
+  covering every index reproduces `N^-1` when `R` is diagonal.
+* *Two routes to one number.* The cheap diagonal identity against
+  `JacobiPreconditioner` on the same operator, which forms the Galerkin matrix
+  and reads its diagonal. They agree to 1.9e-16.
+* *An answer that must not depend on the preconditioner.* The posterior mean,
+  through all four, agreeing to 1e-13.
+
+Every one runs on a weighted data space as well as a Euclidean one. A diagonal
+is a statement about a basis, and the Galerkin form is the one in which a
+self-adjoint operator is symmetric; on a Euclidean space the two coincide and
+the distinction hides. It is the same class of error as §21.11's `credible_set`
+and §22.11's eigendecomposition, and this is the third time it has come up.
+
+**A silent approximation, found by testing an exactness claim.** The localised
+preconditioner at full rank on one block was 39% off, and the comment in the
+code said the noise "is never approximated". Both were wrong in the same place:
+only `A Q A*` is treated block-wise and the error covariance contributes its
+diagonal, so `R`'s off-diagonal is dropped. With a diagonal `R` the same
+construction is exact to 1e-14 on both space types, which is what confirmed the
+diagnosis. The behaviour is v1's and is right — `R` is diagonal in nearly every
+real problem — but it is now documented as an approximation and there is a test
+asserting that it *stops* being exact when `R` is correlated, so the
+documentation cannot quietly become false.
+
+### 23.5 What example 24 measures
+
+The tomography problem of example 21 at degree 64: 4225 model dimensions, 704
+paths, and per-station noise spanning two orders of magnitude, which is what
+makes the normal operator badly scaled rather than merely large. Condition
+number 3.5e4.
+
+```
+no preconditioner                   1057 iterations
+diagonal, 16 receiver blocks         518 iterations
+diagonal, exact                      609 iterations
+Woodbury from the surrogate           10 iterations
+```
+
+all agreeing on the answer to 1e-10. The surrogate is a sphere of degree 10 —
+121 dimensions against 4225, thirty-five times smaller — with its own prior,
+damped to give it the precision the Woodbury data form needs.
+
+The third line is worth more than the fourth. The *blocked* diagonal beats the
+*exact* one, at a forty-fourth of the cost, because the blocks are the receivers
+and the noise is constant per receiver: the block structure is the operator's
+structure, and approximating the rest is not a loss. A preconditioner that
+matches the problem beats a more accurate one that does not — which is the
+argument for keeping the factors around, since without them the block structure
+is not expressible at all.
+
+An earlier version of the example used uniform noise, giving condition number
+354, and there both diagonal preconditioners made the solve *worse* (90
+iterations to 101 and 114). That is the §22.5 lesson again and it was left in
+the design record rather than tuned away: a preconditioner is worth what it
+measures on the problem at hand, and nothing in general.
+
+### 23.6 The distance preconditioner, and why it disappointed
+
+The catalogue's note against `distance_localized_preconditioner` read *"This
+was never as good as I hoped -- so check the implementation -- but should be
+useful"*. It is worth having: when the forward operator is point evaluation and
+the prior is invariant, the two-point covariance depends on a pair of points
+only through the distance between them, so
+
+```
+(A Q A*)_ij == k(d(p_i, p_j))
+```
+
+and the whole matrix can be written down from a table of distances with **no**
+applications of the forward operator, its adjoint, or the prior covariance. It
+is the only preconditioner here whose cost does not scale with the model space
+at all.
+
+The implementation is right — with no truncation it reproduces the Galerkin
+matrix of `A Q A*` to 3.5e-11 — and the disappointment is one line: `apply_taper`
+defaulted to `False`.
+
+**Truncating a covariance matrix does not preserve positive definiteness.**
+Dropping entries beyond a radius is not a positive operation, and conjugate
+gradients needs a positive definite preconditioner — an indefinite one does not
+slow it down, it breaks the recurrence it relies on. On 150 points of a degree
+48 sphere with a heat-kernel prior, against a true spectrum of `[7.9e-5, 7.4]`:
+
+```
+radius   pairs   untapered min eig   tapered min eig
+0.10       210        -6.59e-01          +1.44e-01
+0.20       394        -9.86e-01          +4.03e-02
+0.40       986        -5.32e-01          +1.14e-02
+```
+
+Not marginally indefinite: eigenvalues comparable in magnitude to the
+operator's largest, and negative, at every radius. The Gaspari-Cohn taper is
+what fixes it — multiplying by a compactly supported positive definite function
+before cutting is a Schur product, which does preserve definiteness — and it
+is what `apply_taper` switched on. So the default was the broken one.
+
+In v2 it defaults to `True`, and the test asserts the sign of the smallest
+eigenvalue both ways, so the reason is recorded as a fact about the code rather
+than as a remark.
+
+Two further things the measurements say, both worth keeping:
+
+**Even tapered, it is a weak preconditioner here** — 374 iterations to 257,
+where the surrogate Woodbury on a comparable problem gives a hundredfold. It
+earns its place on cost, not on strength: nothing else in the library builds a
+preconditioner without touching the model space.
+
+**The `max_distance == 0` case is provably useless as v1 used it.** An
+invariant prior has one pointwise variance, so with uniform noise the diagonal
+is a constant and the preconditioner is a multiple of the identity — which
+cannot change what conjugate gradients does. Measured: 374 iterations
+preconditioned, 374 unpreconditioned, exactly. v1 had a special case for it. It
+is worth something only when the noise varies between data, and the docstring
+now says so.
+
+### 23.7 What this leaves
+
+The catalogue's preconditioner and surrogate rows are now closed. `low_rank_surrogate`
+is real rather than a pointer at `numerics.randomised`, and needed
+`GaussianMeasure.low_rank_approximation`, which returns a measure with a
+covariance *factor* and therefore no precision — so a low-rank measure can
+stand in for a prior in the data-space formalism and not in the model-space
+one, which is the sort of thing the formalism check now says out loud.
+
+`parameterised` and `data_reduced` existed on `LinearForwardProblem` and are
+lifted onto the inversion, as in v1. They are not preconditioners: they give a
+different and generally worse answer, and the point is that it may be the only
+one that fits.
+
+Still open from §22.10: the alternative convex solvers, and the plotting tail
+with the `dynamical_system` family.
+
+### 23.8 The last preconditioner, and the same bug a third time
+
+`ColumnThresholdedPreconditioner` keeps a column's entries when they are large
+relative to that column's diagonal. It is what to use when the operator is
+sparse in a basis but not *banded* in it — a covariance over scattered points,
+where what couples to what is geometry rather than index distance.
+
+It has the defect of §23.6 in a different disguise. Dropping entries column by
+column does not produce a symmetric matrix: entry `(i, j)` can pass its own
+column's test while `(j, i)` fails its own. So the result is asymmetric, and
+conjugate gradients needs a symmetric preconditioner. v1 did not symmetrise.
+
+The fix is to threshold the *pattern* rather than the values — keep a position
+when either column wants it — and then read the values off the Galerkin matrix,
+which is symmetric to begin with. Nothing that was asked for is dropped, and
+the result is symmetric by construction. The test checks self-adjointness
+directly rather than trusting the argument.
+
+That is three appearances of one shape:
+
+* the untapered distance truncation (§23.6), indefinite;
+* column-wise thresholding, asymmetric;
+* and, from §22.12, an inexact inner Woodbury solve, also asymmetric.
+
+Each is an approximation made independently in each column, row or iteration,
+of an object whose whole meaning is a relation *between* them. It is cheap to
+prevent in every case and silent in every case, and the third one is documented
+rather than fixed only because there the fix is the caller's — use
+`FlexibleCGSolver`, which is what it is for.
+
+Two boundary cases pin the implementation, both exactly rather than by degree:
+a zero threshold keeps everything, so the preconditioner is the exact inverse;
+and a cap of one entry per column is exactly `JacobiPreconditioner`, which is
+the only sane reading of "keep the largest, and the diagonal". Both run on a
+weighted space as well as a Euclidean one.
+
+With this, every preconditioner row in the catalogue is closed.

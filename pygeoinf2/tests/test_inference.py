@@ -17,7 +17,7 @@ from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.geometry.convex import Ball
 from pygeoinf2.inference import (
-    Bayesian,
+    LinearGaussianInversion,
     ForwardProblem,
     LeastSquares,
     LinearForwardProblem,
@@ -167,7 +167,7 @@ class TestBayesian:
     def test_the_two_formalisms_agree(self, problem, prior, rng):
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
         results = {
-            name: Bayesian(problem, prior, formalism=name)(data)
+            name: LinearGaussianInversion(problem, prior, formalism=name)(data)
             for name in ("model_space", "data_space")
         }
         model = problem.model_space
@@ -182,7 +182,7 @@ class TestBayesian:
 
     def test_it_matches_a_dense_reference(self, problem, prior, rng):
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
-        posterior = Bayesian(problem, prior)(data)
+        posterior = LinearGaussianInversion(problem, prior)(data)
         mean, covariance = dense_posterior(problem, prior, data)
         assert np.allclose(
             problem.model_space.to_components(posterior.expectation), mean
@@ -190,13 +190,13 @@ class TestBayesian:
         assert np.allclose(posterior.covariance.matrix(form="components"), covariance)
 
     def test_the_covariance_does_not_depend_on_the_data(self, problem, prior, rng):
-        estimator = Bayesian(problem, prior)
+        estimator = LinearGaussianInversion(problem, prior)
         first = estimator(problem.data_space.random(rng=rng))
         second = estimator(problem.data_space.random(rng=rng))
         assert first.covariance is second.covariance
 
     def test_it_is_a_measure_estimator(self, problem, prior):
-        assert isinstance(Bayesian(problem, prior), MeasureEstimator)
+        assert isinstance(LinearGaussianInversion(problem, prior), MeasureEstimator)
 
     def test_pushing_forward_agrees_with_pushing_the_answer(self, problem, prior, rng):
         """``(measure, P)`` is free, and the direct path must give the same."""
@@ -205,7 +205,7 @@ class TestBayesian:
             model, EuclideanSpace(2), rng.normal(size=(2, model.dim))
         )
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
-        estimator = Bayesian(problem, prior)
+        estimator = LinearGaussianInversion(problem, prior)
         direct = estimator.push_forward(target)(data)
         indirect = estimator(data).push_forward(target)
         assert np.allclose(direct.expectation, indirect.expectation)
@@ -225,7 +225,7 @@ class TestBayesian:
         """
         from numpy.random import default_rng
 
-        estimator = Bayesian(problem, prior)
+        estimator = LinearGaussianInversion(problem, prior)
         first = estimator._centred_sample(default_rng(11))
         second = estimator._centred_sample(default_rng(11))
         assert np.allclose(first, second)
@@ -236,7 +236,7 @@ class TestBayesian:
         ``GaussianMeasure`` adds the expectation to whatever the callable
         returns, so a sampler that already includes it lands at twice the mean.
         """
-        estimator = Bayesian(problem, prior)
+        estimator = LinearGaussianInversion(problem, prior)
         model = problem.model_space
         centred = [estimator._centred_sample(rng) for _ in range(2000)]
         assert np.allclose(model.to_components(model.mean(centred)), 0.0, atol=0.2)
@@ -244,7 +244,7 @@ class TestBayesian:
     def test_the_posterior_can_be_sampled(self, problem, prior, rng):
         """Randomise-then-optimise, whose mean must be the posterior mean."""
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
-        posterior = Bayesian(problem, prior)(data)
+        posterior = LinearGaussianInversion(problem, prior)(data)
         assert posterior.can_sample
         draws = [posterior.sample(rng=rng) for _ in range(3000)]
         mean = problem.model_space.mean(draws)
@@ -257,7 +257,7 @@ class TestBayesian:
     def test_a_prior_on_the_wrong_space_is_refused(self, problem):
         wrong = GaussianMeasure.from_standard_deviation(EuclideanSpace(9), 1.0)
         with pytest.raises(ValueError, match="model space"):
-            Bayesian(problem, wrong)
+            LinearGaussianInversion(problem, wrong)
 
     def test_a_nonzero_prior_mean_shifts_the_answer(self, problem, rng):
         model = problem.model_space
@@ -267,8 +267,12 @@ class TestBayesian:
         centred = GaussianMeasure.from_standard_deviation(model, 2.0)
         data = problem.data_space.random(rng=rng)
         assert not np.allclose(
-            model.to_components(Bayesian(problem, shifted)(data).expectation),
-            model.to_components(Bayesian(problem, centred)(data).expectation),
+            model.to_components(
+                LinearGaussianInversion(problem, shifted)(data).expectation
+            ),
+            model.to_components(
+                LinearGaussianInversion(problem, centred)(data).expectation
+            ),
         )
 
 
@@ -338,7 +342,7 @@ class TestEvidence:
         and the reference is the one scipy computes."""
         from scipy.stats import multivariate_normal
 
-        estimator = Bayesian(problem, prior)
+        estimator = LinearGaussianInversion(problem, prior)
         data = problem.data_space.random(rng=rng)
         covariance = problem.data_measure_from_model_measure(prior).covariance
         reference = multivariate_normal(
@@ -352,7 +356,7 @@ class TestEvidence:
     def test_the_two_terms_answer_different_questions(self, problem, prior, rng):
         """Misfit and volume, separately: whether the data are surprising, and
         whether the model was flexible enough that they could not have been."""
-        estimator = Bayesian(problem, prior)
+        estimator = LinearGaussianInversion(problem, prior)
         data = problem.data_space.random(rng=rng)
         mahalanobis, volume = estimator.evidence_terms(data)
         assert mahalanobis > 0.0
@@ -365,9 +369,9 @@ class TestEvidence:
         tight = GaussianMeasure.from_standard_deviation(model, 0.5)
         loose = GaussianMeasure.from_standard_deviation(model, 50.0)
         small = problem.synthetic_data(model.scale(0.1, model.random(rng=rng)), rng=rng)
-        assert Bayesian(problem, tight).log_evidence(small) > Bayesian(
-            problem, loose
-        ).log_evidence(small)
+        assert LinearGaussianInversion(problem, tight).log_evidence(
+            small
+        ) > LinearGaussianInversion(problem, loose).log_evidence(small)
 
 
 class TestConstrainedLeastSquares:

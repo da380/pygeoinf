@@ -10,7 +10,7 @@ operator is the identity, so there is one code path.
     problem = LinearForwardProblem(A, error=noise)
 
     point = MinimumNorm(problem)                    # D -> M
-    post  = Bayesian(problem, prior)                # D -> Measure(M)
+    post  = LinearGaussianInversion(problem, prior)                # D -> Measure(M)
 
     measure = post(data)
     property_posterior = post.push_forward(T)(data)  # D -> Measure(P)
@@ -24,7 +24,14 @@ from .backus import (
     DualFeasibleProperty,
     FeasibleProperty,
 )
-from .bayesian import Bayesian
+from .gaussian import LinearGaussianInversion
+from .normal import NormalOperator
+from .preconditioners import (
+    InvariantDistancePreconditioner,
+    LocalisedPreconditioner,
+    NormalDiagonalPreconditioner,
+    gaspari_cohn,
+)
 from .estimators import (
     Estimator,
     GaussianEstimator,
@@ -44,7 +51,12 @@ from .problem import ForwardProblem, LinearForwardProblem
 __all__ = [
     "BackusGilbert",
     "BackusInference",
-    "Bayesian",
+    "LinearGaussianInversion",
+    "NormalOperator",
+    "NormalDiagonalPreconditioner",
+    "LocalisedPreconditioner",
+    "InvariantDistancePreconditioner",
+    "gaspari_cohn",
     "ConstrainedLeastSquares",
     "DualFeasibleProperty",
     "FeasibleProperty",

@@ -132,7 +132,7 @@ spectral path is missing along with `kl_divergence` itself;
 | `BICGStabSolver` | Ported | `BiCGStabSolver`, coordinate-free | |
 | `LSQRSolver` | Ported | `LSQRSolver`; v1's sign bug in the damped branch is fixed (§9) | |
 | `LUSolver`, `CholeskySolver`, `EigenSolver` | Ported | same names, coordinate-backed | |
-| `FCGSolver` | Ported | Flexible CG, for a preconditioner that changes between iterations. Not ported. Needed if the localised preconditioners come back | I've not really used it, but it would be nice to keep |
+| `FCGSolver` | Ported | `FlexibleCGSolver`. Wanted whenever the inner solve of a preconditioner is itself iterative, which the Woodbury one warns about | I've not really used it, but it would be nice to keep |
 | `ScipyIterativeSolver` | Dropped | The point of v2's Krylov methods is that they run coordinate-free against PETSc or MFEM. A SciPy wrapper cannot | I'm happy to drop this, though my sense was when components are available this might be preferable to the hand written forms. But maybe not. |
 | `CGMatrixSolver`, `BICGMatrixSolver`, `BICGStabMatrixSolver`, `GMRESMatrixSolver` | Dropped | Matrix-only convenience wrappers around SciPy, superseded as above. **GMRES itself is missing** and is the one gap — see Open below | |
 | *(GMRES, coordinate-free)* | Ported | v2 has no solver for a non-symmetric operator other than BiCGStab. Worth adding? | Yes, if it's doable. Most invers methods lead to symmetric problems, but for completeness if nothing else. |
@@ -146,7 +146,7 @@ addtional information as you suggest will be very useful. |
 | `IdentityPreconditioningMethod` | Ported | `IdentityPreconditioner` | |
 | `JacobiPreconditioningMethod` | Ported | `JacobiPreconditioner` | |
 | `BandedPreconditioningMethod` | Ported | M5. Needs `extract_diagonals` | |
-| `ColumnThresholdedPreconditioningMethod` | Planned | M5 | |
+| `ColumnThresholdedPreconditioningMethod` | Ported | `ColumnThresholdedPreconditioner`. The pattern is symmetrised — v1's column-wise dropping gives an asymmetric matrix, which CG cannot use (DESIGN §23.8) | |
 | `ExactBlockPreconditioningMethod` | Ported | M5 | |
 | `SpectralPreconditioningMethod` | Ported | M5; `random_eig` is already there | |
 | `IterativePreconditioningMethod` | Ported | M5; wants `FCGSolver` | |
@@ -381,7 +381,7 @@ methods, and a class marked *Ported* above can still have shed half of them.
 | `from_formally_self_adjoint` | Ported | `lift_formal_adjoint(..., traits=...)`. It no longer claims self-adjointness for you: a formally self-adjoint operator is self-adjoint under the new metric only if it commutes with the ratio of the two (§9) | |
 | `linear` | Dropped | Type-level in v2 | |
 | `dual`, `self_dual` | Dropped | No dual spaces | |
-| `extract_diagonal`, `extract_diagonals` | Ported | Not ported. `random_diagonal` covers the stochastic case; the exact one is what the banded preconditioner needs | This has been useful in the past, so I'd want a reason or a replacement. |
+| `extract_diagonal`, `extract_diagonals` | Ported | `LinearOperator.diagonals(offsets=..., form=..., probe=...)`; `random_diagonal` and `deflated_diagonal` cover the stochastic case | This has been useful in the past, so I'd want a reason or a replacement. |
 | — | *(new)* | `traits`, `with_traits`, `from_derivative_callables`, `has_derivative`, `has_second_derivative` | |
 
 ## `GaussianMeasure` (41 methods)
@@ -463,7 +463,7 @@ different metric. So the union of method names is the honest comparison.
 | `spatial_multiplication_operator` | Ported | Multiplication by a field. Needed for a spatially varying coefficient, so it gates the same two examples | Needed and simple |
 | `l2_products_operator` | Ported | Inner products against a set of fields | Needed|
 | `estimate_truncation_degree` | Ported | Choosing `lmax` from a target accuracy | These are useful |
-| `distance_localized_preconditioner` | Planned | M5, with the other preconditioners; needs `pairs_within_distance`, which is ported | This was never as good as I hoped -- so check the implementation -- but should be useful |
+| `distance_localized_preconditioner` | Ported | `inference.InvariantDistancePreconditioner`. Checked as asked: the implementation is right, but `apply_taper` defaulted to False and an untapered truncation is strongly *indefinite*, which breaks CG rather than slowing it. Tapering is now the default (DESIGN §23.6) | This was never as good as I hoped -- so check the implementation -- but should be useful |
 
 ### Measures and fields
 
@@ -490,7 +490,7 @@ different metric. So the union of method names is the honest comparison.
 | `iris_stations`, `random_earthquakes` | Ported | `stations`, `earthquakes` | |
 | `domain_mask`, `random_domain_points` | Ported | `domain_mask`; `random_domain_points` is **Open** | |
 | `pairs_within_distance` | Ported | same name, with the chord formula so a point is in its own neighbourhood (§20.7) | |
-| `cluster_points` | Ported | Not ported | Useful for some preconditioners |
+| `cluster_points` | Ported | On the sphere, and used to build the blocks a `LocalisedPreconditioner` takes | Useful for some preconditioners |
 | `random_source_receiver_paths` | Ported | Not ported. `stations` and `earthquakes` give the ingredients, so this is convenience — but it is convenience every tomography script writes | Yes, needed somewhere |
 
 ## `HilbertSpaceDirectSum` (21 methods)
@@ -531,10 +531,12 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `with_formalism` | Subsumed | An argument on the estimator, defaulting to whichever space is smaller (§18.10) | |
 | `log_evidence`, `mahalanobis_evidence_term` | Ported | M5, as a functional on the data | |
 | `estimate_log_determinant` | Ported | `numerics.functional_calculus` | |
-| `low_rank_surrogate` | Ported | `numerics.randomised` | |
+| `low_rank_surrogate` | Ported | `LinearGaussianInversion.low_rank_surrogate`, on top of the new `GaussianMeasure.low_rank_approximation` (DESIGN §23.7) | |
 | `woodbury_data_preconditioner`, `woodbury_model_preconditioner` | Ported | `WoodburyPreconditioner.data_form` / `.model_form`, one class that picks the identity from the space it is asked to invert (DESIGN §22.12) | |
-| `diagonal_normal_preconditioner`, `sparse_localized_preconditioner` | Planned | `numerics.preconditioners`, M5 | |
-| `surrogate_inversion`, `surrogate_normal_preconditioner`, `surrogate_woodbury_data_preconditioner`, `surrogate_woodbury_model_preconditioner` | Subsumed | A surrogate is a transformed *problem*; the preconditioner then follows from it. `WoodburyPreconditioner` takes `A`, `Q`, `R` as arguments, so passing cheap ones *is* the surrogate case and needs no separate entry point | |
+| `diagonal_normal_preconditioner` | Ported | `inference.NormalDiagonalPreconditioner`, a free-standing LinearSolver taking a `NormalOperator` rather than a method on the inversion (DESIGN §23.4) | |
+| `sparse_localized_preconditioner` | Ported | `inference.LocalisedPreconditioner`, likewise. Blocks may overlap; `R`'s off-diagonal is dropped, now documented and tested as such | |
+| `surrogate_inversion` | Ported | `LinearGaussianInversion.surrogate` / `NormalOperator.surrogate`. Returns the surrogate *normal operator*, which is the only part of a surrogate problem ever used, and may live on a different model space (DESIGN §23.2) | |
+| `surrogate_normal_preconditioner`, `surrogate_woodbury_data_preconditioner`, `surrogate_woodbury_model_preconditioner` | Subsumed | Passing cheap factors *is* the surrogate case: `WoodburyPreconditioner.from_normal(inversion.surrogate(...))` | |
 | `parameterized_inversion`, `data_reduced_inversion` | Dropped | They forward to the `ForwardProblem` methods of the same name (§18.9) | |
 | `normal_residual_callback` | Subsumed | With the solver callbacks above | |
 

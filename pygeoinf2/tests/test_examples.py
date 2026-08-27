@@ -25,7 +25,7 @@ def example_scripts() -> list[pathlib.Path]:
 
 def test_the_examples_are_discovered():
     """Guards against the glob silently matching nothing."""
-    assert len(example_scripts()) >= 23
+    assert len(example_scripts()) >= 24
 
 
 # Examples that need an optional dependency, and the module that provides it.
@@ -36,6 +36,7 @@ OPTIONAL = {
     "21_tomography": "cartopy",
     "22_coupled_fields": "cartopy",
     "23_feasible_set": "cartopy",
+    "24_preconditioning": "pyshtools",
 }
 
 

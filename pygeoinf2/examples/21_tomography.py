@@ -18,7 +18,7 @@ Needs pyshtools and cartopy, which come with the 'sphere' extra.
 import numpy as np
 
 from pygeoinf2 import plotting
-from pygeoinf2.inference import Bayesian, LinearForwardProblem
+from pygeoinf2.inference import LinearGaussianInversion, LinearForwardProblem
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.symmetric_space.sphere import Sobolev
 
@@ -64,7 +64,7 @@ print()
 # The posterior. One line, and the formalism chooses itself.
 # ---------------------------------------------------------------------------
 
-estimator = Bayesian(problem, prior)
+estimator = LinearGaussianInversion(problem, prior)
 print(
     f"normal equations assembled in the {estimator.formalism}"
     f" (dim {min(X.dim, problem.data_space.dim)} rather than"

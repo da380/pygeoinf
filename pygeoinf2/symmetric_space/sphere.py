@@ -989,13 +989,23 @@ class Sphere(SymmetricSpace):
         ]
 
     def pairs_within_distance(
-        self, points: Sequence[Any], distance: float, /
-    ) -> tuple[np.ndarray, np.ndarray]:
+        self,
+        points: Sequence[Any],
+        distance: float,
+        /,
+        *,
+        with_distances: bool = False,
+    ) -> tuple[np.ndarray, ...]:
         """Index pairs closer together than a given geodesic distance.
 
         What a localised covariance needs: the sparsity pattern of "these two
         data see overlapping parts of the model". Returned as two index arrays,
-        ready for ``scipy.sparse``.
+        ready for ``scipy.sparse``, and with ``with_distances`` a third array
+        of the separations themselves — which is what an invariant covariance
+        needs, since for one the entry is a function of the distance alone.
+
+        Both orderings of a pair are returned, and so is every diagonal entry:
+        the result is the pattern of a symmetric matrix, not of a triangle.
         """
         vectors = np.stack([self._to_vector(point) for point in points])
         # Chord length, then 2 asin(chord/2). Accurate for small separations,
@@ -1003,6 +1013,8 @@ class Sphere(SymmetricSpace):
         chords = np.linalg.norm(vectors[:, None, :] - vectors[None, :, :], axis=-1)
         distances = 2.0 * self._radius * np.arcsin(np.clip(0.5 * chords, 0.0, 1.0))
         rows, columns = np.nonzero(distances <= distance)
+        if with_distances:
+            return rows, columns, distances[rows, columns]
         return rows, columns
 
     # ----------------------------------------------------------------- #

@@ -9,7 +9,7 @@ operator or a solver to build one from.
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal, Sequence
+from typing import Any, ClassVar, Literal, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -26,6 +26,7 @@ __all__ = [
     "BandedPreconditioner",
     "BlockPreconditioner",
     "WoodburyPreconditioner",
+    "ColumnThresholdedPreconditioner",
 ]
 
 
@@ -370,6 +371,55 @@ class WoodburyPreconditioner(LinearSolver):
         self._prior_inverse = prior_inverse
         self._noise_inverse = noise_inverse
 
+    @classmethod
+    def from_normal(
+        cls,
+        normal: Any,
+        /,
+        *,
+        solver: LinearSolver | None = None,
+        prior_solver: LinearSolver | None = None,
+        noise_solver: LinearSolver | None = None,
+    ) -> "WoodburyPreconditioner":
+        """Read ``A``, ``Q`` and ``R`` off a normal operator.
+
+        Takes anything exposing ``forward``, ``prior_covariance`` and
+        ``error_covariance`` — in practice a
+        :class:`~pygeoinf2.inference.normal.NormalOperator`, from an
+        inversion's ``normal_operator`` or, more usefully, from a
+        ``surrogate`` of one. Precisions are picked up when the measures carry
+        them, which is what lets the data form avoid a solve.
+
+        This is the ordinary way to build the preconditioner: the arguments are
+        exactly what an inversion already holds, so there is no reason for a
+        caller to reassemble them.
+        """
+        for attribute in ("forward", "prior_covariance", "error_covariance"):
+            if not hasattr(normal, attribute):
+                raise TypeError(
+                    f"from_normal needs an operator carrying its factors — "
+                    f"{type(normal).__name__} has no {attribute!r}. Build one "
+                    f"with pygeoinf2.inference.NormalOperator, or pass A, Q "
+                    f"and R to the constructor directly."
+                )
+        error_covariance = normal.error_covariance
+        if error_covariance is None:
+            raise ValueError(
+                "The Woodbury identity needs a data error covariance R; this "
+                "problem is noise-free, so its normal operator is singular "
+                "whenever the model space is the larger of the two."
+            )
+        return cls(
+            normal.forward,
+            normal.prior_covariance,
+            error_covariance,
+            solver=solver,
+            prior_solver=prior_solver,
+            noise_solver=noise_solver,
+            prior_inverse=getattr(normal, "prior_precision", None),
+            noise_inverse=getattr(normal, "error_precision", None),
+        )
+
     @property
     def model_space(self) -> HilbertSpace:
         """The space ``N_m`` acts on."""
@@ -453,5 +503,125 @@ class WoodburyPreconditioner(LinearSolver):
 
         def solve_fn(y, x0):
             return SolveResult(approximate(y), 1, 0.0, True)
+
+        return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+
+class ColumnThresholdedPreconditioner(LinearSolver):
+    """Keep the large entries of each column, and factorise what is left.
+
+    Where :class:`BandedPreconditioner` assumes the significant entries sit
+    near the diagonal, this one finds them: a column's entries are kept when
+    they are large relative to that column's diagonal, and dropped otherwise.
+    The right choice when the operator is sparse in a basis but not *banded* in
+    it — a covariance over scattered points, where what couples to what is a
+    matter of geometry rather than of index.
+
+    The whole matrix is formed to do this, so it costs one application per
+    column. It is for the case where that is affordable and a dense
+    factorisation is not.
+
+    Note:
+        Thresholding column by column does not produce a symmetric matrix —
+        entry ``(i, j)`` can pass its column's test while ``(j, i)`` fails its
+        own — and conjugate gradients needs a symmetric preconditioner. So the
+        *pattern* is symmetrised, by keeping a position when either column
+        wants it, and the values are then read off the Galerkin matrix, which
+        is symmetric to begin with. v1 did not do this. It is the same failure
+        as the untapered truncation of
+        :class:`~pygeoinf2.inference.preconditioners.InvariantDistancePreconditioner`
+        and it has the same character: cheap to prevent, silent when it happens.
+    """
+
+    requires: ClassVar[Traits] = Traits.SELF_ADJOINT
+    requires_coordinates: ClassVar[bool] = True
+
+    def __init__(
+        self,
+        threshold: float,
+        /,
+        *,
+        max_per_column: int | None = None,
+        incomplete: bool = False,
+        drop_tol: float = 1e-4,
+        fill_factor: float = 10.0,
+    ) -> None:
+        """
+        Args:
+            threshold: entries below ``threshold * |diagonal|`` of their own
+                column are dropped. Zero keeps everything.
+            max_per_column: a hard cap on retained entries per column, keeping
+                the largest. The diagonal is always among them.
+            incomplete: factorise with an incomplete LU rather than an exact
+                sparse one, for when even the sparse factors fill in too much.
+            drop_tol: the ILU drop tolerance, used only when *incomplete*.
+            fill_factor: the ILU fill limit, used only when *incomplete*.
+        """
+        if threshold < 0.0:
+            raise ValueError(f"The threshold must be non-negative, got {threshold}.")
+        if max_per_column is not None and max_per_column < 1:
+            raise ValueError(
+                f"At least one entry per column must be kept -- the diagonal "
+                f"-- but max_per_column is {max_per_column}."
+            )
+        self._threshold = threshold
+        self._max_per_column = max_per_column
+        self._incomplete = incomplete
+        self._drop_tol = drop_tol
+        self._fill_factor = fill_factor
+
+    def _keep(self, column: np.ndarray, index: int) -> np.ndarray:
+        """Which rows of one column survive."""
+        magnitudes = np.abs(column)
+        reference = magnitudes[index]
+        if reference < 1e-14:
+            reference = magnitudes.max(initial=0.0)
+        kept = np.flatnonzero(magnitudes >= self._threshold * reference)
+        cap = self._max_per_column
+        if cap is not None and kept.size > cap:
+            masked = magnitudes.copy()
+            masked[index] = -1.0
+            largest = (
+                np.argpartition(masked, -(cap - 1))[-(cap - 1) :] if cap > 1 else []
+            )
+            kept = np.asarray(largest, dtype=int)
+        return np.union1d(kept, [index])
+
+    def _invert(self, operator: LinearOperator) -> InverseOperator:
+        import scipy.sparse as sparse
+        import scipy.sparse.linalg as sparse_linalg
+
+        domain: CoordinateSpace = operator.domain
+        require_coordinates(domain, operator.codomain)
+        matrix = operator.matrix(form="galerkin")
+        dimension = domain.dim
+
+        pattern = sparse.lil_matrix((dimension, dimension), dtype=bool)
+        for index in range(dimension):
+            pattern[self._keep(matrix[:, index], index), index] = True
+        # Either column wanting a position is enough, which makes the pattern
+        # symmetric without dropping anything that was asked for.
+        pattern = (pattern.tocsr() + pattern.tocsr().T).tocoo()
+        rows, columns = pattern.row, pattern.col
+
+        thresholded = sparse.coo_matrix(
+            (matrix[rows, columns], (rows, columns)),
+            shape=(dimension, dimension),
+        ).tocsc()
+
+        if self._incomplete:
+            factorised = sparse_linalg.spilu(
+                thresholded,
+                drop_tol=self._drop_tol,
+                fill_factor=self._fill_factor,
+            )
+        else:
+            factorised = sparse_linalg.splu(thresholded)
+
+        def solve_fn(y: Any, x0: Any) -> SolveResult:
+            weighted = domain.apply_gram(domain.to_components(y))
+            return SolveResult(
+                domain.from_components(factorised.solve(weighted)), 0, 0.0, True
+            )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)

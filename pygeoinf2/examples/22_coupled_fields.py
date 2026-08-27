@@ -9,7 +9,7 @@ What makes it different from example 21 is that the unknown is a *pair*. The
 model space is a direct sum, the prior is a product measure, and the forward
 operator is a block matrix built from two degree-dependent symbols and the
 flexure operator of example 20. Nothing in the inference layer notices: a
-direct sum is a Hilbert space, so ``Bayesian(problem, prior)`` is the same call
+direct sum is a Hilbert space, so ``LinearGaussianInversion(problem, prior)`` is the same call
 it was before.
 
 The physics is a two-layer gravity calculation, kept only in enough detail to
@@ -28,7 +28,7 @@ from pygeoinf2.algebra.direct_sum import (
     ColumnLinearOperator,
 )
 from pygeoinf2.algebra.operators import LinearOperator
-from pygeoinf2.inference import Bayesian, LinearForwardProblem
+from pygeoinf2.inference import LinearGaussianInversion, LinearForwardProblem
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.symmetric_space.sphere import Sobolev
 
@@ -128,7 +128,7 @@ print()
 # One call. The direct sum is a Hilbert space, so nothing here is special.
 # ---------------------------------------------------------------------------
 
-estimator = Bayesian(problem, prior)
+estimator = LinearGaussianInversion(problem, prior)
 print(f"assembled in the {estimator.formalism}")
 posterior = estimator(data)
 density_mean, traction_mean = posterior.expectation
@@ -177,7 +177,7 @@ geoid_only = LinearForwardProblem(
 )
 print(
     "geoid alone,                                    "
-    f"{coupling_of(Bayesian(geoid_only, prior)):.4f}"
+    f"{coupling_of(LinearGaussianInversion(geoid_only, prior)):.4f}"
 )
 print("which is what a second, differently-sensitive observable is worth")
 print()

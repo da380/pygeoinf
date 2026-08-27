@@ -10,12 +10,14 @@ automatically unless it cannot be — see DESIGN.md section 18.10.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
 from ..algebra.operators import LinearOperator
 from ..numerics.solvers import CholeskySolver, LinearSolver
+from .normal import Formalism
+from .normal import choose_formalism as _choose
 from ..traits import Traits
 from .estimators import LinearPointEstimator
 from .problem import LinearForwardProblem
@@ -27,34 +29,16 @@ __all__ = [
     "choose_formalism",
 ]
 
-Formalism = Literal["auto", "model_space", "data_space"]
-
 
 def choose_formalism(
     problem: LinearForwardProblem, /, *, formalism: Formalism = "auto"
 ) -> str:
-    """Which space to assemble the normal equations in.
+    """Which space to assemble *this problem's* normal equations in.
 
-    ``"auto"`` takes the smaller of the two, which is the whole content of the
-    choice: both assemble the same mapping. It falls back to the data space
-    when a dimension is unavailable, since a coordinate-free model space is
-    exactly the case where a model-space solve cannot be assembled anyway.
+    The spaces-based decision of :func:`~pygeoinf2.inference.normal.choose_formalism`,
+    read off a forward problem.
     """
-    if formalism not in ("auto", "model_space", "data_space"):
-        raise ValueError(
-            f"The formalism is 'auto', 'model_space' or 'data_space', got "
-            f"{formalism!r}."
-        )
-    if formalism != "auto":
-        return formalism
-    try:
-        return (
-            "model_space"
-            if problem.model_space.dim <= problem.data_space.dim
-            else "data_space"
-        )
-    except (AttributeError, NotImplementedError):  # pragma: no cover
-        return "data_space"
+    return _choose(problem.model_space, problem.data_space, formalism=formalism)
 
 
 def _precision(problem: LinearForwardProblem) -> LinearOperator | None:

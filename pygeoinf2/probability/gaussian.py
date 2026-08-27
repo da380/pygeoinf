@@ -451,6 +451,48 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         centred = self.translate(self._domain.negative(self.expectation))
         return (factor * centred).translate(self.expectation)
 
+    def low_rank_approximation(
+        self,
+        /,
+        *,
+        rank: int | None = None,
+        rng: Generator | None = None,
+        **kwargs: Any,
+    ) -> "GaussianMeasure[X]":
+        """The same expectation, with the covariance truncated to *rank* modes.
+
+        Obtained as a randomised Cholesky factorisation ``C ~ L L*``, so the
+        result comes with a covariance *factor* and is therefore samplable even
+        when the original was not. Its precision does not survive — a
+        rank-deficient covariance has none — which means a low-rank measure can
+        stand in for a prior in the data-space formalism and not in the
+        model-space one.
+
+        The point is to be cheap rather than to be accurate: this is how a
+        surrogate is built when no cheaper physics is available. See
+        :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.low_rank_surrogate`.
+        """
+        from ..numerics.randomised import random_cholesky
+        from ..traits import Traits as _Traits
+
+        covariance = self._covariance
+        if covariance is None:
+            raise ValueError(
+                "A low-rank approximation needs the covariance, and this "
+                "measure was given only a precision."
+            )
+        factorised = random_cholesky(
+            covariance.with_traits(_Traits.POSITIVE_SEMIDEFINITE),
+            rank=rank,
+            rng=rng,
+            **kwargs,
+        )
+        return GaussianMeasure(
+            self._domain,
+            expectation=self._expectation,
+            covariance_factor=factorised.factor,
+        )
+
     def with_regularized_inverse(
         self,
         solver: Any,

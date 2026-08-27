@@ -55,6 +55,7 @@ from .optimisation import (
 from .preconditioners import (
     BandedPreconditioner,
     BlockPreconditioner,
+    ColumnThresholdedPreconditioner,
     IdentityPreconditioner,
     JacobiPreconditioner,
     SpectralPreconditioner,
@@ -133,6 +134,7 @@ __all__ = [
     "BandedPreconditioner",
     "BlockPreconditioner",
     "WoodburyPreconditioner",
+    "ColumnThresholdedPreconditioner",
     "LSQRSolver",
     "LUSolver",
     "LeastSquaresSolver",
