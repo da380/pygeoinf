@@ -16,16 +16,23 @@ part is the operator sandwiched in the middle rather than at the ends.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Sequence
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Sequence
 
 import numpy as np
+import scipy.sparse as sparse
+import scipy.sparse.linalg as sparse_linalg
 
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
+from ..algebra.spaces import EuclideanSpace
+from ..numerics.randomised import random_eig
 from ..numerics.solvers import InverseOperator, LinearSolver, SolveResult
 from ..traits import Traits
-from .normal import NormalOperator
+from .normal import FactoredNormalOperator
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..symmetric_space.base import SymmetricSpace
 
 __all__ = [
     "NormalDiagonalPreconditioner",
@@ -35,13 +42,13 @@ __all__ = [
 ]
 
 
-def _require_normal(operator: LinearOperator, name: str) -> NormalOperator:
-    if not isinstance(operator, NormalOperator):
+def _require_normal(operator: LinearOperator, name: str) -> FactoredNormalOperator:
+    if not isinstance(operator, FactoredNormalOperator):
         raise TypeError(
-            f"{name} needs the factors A, Q and R, so it takes a "
-            f"NormalOperator rather than an assembled one. Build it from an "
-            f"inversion's .normal_operator, or from .surrogate(...). Got "
-            f"{type(operator).__name__}."
+            f"{name} needs the factors A, Q and R, so it takes a normal "
+            f"operator that still carries them rather than an assembled one. "
+            f"Build it from an estimator's .normal_operator, or from "
+            f".surrogate(...). Got {type(operator).__name__}."
         )
     if operator.formalism != "data_space":
         raise ValueError(
@@ -211,12 +218,6 @@ class LocalisedPreconditioner(LinearSolver):
         self._rng = rng
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
-        import scipy.sparse as sparse
-        import scipy.sparse.linalg as sparse_linalg
-
-        from ..algebra.spaces import EuclideanSpace
-        from ..numerics.randomised import random_eig
-
         normal = _require_normal(operator, type(self).__name__)
         data_space = normal.data_space
         require_coordinates(data_space, data_space)
@@ -260,8 +261,8 @@ class LocalisedPreconditioner(LinearSolver):
 
             def block_value(
                 components: np.ndarray,
-                restrict: Any = restrict,
-                extend: Any = extend,
+                restrict: Callable[[Any], np.ndarray] = restrict,
+                extend: Callable[[np.ndarray], Any] = extend,
             ) -> np.ndarray:
                 return restrict(core(extend(components)))
 
@@ -384,7 +385,7 @@ class InvariantDistancePreconditioner(LinearSolver):
 
     def __init__(
         self,
-        space: Any,
+        space: "SymmetricSpace",
         points: Sequence[Any],
         max_distance: float,
         /,
@@ -411,9 +412,6 @@ class InvariantDistancePreconditioner(LinearSolver):
         self._taper = taper
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
-        import scipy.sparse as sparse
-        import scipy.sparse.linalg as sparse_linalg
-
         normal = _require_normal(operator, type(self).__name__)
         data_space = normal.data_space
         require_coordinates(data_space, data_space)

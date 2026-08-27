@@ -4148,7 +4148,8 @@ prior variance is also a claim about what regularisation means, and a damping
 does not have to make it.
 
 `TikhonovNormalOperator` carries its factors, so every structure-aware
-preconditioner of §23 applies to the point estimators unchanged. The estimators
+preconditioner of §23 applies to the point estimators — through the shared base
+of §25.1, which is what makes that true rather than merely plausible. The estimators
 gained what §23 gave the Gaussian one: `normal_operator`, `right_hand_side`,
 `with_solver`, `with_formalism`, `with_damping`, `surrogate`, `parameterised`,
 `data_reduced`, and `residual_callback` for v1's progress tracking.
@@ -4226,3 +4227,85 @@ answers in the tangent space. v1 does this correctly and the reason is not
 obvious from its code, since its "unconstrained inversion" attribute is already
 the reduced one. The test that caught it simply asks whether `B u == w` still
 holds; it did not, by 130%.
+
+## 25. A pass over the new code
+
+Reading §§23–24 back with an eye for reach-throughs and misplaced imports found
+one false claim, two private-member accesses, one contract weakened by
+accident, and a wasted solve per search.
+
+### 25.1 A claim that was not true
+
+§24.3 said every structure-aware preconditioner of §23 applies to the point
+estimators unchanged. It did not. `_require_normal` checked
+`isinstance(operator, NormalOperator)`, and `TikhonovNormalOperator` is not
+one — so `NormalDiagonalPreconditioner` and `LocalisedPreconditioner` refused
+the point estimators outright, with a message telling the caller to do the
+thing they had just done.
+
+This is what comes of two classes agreeing by construction rather than by
+declaration. The contract is now written down as `FactoredNormalOperator`, an
+abstract base declaring `formalism`, `forward`, `prior_covariance` and
+`error_covariance`, from which the spaces follow. Both normal operators inherit
+it and the preconditioners check for it.
+
+Structural typing — a `Protocol` — was the other candidate and is worse here:
+`runtime_checkable` resolves attributes by `hasattr`, which *calls* the
+property, and `TikhonovNormalOperator.prior_covariance` deliberately raises at
+zero damping. The check would have evaluated the thing it was only supposed to
+look for.
+
+`WoodburyPreconditioner.from_normal` still duck-types, and deliberately: it
+lives in `numerics`, which must not import `inference`. Its error message names
+the three attributes it wants.
+
+### 25.2 Two reach-throughs
+
+`DampedSolves` read `solver._preconditioner` and wrote it on a copy — the copy
+of a private field of another object, which is the worst kind. The solver now
+exposes `preconditioner` and `resolved_for(operator)`, the second returning a
+clone with a deferred preconditioner already built, or itself when there is
+nothing to resolve. The copying belongs to the class that owns the field.
+
+`Bayesian.evidence_terms` called `prior_data._weighted_squared`, reaching for
+the private method because the public `mahalanobis_squared` raises without a
+precision — and a prior predictive covariance `A Q A* + R` has none, being
+assembled rather than given with an inverse.
+
+The first fix was to give the public method the private one's dense fallback.
+That broke a test asserting the opposite, and the test was right: *no precision
+means no Mahalanobis distance* is a deliberate contract, so a cubic cost is
+never incurred by something that looks like a quadratic form. Weakening a
+guard to reach a caller is the wrong direction.
+
+The real fix was in the caller. `evidence_terms` forms the Galerkin matrix
+already, for the log-determinant of its volume term — so it takes the misfit
+from the same assembly, preferring the precision when one exists. One matrix
+now serves both terms where it previously served one and a private method
+computed the other.
+
+### 25.3 A wasted solve in every search
+
+`monotone_root` widens the bracket in both directions from a common starting
+multiplier, and each walk probed that multiplier itself. A probe is a *solve*.
+Every search since the primitive was written had paid one for nothing, and the
+`evaluations` count was reporting it. The start is now probed once and handed
+to both walks.
+
+### 25.4 Imports and types
+
+Function-level imports of `scipy.sparse`, `random_eig`, `random_svd`,
+`random_cholesky` and `CGSolver` were hoisted, having been written where they
+were used rather than where they belonged; `numerics`, `algebra` and `geometry`
+import neither `inference` nor `probability`, so there was never a cycle to
+avoid. What remains at function level in `probability/gaussian.py` and
+`inference/backus.py` is older code and left alone.
+
+`Any` was standing in for `AffineSubspace`, `GaussianMeasure`, `SymmetricSpace`
+and `Traits` in signatures where the real type was available — the symmetric
+space behind `TYPE_CHECKING`, since it is a heavy import for a hint.
+
+Left as it is, and worth a decision rather than a drift: the top-level
+`pygeoinf2/__init__` exports algebra, geometry, symmetric spaces, probability
+and traits, but not `inference` or `numerics`, so an inversion is reached as
+`from pygeoinf2.inference import ...`. v1 exported everything flat.

@@ -33,7 +33,8 @@ from typing import Any, Callable, Literal
 import numpy as np
 
 from ..algebra.operators import LinearOperator
-from .solvers import ConvergenceError, LinearSolver
+from ..traits import Traits
+from .solvers import ConvergenceError, IterativeSolver, LinearSolver
 
 # A probe that fails this way has reached the end of the usable range rather
 # than encountered a bug: a damping small enough leaves the normal operator
@@ -181,7 +182,10 @@ def monotone_root(
         )
 
     def widen(
-        direction: float, satisfied: Callable[[float], bool], end: str
+        direction: float,
+        satisfied: Callable[[float], bool],
+        end: str,
+        start: tuple[float, float, Any],
     ) -> tuple[float, float, Any, RootResult | None]:
         """Walk one end of the bracket until the goal is straddled.
 
@@ -192,8 +196,7 @@ def monotone_root(
         that worked is what is reported, because that is the extreme the
         caller was asking for.
         """
-        multiplier = initial
-        scaled, solution = probe(multiplier)
+        multiplier, scaled, solution = start
         if satisfied(scaled):
             return multiplier, scaled, solution, None
         for _ in range(expansions):
@@ -216,14 +219,20 @@ def monotone_root(
             finish(multiplier, scaled, solution, (multiplier, multiplier), False, end),
         )
 
+    # Probed once and handed to both walks, rather than once per direction:
+    # the starting multiplier is common to them, and a probe is a solve.
+    begin = (initial, *probe(initial))
+
     # Upward: the quantity must fall to or below the goal.
-    high, scaled, solution, exhausted = widen(10.0, lambda value: value <= goal, "high")
+    high, scaled, solution, exhausted = widen(
+        10.0, lambda value: value <= goal, "high", begin
+    )
     if exhausted is not None:
         return exhausted
 
     # Downward: the quantity must rise to or above the goal.
     low, scaled_low, solution_low, exhausted = widen(
-        0.1, lambda value: value >= goal, "low"
+        0.1, lambda value: value >= goal, "low", begin
     )
     if exhausted is not None:
         return exhausted
@@ -273,14 +282,14 @@ class DampedSolves:
     base: LinearOperator
     shift: LinearOperator
     solver: LinearSolver
-    traits: Any = None
+    traits: Traits | None = None
     refresh: float = 10.0
     """Rebuild the preconditioner once the multiplier has moved by more than
     this factor from where it was built. Infinity never rebuilds; one always
     does."""
 
     _cache: dict = field(default_factory=dict, repr=False)
-    _prepared: Any = field(default=None, repr=False)
+    _prepared: LinearSolver | None = field(default=None, repr=False)
     _prepared_at: float | None = field(default=None, repr=False)
 
     def operator(self, multiplier: float) -> LinearOperator:
@@ -293,25 +302,18 @@ class DampedSolves:
         return self._cache[multiplier]
 
     def _solver_for(self, multiplier: float, operator: LinearOperator) -> LinearSolver:
-        """The solver to use, with any preconditioner already resolved."""
-        from .solvers import IterativeSolver
-
+        """The solver to use, with any deferred preconditioner already built."""
         solver = self.solver
-        if not isinstance(solver, IterativeSolver):
-            return solver
-        preconditioner = solver._preconditioner
-        if preconditioner is None or not isinstance(preconditioner, LinearSolver):
+        if not isinstance(solver, IterativeSolver) or not isinstance(
+            solver.preconditioner, LinearSolver
+        ):
             return solver
 
         stale = self._prepared_at is None or not (
             1.0 / self.refresh <= multiplier / self._prepared_at <= self.refresh
         )
         if stale:
-            import copy
-
-            clone = copy.copy(solver)
-            clone._preconditioner = preconditioner(operator)
-            self._prepared = clone
+            self._prepared = solver.resolved_for(operator)
             self._prepared_at = multiplier
         return self._prepared
 

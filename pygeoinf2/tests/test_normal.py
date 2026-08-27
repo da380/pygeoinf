@@ -182,7 +182,7 @@ class TestNormalDiagonalPreconditioner:
     def test_an_assembled_operator_is_refused(self, normal):
         """It cannot do its job without the factors, and says so rather than
         falling back to something that would quietly work worse."""
-        with pytest.raises(TypeError, match="NormalOperator"):
+        with pytest.raises(TypeError, match="still carries them"):
             NormalDiagonalPreconditioner()(normal.assembled)
 
     def test_the_model_space_formalism_is_refused(self, setup):

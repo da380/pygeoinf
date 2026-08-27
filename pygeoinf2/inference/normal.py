@@ -29,6 +29,7 @@ factories. See DESIGN.md section 23.
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from typing import Any, Literal
 
 from ..algebra.operators import LinearOperator
@@ -36,7 +37,12 @@ from ..algebra.spaces import HilbertSpace
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 
-__all__ = ["NormalOperator", "Formalism", "choose_formalism"]
+__all__ = [
+    "FactoredNormalOperator",
+    "NormalOperator",
+    "Formalism",
+    "choose_formalism",
+]
 
 Formalism = Literal["auto", "model_space", "data_space"]
 
@@ -69,7 +75,58 @@ def choose_formalism(
         return "data_space"
 
 
-class NormalOperator(LinearOperator):
+class FactoredNormalOperator(LinearOperator):
+    """A normal operator that still knows what it was assembled from.
+
+    The contract a structure-aware preconditioner needs, and the reason it is
+    written down rather than left implicit: there are two normal operators in
+    this package — the Gaussian :class:`NormalOperator` and the Tikhonov
+    :class:`~pygeoinf2.inference.tikhonov.TikhonovNormalOperator` — and a
+    preconditioner that checked for one of them by name would silently refuse
+    the other. Both are ``A ... A* + ...``; both can be preconditioned the same
+    way.
+
+    Subclasses supply ``forward``, ``prior_covariance`` and
+    ``error_covariance``; the spaces follow from the first.
+    """
+
+    @property
+    @abstractmethod
+    def formalism(self) -> Literal["model_space", "data_space"]:
+        """Which space this was assembled in."""
+
+    @property
+    @abstractmethod
+    def forward(self) -> LinearOperator:
+        """The forward operator ``A``."""
+
+    @property
+    @abstractmethod
+    def prior_covariance(self) -> LinearOperator:
+        """``Q``: the prior covariance, or the one a damping stands for."""
+
+    @property
+    @abstractmethod
+    def error_covariance(self) -> LinearOperator | None:
+        """``R``, or None when the problem is noise-free."""
+
+    @property
+    def model_space(self) -> HilbertSpace:
+        """The model space, which the forward operator maps out of."""
+        return self.forward.domain
+
+    @property
+    def data_space(self) -> HilbertSpace:
+        """The data space, which the forward operator maps into."""
+        return self.forward.codomain
+
+    @property
+    def has_error(self) -> bool:
+        """Whether the problem carries a data error measure."""
+        return self.error_covariance is not None
+
+
+class NormalOperator(FactoredNormalOperator):
     """The normal operator of a linear Gaussian problem, with its factors.
 
     Behaves as the assembled operator everywhere an operator is wanted, and

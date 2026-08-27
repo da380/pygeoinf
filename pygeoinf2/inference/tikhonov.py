@@ -38,12 +38,12 @@ from ..numerics.root_find import DampedSolves
 from ..numerics.solvers import CholeskySolver, LinearSolver
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
-from .normal import Formalism, choose_formalism
+from .normal import FactoredNormalOperator, Formalism, choose_formalism
 
 __all__ = ["TikhonovNormalOperator", "TikhonovFamily"]
 
 
-class TikhonovNormalOperator(LinearOperator):
+class TikhonovNormalOperator(FactoredNormalOperator):
     """``N(t)`` at one damping, carrying the factors it was built from.
 
     The same bargain as :class:`~pygeoinf2.inference.normal.NormalOperator`:
@@ -237,6 +237,14 @@ class TikhonovNormalOperator(LinearOperator):
     #                        Right-hand side                            #
     # ----------------------------------------------------------------- #
 
+    def weighted_adjoint(self) -> LinearOperator:
+        """``A* R^-1`` in the model-space formalism, ``A*`` in the data-space one.
+
+        The piece that turns a data residual into the right-hand side, and the
+        one a caller would otherwise rebuild from the factors by hand.
+        """
+        return self._weighted
+
     def right_hand_side(self, data: Any, /) -> Any:
         """The right-hand side of ``N(t) w == v``, from observed data.
 
@@ -362,6 +370,14 @@ class TikhonovFamily:
             error=self._error,
             formalism=self._formalism,
         )
+
+    def weighted_adjoint(self) -> LinearOperator:
+        """``A* R^-1`` in the model-space formalism, ``A*`` in the data-space one.
+
+        The piece that turns a data residual into the right-hand side, and the
+        one a caller would otherwise rebuild from the factors by hand.
+        """
+        return self._weighted
 
     def right_hand_side(self, data: Any, /) -> Any:
         """The right-hand side, which does not depend on the damping."""

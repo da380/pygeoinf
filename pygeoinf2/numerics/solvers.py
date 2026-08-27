@@ -27,6 +27,8 @@ See DESIGN.md section 6.
 
 from __future__ import annotations
 
+import copy
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar
@@ -337,10 +339,37 @@ class IterativeSolver(LinearSolver):
         """
         if self._preconditioner is not None:
             return self
-        import copy
-
         clone = copy.copy(self)
         clone._preconditioner = preconditioner
+        return clone
+
+    @property
+    def preconditioner(self) -> "LinearSolver | LinearOperator | None":
+        """What this solver preconditions with, if anything.
+
+        A :class:`LinearSolver` here is *deferred*: it is applied to whatever
+        operator the solver is asked to invert, so it is rebuilt for each one.
+        A :class:`LinearOperator` is already resolved and is reused as it is.
+        """
+        return self._preconditioner
+
+    def resolved_for(self, operator: LinearOperator, /) -> "IterativeSolver":
+        """The same solver with a deferred preconditioner already built.
+
+        Returns ``self`` when there is nothing to resolve. Otherwise the
+        preconditioner is applied to *operator* once and the result carried as
+        a fixed operator, so that a caller sweeping a family of related
+        operators can build it once instead of once per member. Whether that is
+        a good trade is the caller's judgement — a preconditioner is an
+        approximation, so reusing one across a family costs accuracy, never
+        correctness.
+        """
+        if self._preconditioner is None or not isinstance(
+            self._preconditioner, LinearSolver
+        ):
+            return self
+        clone = copy.copy(self)
+        clone._preconditioner = self._preconditioner(operator)
         return clone
 
     def _resolve_preconditioner(

@@ -473,7 +473,6 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.low_rank_surrogate`.
         """
         from ..numerics.randomised import random_cholesky
-        from ..traits import Traits as _Traits
 
         covariance = self._covariance
         if covariance is None:
@@ -482,7 +481,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 "measure was given only a precision."
             )
         factorised = random_cholesky(
-            covariance.with_traits(_Traits.POSITIVE_SEMIDEFINITE),
+            covariance.with_traits(Traits.POSITIVE_SEMIDEFINITE),
             rank=rank,
             rng=rng,
             **kwargs,
@@ -727,11 +726,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
 
     def mahalanobis_squared(self, x: X) -> float:
-        """``(x - m, P (x - m))``, the squared Mahalanobis distance."""
+        """``(x - m, P (x - m))``, the squared Mahalanobis distance.
+
+        Needs a precision, and says so rather than falling back to a dense
+        solve. The fallback exists — :meth:`_weighted_squared` has it — but
+        reaching it silently would mean a cubic cost incurred by a method that
+        looks like a quadratic form. Regularise one into existence with
+        :meth:`with_regularized_inverse` if that is what you want.
+        """
         if self._precision is None:
             raise NotImplementedError(
                 "This measure has no precision, so no Mahalanobis distance. "
-                "Supply precision or precision_factor."
+                "Supply precision or precision_factor, or regularise one into "
+                "existence with with_regularized_inverse."
             )
         deviation = self._deviation(x)
         return self._domain.inner_product(self._precision(deviation), deviation)

@@ -19,10 +19,12 @@ otherwise.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 
 from ..algebra.operators import LinearOperator, Operator
+from ..geometry.subspaces import AffineSubspace
+from ..probability.gaussian import GaussianMeasure
 from ..numerics.root_find import Evaluation, RootResult, monotone_root
 from ..numerics.solvers import CholeskySolver, LinearSolver
 from .estimators import LinearPointEstimator
@@ -96,15 +98,7 @@ class LeastSquares(LinearPointEstimator):
         inverse = solver(normal)
 
         if normal.formalism == "model_space":
-            precision = (
-                None if not problem.has_error else problem.error_measure.precision
-            )
-            weighted = (
-                problem.forward_operator.adjoint
-                if precision is None
-                else problem.forward_operator.adjoint @ precision
-            )
-            operator = inverse @ weighted
+            operator = inverse @ normal.weighted_adjoint()
         else:
             operator = problem.forward_operator.adjoint @ inverse
 
@@ -224,7 +218,7 @@ class LeastSquares(LinearPointEstimator):
         /,
         *,
         forward: LinearOperator | None = None,
-        error: Any = None,
+        error: GaussianMeasure | None = None,
         damping: float | None = None,
         formalism: Formalism | None = None,
     ) -> TikhonovNormalOperator:
@@ -266,7 +260,7 @@ class LeastSquares(LinearPointEstimator):
         /,
         *,
         message: str = "iteration {iteration}: normal residual {residual:.3e}",
-        report: Any = print,
+        report: Callable[[str], None] = print,
     ) -> Any:
         """A solver callback that reports the normal-equation residual.
 
@@ -592,7 +586,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
     def __init__(
         self,
         problem: LinearForwardProblem,
-        subspace: Any,
+        subspace: AffineSubspace,
         /,
         *,
         damping: float = 0.0,
@@ -613,7 +607,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         projector = subspace.projector
         translation = subspace.translation
 
-        reduced = reduced_problem(problem, subspace)
+        reduced = _reduced_problem(problem, subspace)
         inner = LeastSquares(
             reduced, damping=damping, solver=solver, formalism=formalism
         )
@@ -636,7 +630,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         self._formalism = formalism
 
     @property
-    def subspace(self) -> Any:
+    def subspace(self) -> AffineSubspace:
         """The affine subspace the answer is confined to."""
         return self._subspace
 
@@ -692,8 +686,8 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         )
 
 
-def reduced_problem(
-    problem: LinearForwardProblem, subspace: Any, /
+def _reduced_problem(
+    problem: LinearForwardProblem, subspace: AffineSubspace, /
 ) -> LinearForwardProblem:
     """The unconstrained problem inside an affine subspace.
 
@@ -722,7 +716,7 @@ class ConstrainedMinimumNorm(Operator):
     def __init__(
         self,
         problem: LinearForwardProblem,
-        subspace: Any,
+        subspace: AffineSubspace,
         /,
         *,
         level: float = 0.95,
@@ -748,7 +742,7 @@ class ConstrainedMinimumNorm(Operator):
         self._projector = subspace.projector
         self._translation = subspace.translation
         self._inner = DiscrepancyPrinciple(
-            reduced_problem(problem, subspace),
+            _reduced_problem(problem, subspace),
             level=level,
             solver=solver,
             formalism=formalism,
@@ -758,7 +752,7 @@ class ConstrainedMinimumNorm(Operator):
         self._offset = problem.forward_operator(self._translation)
 
     @property
-    def subspace(self) -> Any:
+    def subspace(self) -> AffineSubspace:
         """The affine subspace the answer is confined to."""
         return self._subspace
 

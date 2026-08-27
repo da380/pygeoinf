@@ -12,12 +12,20 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal, Sequence
 
 import numpy as np
+import scipy.sparse as sparse
+import scipy.sparse.linalg as sparse_linalg
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..traits import Traits
-from .solvers import InverseOperator, LinearSolver, SolveResult
+from .randomised import random_eig
+from .solvers import (
+    CGSolver,
+    InverseOperator,
+    LinearSolver,
+    SolveResult,
+)
 
 __all__ = [
     "IdentityPreconditioner",
@@ -110,8 +118,6 @@ class SpectralPreconditioner(LinearSolver):
         self._rng = rng
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
-        from .randomised import random_eig
-
         space = operator.domain
         low_rank = random_eig(operator, rank=self._rank, rng=self._rng)
         values = low_rank.eigenvalues
@@ -183,16 +189,15 @@ class BandedPreconditioner(LinearSolver):
         self._probe = probe
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
-        from scipy.sparse import dia_array
-        from scipy.sparse.linalg import splu
-
         space = operator.domain
         offsets = list(range(-self._bandwidth, self._bandwidth + 1))
         diagonals = operator.diagonals(
             offsets=offsets, form=self._form, probe=self._probe
         )
-        banded = dia_array((diagonals, offsets), shape=(space.dim, space.dim)).tocsc()
-        factorisation = splu(banded)
+        banded = sparse.dia_array(
+            (diagonals, offsets), shape=(space.dim, space.dim)
+        ).tocsc()
+        factorisation = sparse_linalg.splu(banded)
         galerkin = self._form == "galerkin" or (
             self._form == "auto" and Traits.SELF_ADJOINT & operator.traits
         )
@@ -433,8 +438,6 @@ class WoodburyPreconditioner(LinearSolver):
     def _inner_solver(self) -> LinearSolver:
         if self._solver is not None:
             return self._solver
-        from .solvers import CGSolver
-
         return CGSolver()
 
     def _resolve(
@@ -588,9 +591,6 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         return np.union1d(kept, [index])
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
-        import scipy.sparse as sparse
-        import scipy.sparse.linalg as sparse_linalg
-
         domain: CoordinateSpace = operator.domain
         require_coordinates(domain, operator.codomain)
         matrix = operator.matrix(form="galerkin")

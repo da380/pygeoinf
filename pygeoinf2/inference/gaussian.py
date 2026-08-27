@@ -36,6 +36,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import AffineOperator, LinearOperator
+from ..numerics.randomised import random_svd
 from ..numerics.solvers import CholeskySolver, LinearSolver
 from ..probability.gaussian import GaussianMeasure
 from .estimators import GaussianEstimator
@@ -226,8 +227,6 @@ class LinearGaussianInversion(GaussianEstimator):
 
         Each rank left as None leaves that factor exact.
         """
-        from ..numerics.randomised import random_svd
-
         forward = None
         if forward_rank is not None:
             forward = random_svd(
@@ -290,14 +289,33 @@ class LinearGaussianInversion(GaussianEstimator):
         """
         prior_data = self._problem.data_measure_from_model_measure(self._prior)
         residual = self.data_space.subtract(data, prior_data.expectation)
-        mahalanobis = prior_data._weighted_squared(residual)
+
+        # One assembly serves both terms. The volume term needs the Galerkin
+        # matrix's determinant, so the matrix exists either way; taking the
+        # misfit from the same factorisation is why this does not ask the
+        # measure for a Mahalanobis distance it has no precision to supply.
         matrix = prior_data.covariance.matrix(form="galerkin")
-        sign, logarithm = np.linalg.slogdet(0.5 * (matrix + matrix.T))
+        symmetric = 0.5 * (matrix + matrix.T)
+        sign, logarithm = np.linalg.slogdet(symmetric)
         if sign <= 0:
             raise ValueError(
                 "The data prior covariance is singular, so the evidence is "
                 "not defined. Regularise it first."
             )
+
+        if prior_data.precision is not None:
+            mahalanobis = self.data_space.inner_product(
+                prior_data.precision(residual), residual
+            )
+        else:
+            # In Galerkin form the quadratic is g^T M^-1 g with g == G c: the
+            # metric appears on both sides because the operator being inverted
+            # is G C_c, not C_c.
+            weighted = self.data_space.apply_gram(
+                self.data_space.to_components(residual)
+            )
+            mahalanobis = float(weighted @ np.linalg.solve(symmetric, weighted))
+
         gram = self.data_space.gram_matrix()
         _, gram_logarithm = np.linalg.slogdet(gram)
         return float(mahalanobis), float(logarithm - gram_logarithm)
