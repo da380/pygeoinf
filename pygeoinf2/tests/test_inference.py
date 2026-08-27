@@ -433,7 +433,7 @@ class TestConstrainedLeastSquares:
         from pygeoinf2.inference import ConstrainedLeastSquares
 
         _, subspace = constrained
-        estimator = ConstrainedLeastSquares(problem, subspace)
+        estimator = ConstrainedLeastSquares(problem, subspace, damping=1e-3)
         assert isinstance(estimator, LinearPointEstimator)
         assert estimator.subspace is subspace
 

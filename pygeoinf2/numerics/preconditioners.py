@@ -68,7 +68,7 @@ class JacobiPreconditioner(LinearSolver):
         codomain: CoordinateSpace = operator.codomain
         require_coordinates(domain, codomain)
 
-        diagonal = np.diag(operator.matrix(form="galerkin"))
+        diagonal = operator.diagonals(offsets=(0,), form="galerkin")[0]
         safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
         inverse_diagonal = 1.0 / safe
 

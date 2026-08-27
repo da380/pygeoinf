@@ -409,7 +409,10 @@ class TestInvariantDistancePreconditioner:
         from pygeoinf2.symmetric_space.sphere import Sobolev
 
         space = Sobolev(32, 2.0, 0.1)
-        points = space.random_points(80)
+        # Seeded: whether a truncation is indefinite depends on how many pairs
+        # fall inside the radius, so points drawn from the global generator
+        # would make this test pass or fail by luck.
+        points = space.random_points(150, rng=np.random.default_rng(11))
         forward = space.point_evaluation_operator(points, dense=True)
         prior = space.heat_measure(0.02, pointwise_std=1.0)
         error = GaussianMeasure.from_standard_deviation(forward.codomain, 0.05)
@@ -432,7 +435,7 @@ class TestInvariantDistancePreconditioner:
         )
         assert np.abs(built - exact).max() < 1e-8 * np.abs(exact).max()
 
-    @pytest.mark.parametrize("radius", [0.15, 0.3])
+    @pytest.mark.parametrize("radius", [0.2, 0.4])
     def test_truncating_without_a_taper_destroys_positive_definiteness(
         self, sphere, radius
     ):

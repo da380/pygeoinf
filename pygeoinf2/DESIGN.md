@@ -4389,3 +4389,130 @@ converges as `1/sqrt(n)`, so `4 sigma` is a statement about the estimator and
 And the misfit through a preconditioned conjugate-gradient solve equals the
 misfit through a Cholesky factorisation to eight figures, which is the whole of
 the matrix-free claim on that half.
+
+## 27. Two defaults that were wrong
+
+Two of my choices deviated from v1 without cause, and both were defaults —
+which is the worst place for an unwarranted choice, because a default is what
+happens when nobody is paying attention.
+
+### 27.1 Direct solvers
+
+`LinearGaussianInversion`, `LeastSquares`, `MinimumNorm`, `DiscrepancyPrinciple`
+and `TikhonovFamily` all defaulted to `CholeskySolver`. A Cholesky
+factorisation forms the matrix: `O(n^2)` memory and `O(n^3)` time, and one
+application per column of the operator merely to assemble it. That is the right
+tool for a small problem and unusable for anything else, and choosing it by
+default says the library expects small problems.
+
+**Matrix-free is preferable unless the use is obviously restricted to small
+problems, and so iterative solvers, not direct ones.** The defaults are now
+`CGSolver`. A direct solver remains a keyword argument away, and is still the
+right choice where it is: `BackusInference._property_pseudo_inverse` factorises
+its property-space normal operator because that space is a handful of rows
+by construction (§22.11), and a test that wants to isolate a derivative from
+solver noise should say `solver=CholeskySolver()` and mean it.
+
+The change is not free, and both of its costs are worth recording.
+
+**It found a singular system a direct solver had been hiding.** An undamped
+`ConstrainedLeastSquares` assembles `(A P)(A P)*` on the data space, whose rank
+is at most the subspace's dimension — so it is singular whenever the subspace is
+smaller than the data space, which is the ordinary case. Measured on the
+existing fixture: eigenvalues `[0, 0.070, 0.481, 7.610]`, condition `6.2e17`.
+Cholesky returned an answer. It satisfied the constraint, because the projector
+enforces that structurally, and it was the solution of a singular system in
+every other respect. Conjugate gradients refuses, and its message says the
+operator claims positive definiteness and does not have it — which is exactly
+what happened.
+
+**It broke an example, correctly.** Example 22 couples a density in kg/m^3 with
+a traction in Pa, so the normal operator's eigenvalues span `9e12` to `7e18`:
+badly *scaled* rather than badly conditioned — the condition number is only
+`7.5e5` and every eigenvalue is positive. Unpreconditioned conjugate gradients
+loses orthogonality on that and reports a residual of `nan`. A diagonal
+preconditioner is the entire fix, because a scaling problem is what a diagonal
+preconditioner is for, and the example now says so. That is a better example
+than one that quietly factorised its way past the issue.
+
+### 27.2 "Whichever space is smaller"
+
+The formalism defaulted to `"auto"`, meaning whichever of the model and data
+spaces has fewer dimensions. v1 defaults to `"data_space"` everywhere, and v1
+is right.
+
+**Data spaces can be large; model spaces are usually larger still.** So the
+data space is where the normal equations belong unless there is a reason
+otherwise, and the model-space formalism is kept for when there is one — an
+overdetermined problem whose precision is cheap, or a surrogate (§23.2), where
+it is genuinely the smaller side.
+
+Comparing dimensions was the wrong test in two further ways. It says nothing
+about whether the model-space route is *available*: that needs `Q^-1`, and a
+function-space prior often has none — a Sobolev covariance is singular in
+practice long before it is in theory. And it reads a discretisation's size as
+though it were the problem's, so refining a grid could silently change which
+algebra runs.
+
+`"auto"` remains, and is now something to opt into rather than the thing that
+happens by default.
+
+### 27.3 The discrepancy principle has no answer sometimes
+
+Making the solves iterative also exposed that `DiscrepancyPrinciple` was
+returning garbage in a case where it should refuse. When no damping is small
+enough to bring the misfit to its target — a two-dimensional subspace against
+eight data, say — the bracket walks down until the normal operator is
+numerically singular, and the "solution" there is the solution of a singular
+system. Its norm was `2.4e5` where the derivative test expected order one.
+
+v1 raises, and that is right: the principle has no solution, and the
+least-damped model is not a fallback but a different thing entirely. It now
+raises with the misfit it reached and the target it was aiming at, and suggests
+the three things that actually help — a lower level, a wider model, or a chosen
+damping.
+
+Note that the *other* saturated case is not like this. "Every damping fits" is
+a real answer — the data support no structure and the smallest model says so
+(§24.1) — and it still returns one. The two ends of the bracket mean different
+things, and only one of them is an answer.
+
+### 27.4 A diagonal should not cost a matrix
+
+Four preconditioners read a diagonal as `np.diag(operator.matrix(...))`, which
+allocates `dim^2` to keep `dim` numbers. `diagonals(offsets=(0,))` costs the
+same applications and `O(dim)` memory. On a data space of any size the
+difference is the whole question of whether the preconditioner can be built at
+all — and these are preconditioners, so they exist for problems where it is.
+
+### 27.5 How many times will you use the inverse?
+
+Switching the defaults took example 22 from thirty seconds to **525**. The
+posterior mean was not the problem: that is one solve either way. The coupling
+diagnostic was, because it *forms* three posterior-covariance blocks, which is
+some three thousand applications of the inverse normal operator — three
+thousand independent Krylov runs where a factorisation would have done one
+decomposition and three thousand triangular solves.
+
+So the criterion is not the one the change was made under. "Iterative unless
+the problem is obviously small" is right for *choosing a default*, because a
+default cannot know how large the problem will be. But at a call site the
+question is sharper:
+
+> How many times will this inverse be applied?
+
+Once or a few times — a posterior mean, a misfit, a damping search — and the
+iterative solver wins outright, since it never assembles and its cost is
+proportional to what it is asked for. Thousands of times, to *form* something
+dense, and the factorisation amortises and the Krylov runs do not. That is the
+same trade `OperatorFunction` already documents about `f(A)`, arriving from the
+other direction.
+
+Example 22 now says so: the inversion is iterative, the diagnostic that builds
+matrices calls `with_solver(CholeskySolver())`, and the comment explains that
+the choice is about the number of applications rather than the size of the
+problem. 85 seconds, and the same numbers.
+
+Worth noticing for its own sake: a dense diagnostic on an iterative inversion
+is exactly what `with_solver` is for, and it would not have been expressible
+before §23 gave the estimators one.

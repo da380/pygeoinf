@@ -61,14 +61,18 @@ print(
 print()
 
 # ---------------------------------------------------------------------------
-# The posterior. One line, and the formalism chooses itself.
+# The posterior. One line, and the solve inside it is iterative and
+# matrix-free: nothing here is ever assembled.
 # ---------------------------------------------------------------------------
 
+# The normal equations go in the data space by default, and here that is also
+# the smaller side. It is the default because it is nearly always the smaller
+# side -- a model space is a discretised function and grows with resolution,
+# while the data are however many observations there are.
 estimator = LinearGaussianInversion(problem, prior)
 print(
     f"normal equations assembled in the {estimator.formalism}"
-    f" (dim {min(X.dim, problem.data_space.dim)} rather than"
-    f" {max(X.dim, problem.data_space.dim)})"
+    f" (dim {problem.data_space.dim} rather than {X.dim})"
 )
 
 posterior = estimator(data)

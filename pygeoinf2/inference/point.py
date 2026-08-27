@@ -26,7 +26,7 @@ from ..algebra.operators import LinearOperator, Operator
 from ..geometry.subspaces import AffineSubspace
 from ..probability.gaussian import GaussianMeasure
 from ..numerics.root_find import Evaluation, RootResult, monotone_root
-from ..numerics.solvers import CholeskySolver, LinearSolver
+from ..numerics.solvers import CGSolver, LinearSolver
 from .estimators import LinearPointEstimator
 from .normal import Formalism
 from .normal import choose_formalism as _choose
@@ -74,7 +74,7 @@ class LeastSquares(LinearPointEstimator):
         *,
         damping: float = 0.0,
         solver: LinearSolver | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Args:
@@ -88,7 +88,7 @@ class LeastSquares(LinearPointEstimator):
                 knows its factors.
             formalism: which space to solve in; see :func:`choose_formalism`.
         """
-        solver = CholeskySolver() if solver is None else solver
+        solver = CGSolver() if solver is None else solver
         normal = TikhonovNormalOperator(
             problem.forward_operator,
             damping,
@@ -424,7 +424,7 @@ class DiscrepancyPrinciple(Operator):
         *,
         level: float = 0.95,
         solver: LinearSolver | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
         iterations: int = 60,
         rtol: float = 1e-6,
     ) -> None:
@@ -446,7 +446,7 @@ class DiscrepancyPrinciple(Operator):
         super().__init__(problem.data_space, problem.model_space)
         self._problem = problem
         self._level = level
-        self._solver = CholeskySolver() if solver is None else solver
+        self._solver = CGSolver() if solver is None else solver
         self._formalism = formalism
         self._iterations = iterations
         self._rtol = rtol
@@ -491,6 +491,21 @@ class DiscrepancyPrinciple(Operator):
             # The zero model already fits, so it is the smallest that does.
             return model_space.zero(), 0.0, False
         found = self.search(data)
+        if found.exhausted == "low":
+            # No damping small enough brings the misfit to its target, so the
+            # principle has no solution: these data cannot be fitted to this
+            # level by any model this problem admits. v1 raises here too. The
+            # least-damped model is *not* a fallback — it is the solution of a
+            # numerically singular system, and its size says nothing about the
+            # data.
+            raise ValueError(
+                f"The data cannot be fitted to the chi-squared threshold at "
+                f"level {self._level}: the misfit is still "
+                f"{found.value:.4g} against a target of {target:.4g} at the "
+                f"smallest damping the normal operator survives. Lower the "
+                f"level, widen the model, or use LeastSquares with a chosen "
+                f"damping."
+            )
         return (
             self._family.model_from(found.solution),
             found.argument,
@@ -591,7 +606,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         *,
         damping: float = 0.0,
         solver: LinearSolver | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Args:
@@ -721,7 +736,7 @@ class ConstrainedMinimumNorm(Operator):
         *,
         level: float = 0.95,
         solver: LinearSolver | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
         iterations: int = 60,
         rtol: float = 1e-6,
     ) -> None:

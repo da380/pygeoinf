@@ -35,7 +35,7 @@ from typing import Any, Literal
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..numerics.root_find import DampedSolves
-from ..numerics.solvers import CholeskySolver, LinearSolver
+from ..numerics.solvers import CGSolver, LinearSolver
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .normal import FactoredNormalOperator, Formalism, choose_formalism
@@ -58,7 +58,7 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         /,
         *,
         error: GaussianMeasure | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Args:
@@ -313,7 +313,7 @@ class TikhonovFamily:
         *,
         error: GaussianMeasure | None = None,
         solver: LinearSolver | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Args:
@@ -327,7 +327,7 @@ class TikhonovFamily:
         """
         self._forward = forward
         self._error = error
-        self._solver = CholeskySolver() if solver is None else solver
+        self._solver = CGSolver() if solver is None else solver
         self._formalism = choose_formalism(
             forward.domain, forward.codomain, formalism=formalism
         )

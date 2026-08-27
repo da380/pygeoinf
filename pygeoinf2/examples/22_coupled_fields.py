@@ -29,6 +29,8 @@ from pygeoinf2.algebra.direct_sum import (
 )
 from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.inference import LinearGaussianInversion, LinearForwardProblem
+from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
+from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.symmetric_space.sphere import Sobolev
 
@@ -128,7 +130,15 @@ print()
 # One call. The direct sum is a Hilbert space, so nothing here is special.
 # ---------------------------------------------------------------------------
 
-estimator = LinearGaussianInversion(problem, prior)
+# The solve is iterative, as it should be for a problem of this size — nothing
+# here is ever assembled. But the two fields carry wildly different units, a
+# density in kg/m^3 against a traction in Pa, so the normal operator's
+# eigenvalues span 9e12 to 7e18: badly *scaled* rather than badly conditioned.
+# Unpreconditioned conjugate gradients loses orthogonality on that and reports
+# a residual of nan. Jacobi is the whole fix, because a scaling problem is
+# exactly what a diagonal preconditioner is for.
+solver = CGSolver(rtol=1e-10, maxiter=5000).with_preconditioner(JacobiPreconditioner())
+estimator = LinearGaussianInversion(problem, prior, solver=solver)
 print(f"assembled in the {estimator.formalism}")
 posterior = estimator(data)
 density_mean, traction_mean = posterior.expectation
@@ -152,8 +162,17 @@ def coupling_of(estimator):
 
     A trace would not do: a cross-covariance block sums signed correlations and
     can vanish while every one of them is large.
+
+    This *forms* three covariance blocks, so it applies the inverse normal
+    operator about three thousand times. That is the case where a direct solver
+    earns its keep: one factorisation, then three thousand cheap triangular
+    solves, against three thousand independent Krylov runs. The posterior above
+    is iterative because a posterior mean is one solve and the problem might be
+    large; this diagnostic is dense because a dense answer is what it asks for.
+    Which solver is right is a question about how many times you will use the
+    inverse, not about how large the problem is.
     """
-    covariance = estimator.covariance
+    covariance = estimator.with_solver(CholeskySolver()).covariance
 
     def block(first, second):
         return (first @ covariance @ second.adjoint).matrix(form="components")
@@ -177,7 +196,7 @@ geoid_only = LinearForwardProblem(
 )
 print(
     "geoid alone,                                    "
-    f"{coupling_of(LinearGaussianInversion(geoid_only, prior)):.4f}"
+    f"{coupling_of(LinearGaussianInversion(geoid_only, prior, solver=solver)):.4f}"
 )
 print("which is what a second, differently-sensitive observable is worth")
 print()

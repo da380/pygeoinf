@@ -57,10 +57,17 @@ def choose_formalism(
     """Which space to assemble the normal equations in.
 
     A purely computational choice — the two give the same answer — so ``auto``
-    takes whichever space is smaller. It falls back to the data space when a
-    dimension is unavailable, since a coordinate-free model space is exactly
-    the case where a model-space solve cannot be assembled anyway. See
-    DESIGN.md section 18.6.
+    takes whichever space is smaller, falling back to the data space when a
+    dimension is unavailable.
+
+    ``auto`` is offered and is *not* the default anywhere. Comparing dimensions
+    says nothing about whether the model-space route is available at all: it
+    needs ``Q^-1``, and a function-space prior often has none. It also reads a
+    discretisation's size as though it were the problem's. Data spaces can be
+    large; model spaces are usually larger still, so the data space is where
+    the normal equations belong unless there is a reason otherwise, and the
+    model-space formalism is kept for when there *is* one — an overdetermined
+    problem with a cheap precision, or a surrogate. See DESIGN.md §18.6, §27.
     """
     if formalism not in ("auto", "model_space", "data_space"):
         raise ValueError(
@@ -141,7 +148,7 @@ class NormalOperator(FactoredNormalOperator):
         /,
         *,
         error: GaussianMeasure | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Args:

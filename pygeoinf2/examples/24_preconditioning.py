@@ -79,8 +79,11 @@ print(
 )
 print()
 
-# The data space is the smaller, so this is the formalism that would be chosen
-# anyway; it is named explicitly because everything below depends on it.
+# The data space is the default and is also the smaller side here; it is named
+# explicitly because everything below depends on it. The Cholesky solver is
+# deliberate too, and the only one in this file: it is the reference the
+# iterative solves are checked against, and this problem is small enough to
+# afford one. Nothing else here assembles anything.
 inversion = LinearGaussianInversion(
     problem, prior, formalism="data_space", solver=CholeskySolver()
 )

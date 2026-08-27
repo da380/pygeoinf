@@ -37,7 +37,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import AffineOperator, LinearOperator
 from ..numerics.randomised import random_svd
-from ..numerics.solvers import CholeskySolver, LinearSolver
+from ..numerics.solvers import CGSolver, LinearSolver
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .estimators import GaussianEstimator
@@ -60,7 +60,7 @@ class LinearGaussianInversion(GaussianEstimator):
         /,
         *,
         solver: LinearSolver | None = None,
-        formalism: Formalism = "auto",
+        formalism: Formalism = "data_space",
     ) -> None:
         """
         Args:
@@ -92,7 +92,7 @@ class LinearGaussianInversion(GaussianEstimator):
                 f"pygeoinf2.inference.backus."
             )
 
-        solver = CholeskySolver() if solver is None else solver
+        solver = CGSolver() if solver is None else solver
         normal = NormalOperator(
             problem.forward_operator,
             prior,

@@ -142,7 +142,9 @@ class NormalDiagonalPreconditioner(LinearSolver):
 
         error_covariance = normal.error_covariance
         if error_covariance is not None:
-            diagonal = diagonal + np.diag(error_covariance.matrix(form="galerkin"))
+            diagonal = (
+                diagonal + error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
+            )
 
         safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
         inverse_diagonal = 1.0 / safe
@@ -294,7 +296,7 @@ class LocalisedPreconditioner(LinearSolver):
         error_covariance = normal.error_covariance
         if error_covariance is not None:
             assembled = assembled + sparse.diags(
-                np.diag(error_covariance.matrix(form="galerkin"))
+                error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
             )
         factorised = sparse_linalg.splu(assembled.tocsc())
 
@@ -426,7 +428,7 @@ class InvariantDistancePreconditioner(LinearSolver):
         noise = (
             np.zeros(dimension)
             if error_covariance is None
-            else np.diag(error_covariance.matrix(form="galerkin"))
+            else error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
         )
 
         if self._max_distance == 0.0:
