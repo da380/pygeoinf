@@ -575,7 +575,8 @@ class TestEvidenceWithoutAssembling:
     def test_evidence_needs_a_data_error_measure(self, gaussian, rng):
         problem, prior = gaussian
         without = LinearForwardProblem(problem.forward_operator)
-        estimator = LinearGaussianInversion(without, prior, formalism="model_space")
+        # Data space: an error-free problem has no model-space assembly at all.
+        estimator = LinearGaussianInversion(without, prior, formalism="data_space")
         with pytest.raises(ValueError, match="data error measure"):
             estimator.mahalanobis(problem.data_space.random(rng=rng))
         with pytest.raises(ValueError, match="data error measure"):

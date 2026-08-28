@@ -381,13 +381,26 @@ class TestSurrogateFamily:
 
     def test_low_rank_needs_an_error_measure_to_approximate_one(self, setup):
         forward, prior, _ = setup
-        # Model space, because a noise-free underdetermined problem has a
-        # singular data-space normal operator: A Q A* has the rank of the model.
         inversion = LinearGaussianInversion(
-            LinearForwardProblem(forward), prior, formalism="model_space"
+            LinearForwardProblem(forward), prior, formalism="data_space"
         )
         with pytest.raises(ValueError, match="no data error measure"):
             inversion.low_rank_surrogate(error_rank=2)
+
+    def test_an_error_free_problem_has_no_model_space_form(self, setup):
+        """``Q^-1 + A* A`` is not the noise-free problem: it is the problem
+        with ``R == I``, whose posterior is a different measure. Only the data
+        space can say ``R == 0``, so that is the only assembly on offer."""
+        forward, prior, _ = setup
+        problem = LinearForwardProblem(forward)
+
+        with pytest.raises(ValueError, match="needs an error measure"):
+            LinearGaussianInversion(problem, prior, formalism="model_space")
+        # And "auto" goes to the data space rather than wandering into it.
+        assert (
+            LinearGaussianInversion(problem, prior, formalism="auto").formalism
+            == "data_space"
+        )
 
     def test_a_parameterised_inversion_lives_on_the_parameter_space(
         self, inversion, rng
