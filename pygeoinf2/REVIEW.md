@@ -296,6 +296,31 @@ S Must-1 (export FlexibleCG/GMRES), S Must-6 (MINRES preconditioning), S Must-7 
 
 **D-13, convex solvers come back.** Port `LevelBundleMethod` (with its LP global bound), the `QPSolver` protocol and `SciPyQPSolver`/`OSQPQPSolver`/`ClarabelQPSolver`/`best_available_qp_solver`, `PrimalKKTSolver`, `ChambollePockSolver`/`solve_primal_feasibility`, `SmoothedDualMaster`/`SmoothedLBFGSSolver`, and `solve_support_values` with its warm start across directions, into `numerics.convex` as solver strategies (DESIGN §18.8's intent), selectable from `DualFeasibleProperty`/`FeasibleProperty` by a `method=` argument. This code was written by Mag; his view on the API is to be sought before changing anything beyond the port itself, and nothing in it is to be cut without his agreement. Restore the fused `value_and_subgradient` oracle (G Should-6) at the same time.
 
+**D-13 outcome (2026-08-28).** Ported: the `QPSolver` protocol with its
+SciPy, OSQP and Clarabel backends and `best_available_qp_solver`
+(`numerics/quadratic_programming.py`); `LevelBundleMethod` with its LP global
+bound; `ChambollePockSolver`; `PrimalKKTSolver`; `solve_support_values` as
+`DualFeasibleProperty.support_values` with its warm start; and
+`SmoothedDualMaster`/`SmoothedLBFGSSolver` as `smoothed_dual_cost` over the
+existing `LBFGS`. `solve_primal_feasibility` and the rest are reached through
+`route=` on `support_values`, which is D-13's `method=` selection. Nothing was
+cut; **Mag's view on the API is still to be sought**, and only the port itself
+has been done.
+
+The four routes answer the same question and were measured against each other
+over sixteen directions: dual 10.96 s, primal 0.066 s, smoothed 0.013 s, KKT
+0.008 s, agreeing with the primal route to 1.7e-8, 2.4e-9 and 2.4e-3
+respectively. That mutual agreement is the strongest check any of them gets.
+
+Two things worth carrying forward. The KKT route's 2.4e-3 is its own limit,
+not the port's: when the noise set is tight its second multiplier saturates,
+and v1 returns the identical multiplier and the same answer. And the review's
+suggestion that a QP backend would fix `ProximalBundleMethod`'s subproblem
+accuracy (N Should-10) is now actionable -- `best_available_qp_solver` is
+there, and the simplex subproblem could be handed to it instead of the
+accelerated projected gradient. Not done, since it changes the proximal
+method's behaviour and that is Mag's code.
+
 ### Phase 5 — geometry, plotting, examples
 G Should-1/2/3/7/8/10 (convex intersections, subspace equations, ellipsoid projection, field-plot options and dispatch, error bounds, tolerance semantics), G Must-7 (`title`, legend, kwarg table), K Should-9/10 (least-squares and nonlinear examples; assertions instead of prose), G Consider-1 (`plot_slice`). Plotting takes `SHGrid` on the sphere (D-1) and degrees (D-2).
 

@@ -14,7 +14,7 @@ route (b), the linear certificate, which is where Backus-Gilbert lives. Routes
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 import scipy.linalg
@@ -1054,6 +1054,135 @@ class DualFeasibleProperty(SetEstimator):
 
         return Functional.from_callables(space, value, gradient=gradient)
 
+    @staticmethod
+    def _smoothed_support(
+        given: Any, epsilon: float, /
+    ) -> tuple[Callable[[Any], float], Callable[[Any], Any]]:
+        """A support function with its corner rounded off, and its gradient.
+
+        Moreau-Yosida smoothing. A ball's support ``(z, c) + r ||z||`` is not
+        differentiable at the origin, which is exactly where a bundle method
+        spends its time; replacing the norm by ``sqrt(||z||^2 + eps^2)`` makes
+        it smooth everywhere, at the cost of an ``O(eps)`` error in the value
+        and a Lipschitz constant that grows like ``1 / eps``. A smaller
+        epsilon is a better approximation and a harder problem, which is the
+        whole trade.
+
+        Args:
+            given: a ball or an ellipsoid.
+            epsilon: the smoothing.
+
+        Returns:
+            The smoothed support and its gradient.
+
+        Raises:
+            TypeError: for any other set. There is no general formula --
+                smoothing a support function needs to know its shape.
+        """
+        from ..geometry.convex import Ball, Ellipsoid
+
+        space = given.domain
+        squared = epsilon * epsilon
+
+        if isinstance(given, Ball):
+            radius, centre = given.radius, given.centre
+
+            def value(z: Any) -> float:
+                return space.inner_product(z, centre) + radius * float(
+                    np.sqrt(space.squared_norm(z) + squared)
+                )
+
+            def gradient(z: Any) -> Any:
+                scale = radius / float(np.sqrt(space.squared_norm(z) + squared))
+                return space.add(centre, space.scale(scale, z))
+
+            return value, gradient
+
+        if isinstance(given, Ellipsoid):
+            if given._covariance is None:
+                raise ValueError(
+                    "A smoothed ellipsoid support needs the covariance."
+                )
+            covariance, centre = given._covariance, given.centre
+
+            def value(z: Any) -> float:
+                weighted = covariance(z)
+                return space.inner_product(z, centre) + float(
+                    np.sqrt(space.inner_product(z, weighted) + squared)
+                )
+
+            def gradient(z: Any) -> Any:
+                weighted = covariance(z)
+                scale = 1.0 / float(
+                    np.sqrt(space.inner_product(z, weighted) + squared)
+                )
+                return space.add(centre, space.scale(scale, weighted))
+
+            return value, gradient
+
+        raise TypeError(
+            f"Smoothing needs a ball or an ellipsoid, whose support has a "
+            f"closed form to smooth; got {type(given).__name__}. Use the "
+            "unsmoothed dual route, which handles any convex set."
+        )
+
+    def smoothed_dual_cost(
+        self, direction: Any, data: Any, /, *, epsilon: float = 1e-3
+    ) -> Any:
+        """The dual cost with its corners rounded off, so it is differentiable.
+
+        :meth:`dual_cost` is convex and non-smooth -- it is built from support
+        functions, which have corners -- so it needs a subgradient method.
+        Rounding the corners by Moreau-Yosida smoothing makes it a smooth
+        problem, which L-BFGS solves with superlinear convergence instead.
+
+        The approximation costs ``O(epsilon)`` in the value, and a smaller
+        epsilon makes the problem stiffer -- the Lipschitz constant grows like
+        ``1 / epsilon``. That is the trade this route offers, and there is no
+        setting of it that is free.
+
+        Args:
+            direction: the direction to evaluate.
+            data: the observations.
+            epsilon: the smoothing.
+
+        Returns:
+            A differentiable ``Functional`` on the data space.
+
+        Raises:
+            ValueError: if the smoothing is not positive.
+            TypeError: if either set is neither a ball nor an ellipsoid.
+        """
+        from ..algebra.operators import Functional
+
+        if epsilon <= 0.0:
+            raise ValueError(f"The smoothing must be positive, got {epsilon}.")
+
+        space = self.data_space
+        model_space = self._problem.model_space
+        forward = self._problem.forward_operator
+        pulled = self._target.adjoint(direction)
+        prior_value, prior_gradient = self._smoothed_support(self._prior, epsilon)
+        noise_value, noise_gradient = self._smoothed_support(self._noise, epsilon)
+
+        def value(certificate: Any) -> float:
+            residual = model_space.subtract(pulled, forward.adjoint(certificate))
+            return (
+                space.inner_product(certificate, data)
+                + prior_value(residual)
+                + noise_value(space.scale(-1.0, certificate))
+            )
+
+        def gradient(certificate: Any) -> Any:
+            residual = model_space.subtract(pulled, forward.adjoint(certificate))
+            negated = space.scale(-1.0, certificate)
+            return space.subtract(
+                space.subtract(data, forward(prior_gradient(residual))),
+                noise_gradient(negated),
+            )
+
+        return Functional.from_callables(space, value, gradient=gradient)
+
     def primal_solver(self, data: Any, /, **kwargs: Any) -> Any:
         """The same problem set up for the *primal* route.
 
@@ -1149,13 +1278,28 @@ class DualFeasibleProperty(SetEstimator):
             ValueError: if the route is not one of the two, or -- on the dual
                 route -- if the feasible set is empty, as :meth:`support` does.
         """
-        if route not in ("dual", "primal", "kkt"):
+        if route not in ("dual", "primal", "kkt", "smoothed"):
             raise ValueError(
-                f"The route is 'dual', 'primal' or 'kkt', got {route!r}."
+                f"The route is 'dual', 'primal', 'kkt' or 'smoothed', got "
+                f"{route!r}."
             )
         directions = tuple(directions)
         if not directions:
             return np.empty(0)
+
+        if route == "smoothed":
+            from ..numerics.optimisation import LBFGS
+
+            optimiser = kwargs.pop("optimiser", None) or LBFGS(max_iterations=500)
+            values, start = [], None
+            for direction in directions:
+                cost = self.smoothed_dual_cost(direction, data, **kwargs)
+                origin = self.data_space.zero() if start is None else start
+                result = optimiser.minimise(cost, origin)
+                values.append(result.value)
+                if warm_start:
+                    start = result.minimiser
+            return np.array(values)
 
         if route == "kkt":
             from ..numerics.convex import PrimalKKTSolver
