@@ -728,6 +728,7 @@ class TestSupportValuesSweep:
             for angle in angles
         ]
 
+    @pytest.mark.slow
     def test_the_warm_start_does_not_change_the_answers(self, dual):
         """Which is the only thing that would make the saving worthless.
         Measured at 1.08 to 1.23 times faster as the directions get closer
@@ -739,6 +740,7 @@ class TestSupportValuesSweep:
         cold = estimator.support_values(directions, data, warm_start=False)
         assert warm == pytest.approx(cold, abs=1e-5)
 
+    @pytest.mark.slow
     def test_it_agrees_with_asking_one_at_a_time(self, dual):
         estimator, space, data = dual
         directions = self.directions(space, 6)

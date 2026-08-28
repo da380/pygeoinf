@@ -118,8 +118,10 @@ problem = LinearForwardProblem(forward, error=noise)
 
 truth, data = problem.synthetic_model_and_data(prior, rng=rng)
 density_truth, traction_truth = truth
-print(f"density anomaly rms {density_truth.std():.3f} kg/m^3")
-print(f"basal traction rms  {traction_truth.std():.3e} Pa")
+# Through grid_values, because a sphere's vectors are SHGrid objects (D-1)
+# rather than arrays and do not carry numpy's methods.
+print(f"density anomaly rms {X.grid_values(density_truth).std():.3f} kg/m^3")
+print(f"basal traction rms  {X.grid_values(traction_truth).std():.3e} Pa")
 print(
     f"chi-squared of the truth: {problem.chi_squared(truth, data):.1f} "
     f"on {problem.data_space.dim} data"

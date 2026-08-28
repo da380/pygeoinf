@@ -6,7 +6,7 @@ This document is the other thing — what the package *is* today, for someone
 who needs to use it or review it without reading five thousand lines of
 reasoning.
 
-Last reconciled against the code on 2026-08-28, at 1967 passing tests.
+Last reconciled against the code on 2026-08-28, at 2085 passing tests.
 
 ---
 

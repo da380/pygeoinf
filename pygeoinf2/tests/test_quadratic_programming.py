@@ -231,6 +231,7 @@ class TestTheTwoRoutesMeet:
             for angle in angles
         ]
 
+    @pytest.mark.slow
     def test_the_primal_and_dual_support_values_agree(self, setting):
         """To 1.7e-8 relative, measured over sixteen directions."""
         estimator, space, data = setting
