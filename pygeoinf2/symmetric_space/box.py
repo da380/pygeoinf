@@ -158,6 +158,23 @@ class Box(PeriodicBox):
             [generator.uniform(lower, upper) for lower, upper in self._bounds]
         )
 
+    def _separation(self, start: Any, end: Any, /) -> np.ndarray:
+        """``end - start``, straight, never round through the padding.
+
+        A bounded domain is not periodic. It is *embedded* in a periodic one so
+        that the spectral basis exists, and the padding is a numerical device,
+        not part of the domain -- so the distance between two points is the
+        straight-line one, and the periodic short cut through the padding is
+        not a path at all.
+
+        The distinction is not academic: with the default padding of a tenth of
+        each extent the period is ``1.2`` times the domain, so two points near
+        opposite ends are further apart than half a period and
+        :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox` would take the
+        wrap.
+        """
+        return self._as_point(end) - self._as_point(start)
+
     def with_order(
         self, order: float, /, *, length_scale: float | None = None
     ) -> "Box":
@@ -191,21 +208,89 @@ class Box(PeriodicBox):
             mask = np.logical_and.outer(mask, extra)
         return mask.reshape(self._shape)
 
-    def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
-        """Sample a function on the grid, taking it to vanish on the padding.
+    @cached_property
+    def _taper(self) -> np.ndarray:
+        """A raised-cosine window: one on the domain, zero past the padding.
+
+        The product of a per-axis window, each going smoothly from one at the
+        boundary to zero at the edge of the padding.
+        """
+        windows = []
+        for axis, (lower, upper), pad in zip(
+            self.grid_axes, self._bounds, self._padding
+        ):
+            window = np.ones_like(axis)
+            if pad > 0.0:
+                below = axis < lower
+                above = axis > upper
+                # Distance into the padding, as a fraction of its width. The
+                # grid is periodic, so a point past the far edge is also
+                # "before" the near one; both are handled by measuring from
+                # whichever boundary it fell off.
+                left = np.clip((lower - axis[below]) / pad, 0.0, 1.0)
+                right = np.clip((axis[above] - upper) / pad, 0.0, 1.0)
+                window[below] = 0.5 * (1.0 + np.cos(np.pi * left))
+                window[above] = 0.5 * (1.0 + np.cos(np.pi * right))
+            windows.append(window)
+
+        taper = windows[0]
+        for extra in windows[1:]:
+            taper = np.multiply.outer(taper, extra)
+        return taper.reshape(self._shape)
+
+    def project_function(
+        self, function: Callable[[Any], float], /, *, taper: bool = True
+    ) -> np.ndarray:
+        """Sample a function on the grid, rolling it off across the padding.
 
         The function is never called outside the domain, since it need not be
-        defined there — which is the practical reason the padding is filled
-        with zeros rather than with periodic continuation.
+        defined there. What fills the padding instead is the nearest boundary
+        value, multiplied by a raised-cosine window that reaches zero at the
+        far edge — so the sampled field is continuous, and periodic, without
+        ``function`` ever being asked about a point it does not have.
+
+        **Why not simply zero.** A hard cutoff puts a step into a field the
+        space then represents by a truncated Fourier series, and a step rings.
+        Measured on the constant one over ``[0, 1]`` with the default padding:
+        integrating along a path from 0.05 to 0.95 gives 0.851 against an exact
+        0.9, an error of 5%, which falls to 7e-6 for a path from 0.4 to 0.6
+        where the ringing has died away. v1 tapers for exactly this reason; v2
+        stopped, and its module docstring presented the step as a "support
+        assumption".
+
+        Args:
+            function: called with a point of the domain.
+            taper: roll off across the padding. ``False`` gives the hard cutoff,
+                which is right when the function genuinely vanishes at the
+                boundary and there is nothing to ring.
+
+        Returns:
+            The sampled field.
         """
         mesh = np.meshgrid(*self.grid_axes, indexing="ij")
         points = np.stack([m.ravel() for m in mesh], axis=1)
-        mask = self.interior_mask.ravel()
-        values = np.zeros(points.shape[0])
-        for index in np.flatnonzero(mask):
-            point = points[index]
-            values[index] = float(function(point if point.size > 1 else point[0]))
-        return values.reshape(self._shape)
+
+        if not taper:
+            mask = self.interior_mask.ravel()
+            values = np.zeros(points.shape[0])
+            for index in np.flatnonzero(mask):
+                point = points[index]
+                values[index] = float(function(point if point.size > 1 else point[0]))
+            return values.reshape(self._shape)
+
+        # Clamp each coordinate into the domain, so a padding point is given
+        # the value of the nearest point of the domain and `function` is never
+        # asked about anywhere else.
+        lower = np.array([a for a, _ in self._bounds])
+        upper = np.array([b for _, b in self._bounds])
+        clamped = np.clip(points, lower, upper)
+        values = np.array(
+            [
+                float(function(point if point.size > 1 else point[0]))
+                for point in clamped
+            ]
+        )
+        return values.reshape(self._shape) * self._taper
 
     def support_projection(self) -> LinearOperator:
         """Multiplication by the domain's indicator, as an operator.

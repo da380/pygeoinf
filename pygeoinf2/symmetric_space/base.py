@@ -723,6 +723,29 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             operator, rank=rank, samples=samples, form="components", rng=rng
         )
 
+    def random_points(
+        self, count: int, /, *, rng: Generator | None = None
+    ) -> list[Any]:
+        """Several points drawn uniformly over the domain.
+
+        On the base because it is a loop over :meth:`random_point` and nothing
+        else. It lived on the sphere, so every other geometry lacked it for no
+        reason anyone had decided.
+
+        Args:
+            count: how many points.
+            rng: the generator.
+
+        Returns:
+            The points.
+
+        Raises:
+            ValueError: if *count* is negative.
+        """
+        if count < 0:
+            raise ValueError("count must be non-negative.")
+        return [self.random_point(rng=rng) for _ in range(count)]
+
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
         """Points at given geodesic distances from a point, along one direction."""
         raise NotImplementedError(

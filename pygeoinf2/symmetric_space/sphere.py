@@ -703,12 +703,6 @@ class Sphere(SymmetricSpace[Any]):
             for angle in angles
         ]
 
-    def random_points(
-        self, count: int, /, *, rng: Generator | None = None
-    ) -> list[np.ndarray]:
-        """Several points drawn uniformly over the sphere's area."""
-        return [self.random_point(rng=rng) for _ in range(count)]
-
     # ----------------------------------------------------------------- #
     #                              Geometry                             #
     # ----------------------------------------------------------------- #

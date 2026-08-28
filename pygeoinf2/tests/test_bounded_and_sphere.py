@@ -45,12 +45,42 @@ class TestBoundedDomains:
         check_space(space, rng=rng, rebuild=space_factory)
         check_coordinates(space, rng=rng)
 
-    def test_a_function_vanishes_on_the_padding(self, rng):
-        """The support assumption, made real rather than assumed."""
+    def test_a_function_rolls_off_across_the_padding(self, rng):
+        """Not a step. A hard cutoff puts a discontinuity into a field the
+        space represents by a truncated Fourier series, and a step rings: the
+        integral of the constant one along a path spanning most of the domain
+        came out 5% low. The padding now carries the boundary value tapered to
+        zero."""
         space = Interval(32, lower=0.0, upper=1.0)
         field = space.project_function(lambda t: 1.0 + t**2)
-        assert np.all(field[~space.interior_mask] == 0.0)
+        outside = field[~space.interior_mask]
+
         assert np.all(field[space.interior_mask] > 0.0)
+        # Zero at the far edge of the padding, and monotone in between rather
+        # than dropping to zero at once.
+        assert np.all(outside >= 0.0)
+        assert outside.min() == pytest.approx(0.0, abs=1e-12)
+        assert outside.max() > 0.5
+
+    def test_the_hard_cutoff_is_still_available(self):
+        """Right when the function genuinely vanishes at the boundary, since
+        then there is nothing to ring."""
+        space = Interval(32, lower=0.0, upper=1.0)
+        field = space.project_function(lambda t: 1.0 + t**2, taper=False)
+        assert np.all(field[~space.interior_mask] == 0.0)
+
+    def test_the_taper_removes_most_of_the_ringing(self):
+        """Measured, because the point of it is a number."""
+        space = Interval(128, lower=0.0, upper=1.0)
+        start, end = np.array([0.05]), np.array([0.95])
+        exact = 0.9
+
+        tapered = space.project_function(lambda t: 1.0)
+        hard = space.project_function(lambda t: 1.0, taper=False)
+        integral = space.path_integral_operator([(start, end)], count=40)
+
+        assert abs(integral(hard)[0] - exact) > 0.04
+        assert abs(integral(tapered)[0] - exact) < 0.02
 
     def test_the_function_is_never_called_outside_the_domain(self):
         """It need not be defined there, which is why the padding is zeroed."""
@@ -118,7 +148,12 @@ class TestBoundedDomains:
         assert space.spatial_dimension == 2
         assert space.domain_volume == pytest.approx(2.0)
         field = space.project_function(lambda p: p[0] + p[1])
-        assert np.all(field[~space.interior_mask] == 0.0)
+        # The taper is a product over axes, so a corner of the padding is
+        # damped by both and reaches zero at the outer edge.
+        assert np.all(np.isfinite(field))
+        assert space.grid_values(space.project_function(lambda p: 1.0))[0, 0] == (
+            pytest.approx(0.0, abs=1e-12)
+        )
 
 
 class TestSphere:

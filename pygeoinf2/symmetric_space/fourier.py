@@ -494,6 +494,161 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         return np.array([generator.uniform(0.0, length) for length in self._lengths])
 
     # ----------------------------------------------------------------- #
+    #                              Geometry                             #
+    # ----------------------------------------------------------------- #
+
+    def _separation(self, start: Any, end: Any, /) -> np.ndarray:
+        """``end - start``, taken the short way round each periodic axis.
+
+        The whole of what makes a torus a torus rather than a rectangle: the
+        two ends of an axis are the same place, so the displacement between two
+        points is whichever of the two ways round is shorter.
+        """
+        first = self._as_point(start)
+        second = self._as_point(end)
+        lengths = np.asarray(self._lengths, dtype=float)
+        offset = second - first
+        return offset - lengths * np.round(offset / lengths)
+
+    def _as_point(self, point: Any, /) -> np.ndarray:
+        """One point, checked."""
+        position = np.atleast_1d(np.asarray(point, dtype=float))
+        if position.shape != (self.spatial_dimension,):
+            raise ValueError(
+                f"A point needs {self.spatial_dimension} coordinates, got "
+                f"{position.shape}."
+            )
+        return position
+
+    def geodesic_distance(self, start: Any, end: Any, /) -> float:
+        """The distance between two points, the short way round.
+
+        Args:
+            start, end: points of the box.
+
+        Returns:
+            The distance.
+        """
+        return float(np.linalg.norm(self._separation(start, end)))
+
+    def geodesic_quadrature(
+        self, start: Any, end: Any, /, *, count: int
+    ) -> tuple[list[Any], np.ndarray]:
+        """Nodes and weights integrating along the straight path between two
+        points, taken the short way round each periodic axis.
+
+        Gauss-Legendre on the segment, so the weights carry the arc-length
+        element and sum to the distance -- the contract
+        :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.geodesic_quadrature`
+        states, and what makes integrating the constant one give that distance.
+
+        Args:
+            start, end: the endpoints.
+            count: how many nodes.
+
+        Returns:
+            ``(nodes, weights)``.
+
+        Raises:
+            ValueError: if fewer than one node is asked for.
+        """
+        if count < 1:
+            raise ValueError(f"At least one node is needed, got {count}.")
+        first = self._as_point(start)
+        offset = self._separation(start, end)
+        length = float(np.linalg.norm(offset))
+
+        abscissae, weights = np.polynomial.legendre.leggauss(count)
+        fractions = 0.5 * (abscissae + 1.0)
+        nodes = [self._wrap(first + fraction * offset) for fraction in fractions]
+        return nodes, 0.5 * length * weights
+
+    def _wrap(self, point: np.ndarray, /) -> np.ndarray:
+        """A point brought back into ``[0, L)`` on each axis."""
+        return np.asarray(point, dtype=float) % np.asarray(self._lengths, dtype=float)
+
+    def geodesic_ball_quadrature(
+        self, centre: Any, radius: float, /, *, count: int
+    ) -> tuple[list[Any], np.ndarray]:
+        """Nodes and weights integrating over a ball, so they sum to its volume.
+
+        Gauss-Legendre in the radius, carrying the ``r^(d-1)`` element, crossed
+        with a uniform rule over directions. In one dimension the ball is an
+        interval and the directions are the two signs; in two it is a disc and
+        they are equally spaced angles, where a uniform rule is exact for the
+        trigonometric polynomials it meets.
+
+        Args:
+            centre: the ball's centre.
+            radius: its radius, in the units of the domain.
+            count: roughly how many nodes. Split between radius and direction.
+
+        Returns:
+            ``(nodes, weights)``.
+
+        Raises:
+            ValueError: for a negative radius or fewer than one node.
+            NotImplementedError: in three dimensions or more, where a good set
+                of directions on the sphere is its own problem and none of the
+                geometries shipped here needs one.
+        """
+        if count < 1:
+            raise ValueError("A quadrature rule needs at least one node.")
+        if radius < 0.0:
+            raise ValueError(f"The radius must be non-negative, got {radius}.")
+        dimension = self.spatial_dimension
+        if dimension > 2:
+            raise NotImplementedError(
+                f"A ball quadrature is implemented in one and two dimensions; "
+                f"this box has {dimension}. Integrate with an explicit set of "
+                f"nodes instead."
+            )
+        first = self._as_point(centre)
+
+        if dimension == 1:
+            abscissae, weights = np.polynomial.legendre.leggauss(max(count, 1))
+            offsets = radius * abscissae
+            nodes = [self._wrap(first + np.array([offset])) for offset in offsets]
+            return nodes, radius * weights
+
+        rings = max(1, int(np.sqrt(count)))
+        spokes = max(1, count // rings)
+        abscissae, weights = np.polynomial.legendre.leggauss(rings)
+        radii = 0.5 * radius * (abscissae + 1.0)
+        # r dr from the area element, and the half-width of the mapping.
+        radial = 0.5 * radius * weights * radii
+        angles = 2.0 * np.pi * np.arange(spokes) / spokes
+
+        nodes, values = [], []
+        for ring_radius, ring_weight in zip(radii, radial):
+            for angle in angles:
+                offset = ring_radius * np.array([np.cos(angle), np.sin(angle)])
+                nodes.append(self._wrap(first + offset))
+                values.append(ring_weight * 2.0 * np.pi / spokes)
+        return nodes, np.array(values)
+
+    def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
+        """Points at given distances from a point, along the first axis.
+
+        Any direction would do -- a periodic box is homogeneous and isotropic
+        -- and the first axis is the one that needs no frame.
+
+        Args:
+            point: where to start.
+            distances: how far to go.
+
+        Returns:
+            The points.
+        """
+        position = self._as_point(point)
+        result = []
+        for distance in np.asarray(distances, dtype=float):
+            moved = position.copy()
+            moved[0] = moved[0] + float(distance)
+            result.append(self._wrap(moved))
+        return result
+
+    # ----------------------------------------------------------------- #
     #                         The module structure                      #
     # ----------------------------------------------------------------- #
 
