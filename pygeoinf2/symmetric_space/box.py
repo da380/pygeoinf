@@ -315,24 +315,25 @@ class Box(PeriodicBox):
         projection onto fields supported in the domain — and the traits say so.
 
         On a **Sobolev** space it is neither: multiplying by a discontinuous
-        mask does not commute with the metric. Lifting it there with
-        :func:`~pygeoinf2.symmetric_space.base.lift_formal_adjoint` gives the right
-        adjoint and claims nothing about symmetry, which is the honest outcome
-        and the same point as DESIGN.md 3.5.
+        mask does not commute with the metric. There it is built on this
+        space's Lebesgue counterpart and lifted with
+        :func:`~pygeoinf2.symmetric_space.base.lift_formal_adjoint`, which gives
+        the right adjoint and claims nothing about symmetry -- the honest
+        outcome, and the same point as DESIGN.md 3.5. This used to raise and
+        tell the caller to do that by hand, which is the same operator with an
+        extra step.
         """
         mask = self.interior_mask.astype(float)
-        traits = (
-            Traits.SELF_ADJOINT | Traits.IDEMPOTENT
-            if self._order == 0.0
-            else Traits.NONE
-        )
         if self._order != 0.0:
-            raise ValueError(
-                "A support projection is self-adjoint only on a Lebesgue "
-                "space. Build it on this space's Lebesgue counterpart and lift "
-                "it with lift_formal_adjoint, which will claim no symmetry."
-            )
-        return LinearOperator.self_adjoint(self, lambda x: mask * x, traits=traits)
+            from .base import lift_formal_adjoint
+
+            base = self.with_order(0.0)
+            return lift_formal_adjoint(base.support_projection(), base, codomain=self)
+        return LinearOperator.self_adjoint(
+            self,
+            lambda x: mask * x,
+            traits=Traits.SELF_ADJOINT | Traits.IDEMPOTENT,
+        )
 
 
 def Interval(

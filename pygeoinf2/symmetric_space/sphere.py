@@ -34,7 +34,7 @@ argument that takes one says so.
 
 from __future__ import annotations
 
-from functools import cached_property
+from functools import cached_property, lru_cache
 from typing import Any, Callable, Hashable, Sequence
 
 import numpy as np
@@ -70,6 +70,51 @@ _TRANSFORM_MIN_DIM = 256
 
 # pyshtools spells "leave the Condon-Shortley phase out" as csphase=1.
 _NO_CONDON_SHORTLEY = 1
+
+
+# Grid weights, keyed on what they actually depend on: the truncation, the
+# longitude sampling and the radius -- but not the Sobolev order, which is the
+# whole point, since with_order is what makes new spaces in a hot loop. A plain
+# dict rather than an lru_cache because the value is computed from an instance.
+_QUADRATURES: dict[tuple[int, int, float], np.ndarray] = {}
+
+
+@lru_cache(maxsize=8)
+def _packing_for(lmax: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The component ordering for a truncation, built once per ``lmax``.
+
+    Module-level rather than per instance because a space is cheap to make and
+    these are not: ``with_order`` and ``with_degree`` both produce new spaces
+    over the same harmonics, and a `multiplication_operator` makes one on every
+    call.
+
+    Returned read-only, since the whole point is that callers share it.
+    """
+    degrees = np.repeat(np.arange(lmax + 1), 2 * np.arange(lmax + 1) + 1)
+    # Within a degree: cosines for m = 0..l, then sines for m = 1..l.
+    position = np.arange(degrees.size) - degrees**2
+    cosine = position <= degrees
+    parts = np.where(cosine, 0, 1)
+    orders = np.where(cosine, position, position - degrees)
+
+    tables = (parts, degrees, orders)
+    for table in tables:
+        table.flags.writeable = False
+    return tables
+
+
+@lru_cache(maxsize=8)
+def _legendre_indices_for(lmax: int) -> np.ndarray:
+    """Where each component sits in pyshtools' packed Legendre array.
+
+    ``PlmIndex(l, m)`` is ``l (l + 1) / 2 + m``, verified against pyshtools
+    itself. Calling it per component instead made this a Python loop of length
+    ``dim``: 212 ms at ``lmax`` 256, against 2 ms here.
+    """
+    _, degrees, orders = _packing_for(lmax)
+    indices = degrees * (degrees + 1) // 2 + orders
+    indices.flags.writeable = False
+    return indices
 
 
 def _require_pyshtools() -> object:
@@ -253,23 +298,10 @@ class Sphere(SymmetricSpace[Any]):
         Degree by degree: the cosine coefficients for ``m`` from zero to ``l``,
         then the sine coefficients for ``m`` from one to ``l``. That is
         ``2l + 1`` per degree and ``(lmax + 1)^2`` in all, which is the
-        dimension of the space.
+        dimension of the space. Shared across instances, as it depends only on
+        ``lmax``.
         """
-        parts, degrees, orders = [], [], []
-        for degree in range(self._lmax + 1):
-            for order in range(degree + 1):
-                parts.append(0)
-                degrees.append(degree)
-                orders.append(order)
-            for order in range(1, degree + 1):
-                parts.append(1)
-                degrees.append(degree)
-                orders.append(order)
-        return (
-            np.asarray(parts, dtype=int),
-            np.asarray(degrees, dtype=int),
-            np.asarray(orders, dtype=int),
-        )
+        return _packing_for(self._lmax)
 
     @cached_property
     def _azimuthal(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -283,19 +315,11 @@ class Sphere(SymmetricSpace[Any]):
     def _legendre_indices(self) -> np.ndarray:
         """Where each component sits in pyshtools' packed Legendre array.
 
-        Cached because it depends only on ``lmax``. Recomputing it per call
-        made :meth:`basis_at` a Python loop of length ``dim``, and so made the
-        adjoint of an observation operator quadratic in the truncation.
+        Depends only on ``lmax``, so it is shared between every space of that
+        truncation rather than rebuilt per instance -- ``with_order`` makes a
+        new space, and this was 212 ms of it at ``lmax`` 256, on every call.
         """
-        from pyshtools.legendre import PlmIndex
-
-        _, degrees, orders = self._packing
-        return np.array(
-            [
-                PlmIndex(int(degree), int(order))
-                for degree, order in zip(degrees, orders)
-            ]
-        )
+        return _legendre_indices_for(self._lmax)
 
     @property
     def _degree_of_component(self) -> np.ndarray:
@@ -569,6 +593,15 @@ class Sphere(SymmetricSpace[Any]):
         """
         from pyshtools.utils import DHaj
 
+        # Shared between spaces that would compute the same weights. The
+        # Sobolev order is not among them -- the weights are the transform's,
+        # and the transform does not know the metric -- so with_order(0.0),
+        # which every multiplication_operator call makes, gets them free.
+        key = (self._lmax, self._sampling, self._radius)
+        cached = _QUADRATURES.get(key)
+        if cached is not None:
+            return cached
+
         rows, columns = self.grid_shape
         shape = DHaj(rows)
 
@@ -579,7 +612,10 @@ class Sphere(SymmetricSpace[Any]):
         indicator[row] = 1.0
         reference = float(self.basis_at(self.reference_point)[0])
         measured = self.to_components(indicator)[0] / (columns * reference)
-        return shape * (measured / shape[row])
+        weights = shape * (measured / shape[row])
+        weights.flags.writeable = False
+        _QUADRATURES[key] = weights
+        return weights
 
     def _quadrature_from_transform(self) -> np.ndarray:
         """The same weights, read off the transform instead of a formula.
@@ -968,7 +1004,12 @@ class Sphere(SymmetricSpace[Any]):
         if count < 1:
             raise ValueError("A quadrature rule needs at least one node.")
         first, second = self._to_vector(start), self._to_vector(end)
-        angle = float(np.arccos(np.clip(np.dot(first, second), -1.0, 1.0)))
+        # atan2 of the cross and dot products, as in geodesic_distance and for
+        # the same reason: arccos of a dot product loses half its digits for
+        # nearby points, which is exactly where the short paths are.
+        angle = float(
+            np.arctan2(np.linalg.norm(np.cross(first, second)), np.dot(first, second))
+        )
 
         if angle < 1.0e-12:
             return [np.asarray(start, dtype=float)] * count, np.zeros(count)

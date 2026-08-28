@@ -362,13 +362,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             raise ValueError(f"The tolerance lies in (0, 1), got {tolerance}.")
         power = np.asarray(symbol(self.laplacian_eigenvalues), dtype=float)
         degrees = self.degrees
-        order = np.argsort(degrees)
-        cumulative = np.cumsum(power[order])
+        # Total the power *within* each degree first, then walk up the degrees.
+        # Sorting the components and cumulating those instead left the answer
+        # depending on the order of the ties, which on a box is not a detail:
+        # the components of one degree there have different eigenvalues, so
+        # they carry different power.
+        per_degree = np.bincount(degrees, weights=power)
+        cumulative = np.cumsum(per_degree)
         total = cumulative[-1]
         if total <= 0.0:
             return 0
         reached = np.searchsorted(cumulative, (1.0 - tolerance) * total)
-        return int(degrees[order][min(reached, degrees.size - 1)])
+        return int(min(reached, per_degree.size - 1))
 
     def sobolev_symbol(self, order: float, scale: float, /) -> np.ndarray:
         """``(1 + scale^2 lambda)^order``, the Sobolev weight on each mode.

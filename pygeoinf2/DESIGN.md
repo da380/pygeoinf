@@ -1955,8 +1955,11 @@ and nothing else — a little over 300 lines against v1's 2215, most of the
 difference being plotting and geometry helpers that are not core numerics.
 
 Its conventions are pinned by test rather than assumed: orthonormal harmonics
-with the Condon-Shortley phase, a Driscoll-Healy grid at `sampling=2`, and a
-point as a `(colatitude, longitude)` pair in radians. The test that pins them
+*without* the Condon-Shortley phase, a Driscoll-Healy grid, and a point as a
+`(latitude, longitude)` pair in degrees. (This paragraph previously said "with
+the Condon-Shortley phase", which is backwards: the code passes `csphase=1`,
+which is how pyshtools spells leaving it out, and §21.x records the naming
+that made it read the other way.) The test that pins them
 is the same one used for the Fourier spaces — `sum_i c_i phi_i(p) == f(p)` at
 grid points — which fails on any normalisation or phase error.
 
@@ -3228,9 +3231,12 @@ B^H g == (4 pi / R) SHExpandDH(g / a_j)
 ```
 
 with `a_j` the Driscoll-Healy quadrature weights. That is derivable rather than
-calibrated, which is the requirement; but `DHaj` is not exposed by the
-installed pyshtools, so the weights must be derived and pinned against an
-explicit basis sum first. Two further pieces, `F^H == ifft2` and the transpose
+calibrated, which is the requirement. `pyshtools.utils.DHaj` *is* exposed --
+this said it was not, and the weights were bootstrapped by probing the
+transform on every row of the grid as a result, at 8.0 s for `lmax` 256. The
+shape now comes from `DHaj` and only the scale is probed, on a single row,
+because the pole correction carries no weight of its own and so a common factor
+does not cancel against it. The bootstrap is kept as the test. Two further pieces, `F^H == ifft2` and the transpose
 of the fold, are easy and separately testable.
 
 **One row is missing from the fold.** The Driscoll-Healy grid samples

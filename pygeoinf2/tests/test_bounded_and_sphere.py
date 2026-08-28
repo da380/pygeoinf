@@ -131,19 +131,26 @@ class TestBoundedDomains:
         check_operator(projector, rng=rng)
         check_traits(projector, rng=rng)
 
-    def test_it_is_refused_on_a_sobolev_space(self):
-        """Multiplying by a discontinuous mask does not commute with the metric."""
-        space = Interval(32, order=2.0, length_scale=0.1)
-        with pytest.raises(ValueError, match="Lebesgue"):
-            space.support_projection()
+    def test_on_a_sobolev_space_it_lifts_rather_than_refusing(self, rng):
+        """Multiplying by a discontinuous mask does not commute with the
+        metric, so it is not self-adjoint there and must not say it is. It
+        used to raise and tell the caller to lift it by hand; doing the lift
+        is the same operator without the extra step."""
+        space = Interval(32, lower=0.0, upper=1.0, order=2.0, length_scale=0.1)
+        projector = space.support_projection()
 
-    def test_it_can_be_lifted_instead(self, rng):
-        """The lift gives the right adjoint and claims no symmetry."""
+        assert projector.traits == Traits.NONE
+        check_operator(projector, rng=rng)
+
+    def test_the_lift_is_the_one_a_caller_would_have_written(self, rng):
         lebesgue = Interval(32, lower=0.0, upper=1.0)
         sobolev = Interval(32, lower=0.0, upper=1.0, order=2.0, length_scale=0.1)
-        lifted = lift_formal_adjoint(lebesgue.support_projection(), sobolev)
-        assert lifted.traits == Traits.NONE
-        check_operator(lifted, rng=rng)
+        by_hand = lift_formal_adjoint(lebesgue.support_projection(), sobolev)
+
+        field = sobolev.random(rng=rng)
+        assert sobolev.norm(
+            sobolev.subtract(sobolev.support_projection()(field), by_hand(field))
+        ) == pytest.approx(0.0, abs=1e-12)
 
     @pytest.mark.parametrize(
         "kwargs, message",

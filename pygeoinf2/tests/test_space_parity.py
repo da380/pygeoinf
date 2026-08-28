@@ -462,3 +462,85 @@ class TestBothEvaluationRoutesAgree:
         assert space.evaluate(field, points) == pytest.approx(
             direct, rel=1e-8, abs=1e-8 * np.abs(direct).max()
         )
+
+
+class TestSharedTablesAndSmallFixes:
+    """A cluster of Should items from the review, each with its own reason."""
+
+    def test_a_truncation_degree_does_not_depend_on_tie_order(self, geometry):
+        """The power in a degree is summed before the degrees are walked. On a
+        box the components of one degree have different eigenvalues and so
+        different power, and cumulating the sorted components instead left the
+        answer depending on how the sort broke the ties."""
+        _, space = geometry
+        symbol = lambda eigenvalues: (1.0 + 0.05 * eigenvalues) ** -4.0
+
+        degree = space.estimate_truncation_degree(symbol)
+        power = np.bincount(space.degrees, weights=symbol(space.laplacian_eigenvalues))
+        held = power[: degree + 1].sum() / power.sum()
+
+        assert held >= 1.0 - 1e-3
+        assert power[:degree].sum() / power.sum() < 1.0 - 1e-3
+
+
+class TestSphereTables:
+    """Shared between spaces of the same truncation, and still correct."""
+
+    def test_they_are_what_the_loops_built(self):
+        """Vectorised, so this is the check that the vectorisation is exact."""
+        pytest.importorskip("pyshtools")
+        from pyshtools.legendre import PlmIndex
+
+        from pygeoinf2.symmetric_space.sphere import _legendre_indices_for, _packing_for
+
+        lmax = 12
+        parts, degrees, orders = _packing_for(lmax)
+
+        expected = []
+        for degree in range(lmax + 1):
+            expected += [(0, degree, order) for order in range(degree + 1)]
+            expected += [(1, degree, order) for order in range(1, degree + 1)]
+        assert list(zip(parts.tolist(), degrees.tolist(), orders.tolist())) == expected
+
+        assert _legendre_indices_for(lmax).tolist() == [
+            PlmIndex(degree, order) for degree, order in zip(degrees, orders)
+        ]
+
+    def test_changing_the_order_reuses_them(self):
+        """with_order makes a new space, and multiplication_operator makes one
+        on every call. Rebuilding these there was 231 ms at lmax 256."""
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(16, 2.0, 0.3)
+        other = space.with_order(0.0)
+
+        assert other._packing[0] is space._packing[0]
+        assert other._legendre_indices is space._legendre_indices
+        assert other._quadrature is space._quadrature
+
+    def test_they_are_read_only(self):
+        """Shared, so a caller must not be able to edit everyone's copy."""
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(8, 2.0, 0.3)
+        for table in (*space._packing, space._legendre_indices, space._quadrature):
+            with pytest.raises(ValueError):
+                table[0] = 0
+
+    def test_a_short_arc_keeps_its_precision(self):
+        """arccos of a dot product loses half its digits for nearby points,
+        which is where the short paths are: at 1e-8 degrees apart it returns
+        zero, a relative error of one. atan2 of the cross and dot products is
+        exact there, as geodesic_distance already knew."""
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(8, 2.0, 0.3)
+        for separation in (1e-2, 1e-6, 1e-8):
+            start, end = np.array([0.0, 0.0]), np.array([0.0, separation])
+            _, weights = space.geodesic_quadrature(start, end, count=5)
+            assert weights.sum() == pytest.approx(
+                space.radius * np.radians(separation), rel=1e-12
+            )
