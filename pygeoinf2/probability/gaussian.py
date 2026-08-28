@@ -28,6 +28,7 @@ from ..algebra.spaces import CoordinateSpace, EuclideanSpace, HilbertSpace
 from ..traits import Traits
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ..algebra.direct_sum import DirectSum
     from ..numerics.randomised import Estimate
     from ..geometry.convex import Ellipsoid
 from .base import ProbabilityMeasure
@@ -1054,6 +1055,108 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             ),
             sample=sample,
         )
+
+    def _require_direct_sum(self, what: str, /) -> "DirectSum":
+        """The domain as a direct sum, or a message saying it is not one."""
+        from ..algebra.direct_sum import DirectSum
+
+        if not isinstance(self._domain, DirectSum):
+            raise ValueError(
+                f"{what} needs a measure on a direct sum; this one is on "
+                f"{self._domain!r}."
+            )
+        return self._domain
+
+    def marginal(self, key: int | str, /) -> "GaussianMeasure":
+        """The law of one summand, for a measure on a direct sum.
+
+        The joint measure a coupled problem builds is rarely the one it wants
+        to look at: the interesting question is usually about one field. This
+        is the pushforward under the projection, so it costs nothing and stays
+        exact -- the alternative was slicing the covariance's component matrix,
+        which is a dense ``dim x dim`` assembly to read one block off.
+
+        Args:
+            key: which summand, by position or by label.
+
+        Returns:
+            The marginal measure.
+
+        Raises:
+            ValueError: if this measure is not on a direct sum.
+        """
+        from ..algebra.diagonal import DiagonalLinearOperator
+
+        domain = self._require_direct_sum("A marginal")
+        covariance = self._covariance
+        if covariance is None:
+            return self.push_forward(domain.projection(key))
+
+        block = self._block_of(covariance, domain, key, key)
+        expectation = (
+            None
+            if self.has_zero_expectation
+            else domain.component(self._expectation, key)
+        )
+        # A diagonal block carries its own factor -- the square root of its
+        # eigenvalues -- so the marginal can still be sampled. The general
+        # route cannot say that: if C = L L*, the (i, i) block of C is a sum
+        # over the whole i-th row of L, not L_ii L_ii*.
+        factor = block.sqrt if isinstance(block, DiagonalLinearOperator) else None
+        return GaussianMeasure(
+            block.domain,
+            covariance=block,
+            covariance_factor=factor,
+            expectation=expectation,
+        )
+
+    def cross_covariance(
+        self, first: int | str, second: int | str, /
+    ) -> LinearOperator:
+        """``Cov(x_i, x_j)`` as an operator, for a measure on a direct sum.
+
+        ``P_i C P_j*``: it maps the *second* summand's space to the first's,
+        which is the direction that makes ``(u, Cov(x_i, x_j) v)`` the
+        covariance of ``(u, x_i)`` with ``(v, x_j)``. The adjoint is taken
+        rather than the inclusion assumed, so this is right whatever metric the
+        summands carry.
+
+        Args:
+            first: the summand on the left.
+            second: the summand on the right.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if this measure is not on a direct sum, or has no
+                covariance.
+        """
+        domain = self._require_direct_sum("A cross-covariance")
+        covariance = self._require_covariance("A cross-covariance")
+        return self._block_of(covariance, domain, first, second)
+
+    @staticmethod
+    def _block_of(
+        operator: LinearOperator,
+        domain: "DirectSum",
+        first: int | str,
+        second: int | str,
+        /,
+    ) -> LinearOperator:
+        """One block of an operator on a direct sum.
+
+        Read straight off a block operator where there is one, so that a
+        diagonal block stays diagonal and keeps its eigenvalues and its
+        traits. Sandwiching it between projections instead is correct but
+        gives back a composition, which has forgotten all of that.
+        """
+        from ..algebra.direct_sum import BlockLinearOperator
+
+        left, right = domain.index(first), domain.index(second)
+        if isinstance(operator, BlockLinearOperator):
+            return operator.blocks[left][right]
+        return domain.projection(first) @ operator @ domain.projection(second).adjoint
 
     def mahalanobis_squared(self, x: X) -> float:
         """``(x - m, P (x - m))``, the squared Mahalanobis distance.

@@ -736,6 +736,42 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         sigma = matrix * deviations[:, :, None] * deviations[:, None, :]
         return self.correlated_measure(sigma, expectation=expectation, labels=labels)
 
+    def spectral_correlations(
+        self, measure: GaussianMeasure, /, *, first: int = 0, second: int = 1
+    ) -> np.ndarray:
+        """How strongly two correlated fields are correlated, mode by mode.
+
+        ``rho_ij(k) = Sigma_ij(k) / sqrt(Sigma_ii(k) Sigma_jj(k))``, which is
+        the thing :meth:`correlated_measure_from_correlations` was given and
+        the thing a reader of the result wants back. Scale-dependent, which is
+        the whole point of the construction: a single number multiplying two
+        marginals cannot say that two fields agree at long wavelengths and not
+        at short ones.
+
+        Zero wherever either marginal has no variance at that mode, following
+        v1: there is no correlation to report there, and the ratio is 0/0.
+
+        Args:
+            measure: a measure from :meth:`correlated_measure` or its
+                correlation-parameterised sibling.
+            first: the summand on the left.
+            second: the summand on the right.
+
+        Returns:
+            One correlation per component.
+        """
+        cross = measure.cross_covariance(first, second).eigenvalues
+        left = measure.marginal(first).covariance.eigenvalues
+        right = measure.marginal(second).covariance.eigenvalues
+
+        deviations = np.sqrt(left * right)
+        return np.divide(
+            cross,
+            deviations,
+            out=np.zeros(self.dim),
+            where=deviations > 0.0,
+        )
+
     def power_measure(
         self,
         power: np.ndarray | Callable[[np.ndarray], np.ndarray],

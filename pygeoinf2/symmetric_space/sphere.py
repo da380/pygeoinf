@@ -420,6 +420,77 @@ class Sphere(SymmetricSpace[Any]):
             )
         )
 
+    @staticmethod
+    def truncation_degree_for(
+        order: float,
+        length_scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        rtol: float = 1.0e-8,
+        power_of_two: bool = False,
+    ) -> int:
+        """The degree at which a Sobolev spectrum has run out.
+
+        For choosing a truncation from the prior rather than by habit, and
+        *before* there is a space to ask -- which is the point of it being
+        static: the answer is what you pass to the constructor.
+
+        The rule is v1's, so it gives v1's numbers: sum the Sobolev weights
+        mode by mode and stop when the newest term is a fraction ``rtol`` of
+        the running total.
+
+        Mode by mode, note, and not weighted by the ``2l + 1`` modes a degree
+        holds. :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.estimate_truncation_degree`
+        answers the weighted question, which is the one about the field's
+        energy, and the two are far apart where the spectrum decays slowly: at
+        order 1.5 and length scale 0.5 this returns 721 and the weighted rule
+        wants 13833. The weighted rule is the honest one for power and this one
+        is the usable one for a grid.
+
+        Args:
+            order: the Sobolev order. Must exceed one -- below that the total
+                power does not converge and no truncation is enough.
+            length_scale: the length at which the weight turns over.
+            radius: the sphere's radius, in the same units.
+            rtol: the relative tolerance to stop at.
+            power_of_two: round up to a power of two, which some transforms
+                prefer.
+
+        Returns:
+            The degree.
+
+        Raises:
+            ValueError: if the order is not above one, or the tolerance is not
+                in ``(0, 1)``.
+            RuntimeError: if it has not converged by degree 10000.
+        """
+        if order <= 1.0:
+            raise ValueError(
+                f"The order must exceed one for the power to converge, got "
+                f"{order}."
+            )
+        if not 0.0 < rtol < 1.0:
+            raise ValueError(f"The tolerance lies in (0, 1), got {rtol}.")
+        if length_scale <= 0.0 or radius <= 0.0:
+            raise ValueError("The length scale and radius must be positive.")
+
+        scale = (length_scale / radius) ** 2
+        total, degree, relative = 1.0, 0, 1.0
+        while relative > rtol:
+            degree += 1
+            term = (1.0 + scale * degree * (degree + 1)) ** -order
+            total += term
+            relative = term / total
+            if degree > 10000:
+                raise RuntimeError(
+                    "No truncation below degree 10000 reaches this tolerance."
+                )
+
+        if power_of_two:
+            degree = 2 ** (int(np.log2(degree)) + 1)
+        return degree
+
     def to_coefficients(self, x: Any, /) -> Any:
         """The field's coefficients as a pyshtools ``SHCoeffs``.
 

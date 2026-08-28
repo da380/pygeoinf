@@ -544,3 +544,168 @@ class TestSphereTables:
             assert weights.sum() == pytest.approx(
                 space.radius * np.radians(separation), rel=1e-12
             )
+
+
+class TestCorrelatedMeasureAccessors:
+    """Reading a joint measure back, which v1 could and v2 could not."""
+
+    @staticmethod
+    def _measure(space):
+        variances = [
+            space.sobolev_symbol(-2.0, 0.2),
+            space.heat_symbol(0.14),
+        ]
+        return space.correlated_measure_from_correlations(
+            variances, np.array([[1.0, 0.5], [0.5, 1.0]]), labels=("a", "b")
+        )
+
+    def test_a_marginal_is_the_invariant_measure_it_was_built_from(self, geometry):
+        """And keeps its diagonal structure while doing it. Reading the block
+        off the covariance's dense component matrix -- the only way there was
+        -- costs a dim-by-dim assembly to look at one summand."""
+        _, space = geometry
+        measure = self._measure(space)
+
+        marginal = measure.marginal(0)
+        assert marginal.covariance.domain is space
+        assert marginal.covariance.eigenvalues == pytest.approx(
+            space.sobolev_symbol(-2.0, 0.2)
+        )
+
+    def test_a_marginal_can_still_be_sampled(self, geometry, rng):
+        """A diagonal block carries its own factor. Sandwiching the covariance
+        between projections instead gives a composition, which does not."""
+        _, space = geometry
+        marginal = self._measure(space).marginal(1)
+        assert marginal.can_sample
+        assert marginal.sample(rng=rng) is not None
+
+    def test_labels_work_as_well_as_positions(self, geometry):
+        _, space = geometry
+        measure = self._measure(space)
+        assert measure.marginal("b").covariance.eigenvalues == pytest.approx(
+            measure.marginal(1).covariance.eigenvalues
+        )
+
+    def test_the_correlations_come_back(self, geometry):
+        """Wherever there is a correlation to report. A heat symbol underflows
+        to zero at the shortest wavelengths a circle carries, and there the
+        convention below applies instead."""
+        _, space = geometry
+        live = (
+            space.sobolev_symbol(-2.0, 0.2) * space.heat_symbol(0.14)
+        ) > 0.0
+        correlations = space.spectral_correlations(self._measure(space))
+        assert correlations[live] == pytest.approx(0.5)
+        assert correlations[~live] == pytest.approx(0.0)
+
+    def test_they_come_back_scale_by_scale(self, geometry):
+        """The point of the construction: two fields may agree at long
+        wavelengths and not at short ones, which one number cannot say."""
+        _, space = geometry
+        variance = space.sobolev_symbol(-2.0, 0.2)
+        wanted = np.linspace(0.9, -0.9, space.dim)
+
+        sigma = np.zeros((space.dim, 2, 2))
+        sigma[:, 0, 0] = sigma[:, 1, 1] = variance
+        sigma[:, 0, 1] = sigma[:, 1, 0] = wanted * variance
+
+        measure = space.correlated_measure(sigma)
+        live = variance > 0.0
+        assert space.spectral_correlations(measure)[live] == pytest.approx(
+            wanted[live]
+        )
+
+    def test_a_mode_with_no_variance_has_no_correlation(self, geometry):
+        """0/0, and v1's convention is zero -- there is nothing to report."""
+        _, space = geometry
+        variance = space.sobolev_symbol(-2.0, 0.2).copy()
+        variance[:3] = 0.0
+
+        sigma = np.zeros((space.dim, 2, 2))
+        sigma[:, 0, 0] = sigma[:, 1, 1] = sigma[:, 0, 1] = sigma[:, 1, 0] = variance
+
+        assert space.spectral_correlations(space.correlated_measure(sigma))[
+            :3
+        ] == pytest.approx(0.0)
+
+    def test_the_cross_covariance_is_the_off_diagonal_block(self, geometry):
+        _, space = geometry
+        measure = self._measure(space)
+
+        cross = measure.cross_covariance(0, 1)
+        assert cross.domain is space and cross.codomain is space
+        assert cross.eigenvalues == pytest.approx(
+            0.5
+            * np.sqrt(space.sobolev_symbol(-2.0, 0.2) * space.heat_symbol(0.14))
+        )
+
+    def test_they_are_refused_off_a_direct_sum(self, geometry):
+        _, space = geometry
+        measure = space.invariant_measure(space.heat_symbol(0.14))
+        with pytest.raises(ValueError, match="direct sum"):
+            measure.marginal(0)
+        with pytest.raises(ValueError, match="direct sum"):
+            measure.cross_covariance(0, 1)
+
+
+class TestTruncationDegreeFor:
+    """Choosing lmax from the prior, before there is a space to ask."""
+
+    def test_it_gives_v1s_answer(self):
+        """The rule is v1's, so the number is v1's: order 2, length scale 0.2
+        and rtol 1e-8 gave 354 there."""
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sphere
+
+        assert Sphere.truncation_degree_for(2.0, 0.2) == 354
+
+    def test_it_needs_no_space(self):
+        """Static, because the answer is what you pass to the constructor."""
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev, Sphere
+
+        degree = Sphere.truncation_degree_for(3.0, 0.3)
+        assert Sobolev(degree, 3.0, 0.3).lmax == degree
+
+    def test_the_length_scale_is_read_against_the_radius(self):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sphere
+
+        assert Sphere.truncation_degree_for(
+            2.0, 1000.0, radius=6371.0
+        ) == Sphere.truncation_degree_for(2.0, 1000.0 / 6371.0)
+
+    def test_a_power_of_two_is_available(self):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sphere
+
+        plain = Sphere.truncation_degree_for(2.0, 0.2)
+        rounded = Sphere.truncation_degree_for(2.0, 0.2, power_of_two=True)
+        assert rounded >= plain
+        assert rounded & (rounded - 1) == 0
+
+    def test_a_slower_spectrum_needs_more_degrees(self):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sphere
+
+        assert Sphere.truncation_degree_for(1.5, 0.2) > Sphere.truncation_degree_for(
+            3.0, 0.2
+        )
+
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            (dict(order=1.0, length_scale=0.2), "order"),
+            (dict(order=2.0, length_scale=0.2, rtol=0.0), "tolerance"),
+            (dict(order=2.0, length_scale=-1.0), "positive"),
+        ],
+    )
+    def test_it_refuses_what_it_cannot_answer(self, kwargs, message):
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sphere
+
+        order = kwargs.pop("order")
+        length_scale = kwargs.pop("length_scale")
+        with pytest.raises(ValueError, match=message):
+            Sphere.truncation_degree_for(order, length_scale, **kwargs)
