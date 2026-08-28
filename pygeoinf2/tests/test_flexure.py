@@ -159,8 +159,12 @@ class TestBochnerIdentity:
 
     def test_against_the_closed_form_for_degree_one(self):
         X = Lebesgue(24)
-        f = X.project_function(lambda p: np.cos(p[0]))
-        g = X.project_function(lambda p: np.sin(p[0]) * np.cos(p[1]))
+        # The degree-one zonal and sectoral harmonics, in latitude: cos(colat)
+        # is sin(lat) and sin(colat) cos(lon) is cos(lat) cos(lon).
+        f = X.project_function(lambda p: np.sin(np.radians(p[0])))
+        g = X.project_function(
+            lambda p: np.cos(np.radians(p[0])) * np.cos(np.radians(p[1]))
+        )
         exact, got = values(X, 2.0 * f * g, self._hessian_trace(X, f, g))
         assert np.allclose(got, exact, atol=1e-8 * np.abs(exact).max())
 
@@ -168,8 +172,12 @@ class TestBochnerIdentity:
     def test_the_curvature_coefficient_is_pinned(self, factor):
         """The negative control. Self-adjointness does *not* pin this term."""
         X = Lebesgue(24)
-        f = X.project_function(lambda p: np.cos(p[0]))
-        g = X.project_function(lambda p: np.sin(p[0]) * np.cos(p[1]))
+        # The degree-one zonal and sectoral harmonics, in latitude: cos(colat)
+        # is sin(lat) and sin(colat) cos(lon) is cos(lat) cos(lon).
+        f = X.project_function(lambda p: np.sin(np.radians(p[0])))
+        g = X.project_function(
+            lambda p: np.cos(np.radians(p[0])) * np.cos(np.radians(p[1]))
+        )
         laplacian, products = X.laplacian, X.gradient_dot_product
         block = -0.5 * laplacian(products(f, g))
         block = block + 0.5 * (products(f, laplacian(g)) + products(g, laplacian(f)))

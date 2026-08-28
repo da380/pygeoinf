@@ -153,7 +153,9 @@ class TestSphere:
         for _ in range(6):
             i = int(rng.integers(0, space.grid_shape[0]))
             j = int(rng.integers(0, space.grid_shape[1]))
-            point = np.array([space.colatitudes[i], space.longitudes[j]])
+            point = space.to_latitude_degrees(
+                np.array([space.colatitudes[i], space.longitudes[j]])
+            )[0]
             assert components @ space.basis_at(point) == pytest.approx(
                 space.grid_values(field)[i, j], abs=1e-10
             )
@@ -197,8 +199,14 @@ class TestSphere:
         operator = space.point_evaluation_operator(points)
         check_operator(operator, rng=rng)
 
-        field = space.project_function(lambda p: np.cos(p[0]))
-        assert np.allclose(operator(field), [np.cos(p[0]) for p in points], atol=1e-8)
+        # sin(latitude) is the degree-one zonal harmonic, so it is represented
+        # exactly and the comparison is about the convention, not truncation.
+        field = space.project_function(lambda p: np.sin(np.radians(p[0])))
+        assert np.allclose(
+            operator(field),
+            [np.sin(np.radians(p[0])) for p in points],
+            atol=1e-8,
+        )
 
     def test_the_adjoint_returns_dirac_representers(self, rng):
         space = sphere_module.Sobolev(8, 2.0, 0.2)
@@ -210,14 +218,34 @@ class TestSphere:
         )
 
     def test_random_points_are_uniform_over_the_area(self, rng):
-        """Uniform in cos(colatitude), which is the classic thing to get wrong."""
+        """Uniform in sin(latitude), which is the classic thing to get wrong."""
         space = sphere_module.Lebesgue(4)
-        cosines = np.array(
-            [np.cos(space.random_point(rng=rng)[0]) for _ in range(4000)]
+        sines = np.array(
+            [np.sin(np.radians(space.random_point(rng=rng)[0])) for _ in range(4000)]
         )
-        assert abs(cosines.mean()) < 0.06
+        assert abs(sines.mean()) < 0.06
         # A uniform distribution on [-1, 1] has variance 1/3.
-        assert cosines.var() == pytest.approx(1.0 / 3.0, rel=0.1)
+        assert sines.var() == pytest.approx(1.0 / 3.0, rel=0.1)
+
+    def test_points_are_latitude_and_longitude_in_degrees(self, rng):
+        """D-2. The convention every catalogue, every v1 script and pyshtools
+        itself already use -- and the one whose absence would misplace a
+        station rather than raise."""
+        space = sphere_module.Lebesgue(8)
+        assert space.reference_point == pytest.approx([90.0, 0.0])
+        for point in space.random_points(200, rng=rng):
+            assert -90.0 <= point[0] <= 90.0
+            assert -180.0 <= point[1] <= 180.0
+
+        # sin(latitude) is exactly the degree-one zonal harmonic, so it is
+        # +1 at the north pole and -1 at the south with nothing to truncate.
+        field = space.project_function(lambda p: np.sin(np.radians(p[0])))
+        assert space.evaluate(field, [np.array([90.0, 0.0])])[0] == pytest.approx(
+            1.0, abs=1e-8
+        )
+        assert space.evaluate(field, [np.array([-90.0, 0.0])])[0] == pytest.approx(
+            -1.0, abs=1e-8
+        )
 
     @pytest.mark.parametrize(
         "lmax, kwargs, message",
@@ -237,7 +265,7 @@ class TestSphere:
             space.to_components(np.zeros((3, 3)))
 
     def test_a_point_needs_two_coordinates(self):
-        with pytest.raises(ValueError, match="colatitude"):
+        with pytest.raises(ValueError, match="latitude"):
             sphere_module.Lebesgue(4).basis_at(np.array([0.1]))
 
 

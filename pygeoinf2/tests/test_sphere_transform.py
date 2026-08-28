@@ -56,7 +56,11 @@ class TestQuadratureWeights:
             indicator = np.zeros(X.grid_shape)
             indicator[row, 2] = 1.0
             got = X.to_components(indicator)
-            want = X.basis_at(np.array([X.colatitudes[row], X.longitudes[2]]))
+            want = X.basis_at(
+                X.to_latitude_degrees(np.array([X.colatitudes[row], X.longitudes[2]]))[
+                    0
+                ]
+            )
             live = np.abs(want) > 1e-6 * np.abs(want).max()
             ratios = got[live] / want[live]
             assert np.allclose(ratios, ratios[0], rtol=1e-8)
@@ -83,7 +87,9 @@ class TestQuadratureWeights:
         for row in range(rows):
             for column in range(columns):
                 expected += values[row, column] * X.basis_at(
-                    np.array([X.colatitudes[row], X.longitudes[column]])
+                    X.to_latitude_degrees(
+                        np.array([X.colatitudes[row], X.longitudes[column]])
+                    )[0]
                 )
         assert np.allclose(X._synthesis_adjoint(values), expected)
 
@@ -116,7 +122,7 @@ class TestDoubling:
         X = Lebesgue(8)
         rows, _ = X.grid_shape
         field = X.random(rng=rng)
-        pole = X.evaluate(field, [np.array([np.pi, 0.0])])[0]
+        pole = X.evaluate(field, [np.array([-90.0, 0.0])])[0]
         assert np.allclose(X._double(field)[rows], pole)
 
     def test_the_extension_is_a_trigonometric_polynomial(self, rng):

@@ -72,8 +72,8 @@ class TestEvaluation:
 
 class TestGeodesics:
     def test_pole_to_equator_is_a_quarter_circumference(self, space):
-        pole = np.array([0.0, 0.0])
-        equator = np.array([np.pi / 2.0, 1.3])
+        pole = np.array([90.0, 0.0])
+        equator = np.array([0.0, 74.5])
         assert space.geodesic_distance(pole, equator) == pytest.approx(
             np.pi * RADIUS / 2.0
         )
@@ -104,9 +104,10 @@ class TestGeodesics:
         The cosine is flat near zero separation, so ``acos(u . v)`` throws away
         half its digits exactly where a localisation radius needs them.
         """
-        pole = np.array([0.0, 0.0])
-        nearby = np.array([1.0e-6, 0.0])
-        exact = RADIUS * 1.0e-6
+        pole = np.array([90.0, 0.0])
+        separation = 1.0e-6  # radians of arc
+        nearby = np.array([90.0 - np.degrees(separation), 0.0])
+        exact = RADIUS * separation
         assert space.geodesic_distance(pole, nearby) == pytest.approx(exact, rel=1e-12)
 
         first, second = space._to_vector(pole), space._to_vector(nearby)
@@ -114,8 +115,8 @@ class TestGeodesics:
         assert abs(by_arccos - exact) > 1.0e-6 * exact
 
     def test_antipodal_endpoints_are_refused(self, space):
-        pole = np.array([0.0, 0.0])
-        other = np.array([np.pi, 0.0])
+        pole = np.array([90.0, 0.0])
+        other = np.array([-90.0, 0.0])
         with pytest.raises(ValueError, match="antipodal"):
             space.geodesic_quadrature(pole, other, count=4)
 
@@ -138,8 +139,8 @@ class TestAverages:
     def test_the_cap_integral_of_one_is_the_area(self, lebesgue, rng):
         one = lebesgue.project_function(lambda point: 1.0)
         centre = lebesgue.random_point(rng=rng)
-        angular = 0.15
-        area = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(angular))
+        angular = 8.6  # degrees, as every angle on a sphere now is
+        area = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(np.radians(angular)))
         assert lebesgue.spherical_cap_integral(centre, angular)(one) == pytest.approx(
             area
         )
@@ -263,14 +264,15 @@ class TestAcquisitionGeometry:
         stations = space.stations()
         assert len(stations) > 100
         for point in stations:
-            assert 0.0 <= point[0] <= np.pi
-            assert 0.0 <= point[1] <= 2.0 * np.pi
+            assert -90.0 <= point[0] <= 90.0
+            assert -180.0 <= point[1] <= 180.0
 
     def test_a_named_station_lands_where_it_should(self, space):
         """AAK is in Kyrgyzstan: 42.6 N, 74.5 E."""
         first = space.stations()[0]
-        assert 90.0 - np.degrees(first[0]) == pytest.approx(42.6375)
-        assert np.degrees(first[1]) == pytest.approx(74.4942)
+        # Straight out of the table: a point is what the catalogue holds.
+        assert first[0] == pytest.approx(42.6375)
+        assert first[1] == pytest.approx(74.4942)
 
     def test_the_catalogue_filters_by_magnitude(self, space):
         assert len(space.earthquakes(minimum_magnitude=6.0)) < len(space.earthquakes())
@@ -374,3 +376,45 @@ class TestWeightOperator:
         assert isinstance(W, LinearOperator)
         assert W.domain == EuclideanSpace(4)
         assert np.allclose(W(np.array([1.0, 1.0, 1.0, 1.0])), [3.0, 7.0])
+
+
+class TestPointConvention:
+    """D-2: points are ``(latitude, longitude)`` in degrees, everywhere."""
+
+    def test_the_converters_invert_each_other(self, space, rng):
+        points = np.array(space.random_points(50, rng=rng))
+        back = space.to_latitude_degrees(space.to_colatitude_radians(points))
+        assert back == pytest.approx(points)
+
+    def test_a_catalogue_point_is_the_catalogue_s_numbers(self, space):
+        """The loaders used to convert privately, so a caller who read the same
+        file themselves got different answers from the same numbers."""
+        first = space.stations()[0]
+        assert first[0] == pytest.approx(42.6375)
+        assert first[1] == pytest.approx(74.4942)
+
+    def test_a_field_is_sampled_where_the_point_says(self, space):
+        """sin(latitude) is exactly the degree-one zonal harmonic, so this is
+        about the convention and not about truncation."""
+        field = space.project_function(lambda p: np.sin(np.radians(p[0])))
+        for latitude in (-90.0, -45.0, 0.0, 45.0, 90.0):
+            value = space.evaluate(field, [np.array([latitude, 13.0])])[0]
+            assert value == pytest.approx(np.sin(np.radians(latitude)), abs=1e-8)
+
+    def test_an_angle_is_degrees_and_a_distance_is_not(self, space):
+        """A cap's half-angle is an angle; a ball's radius is a length in the
+        units of the sphere's radius. Mixing them was how the ball average
+        first disagreed with the exact cap."""
+        one = space.with_order(0.0).project_function(lambda p: 1.0)
+        centre = np.array([12.0, 34.0])
+        lebesgue = space.with_order(0.0)
+
+        half_angle = 8.0  # degrees
+        by_angle = lebesgue.spherical_cap_integral(centre, half_angle)(one)
+        expected = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(np.radians(half_angle)))
+        assert by_angle == pytest.approx(expected)
+
+        # The same cap, reached through the physical radius.
+        distance = np.radians(half_angle) * RADIUS
+        by_distance = lebesgue.geodesic_ball_average_operator([centre], distance)
+        assert by_distance(one)[0] == pytest.approx(1.0, rel=1e-6)

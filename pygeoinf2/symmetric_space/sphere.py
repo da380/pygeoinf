@@ -17,8 +17,19 @@ not used.
 Conventions, all pinned by test rather than assumed: coefficients are
 orthonormal (``norm=4`` in pyshtools' low-level interface) with the
 Condon-Shortley phase *excluded* (pyshtools spells that ``csphase=1``), the
-grid is Driscoll-Healy with ``sampling=2``, and a point is a
-``(colatitude, longitude)`` pair in radians.
+grid is Driscoll-Healy with the sampling given at construction, and **a point
+is a ``(latitude, longitude)`` pair in degrees**.
+
+That last is the convention of every station catalogue, every earthquake
+catalogue, pyshtools itself, and every script written against v1. The
+trigonometry inside is done in colatitude and radians, and each method converts
+at its own boundary; :meth:`Sphere.to_colatitude_radians` and
+:meth:`Sphere.to_latitude_degrees` are the conversion, public because anyone
+working below the boundary needs it.
+
+An *angle* on the sphere is likewise in degrees — the half-angle of a cap, for
+instance. A *distance* is in the units of :attr:`Sphere.radius`, and every
+argument that takes one says so.
 """
 
 from __future__ import annotations
@@ -389,15 +400,11 @@ class Sphere(SymmetricSpace[Any]):
         """The value of each orthonormal harmonic at a point.
 
         Args:
-            point: a ``(colatitude, longitude)`` pair in radians.
+            point: a ``(latitude, longitude)`` pair in degrees.
         """
         from pyshtools.legendre import PlmON
 
-        position = np.atleast_1d(np.asarray(point, dtype=float))
-        if position.shape != (2,):
-            raise ValueError(
-                f"A point is a (colatitude, longitude) pair, got {position.shape}."
-            )
+        position = self._radians(point)
         colatitude, longitude = float(position[0]), float(position[1])
 
         legendre = PlmON(self._lmax, np.cos(colatitude), csphase=_NO_CONDON_SHORTLEY)
@@ -426,9 +433,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         from pyshtools.legendre import PlmON
 
-        positions = np.asarray([np.asarray(point, dtype=float) for point in points])
-        if positions.ndim != 2 or positions.shape[1] != 2:
-            raise ValueError("Points are (colatitude, longitude) pairs in radians.")
+        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
 
         indices = self._legendre_indices
         count = positions.shape[0]
@@ -478,7 +483,8 @@ class Sphere(SymmetricSpace[Any]):
         there is invisible to the transform and has to be added back by hand.
         """
         rows, columns = self.grid_shape
-        reference = float(self.basis_at(np.array([0.5, 0.0]))[0])
+        # Component zero is the constant mode, so the point is arbitrary.
+        reference = float(self.basis_at(self.reference_point)[0])
         weights = np.empty(rows)
         for row in range(rows):
             indicator = np.zeros(self.grid_shape)
@@ -489,7 +495,7 @@ class Sphere(SymmetricSpace[Any]):
     @cached_property
     def _south_pole_basis(self) -> np.ndarray:
         """The basis at colatitude ``pi``, which the grid does not sample."""
-        return self.basis_at(np.array([np.pi, 0.0]))
+        return self.basis_at(np.array([-90.0, 0.0]))
 
     def _synthesis_adjoint(self, values: np.ndarray, /) -> np.ndarray:
         """``sum_jk v_jk phi(p_jk)``: the transpose of synthesis onto the grid.
@@ -505,7 +511,7 @@ class Sphere(SymmetricSpace[Any]):
         total = self.to_components(self.from_grid_values(scaled))
         for row in np.flatnonzero(~live):
             total = total + values[row].sum() * self.basis_at(
-                np.array([float(self.colatitudes[row]), 0.0])
+                np.array([90.0 - np.degrees(float(self.colatitudes[row])), 0.0])
             )
         return total
 
@@ -536,10 +542,8 @@ class Sphere(SymmetricSpace[Any]):
         )
 
     def _angles(self, points: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
-        """Points as two contiguous arrays of radians."""
-        positions = np.asarray([np.asarray(point, dtype=float) for point in points])
-        if positions.ndim != 2 or positions.shape[1] != 2:
-            raise ValueError("Points are (colatitude, longitude) pairs in radians.")
+        """Points as two contiguous arrays of radians, for the NUFFT."""
+        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
         return (
             np.ascontiguousarray(positions[:, 0]),
             np.ascontiguousarray(positions[:, 1]),
@@ -572,7 +576,7 @@ class Sphere(SymmetricSpace[Any]):
 
         Args:
             x: a field of this space.
-            points: ``(colatitude, longitude)`` pairs in radians.
+            points: ``(latitude, longitude)`` pairs in degrees.
             eps: the NUFFT's requested accuracy, when it is used.
         """
         points = tuple(points)
@@ -641,23 +645,28 @@ class Sphere(SymmetricSpace[Any]):
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """Sample a function on the grid.
 
-        The function receives a ``(colatitude, longitude)`` pair in radians.
+        The function receives a ``(latitude, longitude)`` pair in degrees.
         """
         colatitudes, longitudes = np.meshgrid(
             self.colatitudes, self.longitudes, indexing="ij"
         )
+        latitudes = 90.0 - np.degrees(colatitudes.ravel())
+        azimuths = (np.degrees(longitudes.ravel()) + 180.0) % 360.0 - 180.0
         values = np.array(
             [
-                float(function(np.array([theta, phi])))
-                for theta, phi in zip(colatitudes.ravel(), longitudes.ravel())
+                float(function(np.array([latitude, azimuth])))
+                for latitude, azimuth in zip(latitudes, azimuths)
             ]
         )
         return self.from_grid_values(values.reshape(self.grid_shape))
 
     @property
     def reference_point(self) -> np.ndarray:
-        """The north pole. Any point would do; the sphere is homogeneous."""
-        return np.array([0.0, 0.0])
+        """The north pole, as ``(latitude, longitude)`` in degrees.
+
+        Any point would do; the sphere is homogeneous.
+        """
+        return np.array([90.0, 0.0])
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point drawn uniformly over the sphere's area.
@@ -669,8 +678,8 @@ class Sphere(SymmetricSpace[Any]):
         generator = np.random.default_rng() if rng is None else rng
         return np.array(
             [
-                float(np.arccos(generator.uniform(-1.0, 1.0))),
-                float(generator.uniform(0.0, 2.0 * np.pi)),
+                float(np.degrees(np.arcsin(generator.uniform(-1.0, 1.0)))),
+                float(generator.uniform(-180.0, 180.0)),
             ]
         )
 
@@ -680,10 +689,12 @@ class Sphere(SymmetricSpace[Any]):
         Any direction would do, the sphere being homogeneous *and* isotropic;
         a meridian is the one that needs no tangent frame.
         """
-        position = np.asarray(point, dtype=float)
+        position = self._radians(point)
         angles = np.asarray(distances, dtype=float) / self._radius
         return [
-            np.array([float(position[0] + angle), float(position[1])])
+            self.to_latitude_degrees(
+                np.array([float(position[0] + angle), float(position[1])])
+            )[0]
             for angle in angles
         ]
 
@@ -698,10 +709,70 @@ class Sphere(SymmetricSpace[Any]):
     # ----------------------------------------------------------------- #
 
     @staticmethod
+    def to_colatitude_radians(points: Any, /) -> np.ndarray:
+        """``(latitude, longitude)`` in degrees to ``(colatitude, longitude)``
+        in radians.
+
+        The public form of the conversion every method here does at its
+        boundary. Points are given in degrees, because that is what a catalogue
+        of stations or earthquakes holds, what pyshtools uses, and what every
+        script written against v1 passes; the trigonometry inside is done in
+        colatitude and radians, because that is what the spherical harmonics
+        are written in.
+
+        Args:
+            points: one ``(latitude, longitude)`` pair or a sequence of them.
+
+        Returns:
+            An ``(n, 2)`` array of ``(colatitude, longitude)`` in radians.
+        """
+        positions = np.atleast_2d(np.asarray(points, dtype=float))
+        if positions.shape[-1] != 2:
+            raise ValueError(
+                f"Points are (latitude, longitude) pairs in degrees, got an "
+                f"array of shape {np.shape(points)}."
+            )
+        return np.column_stack(
+            [
+                np.radians(90.0 - positions[:, 0]),
+                np.radians(positions[:, 1]) % (2.0 * np.pi),
+            ]
+        )
+
+    @staticmethod
+    def to_latitude_degrees(points: Any, /) -> np.ndarray:
+        """``(colatitude, longitude)`` in radians to ``(latitude, longitude)``
+        in degrees. The inverse of :meth:`to_colatitude_radians`.
+
+        Args:
+            points: one ``(colatitude, longitude)`` pair or a sequence of them.
+
+        Returns:
+            An ``(n, 2)`` array of ``(latitude, longitude)`` in degrees, with
+            longitude in ``[-180, 180)``.
+        """
+        positions = np.atleast_2d(np.asarray(points, dtype=float))
+        return np.column_stack(
+            [
+                90.0 - np.degrees(positions[:, 0]),
+                (np.degrees(positions[:, 1]) + 180.0) % 360.0 - 180.0,
+            ]
+        )
+
+    def _radians(self, point: Any, /) -> np.ndarray:
+        """One point, as ``(colatitude, longitude)`` in radians."""
+        converted = self.to_colatitude_radians(point)
+        if converted.shape != (1, 2):
+            raise ValueError(
+                f"Expected one (latitude, longitude) pair, got "
+                f"{converted.shape[0]}."
+            )
+        return converted[0]
+
+    @staticmethod
     def _to_vector(point: Any) -> np.ndarray:
-        """A ``(colatitude, longitude)`` pair as a unit vector in R^3."""
-        position = np.asarray(point, dtype=float)
-        colatitude, longitude = float(position[0]), float(position[1])
+        """A ``(latitude, longitude)`` pair in degrees as a unit vector."""
+        colatitude, longitude = Sphere.to_colatitude_radians(point)[0]
         sine = np.sin(colatitude)
         return np.array(
             [
@@ -713,15 +784,17 @@ class Sphere(SymmetricSpace[Any]):
 
     @staticmethod
     def _to_point(vector: np.ndarray) -> np.ndarray:
-        """A vector in R^3 as a ``(colatitude, longitude)`` pair."""
+        """A unit vector as a ``(latitude, longitude)`` pair in degrees."""
         unit = np.asarray(vector, dtype=float)
         unit = unit / np.linalg.norm(unit)
-        return np.array(
-            [
-                float(np.arccos(np.clip(unit[2], -1.0, 1.0))),
-                float(np.arctan2(unit[1], unit[0]) % (2.0 * np.pi)),
-            ]
-        )
+        return Sphere.to_latitude_degrees(
+            np.array(
+                [
+                    float(np.arccos(np.clip(unit[2], -1.0, 1.0))),
+                    float(np.arctan2(unit[1], unit[0]) % (2.0 * np.pi)),
+                ]
+            )
+        )[0]
 
     @staticmethod
     def _tangent_frame(centre: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -851,12 +924,29 @@ class Sphere(SymmetricSpace[Any]):
         both cheaper and more accurate than
         :meth:`geodesic_ball_quadrature`, which remains the fallback for
         anything that is not a cap.
+
+        Args:
+            centre: the cap's centre, as ``(latitude, longitude)`` in degrees.
+            angular_radius: the cap's half-angle, **in degrees**. An angle, not
+                a distance: :meth:`geodesic_ball_quadrature` takes a *physical*
+                radius, in the same units as :attr:`radius`, and the two are
+                related by the radius of the sphere.
+            normalise: divide by the cap's area, giving the average rather than
+                the integral.
+
+        Returns:
+            The functional.
+
+        Raises:
+            ValueError: if the angular radius is outside ``[0, 180]``, or if an
+                average over a cap of zero area is asked for.
         """
-        if angular_radius < 0.0 or angular_radius > np.pi:
+        if angular_radius < 0.0 or angular_radius > 180.0:
             raise ValueError(
-                f"A cap's angular radius lies in [0, pi], got {angular_radius}."
+                f"A cap's angular radius lies in [0, 180] degrees, got "
+                f"{angular_radius}."
             )
-        area_fraction = 0.5 * (1.0 - np.cos(angular_radius))
+        area_fraction = 0.5 * (1.0 - np.cos(np.radians(angular_radius)))
         if area_fraction <= 0.0:
             if normalise:
                 raise ValueError("A cap of zero area has no average.")
@@ -864,12 +954,12 @@ class Sphere(SymmetricSpace[Any]):
 
         from pyshtools import SHCoeffs
 
-        position = np.asarray(centre, dtype=float)
+        position = np.atleast_2d(np.asarray(centre, dtype=float))[0]
         cap = SHCoeffs.from_cap(
-            np.degrees(angular_radius),
+            float(angular_radius),
             self._lmax,
-            clat=90.0 - np.degrees(float(position[0])),
-            clon=np.degrees(float(position[1])),
+            clat=float(position[0]),
+            clon=float(position[1]),
             normalization="ortho",
             csphase=_NO_CONDON_SHORTLEY,
             kind="real",
@@ -888,7 +978,15 @@ class Sphere(SymmetricSpace[Any]):
     def spherical_cap_average(
         self, centre: Any, angular_radius: float, /
     ) -> LinearFunctional:
-        """The exact average over a spherical cap, as a functional."""
+        """The exact average over a spherical cap, as a functional.
+
+        Args:
+            centre: the cap's centre, as ``(latitude, longitude)`` in degrees.
+            angular_radius: the cap's half-angle, in degrees.
+
+        Returns:
+            The functional.
+        """
         return self.spherical_cap_integral(centre, angular_radius, normalise=True)
 
     def geodesic_ball_average_operator(
@@ -918,7 +1016,9 @@ class Sphere(SymmetricSpace[Any]):
 
         from ..algebra.spaces import EuclideanSpace
 
-        angular_radius = radius / self._radius
+        # `radius` here is a *physical* distance, in the units of self.radius;
+        # spherical_cap_integral takes the half-angle in degrees.
+        angular_radius = np.degrees(radius / self._radius)
         rows = np.stack(
             [
                 self.spherical_cap_integral(
@@ -983,7 +1083,7 @@ class Sphere(SymmetricSpace[Any]):
         exactly the wrong direction for a test to err in.
         """
         table = _read_table("gsn_stations.csv")
-        points = _degrees_to_points(table["Latitude"], table["Longitude"])
+        points = _as_points(table["Latitude"], table["Longitude"])
         return _subsample(points, count, rng)
 
     def earthquakes(
@@ -1001,7 +1101,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         table = _read_table("usgs_event_cache.csv")
         keep = table["mag"] >= minimum_magnitude
-        points = _degrees_to_points(table["latitude"][keep], table["longitude"][keep])
+        points = _as_points(table["latitude"][keep], table["longitude"][keep])
         return _subsample(points, count, rng)
 
     def domain_mask(
@@ -1032,10 +1132,8 @@ class Sphere(SymmetricSpace[Any]):
         land = prep(geometry.MultiPolygon(list(reader.geometries())))
 
         def indicator(point: Any) -> float:
-            position = np.asarray(point, dtype=float)
-            latitude = 90.0 - np.degrees(float(position[0]))
-            longitude = (np.degrees(float(position[1])) + 180.0) % 360.0 - 180.0
-            on_land = land.contains(geometry.Point(longitude, latitude))
+            latitude, longitude = np.asarray(point, dtype=float)
+            on_land = land.contains(geometry.Point(float(longitude), float(latitude)))
             return float(on_land != ocean)
 
         return self.project_function(indicator)
@@ -1200,13 +1298,21 @@ def _read_table(name: str) -> dict[str, np.ndarray]:
     return table
 
 
-def _degrees_to_points(
-    latitudes: np.ndarray, longitudes: np.ndarray
-) -> list[np.ndarray]:
-    """Latitude and longitude in degrees as (colatitude, longitude) radians."""
-    colatitudes = np.radians(90.0 - np.asarray(latitudes, dtype=float))
-    azimuths = np.radians(np.asarray(longitudes, dtype=float)) % (2.0 * np.pi)
-    return [np.array([theta, phi]) for theta, phi in zip(colatitudes, azimuths)]
+def _as_points(latitudes: np.ndarray, longitudes: np.ndarray) -> list[np.ndarray]:
+    """Two columns of a catalogue as points.
+
+    No conversion: a catalogue holds degrees and so does a point, which is the
+    whole reason for the convention. This used to turn them into colatitude and
+    radians here, privately, so that a caller who read the same file themselves
+    got different answers from the same numbers.
+    """
+    return [
+        np.array([float(latitude), float(longitude)])
+        for latitude, longitude in zip(
+            np.asarray(latitudes, dtype=float),
+            np.asarray(longitudes, dtype=float),
+        )
+    ]
 
 
 def _subsample(

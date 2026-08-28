@@ -146,7 +146,7 @@ def plot_points(
 
     Args:
         space: the sphere.
-        points: ``(colatitude, longitude)`` pairs in radians.
+        points: ``(latitude, longitude)`` pairs in degrees.
         ax: axes to draw on. A new map is made if omitted.
         marker: matplotlib marker.
         size: marker area.
@@ -159,10 +159,10 @@ def plot_points(
     crs = _require_cartopy()
     if ax is None:
         _, ax = subplots(space)
-    positions = np.asarray([np.asarray(point, dtype=float) for point in points])
+    positions = np.atleast_2d(np.asarray(list(points), dtype=float))
     collection = ax.scatter(
-        np.degrees(positions[:, 1]),
-        90.0 - np.degrees(positions[:, 0]),
+        positions[:, 1],
+        positions[:, 0],
         transform=crs.PlateCarree(),
         marker=marker,
         s=size,
@@ -210,9 +210,8 @@ def plot_paths(
     lines = []
     for start, end in paths:
         nodes, _ = space.geodesic_quadrature(start, end, count=count)
-        positions = np.asarray(nodes)
-        longitudes = np.degrees(positions[:, 1])
-        latitudes = 90.0 - np.degrees(positions[:, 0])
+        positions = np.atleast_2d(np.asarray(nodes, dtype=float))
+        latitudes, longitudes = positions[:, 0], positions[:, 1]
         # A path crossing the dateline would otherwise be drawn straight across
         # the whole map; splitting it at the jump keeps each piece local.
         breaks = np.flatnonzero(np.abs(np.diff(longitudes)) > 180.0) + 1
