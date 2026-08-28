@@ -14,7 +14,7 @@ route (b), the linear certificate, which is where Backus-Gilbert lives. Routes
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import scipy.linalg
@@ -1020,21 +1020,104 @@ class DualFeasibleProperty(SetEstimator):
         prior_support = self._prior.support_function()
         noise_support = self._noise.support_function()
 
+        # A bundle method asks for the value and the subgradient at the *same*
+        # point, one after the other, and both need the same two quantities:
+        # the residual ``T* q - A* lambda`` and the negated certificate. v1
+        # fused them into one oracle for exactly this reason; here a one-entry
+        # memo does it without changing the Functional protocol, and the
+        # saving is one adjoint application and one negation per oracle call.
+        cache: dict[str, Any] = {}
+
+        def prepare(certificate: Any) -> tuple[Any, Any]:
+            key = id(certificate)
+            if cache.get("key") != key:
+                cache["key"] = key
+                cache["parts"] = (
+                    model_space.subtract(pulled, forward.adjoint(certificate)),
+                    space.scale(-1.0, certificate),
+                )
+            return cache["parts"]
+
         def value(certificate: Any) -> float:
-            residual = model_space.subtract(pulled, forward.adjoint(certificate))
+            residual, negated = prepare(certificate)
             return (
                 space.inner_product(certificate, data)
                 + prior_support(residual)
-                + noise_support(space.scale(-1.0, certificate))
+                + noise_support(negated)
             )
 
         def gradient(certificate: Any) -> Any:
-            residual = model_space.subtract(pulled, forward.adjoint(certificate))
+            residual, negated = prepare(certificate)
             from_prior = forward(self._prior.support_maximiser(residual))
-            from_noise = self._noise.support_maximiser(space.scale(-1.0, certificate))
+            from_noise = self._noise.support_maximiser(negated)
             return space.subtract(space.subtract(data, from_prior), from_noise)
 
         return Functional.from_callables(space, value, gradient=gradient)
+
+    def support_values(
+        self,
+        directions: Sequence[Any],
+        data: Any,
+        /,
+        *,
+        warm_start: bool = True,
+        n_jobs: int | None = None,
+        backend: str | None = None,
+    ) -> np.ndarray:
+        """The support values in many directions, sweeping with a warm start.
+
+        Restores v1's ``solve_support_values``. Neighbouring directions have
+        neighbouring certificates, so each minimisation started from the last
+        one's answer is a correction rather than a fresh problem -- which is
+        the whole reason to sweep rather than to call :meth:`support` in a
+        loop, and the part :class:`ProximalBundleMethod` does not supply on
+        its own.
+
+        Warm starting is inherently *sequential*: each direction needs the one
+        before it. Passing ``n_jobs`` runs the directions in parallel instead
+        and gives the warm start up, which is the right trade only when the
+        directions are few and each minimisation is dear.
+
+        Args:
+            directions: the directions to evaluate.
+            data: the observations.
+            warm_start: carry each answer into the next. Ignored when running
+                in parallel, where there is no previous answer to carry.
+            n_jobs: workers. ``None`` or one keeps the sweep sequential.
+            backend: the joblib backend.
+
+        Returns:
+            One support value per direction.
+
+        Raises:
+            ValueError: if the feasible set is empty, as :meth:`support` does.
+        """
+        directions = tuple(directions)
+        if not directions:
+            return np.empty(0)
+
+        from ..parallel import parallel_map, resolve_jobs
+
+        if resolve_jobs(n_jobs) != 1:
+            return np.array(
+                parallel_map(
+                    lambda direction: self.support(direction, data),
+                    directions,
+                    n_jobs=n_jobs,
+                    backend=backend,
+                )
+            )
+
+        values, start = [], None
+        for direction in directions:
+            cost = self.dual_cost(direction, data)
+            origin = self.data_space.zero() if start is None else start
+            result = self._method.minimise(cost, origin)
+            self._check_bounded(result)
+            values.append(result.value)
+            if warm_start:
+                start = result.minimiser
+        return np.array(values)
 
     def support(self, direction: Any, data: Any, /, *, start: Any = None) -> float:
         """The support value in one direction, by minimising the dual cost.
@@ -1048,6 +1131,12 @@ class DualFeasibleProperty(SetEstimator):
         cost = self.dual_cost(direction, data)
         origin = self.data_space.zero() if start is None else start
         result = self._method.minimise(cost, origin)
+        self._check_bounded(result)
+        return result.value
+
+    @staticmethod
+    def _check_bounded(result: Any) -> None:
+        """Refuse a dual that ran away rather than converged."""
         if not result.converged and result.value < -_UNBOUNDED:
             raise ValueError(
                 f"The dual fell to {result.value:.3g} without converging, "
@@ -1055,7 +1144,6 @@ class DualFeasibleProperty(SetEstimator):
                 "within the noise set of the data. Check the two against each "
                 "other before checking this."
             )
-        return result.value
 
     def certificate(self, direction: Any, data: Any, /) -> Any:
         """The optimal ``lambda``: the linear combination of data that bounds.

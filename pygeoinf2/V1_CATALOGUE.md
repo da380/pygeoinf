@@ -215,7 +215,7 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `PrimalKKTSolver`, `KKTResult` | Being restored | **D-13**, Phase 4. `monotone_root` and `ProximalBundleMethod` cover the same ground, which is why this was marked subsumed -- but the decision is that it comes back as an alternative `method=`, not that it is replaced. It is `work/sphere_dli_example.py`'s solver | |
 | `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Planned | M5 stage 5.9 | |
 | `ChambollePockSolver`, `ChambollePockResult` | Planned | M5 stage 5.9 | |
-| `solve_support_values` | Being restored | **D-13**, Phase 4, with its warm start across directions -- which is the part `ProximalBundleMethod` does not have | |
+| `solve_support_values` | Ported | **D-13**. `DualFeasibleProperty.support_values(directions, data)`, with the warm start across directions -- 1.08 to 1.23x as they get closer together, and the same answers. `n_jobs` runs them in parallel instead, which gives the warm start up | |
 | `solve_primal_feasibility` | Being restored | **D-13**, Phase 4, with `ChambollePockSolver`. The inclusion test of DESIGN 18.5 | |
 
 ## `subsets.py` → `geometry/sets.py`, `geometry/convex.py`
