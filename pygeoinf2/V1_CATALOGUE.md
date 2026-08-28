@@ -207,7 +207,8 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 |---|---|---|---|
 | `SubgradientDescent`, `SubgradientResult` | Ported | `SubgradientDescent`, `_ConvexResult` | |
 | `Cut`, `Bundle` | Ported | M5 stage 5.9 | |
-| `LevelBundleMethod` | Ported | **D-13**. `numerics.convex.LevelBundleMethod`, with the LP lower bound: unlike the proximal method's gap, this one is a *certified* bound on the distance to the minimum, verified to bracket the true minimum at every stage | |
+| `ProximalBundleMethod`, `BundleResult` | Ported | The dual route for a general convex prior. `BundleResult`'s fields are now `OptimisationResult`'s, and its `gap` is documented as a practical criterion rather than a certified bound | |
+| `LevelBundleMethod` | Ported | **D-13**. `numerics.convex.LevelBundleMethod`, with the LP lower bound -- and *that* gap is certified, verified to bracket the true minimum at every stage rather than only at the end | |
 | `QPSolver`, `QPResult` | Ported | **D-13**. `numerics/quadratic_programming.py`, in the OSQP standard form `l <= A x <= u`, which covers equalities and one-sided bounds without a case for each | |
 | `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Ported | **D-13**, with `best_available_qp_solver` preferring OSQP, then Clarabel, then SciPy. All three verified to agree to 1e-6 on the same programme. Coordinates are fine here: the QP lives in a finite-dimensional, canonically Euclidean space | |
 | `best_available_qp_solver` | Planned | M5 stage 5.9 | |
