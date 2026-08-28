@@ -51,7 +51,7 @@ problem = LinearForwardProblem(forward, error=noise)
 
 # A heat-kernel prior with a correlation length of roughly 15 degrees, and
 # a pointwise standard deviation you can actually have an opinion about.
-prior = X.heat_measure(0.03, pointwise_std=0.05)
+prior = X.heat_measure(0.17, pointwise_std=0.05)
 truth, data = problem.synthetic_model_and_data(prior, rng=rng)
 print(
     f"truth has pointwise rms {X.grid_values(truth).std():.4f}; "

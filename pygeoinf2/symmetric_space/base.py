@@ -278,11 +278,31 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             raise ValueError("scale must be positive.")
         return (1.0 + scale**2 * self.laplacian_eigenvalues) ** order
 
-    def heat_symbol(self, time: float, /) -> np.ndarray:
-        """``exp(-time * lambda)``, the heat kernel's spectral weight."""
-        if time < 0.0:
-            raise ValueError("time must be non-negative.")
-        return np.exp(-time * self.laplacian_eigenvalues)
+    def heat_symbol(self, length_scale: float, /) -> np.ndarray:
+        r"""``exp(-length_scale^2 lambda)``, the heat kernel's spectral weight.
+
+        Parameterised by a **length**, not by a diffusion time. The two differ
+        by a square — ``time == length_scale^2`` — and the length is the one a
+        modeller has an opinion about: it is the distance over which the field
+        decorrelates, in the units of the domain, and it sits beside
+        :meth:`sobolev_symbol`'s length scale meaning the same thing.
+
+        v1 spells this ``heat_kernel(scale)`` with the same convention. v2
+        briefly took the time instead, silently, which turns a correlation
+        length of 0.1 into one of about 0.32.
+
+        Args:
+            length_scale: the correlation length, non-negative.
+
+        Returns:
+            The spectral weight, one value per component.
+
+        Raises:
+            ValueError: if the length scale is negative.
+        """
+        if length_scale < 0.0:
+            raise ValueError("length_scale must be non-negative.")
+        return np.exp(-(length_scale**2) * self.laplacian_eigenvalues)
 
     # ----------------------------------------------------------------- #
     #                         Invariant measures                        #
@@ -435,17 +455,36 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
     def heat_measure(
         self,
-        time: float,
+        length_scale: float,
         /,
         *,
         amplitude: float = 1.0,
-        expectation: np.ndarray | None = None,
+        expectation: V | None = None,
         pointwise_std: float | None = None,
         norm_std: float | None = None,
     ) -> GaussianMeasure:
-        """A Gaussian prior with a heat-kernel covariance."""
+        r"""A Gaussian prior with a heat-kernel covariance.
+
+        The covariance is ``amplitude^2 exp(-length_scale^2 Delta)``, which is
+        v1's ``heat_kernel_gaussian_measure(scale)`` unchanged. See
+        :meth:`heat_symbol` on why the parameter is a length and not a time.
+
+        Args:
+            length_scale: the correlation length, in the units of the domain.
+            amplitude: an overall scaling of the field.
+            expectation: the mean. Zero by default.
+            pointwise_std: rescale so the pointwise standard deviation is this.
+            norm_std: rescale so the expected squared norm matches this.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: if the length scale is negative, or if both
+                *pointwise_std* and *norm_std* are given.
+        """
         return self.invariant_measure(
-            amplitude**2 * self.heat_symbol(time),
+            amplitude**2 * self.heat_symbol(length_scale),
             expectation=expectation,
             pointwise_std=pointwise_std,
             norm_std=norm_std,
@@ -643,6 +682,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         rank: int = 0,
         samples: int | None = None,
         rng: Generator | None = None,
+        n_jobs: int | None = None,
+        backend: str | None = None,
     ) -> np.ndarray:
         """``Var(x(p))`` at given points, for *any* measure on this space.
 
@@ -657,15 +698,25 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         which for a covariance with a decaying spectrum is the difference
         between a useful estimate and a useless one.
         """
+        if samples is None:
+            # One covariance application per point, and the points are
+            # independent: the loop parallelises even though nothing inside it
+            # does. The operator below is not built on this path -- it was,
+            # and was dead work.
+            from ..parallel import parallel_map
+
+            return np.array(
+                parallel_map(
+                    lambda point: measure.directional_variance(
+                        self.dirac(point).representer
+                    ),
+                    points,
+                    n_jobs=n_jobs,
+                    backend=backend,
+                )
+            )
         evaluation = self.point_evaluation_operator(points)
         operator = evaluation @ measure.covariance @ evaluation.adjoint
-        if samples is None:
-            return np.array(
-                [
-                    measure.directional_variance(self.dirac(point).representer)
-                    for point in points
-                ]
-            )
         from ..numerics.randomised import deflated_diagonal
 
         return deflated_diagonal(
@@ -678,7 +729,53 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             f"{type(self).__name__} does not implement walk_from."
         )
 
-    def dirac(self, point: Any, /) -> LinearFunctional:
+    @property
+    def spatial_dimension(self) -> int:
+        """The dimension of the domain the fields live on."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not report a spatial dimension."
+        )
+
+    def _require_point_evaluation(self, what: str, /, *, unsafe: bool) -> None:
+        r"""Refuse point evaluation on a space too rough to admit it.
+
+        Sobolev embedding: point evaluation is a bounded functional on ``H^s``
+        exactly when ``s > d/2``. At or below that the Dirac has no representer
+        in the space, and what the code returns instead is not an approximation
+        to one — it is a grid-scale artefact that shrinks as the truncation
+        rises and has no limit.
+
+        Nothing downstream can detect this. The adjoint of an observation
+        operator built here returns noise, an inversion built on that adjoint
+        returns noise, and every number involved is finite. v1 refuses, v2
+        stopped refusing, and this puts it back.
+
+        ``unsafe=True`` proceeds anyway, which is worth having: seeing the
+        representer fail to converge as ``lmax`` grows is the clearest
+        demonstration of why the condition is there.
+
+        Args:
+            what: the operation, named for the message.
+            unsafe: proceed regardless.
+
+        Raises:
+            ValueError: when the order is too low and *unsafe* is not set.
+        """
+        if unsafe:
+            return
+        threshold = self.spatial_dimension / 2.0
+        if self.order <= threshold:
+            raise ValueError(
+                f"{what} needs a Sobolev order above {threshold:g} on a "
+                f"{self.spatial_dimension}-dimensional domain, and this space "
+                f"has order {self.order:g}. Below that a point evaluation is "
+                f"not a bounded functional: it has no representer, and the "
+                f"one this would return is a grid-scale artefact with no limit "
+                f"as the truncation rises. Raise the order, or pass "
+                f"unsafe=True if you want to see that for yourself."
+            )
+
+    def dirac(self, point: Any, /, *, unsafe: bool = False) -> LinearFunctional:
         """The evaluation functional at a point.
 
         Built from derivative components, so ``dirac(p).representer`` is the
@@ -686,8 +783,21 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         adjoint. On a Lebesgue space the Dirac is not bounded and the
         representer is meaningless; on a Sobolev space of high enough order it
         is a perfectly good function, and the difference is visible in the
-        metric rather than hidden in the code.
+        metric rather than hidden in the code, and in a refusal: see
+        :meth:`_require_point_evaluation`.
+
+        Args:
+            point: where to evaluate.
+            unsafe: build it even on a space too rough to admit it.
+
+        Returns:
+            The evaluation functional.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below half the spatial
+                dimension and *unsafe* is not set.
         """
+        self._require_point_evaluation("A Dirac functional", unsafe=unsafe)
         return LinearFunctional.from_derivative_components(self, self.basis_at(point))
 
     def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
@@ -725,7 +835,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         return total
 
     def point_evaluation_operator(
-        self, points: Sequence[Any], /, *, dense: bool = False
+        self, points: Sequence[Any], /, *, dense: bool = False, unsafe: bool = False
     ) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
@@ -744,13 +854,27 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
         Its adjoint returns a weighted sum of Dirac *representers*, which is
         what makes an adjoint-based inversion give a function rather than an
-        array of numbers.
+        array of numbers — and why the Sobolev order has to be high enough for
+        those representers to exist. See :meth:`_require_point_evaluation`.
+
+        Args:
+            points: where to evaluate.
+            dense: assemble the derivative matrix.
+            unsafe: build it even on a space too rough to admit it.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if no points are given, or if the Sobolev order is at
+                or below half the spatial dimension and *unsafe* is not set.
         """
         from ..algebra.spaces import EuclideanSpace
 
         points = tuple(points)
         if not points:
             raise ValueError("At least one point is needed.")
+        self._require_point_evaluation("A point evaluation operator", unsafe=unsafe)
         codomain = EuclideanSpace(len(points))
 
         if dense:
@@ -1106,28 +1230,109 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     #                         Averaging operators                       #
     # ----------------------------------------------------------------- #
 
+    def _path_nodes(self, start: Any, end: Any, count: int | None) -> tuple:
+        """Quadrature nodes and weights along one geodesic.
+
+        With ``count`` unset the node count comes from the arc length and the
+        space's own length scale: two nodes per length scale, which is v1's
+        heuristic and the only one available without asking the caller what the
+        field looks like. A fixed count is under-resolved for a long path on a
+        short-scale space and wasteful for the reverse, and the field's length
+        scale is exactly the thing that settles it.
+        """
+        if count is None:
+            arc = self.geodesic_distance(start, end)
+            count = max(2, int(np.ceil(2.0 * arc / self.length_scale)))
+        return self.geodesic_quadrature(start, end, count=count)
+
+    def path_integral_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        /,
+        *,
+        count: int | None = None,
+        weight: Callable[[Any], float] | None = None,
+        dense: bool = False,
+    ) -> LinearOperator:
+        """Line integrals along a set of geodesic paths.
+
+        The tomographic forward map: a travel time is an integral along a ray,
+        not an average over one. v1 computes exactly this and calls it
+        ``path_average_operator``, saying in its own docstring that the name is
+        wrong; :meth:`path_average_operator` here is the normalised variant,
+        and the two now differ by what they are called rather than by which
+        version you are using.
+
+        Built as ``W E``: point evaluation at the pooled quadrature nodes, then
+        a sparse matrix of weights. Writing it that way means the adjoint is
+        derived by the algebra rather than written out, which is where the
+        metric is usually dropped.
+
+        Args:
+            paths: ``(start, end)`` pairs.
+            count: quadrature nodes per path. Chosen from the arc length and
+                the space's length scale when omitted -- see
+                :meth:`_path_nodes`.
+            weight: an optional weight along the path, called with each node.
+                For a slowness that varies along the ray for reasons other than
+                the field being solved for. A *background* that varies with
+                position is a composition with a multiplication operator
+                instead; ray tracing, where the path itself depends on the
+                field, is out of scope.
+            dense: assemble the matrix rather than composing operators.
+
+        Returns:
+            The operator, from this space into a Euclidean space of one entry
+            per path.
+
+        Raises:
+            ValueError: if no paths are given.
+        """
+        return self._path_operator(
+            paths, count=count, weight=weight, dense=dense, normalise=False
+        )
+
     def path_average_operator(
         self,
         paths: Sequence[tuple[Any, Any]],
         /,
         *,
-        count: int = 20,
-        normalise: bool = True,
+        count: int | None = None,
+        weight: Callable[[Any], float] | None = None,
         dense: bool = False,
     ) -> LinearOperator:
-        """Averages, or integrals, along a set of geodesic paths.
+        """Averages along a set of geodesic paths.
 
-        The tomographic forward map. Built as ``W E``: point evaluation at the
-        pooled quadrature nodes, then a sparse matrix of weights. Writing it
-        this way means the adjoint is derived by the algebra rather than
-        written out, which is where the metric is usually dropped.
+        :meth:`path_integral_operator` divided by each path's length. Use that
+        one for a travel time; this one when the quantity of interest is a mean
+        property of the material along the ray, independent of how far it goes.
 
         Args:
             paths: ``(start, end)`` pairs.
-            count: quadrature nodes per path.
-            normalise: divide by the path length, giving an average rather
-                than an integral.
+            count, weight, dense: as for :meth:`path_integral_operator`.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if no paths are given, or if a path has zero length and
+                so no average.
         """
+        return self._path_operator(
+            paths, count=count, weight=weight, dense=dense, normalise=True
+        )
+
+    def _path_operator(
+        self,
+        paths: Sequence[tuple[Any, Any]],
+        /,
+        *,
+        count: int | None,
+        weight: Callable[[Any], float] | None,
+        dense: bool,
+        normalise: bool,
+    ) -> LinearOperator:
+        """The integral or the average, which differ only by a scaling."""
         paths = tuple(paths)
         if not paths:
             raise ValueError("At least one path is needed.")
@@ -1135,7 +1340,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         nodes: list[Any] = []
         rows, columns, values = [], [], []
         for index, (start, end) in enumerate(paths):
-            path_nodes, path_weights = self.geodesic_quadrature(start, end, count=count)
+            path_nodes, path_weights = self._path_nodes(start, end, count)
+            path_weights = np.asarray(path_weights, dtype=float)
             if normalise:
                 total = float(np.sum(path_weights))
                 if total <= 0.0:
@@ -1143,11 +1349,15 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                         f"Path {index} has zero length, so it has no average."
                     )
                 path_weights = path_weights / total
+            if weight is not None:
+                path_weights = path_weights * np.array(
+                    [float(weight(node)) for node in path_nodes]
+                )
             offset = len(nodes)
             nodes.extend(path_nodes)
             rows.extend([index] * len(path_nodes))
             columns.extend(range(offset, offset + len(path_nodes)))
-            values.extend(np.asarray(path_weights, dtype=float).tolist())
+            values.extend(path_weights.tolist())
 
         weights = _weight_operator(len(paths), len(nodes), rows, columns, values)
         if dense:
@@ -1157,7 +1367,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(paths)), matrix, form="galerkin"
             )
-        return weights @ self.point_evaluation_operator(nodes)
+        # unsafe: as for the ball average, the quadrature samples points but
+        # the functional does not. A path is a *measure-zero* set, though, so
+        # this one is bounded only for order above 1/2 rather than for every
+        # order -- a weaker condition than point evaluation's, and one this
+        # class does not check.
+        return weights @ self.point_evaluation_operator(nodes, unsafe=True)
 
     def geodesic_ball_average_operator(
         self,
@@ -1204,7 +1419,11 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             return LinearOperator.from_matrix(
                 self, EuclideanSpace(len(centres)), matrix, form="galerkin"
             )
-        return weights @ self.point_evaluation_operator(nodes)
+        # unsafe: the *quadrature* samples points, but the functional it
+        # computes is an average over a set of positive measure, which is
+        # bounded on L2 and has a perfectly good representer there. The
+        # closed-form route below takes no point values at all.
+        return weights @ self.point_evaluation_operator(nodes, unsafe=True)
 
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """The field obtained by sampling a function on the space's grid."""

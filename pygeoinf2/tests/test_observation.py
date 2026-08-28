@@ -163,10 +163,46 @@ class TestAverages:
         assert A(one)[0] == pytest.approx(1.0)
 
     def test_the_path_integral_of_one_is_the_arc_length(self, lebesgue, rng):
+        """The integral is its own method now, rather than a keyword on the
+        average: a travel time is an integral along a ray, and v1 computes
+        exactly this while calling it an average."""
         one = lebesgue.project_function(lambda point: 1.0)
         a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
-        A = lebesgue.path_average_operator([(a, b)], count=12, normalise=False)
+        A = lebesgue.path_integral_operator([(a, b)], count=12)
         assert A(one)[0] == pytest.approx(lebesgue.geodesic_distance(a, b))
+
+    def test_the_node_count_follows_the_length_scale(self, rng):
+        """Left to itself, the quadrature resolves the field it is integrating:
+        two nodes per length scale, as v1 does. A fixed count is
+        under-resolved for a long path on a short-scale space."""
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        short = Sobolev(24, 2.0, 0.1, radius=2.0)
+        long = Sobolev(24, 2.0, 0.8, radius=2.0)
+        a, b = np.array([10.0, 20.0]), np.array([-30.0, 80.0])
+        one = short.with_order(0.0).project_function(lambda p: 1.0)
+
+        # Both still integrate a constant exactly; the finer one simply uses
+        # more nodes to do it.
+        for space in (short, long):
+            assert space.path_integral_operator([(a, b)])(one)[0] == pytest.approx(
+                space.geodesic_distance(a, b)
+            )
+        arc = short.geodesic_distance(a, b)
+        assert int(np.ceil(2.0 * arc / short.length_scale)) > int(
+            np.ceil(2.0 * arc / long.length_scale)
+        )
+
+    def test_a_weight_along_the_path_is_applied(self, lebesgue, rng):
+        """For a slowness that varies along the ray for reasons other than the
+        field being solved for."""
+        one = lebesgue.project_function(lambda point: 1.0)
+        a, b = lebesgue.random_point(rng=rng), lebesgue.random_point(rng=rng)
+        plain = lebesgue.path_integral_operator([(a, b)], count=12)
+        doubled = lebesgue.path_integral_operator(
+            [(a, b)], count=12, weight=lambda point: 2.0
+        )
+        assert doubled(one)[0] == pytest.approx(2.0 * plain(one)[0])
 
     def test_the_path_average_is_the_quadrature_sum(self, space, rng):
         """The W E factorisation must agree with doing it by hand."""
@@ -355,7 +391,7 @@ class TestPointwiseVariance:
     def test_it_works_on_a_periodic_box_too(self):
         """Nothing in the calculation is spherical."""
         box = BoxSobolev((64,), 2.0, 0.05, lengths=(1.0,))
-        measure = box.heat_measure(0.001, pointwise_std=3.0)
+        measure = box.heat_measure(0.032, pointwise_std=3.0)
         representer = box.dirac(box.reference_point).representer
         variance = box.inner_product(measure.covariance(representer), representer)
         assert np.sqrt(variance) == pytest.approx(3.0)

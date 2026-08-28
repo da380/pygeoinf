@@ -599,3 +599,81 @@ class TestConditioning:
         assert space.norm(
             space.subtract(direct.covariance(probe), default.covariance(probe))
         ) < 1e-8 * space.norm(probe)
+
+
+class TestParallelLoops:
+    """D-6: ``n_jobs`` at the loops *around* operators, never inside them."""
+
+    def test_parallel_draws_have_the_right_law(self, rng):
+        """Not the same numbers as a serial run at the same seed -- each worker
+        gets its own spawned stream, so the draws are independent rather than
+        identical. Reproducible, and not a repeat."""
+        space = make_weighted_space()
+        measure = GaussianMeasure.from_standard_deviation(space, 1.5)
+
+        serial = measure.samples(2000, rng=np.random.default_rng(3))
+        parallel = measure.samples(
+            2000, rng=np.random.default_rng(3), n_jobs=2, backend="threading"
+        )
+        assert len(parallel) == 2000
+        assert not np.allclose(serial[0], parallel[0])
+
+        for draws in (serial, parallel):
+            components = np.array([space.to_components(x) for x in draws])
+            for index in range(space.dim):
+                direction = space.basis_vector(index)
+                empirical = np.mean(
+                    [space.inner_product(x, direction) ** 2 for x in draws]
+                )
+                assert empirical == pytest.approx(
+                    1.5**2 * space.inner_product(direction, direction), rel=0.12
+                )
+            assert components.shape == (2000, space.dim)
+
+    def test_a_parallel_matrix_is_the_serial_one(self, rng):
+        space = make_dense_metric_space()
+        codomain = EuclideanSpace(4)
+        matrix = rng.normal(size=(4, space.dim))
+        operator = LinearOperator.from_callables(
+            space,
+            codomain,
+            lambda x: codomain.from_components(matrix @ space.to_components(x)),
+            adjoint=lambda y: space.from_components(
+                space.solve_gram(
+                    matrix.T @ codomain.apply_gram(codomain.to_components(y))
+                )
+            ),
+        )
+        for form in ("components", "galerkin"):
+            for by in ("columns", "rows"):
+                assert operator.matrix(form=form, by=by) == pytest.approx(
+                    operator.matrix(form=form, by=by, n_jobs=2, backend="threading")
+                )
+
+    def test_the_job_count_is_validated(self):
+        from pygeoinf2.parallel import resolve_jobs
+
+        assert resolve_jobs(None) == 1
+        assert resolve_jobs(1) == 1
+        assert resolve_jobs(-1) >= 1
+        with pytest.raises(ValueError, match="positive count"):
+            resolve_jobs(0)
+        with pytest.raises(ValueError, match="positive count"):
+            resolve_jobs(-2)
+
+    def test_it_stays_serial_without_joblib(self, monkeypatch):
+        """The dependency is optional: with one job nothing is imported, and
+        with joblib missing the loop still runs."""
+        import builtins
+
+        from pygeoinf2.parallel import parallel_map
+
+        real_import = builtins.__import__
+
+        def refuse(name, *args, **kwargs):
+            if name == "joblib":
+                raise ImportError("no joblib")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", refuse)
+        assert parallel_map(lambda i: i * i, range(4), n_jobs=2) == [0, 1, 4, 9]

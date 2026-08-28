@@ -474,6 +474,8 @@ def random_trace(
     *,
     samples: int = 100,
     rng: Generator | None = None,
+    n_jobs: int | None = None,
+    backend: str | None = None,
 ) -> Estimate:
     """The Hutchinson trace estimate, coordinate-free.
 
@@ -488,10 +490,30 @@ def random_trace(
         raise ValueError("At least two samples are needed for an error estimate.")
 
     space = operator.domain
-    draws = np.empty(samples)
-    for index in range(samples):
-        probe = space.white_noise(rng=rng)
-        draws[index] = space.inner_product(operator(probe), probe)
+    from ..parallel import parallel_map, resolve_jobs
+
+    if resolve_jobs(n_jobs) == 1:
+        draws = np.empty(samples)
+        for index in range(samples):
+            probe = space.white_noise(rng=rng)
+            draws[index] = space.inner_product(operator(probe), probe)
+    else:
+        # A probe per worker, each with its own stream so the run is
+        # reproducible and the workers do not share one. The draws then differ
+        # from a serial run at the same seed -- independent, not identical.
+        from numpy.random import default_rng
+
+        parent = default_rng() if rng is None else rng
+
+        def probe_once(stream: Any) -> float:
+            probe = space.white_noise(rng=stream)
+            return space.inner_product(operator(probe), probe)
+
+        draws = np.array(
+            parallel_map(
+                probe_once, parent.spawn(samples), n_jobs=n_jobs, backend=backend
+            )
+        )
     return Estimate(
         float(draws.mean()),
         float(draws.std(ddof=1) / np.sqrt(samples)),

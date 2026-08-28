@@ -69,7 +69,101 @@ from .probability.gaussian import GaussianMeasure
 from .probability.mixture import GaussianMixture
 from .traits import Traits
 
+# The subpackages, so that ``gi.inference.X`` works. inference and plotting
+# were the two a user needs in order to *solve* anything, and the two that were
+# not reachable at all; numerics arrived only by accident, pulled in
+# transitively by symmetric_space. See DESIGN.md section 25.4.
+from . import geometry, inference, numerics, plotting, probability, symmetric_space
+from .inference import (
+    BackusGilbert,
+    BackusInference,
+    ConstrainedLeastSquares,
+    ConstrainedMinimumNorm,
+    DiscrepancyPrinciple,
+    FeasibleProperty,
+    ForwardProblem,
+    LeastSquares,
+    LinearForwardProblem,
+    LinearGaussianInversion,
+    LinearGaussianMixtureInversion,
+    LocalisedPreconditioner,
+    MinimumNorm,
+    NormalDiagonalPreconditioner,
+    NormalOperator,
+    TikhonovFamily,
+    TikhonovNormalOperator,
+)
+from .numerics.preconditioners import (
+    BandedPreconditioner,
+    IdentityPreconditioner,
+    JacobiPreconditioner,
+    SpectralPreconditioner,
+    WoodburyPreconditioner,
+)
+from .numerics.solvers import (
+    BiCGStabSolver,
+    CGSolver,
+    CholeskySolver,
+    EigenSolver,
+    FlexibleCGSolver,
+    GMRESSolver,
+    LSQRSolver,
+    LUSolver,
+    MinResSolver,
+    ProgressCallback,
+    SolveResult,
+)
+from .plotting import plot, plot_corner, plot_densities, plot_points, subplots
+
 __all__ = [
+    # subpackages
+    "geometry",
+    "inference",
+    "numerics",
+    "plotting",
+    "probability",
+    "symmetric_space",
+    # inference: the workflow, flat, as v1 had it
+    "BackusGilbert",
+    "BackusInference",
+    "ConstrainedLeastSquares",
+    "ConstrainedMinimumNorm",
+    "DiscrepancyPrinciple",
+    "FeasibleProperty",
+    "ForwardProblem",
+    "LeastSquares",
+    "LinearForwardProblem",
+    "LinearGaussianInversion",
+    "LinearGaussianMixtureInversion",
+    "MinimumNorm",
+    "NormalOperator",
+    "TikhonovFamily",
+    "TikhonovNormalOperator",
+    # solvers and preconditioners
+    "BandedPreconditioner",
+    "BiCGStabSolver",
+    "CGSolver",
+    "CholeskySolver",
+    "EigenSolver",
+    "FlexibleCGSolver",
+    "GMRESSolver",
+    "IdentityPreconditioner",
+    "JacobiPreconditioner",
+    "LocalisedPreconditioner",
+    "LSQRSolver",
+    "LUSolver",
+    "MinResSolver",
+    "NormalDiagonalPreconditioner",
+    "ProgressCallback",
+    "SolveResult",
+    "SpectralPreconditioner",
+    "WoodburyPreconditioner",
+    # plotting
+    "plot",
+    "plot_corner",
+    "plot_densities",
+    "plot_points",
+    "subplots",
     # algebra.spaces
     "ArrayVectorMixin",
     "CoordinateSpace",

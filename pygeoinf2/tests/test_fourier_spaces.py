@@ -209,7 +209,7 @@ class TestInvariantMeasures:
 
     def test_a_heat_measure(self, rng):
         space = Lebesgue((16,))
-        measure = space.heat_measure(0.05)
+        measure = space.heat_measure(0.22)
         check_measure(measure, rng=rng, samples=6000, rtol=0.15)
 
     def test_negative_variances_are_refused(self):
@@ -352,7 +352,10 @@ class TestNonUniformFFT:
         points = [rng.uniform(0.0, 1.0, 4) for _ in range(5)]
         x = X.random(rng=rng)
         assert np.allclose(X.evaluate(x, points), SymmetricSpace.evaluate(X, x, points))
-        check_operator(X.point_evaluation_operator(points), rng=rng)
+        # The operator needs an order above d/2 for its adjoint to mean
+        # anything; the route it takes is the same either way.
+        smooth = Sobolev((6, 6, 6, 6), 3.0, 0.2)
+        check_operator(smooth.point_evaluation_operator(points), rng=rng)
 
     def test_a_wrong_point_shape_is_refused(self):
         X = Lebesgue((16, 16))

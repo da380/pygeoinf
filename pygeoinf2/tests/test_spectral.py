@@ -204,7 +204,7 @@ class TestMeasureStatistics:
         it is different."""
         X = Sobolev(6, 2.0, 0.2)
         first = X.sobolev_measure(2.0, 0.2)
-        second = X.heat_measure(0.02)
+        second = X.heat_measure(0.14)
         assert first.kl_divergence(second) == pytest.approx(
             first.kl_divergence(second, method="dense")
         )
@@ -242,7 +242,7 @@ class TestMeasureStatistics:
     def test_auto_takes_the_spectral_route_when_it_can(self):
         X = Sobolev(6, 2.0, 0.2)
         first = X.sobolev_measure(2.0, 0.2)
-        second = X.heat_measure(0.02)
+        second = X.heat_measure(0.14)
         assert first.kl_divergence_estimate(second).standard_error == 0.0
         forced = first.kl_divergence_estimate(
             second,
@@ -351,7 +351,7 @@ class TestTwoPointCovariance:
 
     def test_it_decays_with_distance(self, rng):
         X = Sobolev(24, 2.0, 0.05)
-        field = X.heat_measure(0.002).two_point_covariance(X.reference_point)
+        field = X.heat_measure(0.045).two_point_covariance(X.reference_point)
         near = X.evaluate(field, [np.array([0.05, 0.0])])[0]
         far = X.evaluate(field, [np.array([1.5, 0.0])])[0]
         assert near > far
@@ -392,7 +392,7 @@ class TestNormCalibration:
     def test_a_non_positive_norm_is_refused(self):
         X = Sobolev(8, 2.0, 0.2)
         with pytest.raises(ValueError, match="must be positive"):
-            X.heat_measure(0.01, norm_std=0.0)
+            X.heat_measure(0.1, norm_std=0.0)
 
 
 class TestPowerMeasure:
@@ -432,15 +432,15 @@ class TestCovarianceFunction:
     def test_it_falls_away_from_the_origin(self):
         X = Sobolev(48, 2.0, 0.05)
         values = X.covariance_function(
-            X.heat_measure(0.002), np.array([0.0, 0.05, 0.2, 0.6])
+            X.heat_measure(0.045), np.array([0.0, 0.05, 0.2, 0.6])
         )
         assert values[0] > values[1] > values[2]
 
     def test_a_longer_correlation_length_decays_more_slowly(self):
         X = Sobolev(48, 2.0, 0.05)
         distance = np.array([0.3])
-        short = X.covariance_function(X.heat_measure(0.002), distance)
-        long = X.covariance_function(X.heat_measure(0.02), distance)
-        assert long[0] / X.pointwise_variance(X.heat_symbol(0.02)) > short[
+        short = X.covariance_function(X.heat_measure(0.045), distance)
+        long = X.covariance_function(X.heat_measure(0.14), distance)
+        assert long[0] / X.pointwise_variance(X.heat_symbol(0.14)) > short[
             0
-        ] / X.pointwise_variance(X.heat_symbol(0.002))
+        ] / X.pointwise_variance(X.heat_symbol(0.045))

@@ -44,6 +44,7 @@ __all__ = [
     "SolverLike",
     "resolve_solver",
     "ConvergenceError",
+    "ProgressCallback",
     "SolveResult",
     "LinearSolver",
     "InverseOperator",
@@ -287,6 +288,65 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
 # --------------------------------------------------------------------- #
 #                            Direct solvers                             #
 # --------------------------------------------------------------------- #
+
+
+class ProgressCallback:
+    """A callback that records a solve's progress, and can report it.
+
+    Every iterative solver here takes ``callback=(iteration, residual)``, so
+    this is a few lines; it is supplied because the few lines were the same
+    ones every caller was writing, and because v1 had it. Pass one and keep it:
+    it is the diagnostic an inversion otherwise discards, since an estimator
+    applies its inverse operator through the algebra and the ``SolveResult``
+    never reaches the caller.
+
+    A single instance can be reused across solves. It resets itself whenever a
+    solve starts over at iteration zero, so the counts belong to the last one.
+
+    .. code-block:: python
+
+        progress = ProgressCallback()
+        estimator = LinearGaussianInversion(
+            problem, prior, solver=CGSolver(callback=progress)
+        )
+        posterior = estimator(data)
+        print(progress.iterations, progress.residual)
+    """
+
+    def __init__(self, /, *, report: Callable[[str], None] | None = None) -> None:
+        """
+        Args:
+            report: called with a one-line summary at each iteration. Nothing
+                is printed unless one is given, because a library that writes
+                to stdout uninvited is a nuisance inside a loop. ``print`` is
+                the obvious argument.
+        """
+        self._report = report
+        self.residuals: list[float] = []
+
+    def __call__(self, iteration: int, residual: float) -> None:
+        """Record one step."""
+        if iteration == 0:
+            self.residuals = []
+        self.residuals.append(float(residual))
+        if self._report is not None:
+            self._report(f"iteration {iteration}: residual {residual:.6g}")
+
+    @property
+    def iterations(self) -> int:
+        """Steps taken in the last solve, not counting the initial residual."""
+        return max(len(self.residuals) - 1, 0)
+
+    @property
+    def residual(self) -> float:
+        """The last residual seen, or infinity before anything has run."""
+        return self.residuals[-1] if self.residuals else float("inf")
+
+    def __repr__(self) -> str:
+        return (
+            f"ProgressCallback(iterations={self.iterations}, "
+            f"residual={self.residual:.3g})"
+        )
 
 
 class DirectSolver(LinearSolver):

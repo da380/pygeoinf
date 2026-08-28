@@ -196,6 +196,11 @@ class Sphere(SymmetricSpace[Any]):
         return self._packing[1]
 
     @property
+    def spatial_dimension(self) -> int:
+        """Two: a sphere is a two-dimensional surface."""
+        return 2
+
+    @property
     def gaussian_curvature(self) -> float:
         """``1 / radius^2``, constant over the sphere."""
         return 1.0 / self._radius**2

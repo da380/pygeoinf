@@ -40,7 +40,7 @@ rough = X.multiply(X.project_function(lambda point: OCEANIC), 1.0 + 9.0 * land)
 
 # Sharp coastlines ring in a truncated harmonic basis, so smooth them with a
 # heat kernel. The covariance of a heat-kernel measure *is* that smoother.
-rigidity = X.heat_measure(0.02).covariance(rough)
+rigidity = X.heat_measure(0.14).covariance(rough)
 # Fields are SHGrid objects; grid_values reaches their numbers.
 stiffness = X.grid_values(rigidity)
 print(f"rigidity from {stiffness.min():.3e} to {stiffness.max():.3e}")

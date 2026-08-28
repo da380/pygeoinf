@@ -650,6 +650,8 @@ class LinearOperator[X, Y](Operator[X, Y]):
         *,
         form: Literal["auto", "components", "galerkin"] = "auto",
         by: Literal["auto", "columns", "rows"] = "auto",
+        n_jobs: int | None = None,
+        backend: str | None = None,
     ) -> np.ndarray:
         """A dense matrix representation. Requires coordinates on both sides.
 
@@ -669,6 +671,24 @@ class LinearOperator[X, Y](Operator[X, Y]):
         applications of its adjoint. For an observation operator — a few
         hundred data from a model space of many thousands — the difference is
         two orders of magnitude, so ``"auto"`` takes whichever side is smaller.
+
+        Those applications are independent of each other, which is what
+        ``n_jobs`` is for: one column per worker. It is worth it when a single
+        application is expensive — an operator with a PDE solve inside it, or
+        an inverse that runs a Krylov iteration per column — and not otherwise.
+        Serial by default; see :mod:`pygeoinf2.parallel`.
+
+        Args:
+            form: which representation to return.
+            by: which way to fill it in.
+            n_jobs: workers for the column or row loop. Serial by default.
+            backend: joblib's backend.
+
+        Returns:
+            The matrix.
+
+        Raises:
+            ValueError: for an unknown *form* or *by*.
         """
         require_coordinates(self.domain, self.codomain)
         if form == "auto":
@@ -680,11 +700,23 @@ class LinearOperator[X, Y](Operator[X, Y]):
         if by not in ("columns", "rows"):
             raise ValueError(f"Unknown fill direction {by!r}.")
 
+        from ..parallel import parallel_map
+
         if by == "columns":
-            matrix = np.zeros((self.codomain.dim, self.domain.dim))
-            for j in range(self.domain.dim):
-                image = self(self.domain.basis_vector(j))
-                matrix[:, j] = self.codomain.to_components(image)
+
+            def column(index: int) -> np.ndarray:
+                return self.codomain.to_components(
+                    self(self.domain.basis_vector(index))
+                )
+
+            columns = parallel_map(
+                column, range(self.domain.dim), n_jobs=n_jobs, backend=backend
+            )
+            matrix = (
+                np.column_stack(columns)
+                if columns
+                else np.zeros((self.codomain.dim, 0))
+            )
             if form == "galerkin":
                 matrix = np.column_stack(
                     [
@@ -698,12 +730,15 @@ class LinearOperator[X, Y](Operator[X, Y]):
         # x -> (A x, e_i)_Y == (x, A* e_i)_X, which is G_X applied to the
         # components of the adjoint's image. See DESIGN.md section 5.6.
         adjoint = self.adjoint
-        matrix = np.zeros((self.codomain.dim, self.domain.dim))
-        for i in range(self.codomain.dim):
-            representer = adjoint(self.codomain.basis_vector(i))
-            matrix[i, :] = self.domain.apply_gram(
-                self.domain.to_components(representer)
-            )
+
+        def row(index: int) -> np.ndarray:
+            representer = adjoint(self.codomain.basis_vector(index))
+            return self.domain.apply_gram(self.domain.to_components(representer))
+
+        rows = parallel_map(
+            row, range(self.codomain.dim), n_jobs=n_jobs, backend=backend
+        )
+        matrix = np.stack(rows) if rows else np.zeros((0, self.domain.dim))
         if form == "components":
             # A_c == G_Y^-1 M, so the inverse metric acts down each column.
             matrix = np.column_stack(

@@ -457,3 +457,68 @@ class TestDirectInverseAdjoint:
         probe = space.random(rng=rng)
         recovered = operator.adjoint(inverse.adjoint(probe))
         assert space.norm(space.subtract(recovered, probe)) < 1e-10 * space.norm(probe)
+
+
+class TestProgressCallback:
+    """The diagnostic an inversion otherwise discards."""
+
+    def test_it_records_the_last_solve(self, spd_problem):
+        from pygeoinf2.numerics.solvers import ProgressCallback
+
+        A, b, _ = spd_problem
+        progress = ProgressCallback()
+        result = CGSolver(rtol=1e-10, callback=progress)(A).solve(b)
+
+        assert progress.iterations == result.iterations
+        assert progress.residual == pytest.approx(result.residual_norm)
+        assert list(progress.residuals) == list(result.history)
+
+    def test_it_resets_between_solves(self, spd_problem, rng):
+        """An estimator solves more than once -- at construction and at every
+        application -- so the counts have to belong to the last one rather than
+        accumulating."""
+        from pygeoinf2.numerics.solvers import ProgressCallback
+
+        A, b, _ = spd_problem
+        progress = ProgressCallback()
+        inverse = CGSolver(rtol=1e-10, callback=progress)(A)
+        inverse.solve(b)
+        first = progress.iterations
+        inverse.solve(A.domain.random(rng=rng))
+        assert progress.iterations > 0
+        assert len(progress.residuals) == progress.iterations + 1
+        assert first > 0
+
+    def test_it_reports_only_when_asked(self, spd_problem):
+        """A library that writes to stdout uninvited is a nuisance inside a
+        loop, so nothing is printed without a sink."""
+        from pygeoinf2.numerics.solvers import ProgressCallback
+
+        A, b, _ = spd_problem
+        lines = []
+        CGSolver(rtol=1e-10, callback=ProgressCallback(report=lines.append))(A).solve(b)
+        assert lines
+        assert lines[0].startswith("iteration 0:")
+
+    def test_it_survives_an_estimator(self, rng):
+        """The workflow it exists for: pyslfp prints the iteration count after
+        every solve, and ``est(data)`` discards the SolveResult."""
+        import pygeoinf2 as gi
+
+        from pygeoinf2.numerics.solvers import ProgressCallback
+
+        model, data_space = EuclideanSpace(30), EuclideanSpace(15)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(15, 30)), form="components"
+        )
+        problem = gi.LinearForwardProblem(
+            forward, error=gi.GaussianMeasure.from_standard_deviation(data_space, 0.1)
+        )
+        prior = gi.GaussianMeasure.from_standard_deviation(model, 1.0)
+        progress = ProgressCallback()
+        estimator = gi.LinearGaussianInversion(
+            problem, prior, solver=CGSolver(rtol=1e-10, callback=progress)
+        )
+        _, observed = problem.synthetic_model_and_data(prior, rng=rng)
+        estimator(observed)
+        assert progress.iterations > 0

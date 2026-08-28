@@ -564,7 +564,7 @@ class TestCorrelatedMeasures:
     def test_the_requested_correlation_appears_in_samples(self, correlation, rng):
         X = self.space()
         first = X.sobolev_symbol(-2.0, 0.2)
-        second = X.heat_symbol(0.02)
+        second = X.heat_symbol(0.14)
         measure = X.correlated_measure_from_correlations(
             [first, second],
             np.array([[1.0, correlation], [correlation, 1.0]]),
@@ -580,7 +580,7 @@ class TestCorrelatedMeasures:
         X = self.space()
         first = X.sobolev_symbol(-2.0, 0.2)
         measure = X.correlated_measure_from_correlations(
-            [first, X.heat_symbol(0.02)], np.array([[1.0, 0.5], [0.5, 1.0]])
+            [first, X.heat_symbol(0.14)], np.array([[1.0, 0.5], [0.5, 1.0]])
         )
         block = measure.covariance.matrix(form="components")[: X.dim, : X.dim]
         assert np.allclose(np.diag(block), first)
@@ -589,7 +589,7 @@ class TestCorrelatedMeasures:
         """An extended Karhunen-Loeve expansion, without writing one."""
         X = self.space()
         measure = X.correlated_measure_from_correlations(
-            [X.heat_symbol(0.02), X.heat_symbol(0.02)],
+            [X.heat_symbol(0.14), X.heat_symbol(0.14)],
             np.array([[1.0, 0.8], [0.8, 1.0]]),
         )
         assert measure.can_sample
@@ -600,7 +600,7 @@ class TestCorrelatedMeasures:
         X = self.space()
         with pytest.raises(ValueError, match="positive semidefinite"):
             X.correlated_measure_from_correlations(
-                [X.heat_symbol(0.02), X.heat_symbol(0.02)],
+                [X.heat_symbol(0.14), X.heat_symbol(0.14)],
                 np.array([[1.0, 1.5], [1.5, 1.0]]),
             )
 
@@ -612,7 +612,7 @@ class TestCorrelatedMeasures:
         varying[:, 0, 0] = varying[:, 1, 1] = 1.0
         varying[:, 0, 1] = varying[:, 1, 0] = np.where(X.degrees < 3, 0.9, 0.0)
         measure = X.correlated_measure_from_correlations(
-            [X.heat_symbol(0.02), X.heat_symbol(0.02)], varying
+            [X.heat_symbol(0.14), X.heat_symbol(0.14)], varying
         )
         components = measure.covariance.matrix(form="components")
         cross = np.diag(components[: X.dim, X.dim :])

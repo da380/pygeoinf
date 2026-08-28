@@ -462,7 +462,7 @@ class TestInvariantDistancePreconditioner:
         # would make this test pass or fail by luck.
         points = space.random_points(150, rng=np.random.default_rng(11))
         forward = space.point_evaluation_operator(points, dense=True)
-        prior = space.heat_measure(0.02, pointwise_std=1.0)
+        prior = space.heat_measure(0.14, pointwise_std=1.0)
         error = GaussianMeasure.from_standard_deviation(forward.codomain, 0.05)
         normal = NormalOperator(forward, prior, error=error, formalism="data_space")
         return space, points, forward, prior, normal

@@ -69,7 +69,7 @@ noise = GaussianMeasure(
     ),
 )
 problem = LinearForwardProblem(forward, error=noise)
-prior = X.heat_measure(0.03, pointwise_std=0.05)
+prior = X.heat_measure(0.17, pointwise_std=0.05)
 truth, data = problem.synthetic_model_and_data(prior, rng=rng)
 
 print(f"model space   dimension {X.dim} (degree {X.lmax})")
@@ -162,7 +162,7 @@ coarse_forward = coarse.path_average_operator(paths, count=16, dense=True)
 # The prior needs a precision for the Woodbury data form, and a heat-kernel
 # covariance is singular in practice long before it is in theory -- so it is
 # damped, which says the smallest variances are no smaller than the damping.
-coarse_prior = coarse.heat_measure(0.03, pointwise_std=0.05).with_regularized_inverse(
+coarse_prior = coarse.heat_measure(0.17, pointwise_std=0.05).with_regularized_inverse(
     CholeskySolver(), damping=1e-6
 )
 
