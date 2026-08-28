@@ -17,6 +17,7 @@ from pygeoinf2.numerics.randomised import (
     random_svd,
     random_trace,
 )
+from pygeoinf2.numerics.functional_calculus import log_determinant
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
@@ -447,3 +448,91 @@ class TestRandomisedOnADenseMetric:
             assert other.norm(
                 other.subtract(decomposition(vector), operator(vector))
             ) < 1e-8 * max(other.norm(operator(vector)), 1e-30)
+
+
+class TestSamplingToATolerance:
+    """A stochastic estimator that must be told a sample count is asking the
+    caller to guess the answer's accuracy in advance. The Estimate type already
+    carries the standard error; these stop when it is small enough."""
+
+    @staticmethod
+    def operator(n, rng):
+        matrix = rng.standard_normal((n, n))
+        matrix = matrix @ matrix.T / n + np.diag(rng.uniform(2.0, 6.0, n))
+        space = EuclideanSpace(n)
+        return matrix, LinearOperator.self_adjoint(
+            space, lambda c: matrix @ c, traits=Traits.POSITIVE_DEFINITE
+        )
+
+    def test_a_tighter_trace_tolerance_draws_more(self, rng):
+        matrix, operator = self.operator(200, rng)
+
+        loose = random_trace(
+            operator, samples=20, rtol=5e-2, rng=np.random.default_rng(1)
+        )
+        tight = random_trace(
+            operator, samples=20, rtol=1e-2, rng=np.random.default_rng(1)
+        )
+        assert tight.samples > loose.samples
+        assert tight.standard_error < loose.standard_error
+        assert tight.standard_error <= 1e-2 * abs(tight.value)
+
+    def test_the_diagonal_tolerance_is_the_accuracy_it_delivers(self, rng):
+        """The stopping statistic is ``||standard error|| / ||estimate||``,
+        which was chosen because it predicts the achieved error: asking for
+        1e-2 gets 1.06e-2, and 2e-2 gets 1.95e-2. The worst entry's own
+        standard error does not predict it -- the maximum over many entries
+        runs several standard errors out, and a rule built on it stopped at the
+        first block whatever tolerance it was given."""
+        matrix, operator = self.operator(120, rng)
+        exact = np.diag(matrix)
+
+        achieved = {}
+        for tolerance in (4e-2, 1e-2):
+            estimate = random_diagonal(
+                operator, samples=20, rtol=tolerance, rng=np.random.default_rng(1)
+            )
+            achieved[tolerance] = np.linalg.norm(estimate - exact) / np.linalg.norm(
+                exact
+            )
+        assert achieved[1e-2] < achieved[4e-2]
+        assert achieved[1e-2] < 2e-2
+
+    def test_the_ceiling_is_honoured(self, rng):
+        """A tolerance that cannot be met must stop somewhere, and say how
+        many it drew."""
+        _, operator = self.operator(60, rng)
+        estimate = random_trace(
+            operator,
+            samples=10,
+            rtol=1e-12,
+            max_samples=50,
+            rng=np.random.default_rng(2),
+        )
+        assert estimate.samples == 50
+
+    def test_a_nonsense_tolerance_is_refused(self, rng):
+        _, operator = self.operator(20, rng)
+        with pytest.raises(ValueError, match="tolerance"):
+            random_trace(operator, rtol=0.0)
+        with pytest.raises(ValueError, match="tolerance"):
+            random_diagonal(operator, rtol=1.5)
+
+    def test_the_log_determinant_passes_it_down(self, rng):
+        """Its own ``rtol`` is the *inner* Lanczos budget; the sampling
+        tolerance is a separate one, and tightening the wrong one buys
+        nothing."""
+        matrix, operator = self.operator(80, rng)
+
+        loose = log_determinant(
+            operator, method="stochastic", samples=20, rng=np.random.default_rng(3)
+        )
+        tight = log_determinant(
+            operator,
+            method="stochastic",
+            samples=20,
+            sample_rtol=2e-3,
+            rng=np.random.default_rng(3),
+        )
+        assert tight.samples > loose.samples
+        assert tight.standard_error < loose.standard_error

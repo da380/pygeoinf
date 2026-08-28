@@ -39,7 +39,13 @@ from .solvers import ConvergenceError, IterativeSolver, LinearSolver
 # A probe that fails this way has reached the end of the usable range rather
 # than encountered a bug: a damping small enough leaves the normal operator
 # numerically singular, and no solver can be asked to go further.
-_BREAKDOWN = (ConvergenceError, np.linalg.LinAlgError)
+#
+# ConvergenceError is *not* in here, though it used to be. It is raised both
+# by a solver that met a singular operator and by one that merely ran out of
+# iterations, and it carries nothing to tell them apart -- so treating it as
+# saturation reported "no root in this range" for a sweep that had simply set
+# maxiter too low. It is caught separately below and recorded on the result.
+_BREAKDOWN = (np.linalg.LinAlgError,)
 
 __all__ = [
     "Evaluation",
@@ -101,6 +107,18 @@ class RootResult:
     warm_started: bool = False
     """Whether the probes were given the previous solution to start from."""
 
+    breakdown: BaseException | None = None
+    """The exception that ended the sweep, when one did.
+
+    A saturated sweep and a failed inner solve both stop the widening, and
+    they mean different things: the first says no root exists in the range,
+    which is an answer, and the second says a probe could not be computed,
+    which is not. Only a genuine singularity -- ``LinAlgError`` -- is read as
+    saturation now. A ``ConvergenceError`` from a strict solver that merely
+    ran out of iterations lands here instead, so the caller can see that
+    :attr:`exhausted` is standing in for a solve that did not finish rather
+    than for an exhausted range."""
+
 
 def monotone_root(
     evaluate: Callable[[float, Any], Evaluation],
@@ -150,6 +168,9 @@ def monotone_root(
     sign = 1.0 if decreasing else -1.0
     goal = sign * target
     tally = {"evaluations": 0, "iterations": 0}
+    # Records a probe that could not be computed, as distinct from a range
+    # that ran out. See RootResult.breakdown.
+    failure: dict[str, BaseException | None] = {"error": None}
     previous: Any = None
 
     def probe(multiplier: float) -> tuple[float, Any]:
@@ -179,6 +200,7 @@ def monotone_root(
             converged=converged,
             exhausted=exhausted,
             warm_started=warm_start,
+            breakdown=failure["error"],
         )
 
     def widen(
@@ -204,6 +226,12 @@ def monotone_root(
             try:
                 scaled_candidate, solution_candidate = probe(candidate)
             except _BREAKDOWN:
+                break
+            except ConvergenceError as error:
+                # Not saturation: a probe that could not be computed. The
+                # sweep still has to stop -- there is no value to widen from
+                # -- but it says so rather than reporting an exhausted range.
+                failure["error"] = error
                 break
             multiplier, scaled, solution = (
                 candidate,

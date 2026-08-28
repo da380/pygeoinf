@@ -1397,3 +1397,174 @@ class TestColumnThresholdedPreconditioner:
             ColumnThresholdedPreconditioner(-1.0)
         with pytest.raises(ValueError, match="the diagonal"):
             ColumnThresholdedPreconditioner(0.1, max_per_column=0)
+
+
+class TestImhofOnATrapezoid:
+    """Adaptive quadrature on a scalar integrand exhausted its subdivisions,
+    warned, and took 106 ms at three weights -- the slowest-decaying case.
+    v1's vectorised trapezoid is both faster and quieter."""
+
+    def test_it_is_exact_where_there_is_a_closed_form(self):
+        """Equal weights make it a scaled chi-squared. Perturbed by 1e-12 so
+        the equal-weight short circuit does not fire and the real quadrature
+        runs."""
+        from scipy.stats import chi2
+
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_cdf
+
+        weights = np.full(7, 2.0) + np.linspace(0.0, 1e-12, 7)
+        for value in (5.0, 14.0, 30.0):
+            assert weighted_chi2_cdf(weights, value, method="imhof") == pytest.approx(
+                chi2.cdf(value / 2.0, 7), abs=1e-9
+            )
+
+    def test_it_does_not_warn(self, rng):
+        """The old route hit its subdivision limit and said so."""
+        import warnings
+
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_cdf
+
+        weights = rng.uniform(0.5, 4.0, 3)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            weighted_chi2_cdf(weights, float(weights.sum()), method="imhof")
+
+    def test_it_agrees_with_sampling(self, rng):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_cdf
+
+        weights = rng.uniform(0.5, 4.0, 12)
+        value = float(weights.sum())
+        assert weighted_chi2_cdf(weights, value, method="imhof") == pytest.approx(
+            weighted_chi2_cdf(
+                weights,
+                value,
+                method="monte_carlo",
+                samples=200_000,
+                rng=np.random.default_rng(1),
+            ),
+            abs=5e-3,
+        )
+
+
+class TestQuantileSampling:
+    """v1 could draw the quantile; v2's took no rng and its ``monte_carlo``
+    method reached a root find on a function that returns a different value
+    each call, which has no root to find."""
+
+    def test_the_sampled_quantile_matches_the_computed_one(self, rng):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        weights = rng.uniform(0.5, 4.0, 10)
+        computed = weighted_chi2_quantile(weights, 0.95)
+        sampled = weighted_chi2_quantile(
+            weights,
+            0.95,
+            method="monte_carlo",
+            samples=400_000,
+            rng=np.random.default_rng(1),
+        )
+        assert sampled == pytest.approx(computed, rel=5e-3)
+
+    def test_it_is_reproducible(self, rng):
+        from pygeoinf2.numerics.quadratic_forms import weighted_chi2_quantile
+
+        weights = rng.uniform(0.5, 4.0, 6)
+        first, second = (
+            weighted_chi2_quantile(
+                weights,
+                0.9,
+                method="monte_carlo",
+                samples=20_000,
+                rng=np.random.default_rng(7),
+            )
+            for _ in range(2)
+        )
+        assert first == second
+
+
+class TestFunctionCalculusNeedsSelfAdjointness:
+    """The Lanczos route always required it and the diagonal route did not, so
+    the same request was refused for a general operator and accepted for a
+    diagonal one. On a non-diagonal metric a component-diagonal operator is not
+    self-adjoint, and what the exact route computes there is a component-wise
+    calculus, not a spectral one."""
+
+    def test_a_diagonal_operator_on_a_dense_metric_is_refused(self, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.numerics.functional_calculus import operator_function
+
+        from .conftest import DenseMetricSpace
+
+        root = np.eye(6) + 0.3 * np.tril(rng.standard_normal((6, 6)), -1)
+        space = DenseMetricSpace(root @ root.T)
+        operator = DiagonalLinearOperator(space, rng.uniform(1.0, 4.0, 6))
+
+        assert not (Traits.SELF_ADJOINT & operator.traits)
+        with pytest.raises(ValueError, match="self-adjoint"):
+            operator_function(operator, np.sqrt)
+
+    def test_but_the_component_wise_route_is_still_reachable(self, rng):
+        """It is a perfectly good calculus in the basis; it is just not the
+        one ``operator_function`` names."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        from .conftest import DenseMetricSpace
+
+        root = np.eye(6) + 0.3 * np.tril(rng.standard_normal((6, 6)), -1)
+        space = DenseMetricSpace(root @ root.T)
+        values = rng.uniform(1.0, 4.0, 6)
+        operator = DiagonalLinearOperator(space, values)
+
+        assert operator.apply_function(np.sqrt).eigenvalues == pytest.approx(
+            np.sqrt(values)
+        )
+
+    def test_a_diagonal_metric_still_works(self, rng):
+        """Where a diagonal operator commutes with the metric it is
+        self-adjoint, the trait is deduced, and nothing changes -- which is
+        every symmetric space here."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.numerics.functional_calculus import operator_function
+
+        space = EuclideanSpace(6)
+        values = rng.uniform(1.0, 4.0, 6)
+        operator = DiagonalLinearOperator(space, values)
+
+        assert operator_function(operator, np.sqrt).eigenvalues == pytest.approx(
+            np.sqrt(values)
+        )
+
+
+class TestARootFindSaysWhyItStopped:
+    """A saturated sweep and a failed inner solve both stop the widening and
+    mean different things. ConvergenceError was read as saturation, so a sweep
+    whose solver merely ran out of iterations reported 'no root in this range'."""
+
+    def test_a_convergence_failure_is_recorded_not_disguised(self):
+        from pygeoinf2.numerics.root_find import monotone_root
+        from pygeoinf2.numerics.solvers import ConvergenceError
+
+        def evaluate(multiplier, guess):
+            from pygeoinf2.numerics.root_find import Evaluation
+
+            if multiplier > 4.0:
+                raise ConvergenceError("ran out of iterations")
+            return Evaluation(value=10.0 / multiplier, solution=multiplier, iterations=1)
+
+        result = monotone_root(evaluate, 0.5, initial=1.0)
+        assert result.breakdown is not None
+        assert isinstance(result.breakdown, ConvergenceError)
+
+    def test_a_genuine_saturation_is_not(self):
+        """A singular operator is an answer about the range, and reports no
+        breakdown."""
+        from pygeoinf2.numerics.root_find import Evaluation, monotone_root
+
+        def evaluate(multiplier, guess):
+            if multiplier > 4.0:
+                raise np.linalg.LinAlgError("singular")
+            return Evaluation(value=10.0 / multiplier, solution=multiplier, iterations=1)
+
+        result = monotone_root(evaluate, 0.5, initial=1.0)
+        assert result.breakdown is None
+        assert result.exhausted is not None
