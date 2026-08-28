@@ -522,7 +522,7 @@ class TestAcquisitionHelpers:
 
         X = SphereLebesgue(8)
         points = X.stations(count=40, rng=rng)
-        clusters = X.cluster_points(points, 0.6)
+        clusters = X.cluster_points(points, radius=0.6)
         covered = sorted(index for cluster in clusters for index in cluster)
         assert covered == list(range(40))
 
@@ -532,7 +532,7 @@ class TestAcquisitionHelpers:
 
         X = SphereLebesgue(8)
         points = X.stations(count=30, rng=rng)
-        for cluster in X.cluster_points(points, 0.5):
+        for cluster in X.cluster_points(points, radius=0.5):
             seed = points[cluster[0]]
             for index in cluster:
                 assert X.geodesic_distance(seed, points[index]) <= 0.5 + 1e-12

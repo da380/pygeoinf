@@ -93,6 +93,15 @@ class _FourierPacking:
                 for w in signed
             ]
         )
+        # Which half of a conjugate pair each component is: 0 for a cosine or a
+        # fixed point, 1 for a sine. Together with the wavevector this names a
+        # component uniquely, which is what lets two grids be matched up.
+        self.phases = np.concatenate(
+            [
+                np.zeros(self.fixed_indices.size, dtype=int),
+                np.tile(np.array([0, 1]), self.paired_indices.size),
+            ]
+        )
 
 
 class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
@@ -566,6 +575,123 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     def _wrap(self, point: np.ndarray, /) -> np.ndarray:
         """A point brought back into ``[0, L)`` on each axis."""
         return np.asarray(point, dtype=float) % np.asarray(self._lengths, dtype=float)
+
+    # ----------------------------------------------------------------- #
+    #                            Resolution                             #
+    # ----------------------------------------------------------------- #
+
+    def with_shape(self, shape: Sequence[int], /) -> "PeriodicBox":
+        """The same domain, on a different grid.
+
+        The honest primitive for a box, where resolution is per-axis rather
+        than a single number.
+
+        Args:
+            shape: grid points along each axis.
+
+        Returns:
+            The space on that grid.
+
+        Raises:
+            ValueError: if the number of axes changes.
+        """
+        shape = tuple(int(n) for n in shape)
+        if len(shape) != self.spatial_dimension:
+            raise ValueError(
+                f"This box has {self.spatial_dimension} axes, got {len(shape)}."
+            )
+        return PeriodicBox(
+            shape,
+            lengths=self._lengths,
+            order=self._order,
+            length_scale=self._length_scale,
+        )
+
+    def with_degree(self, degree: int, /) -> "PeriodicBox":
+        """The same domain, resolved to a given wavenumber on every axis.
+
+        The counterpart of :meth:`~pygeoinf2.symmetric_space.sphere.Sphere.with_degree`.
+        A grid of ``n`` points along an axis carries wavenumbers up to
+        ``n // 2``, so this asks for ``2 * degree`` points on each -- an
+        *isotropic* band limit, which is what a degree means. Where the axes
+        should be resolved differently, say so with :meth:`with_shape`.
+
+        Args:
+            degree: the wavenumber to resolve on each axis.
+
+        Returns:
+            The space on that grid.
+
+        Raises:
+            ValueError: if the degree is not positive.
+        """
+        if degree < 1:
+            raise ValueError(f"The degree must be positive, got {degree}.")
+        return self.with_shape((2 * int(degree),) * self.spatial_dimension)
+
+    def _component_index(self) -> dict:
+        """Where each ``(wavevector, phase)`` label sits in the components."""
+        packing = self._packing
+        return {
+            (tuple(int(k) for k in packing.wavenumbers[:, i]), int(packing.phases[i])): i
+            for i in range(self.dim)
+        }
+
+    def degree_transfer_operator(self, target: "PeriodicBox", /) -> LinearOperator:
+        """Truncation to, or prolongation into, another grid.
+
+        Components are matched by their ``(wavevector, cosine-or-sine)`` label,
+        not by the degree they fall in: on a box many wavevectors share a
+        degree, so matching on that would pair up unrelated modes. Anything the
+        target does not have is dropped, and anything it has and this does not
+        is left zero.
+
+        The adjoint is derived rather than written down, which matters: it is
+        the other one of the pair only when the two spaces carry the same
+        metric on their shared components, and it is the ratio of the two
+        otherwise.
+
+        Args:
+            target: the space to map into.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if the two boxes are not the same domain.
+        """
+        if target.lengths != self._lengths:
+            raise ValueError("Degree transfer needs a common domain.")
+
+        here = self._component_index()
+        there = target._component_index()
+        shared = [(here[label], there[label]) for label in here if label in there]
+        keep = np.array([a for a, _ in shared], dtype=int)
+        place = np.array([b for _, b in shared], dtype=int)
+
+        def value(x: np.ndarray) -> np.ndarray:
+            components = np.zeros(target.dim)
+            components[place] = self.to_components(x)[keep]
+            return target.from_components(components)
+
+        def derivative_components(y: np.ndarray) -> np.ndarray:
+            pulled = target.apply_gram(target.to_components(y))
+            total = np.zeros(self.dim)
+            total[keep] = pulled[place]
+            return total
+
+        return LinearOperator.from_derivative_callables(
+            self, target, value, derivative_components
+        )
+
+    def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
+        """The coordinates themselves, with the box a tree should wrap in.
+
+        Euclidean distance in the embedding *is* the geodesic here, once the
+        wrap is accounted for -- which ``cKDTree`` does natively given the box.
+        """
+        vectors = np.stack([self._as_point(point) for point in points])
+        return self._wrap(vectors), np.asarray(self._lengths, dtype=float)
 
     def geodesic_ball_quadrature(
         self, centre: Any, radius: float, /, *, count: int

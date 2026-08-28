@@ -1137,32 +1137,6 @@ class Sphere(SymmetricSpace[Any]):
 
         return self.project_function(indicator)
 
-    def cluster_points(
-        self, points: Sequence[Any], radius: float, /
-    ) -> list[list[int]]:
-        """Group points into clusters no wider than a radius, greedily.
-
-        What a block preconditioner needs: a partition of the data into
-        groups that see overlapping parts of the model. Greedy rather than
-        optimal, because the blocks only have to be *reasonable* — a
-        preconditioner is never the answer, only a way of getting to it faster.
-
-        Returns index lists, in the order the clusters were formed.
-        """
-        if radius <= 0.0:
-            raise ValueError(f"The radius must be positive, got {radius}.")
-        vectors = np.stack([self._to_vector(point) for point in points])
-        remaining = set(range(len(vectors)))
-        clusters: list[list[int]] = []
-        while remaining:
-            seed = min(remaining)
-            chords = np.linalg.norm(vectors - vectors[seed], axis=1)
-            distances = 2.0 * self._radius * np.arcsin(np.clip(0.5 * chords, 0.0, 1.0))
-            members = sorted(index for index in remaining if distances[index] <= radius)
-            clusters.append(members)
-            remaining.difference_update(members)
-        return clusters
-
     def source_receiver_paths(
         self,
         /,
@@ -1191,34 +1165,25 @@ class Sphere(SymmetricSpace[Any]):
             if self.geodesic_distance(origin, station) > minimum_separation
         ]
 
-    def pairs_within_distance(
-        self,
-        points: Sequence[Any],
-        distance: float,
-        /,
-        *,
-        with_distances: bool = False,
-    ) -> tuple[np.ndarray, ...]:
-        """Index pairs closer together than a given geodesic distance.
+    def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
+        """The points as vectors in R^3, scaled to the sphere's radius.
 
-        What a localised covariance needs: the sparsity pattern of "these two
-        data see overlapping parts of the model". Returned as two index arrays,
-        ready for ``scipy.sparse``, and with ``with_distances`` a third array
-        of the separations themselves — which is what an invariant covariance
-        needs, since for one the entry is a function of the distance alone.
-
-        Both orderings of a pair are returned, and so is every diagonal entry:
-        the result is the pattern of a symmetric matrix, not of a triangle.
+        Euclidean distance in the embedding is the *chord*, not the geodesic;
+        the two are related by :meth:`_embedded_radius` and its inverse. Chord
+        length is what makes a KD-tree usable here, and it is exactly zero on
+        the diagonal, which the cosine route is not.
         """
         vectors = np.stack([self._to_vector(point) for point in points])
-        # Chord length, then 2 asin(chord/2). Accurate for small separations,
-        # and exactly zero on the diagonal, which the cosine route is not.
-        chords = np.linalg.norm(vectors[:, None, :] - vectors[None, :, :], axis=-1)
-        distances = 2.0 * self._radius * np.arcsin(np.clip(0.5 * chords, 0.0, 1.0))
-        rows, columns = np.nonzero(distances <= distance)
-        if with_distances:
-            return rows, columns, distances[rows, columns]
-        return rows, columns
+        return vectors * self._radius, None
+
+    def _embedded_radius(self, distance: float, /) -> float:
+        """A geodesic radius as a chord: ``2 R sin(d / 2R)``."""
+        return float(2.0 * self._radius * np.sin(0.5 * distance / self._radius))
+
+    def _geodesic_from_embedded(self, lengths: np.ndarray, /) -> np.ndarray:
+        """Chords back to geodesics: ``2 R asin(c / 2R)``."""
+        ratio = np.clip(np.asarray(lengths, dtype=float) / (2.0 * self._radius), -1.0, 1.0)
+        return 2.0 * self._radius * np.arcsin(ratio)
 
     # ----------------------------------------------------------------- #
     #                            Resolution                             #

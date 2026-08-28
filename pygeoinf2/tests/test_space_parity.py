@@ -131,3 +131,96 @@ class TestEveryGeometryHasTheGeometry:
         assert operator(one)[0] == pytest.approx(
             lebesgue.geodesic_distance(start, end), rel=2e-2
         )
+
+
+class TestNeighbourSearchAndClustering:
+    """On the base, so every geometry has them, and by KD-tree."""
+
+    def test_the_pairs_are_the_pairs(self, geometry, rng):
+        """Against a brute-force sweep, which is what v1 does on the base and
+        what v2 did on the sphere -- correct, and 216 MB of differences at
+        n = 3000."""
+        _, space = geometry
+        points = space.random_points(30, rng=rng)
+        scale = 1.01 * space.geodesic_distance(points[0], points[1])
+
+        rows, columns, distances = space.pairs_within_distance(
+            points, scale, with_distances=True
+        )
+        expected = {
+            (i, j)
+            for i in range(30)
+            for j in range(30)
+            if space.geodesic_distance(points[i], points[j]) <= scale
+        }
+        assert set(zip(rows.tolist(), columns.tolist())) == expected
+
+        # And the reported separations are the geodesic ones. On a periodic
+        # domain the tree wraps, so measuring the pairs afterwards has to wrap
+        # too -- otherwise it reports the long way round.
+        reference = np.array(
+            [space.geodesic_distance(points[i], points[j]) for i, j in zip(rows, columns)]
+        )
+        assert distances == pytest.approx(reference)
+
+    def test_the_pattern_is_symmetric_and_has_a_diagonal(self, geometry, rng):
+        """It is the sparsity pattern of a symmetric matrix, which is what a
+        localised covariance is assembled into."""
+        _, space = geometry
+        points = space.random_points(20, rng=rng)
+        scale = 1.01 * space.geodesic_distance(points[0], points[1])
+        rows, columns = space.pairs_within_distance(points, scale)
+        pairs = set(zip(rows.tolist(), columns.tolist()))
+
+        assert all((j, i) in pairs for i, j in pairs)
+        assert all((i, i) in pairs for i in range(20))
+
+    def test_clustering_by_count_gives_that_many(self, geometry, rng):
+        """The mode that sizes preconditioner blocks to a budget, and the one
+        v2 dropped in favour of a greedy rule seeded by the lowest remaining
+        index -- which is not stable under reordering the points."""
+        _, space = geometry
+        points = space.random_points(20, rng=rng)
+        clusters = space.cluster_points(points, count=4)
+
+        assert len(clusters) == 4
+        assert sorted(i for cluster in clusters for i in cluster) == list(range(20))
+
+    def test_clustering_by_radius_bounds_the_width(self, geometry, rng):
+        """Complete linkage, so the *widest* separation within a cluster is
+        what the radius caps."""
+        _, space = geometry
+        points = space.random_points(20, rng=rng)
+        scale = 0.5 * space.geodesic_distance(points[0], points[1])
+        for cluster in space.cluster_points(points, radius=scale):
+            for i in cluster:
+                for j in cluster:
+                    assert space.geodesic_distance(points[i], points[j]) <= scale * 1.001
+
+    def test_exactly_one_criterion_is_needed(self, geometry, rng):
+        _, space = geometry
+        points = space.random_points(5, rng=rng)
+        with pytest.raises(ValueError, match="exactly one"):
+            space.cluster_points(points)
+        with pytest.raises(ValueError, match="exactly one"):
+            space.cluster_points(points, radius=1.0, count=2)
+
+
+class TestResolutionTransfer:
+    """Moving a field between grids, on every geometry that has more than one."""
+
+    def test_prolonging_then_restricting_is_the_identity(self, geometry, rng):
+        """Nothing is lost going up and coming back: the finer grid holds every
+        mode of the coarser one."""
+        from pygeoinf2.testing import check_operator
+
+        name, space = geometry
+        finer = space.with_degree(space.degrees.max() + 2)
+
+        up = space.degree_transfer_operator(finer)
+        down = finer.degree_transfer_operator(space)
+        check_operator(up, rng=rng)
+
+        field = space.random(rng=rng)
+        recovered = down(up(field))
+        assert space.norm(space.subtract(recovered, field)) < 1e-10 * space.norm(field)

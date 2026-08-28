@@ -175,6 +175,10 @@ class Box(PeriodicBox):
         """
         return self._as_point(end) - self._as_point(start)
 
+    def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
+        """The coordinates, with nothing wrapping: see :meth:`_separation`."""
+        return np.stack([self._as_point(point) for point in points]), None
+
     def with_order(
         self, order: float, /, *, length_scale: float | None = None
     ) -> "Box":

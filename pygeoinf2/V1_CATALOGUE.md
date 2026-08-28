@@ -455,7 +455,7 @@ different metric. So the union of method names is the honest comparison.
 | `geodesic_ball_integral`, `geodesic_ball_average` | Ported | `geodesic_ball_average_operator` | |
 | `spherical_cap_integral`, `spherical_cap_average` | Ported | same names, exact in the harmonic basis | |
 | `to_coefficient_operator`, `from_coefficient_operator` | Ported | `coefficient_operator` | |
-| `with_degree`, `degree_transfer_operator` | Ported | same names | |
+| `with_degree`, `degree_transfer_operator` | Ported | same names, and now on the boxes too, not just the sphere. `with_shape` is the primitive there, since a box is resolved per-axis; `with_degree(l)` is the isotropic `2l` points on each. Transfer matches components by `(wavevector, cosine-or-sine)` as v1's torus does, not by degree -- on a box many wavevectors share a degree | |
 | `with_order` | Ported | same name | |
 | `order_inclusion_operator` | Ported | The embedding `H^s -> H^t`. Not ported | This is useful |
 | `spectral_projection_operator` | Ported | Projection onto a band of degrees. `coefficient_operator` gives the map *out*; this is the projector *within* | Useful |
@@ -490,8 +490,8 @@ different metric. So the union of method names is the honest comparison.
 | `random_point`, `random_points` | Ported | same names | |
 | `iris_stations`, `random_earthquakes` | Ported | `stations`, `earthquakes` | |
 | `domain_mask`, `random_domain_points` | Ported | `domain_mask`; `random_domain_points` is **Open** | |
-| `pairs_within_distance` | Ported | same name, with the chord formula so a point is in its own neighbourhood (§20.7) | |
-| `cluster_points` | Ported | On the sphere, and used to build the blocks a `LocalisedPreconditioner` takes | Useful for some preconditioners |
+| `pairs_within_distance` | Ported | same name, with the chord formula so a point is in its own neighbourhood (§20.7). Now on the base by KD-tree, so every geometry gets v1's fast sphere route rather than its O(n^2) fallback: at n = 3000, 0.050 s and 1.0 MB against 216 MB dense. Each geometry says only how it embeds; a periodic one hands the tree a `boxsize` and separations wrap | |
+| `cluster_points` | Ported | On the base now, so every geometry has it, and used to build the blocks a `LocalisedPreconditioner` takes. Hierarchical linkage as in v1, with both of v1's criteria: `radius=` and the `count=` mode v2 had dropped for a greedy rule seeded by the lowest remaining index, which is not stable under reordering the points | Useful for some preconditioners |
 | `random_source_receiver_paths` | Ported | Not ported. `stations` and `earthquakes` give the ingredients, so this is convenience — but it is convenience every tomography script writes | Yes, needed somewhere |
 
 ## `HilbertSpaceDirectSum` (21 methods)

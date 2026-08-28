@@ -723,6 +723,173 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             operator, rank=rank, samples=samples, form="components", rng=rng
         )
 
+    def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:
+        """The points as vectors whose Euclidean distance tracks the geodesic.
+
+        The hook the neighbour search is built on. Returns the coordinates and,
+        for a periodic domain, the box a KD-tree should wrap in. On a sphere the
+        embedding is into R^3 and Euclidean distance is the *chord*, which is a
+        monotone function of the geodesic -- see :meth:`_embedded_radius`.
+
+        Returns:
+            ``(vectors, boxsize)``, with ``boxsize`` None when nothing wraps.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide an embedding, so it has "
+            f"no neighbour search."
+        )
+
+    def _embedded_radius(self, distance: float, /) -> float:
+        """A geodesic radius as a radius in the embedding. Identity by default."""
+        return float(distance)
+
+    def _geodesic_from_embedded(self, lengths: np.ndarray, /) -> np.ndarray:
+        """Embedded distances back to geodesic ones. Identity by default."""
+        return np.asarray(lengths, dtype=float)
+
+    def pairs_within_distance(
+        self,
+        points: Sequence[Any],
+        distance: float,
+        /,
+        *,
+        with_distances: bool = False,
+    ) -> tuple[np.ndarray, ...]:
+        """Index pairs closer together than a given geodesic distance.
+
+        What a localised covariance needs: the sparsity pattern of "these two
+        data see overlapping parts of the model". Returned as two index arrays,
+        ready for ``scipy.sparse``, and with ``with_distances`` a third array
+        of the separations themselves -- which is what an invariant covariance
+        needs, since for one the entry is a function of the distance alone.
+
+        Both orderings of a pair are returned, and so is every diagonal entry:
+        the result is the pattern of a symmetric matrix, not of a triangle.
+
+        A KD-tree over the embedding, as v1 does on the sphere. v2 formed the
+        full ``(n, n, d)`` array of differences instead: 576 MB and 0.21 s at
+        n = 3000 against 7 MB and 0.08 s, and 2.4 GB at n = 10^4.
+
+        On the base rather than on the sphere, because it needs only the
+        embedding -- so a box gets it too, with the tree wrapping periodically
+        where the domain does.
+
+        Args:
+            points: the points.
+            distance: the geodesic separation to search within.
+            with_distances: also return the separations.
+
+        Returns:
+            ``(rows, columns)``, or ``(rows, columns, distances)``.
+        """
+        from scipy.spatial import cKDTree
+
+        vectors, boxsize = self._embedding(points)
+        count = vectors.shape[0]
+        if count == 0:
+            empty = np.zeros(0, dtype=int)
+            return (empty, empty, np.zeros(0)) if with_distances else (empty, empty)
+
+        tree = cKDTree(vectors, boxsize=boxsize)
+        neighbours = tree.query_pairs(
+            self._embedded_radius(distance), output_type="ndarray"
+        )
+        # query_pairs gives each unordered pair once and no diagonal; the
+        # caller wants the symmetric pattern, so both orderings and the
+        # diagonal go back in.
+        diagonal = np.arange(count)
+        if neighbours.size:
+            rows = np.concatenate([neighbours[:, 0], neighbours[:, 1], diagonal])
+            columns = np.concatenate([neighbours[:, 1], neighbours[:, 0], diagonal])
+        else:
+            rows = columns = diagonal
+        if not with_distances:
+            return rows, columns
+        return rows, columns, self._embedded_separations(
+            vectors[rows], vectors[columns], boxsize
+        )
+
+    def _embedded_separations(
+        self, first: np.ndarray, second: np.ndarray, boxsize: Any, /
+    ) -> np.ndarray:
+        """Geodesic distances between two arrays of embedded points.
+
+        The wrap has to be taken here as well as in the tree. The tree applies
+        it and finds the right pairs; measuring them with a plain difference
+        afterwards reports the long way round instead, which on a unit circle
+        is an error of up to half the circumference.
+        """
+        offsets = np.asarray(second, dtype=float) - np.asarray(first, dtype=float)
+        if boxsize is not None:
+            lengths = np.asarray(boxsize, dtype=float)
+            offsets = offsets - lengths * np.round(offsets / lengths)
+        return self._geodesic_from_embedded(np.linalg.norm(offsets, axis=-1))
+
+    def cluster_points(
+        self,
+        points: Sequence[Any],
+        /,
+        *,
+        radius: float | None = None,
+        count: int | None = None,
+        method: str = "complete",
+    ) -> list[list[int]]:
+        """Group points into clusters, by hierarchical linkage.
+
+        What a block preconditioner needs: a partition of the data into groups
+        that see overlapping parts of the model.
+
+        Two ways to say how many, and exactly one is required. ``radius`` caps
+        how wide a cluster may be; ``count`` fixes how many there are, which is
+        the mode that sizes preconditioner blocks to a budget and the one v2
+        dropped -- it offered a greedy radius rule seeded by the lowest
+        remaining index, which is neither of v1's and is not stable under
+        reordering the points.
+
+        Args:
+            points: the points.
+            radius: the widest a cluster may be, in geodesic distance.
+            count: how many clusters to form.
+            method: the linkage rule. ``"complete"`` by default, as in v1,
+                because it is the one that keeps clusters compact.
+
+        Returns:
+            One list of indices per cluster.
+
+        Raises:
+            ValueError: unless exactly one of *radius* and *count* is given, or
+                if *radius* is not positive.
+        """
+        from scipy.cluster.hierarchy import fcluster, linkage
+
+        if (radius is None) == (count is None):
+            raise ValueError("Give exactly one of radius and count.")
+        if radius is not None and radius <= 0.0:
+            raise ValueError(f"The radius must be positive, got {radius}.")
+
+        points = list(points)
+        if not points:
+            return []
+        if len(points) == 1:
+            return [[0]]
+
+        vectors, boxsize = self._embedding(points)
+        first, second = np.triu_indices(len(points), k=1)
+        condensed = self._embedded_separations(
+            vectors[first], vectors[second], boxsize
+        )
+
+        tree = linkage(condensed, method=method)
+        if count is not None:
+            labels = fcluster(tree, t=count, criterion="maxclust")
+        else:
+            labels = fcluster(tree, t=radius, criterion="distance")
+
+        clusters: dict[int, list[int]] = {}
+        for index, label in enumerate(labels):
+            clusters.setdefault(int(label), []).append(index)
+        return [clusters[label] for label in sorted(clusters)]
+
     def random_points(
         self, count: int, /, *, rng: Generator | None = None
     ) -> list[Any]:
