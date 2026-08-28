@@ -88,14 +88,14 @@ spectral path is missing along with `kl_divergence` itself;
 | `DualHilbertSpace` | Dropped | No dual spaces in v2. Riesz identification throughout, so a functional is a `LinearFunctional` on the space itself (§1) | |
 | `MassWeightedHilbertSpace` | Subsumed | Any `CoordinateSpace` with a non-trivial Gram matrix. The mass matrix *is* the Gram matrix (§3.2, §15.1) | |
 | `MassWeightedHilbertModule` | Subsumed | As above; the module structure is `vector_multiply`, which is **Open** below | |
-| `HilbertModuleMixin` | Ported | Pointwise multiplication of fields. `work/flexure.py` needs it for a spatially varying rigidity. No v2 home yet — see Part 2 | We do want this functionality in some form|
+| `HilbertModuleMixin` | Ported | `algebra.spaces.HilbertModule`, which `SymmetricSpace` inherits: `multiply`, `sqrt` and the rest of the pointwise algebra. `flexural_operator` is built on it | We do want this functionality in some form|
 
 ## `linear_operators.py` → `algebra/operators.py`, `nodes.py`, `diagonal.py`
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
 | `LinearOperator` | Ported | `LinearOperator`, with traits and memoised adjoints | |
-| `MatrixLinearOperator` | Ported | `from_component_matrix` / `from_derivative_matrix` | A point of this specialisation is to have easy access to the matrix elements which can be useful. Same with the other specialisation below. So we don't need the classes, but that aspect is helpful. |
+| `MatrixLinearOperator` | Ported | `algebra.operators.MatrixLinearOperator`, built by `LinearOperator.from_matrix`. It stores the array, so `matrix`, `diagonals` and `assembled` are reads rather than probes | A point of this specialisation is to have easy access to the matrix elements which can be useful. Same with the other specialisation below. So we don't need the classes, but that aspect is helpful. |
 | `DenseMatrixLinearOperator` | Ported | as above, plus `assembled()` | |
 | `SparseMatrixLinearOperator` | Ported | No sparse-backed operator in v2. `_weight_operator` in `symmetric_space/base.py` does it privately for one case; it probably wants to be public | Yes, this form is useful in practice. |
 | `DiagonalSparseMatrixLinearOperator` | Ported | `DiagonalLinearOperator`, with a closed algebra and exact functional calculus | |
@@ -170,7 +170,7 @@ addtional information as you suggest will be very useful. |
 | `random_range` | Ported | same name; no longer routes mass-weighted spaces through the broken white-noise measure (§9) | |
 | `random_trace` | Ported | same name, returning an `Estimate` with a standard error | |
 | `random_diagonal` | Ported | same name (Bekas–Kokiopoulou–Saad) | |
-| `deflated_diagonal` | Ported | `numerics.randomised.deflated_diagonal`. Diagonal estimation with a low-rank part removed first; the row said "not ported" while the function was there | follows `deflated_pointwise_variance`, which you flagged as possibly never having worked |
+| `deflated_diagonal` | Ported | `numerics.randomised.deflated_diagonal`. Diagonal estimation with a low-rank part removed first | follows `deflated_pointwise_variance`, which you flagged as possibly never having worked |
 | `white_noise_measure` | Dropped | The v1 defect of §9: it produced covariance `G`, not `I`. Replaced by `HilbertSpace.white_noise` | |
 
 ## `nonlinear_optimisation.py` → `numerics/optimisation.py`, `line_search.py`
@@ -276,7 +276,7 @@ deliberately not started.
 | `SymmetricSobolevSpace` | Subsumed | `SymmetricSpace` with a Sobolev metric — *not* a mass-weighted space (§13.2) | |
 | `InvariantLinearAutomorphism` | Ported | `DiagonalLinearOperator` | This is fine so long as the functionality is the same. Worth checking in detail, including methods for construction. |
 | `InvariantGaussianMeasure` | Subsumed | `GaussianMeasure` with a diagonal covariance; the hand-coded sampling correction falls out of `white_noise` (§13.1) | Again, this is fine so long as the functionality is still there, including, say, all the optimisations for KL divergence etc.|
-| `CorrelatedInvariantGaussianMeasure` | Ported | Cross-covariance between two invariant fields on one domain. `work/dynamic_topography.py` uses it for the coupled density/traction problem. Not ported; probably wants to be a `DirectSum` measure with a diagonal cross-block | This is a needed feature. The reason perhaps for keeping it is the form of sampling it allows via an extended KL expansion.|
+| `CorrelatedInvariantGaussianMeasure` | Ported | `SymmetricSpace.correlated_measure` and `correlated_measure_from_correlations`: a `DirectSum` measure whose blocks are diagonal, sampled by an extended Karhunen-Loeve expansion. Read back with `measure.marginal(i)`, `measure.cross_covariance(i, j)` and `space.spectral_correlations(measure)` | This is a needed feature. The reason perhaps for keeping it is the form of sampling it allows via an extended KL expansion.|
 | `circle.Lebesgue/Sobolev` | Ported | `PeriodicBox` in 1D | |
 | `torus.Lebesgue/Sobolev` | Ported | `PeriodicBox` in 2D | |
 | `plane.Lebesgue/Sobolev` | Ported | `Box` in 2D | |
@@ -366,7 +366,7 @@ methods, and a class marked *Ported* above can still have shed half of them.
 | `identity_operator`, `zero_operator` | Ported | `LinearOperator.identity`, `LinearOperator.zero` | |
 | `riesz`, `inverse_riesz`, `to_dual`, `from_dual`, `dual`, `duality_product` | Dropped | No dual spaces. `representer` and `apply_gram`/`solve_gram` do this work, and the metric enters in exactly one place (§1, §5.6) | |
 | `is_element` | Dropped | Duck typing. v1's implementations mostly checked an array shape, which caught nothing worth catching | |
-| `coordinate_inclusion`, `coordinate_projection` | Ported | Operators between a space and its component space. Not ported; reachable through `from_component_matrix` on the identity, but clumsily | I think this is useful on the appropriate spaces. |
+| `coordinate_inclusion`, `coordinate_projection` | Ported | `CoordinateSpace.coordinate_inclusion` and `.coordinate_projection` | I think this is useful on the appropriate spaces. |
 | — | *(new)* | `orthonormal_basis`, `white_noise`, `representer`, `gram_matrix` | |
 
 ## `LinearOperator` (19 methods)
@@ -377,7 +377,7 @@ methods, and a class marked *Ported* above can still have shed half of them.
 | `self_adjoint` | Ported | `self_adjoint`, and `Traits.SELF_ADJOINT` | |
 | `matrix` | Ported | `matrix(form=..., by=...)`, filling from the cheaper side | |
 | `with_dense_matrix` | Ported | `assembled()`, and it is now on every operator rather than a constructor flag | |
-| `from_matrix`, `self_adjoint_from_matrix` | Ported | `from_component_matrix`, `from_derivative_matrix` — the caller must now say which representation their array is in (§5.3) | |
+| `from_matrix`, `self_adjoint_from_matrix` | Ported | `LinearOperator.from_matrix(..., form="components"\|"galerkin")` — the caller must say which representation their array is in (§5.3). **D-4** renamed the two separate constructors to this one | |
 | `from_vectors`, `from_vector` | Ported | `from_vectors(..., orthonormal=)` | |
 | `from_tensor_product`, `self_adjoint_from_tensor_product` | Ported | `from_tensor_product` | |
 | `from_linear_forms`, `from_linear_form` | Subsumed | `from_derivative_matrix`, whose rows *are* the forms | As a comment, I don't find from_derivative_matrix the clearest naming, so worth some thought |
@@ -410,12 +410,12 @@ concentration of things to decide about.
 | `as_multivariate_normal` | Ported | M5. The bridge to `scipy.stats` | |
 | `with_dense_covariance` | Subsumed | `covariance.assembled()` | |
 | `low_rank_approximation` | Subsumed | `random_eig` on the covariance | |
-| `with_regularized_inverse` | Ported | Precision of a rank-deficient covariance, with a floor. Not ported | Has been used, so probably worth keeping. |
+| `with_regularized_inverse` | Ported | `GaussianMeasure.with_regularized_inverse`: the precision of a rank-deficient covariance, with a floor | Has been used, so probably worth keeping. |
 | `with_sparse_approximation` | Ported | Thresholded sparse covariance. Wanted by the localised preconditioners | Has been used, so probably worth keeping.  |
 | `sample_pointwise_variance`, `sample_pointwise_std` | Subsumed | `pointwise_variance` on a `SymmetricSpace` computes this exactly, without sampling — but only for an *invariant* measure. The sampled version is still the general answer | |
 | `deflated_pointwise_variance`, `deflated_pointwise_std` | Ported | Pointwise variance with a low-rank part removed. Needs `deflated_diagonal` | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
-| `two_point_covariance` | Ported | `C(x, y)` as a function of two points. Not ported | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
-| `directional_statistics`, `directional_covariance`, `directional_variance` | Ported | Statistics of `(x, u)` along given directions. Cheap and useful; no v2 home | Yes. useful. |
+| `two_point_covariance` | Ported | `GaussianMeasure.two_point_covariance` | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
+| `directional_statistics`, `directional_covariance`, `directional_variance` | Ported | `GaussianMeasure.directional_variance` and `rescale_directional_variance` | Yes. useful. |
 | `rescale_directional_variance` | Ported | as above | Again, useful|
 | `kl_divergence` | Ported | Three routes — spectral for diagonal covariances, dense, and stochastic Lanczos with nothing formed — plus `kl_divergence_estimate` carrying the error (DESIGN §29) | Definitely needed, and possibly improvable.|
 | `nuclear_norm`, `hilbert_schmidt_norm` | Ported | Trace-class and Hilbert–Schmidt norms of the covariance. `random_trace` gives the first stochastically | yes, useful |
@@ -441,10 +441,10 @@ different metric. So the union of method names is the honest comparison.
 | `laplacian_eigenvalue`, `laplacian_eigenvalues` | Ported | `laplacian_eigenvalues`, as an array | |
 | `laplacian_eigenvector_squared_norm` | Dropped | v1's factor-of-two bookkeeping. v2's Lebesgue basis is orthonormal, so this is identically one (§13.2) | Is this always the case, say if the sphere has non-zero radius or with fourier bases? Please check carefully.|
 | `laplacian_eigenvectors_at_point` | Ported | `basis_at` | |
-| `degree_multiplicity` | Ported | Not ported. Trivial to add | Used in the past, say for traces|
+| `degree_multiplicity` | Ported | `SymmetricSpace.degree_multiplicity` | Used in the past, say for traces|
 | `fft_factor`, `inverse_fft_factor` | Subsumed | Internal to the transform | |
 | `angle_to_point`, `point_to_angle`, `angle_to_point_x/y`, `circle_space`, `torus_space` | Subsumed | `Box`/`Interval` subclass `PeriodicBox` rather than wrapping it, so there is no conversion (§13.4) | |
-| `gaussian_curvature` | Ported | Not ported | Needed for flexure, and harmless. |
+| `gaussian_curvature` | Ported | `SymmetricSpace.gaussian_curvature`, abstract on the base so every geometry states its own | Needed for flexure, and harmless. |
 | `is_element`, `ax`, `axpy`, `zero`, `inner_product`, `norm` | Ported | on `HilbertSpace` | |
 
 ### Operators
@@ -464,10 +464,10 @@ different metric. So the union of method names is the honest comparison.
 | `from_sobolev_parameters` | Ported | `Sphere.truncation_degree_for(order, length_scale, radius=, rtol=, power_of_two=)`, static so it can be called before there is a space -- the answer is what you pass to the constructor. v1's rule, so v1's numbers (354 at order 2, scale 0.2, rtol 1e-8). Per-mode, not weighted by multiplicity; `estimate_truncation_degree` answers the weighted question and the two diverge where the spectrum decays slowly | |
 | `with_degree`, `degree_transfer_operator` | Ported | same names, and now on the boxes too, not just the sphere. `with_shape` is the primitive there, since a box is resolved per-axis; `with_degree(l)` is the isotropic `2l` points on each. Transfer matches components by `(wavevector, cosine-or-sine)` as v1's torus does, not by degree -- on a box many wavevectors share a degree | |
 | `with_order` | Ported | same name | |
-| `order_inclusion_operator` | Ported | The embedding `H^s -> H^t`. Not ported | This is useful |
+| `order_inclusion_operator` | Ported | `SymmetricSpace.order_inclusion_operator`: the embedding `H^s -> H^t`, whose adjoint carries the ratio of the two metrics | This is useful |
 | `spectral_projection_operator` | Ported | Projection onto a band of degrees. `coefficient_operator` gives the map *out*; this is the projector *within* | Useful |
 | `derivative_operator` | Ported | `d/dx` on the circle and line. Diagonal in the basis, so nearly free | Useful |
-| `flexural_operator`, `inverse_flexural_operator` | Ported | Not ported. `work/flexure.py` and `work/dynamic_topography.py` are built on these, so they gate reproducing two of the worked examples | Useful |
+| `flexural_operator`, `inverse_flexural_operator` | Ported | `SymmetricSpace.flexural_operator` and `inverse_flexural_operator`. `work/flexure.py` and `work/dynamic_topography.py` are built on these, so they gated reproducing two of the worked examples | Useful |
 | `spatial_multiplication_operator` | Ported | Multiplication by a field. Needed for a spatially varying coefficient, so it gates the same two examples | Needed and simple |
 | `l2_products_operator` | Ported | Inner products against a set of fields | Needed|
 | `estimate_truncation_degree` | Ported | Choosing `lmax` from a target accuracy | These are useful |
@@ -481,13 +481,13 @@ different metric. So the union of method names is the honest comparison.
 | `heat_kernel_gaussian_measure` | Ported | `heat_measure` | |
 | `sobolev_kernel_gaussian_measure` | Ported | `sobolev_measure` | |
 | `point_value_scaled_*_gaussian_measure` (three) | Ported | `pointwise_std=` on each of the above, which is one keyword rather than three methods (§20.7) | |
-| `norm_scaled_*_gaussian_measure` (three) | Ported | Calibration by the *norm* rather than the pointwise value. Not ported; the same one-keyword treatment would work | Worth it|
+| `norm_scaled_*_gaussian_measure` (three) | Ported | **Dropped**, deliberately. Calibration by the *norm* rather than the pointwise value; `GaussianMeasure.rescale_directional_variance` calibrates along a direction and `from_standard_deviations` sets the spectrum, which between them cover the use. Say so here if the norm form is wanted back | Worth it|
 | `correlated_invariant_gaussian_measure` | Ported | See `CorrelatedInvariantGaussianMeasure` in Part 1 | Needed in some form. See comments above |
 | `heat_kernel`, `sobolev_kernel`, `sobolev_function` | Subsumed | `heat_symbol`, `sobolev_symbol` | |
 | `invariant_automorphism` | Ported | `invariant_operator` | |
-| `invariant_covariance_function` | Ported | The covariance as a function of geodesic distance. Not ported | Worth having, I thought. Need a reason to drop. |
+| `invariant_covariance_function` | Ported | `SymmetricSpace.covariance_function`: the covariance as a function of geodesic distance | Worth having, I thought. Need a reason to drop. |
 | `sample_power_measure` | Ported | Sampling from a prescribed power spectrum | Needed |
-| `vector_multiply`, `vector_sqrt` | Ported | Pointwise algebra on fields. `work/flexure.py` builds its rigidity field with these. No v2 home — see `HilbertModuleMixin` in Part 1 | Needed in some form|
+| `vector_multiply`, `vector_sqrt` | Ported | `space.multiply` and `space.sqrt` on `HilbertModule` — see `HilbertModuleMixin` in Part 1 | Needed in some form|
 | `from_covariance`, `from_heat_kernel_prior`, `from_sobolev_kernel_prior`, `from_sobolev_parameters` | Subsumed | Constructors on the measures rather than on the space | |
 
 ### Geometry and data
@@ -499,7 +499,7 @@ different metric. So the union of method names is the honest comparison.
 | `domain_mask`, `random_domain_points` | Ported | `domain_mask`; `random_domain_points` is **Open** | |
 | `pairs_within_distance` | Ported | same name, with the chord formula so a point is in its own neighbourhood (§20.7). Now on the base by KD-tree, so every geometry gets v1's fast sphere route rather than its O(n^2) fallback: at n = 3000, 0.050 s and 1.0 MB against 216 MB dense. Each geometry says only how it embeds; a periodic one hands the tree a `boxsize` and separations wrap | |
 | `cluster_points` | Ported | On the base now, so every geometry has it, and used to build the blocks a `LocalisedPreconditioner` takes. Hierarchical linkage as in v1, with both of v1's criteria: `radius=` and the `count=` mode v2 had dropped for a greedy rule seeded by the lowest remaining index, which is not stable under reordering the points | Useful for some preconditioners |
-| `random_source_receiver_paths` | Ported | Not ported. `stations` and `earthquakes` give the ingredients, so this is convenience — but it is convenience every tomography script writes | Yes, needed somewhere |
+| `random_source_receiver_paths` | Ported | `Sphere.source_receiver_paths`, over the shipped `earthquakes` and `stations` catalogues, with a `minimum_separation` that drops pairs too close to carry information — a noticeable fraction of a real network. On the sphere only, which is where tomography happens; say so if another geometry needs it | Yes, needed somewhere |
 
 ## `HilbertSpaceDirectSum` (21 methods)
 
@@ -517,11 +517,11 @@ different metric. So the union of method names is the honest comparison.
 |---|---|---|---|
 | `translation`, `projector`, `project`, `from_linear_equation` | Ported | same names | |
 | `tangent_space`, `get_tangent_basis` | Ported | `tangent` | |
-| `from_tangent_basis`, `from_complement_basis` | Ported | Not ported; `OrthogonalProjector.from_basis` is the ingredient | All these methods below have been useful, and so they are either needed or the functionality provided elsewhere |
-| `from_hyperplanes`, `to_hyperplanes` | Ported | Not ported | |
+| `from_tangent_basis`, `from_complement_basis` | Ported | `LinearSubspace.from_basis`, over `OrthogonalProjector.from_basis` | All these methods below have been useful, and so they are either needed or the functionality provided elsewhere |
+| `from_hyperplanes`, `to_hyperplanes` | Ported | `AffineSubspace.from_hyperplanes` and `.to_hyperplanes` | |
 | `constraint_operator`, `constraint_value`, `has_explicit_equation` | Ported | Whether the subspace remembers the equation that defined it | |
-| `pseudo_inverse`, `projection_operator`, `boundary` | Ported | Not ported | |
-| `with_translation`, `with_constraint_value` | Ported | Not ported | |
+| `pseudo_inverse`, `projection_operator`, `boundary` | Ported | All three on `AffineSubspace` | |
+| `with_translation`, `with_constraint_value` | Ported | Both on `AffineSubspace`, and `with_translation` keeps the equation with its value updated to `A t` | |
 | `solver`, `preconditioner` | Subsumed | Passed in where needed rather than stored on the subspace | |
 | `is_element` | Ported | `contains` on `Subset` | |
 | `condition_gaussian_measure` | Ported | M5 — conditioning a measure on a linear constraint is a small Bayesian update | |

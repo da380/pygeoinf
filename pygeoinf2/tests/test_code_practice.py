@@ -168,3 +168,88 @@ def test_space_attributes_do_not_shadow_the_vector_api(space_class):
     assert not offenders, f"{space_class.__name__} shadows the vector API:\n  " + (
         "\n  ".join(offenders)
     )
+
+
+class TestTheCatalogueMatchesTheCode:
+    """The review found the catalogue "materially overstating what was
+    ported", and the same class of error twice more since. A document nobody
+    can trust is worse than no document, so the claims are checked here rather
+    than re-read."""
+
+    @staticmethod
+    def catalogue() -> str:
+        import pathlib
+
+        return (
+            pathlib.Path(__file__).resolve().parent.parent / "V1_CATALOGUE.md"
+        ).read_text()
+
+    def test_no_row_contradicts_its_own_status(self):
+        """A row marked Ported whose text says "not ported" is the exact
+        defect the review named, and there were twenty of them."""
+        import re
+
+        rows = re.findall(
+            r"^\| ([^|]+) \| (Ported[^|]*) \| ([^|]*) \|", self.catalogue(), re.M
+        )
+        contradictory = [
+            v1.strip()
+            for v1, _, v2 in rows
+            if re.search(r"\bnot ported\b|\bno v2 home\b", v2, re.I)
+        ]
+        assert not contradictory, f"marked Ported but say otherwise: {contradictory}"
+
+    def test_every_named_v2_symbol_exists(self):
+        """A row naming a v2 symbol that does not exist is a promise the code
+        does not keep. Keyword arguments and prose are backticked too, so this
+        checks only names that look like symbols and are not obviously words."""
+        import importlib
+        import inspect
+        import pkgutil
+        import re
+
+        import pygeoinf2
+
+        known: set[str] = set()
+        for module in pkgutil.walk_packages(pygeoinf2.__path__, "pygeoinf2."):
+            if ".tests" in module.name or ".examples" in module.name:
+                continue
+            try:
+                loaded = importlib.import_module(module.name)
+            except Exception:  # pragma: no cover - optional dependencies
+                continue
+            for name in dir(loaded):
+                if name.startswith("__"):
+                    continue
+                known.add(name)
+                attribute = getattr(loaded, name, None)
+                if inspect.isclass(attribute):
+                    known.update(
+                        item for item in dir(attribute) if not item.startswith("__")
+                    )
+
+        # Only paths rooted in one of v2's own subpackages. A dotted name is
+        # how a symbol is written when it is meant as one -- but plenty of
+        # them belong to somebody else (``scipy.stats``, ``SHCoeffs.spectrum``)
+        # or are not symbols at all (``py.typed``), and this is a check on
+        # v2's promises rather than on anyone else's.
+        roots = {module.name for module in pkgutil.iter_modules(pygeoinf2.__path__)}
+        # Submodule names count as things that exist: the catalogue refers to
+        # `backends.mfem` and the like.
+        for module in pkgutil.walk_packages(pygeoinf2.__path__, "pygeoinf2."):
+            known.add(module.name.rsplit(".", 1)[-1])
+        dotted = re.findall(
+            r"`(?:pygeoinf2\.)?((?:\w+\.)+\w+)`", self.catalogue()
+        )
+        missing = sorted(
+            {
+                path.split(".")[-1]
+                for path in dotted
+                # A trailing "py" is a file name -- `plotting.py` names the
+                # module, not a symbol called py.
+                if path.split(".")[0] in roots
+                and path.split(".")[-1] not in known
+                and path.split(".")[-1] != "py"
+            }
+        )
+        assert not missing, f"named in the catalogue but not in the code: {missing}"
