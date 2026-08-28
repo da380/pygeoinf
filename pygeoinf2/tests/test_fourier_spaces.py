@@ -365,7 +365,7 @@ class TestFormalAdjointLift:
         """Define on L2, use on the Sobolev space. DESIGN.md 3.5 and 13.2."""
         lebesgue, sobolev = Lebesgue((16,)), Sobolev((16,), 2.0, 0.3)
         matrix = rng.normal(size=(16, 16))
-        base = LinearOperator.from_component_matrix(lebesgue, lebesgue, matrix)
+        base = LinearOperator.from_matrix(lebesgue, lebesgue, matrix, form="components")
         lifted = lift_formal_adjoint(base, sobolev)
 
         x = sobolev.random(rng=rng)
@@ -377,7 +377,7 @@ class TestFormalAdjointLift:
     def test_the_adjoint_is_correct_under_the_new_metric(self, rng):
         lebesgue, sobolev = Lebesgue((16,)), Sobolev((16,), 2.0, 0.3)
         matrix = rng.normal(size=(16, 16))
-        base = LinearOperator.from_component_matrix(lebesgue, lebesgue, matrix)
+        base = LinearOperator.from_matrix(lebesgue, lebesgue, matrix, form="components")
         check_operator(lift_formal_adjoint(base, sobolev), rng=rng)
 
     def test_it_claims_no_symmetry(self, rng):
@@ -389,8 +389,8 @@ class TestFormalAdjointLift:
         lebesgue, sobolev = Lebesgue((16,)), Sobolev((16,), 2.0, 0.3)
         matrix = rng.normal(size=(16, 16))
         matrix = matrix + matrix.T
-        base = LinearOperator.from_component_matrix(
-            lebesgue, lebesgue, matrix, traits=Traits.SELF_ADJOINT
+        base = LinearOperator.from_matrix(
+            lebesgue, lebesgue, matrix, traits=Traits.SELF_ADJOINT, form="components"
         )
         lifted = lift_formal_adjoint(base, sobolev)
         assert lifted.traits == Traits.NONE
@@ -403,7 +403,9 @@ class TestFormalAdjointLift:
 
     def test_a_dimension_mismatch_is_refused(self, rng):
         lebesgue, sobolev = Lebesgue((8,)), Sobolev((16,), 2.0, 0.3)
-        base = LinearOperator.from_component_matrix(lebesgue, lebesgue, np.identity(8))
+        base = LinearOperator.from_matrix(
+            lebesgue, lebesgue, np.identity(8), form="components"
+        )
         with pytest.raises(ValueError, match="dimension"):
             lift_formal_adjoint(base, sobolev)
 

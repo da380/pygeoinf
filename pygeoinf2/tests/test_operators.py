@@ -32,26 +32,28 @@ def spaces():
 class TestAdjoint:
     def test_adjoint_identity_on_orthonormal_spaces(self, spaces, rng):
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         check_operator(A, rng=rng)
 
     def test_adjoint_identity_on_a_weighted_space(self, rng):
         """Where a hand-written adjoint most often goes wrong."""
         X = make_weighted_space()
         Y = make_dense_metric_space()
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(Y.dim, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(Y.dim, X.dim)), form="components"
+        )
         check_operator(A, rng=rng)
 
     def test_adjoint_is_memoised(self, spaces, rng):
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         assert A.adjoint is A.adjoint
         assert A.adjoint.adjoint is A
 
     def test_self_adjoint_operator_is_its_own_adjoint(self, rng):
         X = make_weighted_space()
-        C = LinearOperator.from_component_matrix(
-            X, X, spd_matrix(rng, X.dim), traits=Traits.SELF_ADJOINT
+        C = LinearOperator.from_matrix(
+            X, X, spd_matrix(rng, X.dim), traits=Traits.SELF_ADJOINT, form="components"
         )
         # The claim is not verified at construction, so check it separately.
         A = LinearOperator.self_adjoint(X, lambda x: X.scale(2.0, x))
@@ -68,7 +70,7 @@ class TestAdjoint:
 class TestTraitPropagation:
     def test_gramian_is_semidefinite(self, spaces, rng):
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         G = A @ A.adjoint
         assert Traits.SELF_ADJOINT & G.traits
         assert Traits.POSITIVE_SEMIDEFINITE & G.traits
@@ -82,9 +84,13 @@ class TestTraitPropagation:
         complete.
         """
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
-        C = LinearOperator.from_component_matrix(
-            X, X, spd_matrix(rng, 4), traits=Traits.POSITIVE_SEMIDEFINITE
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
+        C = LinearOperator.from_matrix(
+            X,
+            X,
+            spd_matrix(rng, 4),
+            traits=Traits.POSITIVE_SEMIDEFINITE,
+            form="components",
         )
         pushforward = A @ C @ A.adjoint
         assert Traits.SELF_ADJOINT & pushforward.traits
@@ -95,12 +101,16 @@ class TestTraitPropagation:
     def test_bayesian_normal_operator(self, spaces, rng):
         """A Q A* + R, the operator the whole inversion layer inverts."""
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
-        Q = LinearOperator.from_component_matrix(
-            X, X, spd_matrix(rng, 4), traits=Traits.POSITIVE_SEMIDEFINITE
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
+        Q = LinearOperator.from_matrix(
+            X,
+            X,
+            spd_matrix(rng, 4),
+            traits=Traits.POSITIVE_SEMIDEFINITE,
+            form="components",
         )
-        R = LinearOperator.from_component_matrix(
-            Y, Y, spd_matrix(rng, 3), traits=Traits.POSITIVE_DEFINITE
+        R = LinearOperator.from_matrix(
+            Y, Y, spd_matrix(rng, 3), traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         normal = A @ Q @ A.adjoint + R
         assert Traits.SELF_ADJOINT & normal.traits
@@ -109,18 +119,18 @@ class TestTraitPropagation:
 
     def test_a_plain_product_claims_nothing(self, rng):
         X = EuclideanSpace(4)
-        A = LinearOperator.from_component_matrix(
-            X, X, spd_matrix(rng, 4), traits=Traits.SELF_ADJOINT
+        A = LinearOperator.from_matrix(
+            X, X, spd_matrix(rng, 4), traits=Traits.SELF_ADJOINT, form="components"
         )
-        B = LinearOperator.from_component_matrix(
-            X, X, spd_matrix(rng, 4), traits=Traits.SELF_ADJOINT
+        B = LinearOperator.from_matrix(
+            X, X, spd_matrix(rng, 4), traits=Traits.SELF_ADJOINT, form="components"
         )
         assert not (Traits.SELF_ADJOINT & (A @ B).traits)
 
     def test_negative_scaling_drops_definiteness(self, rng):
         X = EuclideanSpace(4)
-        C = LinearOperator.from_component_matrix(
-            X, X, spd_matrix(rng, 4), traits=Traits.POSITIVE_DEFINITE
+        C = LinearOperator.from_matrix(
+            X, X, spd_matrix(rng, 4), traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         assert Traits.SELF_ADJOINT & (-C).traits
         assert not (Traits.POSITIVE_SEMIDEFINITE & (-C).traits)
@@ -138,8 +148,8 @@ class TestTraitsAreClaimsNotProofs:
         """Nothing verifies traits at construction. check_traits is the net."""
         X = EuclideanSpace(4)
         asymmetric = rng.normal(size=(4, 4))
-        liar = LinearOperator.from_component_matrix(
-            X, X, asymmetric, traits=Traits.SELF_ADJOINT
+        liar = LinearOperator.from_matrix(
+            X, X, asymmetric, traits=Traits.SELF_ADJOINT, form="components"
         )
         with pytest.raises(AssertionError, match="SELF_ADJOINT"):
             check_traits(liar, rng=rng)
@@ -147,8 +157,8 @@ class TestTraitsAreClaimsNotProofs:
     def test_a_false_definiteness_claim_is_caught(self, rng):
         X = EuclideanSpace(4)
         negative = -spd_matrix(rng, 4)
-        liar = LinearOperator.from_component_matrix(
-            X, X, negative, traits=Traits.POSITIVE_DEFINITE
+        liar = LinearOperator.from_matrix(
+            X, X, negative, traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         with pytest.raises(AssertionError, match="POSITIVE"):
             check_traits(liar, rng=rng)
@@ -165,7 +175,7 @@ class TestNodes:
 
     def test_identity_disappears_from_compositions(self, spaces, rng):
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         assert A @ LinearOperator.identity(X) is A
         assert LinearOperator.identity(Y) @ A is A
 
@@ -177,14 +187,14 @@ class TestNodes:
 
     def test_zero_disappears_from_sums(self, spaces, rng):
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         assert A + LinearOperator.zero(X, codomain=Y) is A
         assert LinearOperator.zero(X, codomain=Y) + A is A
 
     def test_sums_flatten(self, spaces, rng):
         X, Y = spaces
         ops = [
-            LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+            LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
             for _ in range(3)
         ]
         total = ops[0] + ops[1] + ops[2]
@@ -194,7 +204,7 @@ class TestNodes:
     def test_compositions_flatten(self, rng):
         X = EuclideanSpace(4)
         ops = [
-            LinearOperator.from_component_matrix(X, X, rng.normal(size=(4, 4)))
+            LinearOperator.from_matrix(X, X, rng.normal(size=(4, 4)), form="components")
             for _ in range(3)
         ]
         product = ops[0] @ ops[1] @ ops[2]
@@ -203,22 +213,22 @@ class TestNodes:
 
     def test_nested_scalings_fold(self, spaces, rng):
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         assert (2.0 * (3.0 * A)).alpha == pytest.approx(6.0)
         assert 0.5 * (2.0 * A) is A
         assert 1.0 * A is A
 
     def test_composition_adjoint_reverses(self, rng):
         X = EuclideanSpace(4)
-        A = LinearOperator.from_component_matrix(X, X, rng.normal(size=(4, 4)))
-        B = LinearOperator.from_component_matrix(X, X, rng.normal(size=(4, 4)))
+        A = LinearOperator.from_matrix(X, X, rng.normal(size=(4, 4)), form="components")
+        B = LinearOperator.from_matrix(X, X, rng.normal(size=(4, 4)), form="components")
         product = A @ B
         check_operator(product, rng=rng)
         assert product.adjoint.factors == (B.adjoint, A.adjoint)
 
     def test_repr_names_real_objects(self, spaces, rng):
         X, Y = spaces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         assert "Composition" in repr(A @ A.adjoint)
         assert "Adjoint" in repr(A.adjoint)
 
@@ -257,7 +267,9 @@ class TestSpecialisationProtocol:
 
         a = Diagonal(X, [1.0, 2, 3, 4], traits=Traits.SELF_ADJOINT)
         b = Diagonal(X, [5.0, 6, 7, 8], traits=Traits.SELF_ADJOINT)
-        generic = LinearOperator.from_component_matrix(X, X, rng.normal(size=(4, 4)))
+        generic = LinearOperator.from_matrix(
+            X, X, rng.normal(size=(4, 4)), form="components"
+        )
 
         assert isinstance(a + b, Diagonal)
         # And the structure is not lost just because the special operand is on
@@ -271,13 +283,13 @@ class TestMatrixRepresentations:
     def test_component_matrix_round_trip(self, rng):
         X, Y = make_weighted_space(), make_dense_metric_space()
         M = rng.normal(size=(Y.dim, X.dim))
-        A = LinearOperator.from_component_matrix(X, Y, M)
+        A = LinearOperator.from_matrix(X, Y, M, form="components")
         assert np.allclose(A.matrix(form="components"), M)
 
     def test_galerkin_form_is_the_gram_weighted_matrix(self, rng):
         X, Y = make_weighted_space(), make_dense_metric_space()
         M = rng.normal(size=(Y.dim, X.dim))
-        A = LinearOperator.from_component_matrix(X, Y, M)
+        A = LinearOperator.from_matrix(X, Y, M, form="components")
         assert np.allclose(A.matrix(form="galerkin"), Y.gram_matrix() @ M)
 
     def test_auto_picks_galerkin_for_self_adjoint_operators(self, rng):
@@ -297,7 +309,7 @@ class TestMatrixRepresentations:
         """The operator-level form of the derivative/gradient distinction."""
         X, Y = make_weighted_space(), EuclideanSpace(2)
         M = rng.normal(size=(2, X.dim))
-        A = LinearOperator.from_derivative_matrix(X, Y, M)
+        A = LinearOperator.from_matrix(X, Y, M, form="galerkin")
         check_operator(A, rng=rng)
         # Row i acts as the i-th derivative functional...
         x = X.random(rng=rng)
@@ -310,7 +322,7 @@ class TestMatrixRepresentations:
         """The matrix-free path must agree with the one it stands in for."""
         X, Y = make_weighted_space(), EuclideanSpace(2)
         M = rng.normal(size=(2, X.dim))
-        assembled = LinearOperator.from_derivative_matrix(X, Y, M)
+        assembled = LinearOperator.from_matrix(X, Y, M, form="galerkin")
         matrix_free = LinearOperator.from_derivative_callables(
             X,
             Y,
@@ -382,7 +394,7 @@ class TestMatrixRepresentations:
         """Rows cost dim(Y) adjoint applications, columns cost dim(X)."""
         X, Y = make_weighted_space(), make_dense_metric_space()
         M = rng.normal(size=(Y.dim, X.dim))
-        A = LinearOperator.from_component_matrix(X, Y, M)
+        A = LinearOperator.from_matrix(X, Y, M, form="components")
         for form in ("components", "galerkin"):
             by_columns = A.matrix(form=form, by="columns")
             by_rows = A.matrix(form=form, by="rows")
@@ -482,7 +494,7 @@ class TestWithTraits:
         space = EuclideanSpace(5)
         matrix = rng.normal(size=(5, 5))
         matrix = matrix @ matrix.T + 5.0 * np.identity(5)
-        operator = LinearOperator.from_component_matrix(space, space, matrix)
+        operator = LinearOperator.from_matrix(space, space, matrix, form="components")
         claimed = operator.with_traits(Traits.SELF_ADJOINT)
 
         vector = rng.normal(size=5)
@@ -525,11 +537,9 @@ class TestCompositionCosts:
             applications += 1
             return matrix.T @ y
 
-        operator = LinearOperator.from_callables(
-            space, space, value, adjoint=adjoint
-        )
-        other = LinearOperator.from_component_matrix(
-            space, space, rng.normal(size=(40, 40))
+        operator = LinearOperator.from_callables(space, space, value, adjoint=adjoint)
+        other = LinearOperator.from_matrix(
+            space, space, rng.normal(size=(40, 40)), form="components"
         )
         inverse = LUSolver()(operator)
 
@@ -544,20 +554,20 @@ class TestCompositionCosts:
         The links that matter are made by writing ``A.adjoint`` in the
         expression, which happens before the composition is built."""
         space = EuclideanSpace(5)
-        operator = LinearOperator.from_component_matrix(
-            space, space, rng.normal(size=(5, 5))
+        operator = LinearOperator.from_matrix(
+            space, space, rng.normal(size=(5, 5)), form="components"
         )
-        middle = LinearOperator.from_component_matrix(
+        middle = LinearOperator.from_matrix(
             space,
             space,
             np.identity(5) * 2.0,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+            form="components",
         )
 
         assert Traits.POSITIVE_SEMIDEFINITE & (operator @ operator.adjoint).traits
         assert (
-            Traits.POSITIVE_SEMIDEFINITE
-            & (operator @ middle @ operator.adjoint).traits
+            Traits.POSITIVE_SEMIDEFINITE & (operator @ middle @ operator.adjoint).traits
         )
         assert Traits.SELF_ADJOINT & (operator.adjoint @ operator).traits
 
@@ -579,9 +589,7 @@ class TestMatrixLinearOperator:
     def test_the_matrix_round_trips_in_its_own_form(self, domain, form, rng):
         codomain = EuclideanSpace(3)
         matrix = rng.normal(size=(3, domain.dim))
-        operator = LinearOperator.from_matrix(
-            domain, codomain, matrix, form=form
-        )
+        operator = LinearOperator.from_matrix(domain, codomain, matrix, form=form)
         assert operator.matrix(form=form) == pytest.approx(matrix)
 
     @pytest.mark.parametrize("form", ["components", "galerkin"])
@@ -618,9 +626,7 @@ class TestMatrixLinearOperator:
         class Counting(EuclideanSpace):
             pass
 
-        operator = LinearOperator.from_matrix(
-            space, space, matrix, form="components"
-        )
+        operator = LinearOperator.from_matrix(space, space, matrix, form="components")
         original = type(operator)._value
 
         def counting(self, x):
@@ -644,9 +650,7 @@ class TestMatrixLinearOperator:
 
         space = EuclideanSpace(50)
         sparse = sp.diags([np.ones(49), np.full(50, 2.0), np.ones(49)], [-1, 0, 1])
-        operator = LinearOperator.from_matrix(
-            space, space, sparse, form="components"
-        )
+        operator = LinearOperator.from_matrix(space, space, sparse, form="components")
         assert sp.issparse(operator.stored_matrix)
         assert operator.stored_matrix.nnz == 148
         # And it still applies correctly.
@@ -658,6 +662,4 @@ class TestMatrixLinearOperator:
         with pytest.raises(TypeError):
             LinearOperator.from_matrix(space, space, np.identity(3))
         with pytest.raises(ValueError, match="components' or 'galerkin"):
-            LinearOperator.from_matrix(
-                space, space, np.identity(3), form="derivative"
-            )
+            LinearOperator.from_matrix(space, space, np.identity(3), form="derivative")

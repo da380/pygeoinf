@@ -36,8 +36,8 @@ def spd(rng, n=N):
 def spd_problem(rng):
     X = EuclideanSpace(N)
     matrix = spd(rng)
-    A = LinearOperator.from_component_matrix(
-        X, X, matrix, traits=Traits.POSITIVE_DEFINITE
+    A = LinearOperator.from_matrix(
+        X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
     )
     b = rng.normal(size=N)
     return A, b, np.linalg.solve(matrix, b)
@@ -66,8 +66,8 @@ class TestCorrectness:
         X = EuclideanSpace(N)
         matrix = rng.normal(size=(N, N))
         matrix = matrix + matrix.T
-        A = LinearOperator.from_component_matrix(
-            X, X, matrix, traits=Traits.SELF_ADJOINT
+        A = LinearOperator.from_matrix(
+            X, X, matrix, traits=Traits.SELF_ADJOINT, form="components"
         )
         b = rng.normal(size=N)
         result = MinResSolver(rtol=1e-12)(A).solve(b)
@@ -76,7 +76,7 @@ class TestCorrectness:
     def test_bicgstab_handles_a_nonsymmetric_system(self, rng):
         X = EuclideanSpace(N)
         matrix = rng.normal(size=(N, N)) + N * np.identity(N)
-        A = LinearOperator.from_component_matrix(X, X, matrix)
+        A = LinearOperator.from_matrix(X, X, matrix, form="components")
         b = rng.normal(size=N)
         result = BiCGStabSolver(rtol=1e-12)(A).solve(b)
         assert np.allclose(result.solution, np.linalg.solve(matrix, b), atol=1e-8)
@@ -102,28 +102,30 @@ class TestDeclaredPreconditions:
 
     def test_cg_refuses_an_operator_that_has_not_earned_it(self, rng):
         X = EuclideanSpace(N)
-        A = LinearOperator.from_component_matrix(X, X, spd(rng))  # no traits claimed
+        A = LinearOperator.from_matrix(
+            X, X, spd(rng), form="components"
+        )  # no traits claimed
         with pytest.raises(ValueError, match="POSITIVE_DEFINITE"):
             CGSolver()(A)
 
     def test_the_message_names_what_is_missing(self, rng):
         X = EuclideanSpace(N)
-        A = LinearOperator.from_component_matrix(
-            X, X, spd(rng), traits=Traits.SELF_ADJOINT
+        A = LinearOperator.from_matrix(
+            X, X, spd(rng), traits=Traits.SELF_ADJOINT, form="components"
         )
         with pytest.raises(ValueError, match="missing"):
             CGSolver()(A)
 
     def test_minres_accepts_mere_self_adjointness(self, rng):
         X = EuclideanSpace(N)
-        A = LinearOperator.from_component_matrix(
-            X, X, spd(rng), traits=Traits.SELF_ADJOINT
+        A = LinearOperator.from_matrix(
+            X, X, spd(rng), traits=Traits.SELF_ADJOINT, form="components"
         )
         assert isinstance(MinResSolver()(A), InverseOperator)
 
     def test_rectangular_systems_are_refused_with_a_pointer(self, rng):
         X, Y = EuclideanSpace(N), EuclideanSpace(5)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(5, N)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(5, N)), form="components")
         with pytest.raises(ValueError, match="LeastSquaresSolver"):
             LUSolver()(A)
 
@@ -132,8 +134,8 @@ class TestDeclaredPreconditions:
         X = EuclideanSpace(N)
         matrix = rng.normal(size=(N, N))
         matrix = -(matrix @ matrix.T) - N * np.identity(N)
-        liar = LinearOperator.from_component_matrix(
-            X, X, matrix, traits=Traits.POSITIVE_DEFINITE
+        liar = LinearOperator.from_matrix(
+            X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         with pytest.raises(ConvergenceError, match="check_traits"):
             CGSolver()(liar).solve(rng.normal(size=N))
@@ -199,7 +201,7 @@ class TestInverseOperator:
     def test_the_adjoint_of_the_inverse_is_the_inverse_of_the_adjoint(self, rng):
         X = EuclideanSpace(N)
         matrix = rng.normal(size=(N, N)) + N * np.identity(N)
-        A = LinearOperator.from_component_matrix(X, X, matrix)
+        A = LinearOperator.from_matrix(X, X, matrix, form="components")
         inverse = LUSolver()(A)
         check_operator(inverse, rng=rng)
         y = X.random(rng=rng)
@@ -220,8 +222,8 @@ class TestInverseOperator:
         results = []
         for _ in range(2):
             matrix = spd(rng)
-            A = LinearOperator.from_component_matrix(
-                X, X, matrix, traits=Traits.POSITIVE_DEFINITE
+            A = LinearOperator.from_matrix(
+                X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
             )
             b = rng.normal(size=N)
             result = solver(A).solve(b)
@@ -256,9 +258,7 @@ class TestConvergenceReporting:
         warm = inverse.solve(b, x0=A.domain.from_components(exact * 0.999))
         assert warm.iterations < cold.iterations
 
-    @pytest.mark.parametrize(
-        "solver_class", [CGSolver, MinResSolver, BiCGStabSolver]
-    )
+    @pytest.mark.parametrize("solver_class", [CGSolver, MinResSolver, BiCGStabSolver])
     def test_every_iterative_solver_reports_its_history(
         self, solver_class, spd_problem
     ):
@@ -267,9 +267,9 @@ class TestConvergenceReporting:
         history, so a non-convergence in those three left no trail."""
         A, b, _ = spd_problem
         seen = []
-        result = solver_class(
-            rtol=1e-10, callback=lambda i, r: seen.append((i, r))
-        )(A).solve(b)
+        result = solver_class(rtol=1e-10, callback=lambda i, r: seen.append((i, r)))(
+            A
+        ).solve(b)
 
         assert result.converged
         assert len(result.history) > 1
@@ -279,13 +279,16 @@ class TestConvergenceReporting:
         assert result.history[-1] < result.history[0]
 
     def test_lsqr_reports_its_history(self, rng):
-        A = LinearOperator.from_component_matrix(
-            EuclideanSpace(12), EuclideanSpace(20), rng.normal(size=(20, 12))
+        A = LinearOperator.from_matrix(
+            EuclideanSpace(12),
+            EuclideanSpace(20),
+            rng.normal(size=(20, 12)),
+            form="components",
         )
         seen = []
-        result = LSQRSolver(rtol=1e-12, callback=lambda i, r: seen.append(i))(
-            A
-        ).solve(rng.normal(size=20))
+        result = LSQRSolver(rtol=1e-12, callback=lambda i, r: seen.append(i))(A).solve(
+            rng.normal(size=20)
+        )
         assert len(result.history) > 1
         assert len(seen) == len(result.history)
 
@@ -296,8 +299,8 @@ class TestLSQRWarmStart:
     @pytest.fixture
     def least_squares(self, rng):
         domain, codomain = EuclideanSpace(20), EuclideanSpace(30)
-        operator = LinearOperator.from_component_matrix(
-            domain, codomain, rng.normal(size=(30, 20))
+        operator = LinearOperator.from_matrix(
+            domain, codomain, rng.normal(size=(30, 20)), form="components"
         )
         return operator, rng.normal(size=30)
 
@@ -313,9 +316,10 @@ class TestLSQRWarmStart:
 
         assert cold.iterations > 5
         assert warm.iterations == 1
-        assert operator.domain.norm(
-            operator.domain.subtract(warm.solution, cold.solution)
-        ) < 1e-10
+        assert (
+            operator.domain.norm(operator.domain.subtract(warm.solution, cold.solution))
+            < 1e-10
+        )
 
     def test_a_damped_warm_start_is_refused(self, least_squares):
         """Shifting moves the penalty onto the correction, which minimises
@@ -336,8 +340,8 @@ class TestPreconditioning:
         X = EuclideanSpace(N)
         scales = np.logspace(0, 5, N)
         matrix = np.diag(scales) + 0.01 * np.identity(N)
-        A = LinearOperator.from_component_matrix(
-            X, X, matrix, traits=Traits.POSITIVE_DEFINITE
+        A = LinearOperator.from_matrix(
+            X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         b = rng.normal(size=N)
         plain = CGSolver(rtol=1e-10)(A).solve(b)
@@ -373,7 +377,7 @@ class TestLeastSquares:
         X, Y = EuclideanSpace(n), EuclideanSpace(m)
         matrix = rng.normal(size=(m, n))
         b = rng.normal(size=m)
-        A = LinearOperator.from_component_matrix(X, Y, matrix)
+        A = LinearOperator.from_matrix(X, Y, matrix, form="components")
         result = LSQRSolver(rtol=1e-13)(A).solve(b)
         assert np.allclose(
             result.solution, np.linalg.lstsq(matrix, b, rcond=None)[0], atol=1e-8
@@ -384,7 +388,7 @@ class TestLeastSquares:
         X, Y = EuclideanSpace(n), EuclideanSpace(m)
         matrix = rng.normal(size=(m, n))
         b = rng.normal(size=m)
-        A = LinearOperator.from_component_matrix(X, Y, matrix)
+        A = LinearOperator.from_matrix(X, Y, matrix, form="components")
         result = LSQRSolver(damping=damping, rtol=1e-13)(A).solve(b)
         expected = np.linalg.solve(
             matrix.T @ matrix + damping**2 * np.identity(n), matrix.T @ b
@@ -393,7 +397,9 @@ class TestLeastSquares:
 
     def test_the_pseudo_inverse_claims_no_invertibility(self, rng):
         X, Y = EuclideanSpace(12), EuclideanSpace(7)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(7, 12)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(7, 12)), form="components"
+        )
         assert LSQRSolver()(A).traits == Traits.NONE
 
     def test_negative_damping_is_refused(self):
@@ -424,9 +430,7 @@ class TestDirectInverseAdjoint:
             applications += 1
             return matrix.T @ y
 
-        operator = LinearOperator.from_callables(
-            space, space, value, adjoint=adjoint
-        )
+        operator = LinearOperator.from_callables(space, space, value, adjoint=adjoint)
         inverse = LUSolver()(operator)
 
         applications = 0
@@ -447,9 +451,7 @@ class TestDirectInverseAdjoint:
         space = make_weighted_space()
         size = space.dim
         matrix = rng.normal(size=(size, size)) + size * np.identity(size)
-        operator = LinearOperator.from_matrix(
-            space, space, matrix, form="components"
-        )
+        operator = LinearOperator.from_matrix(space, space, matrix, form="components")
         inverse = LUSolver()(operator)
 
         probe = space.random(rng=rng)

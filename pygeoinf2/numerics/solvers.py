@@ -933,9 +933,7 @@ class MinResSolver(IterativeSolver):
             delta_bar = delta_bar_next
             epsilon = epsilon_next
 
-        return SolveResult(
-            x, self._limit(operator), residual, False, tuple(history)
-        )
+        return SolveResult(x, self._limit(operator), residual, False, tuple(history))
 
 
 class BiCGStabSolver(IterativeSolver):
@@ -1004,9 +1002,7 @@ class BiCGStabSolver(IterativeSolver):
             if residual <= tolerance:
                 return SolveResult(x, iteration, residual, True, tuple(history))
 
-        return SolveResult(
-            x, self._limit(operator), residual, False, tuple(history)
-        )
+        return SolveResult(x, self._limit(operator), residual, False, tuple(history))
 
 
 # --------------------------------------------------------------------- #
@@ -1097,9 +1093,7 @@ class LSQRSolver(LeastSquaresSolver):
         if self._callback is not None:
             self._callback(iteration, float(residual))
 
-    def _solve(
-        self, operator: LinearOperator, b: Any, x0: Any | None
-    ) -> SolveResult:
+    def _solve(self, operator: LinearOperator, b: Any, x0: Any | None) -> SolveResult:
         """The bidiagonalisation, started from *x0* when one is given.
 
         The warm start solves for the *correction*: the iteration runs on the

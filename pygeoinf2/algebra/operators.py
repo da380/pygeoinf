@@ -665,17 +665,18 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
         Trades memory for repeated application. Nothing else changes: the
         matrix is extracted in Galerkin form and handed back to
-        :meth:`from_derivative_matrix`, so the metric still enters exactly
+        :meth:`from_matrix` in Galerkin form, so the metric still enters
         once, inside the adjoint, and the traits are carried across.
 
         This is why no observation operator needs a ``matrix_free`` flag. Build
         it matrix-free, and assemble it here if it is small enough to be worth
         assembling.
         """
-        return LinearOperator.from_derivative_matrix(
+        return LinearOperator.from_matrix(
             self.domain,
             self.codomain,
             self.matrix(form="galerkin"),
+            form="galerkin",
             traits=self._traits,
         )
 
@@ -902,78 +903,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         Raises:
             ValueError: if the shape is wrong or the form is not one of the two.
         """
-        return MatrixLinearOperator(
-            domain, codomain, matrix, form=form, traits=traits
-        )
-
-    @classmethod
-    def from_component_matrix(
-        cls,
-        domain: CoordinateSpace[X],
-        codomain: CoordinateSpace[Y],
-        matrix: np.ndarray,
-        /,
-        *,
-        traits: Traits = Traits.NONE,
-    ) -> LinearOperator[X, Y]:
-        """From ``M`` with ``c_{Ax} == M c_x``.
-
-        :meth:`from_matrix` with ``form="components"``.
-
-        Args:
-            domain: the domain, which must have coordinates.
-            codomain: the codomain, which must have coordinates.
-            matrix: the component matrix, dense or sparse.
-            traits: claims about the operator.
-
-        Returns:
-            A :class:`MatrixLinearOperator`, which keeps the array: asking it
-            for its matrix or its diagonals is a read rather than ``dim``
-            applications.
-
-        Raises:
-            ValueError: if the matrix has the wrong shape.
-        """
-        return MatrixLinearOperator(
-            domain, codomain, matrix, form="components", traits=traits
-        )
-
-    @classmethod
-    def from_derivative_matrix(
-        cls,
-        domain: CoordinateSpace[X],
-        codomain: CoordinateSpace[Y],
-        matrix: np.ndarray,
-        /,
-        *,
-        traits: Traits = Traits.NONE,
-    ) -> LinearOperator[X, Y]:
-        """From ``M == G_Y A_c``, whose rows are derivative components.
-
-        :meth:`from_matrix` with ``form="galerkin"``. The name says where such
-        a matrix comes from; the form says what it is.
-
-        Row ``i`` holds the derivative components of the ``i``-th output
-        functional, which is the form a numerical adjoint method produces. The
-        adjoint then applies ``G_X^-1`` on its own, which is what makes ``A*``
-        return representers rather than raw component arrays. See DESIGN.md
-        section 5.6.
-
-        Args:
-            domain: the domain, which must have coordinates.
-            codomain: the codomain, which must have coordinates.
-            matrix: the Galerkin matrix ``G_Y A_c``, dense or sparse.
-            traits: claims about the operator.
-
-        Returns:
-            A :class:`MatrixLinearOperator` holding the array in Galerkin form.
-
-        Raises:
-            ValueError: if the matrix has the wrong shape.
-        """
-        return MatrixLinearOperator(
-            domain, codomain, matrix, form="galerkin", traits=traits
-        )
+        return MatrixLinearOperator(domain, codomain, matrix, form=form, traits=traits)
 
     @classmethod
     def from_derivative_callables(
@@ -988,7 +918,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
     ) -> LinearOperator[X, Y]:
         """Matrix-free, from the action and the *derivative* of its pullback.
 
-        The counterpart of :meth:`from_derivative_matrix` for an operator too
+        The counterpart of :meth:`from_matrix` in Galerkin form, for an operator
         large to assemble. ``derivative_components(y)`` returns
 
         .. code-block:: text
@@ -1100,15 +1030,11 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
         """
         require_coordinates(domain, codomain)
         if form not in ("components", "galerkin"):
-            raise ValueError(
-                f"The form is 'components' or 'galerkin', got {form!r}."
-            )
+            raise ValueError(f"The form is 'components' or 'galerkin', got {form!r}.")
         stored = _as_matrix(matrix)
         expected = (codomain.dim, domain.dim)
         if stored.shape != expected:
-            raise ValueError(
-                f"Matrix has shape {stored.shape}, expected {expected}."
-            )
+            raise ValueError(f"Matrix has shape {stored.shape}, expected {expected}.")
         super().__init__(domain, codomain, traits=traits)
         self._stored = stored
         self._form = form
@@ -1155,9 +1081,7 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
         if form == self._form:
             return dense
         convert = (
-            self.codomain.apply_gram
-            if form == "galerkin"
-            else self.codomain.solve_gram
+            self.codomain.apply_gram if form == "galerkin" else self.codomain.solve_gram
         )
         # Column by column: apply_gram takes a component vector, and handing it
         # a matrix is right only for a diagonal metric.

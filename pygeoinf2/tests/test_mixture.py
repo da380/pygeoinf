@@ -135,8 +135,8 @@ class TestGaussianMixture:
     def test_an_affine_map_maps_every_component(self, mixture, rng):
         space, mix = mixture
         target = EuclideanSpace(1)
-        operator = LinearOperator.from_derivative_matrix(
-            space, target, np.array([[1.0, -1.0]])
+        operator = LinearOperator.from_matrix(
+            space, target, np.array([[1.0, -1.0]]), form="galerkin"
         )
         mapped = mix.push_forward(operator)
         assert isinstance(mapped, GaussianMixture)
@@ -191,32 +191,34 @@ class TestMixtureInversion:
         )
         data = EuclideanSpace(2)
         matrix = rng.normal(size=(2, model.dim))
-        forward = LinearOperator.from_derivative_matrix(model, data, matrix)
+        forward = LinearOperator.from_matrix(model, data, matrix, form="galerkin")
         variances = np.array([0.04, 0.09])
         chol = CholeskySolver()
-        covariance = LinearOperator.from_derivative_matrix(
+        covariance = LinearOperator.from_matrix(
             data,
             data,
             np.diag(variances),
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
         noise = GaussianMeasure(
             data,
             covariance=covariance,
             precision=chol(covariance),
-            covariance_factor=LinearOperator.from_derivative_matrix(
-                data, data, np.diag(np.sqrt(variances))
+            covariance_factor=LinearOperator.from_matrix(
+                data, data, np.diag(np.sqrt(variances)), form="galerkin"
             ),
         )
         problem = LinearForwardProblem(forward, error=noise)
 
         def component(mean, spread):
             galerkin = np.diag(np.full(model.dim, spread))
-            operator = LinearOperator.from_derivative_matrix(
+            operator = LinearOperator.from_matrix(
                 model,
                 model,
                 galerkin,
                 traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+                form="galerkin",
             )
             return GaussianMeasure(
                 model,
@@ -325,8 +327,8 @@ class TestMixtureInversion:
         map is applied afterwards and cannot change them."""
         problem, prior, model, _ = setup
         target = EuclideanSpace(1)
-        operator = LinearOperator.from_derivative_matrix(
-            model, target, np.ones((1, model.dim))
+        operator = LinearOperator.from_matrix(
+            model, target, np.ones((1, model.dim)), form="galerkin"
         )
         inversion = LinearGaussianMixtureInversion(
             problem, prior, solver=CholeskySolver()

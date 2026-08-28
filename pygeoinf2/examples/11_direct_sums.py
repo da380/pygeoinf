@@ -30,7 +30,7 @@ print("a direct-sum vector is a tuple:", type(S.random(rng=rng)).__name__)
 print("with named access:", S.component(S.random(rng=rng), "model").shape)
 print()
 
-A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
 prior = GaussianMeasure.from_standard_deviation(X, 1.0)
 noise = GaussianMeasure.from_standard_deviation(Y, 0.2)
 

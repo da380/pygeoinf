@@ -151,7 +151,9 @@ class TestBlockOperators:
     @pytest.fixture
     def pieces(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
         return X, Y, A
 
     def test_linear_blocks_dispatch_to_the_linear_class(self, pieces):
@@ -178,7 +180,7 @@ class TestBlockOperators:
 
     def test_a_symmetric_grid_is_recognised_as_self_adjoint(self, rng):
         X, Y = EuclideanSpace(3), EuclideanSpace(2)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(2, 3)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(2, 3)), form="components")
         C = LinearOperator.self_adjoint(X, lambda x: 2.0 * x)
         D = LinearOperator.self_adjoint(Y, lambda y: 3.0 * y)
         op = BlockOperator([[C, A.adjoint], [A, D]])
@@ -212,8 +214,12 @@ class TestColumnRowAndDiagonal:
     @pytest.fixture
     def pieces(self, rng):
         X, Y, Z = make_weighted_space(), EuclideanSpace(3), EuclideanSpace(2)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
-        B = LinearOperator.from_component_matrix(X, Z, rng.normal(size=(2, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
+        B = LinearOperator.from_matrix(
+            X, Z, rng.normal(size=(2, X.dim)), form="components"
+        )
         return X, Y, Z, A, B
 
     def test_column_maps_into_a_sum(self, pieces, rng):
@@ -257,7 +263,7 @@ class TestColumnRowAndDiagonal:
         C = LinearOperator.self_adjoint(
             X, lambda x: 2.0 * x, traits=Traits.POSITIVE_DEFINITE
         )
-        D = LinearOperator.from_component_matrix(Y, Y, rng.normal(size=(2, 2)))
+        D = LinearOperator.from_matrix(Y, Y, rng.normal(size=(2, 2)), form="components")
         assert not (Traits.SELF_ADJOINT & BlockDiagonalOperator([C, D]).traits)
 
 
@@ -275,7 +281,7 @@ class TestNonlinearBlocks:
         def derivative(m):
             c = X.to_components(m)
             rows = np.vstack([2.0 * c, np.eye(X.dim)[0], np.eye(X.dim)[1]])
-            return LinearOperator.from_component_matrix(X, Y, rows)
+            return LinearOperator.from_matrix(X, Y, rows, form="components")
 
         F = Operator.from_callables(X, Y, value, derivative=derivative)
         return X, Y, F
@@ -321,7 +327,9 @@ class TestNonlinearBlocks:
 
     def test_a_nonlinear_column(self, pieces, rng):
         X, Y, F = pieces
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
         op = ColumnOperator([F, A])
         assert type(op) is ColumnOperator
         check_derivative(op, X.random(rng=rng), rng=rng)
@@ -371,7 +379,9 @@ class TestJointModel:
 
     def test_the_linear_joint_law_matches_v1s_shape(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
 
         prior = GaussianMeasure.from_standard_deviation(X, 1.5)
         noise = GaussianMeasure.from_standard_deviation(Y, 0.3)

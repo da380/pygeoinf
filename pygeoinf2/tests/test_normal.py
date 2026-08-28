@@ -42,11 +42,12 @@ from .conftest import WeightedSpace, make_weighted_space
 
 
 def dense(space, matrix):
-    return LinearOperator.from_derivative_matrix(
+    return LinearOperator.from_matrix(
         space,
         space,
         matrix,
         traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        form="galerkin",
     )
 
 
@@ -60,8 +61,8 @@ def setup(request, rng):
     """A linear Gaussian problem whose data space may carry a metric."""
     model = EuclideanSpace(6)
     data = EuclideanSpace(8) if request.param == "euclidean" else make_weighted_space()
-    forward = LinearOperator.from_derivative_matrix(
-        model, data, rng.normal(size=(data.dim, model.dim))
+    forward = LinearOperator.from_matrix(
+        model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
     )
     chol = CholeskySolver()
     covariance = positive(model, rng)
@@ -110,8 +111,11 @@ class TestNormalOperator:
     def test_a_surrogate_may_live_on_a_smaller_model_space(self, normal, rng):
         """The tomography case: only the data space is shared."""
         coarse = EuclideanSpace(3)
-        cheap = LinearOperator.from_derivative_matrix(
-            coarse, normal.data_space, rng.normal(size=(normal.data_space.dim, 3))
+        cheap = LinearOperator.from_matrix(
+            coarse,
+            normal.data_space,
+            rng.normal(size=(normal.data_space.dim, 3)),
+            form="galerkin",
         )
         prior = GaussianMeasure(coarse, covariance=positive(coarse, rng))
         surrogate = normal.surrogate(forward=cheap, prior=prior)
@@ -121,10 +125,11 @@ class TestNormalOperator:
 
     def test_a_surrogate_must_share_the_data_space(self, normal, rng):
         other = EuclideanSpace(normal.data_space.dim + 1)
-        cheap = LinearOperator.from_derivative_matrix(
+        cheap = LinearOperator.from_matrix(
             normal.model_space,
             other,
             rng.normal(size=(other.dim, normal.model_space.dim)),
+            form="galerkin",
         )
         with pytest.raises(ValueError, match="share the data space"):
             normal.surrogate(forward=cheap)
@@ -132,8 +137,11 @@ class TestNormalOperator:
     def test_a_new_model_space_needs_a_new_prior(self, normal, rng):
         """Rather than silently inheriting one defined somewhere else."""
         coarse = EuclideanSpace(3)
-        cheap = LinearOperator.from_derivative_matrix(
-            coarse, normal.data_space, rng.normal(size=(normal.data_space.dim, 3))
+        cheap = LinearOperator.from_matrix(
+            coarse,
+            normal.data_space,
+            rng.normal(size=(normal.data_space.dim, 3)),
+            form="galerkin",
         )
         with pytest.raises(ValueError, match="its own prior"):
             normal.surrogate(forward=cheap)
@@ -386,8 +394,8 @@ class TestSurrogateFamily:
     ):
         model = inversion.problem.model_space
         parameters = EuclideanSpace(3)
-        parameterisation = LinearOperator.from_derivative_matrix(
-            parameters, model, rng.normal(size=(model.dim, 3))
+        parameterisation = LinearOperator.from_matrix(
+            parameters, model, rng.normal(size=(model.dim, 3)), form="galerkin"
         )
         prior = GaussianMeasure(parameters, covariance=positive(parameters, rng))
         reduced = inversion.parameterised(parameterisation, prior=prior)
@@ -640,8 +648,8 @@ class TestSolverSequencing:
     @pytest.fixture
     def setup(self, rng):
         model, data = EuclideanSpace(30), EuclideanSpace(18)
-        forward = LinearOperator.from_derivative_matrix(
-            model, data, rng.normal(size=(18, 30))
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(18, 30)), form="galerkin"
         )
         chol = CholeskySolver()
         covariance = positive(model, rng)

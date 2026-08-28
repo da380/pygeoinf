@@ -282,7 +282,9 @@ class TestSubspaces:
     @pytest.fixture
     def problem(self, X, rng):
         Y = EuclideanSpace(4)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(4, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(4, X.dim)), form="components"
+        )
         return X, Y, A
 
     def test_a_span(self, X, rng):

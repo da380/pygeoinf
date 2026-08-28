@@ -32,11 +32,14 @@ def setting(rng):
     model = make_weighted_space()
     data = EuclideanSpace(2)
     target_space = EuclideanSpace(2)
-    forward = LinearOperator.from_derivative_matrix(
-        model, data, rng.normal(size=(data.dim, model.dim))
+    forward = LinearOperator.from_matrix(
+        model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
     )
-    target = LinearOperator.from_derivative_matrix(
-        model, target_space, rng.normal(size=(target_space.dim, model.dim))
+    target = LinearOperator.from_matrix(
+        model,
+        target_space,
+        rng.normal(size=(target_space.dim, model.dim)),
+        form="galerkin",
     )
     raw = model.random(rng=rng)
     truth = model.scale(2.0 / model.norm(raw), raw)  # one vector, scaled
@@ -423,17 +426,19 @@ class TestDualRoute:
         model, forward, target, truth, data = setting
         scale = np.diag(np.array([36.0, 16.0, 16.0, 9.0])[: model.dim])
         gram = model.gram_matrix()
-        covariance = LinearOperator.from_derivative_matrix(
+        covariance = LinearOperator.from_matrix(
             model,
             model,
             gram @ scale,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
-        precision = LinearOperator.from_derivative_matrix(
+        precision = LinearOperator.from_matrix(
             model,
             model,
             gram @ np.linalg.inv(scale),
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
         prior = Ellipsoid(model, precision, covariance=covariance)
         assert prior.contains(truth)
@@ -519,11 +524,11 @@ class TestInclusionWithErrors:
         model = make_weighted_space()
         data_space = EuclideanSpace(3)
         target_space = EuclideanSpace(2)
-        forward = LinearOperator.from_derivative_matrix(
-            model, data_space, rng.normal(size=(3, model.dim))
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.normal(size=(3, model.dim)), form="galerkin"
         )
-        target = LinearOperator.from_derivative_matrix(
-            model, target_space, rng.normal(size=(2, model.dim))
+        target = LinearOperator.from_matrix(
+            model, target_space, rng.normal(size=(2, model.dim)), form="galerkin"
         )
         raw = model.random(rng=rng)
         truth = model.scale(2.0 / model.norm(raw), raw)
@@ -658,9 +663,7 @@ class TestHardeningTheError:
         assert ball.radius == 0.0
         assert ball.contains(forward.codomain.zero())
 
-    @pytest.mark.parametrize(
-        "build", [lambda: EuclideanSpace(4), make_weighted_space]
-    )
+    @pytest.mark.parametrize("build", [lambda: EuclideanSpace(4), make_weighted_space])
     def test_the_ball_carries_the_probability_it_claims(self, build, rng):
         """An anisotropic error on a weighted space, which is where the old
         rule was wrong.
@@ -679,8 +682,8 @@ class TestHardeningTheError:
         error = GaussianMeasure.from_covariance_matrix(
             data_space, components, form="components"
         )
-        forward = LinearOperator.from_component_matrix(
-            EuclideanSpace(2), data_space, np.eye(4, 2)
+        forward = LinearOperator.from_matrix(
+            EuclideanSpace(2), data_space, np.eye(4, 2), form="components"
         )
         problem = LinearForwardProblem(forward, error=error)
 

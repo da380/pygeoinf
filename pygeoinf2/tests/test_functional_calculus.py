@@ -39,8 +39,8 @@ def spd(rng, n=N, shift=None):
 def problem(rng):
     X = EuclideanSpace(N)
     matrix = spd(rng)
-    A = LinearOperator.from_component_matrix(
-        X, X, matrix, traits=Traits.POSITIVE_DEFINITE
+    A = LinearOperator.from_matrix(
+        X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
     )
     return X, A, matrix
 
@@ -122,8 +122,8 @@ class TestAgainstDenseMatrixFunctions:
         X, A, matrix = problem
         if name == "exp":
             matrix = matrix / 50.0
-            A = LinearOperator.from_component_matrix(
-                X, X, matrix, traits=Traits.POSITIVE_DEFINITE
+            A = LinearOperator.from_matrix(
+                X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
             )
         function, reference = {
             "sqrt": (np.sqrt, sla.sqrtm),
@@ -189,30 +189,30 @@ class TestOperatorFunction:
 class TestTraitGating:
     def test_a_non_self_adjoint_operator_is_refused(self, rng):
         X = EuclideanSpace(N)
-        A = LinearOperator.from_component_matrix(X, X, rng.normal(size=(N, N)))
+        A = LinearOperator.from_matrix(X, X, rng.normal(size=(N, N)), form="components")
         with pytest.raises(ValueError, match="self-adjoint"):
             operator_function(A, np.sqrt)
 
     def test_a_square_root_needs_semidefiniteness(self, rng):
         X = EuclideanSpace(N)
         matrix = spd(rng)
-        A = LinearOperator.from_component_matrix(
-            X, X, matrix, traits=Traits.SELF_ADJOINT
+        A = LinearOperator.from_matrix(
+            X, X, matrix, traits=Traits.SELF_ADJOINT, form="components"
         )
         with pytest.raises(ValueError, match="square root requires"):
             operator_sqrt(A)
 
     def test_a_logarithm_needs_definiteness(self, rng):
         X = EuclideanSpace(N)
-        A = LinearOperator.from_component_matrix(
-            X, X, spd(rng), traits=Traits.POSITIVE_SEMIDEFINITE
+        A = LinearOperator.from_matrix(
+            X, X, spd(rng), traits=Traits.POSITIVE_SEMIDEFINITE, form="components"
         )
         with pytest.raises(ValueError, match="logarithm requires"):
             operator_log(A)
 
     def test_the_message_points_at_check_traits(self, rng):
         X = EuclideanSpace(N)
-        A = LinearOperator.from_component_matrix(X, X, rng.normal(size=(N, N)))
+        A = LinearOperator.from_matrix(X, X, rng.normal(size=(N, N)), form="components")
         with pytest.raises(ValueError, match="check_traits"):
             operator_function(A, np.sqrt)
 
@@ -233,8 +233,8 @@ class TestDiagonalFastPath:
         X = EuclideanSpace(6)
         values = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         diagonal = DiagonalLinearOperator(X, values)
-        dense = LinearOperator.from_component_matrix(
-            X, X, np.diag(values), traits=Traits.POSITIVE_DEFINITE
+        dense = LinearOperator.from_matrix(
+            X, X, np.diag(values), traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         x = X.random(rng=rng)
         assert np.allclose(
@@ -355,11 +355,12 @@ class TestLogDeterminant:
             "dense-metric": make_dense_metric_space,
         }[request.param]()
         root = rng.normal(size=(space.dim, space.dim))
-        return LinearOperator.from_derivative_matrix(
+        return LinearOperator.from_matrix(
             space,
             space,
             root @ root.T + space.dim * np.identity(space.dim),
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
 
     def test_the_dense_route_is_the_operators_own_determinant(self, operator):
@@ -414,11 +415,12 @@ class TestLogDeterminant:
         with pytest.raises(ValueError, match="'auto', 'dense' or 'stochastic'"):
             log_determinant(operator, method="lanczos")
         space = operator.domain
-        indefinite = LinearOperator.from_derivative_matrix(
+        indefinite = LinearOperator.from_matrix(
             space,
             space,
             -np.identity(space.dim),
             traits=Traits.SELF_ADJOINT,
+            form="galerkin",
         )
         with pytest.raises(ValueError, match="POSITIVE_DEFINITE"):
             log_determinant(indefinite, method="dense")

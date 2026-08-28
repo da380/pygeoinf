@@ -22,11 +22,13 @@ def spd(n):
     return root @ root.T + n * np.identity(n)
 
 
-A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(4, 6)))
-Q = LinearOperator.from_component_matrix(
-    X, X, spd(6), traits=Traits.POSITIVE_SEMIDEFINITE
+A = LinearOperator.from_matrix(X, Y, rng.normal(size=(4, 6)), form="components")
+Q = LinearOperator.from_matrix(
+    X, X, spd(6), traits=Traits.POSITIVE_SEMIDEFINITE, form="components"
 )
-R = LinearOperator.from_component_matrix(Y, Y, spd(4), traits=Traits.POSITIVE_DEFINITE)
+R = LinearOperator.from_matrix(
+    Y, Y, spd(4), traits=Traits.POSITIVE_DEFINITE, form="components"
+)
 
 print("A          ", A.traits)
 print("A @ A*     ", (A @ A.adjoint).traits, " <- a Gramian is always semidefinite")

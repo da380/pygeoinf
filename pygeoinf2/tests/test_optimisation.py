@@ -78,8 +78,8 @@ def rosenbrock(space):
                 [-400.0 * x[0], 200.0],
             ]
         )
-        return LinearOperator.from_component_matrix(
-            space, space, matrix, traits=Traits.SELF_ADJOINT
+        return LinearOperator.from_matrix(
+            space, space, matrix, traits=Traits.SELF_ADJOINT, form="components"
         )
 
     return Functional.from_callables(
@@ -345,8 +345,8 @@ class TestTruncatedCG:
         space = EuclideanSpace(10)
         root = rng.normal(size=(10, 10))
         matrix = root @ root.T + 10.0 * np.identity(10)
-        H = LinearOperator.from_component_matrix(
-            space, space, matrix, traits=Traits.POSITIVE_DEFINITE
+        H = LinearOperator.from_matrix(
+            space, space, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         rhs = rng.normal(size=10)
         step, reason = truncated_cg(H, rhs, rtol=1e-12)
@@ -357,8 +357,8 @@ class TestTruncatedCG:
         """Where CGSolver would raise, because there it is a failure."""
         space = EuclideanSpace(6)
         matrix = np.diag([1.0, 1.0, 1.0, 1.0, 1.0, -5.0])
-        H = LinearOperator.from_component_matrix(
-            space, space, matrix, traits=Traits.SELF_ADJOINT
+        H = LinearOperator.from_matrix(
+            space, space, matrix, traits=Traits.SELF_ADJOINT, form="components"
         )
         _, reason = truncated_cg(H, rng.normal(size=6), radius=1.0)
         assert reason in ("negative curvature", "boundary")
@@ -366,11 +366,12 @@ class TestTruncatedCG:
     def test_the_boundary_is_respected(self, rng):
         space = EuclideanSpace(10)
         root = rng.normal(size=(10, 10))
-        H = LinearOperator.from_component_matrix(
+        H = LinearOperator.from_matrix(
             space,
             space,
             root @ root.T + 10.0 * np.identity(10),
             traits=Traits.POSITIVE_DEFINITE,
+            form="components",
         )
         radius = 0.01
         step, reason = truncated_cg(H, rng.normal(size=10), radius=radius, rtol=1e-14)
@@ -387,7 +388,9 @@ class TestGaussNewton:
             X,
             Y,
             lambda x: matrix @ x,
-            derivative=lambda x: LinearOperator.from_component_matrix(X, Y, matrix),
+            derivative=lambda x: LinearOperator.from_matrix(
+                X, Y, matrix, form="components"
+            ),
         )
         H = gauss_newton_hessian(F, X.random(rng=rng))
         assert Traits.POSITIVE_SEMIDEFINITE & H.traits
@@ -402,10 +405,12 @@ class TestGaussNewton:
             X,
             Y,
             lambda x: matrix @ x,
-            derivative=lambda x: LinearOperator.from_component_matrix(X, Y, matrix),
+            derivative=lambda x: LinearOperator.from_matrix(
+                X, Y, matrix, form="components"
+            ),
         )
-        W = LinearOperator.from_component_matrix(
-            Y, Y, weight, traits=Traits.POSITIVE_DEFINITE
+        W = LinearOperator.from_matrix(
+            Y, Y, weight, traits=Traits.POSITIVE_DEFINITE, form="components"
         )
         H = gauss_newton_hessian(F, X.random(rng=rng), weighting=W)
         assert Traits.POSITIVE_SEMIDEFINITE & H.traits
@@ -418,9 +423,11 @@ class TestGaussNewton:
             X,
             Y,
             lambda x: matrix @ x,
-            derivative=lambda x: LinearOperator.from_component_matrix(X, Y, matrix),
+            derivative=lambda x: LinearOperator.from_matrix(
+                X, Y, matrix, form="components"
+            ),
         )
-        W = LinearOperator.from_component_matrix(Y, Y, rng.normal(size=(8, 8)))
+        W = LinearOperator.from_matrix(Y, Y, rng.normal(size=(8, 8)), form="components")
         with pytest.raises(ValueError, match="self-adjoint"):
             gauss_newton_hessian(F, X.random(rng=rng), weighting=W)
 

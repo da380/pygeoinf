@@ -127,11 +127,12 @@ class TestDistributions:
         from pygeoinf2.traits import Traits
 
         root = rng.normal(size=(space.dim, space.dim))
-        covariance = LinearOperator.from_derivative_matrix(
+        covariance = LinearOperator.from_matrix(
             space,
             space,
             root @ root.T + space.dim * np.identity(space.dim),
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
         return GaussianMeasure(
             space,
@@ -177,8 +178,8 @@ class TestDistributions:
         space, gaussian = measure
         target = EuclideanSpace(3)
         rng = np.random.default_rng(4)
-        forward = LinearOperator.from_derivative_matrix(
-            space, target, rng.normal(size=(3, space.dim))
+        forward = LinearOperator.from_matrix(
+            space, target, rng.normal(size=(3, space.dim)), form="galerkin"
         )
         exact_mean, exact_covariance, _ = plotting.moments(
             gaussian.push_forward(forward)

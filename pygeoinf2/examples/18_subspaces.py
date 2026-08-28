@@ -44,7 +44,7 @@ print(
 print()
 
 # --- the kernel of an operator, coordinate-free --------------------------
-A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(4, X.dim)))
+A = LinearOperator.from_matrix(X, Y, rng.normal(size=(4, X.dim)), form="components")
 kernel = LinearSubspace.from_kernel(A)
 print("kernel of A:")
 print("  P x = x - A* (A A*)^-1 A x, and A A* is recognised as")

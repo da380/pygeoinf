@@ -38,8 +38,8 @@ from .conftest import make_weighted_space
 def problem(rng):
     model = make_weighted_space()
     data = EuclideanSpace(4)
-    operator = LinearOperator.from_derivative_matrix(
-        model, data, rng.normal(size=(data.dim, model.dim))
+    operator = LinearOperator.from_matrix(
+        model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
     )
     error = GaussianMeasure.from_standard_deviation(data, 0.1)
     return LinearForwardProblem(operator, error=error)
@@ -150,16 +150,22 @@ class TestForwardProblem:
 
     def test_a_parameterisation_restricts_the_model_space(self, problem, rng):
         small = EuclideanSpace(2)
-        parameterisation = LinearOperator.from_derivative_matrix(
-            small, problem.model_space, rng.normal(size=(problem.model_space.dim, 2))
+        parameterisation = LinearOperator.from_matrix(
+            small,
+            problem.model_space,
+            rng.normal(size=(problem.model_space.dim, 2)),
+            form="galerkin",
         )
         reduced = problem.parameterised(parameterisation)
         assert reduced.model_space == small
         assert reduced.data_space == problem.data_space
 
     def test_data_reduction_pushes_the_error_forward(self, problem, rng):
-        reduction = LinearOperator.from_derivative_matrix(
-            problem.data_space, EuclideanSpace(2), rng.normal(size=(2, 4))
+        reduction = LinearOperator.from_matrix(
+            problem.data_space,
+            EuclideanSpace(2),
+            rng.normal(size=(2, 4)),
+            form="galerkin",
         )
         reduced = problem.data_reduced(reduction)
         assert reduced.data_space.dim == 2
@@ -219,8 +225,8 @@ class TestBayesian:
     def test_pushing_forward_agrees_with_pushing_the_answer(self, problem, prior, rng):
         """``(measure, P)`` is free, and the direct path must give the same."""
         model = problem.model_space
-        target = LinearOperator.from_derivative_matrix(
-            model, EuclideanSpace(2), rng.normal(size=(2, model.dim))
+        target = LinearOperator.from_matrix(
+            model, EuclideanSpace(2), rng.normal(size=(2, model.dim)), form="galerkin"
         )
         data = problem.synthetic_data(prior.sample(rng=rng), rng=rng)
         estimator = LinearGaussianInversion(problem, prior)
@@ -398,8 +404,8 @@ class TestConstrainedLeastSquares:
         from pygeoinf2.geometry.subspaces import AffineSubspace
 
         model = problem.model_space
-        constraint = LinearOperator.from_derivative_matrix(
-            model, EuclideanSpace(1), rng.normal(size=(1, model.dim))
+        constraint = LinearOperator.from_matrix(
+            model, EuclideanSpace(1), rng.normal(size=(1, model.dim)), form="galerkin"
         )
         subspace = AffineSubspace.from_linear_equation(constraint, np.array([2.0]))
         return constraint, subspace
@@ -481,17 +487,18 @@ class TestEvidenceWithoutAssembling:
         from pygeoinf2.numerics.solvers import CholeskySolver
 
         model, data = make_weighted_space(), EuclideanSpace(9)
-        forward = LinearOperator.from_derivative_matrix(
-            model, data, rng.normal(size=(data.dim, model.dim))
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
         )
 
         def positive(space, scale=1.0):
             root = rng.normal(size=(space.dim, space.dim))
-            return LinearOperator.from_derivative_matrix(
+            return LinearOperator.from_matrix(
                 space,
                 space,
                 scale * (root @ root.T + space.dim * np.identity(space.dim)),
                 traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+                form="galerkin",
             )
 
         chol = CholeskySolver()
@@ -590,15 +597,16 @@ class TestPosteriorSampling:
         from pygeoinf2.numerics.functional_calculus import operator_sqrt
 
         model, data = make_weighted_space(), EuclideanSpace(6)
-        forward = LinearOperator.from_derivative_matrix(
-            model, data, rng.normal(size=(6, model.dim))
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(6, model.dim)), form="galerkin"
         )
         root = rng.normal(size=(model.dim, model.dim))
-        covariance = LinearOperator.from_derivative_matrix(
+        covariance = LinearOperator.from_matrix(
             model,
             model,
             root @ root.T + model.dim * np.identity(model.dim),
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
         prior = GaussianMeasure(
             model,
@@ -613,8 +621,11 @@ class TestPosteriorSampling:
     def test_the_property_posterior_can_be_sampled(self, setup, rng):
         problem, prior = setup
         target = EuclideanSpace(2)
-        operator = LinearOperator.from_derivative_matrix(
-            problem.model_space, target, rng.normal(size=(2, problem.model_space.dim))
+        operator = LinearOperator.from_matrix(
+            problem.model_space,
+            target,
+            rng.normal(size=(2, problem.model_space.dim)),
+            form="galerkin",
         )
         estimator = LinearGaussianInversion(
             problem, prior, solver=CholeskySolver()
@@ -631,8 +642,11 @@ class TestPosteriorSampling:
         """
         problem, prior = setup
         target = EuclideanSpace(2)
-        operator = LinearOperator.from_derivative_matrix(
-            problem.model_space, target, rng.normal(size=(2, problem.model_space.dim))
+        operator = LinearOperator.from_matrix(
+            problem.model_space,
+            target,
+            rng.normal(size=(2, problem.model_space.dim)),
+            form="galerkin",
         )
         estimator = LinearGaussianInversion(
             problem, prior, solver=CholeskySolver()

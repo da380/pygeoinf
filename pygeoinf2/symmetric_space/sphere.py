@@ -821,8 +821,8 @@ class Sphere(SymmetricSpace):
                 for centre in centres
             ]
         )
-        return LinearOperator.from_derivative_matrix(
-            self, EuclideanSpace(len(centres)), rows
+        return LinearOperator.from_matrix(
+            self, EuclideanSpace(len(centres)), rows, form="galerkin"
         )
 
     # ----------------------------------------------------------------- #

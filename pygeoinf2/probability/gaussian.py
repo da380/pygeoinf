@@ -339,10 +339,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         symmetric = 0.5 * (matrix + matrix.T)
         root = np.linalg.cholesky(symmetric)
-        # from_derivative_matrix(E, X, R) has component matrix G^-1 R, and
+        # from_matrix(E, X, R, form="galerkin") has component matrix G^-1 R, and
         # (G^-1 R)(G^-1 R)* has Galerkin matrix R R^T == the covariance.
-        factor = LinearOperator.from_derivative_matrix(
-            EuclideanSpace(domain.dim), domain, root
+        factor = LinearOperator.from_matrix(
+            EuclideanSpace(domain.dim), domain, root, form="galerkin"
         )
         return cls(domain, expectation=expectation, covariance_factor=factor)
 
@@ -835,15 +835,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 "a smaller threshold."
             )
         sparse = csr_matrix(matrix)
-        builder = (
-            LinearOperator.from_derivative_matrix
-            if form == "galerkin"
-            else LinearOperator.from_component_matrix
-        )
-        covariance = builder(
+        covariance = LinearOperator.from_matrix(
             self._domain,
             self._domain,
             sparse,
+            form=form,
             traits=_Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE,
         )
         return GaussianMeasure(
@@ -890,11 +886,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             # set covered 46% of its nominal 90% on a weighted one.
             gram = self._domain.gram_matrix()
             galerkin = gram @ np.linalg.solve(covariance.matrix(form="galerkin"), gram)
-            precision = _LinearOperator.from_derivative_matrix(
+            precision = _LinearOperator.from_matrix(
                 self._domain,
                 self._domain,
                 0.5 * (galerkin + galerkin.T),
                 traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+                form="galerkin",
             )
         return Ellipsoid(
             self.domain,
@@ -1016,9 +1013,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         normal = operator @ covariance @ operator.adjoint
         if noise is not None:
             normal = normal + noise.covariance
-        normal = normal.with_traits(
-            _Traits.SELF_ADJOINT | _Traits.POSITIVE_DEFINITE
-        )
+        normal = normal.with_traits(_Traits.SELF_ADJOINT | _Traits.POSITIVE_DEFINITE)
         inverse = resolve_solver(solver, normal)(normal)
         cross = covariance @ operator.adjoint
 
@@ -1364,9 +1359,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             if self._precision_factor is not None:
                 precision_factor = (1.0 / abs(alpha)) * self._precision_factor
         factor = (
-            None
-            if self._covariance_factor is None
-            else alpha * self._covariance_factor
+            None if self._covariance_factor is None else alpha * self._covariance_factor
         )
         covariance = (
             None

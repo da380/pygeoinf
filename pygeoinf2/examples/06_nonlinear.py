@@ -28,7 +28,9 @@ def linearise(m):
     squared, jacobian_row = expensive_solve(m)
     value = np.array([squared, float(m[0])])
     rows = np.vstack([jacobian_row, np.eye(3)[0]])
-    return Linearisation(m, value, LinearOperator.from_component_matrix(X, Y, rows))
+    return Linearisation(
+        m, value, LinearOperator.from_matrix(X, Y, rows, form="components")
+    )
 
 
 F = Operator.from_callables(
@@ -55,7 +57,9 @@ print()
 
 # The chain rule composes, and the derivative of the composition is built for
 # you. A second derivative is optional and propagates the same way.
-A = LinearOperator.from_component_matrix(Y, EuclideanSpace(1), rng.normal(size=(1, 2)))
+A = LinearOperator.from_matrix(
+    Y, EuclideanSpace(1), rng.normal(size=(1, 2)), form="components"
+)
 composed = A @ F
 print("(A @ F).has_derivative:", composed.has_derivative)
 check_derivative(composed, m, rng=rng)

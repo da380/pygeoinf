@@ -177,14 +177,14 @@ class TestNonlinearOperator:
 
         def derivative(x):
             c = X.to_components(x)
-            return LinearOperator.from_component_matrix(
-                X, Y, np.stack([2.0 * (B @ c) for B in blocks])
+            return LinearOperator.from_matrix(
+                X, Y, np.stack([2.0 * (B @ c) for B in blocks]), form="components"
             )
 
         def second_derivative(x, dx):
             cd = X.to_components(dx)
-            return LinearOperator.from_component_matrix(
-                X, Y, np.stack([2.0 * (B @ cd) for B in blocks])
+            return LinearOperator.from_matrix(
+                X, Y, np.stack([2.0 * (B @ cd) for B in blocks]), form="components"
             )
 
         return Operator.from_callables(
@@ -204,7 +204,7 @@ class TestNonlinearOperator:
     def test_chain_rule(self, rng):
         X, Y, Z = make_weighted_space(), EuclideanSpace(3), EuclideanSpace(2)
         F = self.build(X, Y, rng)
-        A = LinearOperator.from_component_matrix(Y, Z, rng.normal(size=(2, 3)))
+        A = LinearOperator.from_matrix(Y, Z, rng.normal(size=(2, 3)), form="components")
         composed = A @ F
         assert composed.has_derivative
         check_derivative(composed, X.random(rng=rng), rng=rng)
@@ -225,8 +225,8 @@ class TestNonlinearOperator:
             Y,
             Z,
             lambda y: np.array([y @ y, 0.0]),
-            derivative=lambda y: LinearOperator.from_component_matrix(
-                Y, Z, np.stack([2.0 * y, np.zeros(3)])
+            derivative=lambda y: LinearOperator.from_matrix(
+                Y, Z, np.stack([2.0 * y, np.zeros(3)]), form="components"
             ),
         )
         assert not (partial @ F).has_second_derivative
@@ -251,7 +251,7 @@ class TestSharedWork:
             calls["n"] += 1  # stands in for the PDE solve
             value = Y.from_components(M @ X.to_components(x))
             return Linearisation(
-                x, value, LinearOperator.from_component_matrix(X, Y, M)
+                x, value, LinearOperator.from_matrix(X, Y, M, form="components")
             )
 
         F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
@@ -271,7 +271,7 @@ class TestSharedWork:
             return Linearisation(
                 x,
                 Y.from_components(M @ X.to_components(x)),
-                LinearOperator.from_component_matrix(X, Y, M),
+                LinearOperator.from_matrix(X, Y, M, form="components"),
             )
 
         F = Operator.from_callables(X, Y, lambda x: M @ x, linearise=linearise)
@@ -283,7 +283,9 @@ class TestSharedWork:
 class TestAffineOperator:
     def test_value_and_derivative(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
         b = Y.random(rng=rng)
         F = AffineOperator(A, b)
         x = X.random(rng=rng)
@@ -294,8 +296,8 @@ class TestAffineOperator:
     def test_affineness_survives_the_algebra(self, rng):
         """v1 preserves this with a string type check; the protocol replaces it."""
         X, Y = EuclideanSpace(4), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
-        B = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
+        B = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         F = AffineOperator(A, Y.random(rng=rng))
 
         assert isinstance(F + B, AffineOperator)
@@ -305,9 +307,9 @@ class TestAffineOperator:
 
     def test_composition_with_linear_operators_stays_affine(self, rng):
         X, Y, Z = EuclideanSpace(4), EuclideanSpace(3), EuclideanSpace(2)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
-        C = LinearOperator.from_component_matrix(Y, Z, rng.normal(size=(2, 3)))
-        D = LinearOperator.from_component_matrix(Z, X, rng.normal(size=(4, 2)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
+        C = LinearOperator.from_matrix(Y, Z, rng.normal(size=(2, 3)), form="components")
+        D = LinearOperator.from_matrix(Z, X, rng.normal(size=(4, 2)), form="components")
         F = AffineOperator(A, Y.random(rng=rng))
 
         assert isinstance(C @ F, AffineOperator)

@@ -25,7 +25,9 @@ rng = np.random.default_rng(0)
 X = EuclideanSpace(20)
 root = rng.normal(size=(20, 20))
 matrix = root @ root.T + 20.0 * np.identity(20)
-A = LinearOperator.from_component_matrix(X, X, matrix, traits=Traits.POSITIVE_DEFINITE)
+A = LinearOperator.from_matrix(
+    X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
+)
 
 x = X.random(rng=rng)
 print(

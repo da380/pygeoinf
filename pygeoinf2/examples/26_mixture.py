@@ -44,18 +44,19 @@ chol = CholeskySolver()
 
 def scenario(centre, spread):
     """A Gaussian around one scenario's expected model."""
-    covariance = LinearOperator.from_derivative_matrix(
+    covariance = LinearOperator.from_matrix(
         X,
         X,
         spread * np.identity(2),
         traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        form="galerkin",
     )
     return GaussianMeasure(
         X,
         covariance=covariance,
         precision=chol(covariance),
-        covariance_factor=LinearOperator.from_derivative_matrix(
-            X, X, np.sqrt(spread) * np.identity(2)
+        covariance_factor=LinearOperator.from_matrix(
+            X, X, np.sqrt(spread) * np.identity(2), form="galerkin"
         ),
         expectation=X.from_components(np.asarray(centre, float)),
     )
@@ -84,8 +85,8 @@ print()
 
 # Sensitive to the sum of the two parameters only: it cannot separate them, so
 # what discriminates the scenarios is the prior geometry, not the data alone.
-forward = LinearOperator.from_derivative_matrix(
-    X, EuclideanSpace(1), np.array([[1.0, 1.0]])
+forward = LinearOperator.from_matrix(
+    X, EuclideanSpace(1), np.array([[1.0, 1.0]]), form="galerkin"
 )
 noise = GaussianMeasure.from_standard_deviation(forward.codomain, 0.25)
 problem = LinearForwardProblem(forward, error=noise)

@@ -26,7 +26,7 @@ from .doubles import OpaqueSpace
 def least_squares(space, matrix, data):
     """``0.5 ||A x - d||^2``, with an ill-conditioned ``A`` to make it hard."""
     codomain = EuclideanSpace(matrix.shape[0])
-    A = LinearOperator.from_component_matrix(space, codomain, matrix)
+    A = LinearOperator.from_matrix(space, codomain, matrix, form="components")
 
     def value(x):
         residual = matrix @ space.to_components(x) - data
@@ -198,7 +198,9 @@ class TestSupportFunctions:
     def test_a_linear_image(self, rng):
         """h_{A K}(y) == h_K(A* y)."""
         X, Y = make_weighted_space(), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
         h = SupportFunction.of_ball(X, radius=1.0).compose_with(A)
         y = Y.random(rng=rng)
         assert h(y) == pytest.approx(X.norm(A.adjoint(y)))
@@ -206,7 +208,7 @@ class TestSupportFunctions:
     def test_a_mismatched_operator_is_refused(self, rng):
         """The operator must map *out of* the space the set lives in."""
         X, Y = make_weighted_space(), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(Y, Y, np.identity(3))
+        A = LinearOperator.from_matrix(Y, Y, np.identity(3), form="components")
         with pytest.raises(ValueError, match="must map out of"):
             SupportFunction.of_ball(X).compose_with(A)
 

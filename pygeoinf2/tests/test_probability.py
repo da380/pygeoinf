@@ -27,7 +27,9 @@ class TestConstruction:
     def test_a_factor_gives_a_covariance_with_traits_for_free(self, rng):
         """L L* is recognised as positive semidefinite by the palindrome rule."""
         X, Y = EuclideanSpace(3), EuclideanSpace(5)
-        factor = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(5, 3)))
+        factor = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(5, 3)), form="components"
+        )
         mu = GaussianMeasure(Y, covariance_factor=factor)
         assert Traits.SELF_ADJOINT & mu.covariance.traits
         assert Traits.POSITIVE_SEMIDEFINITE & mu.covariance.traits
@@ -39,13 +41,13 @@ class TestConstruction:
 
     def test_an_unstructured_covariance_is_refused(self, rng):
         X = EuclideanSpace(4)
-        unstructured = LinearOperator.from_component_matrix(X, X, spd(rng, 4))
+        unstructured = LinearOperator.from_matrix(X, X, spd(rng, 4), form="components")
         with pytest.raises(ValueError, match="must claim"):
             GaussianMeasure(X, covariance=unstructured)
 
     def test_the_message_points_at_the_remedy(self, rng):
         X = EuclideanSpace(4)
-        unstructured = LinearOperator.from_component_matrix(X, X, spd(rng, 4))
+        unstructured = LinearOperator.from_matrix(X, X, spd(rng, 4), form="components")
         with pytest.raises(ValueError, match="check_traits"):
             GaussianMeasure(X, covariance=unstructured)
 
@@ -55,8 +57,8 @@ class TestConstruction:
 
     def test_a_covariance_on_the_wrong_space_is_refused(self, rng):
         X, Y = EuclideanSpace(3), EuclideanSpace(4)
-        wrong = LinearOperator.from_component_matrix(
-            Y, Y, spd(rng, 4), traits=Traits.POSITIVE_SEMIDEFINITE
+        wrong = LinearOperator.from_matrix(
+            Y, Y, spd(rng, 4), traits=Traits.POSITIVE_SEMIDEFINITE, form="components"
         )
         with pytest.raises(ValueError, match="operator on"):
             GaussianMeasure(X, covariance=wrong)
@@ -119,8 +121,8 @@ class TestMomentsMatchSamples:
     def test_with_a_nontrivial_factor(self, rng):
         X = make_weighted_space()
         E = EuclideanSpace(X.dim)
-        factor = LinearOperator.from_component_matrix(
-            E, X, rng.normal(size=(X.dim, X.dim))
+        factor = LinearOperator.from_matrix(
+            E, X, rng.normal(size=(X.dim, X.dim)), form="components"
         )
         mu = GaussianMeasure(X, covariance_factor=factor)
         check_measure(mu, rng=rng, samples=SAMPLES)
@@ -198,7 +200,9 @@ class TestWhiteNoiseCorrection:
 class TestPushForward:
     def test_a_linear_map_keeps_it_gaussian(self, rng):
         X, Y = make_weighted_space(), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
         mu = GaussianMeasure.from_standard_deviation(X, 1.3)
         nu = A @ mu
         assert isinstance(nu, GaussianMeasure)
@@ -207,14 +211,16 @@ class TestPushForward:
     def test_the_pushforward_covariance_is_recognised_as_semidefinite(self, rng):
         """A C A*, with nothing asserted."""
         X, Y = make_weighted_space(), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, X.dim)))
+        A = LinearOperator.from_matrix(
+            X, Y, rng.normal(size=(3, X.dim)), form="components"
+        )
         nu = A @ GaussianMeasure.from_standard_deviation(X, 1.3)
         assert Traits.POSITIVE_SEMIDEFINITE & nu.covariance.traits
         check_traits(nu.covariance, rng=rng)
 
     def test_an_affine_map_shifts_the_mean(self, rng):
         X, Y = EuclideanSpace(4), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 4)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 4)), form="components")
         b = Y.random(rng=rng)
         mu = GaussianMeasure.from_standard_deviation(X, 1.0)
         nu = AffineOperator(A, b) @ mu
@@ -240,7 +246,7 @@ class TestPushForward:
 
     def test_domain_mismatch_is_refused(self, rng):
         X, Y = EuclideanSpace(4), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(Y, Y, np.identity(3))
+        A = LinearOperator.from_matrix(Y, Y, np.identity(3), form="components")
         mu = GaussianMeasure.from_standard_deviation(X, 1.0)
         with pytest.raises(ValueError, match="domain"):
             A @ mu
@@ -287,7 +293,7 @@ class TestAlgebra:
         mu = Tagged(X, covariance_factor=2.0 * LinearOperator.identity(X))
         assert isinstance(3.0 * mu, Tagged)
         assert isinstance(mu + mu, Tagged)
-        A = LinearOperator.from_component_matrix(X, X, np.identity(4))
+        A = LinearOperator.from_matrix(X, X, np.identity(4), form="components")
         assert isinstance(A @ mu, Tagged)
 
 
@@ -326,8 +332,12 @@ class TestDensities:
         X = EuclideanSpace(4)
         mu = GaussianMeasure(
             X,
-            covariance=LinearOperator.from_component_matrix(
-                X, X, spd(rng, 4), traits=Traits.POSITIVE_SEMIDEFINITE
+            covariance=LinearOperator.from_matrix(
+                X,
+                X,
+                spd(rng, 4),
+                traits=Traits.POSITIVE_SEMIDEFINITE,
+                form="components",
             ),
         )
         assert not mu.has_log_density
@@ -362,8 +372,12 @@ class TestCoordinateFree:
         X = EuclideanSpace(4)
         mu = GaussianMeasure(
             X,
-            covariance=LinearOperator.from_component_matrix(
-                X, X, spd(rng, 4), traits=Traits.POSITIVE_SEMIDEFINITE
+            covariance=LinearOperator.from_matrix(
+                X,
+                X,
+                spd(rng, 4),
+                traits=Traits.POSITIVE_SEMIDEFINITE,
+                form="components",
             ),
         )
         assert not mu.can_sample
@@ -418,7 +432,9 @@ class TestPrecisionSurvivesTheAlgebra:
         for name, derived in self.operations(space, mu, rng):
             assert derived.precision is not None, name
             probe = space.random(rng=rng)
-            residual = space.subtract(derived.precision(derived.covariance(probe)), probe)
+            residual = space.subtract(
+                derived.precision(derived.covariance(probe)), probe
+            )
             assert space.norm(residual) < 1e-10 * space.norm(probe), name
 
     def test_a_translated_measure_still_has_a_density(self, measure, rng):
@@ -505,9 +521,7 @@ class TestPrecisionOnlyMeasures:
 
 
 class TestStandardDeviations:
-    @pytest.mark.parametrize(
-        "build", [lambda: EuclideanSpace(4), make_weighted_space]
-    )
+    @pytest.mark.parametrize("build", [lambda: EuclideanSpace(4), make_weighted_space])
     def test_a_deviation_per_direction(self, build, rng):
         space = build()
         deviations = np.array([0.5, 1.0, 2.0, 3.0])
@@ -547,8 +561,8 @@ class TestConditioning:
             EuclideanSpace(5) if request.param == "euclidean" else make_weighted_space()
         )
         constraint = EuclideanSpace(2)
-        operator = LinearOperator.from_component_matrix(
-            space, constraint, rng.normal(size=(2, space.dim))
+        operator = LinearOperator.from_matrix(
+            space, constraint, rng.normal(size=(2, space.dim)), form="components"
         )
         return space, operator, GaussianMeasure.from_standard_deviation(space, 1.2)
 

@@ -30,7 +30,7 @@ print()
 
 # Pushforward through a forward operator.
 Y = EuclideanSpace(4)
-A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(4, X.dim)))
+A = LinearOperator.from_matrix(X, Y, rng.normal(size=(4, X.dim)), form="components")
 data_measure = A @ mu
 print("A @ mu is a", type(data_measure).__name__)
 print("its covariance:", data_measure.covariance.traits)

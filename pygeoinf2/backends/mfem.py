@@ -12,7 +12,7 @@ out of the general machinery instead:
 
 - **An assembled bilinear form is a Galerkin matrix.** ``a(u, v) == u^T K v``
   means ``K == M A_c``, which is precisely what
-  :meth:`LinearOperator.from_derivative_matrix` expects. The adjoint then
+  :meth:`LinearOperator.from_matrix` in Galerkin form expects. The adjoint then
   applies ``M^-1`` on its own.
 - **An assembled linear form is a derivative, not a gradient.** The load vector
   has entries ``b_i == l(phi_i)``, so it is the functional's derivative
@@ -252,7 +252,7 @@ class MfemSpace(CoordinateSpace):
         problem fits in memory at all: at 1e5 degrees of freedom a dense block
         is 80 GB. This used to call ``.toarray()`` unconditionally, so
         :func:`operator_from_bilinear_form` handed a dense array to
-        ``from_derivative_matrix`` and :func:`solver_from_bilinear_form`
+        ``from_matrix`` and :func:`solver_from_bilinear_form`
         densified it only to re-sparsify it immediately.
 
         Args:
@@ -262,7 +262,11 @@ class MfemSpace(CoordinateSpace):
             The free block, sparse when the input was sparse.
         """
         if isinstance(matrix, np.ndarray):
-            return matrix[np.ix_(self._free, self._free)] if self.is_constrained else matrix
+            return (
+                matrix[np.ix_(self._free, self._free)]
+                if self.is_constrained
+                else matrix
+            )
         sparse = _to_scipy(matrix)
         if not self.is_constrained:
             return sparse
@@ -421,7 +425,7 @@ def operator_from_bilinear_form(
     An assembled bilinear form is the **Galerkin matrix** of the operator it
     represents: ``a(u, v) == u^T K v`` and ``(A u, v) == (A u)^T M v`` together
     give ``K == M A_c``. So the assembled matrix goes straight into
-    :meth:`LinearOperator.from_derivative_matrix`, and the mass solve that
+    :meth:`LinearOperator.from_matrix` in Galerkin form, and the mass solve that
     turns it into an action on functions happens inside the operator rather
     than in the caller's code.
 
@@ -433,8 +437,8 @@ def operator_from_bilinear_form(
             so the claim is the caller's and ``testing.check_traits`` verifies
             it.
     """
-    return LinearOperator.from_derivative_matrix(
-        space, space, space.restrict(form.SpMat()), traits=traits
+    return LinearOperator.from_matrix(
+        space, space, space.restrict(form.SpMat()), traits=traits, form="galerkin"
     )
 
 
@@ -604,7 +608,7 @@ def operator_from_linear_forms(
     footprint, and MFEM assembles exactly that. So an observation operator is a
     stack of load vectors, and because each row is a set of *derivative*
     components rather than a function, the whole thing is
-    ``from_derivative_matrix`` and the mass solve that its adjoint needs stays
+    ``from_matrix`` and the mass solve that its adjoint needs stays
     inside the operator.
 
     Getting this wrong is the standard way to break a finite element inverse
@@ -628,7 +632,7 @@ def operator_from_linear_forms(
             f"{len(rows)} linear forms for a data space of dimension "
             f"{codomain.dim}."
         )
-    return LinearOperator.from_derivative_matrix(space, codomain, np.array(rows))
+    return LinearOperator.from_matrix(space, codomain, np.array(rows), form="galerkin")
 
 
 def _white_noise_integrator(seed: int) -> Any:

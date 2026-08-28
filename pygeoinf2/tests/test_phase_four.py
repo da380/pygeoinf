@@ -30,7 +30,7 @@ def nonsymmetric(space, rng):
     """A well-conditioned operator with no symmetry to exploit."""
     size = space.dim
     matrix = rng.normal(size=(size, size)) + 4.0 * np.identity(size)
-    return LinearOperator.from_component_matrix(space, space, matrix), matrix
+    return LinearOperator.from_matrix(space, space, matrix, form="components"), matrix
 
 
 def positive_definite(space, rng):
@@ -50,9 +50,9 @@ class TestSparseMatrices:
         X = make_weighted_space()
         Y = EuclideanSpace(X.dim)
         dense = np.diag(np.arange(1.0, X.dim + 1))
-        sparse = LinearOperator.from_derivative_matrix(X, Y, csr_matrix(dense))
+        sparse = LinearOperator.from_matrix(X, Y, csr_matrix(dense), form="galerkin")
         check_operator(sparse, rng=rng)
-        reference = LinearOperator.from_derivative_matrix(X, Y, dense)
+        reference = LinearOperator.from_matrix(X, Y, dense, form="galerkin")
         x, y = X.random(rng=rng), Y.random(rng=rng)
         assert np.allclose(sparse(x), reference(x))
         assert np.allclose(
@@ -63,7 +63,9 @@ class TestSparseMatrices:
     def test_a_wrong_shape_is_still_refused(self):
         X = make_weighted_space()
         with pytest.raises(ValueError, match="expected"):
-            LinearOperator.from_component_matrix(X, X, csr_matrix(np.zeros((2, 2))))
+            LinearOperator.from_matrix(
+                X, X, csr_matrix(np.zeros((2, 2))), form="components"
+            )
 
 
 class TestCoordinateOperators:
@@ -99,7 +101,7 @@ class TestDiagonals:
         X = make_weighted_space()
         full = rng.normal(size=(X.dim, X.dim))
         matrix = np.triu(np.tril(full, 1), -1)
-        return X, matrix, LinearOperator.from_component_matrix(X, X, matrix)
+        return X, matrix, LinearOperator.from_matrix(X, X, matrix, form="components")
 
     def test_the_exact_route_reads_the_matrix(self, banded):
         X, matrix, operator = banded
@@ -340,8 +342,8 @@ class TestSubspaceConstructions:
     @pytest.fixture
     def constrained(self, rng):
         X = make_weighted_space()
-        operator = LinearOperator.from_derivative_matrix(
-            X, EuclideanSpace(2), rng.normal(size=(2, X.dim))
+        operator = LinearOperator.from_matrix(
+            X, EuclideanSpace(2), rng.normal(size=(2, X.dim)), form="galerkin"
         )
         value = np.array([1.0, -0.5])
         return X, operator, value, AffineSubspace.from_linear_equation(operator, value)
@@ -638,11 +640,12 @@ class TestDeflatedDiagonal:
         rotation, _ = np.linalg.qr(rng.normal(size=(size, size)))
         spectrum = np.array([100.0 * decay**index for index in range(size)]) + 1e-4
         matrix = rotation @ np.diag(spectrum) @ rotation.T
-        return LinearOperator.from_derivative_matrix(
+        return LinearOperator.from_matrix(
             space,
             space,
             matrix,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+            form="galerkin",
         )
 
     @pytest.mark.parametrize("form", ["galerkin", "components"])
@@ -725,11 +728,12 @@ class TestPreconditioners:
         size = space.dim
         rotation, _ = np.linalg.qr(rng.normal(size=(size, size)))
         spectrum = np.array([1000.0 * decay**index for index in range(size)]) + 5.0
-        return LinearOperator.from_derivative_matrix(
+        return LinearOperator.from_matrix(
             space,
             space,
             rotation @ np.diag(spectrum) @ rotation.T,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
 
     @staticmethod
@@ -747,11 +751,12 @@ class TestPreconditioners:
         ).toarray()
         matrix = band + 1e-3 * rng.normal(size=(size, size))
         matrix = 0.5 * (matrix + matrix.T) + 2.0 * np.identity(size)
-        return LinearOperator.from_derivative_matrix(
+        return LinearOperator.from_matrix(
             space,
             space,
             matrix,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
 
     @staticmethod
@@ -1049,8 +1054,8 @@ class TestConditioning:
         measure = GaussianMeasure.from_covariance_matrix(
             space, root @ root.T + space.dim * np.identity(space.dim)
         )
-        operator = LinearOperator.from_derivative_matrix(
-            space, EuclideanSpace(2), rng.normal(size=(2, space.dim))
+        operator = LinearOperator.from_matrix(
+            space, EuclideanSpace(2), rng.normal(size=(2, space.dim)), form="galerkin"
         )
         value = np.array([0.5, -1.0])
         assert np.allclose(
@@ -1071,8 +1076,8 @@ class TestConditioning:
             space, root @ root.T + space.dim * np.identity(space.dim)
         )
         data_space = EuclideanSpace(2)
-        operator = LinearOperator.from_derivative_matrix(
-            space, data_space, rng.normal(size=(2, space.dim))
+        operator = LinearOperator.from_matrix(
+            space, data_space, rng.normal(size=(2, space.dim)), form="galerkin"
         )
         noise = GaussianMeasure.from_standard_deviation(data_space, 0.3)
         value = np.array([0.5, -1.0])
@@ -1096,8 +1101,8 @@ class TestConditioning:
         measure = GaussianMeasure.from_covariance_matrix(
             space, root @ root.T + space.dim * np.identity(space.dim)
         )
-        operator = LinearOperator.from_derivative_matrix(
-            space, EuclideanSpace(2), rng.normal(size=(2, space.dim))
+        operator = LinearOperator.from_matrix(
+            space, EuclideanSpace(2), rng.normal(size=(2, space.dim)), form="galerkin"
         )
         conditioned = measure.condition(operator, np.array([0.5, -1.0]))
         assert conditioned.nuclear_norm() < measure.nuclear_norm()
@@ -1116,11 +1121,12 @@ class TestWoodburyPreconditioner:
     def psd(space, rng, scale=1.0):
         root = rng.normal(size=(space.dim, space.dim))
         matrix = scale * (root @ root.T + space.dim * np.identity(space.dim))
-        return LinearOperator.from_derivative_matrix(
+        return LinearOperator.from_matrix(
             space,
             space,
             matrix,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
 
     @pytest.fixture(params=["euclidean", "weighted-model", "weighted-data"])
@@ -1136,8 +1142,8 @@ class TestWoodburyPreconditioner:
             model, data = make_weighted_space(), EuclideanSpace(3)
         else:
             model, data = EuclideanSpace(5), make_weighted_space()
-        forward = LinearOperator.from_derivative_matrix(
-            model, data, rng.normal(size=(data.dim, model.dim))
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
         )
         return forward, self.psd(model, rng), self.psd(data, rng, 0.3)
 
@@ -1201,17 +1207,18 @@ class TestWoodburyPreconditioner:
         from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
 
         model, data = EuclideanSpace(120), EuclideanSpace(8)
-        forward = LinearOperator.from_derivative_matrix(
-            model, data, rng.normal(size=(8, 120))
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(8, 120)), form="galerkin"
         )
         decay = np.exp(-np.arange(120) / 6.0) + 1e-4
 
         def diagonal(space, values):
-            return LinearOperator.from_derivative_matrix(
+            return LinearOperator.from_matrix(
                 space,
                 space,
                 np.diag(values),
                 traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+                form="galerkin",
             )
 
         noise_inverse = diagonal(data, np.full(8, 100.0))
@@ -1243,8 +1250,8 @@ class TestWoodburyPreconditioner:
         from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
 
         model, data = EuclideanSpace(5), EuclideanSpace(3)
-        forward = LinearOperator.from_derivative_matrix(
-            model, data, rng.normal(size=(3, 5))
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(3, 5)), form="galerkin"
         )
         with pytest.raises(ValueError, match="prior covariance"):
             WoodburyPreconditioner(forward, self.psd(data, rng), self.psd(data, rng))
@@ -1272,11 +1279,12 @@ class TestColumnThresholdedPreconditioner:
         matrix = np.exp(-((separations / 0.15) ** 2)) + space.dim * np.identity(
             space.dim
         )
-        return LinearOperator.from_derivative_matrix(
+        return LinearOperator.from_matrix(
             space,
             space,
             matrix,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            form="galerkin",
         )
 
     @pytest.fixture(params=["euclidean", "weighted"])

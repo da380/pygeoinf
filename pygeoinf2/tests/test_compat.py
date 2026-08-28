@@ -186,8 +186,12 @@ class TestBayesianNormalOperator:
             prior.covariance, domain=X, codomain=X, traits=Traits.POSITIVE_DEFINITE
         )
         Y = A.codomain
-        R = LinearOperator.from_component_matrix(
-            Y, Y, 0.04 * np.identity(len(POINTS)), traits=Traits.POSITIVE_DEFINITE
+        R = LinearOperator.from_matrix(
+            Y,
+            Y,
+            0.04 * np.identity(len(POINTS)),
+            traits=Traits.POSITIVE_DEFINITE,
+            form="components",
         )
         return X, A, Q, R
 
@@ -285,8 +289,12 @@ class TestSphere:
             traits=Traits.POSITIVE_DEFINITE,
         )
         Y = A.codomain
-        R = LinearOperator.from_component_matrix(
-            Y, Y, 0.01 * np.identity(len(points)), traits=Traits.POSITIVE_DEFINITE
+        R = LinearOperator.from_matrix(
+            Y,
+            Y,
+            0.01 * np.identity(len(points)),
+            traits=Traits.POSITIVE_DEFINITE,
+            form="components",
         )
         normal = A @ Q @ A.adjoint + R
         assert Traits.POSITIVE_DEFINITE & normal.traits
@@ -309,8 +317,12 @@ class TestSolversOnAdaptedSpaces:
             traits=Traits.POSITIVE_DEFINITE,
         )
         Y = A.codomain
-        R = LinearOperator.from_component_matrix(
-            Y, Y, 0.04 * np.identity(len(POINTS)), traits=Traits.POSITIVE_DEFINITE
+        R = LinearOperator.from_matrix(
+            Y,
+            Y,
+            0.04 * np.identity(len(POINTS)),
+            traits=Traits.POSITIVE_DEFINITE,
+            form="components",
         )
         return X, A, Q, R, A @ Q @ A.adjoint + R
 

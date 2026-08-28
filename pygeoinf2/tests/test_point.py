@@ -160,11 +160,12 @@ class TestDampedSolves:
     def family(self, rng):
         space = EuclideanSpace(30)
         root = rng.normal(size=(30, 30))
-        base = LinearOperator.from_derivative_matrix(
+        base = LinearOperator.from_matrix(
             space,
             space,
             root @ root.T,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+            form="galerkin",
         )
         return space, DampedSolves(
             base,
@@ -215,8 +216,8 @@ class TestDampedSolves:
         space, _ = family
         root = rng.normal(size=(30, 30))
         solves = DampedSolves(
-            LinearOperator.from_derivative_matrix(
-                space, space, root @ root.T, traits=Traits.SELF_ADJOINT
+            LinearOperator.from_matrix(
+                space, space, root @ root.T, traits=Traits.SELF_ADJOINT, form="galerkin"
             ),
             LinearOperator.identity(space),
             CholeskySolver(),
@@ -232,21 +233,22 @@ def setup(request, rng):
         EuclideanSpace(12) if request.param == "euclidean" else make_weighted_space()
     )
     data = EuclideanSpace(8)
-    forward = LinearOperator.from_derivative_matrix(
-        model, data, rng.normal(size=(data.dim, model.dim))
+    forward = LinearOperator.from_matrix(
+        model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"
     )
     variances = rng.uniform(0.01, 0.04, data.dim)
-    covariance = LinearOperator.from_derivative_matrix(
+    covariance = LinearOperator.from_matrix(
         data,
         data,
         np.diag(variances),
         traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        form="galerkin",
     )
     error = GaussianMeasure(
         data,
         covariance=covariance,
-        covariance_factor=LinearOperator.from_derivative_matrix(
-            data, data, np.diag(np.sqrt(variances))
+        covariance_factor=LinearOperator.from_matrix(
+            data, data, np.diag(np.sqrt(variances)), form="galerkin"
         ),
         precision=CholeskySolver()(covariance),
     )
@@ -311,10 +313,11 @@ class TestTikhonovNormalOperator:
             problem.forward_operator, 1.0, error=problem.error_measure
         )
         other = EuclideanSpace(problem.data_space.dim + 2)
-        cheap = LinearOperator.from_derivative_matrix(
+        cheap = LinearOperator.from_matrix(
             problem.model_space,
             other,
             rng.normal(size=(other.dim, problem.model_space.dim)),
+            form="galerkin",
         )
         with pytest.raises(ValueError, match="share the data space"):
             normal.surrogate(forward=cheap)
@@ -448,8 +451,8 @@ class TestDiscrepancyPrinciple:
         """
         data_space = build_data()
         model_space = EuclideanSpace(1)
-        forward = LinearOperator.from_component_matrix(
-            model_space, data_space, np.array([[1.0], [0.0], [0.0]])
+        forward = LinearOperator.from_matrix(
+            model_space, data_space, np.array([[1.0], [0.0], [0.0]]), form="components"
         )
         problem = LinearForwardProblem(
             forward,
@@ -462,9 +465,7 @@ class TestDiscrepancyPrinciple:
         with pytest.raises(ValueError, match="cannot be fitted"):
             DiscrepancyPrinciple(problem)(unfittable)
 
-    def test_a_structure_aware_preconditioner_works_inside_the_sweep(
-        self, setup, rng
-    ):
+    def test_a_structure_aware_preconditioner_works_inside_the_sweep(self, setup, rng):
         """DESIGN's claim that every structure-aware preconditioner applies to
         the point estimators held everywhere except where the sweep was the
         point.
@@ -475,9 +476,7 @@ class TestDiscrepancyPrinciple:
         family for its member, which arrives as a ``TikhonovNormalOperator``.
         """
         problem = setup
-        solver = CGSolver(rtol=1e-10).with_preconditioner(
-            JacobiPreconditioner()
-        )
+        solver = CGSolver(rtol=1e-10).with_preconditioner(JacobiPreconditioner())
         structure_aware = CGSolver(rtol=1e-10).with_preconditioner(
             NormalDiagonalPreconditioner()
         )
@@ -517,8 +516,8 @@ class TestDiscrepancyPrinciple:
         right, _ = np.linalg.qr(rng.normal(size=(120, 120)))
         values = np.zeros((90, 120))
         np.fill_diagonal(values, np.geomspace(1.0, 1e-3, 90))
-        forward = LinearOperator.from_derivative_matrix(
-            model, data, left @ values @ right.T
+        forward = LinearOperator.from_matrix(
+            model, data, left @ values @ right.T, form="galerkin"
         )
         problem = LinearForwardProblem(
             forward, error=GaussianMeasure.from_standard_deviation(data, 0.01)
@@ -604,8 +603,8 @@ class TestConstrained:
     @pytest.fixture
     def constraint(self, setup, rng):
         model = setup.model_space
-        operator = LinearOperator.from_derivative_matrix(
-            model, EuclideanSpace(2), rng.normal(size=(2, model.dim))
+        operator = LinearOperator.from_matrix(
+            model, EuclideanSpace(2), rng.normal(size=(2, model.dim)), form="galerkin"
         )
         value = operator.codomain.random(rng=rng)
         return AffineSubspace.from_linear_equation(operator, value)
@@ -704,8 +703,11 @@ class TestConstrained:
     def test_a_geometric_subspace_has_no_constraint_value(self, setup, rng):
         model = setup.model_space
         projector = AffineSubspace.from_linear_equation(
-            LinearOperator.from_derivative_matrix(
-                model, EuclideanSpace(2), rng.normal(size=(2, model.dim))
+            LinearOperator.from_matrix(
+                model,
+                EuclideanSpace(2),
+                rng.normal(size=(2, model.dim)),
+                form="galerkin",
             ),
             EuclideanSpace(2).random(rng=rng),
         ).projector
@@ -740,9 +742,7 @@ class TestTikhonovFamilyAccessors:
         """Its documented job: turn a shifted data vector into the RHS."""
         problem, tikhonov = family
         data = problem.data_space.random(rng=rng)
-        shifted = problem.data_space.subtract(
-            data, problem.error_measure.expectation
-        )
+        shifted = problem.data_space.subtract(data, problem.error_measure.expectation)
 
         built = tikhonov.weighted_adjoint()(shifted)
         stated = tikhonov.right_hand_side(data)

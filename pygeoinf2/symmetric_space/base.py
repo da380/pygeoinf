@@ -205,8 +205,8 @@ class SymmetricSpace(
             raise ValueError("At least one field is needed.")
         base = self if self.order == 0.0 else self.with_order(0.0)
         rows = np.stack([base.to_components(field) for field in fields])
-        return LinearOperator.from_derivative_matrix(
-            self, EuclideanSpace(len(fields)), rows
+        return LinearOperator.from_matrix(
+            self, EuclideanSpace(len(fields)), rows, form="galerkin"
         )
 
     def estimate_truncation_degree(
@@ -718,8 +718,8 @@ class SymmetricSpace(
         codomain = EuclideanSpace(len(points))
 
         if dense:
-            return LinearOperator.from_derivative_matrix(
-                self, codomain, self.basis_matrix(points)
+            return LinearOperator.from_matrix(
+                self, codomain, self.basis_matrix(points), form="galerkin"
             )
         return LinearOperator.from_derivative_callables(
             self,
@@ -1077,8 +1077,8 @@ class SymmetricSpace(
             from ..algebra.spaces import EuclideanSpace
 
             matrix = weights.matrix(form="components") @ self.basis_matrix(nodes)
-            return LinearOperator.from_derivative_matrix(
-                self, EuclideanSpace(len(paths)), matrix
+            return LinearOperator.from_matrix(
+                self, EuclideanSpace(len(paths)), matrix, form="galerkin"
             )
         return weights @ self.point_evaluation_operator(nodes)
 
@@ -1124,8 +1124,8 @@ class SymmetricSpace(
             from ..algebra.spaces import EuclideanSpace
 
             matrix = weights.matrix(form="components") @ self.basis_matrix(nodes)
-            return LinearOperator.from_derivative_matrix(
-                self, EuclideanSpace(len(centres)), matrix
+            return LinearOperator.from_matrix(
+                self, EuclideanSpace(len(centres)), matrix, form="galerkin"
             )
         return weights @ self.point_evaluation_operator(nodes)
 

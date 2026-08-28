@@ -239,9 +239,7 @@ class LeastSquares(LinearPointEstimator):
             forward=forward, error=error, damping=damping, formalism=formalism
         )
 
-    def parameterised(
-        self, parameterisation: LinearOperator, /
-    ) -> "LeastSquares":
+    def parameterised(self, parameterisation: LinearOperator, /) -> "LeastSquares":
         """The same estimator restricted to a parameter space.
 
         Args:

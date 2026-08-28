@@ -18,8 +18,8 @@ rng = np.random.default_rng(0)
 X = EuclideanSpace(40)
 factor = rng.normal(size=(40, 6))
 matrix = factor @ factor.T
-A = LinearOperator.from_component_matrix(
-    X, X, matrix, traits=Traits.POSITIVE_SEMIDEFINITE
+A = LinearOperator.from_matrix(
+    X, X, matrix, traits=Traits.POSITIVE_SEMIDEFINITE, form="components"
 )
 
 basis = random_range(A, rng=rng, rtol=1e-8, block_size=4)

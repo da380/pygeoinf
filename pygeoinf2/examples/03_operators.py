@@ -19,9 +19,9 @@ X = Sobolev((16,), 2.0, 0.3)  # a weighted space: the metric is not the identity
 Y = EuclideanSpace(3)
 matrix = rng.normal(size=(3, X.dim))
 
-# from_component_matrix means "c_{Ax} == M c_x". The adjoint is then derived,
+# form="components" means "c_{Ax} == M c_x". The adjoint is then derived,
 # and it is NOT the transpose: it is G_X^-1 M^T G_Y.
-A = LinearOperator.from_component_matrix(X, Y, matrix)
+A = LinearOperator.from_matrix(X, Y, matrix, form="components")
 
 x, y = X.random(rng=rng), Y.random(rng=rng)
 print("(A x, y)_Y  =", round(Y.inner_product(A(x), y), 10))

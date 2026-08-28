@@ -57,14 +57,15 @@ quality = np.repeat(
 )
 noise = GaussianMeasure(
     D,
-    covariance=LinearOperator.from_derivative_matrix(
+    covariance=LinearOperator.from_matrix(
         D,
         D,
         np.diag(quality**2),
         traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        form="galerkin",
     ),
-    covariance_factor=LinearOperator.from_derivative_matrix(
-        D, D, np.diag(quality), traits=Traits.NONE
+    covariance_factor=LinearOperator.from_matrix(
+        D, D, np.diag(quality), traits=Traits.NONE, form="galerkin"
     ),
 )
 problem = LinearForwardProblem(forward, error=noise)

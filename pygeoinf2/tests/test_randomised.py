@@ -32,8 +32,8 @@ def exact_low_rank(rng):
     X = EuclideanSpace(N)
     root = rng.normal(size=(N, RANK))
     matrix = root @ root.T
-    operator = LinearOperator.from_component_matrix(
-        X, X, matrix, traits=Traits.POSITIVE_SEMIDEFINITE
+    operator = LinearOperator.from_matrix(
+        X, X, matrix, traits=Traits.POSITIVE_SEMIDEFINITE, form="components"
     )
     return X, operator, matrix
 
@@ -74,8 +74,8 @@ class TestRangeFinding:
         values = 1.0 / np.arange(1, 61) ** 0.5  # slowly decaying
         basis = np.linalg.qr(rng.normal(size=(60, 60)))[0]
         matrix = basis @ np.diag(values) @ basis.T
-        A = LinearOperator.from_component_matrix(
-            X, X, matrix, traits=Traits.POSITIVE_DEFINITE
+        A = LinearOperator.from_matrix(
+            X, X, matrix, traits=Traits.POSITIVE_DEFINITE, form="components"
         )
 
         def captured(power):
@@ -116,14 +116,16 @@ class TestFactorisations:
 
     def test_eig_is_refused_for_a_non_self_adjoint_operator(self, rng):
         X = EuclideanSpace(10)
-        A = LinearOperator.from_component_matrix(X, X, rng.normal(size=(10, 10)))
+        A = LinearOperator.from_matrix(
+            X, X, rng.normal(size=(10, 10)), form="components"
+        )
         with pytest.raises(ValueError, match="self-adjoint"):
             random_eig(A, rank=3, rng=rng)
 
     def test_svd_recovers_a_rectangular_operator(self, rng):
         X, Y = EuclideanSpace(30), EuclideanSpace(20)
         matrix = rng.normal(size=(20, RANK)) @ rng.normal(size=(RANK, 30))
-        A = LinearOperator.from_component_matrix(X, Y, matrix)
+        A = LinearOperator.from_matrix(X, Y, matrix, form="components")
 
         decomposition = random_svd(A, rank=RANK, rng=rng)
         assert isinstance(decomposition, LowRankSVD)
@@ -137,7 +139,7 @@ class TestFactorisations:
     def test_svd_singular_values_are_ordered(self, rng):
         X, Y = EuclideanSpace(30), EuclideanSpace(20)
         matrix = rng.normal(size=(20, RANK)) @ rng.normal(size=(RANK, 30))
-        A = LinearOperator.from_component_matrix(X, Y, matrix)
+        A = LinearOperator.from_matrix(X, Y, matrix, form="components")
         values = random_svd(A, rank=RANK, rng=rng).singular_values
         assert np.all(np.diff(values) <= 1e-12)
 
@@ -160,8 +162,8 @@ class TestFactorisations:
     def test_cholesky_is_refused_for_an_indefinite_operator(self, rng):
         X = EuclideanSpace(10)
         matrix = rng.normal(size=(10, 10))
-        A = LinearOperator.from_component_matrix(
-            X, X, matrix + matrix.T, traits=Traits.SELF_ADJOINT
+        A = LinearOperator.from_matrix(
+            X, X, matrix + matrix.T, traits=Traits.SELF_ADJOINT, form="components"
         )
         with pytest.raises(ValueError, match="positive semidefinite"):
             random_cholesky(A, rank=3, rng=rng)
@@ -219,14 +221,14 @@ class TestEstimators:
 
     def test_trace_needs_an_endomorphism(self, rng):
         X, Y = EuclideanSpace(5), EuclideanSpace(3)
-        A = LinearOperator.from_component_matrix(X, Y, rng.normal(size=(3, 5)))
+        A = LinearOperator.from_matrix(X, Y, rng.normal(size=(3, 5)), form="components")
         with pytest.raises(ValueError, match="space to itself"):
             random_trace(A, rng=rng)
 
     def test_diagonal_of_the_component_matrix(self, rng):
         X = EuclideanSpace(12)
         matrix = np.diag(np.arange(1.0, 13.0)) + 0.05 * rng.normal(size=(12, 12))
-        A = LinearOperator.from_component_matrix(X, X, matrix)
+        A = LinearOperator.from_matrix(X, X, matrix, form="components")
         estimate = random_diagonal(A, samples=4000, form="components", rng=rng)
         assert np.allclose(estimate, np.diag(matrix), rtol=0.15)
 
