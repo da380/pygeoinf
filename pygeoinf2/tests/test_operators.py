@@ -444,3 +444,54 @@ class TestMatrixRepresentations:
     def test_require_coordinates_names_the_capability(self):
         with pytest.raises(TypeError, match="requires one"):
             require_coordinates(OpaqueSpace(np.array([1.0])))
+
+
+class TestWithTraits:
+    """Adding a claim must not cost the operator its class.
+
+    The specialisation protocol dispatches on type, so an operator that arrives
+    at a fast path as a wrapper does not take it. ``with_traits`` returned a
+    wrapper, and that one fact was responsible for a diagonal covariance losing
+    its exact log-determinant and a normal operator losing its factors.
+    """
+
+    def test_a_diagonal_operator_stays_diagonal(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = EuclideanSpace(6)
+        values = np.linspace(1.0, 2.0, 6)
+        claimed = DiagonalLinearOperator(space, values).with_traits(
+            Traits.POSITIVE_DEFINITE
+        )
+
+        assert isinstance(claimed, DiagonalLinearOperator)
+        assert claimed.eigenvalues == pytest.approx(values)
+        assert Traits.POSITIVE_DEFINITE & claimed.traits
+        assert claimed.log_determinant == pytest.approx(float(np.sum(np.log(values))))
+
+    def test_the_original_is_left_alone(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = EuclideanSpace(4)
+        original = DiagonalLinearOperator(space, np.ones(4))
+        before = original.traits
+        original.with_traits(Traits.POSITIVE_DEFINITE)
+        assert original.traits == before
+
+    def test_it_still_acts_the_same_way(self, rng):
+        space = EuclideanSpace(5)
+        matrix = rng.normal(size=(5, 5))
+        matrix = matrix @ matrix.T + 5.0 * np.identity(5)
+        operator = LinearOperator.from_component_matrix(space, space, matrix)
+        claimed = operator.with_traits(Traits.SELF_ADJOINT)
+
+        vector = rng.normal(size=5)
+        assert claimed(vector) == pytest.approx(operator(vector))
+        # SELF_ADJOINT means the adjoint is the operator itself, so the stale
+        # adjoint the original had memoised must not have been carried over.
+        assert claimed.adjoint is claimed
+
+    def test_claiming_self_adjointness_off_the_diagonal_is_refused(self):
+        operator = LinearOperator.zero(EuclideanSpace(3), codomain=EuclideanSpace(4))
+        with pytest.raises(ValueError, match="SELF_ADJOINT"):
+            operator.with_traits(Traits.SELF_ADJOINT)

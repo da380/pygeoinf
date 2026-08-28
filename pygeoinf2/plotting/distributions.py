@@ -102,9 +102,42 @@ def _span(
     return mean - reach * deviation, mean + reach * deviation
 
 
+def _grid(
+    limits: tuple[float, float],
+    mean: float,
+    deviation: float,
+    width: float,
+    *,
+    points: int = 2000,
+) -> np.ndarray:
+    """Points spanning the shared window, concentrated on one curve's own.
+
+    A single grid over the union of every curve's window resolves the widest
+    and aliases the rest. With a prior a thousand times wider than its
+    posterior — the case the twin axis exists for — a uniform 2000 points put
+    several posterior standard deviations between samples, so the posterior
+    peak was simply missed. Raising the count cannot fix it: the ratio, not the
+    absolute width, is what defeats a shared grid.
+
+    So each curve gets the shared span for its extent and a fine grid over its
+    own few standard deviations for its shape, which is where all of its mass
+    is. That is ~160 points per standard deviation regardless of the ratio.
+    """
+    low, high = limits
+    coarse = np.linspace(low, high, points)
+    if deviation <= 0.0:
+        return coarse
+    own_low = max(low, mean - width * deviation)
+    own_high = min(high, mean + width * deviation)
+    if own_high <= own_low:
+        return coarse
+    fine = np.linspace(own_low, own_high, points)
+    return np.unique(np.concatenate([coarse, fine]))
+
+
 def _density(
     axis: Any,
-    values: np.ndarray,
+    limits: tuple[float, float],
     mean: float,
     deviation: float,
     draws: np.ndarray | None,
@@ -113,8 +146,11 @@ def _density(
     label: str | None,
     style: str,
     fill: bool,
+    width: float,
+    points: int = 2000,
 ) -> None:
-    """One marginal, exactly or from draws."""
+    """One marginal, exactly or from draws, on a grid that resolves it."""
+    values = _grid(limits, mean, deviation, width, points=points)
     if draws is None:
         from scipy.stats import norm
 
@@ -207,7 +243,13 @@ def plot_densities(
     deviations = np.array([s for _, s in live])
     truths = None if truth is None else np.full(means.shape, float(truth))
     lower, upper = _span(means, deviations, truths, width)
-    values = np.linspace(lower.min(), upper.max(), 2000)
+    # The grid has to resolve the *narrowest* curve, not the widest. A fixed
+    # count over the union of the windows aliases a posterior much sharper than
+    # its prior — the case the twin axis exists for: with a prior 1000x wider,
+    # 2000 points put roughly six posterior standard deviations between
+    # samples, so the posterior peak is missed altogether. v1 asks for 25
+    # points per standard deviation of the narrowest peak; so does this.
+    limits = (float(lower.min()), float(upper.max()))
 
     axis = plt.gca() if ax is None else ax
     axis.set_xlabel(xlabel)
@@ -226,7 +268,7 @@ def plot_densities(
             )
             _density(
                 prior_axis,
-                values,
+                limits,
                 mean,
                 deviation,
                 draws,
@@ -234,6 +276,7 @@ def plot_densities(
                 label=label,
                 style=":",
                 fill=fill,
+                width=width,
             )
 
     axis.set_ylabel("posterior density")
@@ -245,7 +288,7 @@ def plot_densities(
         )
         _density(
             axis,
-            values,
+            limits,
             mean,
             deviation,
             draws,
@@ -253,6 +296,7 @@ def plot_densities(
             label=label,
             style="-",
             fill=fill,
+            width=width,
         )
 
     if truth is not None:
@@ -379,10 +423,10 @@ def plot_corner(
                 continue
 
             if row == column:
-                grid = np.linspace(lower[row], upper[row], 500)
+                panel = (float(lower[row]), float(upper[row]))
                 _density(
                     axis,
-                    grid,
+                    panel,
                     mean[row],
                     deviation[row],
                     None if draws is None else draws[:, row],
@@ -390,6 +434,8 @@ def plot_corner(
                     label=None,
                     style="-",
                     fill=fill,
+                    width=width,
+                    points=500,
                 )
                 if prior_summary is not None:
                     prior_mean, prior_deviation, prior_draws = prior_summary
@@ -398,7 +444,7 @@ def plot_corner(
                         twin.set_yticks([])
                         _density(
                             twin,
-                            grid,
+                            panel,
                             prior_mean[row],
                             prior_deviation[row],
                             None if prior_draws is None else prior_draws[:, row],
@@ -406,6 +452,8 @@ def plot_corner(
                             label=None,
                             style=":",
                             fill=False,
+                            width=width,
+                            points=500,
                         )
                 axis.set_yticks([])
                 if truth_values is not None:
@@ -448,9 +496,32 @@ def plot_corner(
                     field = density
                     contour_levels = np.sort(contour_levels)
                 if fill:
-                    axis.contourf(
-                        mesh_x, mesh_y, field, levels=len(levels), cmap=colormap
-                    )
+                    # The fill shows *density*, in both branches. `field` is a
+                    # Mahalanobis distance in the Gaussian one, which grows
+                    # away from the mean: filling it directly painted the
+                    # Gaussian panels darkest where the measure is least
+                    # likely, and the sampled panels darkest where it is most,
+                    # so the same argument read opposite ways in one figure.
+                    if draws is None:
+                        shading = np.exp(-0.5 * field**2)
+                        edges = np.sort(np.exp(-0.5 * np.asarray(levels) ** 2))
+                    else:
+                        shading = field
+                        edges = np.sort(contour_levels)
+                    peak = float(shading.max())
+                    if edges.size and peak > edges[-1]:
+                        edges = np.concatenate([edges, [peak]])
+                        axis.contourf(
+                            mesh_x, mesh_y, shading, levels=edges, cmap=colormap
+                        )
+                    else:
+                        axis.contourf(
+                            mesh_x,
+                            mesh_y,
+                            shading,
+                            levels=len(levels),
+                            cmap=colormap,
+                        )
                 else:
                     axis.contour(
                         mesh_x,

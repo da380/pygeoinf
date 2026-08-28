@@ -255,6 +255,23 @@ class TestMeasureStatistics:
         exact = first.kl_divergence(second)
         assert abs(forced.value - exact) < 4.0 * forced.standard_error
 
+    def test_auto_refuses_rather_than_going_stochastic_unasked(self, pair):
+        """The stochastic route has to be named.
+
+        It is the only inexact route, and on the spectra this library produces
+        it has returned -88.6 +/- 21.7 for a divergence of zero. Silently
+        selecting it turns a wrong answer into the default one, so ``"auto"``
+        raises and says what the alternatives are.
+        """
+        _, first, second = pair
+        with pytest.raises(ValueError, match="method='stochastic'"):
+            first.kl_divergence(second, dense_limit=0)
+
+        forced = first.kl_divergence_estimate(
+            second, method="stochastic", dense_limit=0, rng=np.random.default_rng(3)
+        )
+        assert forced.standard_error > 0.0
+
     def test_a_bad_method_is_refused_and_so_is_a_route_that_does_not_apply(self, pair):
         _, first, second = pair
         with pytest.raises(ValueError, match="'auto', 'spectral'"):

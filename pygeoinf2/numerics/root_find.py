@@ -249,7 +249,14 @@ def monotone_root(
 
     middle = float(np.sqrt(low * high))
     scaled, solution = probe(middle)
-    return finish(middle, scaled, solution, (low, high), True)
+    # The loop returns the moment the bracket is tight enough, so arriving here
+    # means it never was: the iteration cap was reached first. Reporting that
+    # as convergence claimed a root to a tolerance never met — with one
+    # iteration and zero tolerances it said converged with the bracket still
+    # 6.8 wide. The criterion is re-evaluated rather than hard-coded False so
+    # the answer stays tied to the bracket rather than to the control flow.
+    converged = high - low <= atol + rtol * (low + high)
+    return finish(middle, scaled, solution, (low, high), converged)
 
 
 @dataclass
@@ -283,6 +290,20 @@ class DampedSolves:
     shift: LinearOperator
     solver: LinearSolver
     traits: Traits | None = None
+    assemble: Callable[[float], LinearOperator] | None = None
+    """How to build the member at one multiplier, when ``base + t * shift``
+    would lose something the solver needs.
+
+    A plain sum is an anonymous operator: it knows its value and its adjoint
+    and nothing else. That is enough to solve with, but not enough to
+    *precondition* with, because every structure-aware preconditioner works by
+    reading the factors ``A``, ``Q`` and ``R`` off the operator it is given.
+    Assembling the sum therefore refused those preconditioners inside every
+    discrepancy sweep, while the same solver worked on a fixed damping — so the
+    library's own claim that they apply to all the point estimators held
+    everywhere except where the sweep was the point. Pass a family's ``at`` and
+    the member arrives with its factors intact."""
+
     refresh: float = 10.0
     """Rebuild the preconditioner once the multiplier has moved by more than
     this factor from where it was built. Infinity never rebuilds; one always
@@ -293,9 +314,22 @@ class DampedSolves:
     _prepared_at: float | None = field(default=None, repr=False)
 
     def operator(self, multiplier: float) -> LinearOperator:
-        """``base + multiplier * shift``, assembled once per multiplier."""
+        """The member at one multiplier, assembled once and kept.
+
+        :attr:`assemble` when one was given, and ``base + multiplier * shift``
+        otherwise.
+
+        Args:
+            multiplier: which member of the family.
+
+        Returns:
+            The operator to solve with, carrying :attr:`traits`.
+        """
         if multiplier not in self._cache:
-            assembled = self.base + multiplier * self.shift
+            if self.assemble is not None:
+                assembled = self.assemble(multiplier)
+            else:
+                assembled = self.base + multiplier * self.shift
             if self.traits is not None:
                 assembled = assembled.with_traits(self.traits)
             self._cache[multiplier] = assembled

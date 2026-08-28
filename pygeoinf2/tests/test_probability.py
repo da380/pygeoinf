@@ -61,6 +61,51 @@ class TestConstruction:
         with pytest.raises(ValueError, match="operator on"):
             GaussianMeasure(X, covariance=wrong)
 
+    @pytest.mark.parametrize(
+        "build",
+        [lambda: EuclideanSpace(3), make_weighted_space, make_dense_metric_space],
+    )
+    def test_a_component_covariance_matrix_round_trips(self, build, rng):
+        """The Galerkin matrix of a component-form covariance is ``G C_c``.
+
+        Only a non-diagonal Gram tells this apart from ``C_c G``: on a
+        diagonal metric the two agree, which is why the transposed form here
+        went unnoticed. The input must be a genuine component matrix, so it is
+        built as ``G^-1 S`` from a symmetric ``S``.
+        """
+        X = build()
+        galerkin = spd(rng, X.dim)
+        components = np.column_stack([X.solve_gram(c) for c in galerkin.T])
+
+        mu = GaussianMeasure.from_covariance_matrix(X, components, form="components")
+
+        assert mu.covariance.matrix(form="components") == pytest.approx(components)
+        assert mu.covariance.matrix(form="galerkin") == pytest.approx(galerkin)
+
+    @pytest.mark.parametrize(
+        "build",
+        [lambda: EuclideanSpace(3), make_weighted_space, make_dense_metric_space],
+    )
+    def test_the_normalising_constant_uses_the_component_determinant(self, build, rng):
+        """``det C_c``, not ``det(G C_c)``: the metric's own determinant is not
+        part of the measure, and the density is with respect to the space's
+        volume measure."""
+        X = build()
+        galerkin = spd(rng, X.dim)
+        components = np.column_stack([X.solve_gram(c) for c in galerkin.T])
+        mu = GaussianMeasure.from_covariance_matrix(X, components, form="components")
+
+        _, logdet = np.linalg.slogdet(components)
+        expected = -0.5 * X.dim * np.log(2.0 * np.pi) - 0.5 * logdet
+        assert mu.log_normalising_constant() == pytest.approx(expected)
+
+    def test_the_normalising_constant_is_exact_for_a_diagonal_covariance(self):
+        """The diagonal route is taken before any retraiting, so it stays exact."""
+        X = make_weighted_space()
+        mu = GaussianMeasure.from_standard_deviation(X, 2.0)
+        expected = -0.5 * X.dim * np.log(2.0 * np.pi) - X.dim * np.log(2.0)
+        assert mu.log_normalising_constant() == pytest.approx(expected)
+
 
 class TestMomentsMatchSamples:
     @pytest.mark.parametrize(
@@ -334,3 +379,209 @@ class TestReproducibility:
         first = mu.sample(rng=np.random.default_rng(42))
         second = mu.sample(rng=np.random.default_rng(42))
         assert np.allclose(X.to_components(first), X.to_components(second))
+
+
+class TestPrecisionSurvivesTheAlgebra:
+    """Every operation used to drop the precision, including translation."""
+
+    @pytest.fixture(params=["euclidean", "weighted"])
+    def measure(self, request):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = (
+            EuclideanSpace(4) if request.param == "euclidean" else make_weighted_space()
+        )
+        values = np.linspace(1.0, 3.0, space.dim)
+        return space, GaussianMeasure(
+            space,
+            covariance=DiagonalLinearOperator(space, values),
+            precision=DiagonalLinearOperator(space, 1.0 / values),
+        )
+
+    def operations(self, space, mu, rng):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        diagonal = DiagonalLinearOperator(space, np.linspace(0.5, 2.0, space.dim))
+        return [
+            ("scaled", 2.0 * mu),
+            ("divided", mu / 2.0),
+            ("summed", mu + mu),
+            ("translated", mu.translate(space.random(rng=rng))),
+            ("mapped", mu.affine_map(diagonal)),
+        ]
+
+    def test_the_precision_survives_and_inverts_the_covariance(self, measure, rng):
+        """Not merely present: the right operator. ``C -> alpha^2 C`` means
+        ``P -> P / alpha^2``, and getting the power wrong would be invisible to
+        a test that only asked whether a precision existed."""
+        space, mu = measure
+        for name, derived in self.operations(space, mu, rng):
+            assert derived.precision is not None, name
+            probe = space.random(rng=rng)
+            residual = space.subtract(derived.precision(derived.covariance(probe)), probe)
+            assert space.norm(residual) < 1e-10 * space.norm(probe), name
+
+    def test_a_translated_measure_still_has_a_density(self, measure, rng):
+        """A shift does not touch the covariance, so losing the density under
+        one was pure loss — and translation is the commonest of the three."""
+        space, mu = measure
+        shift = space.random(rng=rng)
+        moved = mu.translate(shift)
+        point = space.random(rng=rng)
+
+        assert moved.has_log_density
+        assert moved.log_density(point) == pytest.approx(
+            mu.log_density(space.subtract(point, shift))
+        )
+
+    def test_a_sum_of_diagonal_measures_keeps_one_draw(self, measure, rng):
+        """``sqrt(a + b)`` is a diagonal factor, so the sum needs one white
+        noise draw rather than one per summand."""
+        space, mu = measure
+        total = mu + mu
+        assert total.covariance_factor is not None
+        check_measure(total, rng=rng, samples=SAMPLES)
+
+    def test_a_product_carries_a_block_precision(self):
+        """What the Woodbury data form needs: without it the preconditioner
+        inverts Q by conjugate gradients on every application."""
+        first = GaussianMeasure.from_standard_deviation(EuclideanSpace(3), 2.0)
+        second = GaussianMeasure.from_standard_deviation(make_weighted_space(), 0.5)
+        product = GaussianMeasure.from_product([first, second])
+
+        assert product.precision is not None
+        probe = product.domain.random()
+        residual = product.domain.subtract(
+            product.precision(product.covariance(probe)), probe
+        )
+        assert product.domain.norm(residual) < 1e-10 * product.domain.norm(probe)
+
+
+class TestPrecisionOnlyMeasures:
+    """``covariance is None`` is legal, so it must fail legibly."""
+
+    @pytest.fixture
+    def precision_only(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        space = EuclideanSpace(4)
+        return space, GaussianMeasure(
+            space, precision=DiagonalLinearOperator(space, np.linspace(1.0, 2.0, 4))
+        )
+
+    @pytest.mark.parametrize(
+        "operation",
+        ["nuclear_norm", "hilbert_schmidt_norm", "ambient_ball", "directional"],
+    )
+    def test_what_needs_a_covariance_says_so(self, precision_only, operation):
+        """These raised ``TypeError: unsupported operand type(s) for *:
+        'NoneType'`` from several frames down."""
+        space, measure = precision_only
+        calls = {
+            "nuclear_norm": lambda: measure.nuclear_norm(),
+            "hilbert_schmidt_norm": lambda: measure.hilbert_schmidt_norm(),
+            "ambient_ball": lambda: measure.ambient_ball(),
+            "directional": lambda: measure.directional_variance(space.basis_vector(0)),
+        }
+        with pytest.raises(ValueError, match="covariance"):
+            calls[operation]()
+
+    def test_what_needs_only_a_precision_works(self, precision_only, rng):
+        """An ellipsoid is defined by a precision, and a density needs one:
+        neither has any business asking for the covariance."""
+        space, measure = precision_only
+        point = space.random(rng=rng)
+
+        assert measure.log_density(point) < 0.0
+        region = measure.credible_set(level=0.9)
+        assert region.contains(space.zero())
+
+    def test_the_algebra_keeps_it_usable(self, precision_only, rng):
+        space, measure = precision_only
+        shift = space.random(rng=rng)
+        for derived in (2.0 * measure, measure.translate(shift)):
+            assert derived.precision is not None
+            assert derived.has_log_density
+
+
+class TestStandardDeviations:
+    @pytest.mark.parametrize(
+        "build", [lambda: EuclideanSpace(4), make_weighted_space]
+    )
+    def test_a_deviation_per_direction(self, build, rng):
+        space = build()
+        deviations = np.array([0.5, 1.0, 2.0, 3.0])
+        mu = GaussianMeasure.from_standard_deviations(space, deviations)
+
+        assert mu.can_sample
+        assert mu.has_log_density
+        for index, deviation in enumerate(deviations):
+            direction = space.basis_vector(index)
+            # (C u, u) with C == diag(sigma^2) as an operator, so on a
+            # weighted space the metric enters once, not twice.
+            assert mu.directional_variance(direction) == pytest.approx(
+                deviation**2 * space.squared_norm(direction), rel=1e-12
+            )
+        check_measure(mu, rng=rng, samples=SAMPLES)
+
+    def test_the_singular_form_refuses_an_array(self):
+        with pytest.raises(ValueError, match="from_standard_deviations"):
+            GaussianMeasure.from_standard_deviation(
+                EuclideanSpace(3), np.array([1.0, 2.0, 3.0])
+            )
+
+    def test_bad_input_is_refused(self):
+        space = EuclideanSpace(3)
+        with pytest.raises(ValueError, match="Expected 3"):
+            GaussianMeasure.from_standard_deviations(space, np.ones(2))
+        with pytest.raises(ValueError, match="must be positive"):
+            GaussianMeasure.from_standard_deviations(space, np.array([1.0, 0.0, 1.0]))
+
+
+class TestConditioning:
+    """The conditioned measure must be samplable: pyslfp conditions every prior."""
+
+    @pytest.fixture(params=["euclidean", "weighted"])
+    def setting(self, request, rng):
+        space = (
+            EuclideanSpace(5) if request.param == "euclidean" else make_weighted_space()
+        )
+        constraint = EuclideanSpace(2)
+        operator = LinearOperator.from_component_matrix(
+            space, constraint, rng.normal(size=(2, space.dim))
+        )
+        return space, operator, GaussianMeasure.from_standard_deviation(space, 1.2)
+
+    def test_an_exactly_conditioned_measure_can_be_sampled(self, setting, rng):
+        """By the Matheron rule. Without it the conditioned prior could not
+        generate synthetic data, and every posterior built on it lost its
+        sampler too."""
+        space, operator, prior = setting
+        posterior = prior.condition(operator, np.zeros(2))
+
+        assert posterior.can_sample
+        draws = [posterior.sample(rng=rng) for _ in range(200)]
+        for draw in draws:
+            assert np.abs(operator(draw)).max() < 1e-8
+
+    @pytest.mark.slow
+    def test_the_draws_have_the_stated_moments(self, setting, rng):
+        space, operator, prior = setting
+        noise = GaussianMeasure.from_standard_deviation(operator.codomain, 0.3)
+        for posterior in (
+            prior.condition(operator, np.zeros(2)),
+            prior.condition(operator, np.array([0.4, -0.2]), noise=noise),
+        ):
+            check_measure(posterior, rng=rng, samples=60000)
+
+    def test_the_solve_can_be_chosen(self, setting, rng):
+        """It was a dense ``np.linalg.inv`` with no way past it."""
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        space, operator, prior = setting
+        direct = prior.condition(operator, np.zeros(2), solver=CholeskySolver())
+        default = prior.condition(operator, np.zeros(2))
+        probe = space.random(rng=rng)
+        assert space.norm(
+            space.subtract(direct.covariance(probe), default.covariance(probe))
+        ) < 1e-8 * space.norm(probe)

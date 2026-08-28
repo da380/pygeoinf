@@ -88,6 +88,44 @@ def _ball_radius(candidate: Any, name: str) -> float:
     return float(candidate.radius)
 
 
+def harden_error(problem: LinearForwardProblem, /, *, level: float) -> Ball:
+    """The problem's error as a ball, hardening a measure if need be.
+
+    The bridge from a probabilistic error to the set-theoretic one the Backus
+    routes need: the smallest ball about the mean carrying probability *level*,
+    which is :meth:`~pygeoinf2.probability.GaussianMeasure.ambient_ball`.
+
+    The radius is a quantile of ``sum_i lambda_i Z_i^2`` in the *space's* norm.
+    The rule this replaces was ``sqrt(chi2_crit * mean diagonal of the
+    component matrix)``, which is not the radius of any credible ball and is
+    not even a variance on a weighted data space — the covariance of the
+    components is ``C_c G^-1``, so the component matrix's diagonal is the
+    variance only when the basis is orthonormal. It also formed a dense matrix
+    to read one scalar off it.
+
+    Args:
+        problem: the forward problem, whose error may be a measure or a set.
+        level: the probability the ball is to carry.
+
+    Returns:
+        A ball in the data space. Radius zero when the problem has no error,
+        which is the error-free case saying "exactly this".
+
+    Raises:
+        TypeError: if the error is a convex set that is not a ball.
+    """
+    if not problem.has_error:
+        return Ball(problem.data_space, radius=0.0)
+    if isinstance(problem.error, Ball):
+        return problem.error
+    if isinstance(problem.error, ConvexSet):
+        raise TypeError(
+            "This route needs the noise set to be a ball; a general convex "
+            "one needs route (d). Pass noise= explicitly to bound it."
+        )
+    return problem.error_measure.ambient_ball(level=level)
+
+
 class BackusGilbert(LinearPointEstimator):
     """The optimally-averaged estimate of a property, with its error set.
 
@@ -136,7 +174,7 @@ class BackusGilbert(LinearPointEstimator):
         model_radius = _ball_radius(prior, "The prior")
 
         if noise is None:
-            noise = self._harden(problem, level=level)
+            noise = harden_error(problem, level=level)
         noise_radius = _ball_radius(noise, "The noise")
 
         if model_radius <= 0.0:
@@ -163,27 +201,6 @@ class BackusGilbert(LinearPointEstimator):
         self._target = target
         self._prior_radius = model_radius
         self._noise_radius = noise_radius
-
-    @staticmethod
-    def _harden(problem: LinearForwardProblem, /, *, level: float) -> Ball:
-        """The problem's error as a ball, hardening a measure if need be."""
-        if not problem.has_error:
-            return Ball(problem.data_space, radius=0.0)
-        if isinstance(problem.error, Ball):
-            return problem.error
-        if isinstance(problem.error, ConvexSet):
-            raise TypeError(
-                "This route needs the noise set to be a ball; a general convex "
-                "one needs route (d). Pass noise= explicitly to bound it."
-            )
-        measure = problem.error_measure
-        radius = float(
-            np.sqrt(
-                problem.critical_chi_squared(level=level)
-                * measure.covariance.matrix(form="components").diagonal().mean()
-            )
-        )
-        return Ball(problem.data_space, radius=radius)
 
     @property
     def unresolved(self) -> LinearOperator:
@@ -476,7 +493,7 @@ class FeasibleProperty(SetEstimator):
         self._target = target
         self._radius = _ball_radius(prior, "The prior")
         self._noise_radius = _ball_radius(
-            BackusGilbert._harden(problem, level=level) if noise is None else noise,
+            harden_error(problem, level=level) if noise is None else noise,
             "The noise",
         )
         self._solver = solver or CGSolver(rtol=1e-12)

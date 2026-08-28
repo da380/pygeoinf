@@ -283,8 +283,12 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
     def log_density(self, x: X) -> float:
         """``log sum_k w_k p_k(x)``, by log-sum-exp.
 
-        Up to the same additive constant each component's own log density is up
-        to — which is shared, so the *differences* this is used for survive.
+        Each component contributes its *fully normalised* log density. The
+        constant a component's own :meth:`~GaussianMeasure.log_density` omits
+        depends on its covariance, so it differs between components and cannot
+        be left out of a sum over them: dropping it makes a broad component
+        look as tall at its centre as a narrow one.
+
         Summed in the exponent rather than by exponentiating and adding, since
         a mixture's whole point is that one component may be many orders of
         magnitude more likely than another at a given point.
@@ -299,7 +303,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             )
         densities = np.array(
             [
-                component.log_density(x)
+                component.log_density(x) + component.log_normalising_constant()
                 for component, weight in zip(self._components, self._weights)
                 if weight > 0.0
             ]
@@ -349,5 +353,11 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             zip(self._components, self._weights)
         ):
             if weight > 0.0:
-                logs[index] = np.log(weight) + component.log_density(x)
+                # The normalising constant is per-component, so it does not
+                # cancel in the softmax the way a shared one would.
+                logs[index] = (
+                    np.log(weight)
+                    + component.log_density(x)
+                    + component.log_normalising_constant()
+                )
         return softmax(logs)

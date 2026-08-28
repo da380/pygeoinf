@@ -122,6 +122,45 @@ class TestQuadratics:
         assert result.converged, result.message
         assert np.allclose(space.to_components(result.minimiser), offset, atol=1e-6)
 
+    @pytest.mark.parametrize("method", FIRST_ORDER)
+    def test_a_solved_quadratic_is_reported_as_solved(self, method, rng):
+        """Every first-order method used to report failure here.
+
+        The gradient tolerance is unreachable for a line-search method in
+        double precision, so on a well-conditioned quadratic L-BFGS stopped at
+        |g| = 1.8e-7 and said "line search failed", and steepest descent spent
+        2000 iterations and 5330 value evaluations to say the same. The
+        tolerance is not the thing to loosen: a method that can no longer
+        decrease the value has converged, and one whose line search fails at
+        the rounding floor of the value has too.
+        """
+        space = EuclideanSpace(60)
+        root = rng.normal(size=(60, 60))
+        matrix = root @ root.T + 60.0 * np.identity(60)
+        offset = rng.normal(size=60)
+        phi = quadratic(space, matrix, offset)
+
+        result = method(max_iterations=2000).minimise(phi, space.zero())
+
+        assert result.converged, result.message
+        assert result.evaluations < 200
+        assert np.allclose(result.minimiser, offset, atol=1e-4)
+
+    def test_a_flat_functional_stops_rather_than_grinding(self):
+        """``ftol`` is relative to ``|f|`` with no absolute floor: a floor
+        turns the test absolute wherever the minimum is near zero, and there a
+        slow method in a valley takes steps below it while still far away —
+        which stopped Rosenbrock two decimal places early."""
+        space = EuclideanSpace(2)
+        constant = Functional.from_callables(
+            space, lambda x: 3.0, gradient=lambda x: np.zeros(2)
+        )
+        result = SteepestDescent(max_iterations=5000).minimise(
+            constant, np.array([1.0, 1.0])
+        )
+        assert result.converged
+        assert result.iterations < 5
+
     def test_newton_beats_steepest_descent(self, spd_problem, rng):
         space, phi, _ = spd_problem
         start = space.random(rng=rng)

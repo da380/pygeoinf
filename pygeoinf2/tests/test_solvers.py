@@ -256,6 +256,75 @@ class TestConvergenceReporting:
         warm = inverse.solve(b, x0=A.domain.from_components(exact * 0.999))
         assert warm.iterations < cold.iterations
 
+    @pytest.mark.parametrize(
+        "solver_class", [CGSolver, MinResSolver, BiCGStabSolver]
+    )
+    def test_every_iterative_solver_reports_its_history(
+        self, solver_class, spd_problem
+    ):
+        """The class docstring promised a callback for all of them; MINRES,
+        BiCGStab and LSQR never called one and came back with an empty
+        history, so a non-convergence in those three left no trail."""
+        A, b, _ = spd_problem
+        seen = []
+        result = solver_class(
+            rtol=1e-10, callback=lambda i, r: seen.append((i, r))
+        )(A).solve(b)
+
+        assert result.converged
+        assert len(result.history) > 1
+        assert len(seen) == len(result.history)
+        assert [residual for _, residual in seen] == list(result.history)
+        # The residual is being driven down, not merely recorded.
+        assert result.history[-1] < result.history[0]
+
+    def test_lsqr_reports_its_history(self, rng):
+        A = LinearOperator.from_component_matrix(
+            EuclideanSpace(12), EuclideanSpace(20), rng.normal(size=(20, 12))
+        )
+        seen = []
+        result = LSQRSolver(rtol=1e-12, callback=lambda i, r: seen.append(i))(
+            A
+        ).solve(rng.normal(size=20))
+        assert len(result.history) > 1
+        assert len(seen) == len(result.history)
+
+
+class TestLSQRWarmStart:
+    """``x0`` was accepted and silently dropped."""
+
+    @pytest.fixture
+    def least_squares(self, rng):
+        domain, codomain = EuclideanSpace(20), EuclideanSpace(30)
+        operator = LinearOperator.from_component_matrix(
+            domain, codomain, rng.normal(size=(30, 20))
+        )
+        return operator, rng.normal(size=30)
+
+    def test_starting_from_the_answer_costs_one_iteration(self, least_squares):
+        """It cost a full cold solve before, because ``solve_fn`` never passed
+        ``x0`` down. Both halves are needed: the start has to reach the
+        iteration, and the tolerances have to be relative to the data rather
+        than to the shifted residual, which for a warm start is already ~0."""
+        operator, data = least_squares
+        inverse = LSQRSolver(rtol=1e-12)(operator)
+        cold = inverse.solve(data)
+        warm = inverse.solve(data, x0=cold.solution)
+
+        assert cold.iterations > 5
+        assert warm.iterations == 1
+        assert operator.domain.norm(
+            operator.domain.subtract(warm.solution, cold.solution)
+        ) < 1e-10
+
+    def test_a_damped_warm_start_is_refused(self, least_squares):
+        """Shifting moves the penalty onto the correction, which minimises
+        something else. v1 does it anyway; this says so instead."""
+        operator, data = least_squares
+        inverse = LSQRSolver(damping=0.5)(operator)
+        with pytest.raises(ValueError, match="cannot be warm-started"):
+            inverse.solve(data, x0=operator.domain.random())
+
 
 class TestPreconditioning:
     def test_identity_preconditioner_changes_nothing(self, spd_problem):

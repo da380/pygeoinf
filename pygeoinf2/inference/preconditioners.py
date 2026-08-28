@@ -25,7 +25,12 @@ import scipy.sparse.linalg as sparse_linalg
 from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
-from ..algebra.spaces import EuclideanSpace
+from ..algebra.spaces import (
+    DiagonalMetricSpace,
+    EuclideanSpace,
+    HilbertSpace,
+    OrthonormalSpace,
+)
 from ..numerics.randomised import random_eig
 from ..numerics.solvers import InverseOperator, LinearSolver, SolveResult
 from ..traits import Traits
@@ -175,8 +180,10 @@ class LocalisedPreconditioner(LinearSolver):
 
     Unlike :class:`NormalDiagonalPreconditioner` the blocks may **overlap** and
     need not cover every index: this is an approximation to the operator, not a
-    partition of it. Overlapping contributions add, which is what makes an
-    overlapping cover behave sensibly at the seams.
+    partition of it. Where blocks overlap their estimates are **averaged**,
+    which is what makes an overlapping cover behave sensibly at the seams.
+    (They used to be summed, because a COO assembly adds duplicates: an entry
+    two blocks agreed on came out twice its own value.)
 
     Note:
         Only ``A Q A*`` is treated block-wise; the error covariance contributes
@@ -286,13 +293,22 @@ class LocalisedPreconditioner(LinearSolver):
             columns.append(grid_columns.ravel())
             values.append(approximation.ravel())
 
+        all_rows = np.concatenate(rows)
+        all_columns = np.concatenate(columns)
+        shape = (dimension, dimension)
         assembled = sparse.coo_matrix(
-            (
-                np.concatenate(values),
-                (np.concatenate(rows), np.concatenate(columns)),
-            ),
-            shape=(dimension, dimension),
-        )
+            (np.concatenate(values), (all_rows, all_columns)), shape=shape
+        ).tocsr()
+        # COO sums duplicates, so an entry covered by two blocks arrived twice.
+        # Averaging over the blocks that cover it is what makes an overlapping
+        # cover a smooth approximation rather than one whose seams are inflated
+        # by their multiplicity — a doubled diagonal where two blocks meet is
+        # not a better preconditioner, it is a different operator.
+        multiplicity = sparse.coo_matrix(
+            (np.ones(all_rows.size), (all_rows, all_columns)), shape=shape
+        ).tocsr()
+        multiplicity.data = 1.0 / multiplicity.data
+        assembled = assembled.multiply(multiplicity).tocsr()
         error_covariance = normal.error_covariance
         if error_covariance is not None:
             assembled = assembled + sparse.diags(
@@ -307,6 +323,37 @@ class LocalisedPreconditioner(LinearSolver):
             )
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+
+
+def _metric_diagonal(space: HilbertSpace, name: str, /) -> np.ndarray:
+    """The data space's Gram as a diagonal, for a Galerkin assembly.
+
+    A sparse kernel matrix can be turned into a Galerkin one by a row and a
+    column scaling only when the metric is diagonal; a full Gram would fill it
+    in and defeat the purpose of the class. Point data almost always live on a
+    Euclidean or diagonally weighted space, so this is a real restriction only
+    in principle.
+
+    Args:
+        space: the data space.
+        name: the calling class, for the error message.
+
+    Returns:
+        The diagonal of the Gram matrix.
+
+    Raises:
+        ValueError: if the space's metric is not diagonal.
+    """
+    if isinstance(space, OrthonormalSpace):
+        return np.ones(space.dim)
+    if isinstance(space, DiagonalMetricSpace):
+        return np.asarray(space.metric_values, dtype=float)
+    raise ValueError(
+        f"{name} needs a data space with a diagonal metric: it assembles a "
+        f"sparse kernel matrix, and a full Gram matrix would fill it in. The "
+        f"data space is {type(space).__name__}. Use a general preconditioner "
+        f"such as JacobiPreconditioner or LocalisedPreconditioner instead."
+    )
 
 
 def gaspari_cohn(distances: np.ndarray, length: float, /) -> np.ndarray:
@@ -430,6 +477,16 @@ class InvariantDistancePreconditioner(LinearSolver):
             if error_covariance is None
             else error_covariance.diagonals(offsets=(0,), form="galerkin")[0]
         )
+        # The table ``k(d_ij)`` is the covariance of the data *components*, so
+        # it is neither the operator's component matrix nor its Galerkin one:
+        # with the component covariance equal to ``C_c G^-1``, the table is
+        # ``K == C_c G^-1`` and so ``C_gal == G K G``. Everything below is
+        # assembled in the Galerkin form, which is what the solve then wants
+        # (``N_gal^-1 G c_y`` gives the components of ``N^-1 y``) and what the
+        # noise diagonal is already in. Without the two ``G`` factors the
+        # matrix was right only on an orthonormal data space, and the Galerkin
+        # noise was being added to a non-Galerkin kernel.
+        metric = _metric_diagonal(data_space, type(self).__name__)
 
         if self._max_distance == 0.0:
             # Every diagonal entry is k(0), the pointwise prior variance, which
@@ -437,7 +494,7 @@ class InvariantDistancePreconditioner(LinearSolver):
             variance = float(
                 self._space.covariance_function(normal.prior, np.zeros(1))[0]
             )
-            inverse_diagonal = 1.0 / (variance + noise)
+            inverse_diagonal = 1.0 / (variance * metric * metric + noise)
 
             def diagonal_solve(y: Any, x0: Any) -> SolveResult:
                 weighted = data_space.apply_gram(data_space.to_components(y))
@@ -462,7 +519,10 @@ class InvariantDistancePreconditioner(LinearSolver):
         assembled = sparse.coo_matrix(
             (values, (rows, columns)), shape=(dimension, dimension)
         )
-        assembled = (assembled + sparse.diags(noise)).tocsc()
+        # G K G, with G diagonal, is a row and a column scaling: sparsity and
+        # symmetry both survive it.
+        scaling = sparse.diags(metric)
+        assembled = (scaling @ assembled @ scaling + sparse.diags(noise)).tocsc()
         factorised = sparse_linalg.splu(assembled)
 
         def solve_fn(y: Any, x0: Any) -> SolveResult:

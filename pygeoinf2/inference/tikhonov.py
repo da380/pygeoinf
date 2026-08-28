@@ -349,6 +349,11 @@ class TikhonovFamily:
             self._template.shift,
             self._solver,
             traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+            # So that each member arrives as a TikhonovNormalOperator with its
+            # factors, rather than as an anonymous sum. Structure-aware
+            # preconditioners read the factors off the operator they are given,
+            # and a sum has none to read.
+            assemble=self.at,
         )
 
     @property
@@ -384,9 +389,11 @@ class TikhonovFamily:
         """``A* R^-1`` in the model-space formalism, ``A*`` in the data-space one.
 
         The piece that turns a data residual into the right-hand side, and the
-        one a caller would otherwise rebuild from the factors by hand.
+        one a caller would otherwise rebuild from the factors by hand. It does
+        not depend on the damping, so it comes from the template as the rest of
+        the damping-independent pieces do.
         """
-        return self._weighted
+        return self._template.weighted_adjoint()
 
     def right_hand_side(self, data: Any, /) -> Any:
         """The right-hand side, which does not depend on the damping."""

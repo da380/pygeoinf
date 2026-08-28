@@ -20,6 +20,8 @@ from pygeoinf2.inference import (
     FeasibleProperty,
     LinearForwardProblem,
 )
+from pygeoinf2.inference.backus import harden_error
+from pygeoinf2.probability.gaussian import GaussianMeasure
 
 from .conftest import make_weighted_space
 
@@ -642,3 +644,48 @@ class TestInclusionWithErrors:
         far = [space.from_components(np.array([1e4, 1e4])) for _ in range(10)]
         with pytest.raises(ValueError, match="admissible"):
             estimator.inner_hull(far, data)
+
+
+class TestHardeningTheError:
+    """The bridge from a Gaussian error to the ball the Backus routes need."""
+
+    def test_no_error_measure_gives_the_degenerate_ball(self, setting):
+        """The error-free path, which used to raise: ``Ball(radius=0.0)`` was
+        refused by the constructor, so route (a) could not run on exact data at
+        all."""
+        model, forward, _, _, data = setting
+        ball = harden_error(LinearForwardProblem(forward), level=0.95)
+        assert ball.radius == 0.0
+        assert ball.contains(forward.codomain.zero())
+
+    @pytest.mark.parametrize(
+        "build", [lambda: EuclideanSpace(4), make_weighted_space]
+    )
+    def test_the_ball_carries_the_probability_it_claims(self, build, rng):
+        """An anisotropic error on a weighted space, which is where the old
+        rule was wrong.
+
+        It used ``sqrt(chi2_crit * mean diagonal of the component matrix)``.
+        The component matrix's diagonal is the variance only on an orthonormal
+        basis, so on a weighted space the ball came out too small: measured
+        coverage 0.846 against a claimed 0.90, where ``ambient_ball`` gives
+        0.900.
+        """
+        data_space = build()
+        galerkin = np.diag([0.5, 2.0, 0.1, 3.0])
+        components = np.column_stack(
+            [data_space.solve_gram(column) for column in galerkin.T]
+        )
+        error = GaussianMeasure.from_covariance_matrix(
+            data_space, components, form="components"
+        )
+        forward = LinearOperator.from_component_matrix(
+            EuclideanSpace(2), data_space, np.eye(4, 2)
+        )
+        problem = LinearForwardProblem(forward, error=error)
+
+        level = 0.9
+        ball = harden_error(problem, level=level)
+        draws = error.samples(20000, rng=rng)
+        covered = np.mean([ball.contains(draw) for draw in draws])
+        assert covered == pytest.approx(level, abs=0.02)

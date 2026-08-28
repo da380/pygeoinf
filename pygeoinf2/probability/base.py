@@ -116,8 +116,24 @@ class ProbabilityMeasure[X](ABC):
     # ----------------------------------------------------------------- #
 
     def directional_covariance(self, u: Any, v: Any, /) -> float:
-        """``Cov((x, u), (x, v))``, the covariance of two linear readings."""
-        return self.domain.inner_product(self.covariance(u), v)
+        """``Cov((x, u), (x, v))``, the covariance of two linear readings.
+
+        Args:
+            u, v: the directions to read along.
+
+        Returns:
+            The covariance of the two readings.
+
+        Raises:
+            ValueError: if the measure has no covariance operator.
+        """
+        covariance = self.covariance
+        if covariance is None:
+            raise ValueError(
+                f"A directional covariance needs the covariance operator, and "
+                f"this {type(self).__name__} has none."
+            )
+        return self.domain.inner_product(covariance(u), v)
 
     def directional_variance(self, u: Any, /) -> float:
         """``Var((x, u))``, the variance of one linear reading."""

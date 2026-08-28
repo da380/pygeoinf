@@ -384,10 +384,50 @@ class LinearOperator[X, Y](Operator[X, Y]):
         return self._traits
 
     def with_traits(self, traits: Traits) -> Self:
-        """A view of this operator carrying additional claimed traits."""
+        """The same operator, carrying additional claimed traits.
+
+        A shallow copy of *this class*, not a wrapper. That matters more than
+        it looks: the specialisation protocol of the algebra dispatches on
+        type, so an operator that forgets what it is on the way through
+        ``with_traits`` loses every fast path it had. A wrapper cost a
+        ``DiagonalLinearOperator`` its exact log-determinant — sending a
+        diagonal covariance through a hundred Hutchinson probes to estimate a
+        number it could have summed — and cost a ``NormalOperator`` its
+        factors, so that every structure-aware preconditioner refused it.
+
+        The copy shares the original's data, which is safe because operators
+        are immutable, but drops the memoised adjoint: the original may have
+        cached an ``_Adjoint`` of itself, and the copy claiming SELF_ADJOINT
+        must return *itself* instead.
+
+        Args:
+            traits: claims to add. The result carries these and the existing
+                ones, closed under implication.
+
+        Returns:
+            An operator of the same class with the combined claims.
+
+        Raises:
+            ValueError: if SELF_ADJOINT is claimed for an operator whose domain
+                and codomain differ.
+        """
         from ..traits import close
 
-        return _RetraitedOperator(self, close(self._traits | traits))
+        combined = close(self._traits | traits)
+        if Traits.SELF_ADJOINT & combined and self.domain != self.codomain:
+            raise ValueError(
+                "SELF_ADJOINT was claimed for an operator whose domain and "
+                f"codomain differ: {self.domain!r} against {self.codomain!r}."
+            )
+        # Not copy.copy: the block operators define a __new__ that takes their
+        # blocks, and the copy protocol would call it with none. Building the
+        # instance directly and taking the dictionary sidesteps __new__ and
+        # __init__ together, which is what a copy of an immutable object wants.
+        clone = object.__new__(type(self))
+        clone.__dict__.update(self.__dict__)
+        clone._traits = combined
+        clone.__dict__.pop("_adjoint_cache", None)
+        return clone
 
     @property
     def adjoint(self) -> LinearOperator[Y, X]:
@@ -915,20 +955,6 @@ class _CallableLinearOperator[X, Y](LinearOperator[X, Y]):
                 "prohibitively expensive, so it is not done implicitly."
             )
         return self._adjoint_fn(y)
-
-
-class _RetraitedOperator[X, Y](LinearOperator[X, Y]):
-    """A view of an operator carrying extra claimed traits."""
-
-    def __init__(self, base: LinearOperator[X, Y], traits: Traits) -> None:
-        super().__init__(base.domain, base.codomain, traits=traits)
-        self._base = base
-
-    def _value(self, x: X) -> Y:
-        return self._base(x)
-
-    def _adjoint_value(self, y: Y) -> X:
-        return self._base.adjoint(y)
 
 
 class Functional[X](Operator[X, float]):

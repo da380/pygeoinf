@@ -357,7 +357,7 @@ class IterativeSolver(LinearSolver):
         self,
         /,
         *,
-        rtol: float = 1e-10,
+        rtol: float = 1e-8,
         atol: float = 0.0,
         maxiter: int | None = None,
         preconditioner: LinearSolver | LinearOperator | None = None,
@@ -366,9 +366,24 @@ class IterativeSolver(LinearSolver):
     ) -> None:
         """
         Args:
-            rtol: stop when the residual norm falls below ``rtol * ||b||``.
+            rtol: stop when the residual norm falls below ``rtol * ||b||``,
+                measured in the space's own norm and relative to ``||b||``
+                rather than to ``||b - A x0||``.
+
+                The default is ``1e-8``. On a 40 000-dimensional five-point
+                Laplacian with a 0.01 shift, conjugate gradients takes 147
+                iterations at ``1e-5`` (v1's default), 243 at ``1e-8`` and 301
+                at ``1e-10`` (v2's first choice), for relative errors in the
+                solution of 4e-5, 4e-8 and 4e-10. ``1e-10`` costs a quarter
+                more iterations than ``1e-8`` to reach an accuracy no inverse
+                problem can use, and on an ill-conditioned normal operator it
+                is often unreachable — which with ``strict=True`` turns a
+                usable answer into an exception. That combination is what broke
+                one of the examples during the port.
             atol: absolute floor on the same test.
-            maxiter: iteration cap; defaults to the dimension of the space.
+            maxiter: iteration cap. Defaults to ``max(2 * dim, 20)``: a Krylov
+                method terminates within ``dim`` steps in exact arithmetic, but
+                rounding routinely costs a step or two more.
             preconditioner: either a ready-made approximate inverse, or a
                 ``LinearSolver`` from which to build one once the operator is
                 known.
@@ -377,7 +392,8 @@ class IterativeSolver(LinearSolver):
             callback: called with ``(iteration, residual_norm)`` after each
                 step. For watching a long solve, and for finding out *where* a
                 stalled one stalled — which the final residual alone cannot
-                say.
+                say. Every iterative solver here honours it, and records the
+                same numbers in :attr:`SolveResult.history`.
         """
         self._rtol = rtol
         self._atol = atol
@@ -780,9 +796,11 @@ class MinResSolver(IterativeSolver):
         x, r = self._initial(operator, b, x0)
         tolerance = self._tolerance(operator.codomain, b)
 
+        history: list[float] = []
         beta = space.norm(r)
+        self._record(0, beta, history)
         if beta <= tolerance:
-            return SolveResult(x, 0, beta, True)
+            return SolveResult(x, 0, beta, True, tuple(history))
 
         # Lanczos state: v_{k-1}, v_k, and beta_k.
         v_prev = space.zero()
@@ -816,7 +834,7 @@ class MinResSolver(IterativeSolver):
             # --- the new rotation, annihilating beta_next -------------
             gamma = float(np.hypot(gamma_bar, beta_next))
             if gamma == 0.0:
-                return SolveResult(x, iteration, residual, True)
+                return SolveResult(x, iteration, residual, True, tuple(history))
             c = gamma_bar / gamma
             s = beta_next / gamma
             tau = c * phi_bar
@@ -831,10 +849,11 @@ class MinResSolver(IterativeSolver):
 
             # phi_bar is the residual norm, available without forming it.
             residual = abs(phi_bar)
+            self._record(iteration, residual, history)
             if residual <= tolerance:
-                return SolveResult(x, iteration, residual, True)
+                return SolveResult(x, iteration, residual, True, tuple(history))
             if beta_next == 0.0:
-                return SolveResult(x, iteration, residual, True)
+                return SolveResult(x, iteration, residual, True, tuple(history))
 
             # --- roll the state ---------------------------------------
             w_prev, w = w, w_next
@@ -843,7 +862,9 @@ class MinResSolver(IterativeSolver):
             delta_bar = delta_bar_next
             epsilon = epsilon_next
 
-        return SolveResult(x, self._limit(operator), residual, False)
+        return SolveResult(
+            x, self._limit(operator), residual, False, tuple(history)
+        )
 
 
 class BiCGStabSolver(IterativeSolver):
@@ -860,9 +881,11 @@ class BiCGStabSolver(IterativeSolver):
         x, r = self._initial(operator, b, x0)
         tolerance = self._tolerance(operator.codomain, b)
 
+        history: list[float] = []
         residual = space.norm(r)
+        self._record(0, residual, history)
         if residual <= tolerance:
-            return SolveResult(x, 0, residual, True)
+            return SolveResult(x, 0, residual, True, tuple(history))
 
         r0 = space.copy(r)
         rho = 1.0
@@ -874,7 +897,7 @@ class BiCGStabSolver(IterativeSolver):
         for iteration in range(1, self._limit(operator) + 1):
             rho_next = space.inner_product(r0, r)
             if rho_next == 0.0 or omega == 0.0:
-                return SolveResult(x, iteration, residual, False)
+                return SolveResult(x, iteration, residual, False, tuple(history))
             beta = (rho_next / rho) * (alpha / omega)
             rho = rho_next
 
@@ -887,13 +910,14 @@ class BiCGStabSolver(IterativeSolver):
             v = operator(y)
             denominator = space.inner_product(r0, v)
             if denominator == 0.0:
-                return SolveResult(x, iteration, residual, False)
+                return SolveResult(x, iteration, residual, False, tuple(history))
             alpha = rho / denominator
 
             s = space.axpy(-alpha, v, space.copy(r))
             if space.norm(s) <= tolerance:
                 x = space.axpy(alpha, y, x)
-                return SolveResult(x, iteration, space.norm(s), True)
+                self._record(iteration, space.norm(s), history)
+                return SolveResult(x, iteration, space.norm(s), True, tuple(history))
 
             z = s if preconditioner is None else preconditioner(s)
             t = operator(z)
@@ -905,10 +929,13 @@ class BiCGStabSolver(IterativeSolver):
             r = space.axpy(-omega, t, s)
 
             residual = space.norm(r)
+            self._record(iteration, residual, history)
             if residual <= tolerance:
-                return SolveResult(x, iteration, residual, True)
+                return SolveResult(x, iteration, residual, True, tuple(history))
 
-        return SolveResult(x, self._limit(operator), residual, False)
+        return SolveResult(
+            x, self._limit(operator), residual, False, tuple(history)
+        )
 
 
 # --------------------------------------------------------------------- #
@@ -954,17 +981,36 @@ class LSQRSolver(LeastSquaresSolver):
         rtol: float = 1e-10,
         maxiter: int | None = None,
         strict: bool = True,
+        callback: Callable[[int, float], None] | None = None,
     ) -> None:
+        """
+        Args:
+            damping: minimise ``||A x - b||^2 + damping^2 ||x||^2`` when
+                positive. See :meth:`_solve` on what this means with a warm
+                start.
+            rtol: relative tolerance, applied to both the residual and the
+                normal residual.
+            maxiter: iteration cap. Four times the domain dimension by default.
+            strict: raise :class:`ConvergenceError` rather than warn when the
+                cap is reached.
+            callback: called as ``callback(iteration, normal_residual)`` each
+                step, and the same numbers are kept in
+                :attr:`SolveResult.history`.
+
+        Raises:
+            ValueError: if the damping is negative.
+        """
         if damping < 0.0:
             raise ValueError("damping must be non-negative.")
         self._damping = damping
         self._rtol = rtol
         self._maxiter = maxiter
         self._strict = strict
+        self._callback = callback
 
     def _invert(self, operator: LinearOperator) -> LinearOperator:
         def solve_fn(b, x0):
-            result = self._solve(operator, b)
+            result = self._solve(operator, b, x0)
             if not result.converged and self._strict:
                 raise ConvergenceError(
                     f"LSQR did not converge in {result.iterations} iterations; "
@@ -974,27 +1020,72 @@ class LSQRSolver(LeastSquaresSolver):
 
         return InverseOperator(operator, self, solve_fn, traits=Traits.NONE)
 
-    def _solve(self, operator: LinearOperator, b: Any) -> SolveResult:
+    def _note(self, iteration: int, residual: float, history: list) -> None:
+        """Note one step's normal residual, and tell the callback about it."""
+        history.append(float(residual))
+        if self._callback is not None:
+            self._callback(iteration, float(residual))
+
+    def _solve(
+        self, operator: LinearOperator, b: Any, x0: Any | None
+    ) -> SolveResult:
+        """The bidiagonalisation, started from *x0* when one is given.
+
+        The warm start solves for the *correction*: the iteration runs on the
+        residual ``b - A x0`` and accumulates into a copy of ``x0``, which is
+        what v1 does. With no damping that is exactly equivalent to starting
+        from zero, so a warm start can only save iterations. With damping it is
+        not: the penalty then falls on the correction rather than on the whole
+        solution, which is a different minimisation. Damped warm starts are
+        therefore refused rather than quietly answering a different question.
+
+        Raises:
+            ValueError: if both a warm start and a damping are given.
+        """
         domain, codomain = operator.domain, operator.codomain
         limit = self._maxiter if self._maxiter is not None else 4 * max(domain.dim, 1)
+        history: list[float] = []
 
-        beta = codomain.norm(b)
+        if x0 is not None and self._damping > 0.0:
+            raise ValueError(
+                "A damped LSQR cannot be warm-started: the iteration would "
+                "penalise the correction rather than the solution, which "
+                "minimises something else. Start from zero, or damp by "
+                "composing with the shift yourself."
+            )
+
+        start = domain.zero() if x0 is None else domain.copy(x0)
+        shifted = b if x0 is None else codomain.subtract(b, operator(start))
+
+        beta = codomain.norm(shifted)
         if beta == 0.0:
-            return SolveResult(domain.zero(), 0, 0.0, True)
-        u = codomain.scale(1.0 / beta, b)
+            return SolveResult(start, 0, 0.0, True)
+        u = codomain.scale(1.0 / beta, shifted)
 
         v = operator.adjoint(u)
         alpha = domain.norm(v)
         if alpha == 0.0:
-            return SolveResult(domain.zero(), 0, 0.0, True)
+            return SolveResult(start, 0, 0.0, True)
         v = domain.scale_inplace(1.0 / alpha, v)
 
-        x = domain.zero()
+        x = start
         w = domain.copy(v)
         phi_bar, rho_bar = beta, alpha
-        residual_target = self._rtol * beta
         normal_residual = alpha * beta
-        normal_target = self._rtol * normal_residual
+
+        # Both tolerances are relative to the *data*, not to the shifted
+        # residual the iteration happens to start from. For a cold start the
+        # two coincide (``alpha * beta == ||A* b||`` exactly, since
+        # ``u == b / beta``). For a warm start they do not: starting from the
+        # solution leaves a normal residual of ~0, so a target relative to it
+        # is unreachable and the iteration would run to its cap having nothing
+        # left to do.
+        if x0 is None:
+            residual_target = self._rtol * beta
+            normal_target = self._rtol * normal_residual
+        else:
+            residual_target = self._rtol * codomain.norm(b)
+            normal_target = self._rtol * domain.norm(operator.adjoint(b))
 
         for iteration in range(1, limit + 1):
             # --- Golub-Kahan bidiagonalisation step -------------------
@@ -1022,7 +1113,7 @@ class LSQRSolver(LeastSquaresSolver):
             # --- the rotation annihilating beta ----------------------
             rho = float(np.hypot(rho_bar_damped, beta))
             if rho == 0.0:
-                return SolveResult(x, iteration, normal_residual, True)
+                return SolveResult(x, iteration, normal_residual, True, tuple(history))
             c = rho_bar_damped / rho
             s = beta / rho
             theta = s * alpha
@@ -1036,9 +1127,10 @@ class LSQRSolver(LeastSquaresSolver):
             w = domain.axpy(1.0, v, w)
 
             normal_residual = abs(alpha * s * phi)
+            self._note(iteration, normal_residual, history)
             if normal_residual <= normal_target or abs(phi_bar) <= residual_target:
-                return SolveResult(x, iteration, normal_residual, True)
+                return SolveResult(x, iteration, normal_residual, True, tuple(history))
             if beta == 0.0 or alpha == 0.0:
-                return SolveResult(x, iteration, normal_residual, True)
+                return SolveResult(x, iteration, normal_residual, True, tuple(history))
 
-        return SolveResult(x, limit, normal_residual, False)
+        return SolveResult(x, limit, normal_residual, False, tuple(history))

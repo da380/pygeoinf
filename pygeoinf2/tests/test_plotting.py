@@ -266,3 +266,72 @@ class TestDistributions:
             plotting.plot_corner(gaussian, truth=mean[:-1])
         with pytest.raises(IndexError, match="out of range"):
             plotting.plot_densities(gaussian, index=space.dim)
+
+
+class TestDensityResolution:
+    """The two defects in how a marginal is drawn."""
+
+    def test_a_narrow_posterior_is_resolved_beside_a_wide_prior(self):
+        """The case the twin axis exists for.
+
+        A single grid over the union of the two windows resolves the prior and
+        aliases the posterior: with a ratio of 1000 the spacing was about six
+        posterior standard deviations, so the peak was missed and the drawn
+        curve understated it by 16%. Raising the count does not fix it — the
+        ratio is what defeats a shared grid — so each curve gets its own.
+        """
+        import matplotlib.pyplot as plt
+
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        space = EuclideanSpace(1)
+        for ratio in (10.0, 1000.0):
+            deviation = 1.0 / ratio
+            _, axis = plt.subplots()
+            plotting.plot_densities(
+                GaussianMeasure.from_standard_deviation(space, deviation),
+                prior=GaussianMeasure.from_standard_deviation(space, 1.0),
+                ax=axis,
+            )
+            peak = axis.get_lines()[0].get_ydata().max()
+            exact = 1.0 / (deviation * np.sqrt(2.0 * np.pi))
+            assert peak == pytest.approx(exact, rel=1e-3)
+            plt.close("all")
+
+    def test_the_corner_fill_means_the_same_thing_in_both_branches(self, rng):
+        """``fill=True`` shaded a Mahalanobis distance in the Gaussian branch
+        and a density in the sampled one, so one figure could be darkest at the
+        mean and the other darkest away from it. Both now shade density."""
+        import matplotlib.pyplot as plt
+
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.probability.gaussian import GaussianMeasure
+
+        space = EuclideanSpace(2)
+        measure = GaussianMeasure.from_covariance_matrix(
+            space, np.array([[1.0, 0.4], [0.4, 0.6]])
+        )
+
+        def centre_minus_corner(**kwargs):
+            axes = plotting.plot_corner(measure, fill=True, **kwargs)
+            panel = axes[1, 0]
+            figure = panel.figure
+            figure.canvas.draw()
+            image = np.asarray(figure.canvas.buffer_rgba()).astype(float)
+            box = panel.get_window_extent()
+            height = image.shape[0]
+
+            def luminance(fx, fy):
+                px = int(box.x0 + fx * box.width)
+                py = int(height - (box.y0 + fy * box.height))
+                return image[py - 2 : py + 3, px - 2 : px + 3, :3].mean()
+
+            value = luminance(0.5, 0.5) - luminance(0.06, 0.06)
+            plt.close("all")
+            return value
+
+        exact = centre_minus_corner()
+        sampled = centre_minus_corner(samples=4000, rng=rng)
+        assert exact != pytest.approx(0.0, abs=5.0)
+        assert (exact > 0.0) == (sampled > 0.0)

@@ -154,16 +154,28 @@ class OrthogonalProjector(LinearOperator):
 
             ``P x == x - A* (A A*)^-1 A x``
 
-        and the only solve is in the codomain, on ``A A*`` — which the
-        palindrome rule already recognises as positive semidefinite, so a
-        conjugate-gradient solve is admissible without anyone claiming
-        anything. Coordinate-free throughout.
+        and the only solve is in the codomain, on ``A A*``. Coordinate-free
+        throughout.
+
+        **``A`` must have full row rank.** The palindrome rule gets ``A A*`` as
+        far as positive *semi*definite, which is all that is true in general:
+        ``A A*`` is definite exactly when ``A`` is surjective. This asserts
+        definiteness because the formula needs the inverse to exist, so the
+        assertion is a precondition on the caller rather than a deduction. Give
+        it an ``A`` with a nontrivial cokernel and the claim is false, the
+        inverse does not exist, and a conjugate-gradient solve will stall on
+        the null-space component rather than report the difficulty. Drop the
+        dependent rows first, or verify with ``testing.check_traits``.
 
         Args:
-            operator: the operator whose kernel is wanted.
+            operator: the operator whose kernel is wanted. Must have full row
+                rank.
             solver: the solver for ``A A*``. Defaults to conjugate gradients.
+
+        Returns:
+            The orthogonal projector onto the kernel.
         """
-        domain, codomain = operator.domain, operator.codomain
+        domain = operator.domain
         normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
         inverse = (solver or CGSolver(rtol=1e-12))(normal)
 
@@ -171,7 +183,6 @@ class OrthogonalProjector(LinearOperator):
             correction = operator.adjoint(inverse(operator(x)))
             return domain.subtract(x, correction)
 
-        _ = codomain  # named for the docstring's sake
         return cls(domain, project)
 
 

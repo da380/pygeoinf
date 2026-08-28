@@ -107,6 +107,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         self._precision = precision
         self._precision_factor = precision_factor
         self._sample_fn = sample
+        self._log_normalisation: float | None = None
 
     # ----------------------------------------------------------------- #
     #                            Constructors                           #
@@ -127,6 +128,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         noise with respect to the space's inner product. This is the
         construction v1 gets wrong on a mass-weighted space.
         """
+        if np.ndim(standard_deviation) != 0:
+            raise ValueError(
+                "from_standard_deviation takes one number, for an isotropic "
+                "measure. For a different deviation per component, use "
+                "from_standard_deviations."
+            )
         if standard_deviation <= 0.0:
             raise ValueError("standard_deviation must be positive.")
         factor = standard_deviation * LinearOperator.identity(domain)
@@ -136,6 +143,58 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             expectation=expectation,
             covariance_factor=factor,
             precision_factor=inverse,
+        )
+
+    @classmethod
+    def from_standard_deviations(
+        cls,
+        domain: HilbertSpace[X],
+        standard_deviations: np.ndarray,
+        /,
+        *,
+        expectation: X | None = None,
+    ) -> GaussianMeasure[X]:
+        """A measure with a different standard deviation in each direction.
+
+        The covariance is ``diag(sigma^2)`` **as an operator on the space**,
+        which is the generalisation of :meth:`from_standard_deviation` and not
+        of v1's method of this name: v1 built its factor as a map from a
+        Euclidean coefficient space, making the array a statement about
+        components rather than about directions. The two agree on an
+        orthonormal space and differ on every other, and the operator reading
+        is the one that draws white noise correctly — the defect DESIGN.md
+        section 9 exists to record.
+
+        Both a factor and a precision factor are supplied, so the result can be
+        sampled and has a density.
+
+        Args:
+            domain: the space the measure lives on.
+            standard_deviations: one positive number per dimension.
+            expectation: the mean. Defaults to zero.
+
+        Returns:
+            The measure with that diagonal covariance.
+
+        Raises:
+            ValueError: if the array is the wrong length or has an entry that
+                is not positive.
+        """
+        from ..algebra.diagonal import DiagonalLinearOperator
+
+        values = np.asarray(standard_deviations, dtype=float)
+        if values.shape != (domain.dim,):
+            raise ValueError(
+                f"Expected {domain.dim} standard deviations for {domain!r}, "
+                f"got an array of shape {values.shape}."
+            )
+        if np.any(values <= 0.0):
+            raise ValueError("Every standard deviation must be positive.")
+        return cls(
+            domain,
+            expectation=expectation,
+            covariance_factor=DiagonalLinearOperator(domain, values),
+            precision_factor=DiagonalLinearOperator(domain, 1.0 / values),
         )
 
     @classmethod
@@ -182,7 +241,26 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         The covariance is block diagonal, and the block-diagonal operator gives
         it the right traits by intersecting the blocks': the whole is positive
-        definite exactly when every factor is.
+        definite exactly when every factor is. The precision is block diagonal
+        for the same reason, and is built whenever every factor has one.
+
+        That matters beyond the density. The surrogate prior a Woodbury data
+        form is built from is a product of invariant measures, each with a
+        diagonal precision; without a precision on the product the
+        preconditioner falls back to inverting ``Q`` by conjugate gradients on
+        every application, which is a solve nested inside a preconditioner
+        inside a solve.
+
+        Args:
+            measures: the independent factors.
+            labels: names for the summands of the direct sum.
+
+        Returns:
+            The product measure, on the direct sum of the domains.
+
+        Raises:
+            ValueError: if no factors are given, or if some factor has neither
+                a covariance nor a covariance factor.
         """
         from ..algebra.direct_sum import BlockDiagonalLinearOperator, DirectSum
 
@@ -202,6 +280,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         else:
             raise ValueError("Every factor needs a covariance or a covariance factor.")
 
+        precision = None
+        precision_factor = None
+        if all(m.precision is not None for m in measures):
+            precision = BlockDiagonalLinearOperator([m.precision for m in measures])
+        elif all(m.precision_factor is not None for m in measures):
+            precision_factor = BlockDiagonalLinearOperator(
+                [m.precision_factor for m in measures]
+            )
+
         sample = None
         if factor is None and all(m.can_sample for m in measures):
 
@@ -213,6 +300,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             expectation=tuple(m.expectation for m in measures),
             covariance=covariance,
             covariance_factor=factor,
+            precision=precision,
+            precision_factor=precision_factor,
             sample=sample,
         )
 
@@ -240,7 +329,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             raise ValueError(f"Matrix has shape {matrix.shape}, expected {expected}.")
 
         if form == "components":
-            matrix = domain.apply_gram(matrix.T).T  # to the Galerkin form
+            # The Galerkin matrix of a covariance is ``G C_c``. Build it a
+            # column at a time: ``apply_gram`` takes a component vector, and
+            # handing it a matrix relies on a broadcasting coincidence that
+            # holds only for a diagonal metric (it gives ``C_c G`` otherwise).
+            matrix = np.column_stack([domain.apply_gram(col) for col in matrix.T])
         elif form != "galerkin":
             raise ValueError(f"Unknown form {form!r}.")
 
@@ -344,7 +437,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             return float(np.sqrt(np.sum(eigenvalues**2)))
         # tr(C* C) is basis-independent, so it comes from the *component*
         # matrix. The Galerkin one is G C_c, whose trace is a different number.
-        matrix = self._covariance.matrix(form="components")
+        matrix = self._require_covariance("A Hilbert-Schmidt norm").matrix(
+            form="components"
+        )
         return float(np.sqrt(np.sum(matrix * matrix.T)))
 
     def nuclear_norm(self, /, *, method: str = "auto") -> float:
@@ -359,7 +454,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         # A covariance is positive semidefinite, so its trace norm is its
         # trace -- and a trace is the component matrix's, not the Galerkin
         # matrix's, which carries an extra factor of the metric.
-        return float(np.trace(self._covariance.matrix(form="components")))
+        return float(
+            np.trace(
+                self._require_covariance("A nuclear norm").matrix(form="components")
+            )
+        )
 
     def _weighted_squared(self, vector: X, /) -> float:
         """``(C^-1 v, v)``, from the precision if there is one, else densely.
@@ -373,9 +472,36 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         components = self._domain.apply_gram(self._domain.to_components(vector))
         return float(components @ np.linalg.solve(self._symmetric_matrix(), components))
 
+    def _require_covariance(self, what: str, /) -> LinearOperator:
+        """The covariance, or a message saying why there is not one.
+
+        ``covariance is None`` is a legal state — a measure may be described by
+        its precision alone, which is the natural description of a posterior —
+        but almost nothing can be done with it, and what came back was a
+        ``TypeError`` from an arithmetic operation on ``None`` several frames
+        down. This says which method wanted what, and what to do about it.
+
+        Args:
+            what: the operation, named for the message.
+
+        Returns:
+            The covariance operator.
+
+        Raises:
+            ValueError: when the measure has only a precision.
+        """
+        if self._covariance is None:
+            raise ValueError(
+                f"{what} needs the covariance, and this measure was given only "
+                f"a precision. Supply a covariance alongside it, or invert the "
+                f"precision explicitly — the library will not do it silently, "
+                f"because that is a solve per application."
+            )
+        return self._covariance
+
     def _symmetric_matrix(self) -> np.ndarray:
         """The covariance's Galerkin matrix, symmetrised against round-off."""
-        matrix = self._covariance.matrix(form="galerkin")
+        matrix = self._require_covariance("This route").matrix(form="galerkin")
         return 0.5 * (matrix + matrix.T)
 
     def kl_divergence(
@@ -440,13 +566,18 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             determinants, so nothing is ever formed. The route for a space too
             large to assemble, at the cost of an answer with an error bar.
 
+            **It has to be asked for by name.** On the ill-conditioned spectra
+            this library produces it is currently unreliable — measured at
+            -88.6 +/- 21.7 for a divergence of zero on a correlated measure of
+            dimension 578 — so ``"auto"`` raises rather than reaching for it.
+
         Args:
             other: the reference measure. The divergence is not symmetric.
             method: ``"auto"``, ``"spectral"``, ``"dense"`` or ``"stochastic"``.
                 ``"auto"`` takes the spectral route when both covariances are
                 diagonal, then the dense one when the space has coordinates and
-                is no larger than *dense_limit*, and the stochastic one
-                otherwise.
+                is no larger than *dense_limit*, and raises otherwise rather
+                than reaching for the stochastic route unasked.
             solver: how to invert the reference covariance, for the stochastic
                 route. Conjugate gradients by default; a factory taking the
                 operator is also accepted.
@@ -489,7 +620,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             elif isinstance(self._domain, CoordinateSpace) and dimension <= dense_limit:
                 method = "dense"
             else:
-                method = "stochastic"
+                raise ValueError(
+                    "Neither exact route applies here, and the stochastic one "
+                    "is not accurate enough to be chosen on your behalf: on a "
+                    "Sobolev spectrum it has returned -88.6 +/- 21.7 for a "
+                    "divergence whose true value is zero. Ask for it by name "
+                    "with method='stochastic' if an estimate with that error "
+                    "bar is what you want; raise dense_limit if the space can "
+                    "afford two dense matrices; or give both measures diagonal "
+                    "covariances, which is the exact O(dim) route."
+                )
 
         if method == "spectral":
             if np.any(theirs <= 0.0):
@@ -497,7 +637,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     "The reference measure is singular, so the divergence from "
                     "it is infinite."
                 )
-            quadratic = other._weighted_squared(shift)
+            # From the spectrum, not from other._weighted_squared: that falls
+            # back to a dense solve whenever the reference has no precision,
+            # so the "exact O(dim) route" quietly became an O(n^3) one. The
+            # eigenvalues are already in hand, and the operator is diagonal in
+            # the space's own basis, so (C^-1 v, v) == (c/lambda) . (G c).
+            components = self._domain.to_components(shift)
+            quadratic = float(
+                np.dot(components / theirs, self._domain.apply_gram(components))
+            )
             trace = float(np.sum(mine / theirs))
             logs = float(
                 np.sum(np.log(theirs)) - np.sum(np.log(np.clip(mine, 1e-300, None)))
@@ -645,7 +793,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         from ..algebra.operators import LinearOperator
         from ..traits import Traits as _Traits
 
-        operator = self._covariance
+        operator = self._require_covariance("Regularising the inverse")
         if damping > 0.0:
             operator = operator + damping * LinearOperator.identity(self._domain)
         precision = solver(operator.with_traits(_Traits.POSITIVE_DEFINITE))
@@ -721,7 +869,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if not 0.0 < level < 1.0:
             raise ValueError(f"A credible level lies in (0, 1), got {level}.")
         threshold = float(chi2.ppf(level, self.domain.dim))
-        covariance = self.covariance * threshold
+        # The ellipsoid is defined by its precision; the covariance only rides
+        # along for whoever wants it. So a measure described by a precision
+        # alone has a perfectly good credible set, and used to raise.
+        covariance = None if self._covariance is None else self._covariance * threshold
         if self._precision is not None:
             precision = self._precision * (1.0 / threshold)
         else:
@@ -772,7 +923,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         from ..numerics.quadratic_forms import weighted_chi2_quantile
 
         require_coordinates(self._domain)
-        matrix = self._covariance.matrix(form="components")
+        matrix = self._require_covariance("An ambient ball").matrix(form="components")
         eigenvalues = np.clip(np.linalg.eigvals(matrix).real, 0.0, None)
         radius = np.sqrt(weighted_chi2_quantile(eigenvalues, level, method=method))
         return Ball(self._domain, radius=float(radius), centre=self.expectation)
@@ -803,7 +954,9 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                 [self._domain.solve_gram(column) for column in matrix.T]
             )
 
-        galerkin = self._covariance.matrix(form="galerkin")
+        galerkin = self._require_covariance("A multivariate normal").matrix(
+            form="galerkin"
+        )
         components = divide(divide(galerkin).T)
         return multivariate_normal(
             mean=self._domain.to_components(self.expectation),
@@ -818,6 +971,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         /,
         *,
         noise: "GaussianMeasure | None" = None,
+        solver: Any = None,
     ) -> "GaussianMeasure[X]":
         """The measure conditioned on ``A x == value``, or on noisy data.
 
@@ -826,39 +980,84 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         problem: give it an operator and an observed value and it returns the
         posterior. With ``noise`` omitted the constraint is exact, and the
         result is supported on an affine subspace.
+
+        **The result can be sampled**, by the Matheron rule: draw ``x`` from
+        this measure and ``e`` from the noise, and return
+        ``x + K(value - A x - e)``. That has the posterior's mean and, by the
+        usual cancellation, exactly its covariance — at the cost of one prior
+        draw and one solve, with no factorisation of the posterior covariance.
+        It matters because conditioning is how an exact linear constraint — a
+        conserved mass, a removed degree — is imposed on a prior, and a prior
+        that cannot be sampled cannot generate synthetic data or be checked
+        against any of the machinery downstream of it.
+
+        Args:
+            operator: the observation operator ``A``.
+            value: the observed value.
+            noise: the observation error. Omitted means the constraint is
+                exact.
+            solver: how to invert ``A C A* + R`` on the constraint codomain.
+                Conjugate gradients by default; a factory taking the operator
+                is also accepted. This used to be a dense ``np.linalg.inv``
+                with no way to change it.
+
+        Returns:
+            The conditioned measure.
+
+        Raises:
+            ValueError: if this measure has no covariance operator.
         """
+        from ..numerics.solvers import resolve_solver
         from ..traits import Traits as _Traits
 
-        covariance = self._covariance
+        covariance = self._require_covariance("Conditioning")
+        codomain = operator.codomain
+
         normal = operator @ covariance @ operator.adjoint
         if noise is not None:
             normal = normal + noise.covariance
-        codomain = operator.codomain
-        inverse = np.linalg.inv(normal.matrix(form="components"))
-        gain_matrix = inverse
+        normal = normal.with_traits(
+            _Traits.SELF_ADJOINT | _Traits.POSITIVE_DEFINITE
+        )
+        inverse = resolve_solver(solver, normal)(normal)
+        cross = covariance @ operator.adjoint
 
-        def gain(vector):
-            return covariance(
-                operator.adjoint(
-                    codomain.from_components(
-                        gain_matrix @ codomain.to_components(vector)
-                    )
-                )
-            )
+        def gain(vector: Any) -> Any:
+            return cross(inverse(vector))
 
         predicted = operator(self.expectation)
         if noise is not None:
             predicted = codomain.add(predicted, noise.expectation)
         shift = gain(codomain.subtract(value, predicted))
-        updated = covariance - _gain_operator(
-            covariance, operator, gain_matrix, codomain
-        )
+        updated = covariance - cross @ inverse @ cross.adjoint
+
+        sample = None
+        if self.can_sample and (noise is None or noise.can_sample):
+
+            def sample(rng: Generator | None, _noise=noise) -> Any:
+                """A *centred* posterior draw: ``(I - K A) dx - K de``.
+
+                Centred because :meth:`sample` adds the expectation itself, and
+                because it is true: the posterior's spread does not depend on
+                the data, only its mean does. So this is built from the prior
+                and noise *deviations* rather than from the draws.
+                """
+                drawn = self._domain.subtract(self.sample(rng=rng), self.expectation)
+                residual = codomain.negative(operator(drawn))
+                if _noise is not None:
+                    disturbance = codomain.subtract(
+                        _noise.sample(rng=rng), _noise.expectation
+                    )
+                    residual = codomain.subtract(residual, disturbance)
+                return self._domain.add(drawn, gain(residual))
+
         return GaussianMeasure(
             self._domain,
             expectation=self._domain.add(self.expectation, shift),
             covariance=updated.with_traits(
                 _Traits.SELF_ADJOINT | _Traits.POSITIVE_SEMIDEFINITE
             ),
+            sample=sample,
         )
 
     def mahalanobis_squared(self, x: X) -> float:
@@ -879,8 +1078,60 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         deviation = self._deviation(x)
         return self._domain.inner_product(self._precision(deviation), deviation)
 
+    def log_normalising_constant(self) -> float:
+        """``-(n/2) log(2 pi) - (1/2) log det C``, the constant in the density.
+
+        The piece :meth:`log_density` leaves out. It depends on the covariance,
+        so it is *not* shared between two measures on the same space, and any
+        comparison across measures — a mixture's components, most of all — has
+        to put it back. Constant in ``x``, so it is computed once and kept.
+
+        The determinant is the component matrix's, as in
+        :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`: that
+        is the one belonging to the operator rather than to the metric, and it
+        is what makes the density a density with respect to the space's own
+        volume measure.
+
+        Returns:
+            The additive constant, in nats.
+
+        Raises:
+            NotImplementedError: if the measure has no covariance, so there is
+                no determinant to take.
+        """
+        if self._log_normalisation is None:
+            self._log_normalisation = self._compute_log_normalisation()
+        return self._log_normalisation
+
+    def _compute_log_normalisation(self) -> float:
+        """The constant, exactly for a diagonal covariance and otherwise not."""
+        from ..numerics.functional_calculus import log_determinant
+
+        gaussian = -0.5 * self._domain.dim * float(np.log(2.0 * np.pi))
+
+        eigenvalues = self._diagonal_eigenvalues()
+        if eigenvalues is not None:
+            # Exact, and cheap. Taken before any retraiting, so it survives
+            # whatever the general route would have done with the claim.
+            return gaussian - 0.5 * float(np.sum(np.log(eigenvalues)))
+
+        if self._covariance is None:
+            raise NotImplementedError(
+                "This measure has no covariance, so no normalising constant. "
+                "Supply covariance or covariance_factor."
+            )
+        definite = self._covariance.with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+        return gaussian - 0.5 * log_determinant(definite).value
+
     def log_density(self, x: X) -> float:
-        """The log density up to an additive constant."""
+        """The log density up to an additive constant.
+
+        The constant is :meth:`log_normalising_constant`, which depends on the
+        covariance. Differences of this quantity are meaningful only *within*
+        one measure; comparing two measures means adding each one's constant.
+        """
         return -0.5 * self.mahalanobis_squared(x)
 
     def grad_log_density(self, x: X) -> X:
@@ -918,15 +1169,54 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         expectation: object | None,
         covariance: LinearOperator | None,
         covariance_factor: LinearOperator | None,
+        precision: LinearOperator | None = None,
+        precision_factor: LinearOperator | None = None,
         sample: Callable[[Generator | None], object] | None = None,
     ) -> GaussianMeasure:
-        """Build a measure of this class. Subclasses override to stay in theirs."""
+        """Build a measure of this class. Subclasses override to stay in theirs.
+
+        The precision is carried because otherwise nothing can carry it: every
+        algebraic operation goes through here, so a signature without it means
+        no operation whatever can keep a precision, and none did — not even
+        translation, which does not change the covariance at all. The cost was
+        not only the density (``mu.translate(v).log_density`` raised where
+        ``mu.log_density`` worked) but the spectral KL route, which falls back
+        to a dense solve when the reference measure has no precision.
+        """
         return GaussianMeasure(
             domain,
             expectation=expectation,
             covariance=covariance,
             covariance_factor=covariance_factor,
+            precision=precision,
+            precision_factor=precision_factor,
             sample=sample,
+        )
+
+    @staticmethod
+    def _diagonal_inverse(
+        covariance: LinearOperator | None,
+    ) -> tuple[LinearOperator | None, LinearOperator | None]:
+        """A diagonal covariance's factor and precision, when it has them.
+
+        Built from the eigenvalues rather than through
+        :attr:`DiagonalLinearOperator.sqrt` and :attr:`inverse`, which gate on
+        *traits* that are never deduced on a space whose metric is not
+        diagonal. The functional calculus of a diagonalisable operator does not
+        depend on the metric, so the eigenvalues are the honest thing to gate
+        on.
+        """
+        from ..algebra.diagonal import DiagonalLinearOperator
+
+        if not isinstance(covariance, DiagonalLinearOperator):
+            return None, None
+        values = np.asarray(covariance.eigenvalues, dtype=float)
+        if np.any(values <= 0.0):
+            return None, None
+        space = covariance.domain
+        return (
+            DiagonalLinearOperator(space, np.sqrt(values)),
+            DiagonalLinearOperator(space, 1.0 / values),
         )
 
     def _combine_affine(
@@ -945,7 +1235,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         )
         covariance = (
             None
-            if factor is not None
+            if factor is not None or self._covariance is None
             else operator @ self._covariance @ operator.adjoint
         )
         # With no factor to map there is still a sampler: push each draw
@@ -960,13 +1250,60 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
                     return mapped
                 return codomain.add(mapped, _translation)
 
+        precision, precision_factor = self._mapped_precision(operator)
+        if (
+            covariance is None
+            and factor is None
+            and precision is None
+            and precision_factor is None
+        ):
+            # A precision-only measure under a map that does not preserve one:
+            # nothing describes the result, so fall back rather than build an
+            # object whose every method raises.
+            return None
         return self._rebuild(
             codomain,
             expectation=mean,
             covariance=covariance,
             covariance_factor=factor,
+            precision=precision,
+            precision_factor=precision_factor,
             sample=sample,
         )
+
+    def _mapped_precision(
+        self, operator: LinearOperator
+    ) -> tuple[LinearOperator | None, LinearOperator | None]:
+        """The precision of ``A X``, when the map leaves one.
+
+        ``C -> A C A*`` inverts to ``P -> (A^-1)* P A^-1``, so a precision
+        survives exactly when ``A`` does. Two cases are worth taking:
+
+        * the identity, which is what a *translation* is built from. A shift
+          does not touch the covariance, so dropping the precision there was
+          pure loss — and it is the commonest operation of the three.
+        * an invertible diagonal operator, which is what masking or rescaling a
+          field by a spectral multiplier looks like.
+
+        Anything else gives up, because inverting a general operator is a solve
+        and doing one silently inside an algebraic operation is exactly the
+        kind of hidden cost the library is trying not to have.
+        """
+        from ..algebra.diagonal import DiagonalLinearOperator
+        from ..algebra.nodes import _Identity
+
+        if isinstance(operator, _Identity):
+            return self._precision, self._precision_factor
+
+        if isinstance(operator, DiagonalLinearOperator):
+            values = np.asarray(operator.eigenvalues, dtype=float)
+            if np.all(values != 0.0):
+                inverse = DiagonalLinearOperator(operator.domain, 1.0 / values)
+                if self._precision is not None:
+                    return inverse.adjoint @ self._precision @ inverse, None
+                if self._precision_factor is not None:
+                    return None, self._precision_factor @ inverse
+        return None, None
 
     def _combine_add(self, other: object) -> GaussianMeasure[X] | None:
         """The sum of independent Gaussians is Gaussian."""
@@ -983,44 +1320,70 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             def sample(rng, _other=other):
                 return self._domain.add(self.sample(rng=rng), _other.sample(rng=rng))
 
+        # Two diagonal covariances add to a diagonal one, and a diagonal
+        # covariance hands back its own factor and precision. That turns the
+        # sum of two invariant measures -- which is how a prior and a noise
+        # model are combined -- back into a measure that can be sampled with
+        # one draw rather than two, and whose density can be evaluated at all.
+        total = self._covariance + other.covariance
+        factor, precision = self._diagonal_inverse(total)
+        if factor is not None:
+            sample = None  # the factor is the better sampler
         return self._rebuild(
             self._domain,
             expectation=self._domain.add(self.expectation, other.expectation),
-            covariance=self._covariance + other.covariance,
-            covariance_factor=None,
+            covariance=total,
+            covariance_factor=factor,
+            precision=precision,
             sample=sample,
         )
 
     def _combine_scale(self, alpha: float) -> GaussianMeasure[X] | None:
-        """``alpha X`` scales the factor, and so the covariance by ``alpha^2``."""
-        if self._covariance_factor is None:
+        """``alpha X``: the factor scales by ``alpha`` and the covariance by
+        ``alpha^2``.
+
+        Works from whichever of the two the measure has. Requiring a factor
+        turned a measure described by a covariance and a precision — which is
+        every conditioned or explicitly-built one — into an unspecialised
+        pushforward under a scalar multiple.
+        """
+        if (
+            self._covariance_factor is None
+            and self._covariance is None
+            and self._precision is None
+            and self._precision_factor is None
+        ):
+            return None
+        # C -> alpha^2 C, so P -> P / alpha^2 and each factor by |alpha|.
+        # A zero scaling is a point mass and has no precision at all.
+        precision = None
+        precision_factor = None
+        if alpha != 0.0:
+            if self._precision is not None:
+                precision = (1.0 / (alpha * alpha)) * self._precision
+            if self._precision_factor is not None:
+                precision_factor = (1.0 / abs(alpha)) * self._precision_factor
+        factor = (
+            None
+            if self._covariance_factor is None
+            else alpha * self._covariance_factor
+        )
+        covariance = (
+            None
+            if factor is not None or self._covariance is None
+            else (alpha * alpha) * self._covariance
+        )
+        if covariance is None and factor is None and precision is None:
+            # Scaling a precision-only measure by zero.
             return None
         return self._rebuild(
             self._domain,
             expectation=self._domain.scale(alpha, self.expectation),
-            covariance=None,
-            covariance_factor=alpha * self._covariance_factor,
+            covariance=covariance,
+            covariance_factor=factor,
+            precision=precision,
+            precision_factor=precision_factor,
         )
 
     def __repr__(self) -> str:
         return f"GaussianMeasure({self._domain!r})"
-
-
-def _gain_operator(
-    covariance: LinearOperator,
-    operator: LinearOperator,
-    gain_matrix: np.ndarray,
-    codomain: HilbertSpace,
-) -> LinearOperator:
-    """``C A* N^-1 A C``, the amount a conditioning removes."""
-    from ..algebra.operators import LinearOperator as _LinearOperator
-
-    def value(x: object) -> object:
-        image = operator(covariance(x))
-        return covariance(
-            operator.adjoint(
-                codomain.from_components(gain_matrix @ codomain.to_components(image))
-            )
-        )
-
-    return _LinearOperator.self_adjoint(covariance.domain, value)

@@ -85,18 +85,47 @@ class Optimiser(ABC):
         *,
         gtol: float = 1e-8,
         rtol: float = 1e-10,
+        ftol: float = 1e-12,
         max_iterations: int = 500,
         line_search: LineSearch | None = None,
     ) -> None:
         """
         Args:
             gtol: absolute tolerance on ``||grad f||`` in the space's norm.
-            rtol: tolerance relative to the initial gradient norm.
+            rtol: tolerance relative to the initial gradient norm. The test is
+                ``||g|| <= max(gtol, rtol * ||g0||)``.
+
+                This stays tight, because loosening it would cost every caller
+                accuracy to fix a reporting problem. The problem was real: a
+                line-search method cannot reach ``1e-10`` in double precision
+                on an ordinary objective, and on a 60-dimensional quadratic of
+                condition number 4.9 that made L-BFGS stop at ``|g| == 1.8e-7``
+                and report *failure* after 19 iterations, nonlinear CG do the
+                same at ``1.1e-6``, and steepest descent spend 2000 iterations
+                and 5330 value evaluations arriving at the same verdict. But
+                the cure is to recognise the two ways a method legitimately
+                finishes short of the gradient tolerance — see *ftol* and the
+                precision-loss outcome — not to lower the bar. With those, the
+                same four runs converge in 16 to 25 iterations and 40 to 119
+                value evaluations.
+            ftol: stop when one iteration decreases the value by no more than
+                ``ftol * |f|``. The criterion that says "no further progress",
+                which a gradient test alone cannot: near a minimiser the
+                gradient is small everywhere the value is flat.
+
+                Relative to ``|f|`` with no absolute floor, deliberately. A
+                floor makes the test absolute wherever the minimum value is
+                near zero, and there a slow method in a narrow valley — the
+                Rosenbrock function is the standard example — takes steps
+                smaller than the floor while still far from the minimiser, so
+                the floor stops it early and calls that convergence. Set it to
+                zero to rely on the gradient test alone.
             max_iterations: iteration cap.
             line_search: the step rule. Each method supplies a suitable default.
         """
         self._gtol = gtol
         self._rtol = rtol
+        self._ftol = ftol
         self._max_iterations = max_iterations
         self._line_search = line_search or self._default_line_search()
 
@@ -121,6 +150,48 @@ class Optimiser(ABC):
 
     def _tolerance(self, initial_gradient_norm: float) -> float:
         return max(self._gtol, self._rtol * initial_gradient_norm)
+
+    def _precision_limited(self, value: float, gradient_norm: float) -> bool:
+        """Whether the gradient is as small as double precision allows here.
+
+        A line search fails when no step along a descent direction improves the
+        value. Near a minimiser that is not a defect: the decrease a step is
+        predicted to make, ``c1 * alpha * slope``, eventually falls below the
+        rounding error in the value itself, which is ``eps * |f|`` rather than
+        ``eps``. Past that point the search is comparing noise.
+
+        So a failure with the gradient already at that scale is success at the
+        accuracy the arithmetic allows, and saying "line search failed" instead
+        reports a wrong answer about a right one.
+        """
+        floor = float(np.sqrt(np.finfo(float).eps)) * (1.0 + abs(value))
+        return gradient_norm <= floor
+
+    def _finish_search_failure(
+        self,
+        x: Any,
+        value: float,
+        gradient_norm: float,
+        iteration: int,
+        evaluations: int,
+        history: list[float],
+    ) -> OptimisationResult:
+        """The outcome when no step improved the value."""
+        limited = self._precision_limited(value, gradient_norm)
+        return OptimisationResult(
+            x,
+            value,
+            gradient_norm,
+            iteration,
+            evaluations,
+            limited,
+            (
+                "no further decrease is representable in double precision"
+                if limited
+                else "line search failed to find a suitable step"
+            ),
+            history,
+        )
 
 
 class _DescentMethod(Optimiser):
@@ -175,15 +246,8 @@ class _DescentMethod(Optimiser):
             )
             evaluations += search.evaluations
             if not search.converged:
-                return OptimisationResult(
-                    x,
-                    model.value,
-                    gradient_norm,
-                    iteration,
-                    evaluations,
-                    False,
-                    "line search failed to find a suitable step",
-                    history,
+                return self._finish_search_failure(
+                    x, model.value, gradient_norm, iteration, evaluations, history
                 )
 
             previous = (search.step, slope)
@@ -199,9 +263,26 @@ class _DescentMethod(Optimiser):
                 step_vector,
                 space.subtract(new_gradient, gradient),
             )
+            previous_value = model.value
             x, model, gradient = new_x, new_model, new_gradient
             gradient_norm = space.norm(gradient)
             history.append(model.value)
+
+            decrease = previous_value - model.value
+            if 0.0 <= decrease <= self._ftol * abs(model.value):
+                # Flat: the step was accepted but bought nothing. Continuing
+                # only spends evaluations to confirm it, which is what turned a
+                # converged steepest descent into 2000 iterations.
+                return OptimisationResult(
+                    x,
+                    model.value,
+                    gradient_norm,
+                    iteration,
+                    evaluations,
+                    True,
+                    "value tolerance reached",
+                    history,
+                )
 
         return OptimisationResult(
             x,
@@ -484,22 +565,29 @@ class NewtonCG(Optimiser):
             )
             evaluations += search.evaluations
             if not search.converged:
+                return self._finish_search_failure(
+                    x, model.value, gradient_norm, iteration, evaluations, history
+                )
+
+            previous_value = model.value
+            x = search.point
+            model = functional.at(x)
+            evaluations += 1
+            gradient_norm = space.norm(model.gradient)
+            history.append(model.value)
+
+            decrease = previous_value - model.value
+            if 0.0 <= decrease <= self._ftol * abs(model.value):
                 return OptimisationResult(
                     x,
                     model.value,
                     gradient_norm,
                     iteration,
                     evaluations,
-                    False,
-                    "line search failed to find a suitable step",
+                    True,
+                    "value tolerance reached",
                     history,
                 )
-
-            x = search.point
-            model = functional.at(x)
-            evaluations += 1
-            gradient_norm = space.norm(model.gradient)
-            history.append(model.value)
 
         return OptimisationResult(
             x,

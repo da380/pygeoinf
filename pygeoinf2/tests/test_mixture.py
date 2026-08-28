@@ -81,16 +81,56 @@ class TestGaussianMixture:
         space, mix = mixture
         point = space.from_components(np.array([0.4, 0.2]))
         expected = np.log(
-            0.3 * np.exp(mix.components[0].log_density(point))
-            + 0.7 * np.exp(mix.components[1].log_density(point))
+            0.3
+            * np.exp(
+                mix.components[0].log_density(point)
+                + mix.components[0].log_normalising_constant()
+            )
+            + 0.7
+            * np.exp(
+                mix.components[1].log_density(point)
+                + mix.components[1].log_normalising_constant()
+            )
         )
         assert mix.log_density(point) == pytest.approx(expected)
+
+    def test_the_density_matches_an_independent_reference(self, mixture):
+        """Against scipy, with components of *unequal* width.
+
+        Each component's ``-1/2 log det C`` differs, so it does not cancel out
+        of the sum. Omitting it makes the broad component as tall at its centre
+        as the narrow one; sampling never notices, because sampling does not
+        consult the density.
+        """
+        space, mix = mixture
+        components = np.array([0.4, 0.2])
+        reference = np.log(
+            0.3 * multivariate_normal(mean=[-2.0, 0.0], cov=0.3**2).pdf(components)
+            + 0.7 * multivariate_normal(mean=[3.0, 1.0], cov=0.5**2).pdf(components)
+        )
+        assert mix.log_density(space.from_components(components)) == pytest.approx(
+            reference
+        )
 
     def test_it_says_which_component_a_point_came_from(self, mixture):
         space, mix = mixture
         assert mix.marginal_probabilities(
             mix.components[0].expectation
         ) == pytest.approx([1.0, 0.0], abs=1e-6)
+
+    def test_the_responsibilities_match_an_independent_reference(self, mixture):
+        """The per-component constant does not cancel in the softmax."""
+        space, mix = mixture
+        components = np.array([0.4, 0.2])
+        weighted = np.array(
+            [
+                0.3 * multivariate_normal(mean=[-2.0, 0.0], cov=0.3**2).pdf(components),
+                0.7 * multivariate_normal(mean=[3.0, 1.0], cov=0.5**2).pdf(components),
+            ]
+        )
+        assert mix.marginal_probabilities(
+            space.from_components(components)
+        ) == pytest.approx(weighted / weighted.sum())
 
     def test_an_affine_map_maps_every_component(self, mixture, rng):
         space, mix = mixture

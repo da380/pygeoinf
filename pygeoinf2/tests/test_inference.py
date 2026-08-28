@@ -132,6 +132,22 @@ class TestForwardProblem:
         first, second = joint.forward_operator(model)
         assert np.allclose(first, second)
 
+    def test_joining_a_noisy_problem_to_an_exact_one_is_refused(self, problem):
+        """The joint problem used to come out with ``error=None``: a noisy data
+        set joined to an exact one silently lost its noise, and every inversion
+        built on the result then treated it as exact."""
+        exact = LinearForwardProblem(problem.forward_operator)
+        assert problem.has_error and not exact.has_error
+
+        with pytest.raises(ValueError, match="or none may"):
+            LinearForwardProblem.from_direct_sum([problem, exact])
+        with pytest.raises(ValueError, match="or none may"):
+            LinearForwardProblem.from_direct_sum([exact, problem])
+
+        # All-or-nothing still works, both ways round.
+        assert LinearForwardProblem.from_direct_sum([problem, problem]).has_error
+        assert not LinearForwardProblem.from_direct_sum([exact, exact]).has_error
+
     def test_a_parameterisation_restricts_the_model_space(self, problem, rng):
         small = EuclideanSpace(2)
         parameterisation = LinearOperator.from_derivative_matrix(

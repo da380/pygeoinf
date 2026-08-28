@@ -446,6 +446,7 @@ def log_determinant(
         reports a standard error of zero, so a caller can treat the two
         uniformly and still see which it got.
     """
+    from ..algebra.diagonal import DiagonalLinearOperator
     from .randomised import Estimate, random_trace
 
     _require(operator, Traits.POSITIVE_DEFINITE, "A log determinant")
@@ -457,6 +458,17 @@ def log_determinant(
         raise ValueError(
             f"The method is 'auto', 'dense' or 'stochastic', got {method!r}."
         )
+
+    if method == "auto" and isinstance(operator, DiagonalLinearOperator):
+        # ``sum(log lambda)``: exact, O(dim), and no applications at all. Worth
+        # a special case because it is the common one — every invariant measure
+        # on a symmetric space has a diagonal covariance — and because the
+        # alternatives are both bad here: the dense route spends ``dim``
+        # applications assembling a matrix that is already known, and above
+        # dense_limit the stochastic one estimates a number that can be summed
+        # (measured: 455.4 +/- 2.8 against an exact 456.7 at dimension 1000).
+        return Estimate(operator.log_determinant, 0.0, 0)
+
     if method == "auto":
         from ..algebra.spaces import CoordinateSpace
 

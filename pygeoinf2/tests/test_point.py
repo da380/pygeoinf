@@ -30,8 +30,10 @@ from pygeoinf2.inference import (
     LinearForwardProblem,
     LinearGaussianInversion,
     MinimumNorm,
+    TikhonovFamily,
     TikhonovNormalOperator,
 )
+from pygeoinf2.inference.preconditioners import NormalDiagonalPreconditioner
 from pygeoinf2.numerics.preconditioners import JacobiPreconditioner
 from pygeoinf2.numerics.root_find import (
     DampedSolves,
@@ -42,7 +44,7 @@ from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
 
 
 def constant(value):
@@ -93,6 +95,32 @@ class TestMonotoneRoot:
         assert not result.converged
         assert result.exhausted == "low"
         assert result.argument < 1e-10
+
+    def test_running_out_of_iterations_is_not_convergence(self):
+        """The bracket tolerance is the claim; the iteration cap is not.
+
+        Exhausting the loop reported ``converged=True`` regardless: with one
+        iteration and zero tolerances it claimed a root while the bracket was
+        still 6.8 wide, around an argument of 5.62 against a true root of
+        3.333. A discrepancy sweep reading that flag would take a damping it
+        had not actually found.
+        """
+        for iterations in (1, 2, 3):
+            result = monotone_root(
+                lambda t, _: Evaluation(1.0 / t),
+                0.3,
+                iterations=iterations,
+                rtol=0.0,
+                atol=0.0,
+            )
+            low, high = result.bracket
+            assert high - low > 1.0
+            assert not result.converged
+
+        # With a reachable tolerance it still converges, and to the right root.
+        found = monotone_root(lambda t, _: Evaluation(1.0 / t), 0.3, iterations=60)
+        assert found.converged
+        assert found.argument == pytest.approx(10.0 / 3.0, rel=1e-4)
 
     def test_the_previous_solution_reaches_the_next_probe(self):
         seen = []
@@ -296,9 +324,13 @@ class TestLeastSquares:
     """What it inverts, and the ways of asking for the same thing."""
 
     def test_the_two_formalisms_agree(self, setup, rng):
+        """An exact identity, so it is tested with a solver tight enough to
+        show it: at the default tolerance each side carries its own solver
+        error and their difference says more about ``rtol`` than about the
+        algebra."""
         problem = setup
         model = problem.model_space
-        estimator = LeastSquares(problem, damping=0.5)
+        estimator = LeastSquares(problem, damping=0.5, solver=CGSolver(rtol=1e-13))
         other = estimator.with_formalism(
             "model_space" if estimator.formalism == "data_space" else "data_space"
         )
@@ -402,6 +434,70 @@ class TestDiscrepancyPrinciple:
             MinimumNorm(problem, damping=1e-6)(negligible)
         )
 
+    @pytest.mark.parametrize(
+        "build_data", [lambda: EuclideanSpace(3), make_dense_metric_space]
+    )
+    def test_data_that_nothing_fits_are_refused_by_both_routes(self, build_data):
+        """The failure case, which is not saturation.
+
+        The forward operator reaches only the first coordinate, so data with
+        weight elsewhere cannot be fitted at any damping. ``for_data`` used to
+        answer anyway — damping 1e-200, chi-squared 5e7 against a target of
+        9.5 — while ``DiscrepancyPrinciple`` raised on the same input. They now
+        share one search and so cannot disagree.
+        """
+        data_space = build_data()
+        model_space = EuclideanSpace(1)
+        forward = LinearOperator.from_component_matrix(
+            model_space, data_space, np.array([[1.0], [0.0], [0.0]])
+        )
+        problem = LinearForwardProblem(
+            forward,
+            error=GaussianMeasure.from_standard_deviation(data_space, 1e-3),
+        )
+        unfittable = data_space.from_components(np.array([0.0, 4.0, 4.0]))
+
+        with pytest.raises(ValueError, match="cannot be fitted"):
+            MinimumNorm(problem, damping=1.0).for_data(unfittable)
+        with pytest.raises(ValueError, match="cannot be fitted"):
+            DiscrepancyPrinciple(problem)(unfittable)
+
+    def test_a_structure_aware_preconditioner_works_inside_the_sweep(
+        self, setup, rng
+    ):
+        """DESIGN's claim that every structure-aware preconditioner applies to
+        the point estimators held everywhere except where the sweep was the
+        point.
+
+        ``DampedSolves`` built ``base + t * shift``, a plain sum, and a sum has
+        no factors for a preconditioner to read: the same solver that worked at
+        a fixed damping raised ``TypeError`` inside the search. It now asks the
+        family for its member, which arrives as a ``TikhonovNormalOperator``.
+        """
+        problem = setup
+        solver = CGSolver(rtol=1e-10).with_preconditioner(
+            JacobiPreconditioner()
+        )
+        structure_aware = CGSolver(rtol=1e-10).with_preconditioner(
+            NormalDiagonalPreconditioner()
+        )
+        observed = problem.synthetic_data(problem.model_space.random(rng=rng), rng=rng)
+
+        family = TikhonovFamily(
+            problem.forward_operator,
+            error=problem.error_measure,
+            solver=structure_aware,
+        )
+        assert isinstance(family.at(1.0), TikhonovNormalOperator)
+        assert family.solve(1.0, family.right_hand_side(observed)).converged
+
+        # And end to end, which is the test the review asked for.
+        found = DiscrepancyPrinciple(problem, solver=structure_aware)(observed)
+        plain = DiscrepancyPrinciple(problem, solver=solver)(observed)
+        assert problem.model_space.norm(
+            problem.model_space.subtract(found, plain)
+        ) < 1e-6 * problem.model_space.norm(plain)
+
     def test_the_search_reports_what_it_cost(self, setup, rng):
         problem = setup
         observed = problem.data_space.random(rng=rng)
@@ -486,7 +582,9 @@ class TestDiscrepancyPrinciple:
         problem = setup
         model, data = problem.model_space, problem.data_space
         observed = problem.synthetic_data(model.random(rng=rng), rng=rng)
-        derivative = DiscrepancyPrinciple(problem).derivative(observed)
+        derivative = DiscrepancyPrinciple(
+            problem, solver=CGSolver(rtol=1e-13)
+        ).derivative(observed)
         for _ in range(10):
             left, right = data.random(rng=rng), model.random(rng=rng)
             assert model.inner_product(derivative(left), right) == pytest.approx(
@@ -615,3 +713,39 @@ class TestConstrained:
         method = ConstrainedMinimumNorm(setup, geometric)
         with pytest.raises(ValueError, match="defined geometrically"):
             method.constraint_value_mapping(setup.data_space.random(rng=rng))
+
+
+class TestTikhonovFamilyAccessors:
+    """The damping-independent pieces the family hands back."""
+
+    @pytest.fixture
+    def family(self, setup):
+        return setup, TikhonovFamily(
+            setup.forward_operator,
+            error=setup.error_measure,
+            formalism="model_space",
+        )
+
+    def test_the_weighted_adjoint_is_the_templates(self, family):
+        """It returned ``self._weighted``, an attribute never set, so every
+        call raised ``AttributeError``. It does not depend on the damping, so
+        it comes from the template like the other invariant pieces."""
+        problem, tikhonov = family
+        weighted = tikhonov.weighted_adjoint()
+
+        assert weighted.domain == problem.data_space
+        assert weighted.codomain == problem.model_space
+
+    def test_the_weighted_adjoint_builds_the_right_hand_side(self, family, rng):
+        """Its documented job: turn a shifted data vector into the RHS."""
+        problem, tikhonov = family
+        data = problem.data_space.random(rng=rng)
+        shifted = problem.data_space.subtract(
+            data, problem.error_measure.expectation
+        )
+
+        built = tikhonov.weighted_adjoint()(shifted)
+        stated = tikhonov.right_hand_side(data)
+        assert problem.model_space.norm(
+            problem.model_space.subtract(built, stated)
+        ) == pytest.approx(0.0, abs=1e-12)

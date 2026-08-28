@@ -38,7 +38,7 @@ from pygeoinf2.numerics.solvers import CGSolver, CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import WeightedSpace, make_weighted_space
 
 
 def dense(space, matrix):
@@ -206,6 +206,33 @@ class TestLocalisedPreconditioner:
             vector = data.random(rng=rng)
             assert data.norm(
                 data.subtract(normal(exact(vector)), vector)
+            ) == pytest.approx(0.0, abs=1e-8 * data.norm(vector))
+
+    def test_overlapping_blocks_are_averaged_not_summed(self, normal, rng):
+        """The same block twice must mean the same thing as once.
+
+        The assembly is a COO matrix, and COO sums duplicates, so every entry
+        two blocks covered arrived at twice its value: duplicating a full-rank
+        block turned an exact inverse into one with a relative error of 0.5.
+        The docstring called the summing desirable.
+        """
+        data = normal.data_space
+        indices = list(range(data.dim))
+        once = LocalisedPreconditioner(
+            [indices], rank=data.dim, rng=np.random.default_rng(3)
+        )(normal)
+        twice = LocalisedPreconditioner(
+            [indices, indices], rank=data.dim, rng=np.random.default_rng(3)
+        )(normal)
+
+        for _ in range(5):
+            vector = data.random(rng=rng)
+            assert data.norm(
+                data.subtract(twice(vector), once(vector))
+            ) == pytest.approx(0.0, abs=1e-8 * data.norm(once(vector)))
+            # And so it is still the exact inverse, which summing was not.
+            assert data.norm(
+                data.subtract(normal(twice(vector)), vector)
             ) == pytest.approx(0.0, abs=1e-8 * data.norm(vector))
 
     def test_a_correlated_error_is_approximated_by_its_diagonal(self, setup, rng):
@@ -511,6 +538,60 @@ class TestInvariantDistancePreconditioner:
         space, points, forward, prior, normal = sphere
         with pytest.raises(ValueError, match="points are the data"):
             InvariantDistancePreconditioner(space, points[:-1], 0.3)(normal)
+
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_it_is_exact_on_a_weighted_data_space(self, sphere, weighted, rng):
+        """Keep every pair and drop the taper and the shortcut is not an
+        approximation at all, so applying it to ``N y`` must return ``y``.
+
+        The table ``k(d_ij)`` is the covariance of the *components*, which is
+        ``C_c G^-1``; the Galerkin matrix the solve wants is ``G K G``. Without
+        those two factors this was right only when ``G == I``: on a weighted
+        data space the round trip came back with a relative error of 142.
+        """
+        from pygeoinf2.inference import InvariantDistancePreconditioner
+
+        space, points, forward, prior, _ = sphere
+        if weighted:
+            metric = rng.uniform(0.5, 4.0, forward.codomain.dim)
+            data_space = WeightedSpace(metric)
+            forward = LinearOperator.from_callables(
+                forward.domain,
+                data_space,
+                lambda x, e=forward: e(x),
+                adjoint=lambda y, e=forward, g=metric: e.adjoint(g * y),
+            )
+        data_space = forward.codomain
+        error = GaussianMeasure.from_standard_deviation(data_space, 0.05)
+        normal = NormalOperator(forward, prior, error=error, formalism="data_space")
+
+        everything = np.pi * space.radius * 1.01
+        preconditioner = InvariantDistancePreconditioner(
+            space, points, everything, taper=False
+        )(normal)
+
+        vector = data_space.random(rng=rng)
+        recovered = preconditioner(normal(vector))
+        assert data_space.norm(
+            data_space.subtract(recovered, vector)
+        ) < 1e-8 * data_space.norm(vector)
+
+    def test_a_full_gram_data_space_is_refused(self, sphere):
+        """It would fill the sparse matrix in, so it says so."""
+        from pygeoinf2.inference import InvariantDistancePreconditioner
+
+        from .conftest import DenseMetricSpace
+
+        space, points, forward, prior, _ = sphere
+        size = forward.codomain.dim
+        root = np.tril(np.ones((size, size))) * 0.01 + np.identity(size)
+        dense = DenseMetricSpace(root @ root.T)
+        shifted = LinearOperator.from_callables(
+            forward.domain, dense, lambda x, e=forward: e(x)
+        )
+        normal = NormalOperator(shifted, prior, formalism="data_space")
+        with pytest.raises(ValueError, match="diagonal metric"):
+            InvariantDistancePreconditioner(space, points, 0.3)(normal)
 
 
 class TestGaspariCohn:

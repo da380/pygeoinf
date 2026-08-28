@@ -176,11 +176,16 @@ class BallIndicator(Functional):
         """
         Args:
             domain: the space.
-            radius: the ball's radius, which must be positive.
+            radius: the ball's radius, which must not be negative. Zero gives
+                the indicator of a single point, whose prox is the constant map
+                to the centre.
             centre: the ball's centre. Defaults to zero.
+
+        Raises:
+            ValueError: if the radius is negative.
         """
-        if radius <= 0.0:
-            raise ValueError("radius must be positive.")
+        if radius < 0.0:
+            raise ValueError("radius must not be negative.")
         super().__init__(domain)
         self._radius = float(radius)
         self._centre = domain.zero() if centre is None else centre
@@ -299,13 +304,15 @@ class _BallSupport(SupportFunction):
     def __init__(
         self, domain: HilbertSpace, /, *, radius: float = 1.0, centre: Any = None
     ) -> None:
-        if radius <= 0.0:
-            raise ValueError("radius must be positive.")
+        if radius < 0.0:
+            raise ValueError("radius must not be negative.")
         super().__init__(domain)
         self._radius = float(radius)
         self._centre = domain.zero() if centre is None else centre
 
     def _value(self, y: Any) -> float:
+        # At radius zero this is the point support ``(centre, y)``, which is
+        # what it should be: the support function of a single point.
         return self._radius * self.domain.norm(y) + self.domain.inner_product(
             self._centre, y
         )

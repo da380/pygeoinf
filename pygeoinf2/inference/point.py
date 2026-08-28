@@ -23,7 +23,9 @@ from typing import Any, Callable
 
 
 from ..algebra.operators import LinearOperator, Operator
+from ..geometry.sets import Subset
 from ..geometry.subspaces import AffineSubspace
+from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
 from ..numerics.root_find import Evaluation, RootResult, monotone_root
 from ..numerics.solvers import LinearSolver, resolve_solver
@@ -238,22 +240,42 @@ class LeastSquares(LinearPointEstimator):
         )
 
     def parameterised(
-        self, parameterisation: LinearOperator, /, **kwargs: Any
+        self, parameterisation: LinearOperator, /
     ) -> "LeastSquares":
-        """The same estimator restricted to a parameter space."""
+        """The same estimator restricted to a parameter space.
+
+        Args:
+            parameterisation: maps the parameter space into the model space.
+
+        Returns:
+            An estimator of the same kind on the parameterised problem.
+        """
         return type(self)(
-            self._problem.parameterised(parameterisation, **kwargs),
+            self._problem.parameterised(parameterisation),
             damping=self._damping,
             solver=self._solver,
             formalism=self._normal.formalism,
         )
 
     def data_reduced(
-        self, reduction: LinearOperator, /, **kwargs: Any
+        self,
+        reduction: LinearOperator,
+        /,
+        *,
+        error: ProbabilityMeasure | Subset | None = None,
     ) -> "LeastSquares":
-        """The same estimator with the data compressed by *reduction*."""
+        """The same estimator with the data compressed by *reduction*.
+
+        Args:
+            reduction: maps the data space to the reduced one.
+            error: the reduced error. Defaults to pushing the current one
+                forward, as on the problem itself.
+
+        Returns:
+            An estimator of the same kind on the reduced problem.
+        """
         return type(self)(
-            self._problem.data_reduced(reduction, **kwargs),
+            self._problem.data_reduced(reduction, error=error),
             damping=self._damping,
             solver=self._solver,
             formalism=self._normal.formalism,
@@ -322,9 +344,31 @@ class MinimumNorm(LeastSquares):
 
         Both fall out of :func:`~pygeoinf2.numerics.root_find.monotone_root`
         reporting which end it ran out at.
+
+        The third case is not saturation but failure: if the misfit never
+        reaches the threshold *from below*, no model fits and there is no
+        answer to give. That is refused rather than answered, on the same terms
+        as :class:`DiscrepancyPrinciple` — the two share one search.
+
+        Args:
+            data: the data vector.
+            level: the confidence level setting the misfit target.
+            iterations: the search's budget.
+            rtol: the search's bracket tolerance.
+
+        Returns:
+            A :class:`MinimumNorm` with its damping fixed at the value found.
+
+        Raises:
+            ValueError: when no model fits the data to the threshold.
         """
-        found = self.discrepancy_search(
-            data, level=level, iterations=iterations, rtol=rtol
+        found = _searched_damping(
+            self.family(),
+            self._problem,
+            data,
+            level=level,
+            iterations=iterations,
+            rtol=rtol,
         )
         return MinimumNorm(
             self._problem,
@@ -393,6 +437,47 @@ def _discrepancy_search(
         iterations=iterations,
         rtol=rtol,
     )
+
+
+def _searched_damping(
+    family: TikhonovFamily,
+    problem: LinearForwardProblem,
+    data: Any,
+    /,
+    *,
+    level: float = 0.95,
+    iterations: int = 60,
+    rtol: float = 1e-6,
+) -> RootResult:
+    """The discrepancy search, refusing data that no model fits.
+
+    Shared by :class:`DiscrepancyPrinciple` and :meth:`MinimumNorm.for_data`
+    so the two cannot disagree about the saturated cases. They did: where the
+    principle raised, ``for_data`` returned a damping of 1e-200 whose model had
+    a chi-squared of 5e7 against a target of 9.5 — the solution of a
+    numerically singular system, reported as an answer.
+
+    Raises:
+        ValueError: when the misfit does not reach its target at any damping.
+    """
+    found = _discrepancy_search(
+        family, problem, data, level=level, iterations=iterations, rtol=rtol
+    )
+    if found.exhausted == "low":
+        # No damping small enough brings the misfit to its target, so the
+        # principle has no solution: these data cannot be fitted to this level
+        # by any model this problem admits. v1 raises here too. The least-damped
+        # model is *not* a fallback — it solves a numerically singular system,
+        # and its size says nothing about the data.
+        target = problem.critical_chi_squared(level=level)
+        raise ValueError(
+            f"The data cannot be fitted to the chi-squared threshold at "
+            f"level {level}: the misfit is still {found.value:.4g} against a "
+            f"target of {target:.4g} at the smallest damping the normal "
+            f"operator survives. Lower the level, widen the model, or use "
+            f"LeastSquares with a chosen damping."
+        )
+    return found
 
 
 class DiscrepancyPrinciple(Operator):
@@ -495,22 +580,14 @@ class DiscrepancyPrinciple(Operator):
         if self._problem.chi_squared(model_space.zero(), data) <= target:
             # The zero model already fits, so it is the smallest that does.
             return model_space.zero(), 0.0, False
-        found = self.search(data)
-        if found.exhausted == "low":
-            # No damping small enough brings the misfit to its target, so the
-            # principle has no solution: these data cannot be fitted to this
-            # level by any model this problem admits. v1 raises here too. The
-            # least-damped model is *not* a fallback — it is the solution of a
-            # numerically singular system, and its size says nothing about the
-            # data.
-            raise ValueError(
-                f"The data cannot be fitted to the chi-squared threshold at "
-                f"level {self._level}: the misfit is still "
-                f"{found.value:.4g} against a target of {target:.4g} at the "
-                f"smallest damping the normal operator survives. Lower the "
-                f"level, widen the model, or use LeastSquares with a chosen "
-                f"damping."
-            )
+        found = _searched_damping(
+            self._family,
+            self._problem,
+            data,
+            level=self._level,
+            iterations=self._iterations,
+            rtol=self._rtol,
+        )
         return (
             self._family.model_from(found.solution),
             found.argument,

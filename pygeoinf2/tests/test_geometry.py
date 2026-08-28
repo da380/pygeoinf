@@ -14,6 +14,7 @@ from pygeoinf2.geometry import (
     Intersection,
     LinearSubspace,
     OrthogonalProjector,
+    Polytope,
     Union,
     UniversalSet,
 )
@@ -25,6 +26,7 @@ from pygeoinf2.testing import (
     check_traits,
 )
 
+from .conftest import make_dense_metric_space
 from .doubles import OpaqueSpace
 
 
@@ -118,9 +120,26 @@ class TestConvexProjections:
         with pytest.raises(ValueError, match="nonzero"):
             Hyperplane(X, X.zero())
 
-    def test_a_non_positive_radius_is_refused(self, X):
-        with pytest.raises(ValueError, match="positive"):
-            Ball(X, radius=0.0)
+    def test_a_negative_radius_is_refused(self, X):
+        with pytest.raises(ValueError, match="not be negative"):
+            Ball(X, radius=-1.0)
+
+    def test_a_zero_radius_is_the_single_point_at_the_centre(self, X, rng):
+        """The degenerate ball says "exactly this", which is what error-free
+        data are. Refusing it is what stopped the Backus routes running with no
+        error measure at all."""
+        centre = X.random(rng=rng)
+        point = Ball(X, radius=0.0, centre=centre)
+        elsewhere = X.add(centre, X.random(rng=rng))
+
+        assert point.contains(centre)
+        assert not point.contains(elsewhere)
+        assert X.norm(X.subtract(point.project(elsewhere), centre)) < 1e-12
+        # Its support function is the point support (centre, y).
+        direction = X.random(rng=rng)
+        assert point.support_function()(direction) == pytest.approx(
+            X.inner_product(centre, direction)
+        )
 
 
 class TestThreeViewsOfOneSet:
@@ -333,3 +352,69 @@ class TestSubspaces:
             nonsmooth=subspace.indicator(),
         )
         assert np.allclose(A(result.minimiser), value, atol=1e-7)
+
+
+class TestPolytopeProjection:
+    """The nearest point of an intersection of half-spaces, by Dykstra."""
+
+    def test_it_is_the_nearest_point_not_merely_a_feasible_one(self):
+        """The counterexample that showed cyclic projection was not a
+        projection: on ``{x <= 0}`` and ``{x + y <= 0}`` from ``(1, 0.5)`` it
+        returned ``(-0.25, 0.25)`` at squared distance 1.625, where the origin
+        is feasible at 1.25."""
+        space = EuclideanSpace(2)
+        polytope = Polytope(
+            space,
+            [
+                HalfSpace(space, np.array([1.0, 0.0])),
+                HalfSpace(space, np.array([1.0, 1.0])),
+            ],
+            outer=True,
+        )
+        point = np.array([1.0, 0.5])
+        projected = polytope.project(point)
+
+        assert projected == pytest.approx(np.zeros(2), abs=1e-10)
+        assert space.norm(space.subtract(point, projected)) ** 2 == pytest.approx(1.25)
+
+    @pytest.mark.parametrize(
+        "build", [lambda: EuclideanSpace(3), make_dense_metric_space]
+    )
+    def test_it_satisfies_the_projection_axioms(self, build, rng):
+        """Including on a non-diagonal Gram, where 'nearest' is nearest in the
+        space's own norm rather than in components."""
+        space = build()
+        polytope = Polytope(
+            space,
+            [
+                HalfSpace(space, space.from_components(normal), offset=offset)
+                for normal, offset in zip(
+                    [
+                        np.array([1.0, 0.2, -0.3]),
+                        np.array([-0.4, 1.0, 0.1]),
+                        np.array([0.2, -0.5, 1.0]),
+                    ],
+                    [-0.2, 0.1, -0.3],
+                )
+            ],
+            outer=True,
+        )
+        check_projection(polytope, rng=rng)
+
+    def test_the_indicators_prox_is_that_projection(self, rng):
+        """The reason it has to be the projection: a proximal method takes this
+        as the prox, and a prox that is not the projection has the wrong fixed
+        point."""
+        space = EuclideanSpace(2)
+        polytope = Polytope(
+            space,
+            [
+                HalfSpace(space, np.array([1.0, 0.0])),
+                HalfSpace(space, np.array([1.0, 1.0])),
+            ],
+            outer=True,
+        )
+        point = np.array([1.0, 0.5])
+        assert polytope.indicator().prox(point, 0.7) == pytest.approx(
+            polytope.project(point), abs=1e-10
+        )

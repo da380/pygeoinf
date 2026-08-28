@@ -348,21 +348,41 @@ class Polytope(ConvexSet):
         )
 
     def project(self, x: Any, /, *, iterations: int = 200) -> Any:
-        """The nearest point, by cyclic projection onto the half-spaces.
+        """The nearest point of the polytope, by Dykstra's algorithm.
 
-        Dykstra's algorithm would be needed for the exact nearest point;
-        alternating projection converges to *a* point of the intersection,
-        which is what a feasibility question wants. The distinction is named
-        rather than hidden.
+        Cycling the half-space projections on their own — alternating
+        projection — reaches *a* feasible point, not the nearest one. On
+        ``{x <= 0} and {x + y <= 0}`` from ``(1, 0.5)`` it stops at
+        ``(-0.25, 0.25)`` at squared distance 1.625, where the nearest point is
+        the origin at 1.25. That matters because :meth:`indicator` hands this
+        to a proximal method as a prox, and a prox that is not the projection
+        gives the wrong fixed point.
+
+        Dykstra is the same cycle carrying one correction vector per
+        constraint: each is added back before its projection and re-formed
+        after it, which is what makes the limit the projection onto the
+        intersection rather than merely a point of it.
+
+        Args:
+            x: the point to project.
+            iterations: the maximum number of cycles. Each is one projection
+                per half-space.
+
+        Returns:
+            The nearest point of the polytope, to the accuracy the cycle
+            reached.
         """
-        current = x
+        space = self.domain
+        corrections = [space.zero() for _ in self._half_spaces]
+        current = space.copy(x)
         for _ in range(iterations):
-            previous = current
-            for plane in self._half_spaces:
-                current = plane.project(current)
-            if self.domain.norm(self.domain.subtract(current, previous)) <= 1e-12 * max(
-                self.domain.norm(current), 1.0
-            ):
+            start = space.copy(current)
+            for index, plane in enumerate(self._half_spaces):
+                shifted = space.add(current, corrections[index])
+                current = plane.project(shifted)
+                corrections[index] = space.subtract(shifted, current)
+            moved = space.norm(space.subtract(current, start))
+            if moved <= 1e-14 * max(space.norm(current), 1.0):
                 break
         return current
 
@@ -430,11 +450,19 @@ class Ball(ConvexSet):
         """
         Args:
             domain: the space.
-            radius: the radius, which must be positive.
+            radius: the radius, which must not be negative. Zero is allowed and
+                gives the single point at the centre — the degenerate case that
+                says "exactly this", which is what error-free data are. Every
+                method below already does the right thing there: ``project``
+                and ``support_maximiser`` return the centre and ``contains``
+                admits it alone.
             centre: the centre. Defaults to zero.
+
+        Raises:
+            ValueError: if the radius is negative.
         """
-        if radius <= 0.0:
-            raise ValueError("radius must be positive.")
+        if radius < 0.0:
+            raise ValueError("radius must not be negative.")
         super().__init__(domain)
         self._radius = float(radius)
         self._centre = domain.zero() if centre is None else centre
@@ -782,15 +810,28 @@ class BallSurface(Subset):
         """The centre."""
         return self._centre
 
-    def contains(self, x: Any, /, *, tolerance: float = 1e-9) -> bool:
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
         """Whether a point lies on the surface, to a relative tolerance.
 
         Unlike a solid set, membership here is a measure-zero condition, so it
         is only ever meaningful up to a tolerance and the tolerance is a named
         argument rather than a hidden constant.
+
+        The keyword is ``rtol`` because that is what
+        :meth:`~pygeoinf2.geometry.sets.Subset.contains` declares, and every
+        set combinator calls it by that name: as ``tolerance`` this raised
+        ``TypeError`` inside any ``Intersection``, ``Union`` or ``Complement``
+        containing a surface.
+
+        Args:
+            x: the point to test.
+            rtol: the relative tolerance on the radius.
+
+        Returns:
+            True when the point lies on the surface to that tolerance.
         """
         distance = self.domain.norm(self.domain.subtract(x, self._centre))
-        return abs(distance - self._radius) <= tolerance * self._radius
+        return abs(distance - self._radius) <= rtol * self._radius
 
     def project(self, x: Any, /) -> Any:
         """The nearest point on the surface.
@@ -861,11 +902,22 @@ class EllipsoidSurface(Subset):
         """The centre."""
         return self._centre
 
-    def contains(self, x: Any, /, *, tolerance: float = 1e-9) -> bool:
-        """Whether a point lies on the surface, to a relative tolerance."""
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """Whether a point lies on the surface, to a relative tolerance.
+
+        Named ``rtol`` to match the abstract signature, so that the set
+        combinators can call it — see :meth:`BallSurface.contains`.
+
+        Args:
+            x: the point to test.
+            rtol: the relative tolerance on the Mahalanobis value.
+
+        Returns:
+            True when the point lies on the surface to that tolerance.
+        """
         offset = self.domain.subtract(x, self._centre)
         value = self.domain.inner_product(self._precision(offset), offset)
-        return abs(value - 1.0) <= tolerance
+        return abs(value - 1.0) <= rtol
 
     def __repr__(self) -> str:
         return f"EllipsoidSurface({self.domain!r})"

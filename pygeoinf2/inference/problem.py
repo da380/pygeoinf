@@ -198,6 +198,22 @@ class LinearForwardProblem(ForwardProblem):
 
         The joint inversion: the data space becomes the direct sum, and the
         errors are taken to be independent between data sets.
+
+        Either every problem carries an error measure or none does. A mixture
+        of the two is refused rather than resolved: the only way to combine
+        them is to drop the errors that exist, which would make noisy data look
+        exact and quietly overweight them in every inversion built on the
+        result.
+
+        Args:
+            problems: the problems to join. They must share a model space.
+
+        Returns:
+            The joint problem, on the direct sum of the data spaces.
+
+        Raises:
+            ValueError: if no problems are given, if they do not share a model
+                space, or if some carry an error measure and others do not.
         """
         problems = tuple(problems)
         if not problems:
@@ -209,11 +225,22 @@ class LinearForwardProblem(ForwardProblem):
         operator = ColumnLinearOperator(
             [problem.forward_operator for problem in problems]
         )
-        if all(problem.has_error for problem in problems):
+        carries_error = [problem.has_error for problem in problems]
+        if all(carries_error):
             from ..probability.gaussian import GaussianMeasure as Gaussian
 
             error = Gaussian.from_product(
                 [problem.error_measure for problem in problems]
+            )
+        elif any(carries_error):
+            without = [i for i, has in enumerate(carries_error) if not has]
+            raise ValueError(
+                f"Every problem needs an error measure, or none may: "
+                f"problems {without} have none while the others do. Joining "
+                f"them can only be done by discarding the errors that exist, "
+                f"which would present noisy data as exact. Give the exact "
+                f"members an error measure — a small one says 'exact' without "
+                f"lying — or build the joint problem without errors."
             )
         else:
             error = None

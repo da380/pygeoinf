@@ -37,7 +37,9 @@ from numpy.random import Generator
 
 from ..algebra.operators import AffineOperator, LinearOperator
 from ..numerics.randomised import random_svd
+from ..geometry.sets import Subset
 from ..numerics.solvers import LinearSolver, resolve_solver
+from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 from .estimators import GaussianEstimator
@@ -302,7 +304,6 @@ class LinearGaussianInversion(GaussianEstimator):
         /,
         *,
         prior: GaussianMeasure,
-        **kwargs: Any,
     ) -> "LinearGaussianInversion":
         """The same inversion restricted to a parameter space.
 
@@ -310,20 +311,41 @@ class LinearGaussianInversion(GaussianEstimator):
         preconditioner but a smaller *problem*, whose answer is a different
         (and generally worse) estimate; the point is that it may be the only
         one that fits in memory.
+
+        Args:
+            parameterisation: maps the parameter space into the model space.
+            prior: the prior on the parameters. Required: pulling the model
+                prior back through the parameterisation is not a pull-back and
+                would be a different measure.
+
+        Returns:
+            The inversion of the parameterised problem.
         """
-        reduced = self._problem.parameterised(parameterisation, **kwargs)
+        reduced = self._problem.parameterised(parameterisation)
         return LinearGaussianInversion(
             reduced, prior, solver=self._solver, formalism=self._formalism
         )
 
     def data_reduced(
-        self, reduction: LinearOperator, /, **kwargs: Any
+        self,
+        reduction: LinearOperator,
+        /,
+        *,
+        error: ProbabilityMeasure | Subset | None = None,
     ) -> "LinearGaussianInversion":
         """The same inversion with the data compressed by *reduction*.
 
         ``R A`` in place of ``A``, with the error measure pushed through.
+
+        Args:
+            reduction: maps the data space to the reduced one.
+            error: the reduced error. Defaults to pushing the current one
+                forward, as on the problem itself.
+
+        Returns:
+            The inversion of the reduced problem.
         """
-        reduced = self._problem.data_reduced(reduction, **kwargs)
+        reduced = self._problem.data_reduced(reduction, error=error)
         return LinearGaussianInversion(
             reduced, self._prior, solver=self._solver, formalism=self._formalism
         )
