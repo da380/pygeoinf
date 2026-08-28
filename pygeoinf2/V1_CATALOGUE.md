@@ -208,14 +208,14 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `SubgradientDescent`, `SubgradientResult` | Ported | `SubgradientDescent`, `_ConvexResult` | |
 | `Cut`, `Bundle` | Ported | M5 stage 5.9 | |
 | `ProximalBundleMethod`, `LevelBundleMethod`, `BundleResult` | Ported (proximal) | M5 stage 5.9 — the dual route for a general convex prior | |
-| `QPSolver`, `QPResult` | Dropped | Per DESIGN 22.7: nothing left in v2 poses a general QP. The bundle subproblem is solved on the simplex inside `ProximalBundleMethod` | |
-| `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Dropped | Per DESIGN 22.7, with `QPSolver`. Worth revisiting only if the bundle subproblem's accuracy becomes the limiting factor | |
+| `QPSolver`, `QPResult` | Being restored | **D-13**, Phase 4. DESIGN 22.7 argued nothing left in v2 poses a general QP, and the decision went the other way: this is Mag's code and it comes back, as a solver strategy in `numerics.convex` selectable by `method=`. Nothing in it is cut without his agreement | |
+| `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Being restored | **D-13**, with `QPSolver` and `best_available_qp_solver`. Coordinates are fine here: the QP lives in a finite-dimensional, canonically Euclidean space | |
 | `best_available_qp_solver` | Planned | M5 stage 5.9 | |
-| `PrimalKKTSolver`, `KKTResult` | Subsumed | `monotone_root` and `ProximalBundleMethod`, as used in `inference/backus.py`. The KKT system v1 solved by hand is the damping sweep plus the bundle subproblem | |
+| `PrimalKKTSolver`, `KKTResult` | Being restored | **D-13**, Phase 4. `monotone_root` and `ProximalBundleMethod` cover the same ground, which is why this was marked subsumed -- but the decision is that it comes back as an alternative `method=`, not that it is replaced. It is `work/sphere_dli_example.py`'s solver | |
 | `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Planned | M5 stage 5.9 | |
 | `ChambollePockSolver`, `ChambollePockResult` | Planned | M5 stage 5.9 | |
-| `solve_support_values` | Subsumed | Support-function evaluation on a `ConvexSet`, over `ProximalBundleMethod` | |
-| `solve_primal_feasibility` | Subsumed | The inclusion test of DESIGN 18.5, over the same machinery | |
+| `solve_support_values` | Being restored | **D-13**, Phase 4, with its warm start across directions -- which is the part `ProximalBundleMethod` does not have | |
+| `solve_primal_feasibility` | Being restored | **D-13**, Phase 4, with `ChambollePockSolver`. The inclusion test of DESIGN 18.5 | |
 
 ## `subsets.py` → `geometry/sets.py`, `geometry/convex.py`
 
