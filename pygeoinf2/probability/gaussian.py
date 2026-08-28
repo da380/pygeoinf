@@ -128,6 +128,18 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         The factor's domain is the space itself, so the sample draws white
         noise with respect to the space's inner product. This is the
         construction v1 gets wrong on a mass-weighted space.
+
+        Args:
+            domain: the space.
+            standard_deviation: one number, this being an isotropic measure.
+            expectation: the mean. Zero if omitted.
+
+        Returns:
+            The measure, carrying both a factor and a precision factor.
+
+        Raises:
+            ValueError: for a non-positive or non-scalar deviation. Use
+                from_standard_deviations for one per component.
         """
         if np.ndim(standard_deviation) != 0:
             raise ValueError(
@@ -206,6 +218,18 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Coordinate-free: the covariance is a sum of outer products, and its
         factor maps a Euclidean coefficient vector onto the deviations.
+
+        Args:
+            domain: the space.
+            samples: the draws to estimate from.
+
+        Returns:
+            The measure, whose covariance has rank at most one less than the
+            number of samples -- a fact about the estimate, not a defect.
+
+        Raises:
+            ValueError: for fewer than two samples, there being no covariance
+                of one.
         """
         n = len(samples)
         if n < 2:
@@ -322,6 +346,20 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         implies it (DESIGN.md 5.3). The Galerkin form is the natural one here:
         a covariance is self-adjoint, so that is the representation in which it
         is symmetric, and the one a Cholesky factorisation wants.
+
+        Args:
+            domain: the space.
+            matrix: the covariance, as an array.
+            form: which representation *matrix* is in. No default: guessing
+                wrong is a silent error of one factor of the Gram matrix.
+            expectation: the mean. Zero if omitted.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: for an unknown form, a wrongly shaped matrix, or one
+                not symmetric positive semidefinite in that representation.
         """
         require_coordinates(domain)
         matrix = np.asarray(matrix, dtype=float)
@@ -397,7 +435,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return self._sample_fn is not None or self._covariance_factor is not None
 
     def sample(self, *, rng: Generator | None = None) -> X:
-        """One draw, as ``m + L xi`` with ``xi`` white noise on the factor's domain."""
+        """One draw, as ``m + L xi`` with ``xi`` white noise on the factor's domain.
+
+        Args:
+            rng: the generator.
+
+        Returns:
+            A vector of the domain.
+
+        Raises:
+            NotImplementedError: if the measure has a covariance but no
+                factor and no explicit sampler. A covariance says what the
+                spread is; drawing from it needs a square root.
+        """
         if self._sample_fn is not None:
             value = self._sample_fn(rng)
         elif self._covariance_factor is not None:
@@ -432,7 +482,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         return None
 
     def hilbert_schmidt_norm(self, /, *, method: str = "auto") -> float:
-        """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``."""
+        """The Hilbert-Schmidt norm of the covariance, ``sqrt(tr(C* C))``.
+
+        Args:
+            method: ``"dense"`` forms the matrix, ``"stochastic"`` estimates
+                the trace, ``"auto"`` picks by dimension.
+
+        Returns:
+            The norm.
+        """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
             return float(np.sqrt(np.sum(eigenvalues**2)))
@@ -448,6 +506,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         For a covariance this is the trace, since it is positive semidefinite —
         the total variance of the measure.
+
+        Args:
+            method: as for :meth:`hilbert_schmidt_norm`.
+
+        Returns:
+            The norm.
         """
         eigenvalues = self._diagonal_eigenvalues()
         if eigenvalues is not None and method in ("auto", "diagonal"):
@@ -521,6 +585,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         The value alone. :meth:`kl_divergence_estimate` returns it with the
         uncertainty, which is the thing to use when the route is stochastic.
+
+        Args:
+            other: the measure to compare against.
+            method: ``"dense"``, ``"spectral"``, ``"stochastic"``, or
+                ``"auto"``. ``"auto"`` refuses rather than going stochastic
+                silently -- an estimate reported as a bare number is the one
+                way this quantity misleads.
+            solver: how to invert the other's covariance, where needed.
+            samples: probes for the stochastic route.
+            dense_limit: the dimension below which the dense route is taken.
+
+        Returns:
+            The divergence.
         """
         return self.kl_divergence_estimate(
             other,
@@ -592,6 +669,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         Returns:
             An :class:`~pygeoinf2.numerics.randomised.Estimate`. The exact
             routes report a standard error of zero.
+
+        Raises:
+            ValueError: for an unknown method; if the two measures live on
+                different spaces; or, under ``"auto"``, when only the
+                stochastic route is available -- which is refused rather than
+                taken silently.
         """
         from ..numerics.functional_calculus import log_determinant
         from ..numerics.randomised import Estimate, random_trace
@@ -718,6 +801,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         covariance is multiplied by a scalar chosen so that one direction comes
         out right. Every other variance moves by the same factor, which is what
         makes it a recalibration rather than a change of shape.
+
+        Returns:
+            The rescaled measure, of the same class.
+
+        Raises:
+            ValueError: for a non-positive target variance, or a direction in
+                which this measure has none -- there being no factor that
+                would give it one.
         """
         current = self.directional_variance(direction)
         if current <= 0.0:
@@ -749,6 +840,19 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         The point is to be cheap rather than to be accurate: this is how a
         surrogate is built when no cheaper physics is available. See
         :meth:`~pygeoinf2.inference.gaussian.LinearGaussianInversion.low_rank_surrogate`.
+
+        Args:
+            rank: how many eigenpairs to keep.
+            rng: the generator for the probes.
+            **kwargs: passed to the randomised routine.
+
+        Returns:
+            A measure whose covariance has that rank, and which can be
+            sampled -- the factor comes out of the same decomposition.
+
+        Raises:
+            ValueError: for a rank above the dimension, or a measure with no
+                covariance to approximate.
         """
         from ..numerics.randomised import random_cholesky
 
@@ -788,6 +892,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         The covariance itself is left alone. Only the precision is regularised,
         so the two are deliberately *not* inverses of each other and the
         measure says so by construction.
+
+        Args:
+            damping: the floor added to the spectrum before inverting. Larger
+                is better conditioned and further from the true precision.
+
+        Returns:
+            The measure with a regularised precision.
+
+        Raises:
+            ValueError: for non-positive damping, or a measure with no
+                covariance to regularise the inverse of.
         """
         if damping < 0.0:
             raise ValueError(f"The damping must be non-negative, got {damping}.")
@@ -817,6 +932,18 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         localisation there is and it does not preserve positive definiteness —
         so the result is checked, and refused if it has stopped being a
         covariance rather than being returned as one.
+
+        Args:
+            threshold: entries below this fraction of their row's diagonal are
+                dropped.
+            form: which matrix to threshold.
+
+        Returns:
+            The measure with a sparsified covariance.
+
+        Raises:
+            ValueError: if the result is no longer positive semidefinite --
+                which thresholding can do, and is why it is checked.
         """
         require_coordinates(self._domain)
         if not 0.0 <= threshold < 1.0:
@@ -858,6 +985,13 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
 
         Args:
             level: the probability the region carries, in ``(0, 1)``.
+
+        Returns:
+            The credible ellipsoid.
+
+        Raises:
+            ValueError: for a level outside ``(0, 1)``, or a measure with no
+                covariance.
         """
         from scipy.stats import chi2
 
@@ -916,6 +1050,14 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         The radius is a quantile of ``sum_i lambda_i Z_i^2`` with the
         covariance's eigenvalues as weights, which is not a chi-square unless
         the measure is isotropic.
+
+        Args:
+            level: the probability the ball carries, in ``(0, 1)``.
+            method: how to invert that weighted chi-squared -- see
+                :func:`~pygeoinf2.numerics.quadratic_forms.weighted_chi2_quantile`.
+
+        Returns:
+            A ball containing the credible region.
         """
         from ..geometry.convex import Ball
         from ..numerics.quadratic_forms import weighted_chi2_quantile
@@ -1166,6 +1308,15 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         reaching it silently would mean a cubic cost incurred by a method that
         looks like a quadratic form. Regularise one into existence with
         :meth:`with_regularized_inverse` if that is what you want.
+
+        Args:
+            x: the vector to measure.
+
+        Returns:
+            The squared distance.
+
+        Raises:
+            ValueError: if the measure has no precision.
         """
         if self._precision is None:
             raise NotImplementedError(
@@ -1238,6 +1389,16 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         No Riesz map is applied here because none is needed: the precision maps
         the space to itself, so its output is a vector. That is the whole
         content of DESIGN.md section 5.6 in its most agreeable form.
+
+        Args:
+            x: where to evaluate it.
+
+        Returns:
+            The gradient, a vector of the domain.
+
+        Raises:
+            ValueError: if the measure has no precision, the gradient being
+                ``-P (x - m)``.
         """
         if self._precision is None:
             raise NotImplementedError(
