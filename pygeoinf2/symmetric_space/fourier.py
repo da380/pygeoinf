@@ -223,6 +223,10 @@ class PeriodicBox(SymmetricSpace):
     def _key(self) -> Hashable:
         return (self._shape, self._lengths, self._order, self._length_scale)
 
+    def _coordinate_key(self) -> Hashable:
+        """The grid, which the order and length scale do not touch."""
+        return (type(self), self._shape, self._lengths)
+
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
         return f"PeriodicBox({self._shape}, {kind})"

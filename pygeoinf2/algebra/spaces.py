@@ -28,6 +28,7 @@ __all__ = [
     "CoordinateSpace",
     "DiagonalMetricSpace",
     "HilbertModule",
+    "MassWeightedSpace",
     "require_module",
     "OrthonormalSpace",
     "EuclideanSpace",
@@ -82,6 +83,20 @@ class HilbertSpace[V](ABC):
         equality is object identity, so a key containing one makes two
         mathematically identical spaces compare unequal.
         """
+
+    def shares_vectors_with(self, other: "HilbertSpace", /) -> bool:
+        """Whether *other*'s vectors are usable here without conversion.
+
+        Two spaces can hold the same vectors and differ only in their inner
+        product — a Sobolev space and the Lebesgue space over the same grid,
+        or a mass-weighted space and its base. Where that is so, moving a
+        vector between them is a no-op rather than a round trip through
+        components, which on a spectral space is two transforms.
+
+        Conservative by default: only a space itself. A family that knows
+        better says so.
+        """
+        return self is other
 
     @abstractmethod
     def zero(self) -> V:
@@ -488,6 +503,148 @@ def require_module(*spaces: HilbertSpace) -> None:
                 f"multiplication, and this operation requires it. Its vectors "
                 f"are not functions on a common domain."
             )
+
+
+class MassWeightedSpace[V](HilbertSpace[V]):
+    """``(x, y)_V == (M x, y)_base``, for a positive definite mass operator.
+
+    The construction DESIGN.md section 3.5 sets against the Gram matrix, and
+    the distinction is worth restating because they are easy to confuse:
+
+    =========================  =========================================
+    ``CoordinateSpace`` Gram   the inner product against the *components*
+    a mass operator            one inner product against *another*, on the
+                               same vectors
+    =========================  =========================================
+
+    Only the first is automatic. This is the second, and it needs no
+    coordinates at all — just the base's inner product and ``M`` — so it works
+    over a backend that has no component map. When the base *does* have
+    coordinates so does this, and the two compose: the Gram matrix here is the
+    base's times the mass operator's.
+
+    Chaining these is how the concrete spaces are built. v1's are exactly such
+    a chain: component-Euclidean, then L2 with a diagonal Gram, then Sobolev
+    through an invariant mass operator on L2.
+
+    The point of having it is :meth:`LinearOperator.from_formal_adjoint`: it is
+    usually far easier to write down an operator's adjoint with respect to the
+    *base* inner product than the weighted one, and the lift is exact.
+    """
+
+    def __init__(
+        self,
+        base: HilbertSpace[V],
+        mass: "LinearOperator",
+        /,
+        *,
+        mass_solver: object | None = None,
+    ) -> None:
+        """
+        Args:
+            base: the space whose inner product is being reweighted.
+            mass: ``M``, an operator on *base* claiming SELF_ADJOINT and
+                POSITIVE_DEFINITE. The claims are the caller's; verify them
+                with :func:`~pygeoinf2.testing.check_traits`.
+            mass_solver: how to apply ``M^-1``, which the lifted adjoint needs.
+                A :class:`~pygeoinf2.numerics.solvers.LinearSolver`, or an
+                operator that *is* the inverse. Defaults to conjugate
+                gradients, and is free when the mass operator is diagonal.
+
+                v1 makes the caller supply ``inverse_mass_operator`` outright;
+                deriving it is one fewer thing to get wrong, and it makes the
+                construction usable when the inverse has no closed form.
+
+        Raises:
+            ValueError: if the mass operator is not an endomorphism of *base*,
+                or does not claim positive definiteness.
+        """
+        from ..traits import Traits as _Traits
+
+        if mass.domain != base or mass.codomain != base:
+            raise ValueError(
+                f"The mass operator must map {base!r} to itself; it maps "
+                f"{mass.domain!r} to {mass.codomain!r}."
+            )
+        required = _Traits.SELF_ADJOINT | _Traits.POSITIVE_DEFINITE
+        missing = required & ~mass.traits
+        if missing:
+            raise ValueError(
+                f"The mass operator must claim {required!s}; it claims "
+                f"{mass.traits!s} (missing {missing!s}). Attach the traits "
+                f"with with_traits() and verify them with "
+                f"testing.check_traits()."
+            )
+        self._base = base
+        self._mass = mass
+        self._mass_solver = mass_solver
+
+    @property
+    def base(self) -> HilbertSpace[V]:
+        """The space whose inner product is being reweighted."""
+        return self._base
+
+    @property
+    def mass(self) -> "LinearOperator":
+        """``M``, the operator defining the weighting."""
+        return self._mass
+
+    @cached_property
+    def mass_inverse(self) -> "LinearOperator":
+        """``M^-1``, from the solver, built once."""
+        from ..numerics.solvers import CGSolver, LinearSolver
+
+        solver = self._mass_solver
+        if solver is None:
+            solver = CGSolver()
+        if isinstance(solver, LinearSolver):
+            return solver(self._mass)
+        return solver
+
+    @property
+    def dim(self) -> int:
+        """The base's dimension: reweighting does not change the vectors."""
+        return self._base.dim
+
+    def _key(self) -> Hashable:
+        return (self._base, id(self._mass))
+
+    def shares_vectors_with(self, other: HilbertSpace, /) -> bool:
+        """True for the base and for anything the base shares vectors with."""
+        if self is other:
+            return True
+        if other is self._base or self._base.shares_vectors_with(other):
+            return True
+        return isinstance(other, MassWeightedSpace) and self._base.shares_vectors_with(
+            other.base
+        )
+
+    def zero(self) -> V:
+        """The base's zero vector."""
+        return self._base.zero()
+
+    def copy(self, x: V) -> V:
+        """Delegated: the vectors are the base's."""
+        return self._base.copy(x)
+
+    def inner_product(self, x: V, y: V) -> float:
+        """``(M x, y)_base``."""
+        return self._base.inner_product(self._mass(x), y)
+
+    def axpy(self, a: float, x: V, y: V) -> V:
+        """Delegated: linear structure is unchanged by the weighting."""
+        return self._base.axpy(a, x, y)
+
+    def scale_inplace(self, a: float, x: V) -> V:
+        """Delegated."""
+        return self._base.scale_inplace(a, x)
+
+    def random(self, *, rng: Generator | None = None) -> V:
+        """Delegated. Not a white-noise draw; see :meth:`white_noise`."""
+        return self._base.random(rng=rng)
+
+    def __repr__(self) -> str:
+        return f"MassWeightedSpace({self._base!r})"
 
 
 class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):

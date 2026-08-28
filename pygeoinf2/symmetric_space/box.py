@@ -114,6 +114,10 @@ class Box(PeriodicBox):
             self._length_scale,
         )
 
+    def _coordinate_key(self) -> Hashable:
+        """The grid, which the order and length scale do not touch."""
+        return (type(self), self._shape, self._bounds, self._padding)
+
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
         return f"Box({self._shape}, bounds={self._bounds}, {kind})"

@@ -663,3 +663,121 @@ class TestMatrixLinearOperator:
             LinearOperator.from_matrix(space, space, np.identity(3))
         with pytest.raises(ValueError, match="components' or 'galerkin"):
             LinearOperator.from_matrix(space, space, np.identity(3), form="derivative")
+
+
+class TestFormalAdjointLift:
+    """Reusing an operator, and its adjoint, under a different inner product."""
+
+    def test_it_lifts_between_sobolev_orders(self, rng):
+        from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev
+        from pygeoinf2.testing import check_operator
+
+        pytest.importorskip("pyshtools")
+        base = Lebesgue(12)
+        target = Sobolev(12, 2.0, 0.2)
+        operator = LinearOperator.from_matrix(
+            base, base, rng.normal(size=(base.dim, base.dim)), form="components"
+        )
+        lifted = LinearOperator.from_formal_adjoint(target, target, operator)
+
+        # Same action, adjoint taken in the new inner product.
+        probe = target.random(rng=rng)
+        assert lifted(probe) == pytest.approx(operator(probe))
+        check_operator(lifted, rng=rng)
+
+    def test_it_lifts_onto_a_direct_sum_with_a_euclidean_summand(self, rng):
+        """pyslfp's central idiom, which had no equivalent at all.
+
+        Its fingerprint operator maps a ``EuclideanSpace(2)`` of parameters into
+        a direct sum of three Sobolev fields and a pair of scalars, and it is
+        built on the L2 spaces and lifted. ``lift_formal_adjoint`` accepts only
+        a single symmetric space on each side, so neither shape was reachable.
+        """
+        from pygeoinf2.algebra.direct_sum import DirectSum
+        from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev
+        from pygeoinf2.testing import check_operator
+
+        pytest.importorskip("pyshtools")
+        base_field, field = Lebesgue(10), Sobolev(10, 2.0, 0.2)
+        scalars = EuclideanSpace(2)
+        base = DirectSum([base_field, base_field, base_field, scalars])
+        target = DirectSum([field, field, field, scalars])
+
+        columns = [base.random(rng=rng) for _ in range(2)]
+
+        def value(c):
+            out = base.zero()
+            for weight, column in zip(c, columns):
+                out = base.axpy(float(weight), column, out)
+            return out
+
+        def adjoint(y):
+            return np.array([base.inner_product(column, y) for column in columns])
+
+        operator = LinearOperator.from_callables(scalars, base, value, adjoint=adjoint)
+        lifted = LinearOperator.from_formal_adjoint(scalars, target, operator)
+
+        assert lifted.domain is scalars
+        check_operator(lifted, rng=rng)
+
+    def test_the_forward_action_costs_nothing_extra(self, rng):
+        """Only the adjoint is reweighted, so on a shared grid the forward
+        action is the operator's own and nothing else. It used to round-trip
+        through components on both sides, four transforms per application doing
+        no work."""
+        pyshtools = pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev
+
+        counts = {"n": 0}
+        originals = {}
+        for name in ("SHExpandDH", "MakeGridDH"):
+            originals[name] = getattr(pyshtools.expand, name)
+
+            def wrap(inner):
+                def counted(*args, **kwargs):
+                    counts["n"] += 1
+                    return inner(*args, **kwargs)
+
+                return counted
+
+            setattr(pyshtools.expand, name, wrap(originals[name]))
+        try:
+            base, target = Lebesgue(12), Sobolev(12, 2.0, 0.2)
+            lifted = LinearOperator.from_formal_adjoint(
+                target, target, LinearOperator.identity(base)
+            )
+            probe = target.random(rng=rng)
+            counts["n"] = 0
+            lifted(probe)
+            forward = counts["n"]
+        finally:
+            for name, inner in originals.items():
+                setattr(pyshtools.expand, name, inner)
+        assert forward == 0
+
+    def test_a_mass_weighted_space_lifts_without_coordinates(self, rng):
+        """The coordinate-free route, which is what the construction is for:
+        a mass-weighted space over a backend with no component map."""
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+        from pygeoinf2.testing import check_operator
+
+        base = EuclideanSpace(4)
+        mass = DiagonalLinearOperator(base, np.array([1.0, 4.0, 9.0, 0.25]))
+        weighted = MassWeightedSpace(base, mass)
+        operator = LinearOperator.from_matrix(
+            base, base, rng.normal(size=(4, 4)), form="components"
+        )
+        lifted = LinearOperator.from_formal_adjoint(weighted, weighted, operator)
+
+        probe = weighted.random(rng=rng)
+        assert lifted(probe) == pytest.approx(operator(probe))
+        check_operator(lifted, rng=rng)
+
+    def test_mismatched_dimensions_are_refused(self, rng):
+        base = EuclideanSpace(4)
+        operator = LinearOperator.from_matrix(
+            base, base, np.identity(4), form="components"
+        )
+        with pytest.raises(ValueError, match="same vectors"):
+            LinearOperator.from_formal_adjoint(EuclideanSpace(5), base, operator)

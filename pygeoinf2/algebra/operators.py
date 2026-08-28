@@ -55,6 +55,123 @@ def _as_matrix(matrix: Any) -> Any:
     return np.asarray(matrix, dtype=float)
 
 
+class _Mass:
+    """A mass operator relating two inner products, and its inverse.
+
+    Held as a pair of callables rather than as operators, because for the
+    common cases — the identity, and a metric ratio applied through
+    ``apply_gram``/``solve_gram`` — there is no operator to build.
+    """
+
+    __slots__ = ("forward", "inverse")
+
+    def __init__(self, forward: Any, inverse: Any) -> None:
+        self.forward = forward
+        self.inverse = inverse
+
+
+def _identity_mass() -> _Mass:
+    """No reweighting."""
+    return _Mass(lambda x: x, lambda x: x)
+
+
+def _relating_mass(target: HilbertSpace, base: HilbertSpace) -> _Mass:
+    """``M`` on *base* with ``(x, y)_target == (M x, y)_base``, and ``M^-1``.
+
+    Recursive, because a direct sum's mass is the block diagonal of its
+    summands' and a response space of several fields is exactly that.
+
+    Raises:
+        ValueError: if the two spaces hold different vectors, so that no mass
+            operator relates them.
+    """
+    from .direct_sum import DirectSum
+    from .spaces import CoordinateSpace, MassWeightedSpace
+
+    if target is base or target == base:
+        return _identity_mass()
+
+    if target.dim != base.dim:
+        raise ValueError(
+            f"Cannot relate {target!r} to {base!r}: dimensions {target.dim} "
+            f"and {base.dim} differ, so they do not hold the same vectors."
+        )
+
+    if isinstance(target, MassWeightedSpace) and target.base == base:
+        mass, inverse = target.mass, target.mass_inverse
+        return _Mass(mass, inverse)
+
+    if isinstance(target, DirectSum) and isinstance(base, DirectSum):
+        if len(target) != len(base):
+            raise ValueError(
+                f"Cannot relate {target!r} to {base!r}: {len(target)} summands "
+                f"against {len(base)}."
+            )
+        parts = [
+            _relating_mass(one, other)
+            for one, other in zip(target.subspaces, base.subspaces)
+        ]
+
+        def blockwise(which: str) -> Any:
+            def apply(x: Any) -> Any:
+                return tuple(
+                    getattr(part, which)(component) for part, component in zip(parts, x)
+                )
+
+            return apply
+
+        return _Mass(blockwise("forward"), blockwise("inverse"))
+
+    if isinstance(target, CoordinateSpace) and isinstance(base, CoordinateSpace):
+        # M has component matrix G_base^-1 G_target, applied through the two
+        # Gram actions so that nothing is assembled. Both are pointwise on a
+        # diagonal metric, which is the usual case.
+        def forward(x: Any) -> Any:
+            components = target.to_components(x)
+            return base.from_components(base.solve_gram(target.apply_gram(components)))
+
+        def inverse(x: Any) -> Any:
+            components = base.to_components(x)
+            return target.from_components(
+                target.solve_gram(base.apply_gram(components))
+            )
+
+        return _Mass(forward, inverse)
+
+    raise ValueError(
+        f"Cannot relate {target!r} to {base!r}: neither is mass-weighted over "
+        f"the other, they are not direct sums of spaces that are, and at least "
+        f"one has no component map. Wrap one in a MassWeightedSpace, or supply "
+        f"the adjoint directly with from_callables."
+    )
+
+
+def _transfer(source: HilbertSpace, target: HilbertSpace) -> Any:
+    """Move a vector from *source* to *target*, as cheaply as they allow.
+
+    A no-op when the two hold the same vectors, which is the case that matters:
+    on a spectral space the round trip through components is two transforms per
+    application, and the lift would pay four for nothing.
+    """
+    from .spaces import CoordinateSpace
+
+    # Asked both ways round: holding the same vectors is symmetric, but only
+    # one of the two spaces may be in a position to know it -- a mass-weighted
+    # space knows its base, and the base knows nothing of the weighting.
+    if (
+        source is target
+        or target.shares_vectors_with(source)
+        or source.shares_vectors_with(target)
+    ):
+        return lambda x: x
+    if isinstance(source, CoordinateSpace) and isinstance(target, CoordinateSpace):
+        return lambda x: target.from_components(source.to_components(x))
+    raise ValueError(
+        f"Cannot move a vector from {source!r} to {target!r}: they do not "
+        f"share vectors and at least one has no component map."
+    )
+
+
 def require_coordinates(*spaces: HilbertSpace) -> None:
     """Raise unless every space provides a coordinate map.
 
@@ -851,6 +968,138 @@ class LinearOperator[X, Y](Operator[X, Y]):
         traits = Traits.NONE
         if domain == codomain and u is v:
             traits = Traits.POSITIVE_SEMIDEFINITE
+        return _CallableLinearOperator(
+            domain, codomain, value, adjoint=adjoint, traits=traits
+        )
+
+    @classmethod
+    def from_formal_adjoint(
+        cls,
+        domain: HilbertSpace[X],
+        codomain: HilbertSpace[Y],
+        operator: LinearOperator,
+        /,
+        *,
+        traits: Traits = Traits.NONE,
+    ) -> LinearOperator[X, Y]:
+        """Reuse an operator, and its adjoint, under a different inner product.
+
+        The workflow this exists for: derive the action and the adjoint on the
+        space where both are easy — an L2 space, or whatever the discretisation
+        naturally gives — and then use the operator on the weighted space the
+        problem is actually posed in. Writing the weighted adjoint directly is
+        usually much harder and is the step most often got wrong.
+
+        With ``(x, y)_V == (M x, y)_U`` on each side, requiring
+        ``(A x, y)_{V_Y} == (x, A^{*V} y)_{V_X}`` gives
+
+        .. code-block:: text
+
+            A^{*V} == M_X^-1 . A^{*U} . M_Y
+
+        so only the two mass operators are needed, and each is read off the
+        pair of spaces rather than supplied.
+
+        **The recursion is the point.** Each side may be
+
+        * a :class:`~pygeoinf2.algebra.spaces.MassWeightedSpace`, giving its
+          own mass operator;
+        * a :class:`~pygeoinf2.algebra.direct_sum.DirectSum`, whose mass is
+          block diagonal over the summands' — so a response space of several
+          fields *and* a couple of scalars lifts in one call;
+        * any other coordinate space carrying a different metric over the same
+          vectors, where the mass is ``G_U^-1 G_V``, applied through
+          ``apply_gram`` and ``solve_gram`` and so never assembled;
+        * a space with the same inner product as the operator's, where the mass
+          is the identity and nothing happens.
+
+        The last two are what make a Euclidean domain work: a parameter space
+        needs no weighting, and saying so should not require a special case.
+
+        No self-adjointness is claimed. An operator that is formally
+        self-adjoint is self-adjoint under the new inner product only if it
+        commutes with the ratio of the two, which in general it does not.
+        Claim it through *traits* where it holds, and check it.
+
+        Args:
+            domain: the space to present the operator's domain as.
+            codomain: likewise for its codomain.
+            operator: the operator on the base spaces, with a working adjoint.
+            traits: claims about the lifted operator.
+
+        Returns:
+            The same action, with an adjoint taken in the new inner products.
+
+        Raises:
+            ValueError: if a side's dimension does not match the operator's, or
+                if the two spaces on a side hold different vectors so that no
+                mass operator relates them.
+        """
+        from .spaces import CoordinateSpace
+
+        base_domain, base_codomain = operator.domain, operator.codomain
+        for target, base, side in (
+            (domain, base_domain, "domain"),
+            (codomain, base_codomain, "codomain"),
+        ):
+            if target.dim != base.dim:
+                raise ValueError(
+                    f"The operator's {side} has dimension {base.dim}, but the "
+                    f"space to present it as has {target.dim}: they do not "
+                    f"hold the same vectors."
+                )
+
+        spaces = (domain, codomain, base_domain, base_codomain)
+        if all(isinstance(space, CoordinateSpace) for space in spaces):
+            # Everything in components. The two spaces on a side share their
+            # component map, so moving a vector between them is nothing at all
+            # and each mass operator is a pair of Gram actions on an array
+            # already in hand. Going through vectors instead would cost two
+            # transforms per mass application on a spectral space -- four per
+            # call doing no work.
+            # The forward action needs no reweighting at all -- only the
+            # adjoint does -- so where the two spaces hold the same vectors it
+            # is the operator's own action and nothing else.
+            into = _transfer(domain, base_domain)
+            out_of = _transfer(base_codomain, codomain)
+
+            def value(x: X) -> Y:
+                return out_of(operator(into(x)))
+
+            def adjoint(y: Y) -> X:
+                # M_Y in components is G_{U_Y}^-1 G_{V_Y}.
+                weighted = base_codomain.solve_gram(
+                    codomain.apply_gram(codomain.to_components(y))
+                )
+                pulled = base_domain.to_components(
+                    operator.adjoint(base_codomain.from_components(weighted))
+                )
+                # M_X^-1 in components is G_{V_X}^-1 G_{U_X}.
+                return domain.from_components(
+                    domain.solve_gram(base_domain.apply_gram(pulled))
+                )
+
+            return _CallableLinearOperator(
+                domain, codomain, value, adjoint=adjoint, traits=traits
+            )
+
+        # The coordinate-free route, for a mass-weighted space over a backend
+        # with no component map.
+        forward_in = _transfer(domain, base_domain)
+        forward_out = _transfer(base_codomain, codomain)
+        back_in = _transfer(codomain, base_codomain)
+        back_out = _transfer(base_domain, domain)
+
+        domain_mass_inverse = _relating_mass(domain, base_domain).inverse
+        codomain_mass = _relating_mass(codomain, base_codomain).forward
+
+        def value(x: X) -> Y:
+            return forward_out(operator(forward_in(x)))
+
+        def adjoint(y: Y) -> X:
+            weighted = codomain_mass(back_in(y))
+            return back_out(domain_mass_inverse(operator.adjoint(weighted)))
+
         return _CallableLinearOperator(
             domain, codomain, value, adjoint=adjoint, traits=traits
         )

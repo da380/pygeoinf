@@ -115,6 +115,17 @@ class DirectSum[V](HilbertSpace[tuple]):
     def __len__(self) -> int:
         return len(self._spaces)
 
+    def shares_vectors_with(self, other: HilbertSpace, /) -> bool:
+        """True when the summands do, one for one."""
+        if self is other:
+            return True
+        if not isinstance(other, DirectSum) or len(self) != len(other):
+            return False
+        return all(
+            mine.shares_vectors_with(theirs)
+            for mine, theirs in zip(self.subspaces, other.subspaces)
+        )
+
     def _key(self) -> Hashable:
         """Identity is the summands alone.
 

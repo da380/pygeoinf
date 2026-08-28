@@ -5,6 +5,7 @@ from typing import Hashable
 import numpy as np
 import pytest
 
+from pygeoinf2.algebra.operators import LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace, Reals
 from pygeoinf2.testing import (
     check_coordinates,
@@ -255,3 +256,59 @@ class TestCoordinateFreeSpace:
         assert space.norm(np.array([3.0, 4.0])) == pytest.approx(5.0)
         with pytest.raises(NotImplementedError, match="random"):
             space.random()
+
+
+class TestMassWeightedSpace:
+    """One inner product against another, on the same vectors."""
+
+    @pytest.fixture
+    def weighted(self):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+
+        base = EuclideanSpace(4)
+        mass = DiagonalLinearOperator(base, np.array([1.0, 4.0, 9.0, 0.25]))
+        return base, mass, MassWeightedSpace(base, mass)
+
+    def test_it_is_a_hilbert_space(self, weighted, rng):
+        _, _, space = weighted
+        check_space(space, rng=rng)
+
+    def test_the_inner_product_is_the_weighted_one(self, weighted, rng):
+        base, mass, space = weighted
+        x, y = base.random(rng=rng), base.random(rng=rng)
+        assert space.inner_product(x, y) == pytest.approx(
+            base.inner_product(mass(x), y)
+        )
+
+    def test_the_inverse_mass_is_derived(self, weighted, rng):
+        """v1 makes the caller supply it. Deriving it is one fewer thing to get
+        wrong, and it makes the construction usable when the inverse has no
+        closed form."""
+        base, mass, space = weighted
+        probe = base.random(rng=rng)
+        recovered = space.mass_inverse(mass(probe))
+        assert base.norm(base.subtract(recovered, probe)) < 1e-10 * base.norm(probe)
+
+    def test_it_shares_its_vectors_with_its_base(self, weighted):
+        base, _, space = weighted
+        assert space.shares_vectors_with(base)
+
+    def test_a_mass_operator_must_claim_what_it_needs(self, weighted):
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+
+        base, _, _ = weighted
+        unclaimed = LinearOperator.from_matrix(
+            base, base, np.identity(4), form="components"
+        )
+        with pytest.raises(ValueError, match="must claim"):
+            MassWeightedSpace(base, unclaimed)
+
+    def test_the_mass_must_act_on_the_base(self, weighted):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+
+        base, _, _ = weighted
+        elsewhere = DiagonalLinearOperator(EuclideanSpace(3), np.ones(3))
+        with pytest.raises(ValueError, match="map .* to itself"):
+            MassWeightedSpace(base, elsewhere)

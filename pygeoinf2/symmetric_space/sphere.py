@@ -167,6 +167,10 @@ class Sphere(SymmetricSpace):
     def _key(self) -> Hashable:
         return (self._lmax, self._radius, self._order, self._length_scale)
 
+    def _coordinate_key(self) -> Hashable:
+        """The grid, which the order and length scale do not touch."""
+        return (type(self), self._lmax, self._radius)
+
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
         return f"Sphere(lmax={self._lmax}, radius={self._radius}, {kind})"

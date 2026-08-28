@@ -27,14 +27,19 @@ See DESIGN.md section 13.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
 
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearFunctional, LinearOperator
-from ..algebra.spaces import ArrayVectorMixin, DiagonalMetricSpace, HilbertModule
+from ..algebra.spaces import (
+    ArrayVectorMixin,
+    DiagonalMetricSpace,
+    HilbertModule,
+    HilbertSpace,
+)
 from ..probability.gaussian import GaussianMeasure
 from ..traits import Traits
 
@@ -75,6 +80,32 @@ class SymmetricSpace(
     @abstractmethod
     def with_order(self, order: float, /) -> "SymmetricSpace":
         """The same coordinate map, viewed with a different Sobolev order."""
+
+    def _coordinate_key(self) -> Hashable:
+        """Identifies the component map alone, with the metric left out.
+
+        ``_key`` identifies the *space*, so it carries the Sobolev order and
+        length scale; two spaces that differ only there hold the same fields
+        and are not the same space. This is the other half of that key, and
+        subclasses that can separate the two override it. The default is the
+        whole key, which is safe and says "only a space itself".
+        """
+        return self._key()
+
+    def shares_vectors_with(self, other: HilbertSpace, /) -> bool:
+        """True for another symmetric space over the same coordinate map.
+
+        Two spaces differing only in Sobolev order hold the *same* fields —
+        :meth:`with_order` says so — and differ only in how they measure them.
+        Saying it lets a formal-adjoint lift move a vector between them for
+        nothing instead of round-tripping through components, which on a
+        spectral space is two transforms each way.
+        """
+        if self is other:
+            return True
+        if not isinstance(other, SymmetricSpace):
+            return False
+        return self._coordinate_key() == other._coordinate_key()
 
     @property
     @abstractmethod
@@ -1215,13 +1246,12 @@ def lift_formal_adjoint(
 
     The idiom this exists for: derive an operator's action and its adjoint on
     the Lebesgue space, where both are easy, then use it on a Sobolev space
-    over the same coordinate map. With ``(x, y)_V == c_x^T G_V c_y`` and
-    likewise for ``U``,
+    over the same coordinate map.
 
-        ``A*_V == (G_VX^-1 G_UX) . A*_U . (G_UY^-1 G_VY)``
-
-    which is the mass-weighted lift of DESIGN.md 3.5 with the mass operator
-    read off the two diagonals. Cheap, because both metrics are diagonal.
+    This is :meth:`LinearOperator.from_formal_adjoint` with the arguments in
+    the order the symmetric-space code reads best, and with both sides required
+    to be symmetric spaces. The general form handles direct sums, Euclidean
+    sides and mass-weighted spaces too; use it directly for those.
 
     No self-adjointness is claimed: a formally self-adjoint operator is
     self-adjoint under the new metric only if it commutes with the ratio of the
@@ -1233,34 +1263,16 @@ def lift_formal_adjoint(
         domain: the space to present the operator's domain as.
         codomain: likewise for the codomain; defaults to ``domain``.
         traits: claims about the lifted operator.
+
+    Returns:
+        The same action, with an adjoint taken in the new metrics.
+
+    Raises:
+        ValueError: if the dimensions do not match.
     """
-    codomain = domain if codomain is None else codomain
-    base_domain, base_codomain = operator.domain, operator.codomain
-
-    if base_domain.dim != domain.dim or base_codomain.dim != codomain.dim:
-        raise ValueError(
-            f"The operator maps dimension {base_domain.dim} to "
-            f"{base_codomain.dim}, but the target spaces are {domain.dim} and "
-            f"{codomain.dim}."
-        )
-
-    domain_ratio = base_domain.metric_values / domain.metric_values
-    codomain_ratio = codomain.metric_values / base_codomain.metric_values
-
-    def value(x: np.ndarray) -> np.ndarray:
-        return codomain.from_components(
-            base_codomain.to_components(
-                operator(base_domain.from_components(domain.to_components(x)))
-            )
-        )
-
-    def adjoint(y: np.ndarray) -> np.ndarray:
-        components = codomain_ratio * codomain.to_components(y)
-        pulled = base_domain.to_components(
-            operator.adjoint(base_codomain.from_components(components))
-        )
-        return domain.from_components(domain_ratio * pulled)
-
-    return LinearOperator.from_callables(
-        domain, codomain, value, adjoint=adjoint, traits=traits
+    return LinearOperator.from_formal_adjoint(
+        domain,
+        domain if codomain is None else codomain,
+        operator,
+        traits=traits,
     )
