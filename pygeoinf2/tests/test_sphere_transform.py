@@ -205,3 +205,28 @@ class TestBothRoutesAgree:
         X = Lebesgue(8)
         with pytest.raises(ValueError, match="weights for"):
             X.accumulate(np.ones(3), X.random_points(4, rng=rng))
+
+
+class TestQuadratureFromDriscollHealy:
+    """The weights come from pyshtools' closed form, not from probing the
+    transform. This is the check that the two are the same thing."""
+
+    @pytest.mark.parametrize("lmax", [4, 8, 16])
+    @pytest.mark.parametrize("sampling", [1, 2])
+    def test_the_closed_form_matches_the_transform(self, lmax, sampling):
+        """Up to the common constant, which is all either one is defined to."""
+        space = Lebesgue(lmax, sampling=sampling)
+        measured = space._quadrature_from_transform()
+        live = measured != 0.0
+
+        ratio = space._quadrature[live] / measured[live]
+        assert np.ptp(ratio) / ratio.mean() < 1e-12
+
+    def test_the_north_pole_row_carries_no_weight(self):
+        """The grid samples colatitude on [0, pi), so the quadrature gives the
+        pole no area -- and anything sitting there is invisible to the
+        transform. Both routes have to agree about which row that is."""
+        space = Lebesgue(8)
+        assert space._quadrature[0] == 0.0
+        assert np.flatnonzero(space._quadrature == 0.0).tolist() == [0]
+        assert np.flatnonzero(space._quadrature_from_transform() == 0.0).tolist() == [0]

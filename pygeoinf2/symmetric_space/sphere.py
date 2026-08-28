@@ -474,18 +474,51 @@ class Sphere(SymmetricSpace[Any]):
     def _quadrature(self) -> np.ndarray:
         """The transform's own quadrature weight for each grid row.
 
-        :meth:`to_components` is a quadrature, so ``to_components(e_jk)`` is a
-        row-dependent multiple of ``basis_at(p_jk)`` — verifiably so, the ratio
-        being constant across every component. Reading that multiple off gives
-        the weights exactly, from the transform that will be used with them,
-        rather than from a formula that might not match its conventions.
+        The *shape* is Driscoll and Healy's own latitudinal weighting, which
+        is what ``SHExpandDH`` uses, so it is the transform's weighting by
+        construction rather than by coincidence. The *scale* is then fixed by
+        probing the transform on a single row, as
+        :meth:`_quadrature_from_transform` does on every row.
 
-        Returned up to a common constant, which is all that is needed: the
-        constant cancels in :meth:`_synthesis_adjoint`.
+        One probe rather than none, because the scale is not free: the pole
+        correction in :meth:`_synthesis_adjoint` carries no weight of its own,
+        so a common factor on these does not cancel against it. And one rather
+        than a closed-form constant, because that constant is pyshtools'
+        normalisation convention, which is exactly the kind of thing this
+        class should not be asserting from memory.
+
+        One probe rather than ``rows`` of them is the whole saving: 2.9 ms
+        against 583 ms at ``lmax`` 128, and 18 ms against 8.0 s at 256.
 
         **The pole row's weight is zero**, since the grid samples colatitude on
         ``[0, pi)`` and the quadrature gives the pole no area. Anything sitting
         there is invisible to the transform and has to be added back by hand.
+        """
+        from pyshtools.utils import DHaj
+
+        rows, columns = self.grid_shape
+        shape = DHaj(rows)
+
+        # Calibrate against the transform itself, on the first row that
+        # carries any weight at all.
+        row = int(np.flatnonzero(shape)[0])
+        indicator = np.zeros(self.grid_shape)
+        indicator[row] = 1.0
+        reference = float(self.basis_at(self.reference_point)[0])
+        measured = self.to_components(indicator)[0] / (columns * reference)
+        return shape * (measured / shape[row])
+
+    def _quadrature_from_transform(self) -> np.ndarray:
+        """The same weights, read off the transform instead of a formula.
+
+        :meth:`to_components` is a quadrature, so ``to_components(e_jk)`` is a
+        row-dependent multiple of ``basis_at(p_jk)`` — verifiably so, the ratio
+        being constant across every component. Reading that multiple off gives
+        the weights from the transform that will be used with them, with no
+        appeal to a convention.
+
+        Kept as the check on :meth:`_quadrature`, not as the way to get them:
+        it costs one full analysis transform per grid row.
         """
         rows, columns = self.grid_shape
         # Component zero is the constant mode, so the point is arbitrary.

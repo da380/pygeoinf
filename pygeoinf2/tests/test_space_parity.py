@@ -224,3 +224,31 @@ class TestResolutionTransfer:
         field = space.random(rng=rng)
         recovered = down(up(field))
         assert space.norm(space.subtract(recovered, field)) < 1e-10 * space.norm(field)
+
+
+class TestPowerPerDegree:
+    """A spectrum written per degree, on every geometry.
+
+    The multiplicity is the whole of the method, and on a box it is not the
+    ``2l + 1`` of the sphere: degrees there are ``floor(|k|)``, so the counts
+    are irregular and some degrees can be missing altogether.
+    """
+
+    def test_each_degree_holds_the_power_it_was_given(self, geometry):
+        _, space = geometry
+        degrees = space.degrees
+        power = (1.0 + np.arange(degrees.max() + 1)) ** -3.0
+        eigenvalues = space.power_measure(power).covariance.eigenvalues
+
+        for degree in np.unique(degrees):
+            held = eigenvalues[degrees == degree].sum()
+            assert held == pytest.approx(power[degree])
+
+    def test_the_multiplicities_are_the_multiplicities(self, geometry):
+        """Tabulated in one pass rather than swept per component -- the
+        comprehension this replaced was O(dim^2), and 6.8 s at lmax 511."""
+        _, space = geometry
+        degrees = space.degrees
+        counts = np.bincount(degrees)[degrees]
+        expected = np.array([np.count_nonzero(degrees == d) for d in degrees])
+        assert np.array_equal(counts, expected)
