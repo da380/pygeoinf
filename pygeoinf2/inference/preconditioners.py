@@ -365,6 +365,17 @@ def gaspari_cohn(distances: np.ndarray, length: float, /) -> np.ndarray:
     before truncating is what makes the result positive definite again — a
     Schur product with a positive definite function, cut off exactly where the
     truncation cuts off.
+
+    Args:
+        distances: separations, in the same units as *length*.
+        length: the correlation length. The function reaches zero at twice
+            this and stays there.
+
+    Returns:
+        The taper, one value per distance.
+
+    Raises:
+        ValueError: if the length is not positive.
     """
     if length <= 0.0:
         raise ValueError(f"The taper length must be positive, got {length}.")

@@ -453,6 +453,16 @@ class BackusInference(SetEstimator):
         It agrees with ``self(data).contains(value)`` — the two are different
         computations of the same statement, and the test suite checks that they
         do.
+
+        Args:
+            value: the property value to test.
+            data: the observations.
+            rtol: how far outside the bound still counts as admissible. A
+                value exactly on the boundary is admissible in exact
+                arithmetic and would fail without this.
+
+        Returns:
+            Whether the value is admissible.
         """
         return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
 
@@ -881,7 +891,17 @@ class FeasibleProperty(SetEstimator):
         return float(np.sqrt(anchor_norm**2 + correction))
 
     def admits(self, value: Any, data: Any, /, *, rtol: float = 1e-8) -> bool:
-        """Whether a property value is consistent with the data and the prior."""
+        """Whether a property value is consistent with the data and the prior.
+
+        Args:
+            value: the property value to test.
+            data: the observations.
+            rtol: tolerance on the bound, as for
+                :meth:`BackusInference.admits`.
+
+        Returns:
+            Whether the value is admissible.
+        """
         return self.inclusion_norm(value, data) <= self._radius * (1.0 + rtol)
 
     def inner_hull(self, values: Any, data: Any, /) -> Any:
@@ -893,6 +913,19 @@ class FeasibleProperty(SetEstimator):
         mistaken for the outer one — reporting a hull of feasible samples as
         though it were the answer is what BGP's Figure 4 is about, and it is
         always an undercount.
+
+        Args:
+            values: candidate property values, of which the admissible ones
+                are kept.
+            data: the observations.
+
+        Returns:
+            An inner polytope containing the admissible candidates.
+
+        Raises:
+            ValueError: if fewer candidates are admissible than the property
+                space has dimensions, there being no hull to take. That is a
+                statement about the candidates, not about the feasible set.
         """
         from scipy.spatial import ConvexHull
 
@@ -1362,6 +1395,20 @@ class DualFeasibleProperty(SetEstimator):
         the data, the primal supremum is over nothing and the dual falls away
         without limit. That is reported rather than returned, because a large
         negative number is a perfectly plausible-looking support value.
+
+        Args:
+            direction: the direction to evaluate in.
+            data: the observations.
+            start: where to begin the minimisation. Used by
+                :meth:`support_values` to carry each direction's certificate
+                into the next.
+
+        Returns:
+            The support value.
+
+        Raises:
+            ValueError: if the dual is unbounded, meaning the feasible set is
+                empty. :meth:`is_feasible` tests that without an exception.
         """
         cost = self.dual_cost(direction, data)
         origin = self.data_space.zero() if start is None else start

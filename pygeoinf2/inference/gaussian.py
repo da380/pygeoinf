@@ -257,6 +257,15 @@ class LinearGaussianInversion(GaussianEstimator):
         part of a surrogate problem that is ever used. The surrogate may live
         on a different model space; see
         :meth:`~pygeoinf2.inference.normal.NormalOperator.surrogate`.
+
+        Args:
+            forward: a cheaper ``A``, sharing the data space.
+            prior: a cheaper ``Q``, on the surrogate's model space.
+            error: a cheaper ``R``.
+            formalism: which space to assemble in. Inherited if omitted.
+
+        Returns:
+            The surrogate normal operator.
         """
         return self._normal.surrogate(
             forward=forward, prior=prior, error=error, formalism=formalism
@@ -280,7 +289,21 @@ class LinearGaussianInversion(GaussianEstimator):
         surrogate — a coarser mesh, a smoother kernel — is usually better, and
         this is what to reach for when there isn't one.
 
-        Each rank left as None leaves that factor exact.
+        Args:
+            forward_rank: the rank to truncate ``A`` to, by randomised SVD.
+            prior_rank: the rank for ``Q``, by randomised eigendecomposition.
+            error_rank: the rank for ``R``, likewise.
+            rng: the generator for the probes.
+            **kwargs: passed to the randomised routines -- oversampling and
+                power iterations.
+
+        Returns:
+            The surrogate normal operator. Each rank left as None leaves that
+            factor exact.
+
+        Raises:
+            ValueError: if a rank exceeds the dimension of what it truncates,
+                or the problem has no error measure to truncate.
         """
         forward = None
         if forward_rank is not None:
@@ -370,6 +393,18 @@ class LinearGaussianInversion(GaussianEstimator):
 
         which is the whole point of that formalism — the data space is the
         large one there, and it is never inverted.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            The misfit.
+
+        Raises:
+            ValueError: if the problem has no data error measure, there being
+                no metric to measure the misfit in; or, in the model-space
+                formalism, if the error has no precision, which the Woodbury
+                reduction above needs.
         """
         if not self._problem.has_error:
             raise ValueError(
@@ -422,6 +457,23 @@ class LinearGaussianInversion(GaussianEstimator):
         determinant. That costs two further log-determinants, of ``Q`` and
         ``R``, which are usually the cheap ones: a prior with a known spectrum
         and a diagonal noise covariance.
+
+        Args:
+            method: as for
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`
+                -- ``"dense"``, ``"stochastic"`` or ``"auto"``.
+            samples: Hutchinson probes for the stochastic route.
+            rng: the generator for those probes.
+            **kwargs: passed through, including ``sample_rtol`` to sample to a
+                tolerance rather than a count.
+
+        Returns:
+            An estimate, memoised on these settings -- the volume term does
+            not depend on the data, and a mixture asks for it once per
+            component per datum.
+
+        Raises:
+            ValueError: if the problem has no data error measure.
         """
         from ..numerics.functional_calculus import log_determinant
 

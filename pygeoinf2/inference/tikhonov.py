@@ -192,6 +192,12 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         operator apply here unchanged — the identity of the module docstring,
         used rather than argued about. Undefined at zero damping, which is the
         unregularised case and has no prior reading.
+
+        Returns:
+            The covariance operator.
+
+        Raises:
+            ValueError: at zero damping, which corresponds to no prior at all.
         """
         if self._damping <= 0.0:
             raise ValueError(
@@ -279,7 +285,24 @@ class TikhonovNormalOperator(FactoredNormalOperator):
         damping: float | None = None,
         formalism: Formalism | None = None,
     ) -> "TikhonovNormalOperator":
-        """The same operator with any of its factors replaced by cheap ones."""
+        """The same operator with any of its factors replaced by cheap ones.
+
+        As :meth:`~pygeoinf2.inference.normal.NormalOperator.surrogate`: the
+        surrogate's inverse preconditions the true operator, and correctness
+        never depends on how close it is -- only the iteration count does.
+
+        Args:
+            forward: a cheaper ``A``, which must map into the same data space.
+            error: a cheaper ``R`` on that space.
+            damping: a different damping.
+            formalism: which space to assemble in. Inherited if omitted.
+
+        Returns:
+            The surrogate.
+
+        Raises:
+            ValueError: if the surrogate does not share the data space.
+        """
         replacement = self._forward if forward is None else forward
         if replacement.codomain != self.data_space:
             raise ValueError(
@@ -406,13 +429,30 @@ class TikhonovFamily:
     def solve(self, damping: float, right_hand_side: Any, /, *, x0: Any = None) -> Any:
         """One member's solve, warm-started from *x0*.
 
-        Returns the solver's own result, so the iteration count is visible;
-        that is the only way to tell a warm start that is working from one that
-        silently is not.
+        Args:
+            damping: which member of the family.
+            right_hand_side: the vector to solve against.
+            x0: a starting guess, usually the previous damping's answer.
+
+        Returns:
+            The solver's own result, so the iteration count is visible; that
+            is the only way to tell a warm start that is working from one that
+            silently is not.
         """
         return self._solves.solve(damping, right_hand_side, x0=x0)
 
     def model(self, damping: float, data: Any, /, *, x0: Any = None) -> tuple[Any, Any]:
-        """The model at one damping, and the raw solution to warm-start from."""
+        """The model at one damping, and the raw solution to warm-start from.
+
+        Args:
+            damping: which member of the family.
+            data: the observations.
+            x0: a starting guess for the solve.
+
+        Returns:
+            The ``(model, result)`` pair. The second is what the next damping
+            should be started from -- in the *solver's* variable, which in the
+            data-space formalism is not the model.
+        """
         result = self.solve(damping, self.right_hand_side(data), x0=x0)
         return self.model_from(result.solution), result

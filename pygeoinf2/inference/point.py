@@ -52,6 +52,13 @@ def choose_formalism(
 
     The spaces-based decision of
     :func:`~pygeoinf2.inference.normal.choose_formalism`, read off a problem.
+
+    Args:
+        problem: the forward problem.
+        formalism: ``"model_space"``, ``"data_space"``, or ``"auto"``.
+
+    Returns:
+        The formalism to use.
     """
     return _choose(problem.model_space, problem.data_space, formalism=formalism)
 
@@ -231,9 +238,16 @@ class LeastSquares(LinearPointEstimator):
     ) -> TikhonovNormalOperator:
         """A cheap stand-in for this estimator's normal operator.
 
-        Returns the surrogate normal operator, which is the part a
-        preconditioner is built from. It may live on a different model space,
-        as long as the data space is shared.
+        Args:
+            forward: a cheaper ``A``, sharing the data space.
+            error: a cheaper ``R``.
+            damping: a different damping.
+            formalism: which space to assemble in. Inherited if omitted.
+
+        Returns:
+            The surrogate normal operator, which is the part a preconditioner
+            is built from. It may live on a different model space, as long as
+            the data space is shared.
         """
         return self._normal.surrogate(
             forward=forward, error=error, damping=damping, formalism=formalism
@@ -293,6 +307,17 @@ class LeastSquares(LinearPointEstimator):
         and *this* right-hand side, so the number printed is the one the solve
         is actually driving down rather than whatever the solver happens to
         track internally.
+
+        Args:
+            data: the observations the solve is for.
+            message: a format string taking ``iteration`` and ``residual``.
+                The residual is *relative* to the right-hand side, which is
+                what makes it comparable between problems.
+            report: where the line goes. ``print`` by default; pass a logger's
+                method to send it somewhere else.
+
+        Returns:
+            A callback to hand to an iterative solver.
         """
         space = self._normal.domain
         target = self.right_hand_side(data)
@@ -389,6 +414,16 @@ class MinimumNorm(LeastSquares):
         Returned rather than hidden so that the cost is visible: without the
         iteration count there is no way to tell a warm start that is working
         from one that silently is not.
+
+        Args:
+            data: the observations.
+            level: the confidence level setting the misfit target.
+            iterations: bisection steps once the root is bracketed.
+            rtol: how tightly to close the bracket.
+
+        Returns:
+            The root result, with its bracket, evaluation count and inner
+            iteration total.
         """
         return _discrepancy_search(
             self.family(),
@@ -1032,6 +1067,16 @@ class ConstrainedMinimumNorm(Operator):
         With ``B+`` the constraint's pseudo-inverse and ``D`` the unconstrained
         derivative, the chain rule gives ``(I - D A) B+`` — the direct effect of
         moving the constraint, less the part of it the data pull back.
+
+        Args:
+            data: the observations, held fixed.
+
+        Returns:
+            The operator from constraint values to models.
+
+        Raises:
+            ValueError: if the subspace carries no explicit equation. One
+                defined geometrically has no ``w`` to vary.
 
         Needs the subspace to carry an explicit equation; one defined
         geometrically has no ``w`` to vary.

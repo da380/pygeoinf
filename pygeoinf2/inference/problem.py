@@ -78,7 +78,16 @@ class ForwardProblem:
 
     @property
     def error(self) -> ProbabilityMeasure | Subset:
-        """The data uncertainty, as given."""
+        """The data uncertainty, as given -- a measure or a set.
+
+        Returns:
+            Whichever was supplied. Use :attr:`error_measure` or
+            :attr:`error_set` when only one kind will do; each says by type
+            which situation it is refusing.
+
+        Raises:
+            AttributeError: if the problem has no uncertainty at all.
+        """
         if self._error is None:
             raise AttributeError("This problem has no data uncertainty.")
         return self._error
@@ -158,7 +167,19 @@ class ForwardProblem:
         return self.chi_squared_from_residual(residual)
 
     def chi_squared_from_residual(self, residual: Any, /) -> float:
-        """The weighted misfit of a residual."""
+        """The weighted misfit of a residual.
+
+        Args:
+            residual: the difference between predicted and observed data.
+
+        Returns:
+            The Mahalanobis distance of the residual under the error measure,
+            or its plain squared norm when the data are taken as exact.
+
+        Raises:
+            TypeError: if the uncertainty is a set rather than a Gaussian
+                measure. A chi-squared statistic needs a distribution.
+        """
         if not self.has_error:
             return self.data_space.squared_norm(residual)
         measure = self.error_measure
@@ -173,7 +194,18 @@ class ForwardProblem:
         )
 
     def critical_chi_squared(self, /, *, level: float = 0.95) -> float:
-        """The chi-squared threshold at a given confidence level."""
+        """The chi-squared threshold at a given confidence level.
+
+        Args:
+            level: the confidence level, in ``(0, 1)``.
+
+        Returns:
+            The critical value, on as many degrees of freedom as there are
+            data.
+
+        Raises:
+            ValueError: for a level outside ``(0, 1)``.
+        """
         if not 0.0 < level < 1.0:
             raise ValueError(f"A confidence level lies in (0, 1), got {level}.")
         return float(chi2.ppf(level, self.data_space.dim))
@@ -185,6 +217,14 @@ class ForwardProblem:
 
         The boolean on top of :meth:`consistency_set`; the set is the object,
         and this is the question people usually ask of it (§18.11).
+
+        Args:
+            model: the model to test.
+            data: the observations.
+            level: the confidence level.
+
+        Returns:
+            Whether the misfit falls below the critical value.
         """
         return self.chi_squared(model, data) < self.critical_chi_squared(level=level)
 
@@ -194,6 +234,13 @@ class ForwardProblem:
         This is the hardening of §18.1: a Gaussian error measure at a chosen
         chi-squared level. It discards information and says so by being a
         separate, named step rather than something a constructor does quietly.
+
+        Args:
+            model: the model whose predictions the set is centred on.
+            level: the confidence level.
+
+        Returns:
+            An ellipsoid in the data space.
         """
         return self.error_measure.credible_set(level=level).translate(
             self._forward_operator(model)
@@ -280,7 +327,18 @@ class LinearForwardProblem(ForwardProblem):
     def data_measure_from_model_measure(
         self, measure: ProbabilityMeasure, /
     ) -> ProbabilityMeasure:
-        """The distribution of data induced by a distribution of models."""
+        """The distribution of data induced by a distribution of models.
+
+        Args:
+            measure: a measure on the model space.
+
+        Returns:
+            Its push-forward through the forward operator, convolved with the
+            data error when there is one.
+
+        Raises:
+            ValueError: if the measure is not on the model space.
+        """
         if measure.domain != self.model_space:
             raise ValueError("The measure is not defined on the model space.")
         pushed = measure.push_forward(self._forward_operator)
@@ -331,7 +389,18 @@ class LinearForwardProblem(ForwardProblem):
     def parameterised(
         self, parameterisation: LinearOperator, /
     ) -> LinearForwardProblem:
-        """The same data, seen through a restricted model space."""
+        """The same data, seen through a restricted model space.
+
+        Args:
+            parameterisation: from the parameter space into the model space.
+
+        Returns:
+            The problem on the parameter space, with the same error.
+
+        Raises:
+            ValueError: if the parameterisation does not map into the model
+                space.
+        """
         if parameterisation.codomain != self.model_space:
             raise ValueError("The parameterisation must map into the model space.")
         return LinearForwardProblem(
@@ -352,6 +421,14 @@ class LinearForwardProblem(ForwardProblem):
             error: the reduced error. Defaults to pushing the current one
                 forward, which is right for a measure and is the only thing
                 that can be done automatically.
+
+        Returns:
+            The problem on the reduced data space.
+
+        Raises:
+            ValueError: if the reduction does not map from the data space,
+                or -- with no explicit *error* -- if the current one is a set,
+                which cannot be pushed forward the way a measure can.
         """
         if reduction.domain != self.data_space:
             raise ValueError("The reduction must map from the data space.")
