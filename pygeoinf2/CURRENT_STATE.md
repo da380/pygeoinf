@@ -6,7 +6,7 @@ This document is the other thing — what the package *is* today, for someone
 who needs to use it or review it without reading five thousand lines of
 reasoning.
 
-Last reconciled against the code on 2026-08-28, at 2085 passing tests.
+Last reconciled against the code on 2026-08-28, at 2023 passing tests.
 
 ---
 
@@ -149,11 +149,12 @@ Recorded rather than settled, so nobody has to rediscover them.
 - **Iteration-cap naming.** `maxiter`, `max_iterations` and `iterations` all
   appear. One should win.
 - **`random_domain_points`** (land/ocean rejection sampling) is not ported.
-- **Docstring contract.** `Raises:` where a function raises, and `Args:` for
-  parameters carrying a choice, are enforced by `test_code_practice.py` against
-  a *shrinking* list: a file at zero cannot regress, and no file may get worse.
-  269 gaps remain across 35 files; `algebra/spaces.py` and
-  `algebra/direct_sum.py` are clear.
+- ~~**Docstring contract.**~~ Done. `Raises:` wherever a function raises, and
+  `Args:` for parameters carrying a choice, are enforced across the package by
+  `test_code_practice.py` -- 278 gaps across 37 files, taken to zero. What a
+  function refuses is part of its contract and is the one thing a reader cannot
+  guess; a required ``x`` on ``copy(x)`` is not, and is deliberately not
+  demanded.
 
 ## 8. Decisions
 

@@ -276,13 +276,6 @@ class TestTheCatalogueMatchesTheCode:
 # joblib's, and DESIGN.md 7 and pygeoinf2/parallel.py say so once.
 CONVENTIONAL = {"rng", "n_jobs", "backend"}
 
-# Files not yet at zero, with the count they are at. The list shrinks; it must
-# never grow, and a file that reaches zero is removed from it so that it cannot
-# regress. This is the documentation debt, counted rather than described.
-DOCUMENTATION_DEBT = {
-    "symmetric_space/base.py": 35,
-    "symmetric_space/sphere.py": 20,
-}
 
 
 def relative(path) -> str:
@@ -354,30 +347,16 @@ def documentation_gaps(path) -> list[str]:
 class TestDocstringsCarryTheContract:
     """What a function refuses, and what its options mean.
 
-    K Should-12. The rule is enforced against a *shrinking* list: a file at
-    zero is not in it and cannot regress, and a file in it may not get worse.
-    That makes the standard real today rather than after the whole backlog is
-    cleared.
+    K Should-12. This was enforced for a while against a shrinking list of
+    files with a recorded number of gaps each, so the standard could bite
+    before the backlog was cleared. The backlog is cleared -- 278 gaps across
+    37 files, taken to zero -- so the list is gone and the rule is simply the
+    rule.
     """
 
-    def test_no_file_gets_worse(self, path):
+    def test_the_contract_is_documented(self, path):
         gaps = documentation_gaps(path)
-        allowed = DOCUMENTATION_DEBT.get(relative(path), 0)
-        assert len(gaps) <= allowed, (
-            f"{path.name} has {len(gaps)} documentation gaps, above its "
-            f"recorded {allowed}. Document the new ones, or if you have "
-            f"cleared some, lower the number.\n  "
-            + "\n  ".join(gaps[: allowed + 5])
-        )
-
-    def test_the_debt_list_has_no_stale_entries(self, path):
-        """A file that has reached its recorded number exactly is fine; one
-        that is well below it means the list is stale and hiding progress."""
-        gaps = len(documentation_gaps(path))
-        allowed = DOCUMENTATION_DEBT.get(relative(path))
-        if allowed is None:
-            return
-        assert gaps >= allowed - 3, (
-            f"{path.name} is recorded as having {allowed} documentation gaps "
-            f"but has {gaps}. Lower or remove its entry."
+        assert not gaps, (
+            f"{path.name} has {len(gaps)} documentation gaps:\n  "
+            + "\n  ".join(gaps)
         )

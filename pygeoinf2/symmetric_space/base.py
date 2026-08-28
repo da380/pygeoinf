@@ -152,6 +152,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             symbol: applied to the array of Laplacian eigenvalues.
             traits: extra claims. Symmetry and definiteness are deduced from
                 the resulting values, so they seldom need supplying.
+
+        Returns:
+            The operator, diagonal in the spectral basis.
+
+        Raises:
+            ValueError: if the symbol does not give one value per component.
         """
         values = np.asarray(symbol(self.laplacian_eigenvalues), dtype=float)
         if values.shape != (self.dim,):
@@ -173,6 +179,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         v1 spells this ``InvariantLinearAutomorphism.from_index_function``.
         Taking an array rather than a callable on indices is what lets the
         caller write ``space.spectral_operator(f(space.degrees))``.
+
+        Args:
+            values: one per component.
+            traits: further claims. Self-adjointness and definiteness are
+                deduced from the values, so they seldom need supplying.
+
+        Returns:
+            The diagonal operator.
+
+        Raises:
+            ValueError: for the wrong number of values.
         """
         array = np.asarray(values, dtype=float)
         if array.shape != (self.dim,):
@@ -187,6 +204,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         On a sphere this is the harmonic degree; on a box, the wavenumber
         magnitude rounded down. What it is for is writing a symbol that depends
         on where a component sits rather than on its eigenvalue.
+
+        Returns:
+            One integer degree per component.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it. Abstract on
+                this class, so a space cannot be built without one.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not name a degree per component."
@@ -205,6 +229,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         into a Euclidean one. This stays put: it zeroes everything outside the
         band and leaves the rest alone, so it is an idempotent self-adjoint
         projection.
+
+        Args:
+            lmin: the lowest degree to keep.
+            lmax: the highest. The largest present if omitted.
+
+        Returns:
+            The projector, self-adjoint and idempotent.
         """
         degrees = self.degrees
         top = degrees.max() if lmax is None else lmax
@@ -227,6 +258,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         the same thing on every geometry here -- on a box the degree of a
         component is ``floor(|k|)``, so the band is an annulus in wavenumber
         rather than a range of harmonic degrees, but it is still a band.
+
+        Args:
+            lmax: the highest degree to report. The largest present if
+                omitted.
+            lmin: the lowest.
+
+        Returns:
+            The operator into a Euclidean space of the selected components.
         """
         from ..algebra.spaces import EuclideanSpace
 
@@ -256,6 +295,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Lebesgue and wrong for every Sobolev order. Here each is built from its
         own value map and its own derivative, and the metric looks after
         itself.
+
+        Args:
+            lmax: the highest degree accepted. The largest present if omitted.
+            lmin: the lowest.
+
+        Returns:
+            The operator from a Euclidean space of coefficients into this one.
         """
         from ..algebra.spaces import EuclideanSpace
 
@@ -324,6 +370,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         identity operator: its adjoint carries the ratio of the two metrics,
         which is exactly what makes ``H^s -> H^t`` a bounded inclusion rather
         than a relabelling.
+
+        Args:
+            target: the space to read into, of the same dimension.
+
+        Returns:
+            The inclusion, whose adjoint carries the ratio of the metrics.
+
+        Raises:
+            ValueError: if the dimensions differ, in which case the two are
+                not the same functions in different metrics.
         """
         if target.dim != self.dim:
             raise ValueError(
@@ -338,6 +394,15 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         ``x -> [(f_i, x)_L2]``. The ``L2`` products specifically, not this
         space's: the rows are the fields' own components, so the operator means
         the same thing whatever Sobolev order it is read on.
+
+        Args:
+            fields: the fields to take products against.
+
+        Returns:
+            The operator into a Euclidean space, one component per field.
+
+        Raises:
+            ValueError: if no fields are given.
         """
         from ..algebra.spaces import EuclideanSpace
 
@@ -358,6 +423,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         For choosing a truncation from a prior rather than by habit: pass the
         spectral variances and get the degree beyond which the field has
         negligible energy.
+
+        Args:
+            symbol: the spectral variances, as a callable on the Laplacian
+                eigenvalues.
+            tolerance: the fraction of the total power allowed to lie above
+                the returned degree.
+
+        Returns:
+            The smallest degree holding all but *tolerance* of the power.
+
+        Raises:
+            ValueError: for a tolerance outside ``(0, 1)``.
         """
         if not 0.0 < tolerance < 1.0:
             raise ValueError(f"The tolerance lies in (0, 1), got {tolerance}.")
@@ -383,6 +460,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         "smooth" means. Without it the order alone would be scale-dependent,
         which is how a Sobolev prior comes to behave differently on a sphere of
         a different radius.
+
+        Args:
+            order: the Sobolev order.
+            scale: the length at which the weight turns over.
+
+        Returns:
+            One weight per component.
+
+        Raises:
+            ValueError: for a non-positive scale.
         """
         if scale <= 0.0:
             raise ValueError("scale must be positive.")
@@ -426,6 +513,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Used where a quantity is provably the same everywhere and one place has
         to be picked to evaluate it — the pointwise variance of an invariant
         measure being the case that matters.
+
+        Returns:
+            A point of the domain, the same one every time.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not name a reference point."
@@ -495,6 +588,22 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         ``norm_std`` does the same against ``E||x||^2`` instead, which is the
         total rather than the local size. They are alternatives; asking for
         both is a contradiction and is refused.
+
+        Args:
+            spectral_variances: one per component, or a callable on the
+                Laplacian eigenvalues.
+            expectation: the mean. Zero if omitted.
+            pointwise_std: rescale so the pointwise standard deviation is
+                this. Mutually exclusive with *norm_std*.
+            norm_std: rescale so the *norm's* standard deviation is this.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: for negative variances, the wrong number of them, or
+                both calibrations at once -- which is a contradiction rather
+                than an over-specification.
         """
         variances = self._resolve_variances(spectral_variances)
         if pointwise_std is not None and norm_std is not None:
@@ -556,6 +665,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         ``scale``. Note the symbol enters with a *negative* order, since a
         covariance must decay with the eigenvalue for the measure to be
         supported on functions of that smoothness.
+
+        Args:
+            order: the Sobolev order of the *measure*, which must exceed half
+                the spatial dimension for the draws to be functions.
+            length_scale: the correlation length.
+            amplitude: an overall scale on the spectrum.
+            expectation: the mean. Zero if omitted.
+            pointwise_std: calibrate by the pointwise standard deviation.
+            norm_std: calibrate by the norm's, mutually exclusive with it.
+
+        Returns:
+            The measure.
         """
         return self.invariant_measure(
             amplitude**2 * self.sobolev_symbol(-order, scale),
@@ -639,6 +760,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 must be symmetric and positive semidefinite.
             expectation: one field per component. Defaults to zero.
             labels: names for the summands, for readability.
+
+        Returns:
+            The measure on the direct sum.
+
+        Raises:
+            ValueError: for the wrong shape, a slice that is not symmetric,
+                or one that is not positive semidefinite -- which for a pair
+                of fields means a correlation outside ``[-1, 1]``.
         """
         from ..algebra.direct_sum import BlockLinearOperator, DirectSum
 
@@ -719,6 +848,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             correlations: ``(n, n)`` or ``(dim, n, n)``, with unit diagonal.
             expectation: one field per component. Defaults to zero.
             labels: names for the summands.
+
+        Returns:
+            The measure on the direct sum.
+
+        Raises:
+            ValueError: for the wrong number of correlation matrices, or a
+                correlation matrix without a unit diagonal.
         """
         spectra = np.stack(
             [self._resolve_variances(variance) for variance in variances]
@@ -792,6 +928,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             power: total variance at each degree, indexed from zero, or a
                 callable applied to the array of degrees.
             expectation: the mean. Defaults to zero.
+
+        Returns:
+            The measure.
+
+        Raises:
+            ValueError: if an array of powers is too short for the degrees
+                present.
         """
         degrees = self.degrees
         if callable(power):
@@ -847,6 +990,21 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         ``samples`` to estimate it instead, and ``rank`` to deflate first —
         which for a covariance with a decaying spectrum is the difference
         between a useful estimate and a useless one.
+
+        Args:
+            measure: the measure whose variance is wanted.
+            points: where to evaluate it.
+            rank: how many leading eigenpairs to deflate before estimating.
+                For a covariance with a decaying spectrum this is the
+                difference between a useful estimate and a useless one.
+            samples: estimate rather than compute exactly. Exact costs one
+                covariance application per point.
+            rng: the generator for those probes.
+            n_jobs: workers for the exact route, whose points are independent.
+            backend: the joblib backend.
+
+        Returns:
+            One variance per point.
         """
         if samples is None:
             # One covariance application per point, and the points are
@@ -1065,7 +1223,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
     @abstractmethod
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
-        """Points at given geodesic distances from a point, along one direction."""
+        """Points at given geodesic distances from a point, along one direction.
+
+        Args:
+            point: where to start.
+            distances: how far to walk, as *physical* distances.
+
+        Returns:
+            One point per distance.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement walk_from."
         )
@@ -1073,7 +1242,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     @property
     @abstractmethod
     def spatial_dimension(self) -> int:
-        """The dimension of the domain the fields live on."""
+        """The dimension of the domain the fields live on.
+
+        Not the dimension of the space of fields, which is :attr:`dim`. A
+        sphere's is two.
+
+        Returns:
+            The spatial dimension.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not report a spatial dimension."
         )
@@ -1354,7 +1533,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     @property
     @abstractmethod
     def gaussian_curvature(self) -> float:
-        """The Gaussian curvature of the domain, constant by homogeneity."""
+        """The Gaussian curvature of the domain, constant by homogeneity.
+
+        Returns:
+            The curvature: ``1 / radius^2`` on a sphere, zero on a box.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not state its Gaussian curvature."
         )
@@ -1511,6 +1697,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 preconditioner. Defaults to the spatial average.
             baseline_buoyancy: likewise for the restoring coefficient.
             solver: the iterative solver. Defaults to ``CGSolver()``.
+
+        Returns:
+            The inverse operator.
+
+        Raises:
+            TypeError: for a direct solver. The flexure operator is applied
+                matrix-free, so there is nothing to factorise.
         """
         constant = all(
             isinstance(value, (int, float, np.floating, np.integer))
@@ -1577,7 +1770,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
     @abstractmethod
     def geodesic_distance(self, start: Any, end: Any, /) -> float:
-        """The distance between two points along a shortest path."""
+        """The distance between two points along a shortest path.
+
+        Args:
+            start: one point.
+            end: the other.
+
+        Returns:
+            The *physical* distance, not an angle.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement geodesic_distance."
         )
@@ -1591,6 +1795,18 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         The weights carry the arc-length element, so they sum to the distance
         between the endpoints and integrating the constant one gives that
         distance.
+
+        Args:
+            start: one endpoint.
+            end: the other.
+            count: how many quadrature nodes to place.
+
+        Returns:
+            The nodes and weights, which sum to the distance between the
+            endpoints.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement geodesic_quadrature."
@@ -1603,6 +1819,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """Nodes and weights integrating over a geodesic ball.
 
         The weights carry the area element, so they sum to the ball's measure.
+
+        Args:
+            centre: the ball's centre.
+            radius: its *physical* radius.
+            count: how many nodes to place.
+
+        Returns:
+            The nodes and their weights.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement geodesic_ball_quadrature."
@@ -1664,6 +1891,11 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 instead; ray tracing, where the path itself depends on the
                 field, is out of scope.
             dense: assemble the matrix rather than composing operators.
+            eps: accuracy for the non-uniform FFT behind the point
+                evaluations, where one is used. Ignored on the direct route
+                and when the operator is assembled densely.
+            nthreads: threads for that transform; see
+                :meth:`point_evaluation_operator`.
 
         Returns:
             The operator, from this space into a Euclidean space of one entry
@@ -1709,6 +1941,16 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         Raises:
             ValueError: if no paths are given, or if a path has zero length and
                 so no average.
+
+        Args:
+            paths: ``(start, end)`` pairs.
+            count: quadrature nodes per path, as for
+                :meth:`path_integral_operator`.
+            weight: an optional weight along the path, likewise.
+            dense: assemble the matrix rather than composing operators.
+            eps: accuracy for the non-uniform FFT behind the point
+                evaluations.
+            nthreads: threads for that transform.
         """
         return self._path_operator(
             paths,
@@ -1791,6 +2033,21 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         The property operator of an inference problem: a handful of local
         averages, which is what a set of data can actually constrain. Same
         ``W E`` construction as :meth:`path_average_operator`.
+
+        Args:
+            centres: the ball centres.
+            radius: the *physical* ball radius.
+            count: quadrature nodes per ball.
+            normalise: divide by the ball's measure, giving an average rather
+                than an integral.
+            dense: assemble the derivative matrix rather than staying
+                matrix-free.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: for a non-positive radius or count, or no centres.
         """
         centres = tuple(centres)
         if not centres:
@@ -1829,14 +2086,40 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
 
     @abstractmethod
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
-        """The field obtained by sampling a function on the space's grid."""
+        """The field obtained by sampling a function on the space's grid.
+
+        Sampling, not projection in the ``L2`` sense: the result interpolates
+        the function at the grid points rather than minimising a residual.
+
+        Args:
+            function: called with one point of the domain at a time.
+
+        Returns:
+            The field.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement project_function."
         )
 
     @abstractmethod
     def random_point(self, *, rng: Generator | None = None) -> Any:
-        """A point drawn uniformly from the domain."""
+        """A point drawn uniformly from the domain.
+
+        Uniformly with respect to the domain's own measure, so on a sphere the
+        latitudes are not uniform.
+
+        Args:
+            rng: the generator.
+
+        Returns:
+            A point.
+
+        Raises:
+            NotImplementedError: unless the geometry supplies it.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement random_point."
         )

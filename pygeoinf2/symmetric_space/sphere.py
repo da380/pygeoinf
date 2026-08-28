@@ -384,7 +384,17 @@ class Sphere(SymmetricSpace[Any]):
         return x
 
     def to_components(self, x: Any) -> np.ndarray:
-        """Harmonic coefficients of a field, orthonormal in ``L2``."""
+        """Harmonic coefficients of a field, orthonormal in ``L2``.
+
+        Args:
+            x: a field, as an ``SHGrid`` or a bare array of grid values.
+
+        Returns:
+            One coefficient per component.
+
+        Raises:
+            ValueError: if the grid is not this sphere's shape.
+        """
         from pyshtools.expand import SHExpandDH
 
         field = self.grid_values(x)
@@ -401,7 +411,17 @@ class Sphere(SymmetricSpace[Any]):
         return self._radius * coefficients[parts, degrees, orders]
 
     def from_components(self, c: np.ndarray) -> np.ndarray:
-        """The field with the given harmonic coefficients."""
+        """The field with the given harmonic coefficients.
+
+        Args:
+            c: one coefficient per component.
+
+        Returns:
+            The field, as an ``SHGrid``.
+
+        Raises:
+            ValueError: if the component count is not the dimension.
+        """
         from pyshtools.expand import MakeGridDH
 
         components = np.asarray(c, dtype=float)
@@ -511,6 +531,9 @@ class Sphere(SymmetricSpace[Any]):
 
         Returns:
             An ``SHCoeffs`` of degree ``lmax``.
+
+        Raises:
+            ValueError: if the grid is not this sphere's shape.
         """
         from pyshtools import SHCoeffs
         from pyshtools.expand import SHExpandDH
@@ -543,6 +566,9 @@ class Sphere(SymmetricSpace[Any]):
 
         Returns:
             A field on this sphere.
+
+        Raises:
+            ValueError: if the array is not shaped ``(2, l + 1, l + 1)``.
         """
         array = np.asarray(getattr(coefficients, "coeffs", coefficients), dtype=float)
         if array.ndim != 3 or array.shape[0] != 2 or array.shape[1] != array.shape[2]:
@@ -852,7 +878,18 @@ class Sphere(SymmetricSpace[Any]):
         fold and of synthesis onto the grid.
 
         ``eps`` and ``nthreads`` mean what they do in :meth:`evaluate`, and
-        ``nthreads`` defaults to one for the reason measured there.
+        Args:
+            weights: one per point.
+            points: ``(latitude, longitude)`` pairs in degrees.
+            eps: the NUFFT's accuracy, as in :meth:`evaluate`.
+            nthreads: threads for it, one by default and for the reason
+                measured there.
+
+        Returns:
+            The derivative components.
+
+        Raises:
+            ValueError: if the weight count does not match the points.
         """
         points = tuple(points)
         values = np.asarray(weights, dtype=float)
@@ -961,6 +998,11 @@ class Sphere(SymmetricSpace[Any]):
 
         Returns:
             An ``(n, 2)`` array of ``(colatitude, longitude)`` in radians.
+
+        Raises:
+            ValueError: if a point does not have two coordinates, or a
+                latitude lies outside ``[-90, 90]`` -- which is the usual sign
+                that colatitudes have been passed in by mistake.
         """
         positions = np.atleast_2d(np.asarray(points, dtype=float))
         if positions.shape[-1] != 2:
@@ -1071,6 +1113,17 @@ class Sphere(SymmetricSpace[Any]):
         the endpoints. Antipodal endpoints are rejected rather than resolved:
         the great circle through them is not unique, and picking one silently
         would be a wrong answer rather than a missing one.
+
+        Args:
+            start: one endpoint, ``(latitude, longitude)`` in degrees.
+            end: the other.
+            count: how many Gauss-Legendre nodes to place along the arc.
+
+        Returns:
+            The nodes and their weights, which sum to the arc length.
+
+        Raises:
+            ValueError: for fewer than one node, or antipodal endpoints.
         """
         if count < 1:
             raise ValueError("A quadrature rule needs at least one node.")
@@ -1110,6 +1163,18 @@ class Sphere(SymmetricSpace[Any]):
         Gauss-Legendre in ``cos(gamma)`` — which is the variable the area
         element is uniform in — and a trapezoidal rule in azimuth on each ring.
         The weights carry the area element, so they sum to the cap's area.
+
+        Args:
+            centre: the cap's centre, in degrees.
+            radius: its *physical* radius along the sphere, not an angle.
+            count: how many nodes to place.
+
+        Returns:
+            The nodes and their weights.
+
+        Raises:
+            ValueError: for a non-positive radius or count, or a radius
+                larger than half the circumference.
         """
         if count < 1:
             raise ValueError("A quadrature rule needs at least one node.")
@@ -1246,6 +1311,22 @@ class Sphere(SymmetricSpace[Any]):
         cap functionals unless ``count`` is given, which forces the generic
         quadrature route and exists so the two can be checked against each
         other.
+
+        Args:
+            centres: the cap centres, in degrees.
+            radius: the *physical* cap radius, not an angle.
+            count: nodes per cap for the quadrature route. Ignored on the
+                exact harmonic route.
+            normalise: divide by the cap's area, giving an average rather
+                than an integral.
+            dense: assemble the derivative matrix rather than staying
+                matrix-free.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: for a non-positive radius or count, or no centres.
         """
         centres = tuple(centres)
         if not centres:
@@ -1289,6 +1370,14 @@ class Sphere(SymmetricSpace[Any]):
         America and Europe, thin over the southern oceans. Uniformly scattered
         receivers make an inverse problem easier than any real one, which is
         exactly the wrong direction for a test to err in.
+
+        Args:
+            count: how many to return, drawn without replacement. All of them
+                if omitted.
+            rng: the generator for that draw.
+
+        Returns:
+            ``(latitude, longitude)`` points in degrees.
         """
         table = _read_table("gsn_stations.csv")
         points = _as_points(table["Latitude"], table["Longitude"])
@@ -1306,6 +1395,15 @@ class Sphere(SymmetricSpace[Any]):
 
         Sources cluster along plate boundaries, so the ray coverage they give
         is strongly anisotropic. That is the point of using them.
+
+        Args:
+            count: how many to return. All of them if omitted.
+            minimum_magnitude: drop events below this, which is how the
+                catalogue is thinned to the events a study would use.
+            rng: the generator for the draw.
+
+        Returns:
+            ``(latitude, longitude)`` epicentres in degrees.
         """
         table = _read_table("usgs_event_cache.csv")
         keep = table["mag"] >= minimum_magnitude
@@ -1321,6 +1419,16 @@ class Sphere(SymmetricSpace[Any]):
         extra. Sampled on the grid rather than expanded exactly, so the
         coastlines ring: smooth the result with a heat-kernel covariance before
         using it as a coefficient field.
+
+        Args:
+            ocean: mask the ocean rather than the land.
+            resolution: the Natural Earth resolution, as cartopy names it.
+
+        Returns:
+            The mask as a field of ones and zeros.
+
+        Raises:
+            ImportError: without cartopy, which supplies the coastlines.
         """
         try:
             import shapely.geometry as geometry
@@ -1361,6 +1469,18 @@ class Sphere(SymmetricSpace[Any]):
         The convenience every tomography script writes for itself.
         ``minimum_separation`` drops pairs too close together to carry
         information, which in a real network is a noticeable fraction of them.
+
+        Args:
+            sources: how many earthquakes to draw.
+            receivers: how many stations.
+            minimum_magnitude: the magnitude threshold for the sources.
+            minimum_separation: drop pairs closer than this, as a *physical*
+                distance. Zero keeps every pair.
+            rng: the generator.
+
+        Returns:
+            The ``(source, receiver)`` pairs that survive the separation
+            filter, so there may be fewer than ``sources * receivers``.
         """
         generator = np.random.default_rng() if rng is None else rng
         origins = self.earthquakes(
@@ -1417,6 +1537,17 @@ class Sphere(SymmetricSpace[Any]):
         metric on their shared components, and it is the ratio of the two
         metrics otherwise. Getting that by hand is the mistake of DESIGN.md
         section 5.6 wearing a different hat.
+
+        Args:
+            target: the sphere to map into. It must have the same radius --
+                two spheres of different size are not two resolutions of one
+                domain.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if the radii differ.
         """
         if target.radius != self._radius:
             raise ValueError("Degree transfer needs a common radius.")
@@ -1442,7 +1573,17 @@ class Sphere(SymmetricSpace[Any]):
     def with_order(
         self, order: float, /, *, length_scale: float | None = None
     ) -> Sphere:
-        """The same expansion, viewed with a different Sobolev order."""
+        """The same expansion, viewed with a different Sobolev order.
+
+        Args:
+            order: the new Sobolev order.
+            length_scale: the new length scale. Kept as it is if omitted, so
+                this is a change of order alone.
+
+        Returns:
+            The same expansion in the new metric. The components are
+            unchanged; only the inner product moves.
+        """
         return Sphere(
             self._lmax,
             radius=self._radius,
