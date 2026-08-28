@@ -281,15 +281,12 @@ CONVENTIONAL = {"rng", "n_jobs", "backend"}
 # regress. This is the documentation debt, counted rather than described.
 DOCUMENTATION_DEBT = {
     "algebra/operators.py": 21,
-    "backends/mfem.py": 7,
     "geometry/convex.py": 20,
     "geometry/subspaces.py": 8,
-    "probability/base.py": 7,
     "probability/gaussian.py": 21,
     "symmetric_space/base.py": 35,
     "symmetric_space/fourier.py": 6,
     "symmetric_space/sphere.py": 20,
-    "testing.py": 10,
 }
 
 

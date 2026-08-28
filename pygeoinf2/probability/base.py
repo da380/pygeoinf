@@ -196,6 +196,10 @@ class ProbabilityMeasure[X](ABC):
 
         Needs a domain whose points can be evaluated at, so it is defined for a
         space of functions and not for a space of coefficients.
+
+        Raises:
+            NotImplementedError: on a domain with no point evaluation, there
+                being no "two points" to take the covariance between.
         """
         space = self.domain
         dirac = getattr(space, "dirac", None)
@@ -207,7 +211,18 @@ class ProbabilityMeasure[X](ABC):
         return self.covariance(dirac(point).representer)
 
     def log_density(self, x: X) -> float:
-        """The log density at ``x``, up to an additive constant."""
+        """The log density at ``x``, up to an additive constant.
+
+        Args:
+            x: where to evaluate it.
+
+        Returns:
+            The log density.
+
+        Raises:
+            NotImplementedError: unless the measure provides one. Not every
+                measure has a density, and one that is only sampled has none.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a log density."
         )
@@ -217,6 +232,15 @@ class ProbabilityMeasure[X](ABC):
 
         Not a functional: under Riesz identification the representer is the
         natural object, and it is what a gradient-based sampler steps along.
+
+        Args:
+            x: where to evaluate it.
+
+        Returns:
+            The gradient, a vector of the domain.
+
+        Raises:
+            NotImplementedError: unless the measure provides one.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a log-density gradient."
@@ -243,7 +267,19 @@ class ProbabilityMeasure[X](ABC):
         *,
         translation: object | None = None,
     ) -> ProbabilityMeasure:
-        """The law of ``A X + b``."""
+        """The law of ``A X + b``.
+
+        Args:
+            operator: the linear part ``A``.
+            translation: the constant part ``b``. Zero if omitted.
+
+        Returns:
+            The image measure.
+
+        Raises:
+            ValueError: if the operator does not act on this measure's domain,
+                or the translation does not live in its codomain.
+        """
         if operator.domain != self._domain:
             raise ValueError(
                 f"Cannot map: the operator's domain {operator.domain!r} is not "
@@ -262,6 +298,15 @@ class ProbabilityMeasure[X](ABC):
 
         Exact for a Gaussian under an affine map. Otherwise the result can
         still be sampled, which is the minimum nonlinear inference needs.
+
+        Args:
+            operator: the map ``F``, linear, affine or neither.
+
+        Returns:
+            The law of ``F(X)``.
+
+        Raises:
+            ValueError: if the operator's domain is not this measure's.
         """
         if isinstance(operator, AffineOperator):
             return self.affine_map(
@@ -496,6 +541,14 @@ def product(
 
     A product of Gaussians is Gaussian, with block-diagonal covariance; anything
     else is a :class:`ProductMeasure`.
+
+    Args:
+        measures: the independent factors.
+        labels: names for the summands of the direct sum they live on, so a
+            component can be reached by name rather than by position.
+
+    Returns:
+        The product measure.
     """
     from .gaussian import GaussianMeasure
 

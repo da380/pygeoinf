@@ -122,6 +122,11 @@ def essential_dofs_of(
 
     Returns:
         The true-dof indices, sorted.
+
+    Raises:
+        ValueError: if an attribute number is not among the mesh's boundary
+            attributes -- almost always a mesh that does not have the
+            boundary the caller thinks it has.
     """
     mfem = _require_mfem()
     mesh = finite_element_space.GetMesh()
@@ -362,7 +367,18 @@ class MfemSpace(CoordinateSpace):
         return values if not self.is_constrained else values[self._free]
 
     def from_components(self, c: np.ndarray) -> Any:
-        """An ``mfem.Vector``, zero on the essential degrees of freedom."""
+        """An ``mfem.Vector``, zero on the essential degrees of freedom.
+
+        Args:
+            c: the components, one per true degree of freedom.
+
+        Returns:
+            A fresh ``mfem.Vector`` owning its own buffer -- the library frees
+            what it allocates, so this must not alias the caller's array.
+
+        Raises:
+            ValueError: if the component count is not the dimension.
+        """
         mfem = _require_mfem()
         values = np.asarray(c, dtype=float)
         if values.shape != (self._dim,):
@@ -538,14 +554,22 @@ def solver_from_bilinear_form(
             supplies something better — a multigrid cycle, a direct
             factorisation — without anything else changing. Keep a reference to
             anything the solver does not own; MFEM will not.
-        rtol, max_iterations: for the default solver; ignored when
-            *make_solver* is given.
+        rtol: the relative residual for the default solver; ignored when
+            *make_solver* is given. An operator defined by an inexact solve is
+            only as good as that solve.
+        max_iterations: the cap for the default solver, likewise ignored.
         traits: claims about the *inverse*. A symmetric form gives a
             self-adjoint operator whose inverse is self-adjoint too, which is
             the usual case and the default.
         strict: raise when the solver reports it did not converge. A silently
             unconverged solve inside an operator is an operator that is quietly
             not the one it claims to be.
+
+    Returns:
+        The inverse of the form's operator, as a ``LinearOperator``.
+
+    Raises:
+        ImportError: without MFEM installed.
     """
     mfem = _require_mfem()
     system = _to_mfem(sp.csr_matrix(space.restrict(form.SpMat())))
@@ -624,6 +648,13 @@ def operator_from_linear_forms(
         forms: assembled ``mfem.LinearForm`` objects, one per observation.
         codomain: the data space. A Euclidean space of the right size if
             omitted, which is what a list of numbers is.
+
+    Returns:
+        The observation operator.
+
+    Raises:
+        ValueError: if no forms are given, or the codomain's dimension does
+            not match how many there are.
     """
     rows = [space.restrict_vector(form.GetDataArray()) for form in forms]
     if not rows:
@@ -770,6 +801,16 @@ def matern_measure(
         (``ComputePartialFractionApproximation`` is absent). Rather than
         reimplement it here — badly, and duplicating what MFEM already
         does well — this refuses a non-integer exponent and says so.
+        rtol: the relative residual for each of the solves that build the
+            covariance factor.
+
+    Returns:
+        The measure, with a covariance factor built from the solves.
+
+    Raises:
+        ImportError: without MFEM installed.
+        ValueError: for a non-integer or non-positive exponent, or a
+            non-positive correlation length.
     """
     mfem = _require_mfem()
     from ..probability.gaussian import GaussianMeasure

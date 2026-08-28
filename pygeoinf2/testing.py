@@ -223,7 +223,18 @@ def check_coordinates(
     rng: Generator | None = None,
     trials: int = 5,
 ) -> None:
-    """Check the coordinate map, the Gram matrix, and the pairing axiom."""
+    """Check the coordinate map, the Gram matrix, and the pairing axiom.
+
+    Args:
+        space: the space to check.
+        rng: the generator for the probe vectors.
+        trials: how many random vectors to check each axiom on. More than one
+            because a single draw can satisfy an identity by accident.
+
+    Raises:
+        AssertionError: naming the axiom that failed and the numbers that
+            failed it.
+    """
     rng = default_rng() if rng is None else rng
 
     if not isinstance(space, CoordinateSpace):
@@ -308,6 +319,14 @@ def check_representer(
     identity by a factor of the Gram matrix, which is exactly the classic
     adjoint-method error. On an orthonormal basis the two coincide and there is
     nothing to catch. See DESIGN.md section 5.6.
+
+    Args:
+        space: the space to check.
+        rng: the generator for the probe vectors.
+        trials: how many random functionals to check.
+
+    Raises:
+        AssertionError: if a representer does not reproduce its functional.
     """
     rng = default_rng() if rng is None else rng
     g = np.asarray(derivative_components, dtype=float)
@@ -339,6 +358,19 @@ def check_white_noise(
     v1 fails this check on every mass-weighted space: drawing standard normal
     *components* gives covariance ``G`` rather than the identity. See DESIGN.md
     section 9.
+
+    Args:
+        space: the space to check.
+        rng: the generator. Seed it: this is a statistical check and an
+            unseeded failure cannot be reproduced.
+        samples: how many draws to average over.
+        rtol: the agreement required, which must scale like
+            ``1 / sqrt(samples)`` -- tightening one without the other only
+            makes the check flaky.
+
+    Raises:
+        AssertionError: if the sample covariance is not the identity on the
+            space to within *rtol*.
     """
     rng = default_rng() if rng is None else rng
     if space.dim == 0:
@@ -387,6 +419,14 @@ def check_operator(
     The adjoint identity ``(A x, y)_Y == (x, A* y)_X`` is the one that catches
     a mass matrix applied in the wrong place, which is the most common way for
     a hand-written adjoint to be subtly wrong on a non-orthonormal space.
+
+    Args:
+        operator: the operator to check.
+        rng: the generator for the probe vectors.
+        trials: how many pairs to check the adjoint identity on.
+
+    Raises:
+        AssertionError: naming the axiom that failed.
     """
     rng = default_rng() if rng is None else rng
     domain, codomain = operator.domain, operator.codomain
@@ -436,6 +476,14 @@ def check_traits(
     Traits are assertions by whoever built the operator; nothing enforces them
     at construction. This is the safety net. Only claimed traits are checked —
     an absent trait is not a claim that the property fails.
+
+    Args:
+        operator: the operator whose claims are to be checked.
+        rng: the generator for the probe vectors.
+        trials: how many vectors to test each claim on.
+
+    Raises:
+        AssertionError: naming the trait that is claimed but does not hold.
     """
     rng = default_rng() if rng is None else rng
     traits = operator.traits
@@ -523,7 +571,23 @@ def check_derivative(
     trials: int = 3,
     rtol: float = 1e-5,
 ) -> None:
-    """Check the derivative against central finite differences."""
+    """Check the derivative against central finite differences.
+
+    Args:
+        operator: the operator to check.
+        point: where to check it.
+        rng: the generator for the probe directions.
+        step: the finite-difference step. Central differences, so the error
+            is ``O(step^2)`` in truncation and ``O(1/step)`` in rounding --
+            which is why the default is near the square root of machine
+            epsilon rather than as small as possible.
+        trials: how many directions to check.
+        rtol: the agreement required.
+
+    Raises:
+        AssertionError: if the operator carries no derivative, or the
+            difference disagrees with it.
+    """
     rng = default_rng() if rng is None else rng
     if not operator.has_derivative:
         _fail(
@@ -572,6 +636,17 @@ def check_gradient(
     which is the classic adjoint-method error. On an orthonormal space the two
     coincide and there is nothing to catch, which is why the error survives in
     practice. See DESIGN.md section 5.6.
+
+    Args:
+        functional: the functional to check.
+        point: where to check it.
+        rng: the generator for the probe directions.
+        step: the finite-difference step; see :func:`check_derivative`.
+        trials: how many directions to check.
+        rtol: the agreement required.
+
+    Raises:
+        AssertionError: if the gradient is not the derivative's representer.
     """
     rng = default_rng() if rng is None else rng
     domain = functional.domain
@@ -606,7 +681,21 @@ def check_second_derivative(
     trials: int = 3,
     rtol: float = 1e-4,
 ) -> None:
-    """Check ``F''(x)[d, .]`` against finite differences of the derivative."""
+    """Check ``F''(x)[d, .]`` against finite differences of the derivative.
+
+    Args:
+        operator: the operator to check.
+        point: where to check it.
+        rng: the generator for the probe directions.
+        step: the finite-difference step; see :func:`check_derivative`.
+        trials: how many directions to check.
+        rtol: the agreement required. Looser than for a first derivative, the
+            differencing being of an already-differenced quantity.
+
+    Raises:
+        AssertionError: if the operator carries no second derivative, or it
+            disagrees with the differences.
+    """
     rng = default_rng() if rng is None else rng
     if not operator.has_second_derivative:
         _fail(
@@ -663,6 +752,16 @@ def check_measure(
     against 1 — otherwise an entry that is exactly zero in expectation gets
     compared against an absolute floor that has nothing to do with the scale of
     the problem.
+
+    Args:
+        measure: the measure to check.
+        rng: the generator. Seed it, as for :func:`check_white_noise`.
+        samples: how many draws to take.
+        rtol: the agreement required, scaling with the sample count.
+        directions: how many probe directions to compare moments along.
+
+    Raises:
+        AssertionError: if a declared moment disagrees with the samples.
     """
     rng = default_rng() if rng is None else rng
     space = measure.domain
@@ -733,6 +832,17 @@ def check_projection(
     thing for a numerical check. It is what distinguishes a projection from a
     map onto the boundary — v1's ``HalfSpace.project`` satisfies neither of the
     first two.
+
+    Args:
+        subset: the convex set whose projection is to be checked.
+        rng: the generator for the probe points.
+        trials: how many points to project.
+        probes: how many further points to test the obtuse-angle condition
+            against for each projection.
+
+    Raises:
+        AssertionError: if the projection is not idempotent, does not land in
+            the set, or fails the variational inequality.
     """
     rng = default_rng() if rng is None else rng
     space = subset.domain
