@@ -180,6 +180,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         return DiagonalLinearOperator(self, array, traits=traits)
 
     @property
+    @abstractmethod
     def degrees(self) -> np.ndarray:
         """The index attached to each component, for a degree-wise symbol.
 
@@ -418,6 +419,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     # ----------------------------------------------------------------- #
 
     @property
+    @abstractmethod
     def reference_point(self) -> Any:
         """Any point of the domain. The space is homogeneous, so any will do.
 
@@ -1061,6 +1063,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             raise ValueError("count must be non-negative.")
         return [self.random_point(rng=rng) for _ in range(count)]
 
+    @abstractmethod
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
         """Points at given geodesic distances from a point, along one direction."""
         raise NotImplementedError(
@@ -1068,6 +1071,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         )
 
     @property
+    @abstractmethod
     def spatial_dimension(self) -> int:
         """The dimension of the domain the fields live on."""
         raise NotImplementedError(
@@ -1348,6 +1352,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     # ----------------------------------------------------------------- #
 
     @property
+    @abstractmethod
     def gaussian_curvature(self) -> float:
         """The Gaussian curvature of the domain, constant by homogeneity."""
         raise NotImplementedError(
@@ -1564,12 +1569,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     #                              Geodesics                            #
     # ----------------------------------------------------------------- #
 
+    @abstractmethod
     def geodesic_distance(self, start: Any, end: Any, /) -> float:
         """The distance between two points along a shortest path."""
         raise NotImplementedError(
             f"{type(self).__name__} does not implement geodesic_distance."
         )
 
+    @abstractmethod
     def geodesic_quadrature(
         self, start: Any, end: Any, /, *, count: int
     ) -> tuple[list[Any], np.ndarray]:
@@ -1583,6 +1590,7 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             f"{type(self).__name__} does not implement geodesic_quadrature."
         )
 
+    @abstractmethod
     def geodesic_ball_quadrature(
         self, centre: Any, radius: float, /, *, count: int
     ) -> tuple[list[Any], np.ndarray]:
@@ -1813,12 +1821,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # closed-form route below takes no point values at all.
         return weights @ self.point_evaluation_operator(nodes, unsafe=True)
 
+    @abstractmethod
     def project_function(self, function: Callable[[Any], float], /) -> np.ndarray:
         """The field obtained by sampling a function on the space's grid."""
         raise NotImplementedError(
             f"{type(self).__name__} does not implement project_function."
         )
 
+    @abstractmethod
     def random_point(self, *, rng: Generator | None = None) -> Any:
         """A point drawn uniformly from the domain."""
         raise NotImplementedError(

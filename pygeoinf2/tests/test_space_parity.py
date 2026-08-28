@@ -709,3 +709,52 @@ class TestTruncationDegreeFor:
         length_scale = kwargs.pop("length_scale")
         with pytest.raises(ValueError, match=message):
             Sphere.truncation_degree_for(order, length_scale, **kwargs)
+
+
+class TestTheGeometryIsRequired:
+    """A space cannot be built without the geometry it claims to have.
+
+    Which is the structural version of what this file tests by example: the
+    review found that every geometric method existed on the sphere alone, and
+    a base class that raises NotImplementedError lets that happen quietly. An
+    abstract method makes it a construction error instead.
+    """
+
+    def test_an_incomplete_space_cannot_be_constructed(self):
+        from pygeoinf2.symmetric_space.base import SymmetricSpace
+
+        class Incomplete(SymmetricSpace):
+            pass
+
+        with pytest.raises(TypeError, match="abstract"):
+            Incomplete()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "degrees",
+            "reference_point",
+            "walk_from",
+            "spatial_dimension",
+            "gaussian_curvature",
+            "geodesic_distance",
+            "geodesic_quadrature",
+            "geodesic_ball_quadrature",
+            "project_function",
+            "random_point",
+        ],
+    )
+    def test_each_geometric_primitive_is_required(self, name):
+        from pygeoinf2.symmetric_space.base import SymmetricSpace
+
+        assert name in SymmetricSpace.__abstractmethods__
+
+    def test_every_concrete_space_supplies_them(self, geometry):
+        """And they are the space's own, not inherited stubs."""
+        from pygeoinf2.symmetric_space.base import SymmetricSpace
+
+        _, space = geometry
+        for name in SymmetricSpace.__abstractmethods__:
+            assert getattr(type(space), name, None) is not getattr(
+                SymmetricSpace, name, None
+            )
