@@ -319,6 +319,16 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         A fixed-point mode contributes ``a cos(k.r)``; a conjugate pair
         contributes ``a cos(k.r)`` and ``-a sin(k.r)``, the sign following the
         convention that ``rfftn`` carries a negative exponent.
+
+        Args:
+            point: where to evaluate the basis.
+
+        Returns:
+            One value per component.
+
+        Raises:
+            ValueError: if the point does not have as many coordinates as the
+                box has axes.
         """
         position = np.atleast_1d(np.asarray(point, dtype=float))
         if position.shape != (self.spatial_dimension,):
@@ -480,7 +490,15 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         adjoint of the type-2 one — so this is the same transform run the other
         way rather than a second implementation to keep in step.
 
-        ``eps`` and ``nthreads`` mean what they do in :meth:`evaluate`.
+        Args:
+            weights: one per point.
+            points: where the field was evaluated.
+            eps: the NUFFT's accuracy, as in :meth:`evaluate`.
+            nthreads: threads for it, one by default and for the reason given
+                there.
+
+        Returns:
+            The derivative components.
         """
         layout = self._nufft_layout
         if layout is None:
@@ -633,6 +651,10 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
         Returns:
             A field on this box.
+
+        Raises:
+            ValueError: if the array is not shaped as ``rfftn`` returns for
+                this grid.
         """
         expected = self._packing.rfft_shape
         array = np.asarray(coefficients, dtype=complex)
@@ -870,6 +892,16 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         Formally anti-self-adjoint in ``L2``, and lifted through the metric on
         a Sobolev space -- where it is not anti-self-adjoint, since
         differentiation does not commute with the Sobolev weight.
+
+        Args:
+            axis: which coordinate to differentiate along. Zero on a
+                one-dimensional box, where it is the only choice.
+
+        Returns:
+            The operator.
+
+        Raises:
+            ValueError: if the axis is outside the box's dimensions.
         """
         if not 0 <= axis < self.spatial_dimension:
             raise ValueError(
@@ -908,7 +940,17 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     def with_order(
         self, order: float, /, *, length_scale: float | None = None
     ) -> PeriodicBox:
-        """The same grid, viewed with a different Sobolev order."""
+        """The same grid, viewed with a different Sobolev order.
+
+        Args:
+            order: the new order.
+            length_scale: the new length scale, which sets where the Sobolev
+                weight turns over. Kept as it is if omitted, so this is a
+                change of order alone.
+
+        Returns:
+            The same domain and grid, in the new metric.
+        """
         return PeriodicBox(
             self._shape,
             lengths=self._lengths,

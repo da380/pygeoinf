@@ -272,6 +272,13 @@ class AffineSubspace(ConvexSet):
         minimum-norm solution ``A* (A A*)^-1 b`` — which is the right choice of
         representative, since any other would make the reported translation
         depend on how the equation was written down.
+
+        Args:
+            operator: the ``A`` of ``A x == b``.
+            value: the ``b``.
+            solver: how to invert ``A A*`` on the codomain. Conjugate
+                gradients if omitted, which needs ``A A*`` to be definite --
+                pass a least-squares solver for a rank-deficient constraint.
         """
         normal = (operator @ operator.adjoint).with_traits(Traits.POSITIVE_DEFINITE)
         inverse = (solver or CGSolver(rtol=1e-12))(normal)
@@ -299,6 +306,12 @@ class AffineSubspace(ConvexSet):
         :meth:`OrthogonalProjector.from_basis` orthonormalises them and drops
         any that were dependent, so the dimension is the rank rather than the
         count.
+
+        Args:
+            domain: the space.
+            vectors: a spanning set for the tangent space.
+            translation: a point of the affine subspace. The origin if
+                omitted, which makes it linear.
         """
         return cls(
             OrthogonalProjector.from_basis(domain, vectors), translation=translation
@@ -318,6 +331,12 @@ class AffineSubspace(ConvexSet):
         The other way of describing the same object: by what it excludes rather
         than by what it contains. Which is natural depends on whether there are
         few constraints or few degrees of freedom.
+
+        Args:
+            domain: the space.
+            vectors: a spanning set for the *complement* of the tangent space.
+            translation: a point of the affine subspace. The origin if
+                omitted.
         """
         return cls(
             OrthogonalProjector.from_basis(domain, vectors).complement(),
@@ -333,6 +352,15 @@ class AffineSubspace(ConvexSet):
         written that way rather than by intersecting sets, because the
         intersection of hyperplanes has a translation and a tangent space that
         the general intersection of sets does not.
+
+        Args:
+            hyperplanes: the planes to intersect, all on one space.
+
+        Returns:
+            Their intersection, as an affine subspace.
+
+        Raises:
+            ValueError: if none are given, or they do not share a space.
         """
         from ..algebra.operators import LinearOperator
 
@@ -383,7 +411,17 @@ class AffineSubspace(ConvexSet):
 
     @property
     def constraint_operator(self) -> LinearOperator:
-        """The ``A`` of the equation this subspace was built from."""
+        """The ``A`` of the equation this subspace was built from.
+
+        Returns:
+            The constraint operator.
+
+        Raises:
+            AttributeError: if the subspace was built from a basis rather
+                than an equation. A basis fixes the solution set but not which
+                equation defines it; :meth:`to_hyperplanes` gives an equation
+                with the same solutions.
+        """
         if self._equation is None:
             raise AttributeError(
                 "This subspace was not built from an explicit equation, so it "
@@ -394,7 +432,14 @@ class AffineSubspace(ConvexSet):
 
     @property
     def constraint_value(self) -> Any:
-        """The ``b`` of the equation this subspace was built from."""
+        """The ``b`` of the equation this subspace was built from.
+
+        Returns:
+            The constraint value.
+
+        Raises:
+            AttributeError: if the subspace was not built from an equation.
+        """
         if self._equation is None:
             raise AttributeError("This subspace was not built from an equation.")
         return self._equation[1]
@@ -496,7 +541,18 @@ class LinearSubspace(AffineSubspace):
         *,
         orthonormal: bool = False,
     ) -> LinearSubspace:
-        """The span of a family of vectors."""
+        """The span of a family of vectors.
+
+        Args:
+            domain: the space.
+            vectors: the spanning set, which need not be independent.
+            orthonormal: assert that they already are, skipping the
+                orthonormalisation. Wrong if they are not, and not checked --
+                which is why it is not the default.
+
+        Returns:
+            The subspace they span.
+        """
         return cls(
             OrthogonalProjector.from_basis(domain, vectors, orthonormal=orthonormal)
         )
@@ -512,6 +568,14 @@ class LinearSubspace(AffineSubspace):
         :meth:`with_constraint_value`, and the constraint pull-back a
         parameterised inversion does -- works on it. It did not before, and a
         kernel is the commonest way such a subspace gets built.
+
+        Args:
+            operator: the ``A`` whose kernel this is.
+            solver: how to invert ``A A*``, as for
+                :meth:`AffineSubspace.from_linear_equation`.
+
+        Returns:
+            The kernel, which remembers that it is ``A x == 0``.
         """
         subspace = cls(OrthogonalProjector.onto_kernel(operator, solver=solver))
         subspace._equation = (operator, operator.codomain.zero())

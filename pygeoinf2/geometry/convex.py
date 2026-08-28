@@ -83,12 +83,29 @@ class ConvexSet(Subset):
         A default that every convex set inherits: a point is in a closed set
         exactly when the nearest point of that set is itself. Subsets with a
         cheaper test override it.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside. Scaled by the set's
+                own size, so it means the same thing whatever the units are.
+
+        Returns:
+            Whether the set contains the point.
         """
         distance = self._domain.norm(self._domain.subtract(x, self.project(x)))
         return distance <= rtol * max(self._domain.norm(x), 1.0)
 
     def support_function(self) -> SupportFunction:
-        """``h(y) == sup { (y, x) : x in this set }``."""
+        """``h(y) == sup { (y, x) : x in this set }``.
+
+        Returns:
+            The support function, as a functional on the space.
+
+        Raises:
+            NotImplementedError: for a set with no closed form -- an
+                intersection, or one defined only by membership. The
+                Backus-Gilbert routes compute such values by minimisation.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support function."
         )
@@ -99,6 +116,15 @@ class ConvexSet(Subset):
         A *subgradient* of the support function, and the reason it is worth
         having: a nonsmooth minimisation of a support function needs one at
         every step, and for the sets that have closed forms so does this.
+
+        Args:
+            direction: the direction to maximise along.
+
+        Returns:
+            A point of the set attaining the support value.
+
+        Raises:
+            NotImplementedError: for a set with no closed form.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a support maximiser."
@@ -207,7 +233,19 @@ class _OracleSet(ConvexSet):
         return self._maximiser is not None
 
     def maximiser(self, direction: Any, /) -> Any:
-        """The point of the set furthest along a direction."""
+        """The point of the set furthest along a direction.
+
+        Args:
+            direction: the direction to maximise along.
+
+        Returns:
+            The maximising point.
+
+        Raises:
+            NotImplementedError: unless the support function was built with a
+                maximiser. A support *value* does not determine the point that
+                attains it.
+        """
         if self._maximiser is None:
             raise AttributeError(
                 "This set was given a support function but no maximiser, so it "
@@ -225,6 +263,15 @@ class _OracleSet(ConvexSet):
         ``(q, x) <= h(q)`` for *every* ``q`` is membership, and no finite
         number of directions establishes it. What can be had is a certificate
         of *non*-membership — see :meth:`outside`.
+
+        Args:
+            x: a vector of the space.
+            rtol: unused; there is no test to apply it to.
+
+        Raises:
+            NotImplementedError: always. Membership is not decidable from a
+                support function, and returning a guess would be worse than
+                refusing.
         """
         raise NotImplementedError(
             "Membership needs every direction. Use outside() for a "
@@ -236,6 +283,11 @@ class _OracleSet(ConvexSet):
 
         One-sided, and honestly so: a ``True`` is a proof, and a ``False`` is
         only the absence of one among the directions tried.
+
+        Args:
+            x: the point to test.
+            rtol: how far past a supporting hyperplane the point must lie
+                before it counts as outside it.
         """
         for direction in directions:
             pairing = self.domain.inner_product(direction, x)
@@ -244,7 +296,13 @@ class _OracleSet(ConvexSet):
         return False
 
     def project(self, x: Any, /) -> Any:
-        """Not available from a support function alone."""
+        """Not available from a support function alone.
+
+        Raises:
+            NotImplementedError: always. The nearest point of a set is not
+                determined by its support function; that is what makes
+                :meth:`outside` one-sided.
+        """
         raise NotImplementedError(
             "A support function does not give a projection. Bound the set with "
             "polytope() and project onto that."
@@ -294,14 +352,28 @@ class _MinkowskiSum(ConvexSet):
         return self._first.support_function() + self._second.support_function()
 
     def project(self, x: Any, /) -> Any:
-        """Not generally available: the sum of two projections is not one."""
+        """Not generally available: the sum of two projections is not one.
+
+        Raises:
+            NotImplementedError: always. Projecting onto a Minkowski sum is
+                its own optimisation, not a composition of the parts'.
+        """
         raise NotImplementedError(
             "A Minkowski sum has no projection in closed form, even when its "
             "summands do. Bound it with a polytope from its support function."
         )
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Not generally decidable without an optimisation."""
+        """Not generally decidable without an optimisation.
+
+        Args:
+            x: a vector of the space.
+            rtol: unused.
+
+        Raises:
+            NotImplementedError: always. Deciding whether a point is a sum of
+                one from each part is a feasibility problem.
+        """
         raise NotImplementedError(
             "Membership of a Minkowski sum needs an optimisation over the "
             "splitting of the point between the summands."
@@ -388,7 +460,16 @@ class Polytope(ConvexSet):
         return self._outer
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Whether the point satisfies every constraint."""
+        """Whether the point satisfies every constraint.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside. Scaled by the set's
+                own size, so it means the same thing whatever the units are.
+
+        Returns:
+            Whether the set contains the point.
+        """
         return all(
             plane.contains(x, rtol=rtol) if hasattr(plane, "contains") else False
             for plane in self._half_spaces
@@ -536,7 +617,16 @@ class Ball(ConvexSet):
         return self._centre
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Cheaper than the default: one norm rather than a projection."""
+        """Cheaper than the default: one norm rather than a projection.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside. Scaled by the set's
+                own size, so it means the same thing whatever the units are.
+
+        Returns:
+            Whether the set contains the point.
+        """
         offset = self._domain.norm(self._domain.subtract(x, self._centre))
         return offset <= self._radius * (1.0 + rtol)
 
@@ -603,7 +693,16 @@ class Hyperplane(ConvexSet):
         return self._domain.inner_product(self._normal, x) - self._offset
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """True when the point satisfies the equation to tolerance."""
+        """True when the point satisfies the equation to tolerance.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside. Scaled by the set's
+                own size, so it means the same thing whatever the units are.
+
+        Returns:
+            Whether the set contains the point.
+        """
         scale = max(
             abs(self._offset), self._domain.norm(x) * np.sqrt(self._squared_norm), 1.0
         )
@@ -664,6 +763,14 @@ class HalfSpace(ConvexSet):
         The offset alone is not enough: a constraint through the origin has
         offset zero, and the tolerance would then not scale with the point at
         all.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside. Scaled by the set's
+                own size, so it means the same thing whatever the units are.
+
+        Returns:
+            Whether the set contains the point.
         """
         residual = self._domain.inner_product(self._normal, x) - self._offset
         scale = max(
@@ -735,7 +842,19 @@ class Ellipsoid(ConvexSet):
         self._centre = domain.zero() if centre is None else centre
 
     def support_maximiser(self, direction: Any, /) -> Any:
-        """``centre + C q / sqrt((C q, q))``, which needs the covariance."""
+        """``centre + C q / sqrt((C q, q))``, which needs the covariance.
+
+        Args:
+            direction: the direction to maximise along.
+
+        Returns:
+            The point of the ellipsoid furthest along it.
+
+        Raises:
+            ValueError: if the ellipsoid was built without its covariance.
+                The precision alone gives the constraint but not the point
+                attaining the support.
+        """
         if self._covariance is None:
             raise AttributeError(
                 "This ellipsoid was built without a covariance, so it cannot "
@@ -772,7 +891,16 @@ class Ellipsoid(ConvexSet):
         return self._domain.inner_product(self._precision(offset), offset)
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """True when the Mahalanobis distance is at most one."""
+        """True when the Mahalanobis distance is at most one.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside. Scaled by the set's
+                own size, so it means the same thing whatever the units are.
+
+        Returns:
+            Whether the set contains the point.
+        """
         return self.mahalanobis_squared(x) <= 1.0 + rtol
 
     def project(
@@ -847,7 +975,14 @@ class Ellipsoid(ConvexSet):
         return space.add(self._centre, point)
 
     def support_function(self) -> SupportFunction:
-        """``(centre, y) + sqrt((y, C y))`` with ``C`` the covariance."""
+        """``(centre, y) + sqrt((y, C y))`` with ``C`` the covariance.
+
+        Returns:
+            The support function.
+
+        Raises:
+            ValueError: if the ellipsoid was built without its covariance.
+        """
         if self._covariance is None:
             raise NotImplementedError(
                 "An ellipsoid's support function needs its covariance, the "
@@ -947,6 +1082,16 @@ class BallSurface(Subset):
 
         Undefined at the centre, where every point of the surface is equally
         near, and that is raised rather than resolved by an arbitrary choice.
+
+        Args:
+            x: the point to project.
+
+        Returns:
+            The nearest point of the surface.
+
+        Raises:
+            ValueError: at the centre, where every point of the surface is
+                equally near and there is no nearest one to return.
         """
         offset = self.domain.subtract(x, self._centre)
         distance = self.domain.norm(offset)
@@ -1088,7 +1233,16 @@ class ConvexIntersection(ConvexSet):
         return self._subsets
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """True when every part contains the point."""
+        """True when every part contains the point.
+
+        Args:
+            x: a vector of the space.
+            rtol: how far outside still counts as inside. Scaled by the set's
+                own size, so it means the same thing whatever the units are.
+
+        Returns:
+            Whether the set contains the point.
+        """
         return all(part.contains(x, rtol=rtol) for part in self._subsets)
 
     def project(self, x: Any, /, *, iterations: int = 1000) -> Any:
