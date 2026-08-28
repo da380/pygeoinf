@@ -37,6 +37,16 @@ class LineSearchResult:
     value: float
     evaluations: int
     converged: bool
+    model: Any = None
+    """The functional's model at :attr:`point`, when the search already had it.
+
+    A Wolfe search evaluates the *gradient* at each trial step to test the
+    curvature condition, so on success it is holding the very model the caller
+    would otherwise go and recompute -- one full evaluation per outer
+    iteration, spent to learn something already known. ``None`` from a
+    backtracking search, which only ever needs values, and the caller then
+    evaluates as before.
+    """
 
     def __repr__(self) -> str:
         return (
@@ -175,19 +185,24 @@ class StrongWolfeLineSearch(LineSearch):
         space = functional.domain
         evaluations = 0
 
-        def evaluate(step: float) -> tuple[Any, float, float]:
-            """Value and slope at a trial step."""
+        def evaluate(step: float) -> tuple[Any, Any, float, float]:
+            """Model, value and slope at a trial step."""
             nonlocal evaluations
             evaluations += 1
             trial = space.axpy(step, direction, space.copy(point))
             model = functional.at(trial)
-            return trial, model.value, space.inner_product(model.gradient, direction)
+            return (
+                trial,
+                model,
+                model.value,
+                space.inner_product(model.gradient, direction),
+            )
 
         previous_step, previous_value = 0.0, value
         step = initial_step
 
         for iteration in range(1, self._max_iterations + 1):
-            trial, trial_value, trial_slope = evaluate(step)
+            trial, trial_model, trial_value, trial_slope = evaluate(step)
 
             if trial_value > value + self._decrease * step * slope or (
                 iteration > 1 and trial_value >= previous_value
@@ -203,7 +218,9 @@ class StrongWolfeLineSearch(LineSearch):
                     evaluations,
                 )
             if abs(trial_slope) <= -self._curvature * slope:
-                return LineSearchResult(step, trial, trial_value, evaluations, True)
+                return LineSearchResult(
+                    step, trial, trial_value, evaluations, True, trial_model
+                )
             if trial_slope >= 0.0:
                 return self._zoom(
                     functional,
@@ -240,7 +257,10 @@ class StrongWolfeLineSearch(LineSearch):
         smaller step, which is why the interval is not kept ordered.
         """
         space = functional.domain
+        # Counted: it is an evaluation of the functional like any other, and
+        # leaving it out understated every zooming search by one.
         low_value = functional(space.axpy(low, direction, space.copy(point)))
+        evaluations += 1
 
         for _ in range(self._max_iterations):
             step = 0.5 * (low + high)
@@ -256,7 +276,9 @@ class StrongWolfeLineSearch(LineSearch):
 
             trial_slope = space.inner_product(model.gradient, direction)
             if abs(trial_slope) <= -self._curvature * slope:
-                return LineSearchResult(step, trial, model.value, evaluations, True)
+                return LineSearchResult(
+                    step, trial, model.value, evaluations, True, model
+                )
             if trial_slope * (high - low) >= 0.0:
                 high = low
             low, low_value = step, model.value

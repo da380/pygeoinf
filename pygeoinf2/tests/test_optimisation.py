@@ -10,6 +10,8 @@ from pygeoinf2.algebra.operators import (
     Operator,
 )
 from pygeoinf2.algebra.spaces import EuclideanSpace
+
+from .conftest import DenseMetricSpace
 from pygeoinf2.numerics.line_search import (
     ArmijoLineSearch,
     StrongWolfeLineSearch,
@@ -500,3 +502,141 @@ class TestCoordinateFreedom:
 
         space, _, _ = opaque_problem
         assert not isinstance(space, CoordinateSpace)
+
+
+def dense_metric_space(n, rng):
+    """Non-diagonal Gram, well conditioned: the metric is what is under test,
+    not floating point."""
+    root = np.eye(n) + 0.15 * np.tril(rng.standard_normal((n, n)), -1)
+    return DenseMetricSpace(root @ root.T)
+
+
+def quadratic_on(space, rng):
+    """``0.5 (x, M x) - (b, x)`` in components, with its own gradient."""
+    matrix = rng.standard_normal((space.dim, space.dim))
+    matrix = matrix @ matrix.T + np.eye(space.dim)
+    offset = rng.standard_normal(space.dim)
+
+    return (
+        Functional.from_callables(
+            space,
+            lambda x: float(
+                0.5 * space.to_components(x) @ (matrix @ space.to_components(x))
+                - offset @ space.to_components(x)
+            ),
+            derivative=lambda x: LinearFunctional.from_derivative_components(
+                space, matrix @ space.to_components(x) - offset
+            ),
+        ),
+        np.linalg.solve(matrix, offset),
+    )
+
+
+class TestTheLineSearchHandsBackWhatItKnows:
+    """A Wolfe search evaluates the gradient at each trial step to test the
+    curvature condition, so on success it is holding the model the caller then
+    went and recomputed -- one full evaluation per outer iteration."""
+
+    def test_the_model_comes_back(self, rng):
+        space = EuclideanSpace(10)
+        functional, _ = quadratic_on(space, rng)
+        point = space.random(rng=rng)
+        model = functional.at(point)
+        direction = space.negative(model.gradient)
+
+        result = StrongWolfeLineSearch()(
+            functional,
+            point,
+            direction,
+            value=model.value,
+            slope=space.inner_product(model.gradient, direction),
+            initial_step=1.0,
+        )
+        assert result.converged
+        assert result.model is not None
+        assert result.model.value == pytest.approx(result.value)
+
+    def test_a_backtracking_search_returns_none(self, rng):
+        """It only ever needs values, so it has no gradient to hand back and
+        must not pretend otherwise -- the caller evaluates as before."""
+        space = EuclideanSpace(10)
+        functional, _ = quadratic_on(space, rng)
+        point = space.random(rng=rng)
+        model = functional.at(point)
+        direction = space.negative(model.gradient)
+
+        result = ArmijoLineSearch()(
+            functional,
+            point,
+            direction,
+            value=model.value,
+            slope=space.inner_product(model.gradient, direction),
+            initial_step=1.0,
+        )
+        assert result.model is None
+
+    def test_lbfgs_spends_fewer_evaluations_for_the_same_answer(self, rng):
+        """Measured on a 40-dimensional quadratic: 58 evaluations against 94,
+        for the same 42 iterations and the same gradient norm."""
+        space = EuclideanSpace(40)
+        functional, wanted = quadratic_on(space, rng)
+
+        result = LBFGS(max_iterations=500).minimise(functional, space.zero())
+        assert result.converged
+        assert np.linalg.norm(result.minimiser - wanted) < 1e-4 * np.linalg.norm(wanted)
+        # One evaluation per iteration went on recomputing a known model.
+        assert result.evaluations < 2 * result.iterations
+
+
+class TestSteepestDescentUsesAWolfeSearch:
+    """DESIGN.md 11.7 says it does, and it inherited a backtracking one --
+    which cannot take a larger step than it is offered, and a steepest-descent
+    direction carries no natural scale."""
+
+    def test_that_is_the_default(self):
+        assert isinstance(
+            SteepestDescent()._line_search, StrongWolfeLineSearch
+        )
+
+    def test_it_costs_about_half_the_evaluations(self, rng):
+        """Measured on a quadratic of spread 1e3: 3376 evaluations against
+        6744, for the same iteration count."""
+        space = EuclideanSpace(20)
+        basis, _ = np.linalg.qr(rng.standard_normal((20, 20)))
+        matrix = basis @ np.diag(np.geomspace(1.0, 1e3, 20)) @ basis.T
+        offset = rng.standard_normal(20)
+        functional = Functional.from_callables(
+            space,
+            lambda c: float(0.5 * c @ (matrix @ c) - offset @ c),
+            derivative=lambda c: LinearFunctional.from_derivative_components(
+                space, matrix @ c - offset
+            ),
+        )
+
+        counts = {}
+        for label, search in [
+            ("armijo", ArmijoLineSearch()),
+            ("wolfe", StrongWolfeLineSearch()),
+        ]:
+            result = SteepestDescent(
+                max_iterations=5000, line_search=search
+            ).minimise(functional, space.zero())
+            counts[label] = result.evaluations
+        assert counts["wolfe"] < 0.75 * counts["armijo"]
+
+
+class TestOptimisersOnADenseMetric:
+    """The review found these tested only on diagonal Gram matrices. A descent
+    direction is the Riesz representer of the derivative, so a non-diagonal
+    metric is the only thing that distinguishes it from the raw components."""
+
+    @pytest.mark.parametrize("method", [LBFGS, NonlinearCG, SteepestDescent])
+    def test_they_find_the_minimum(self, method, rng):
+        space = dense_metric_space(15, rng)
+        functional, wanted = quadratic_on(space, rng)
+
+        result = method(max_iterations=5000).minimise(functional, space.zero())
+        assert result.converged
+        assert space.norm(
+            space.subtract(result.minimiser, space.from_components(wanted))
+        ) < 1e-4 * space.norm(space.from_components(wanted))

@@ -33,6 +33,7 @@ from ..algebra.spaces import CoordinateSpace
 from ..traits import Traits, close
 
 __all__ = [
+    "deflated_diagonal",
     "Estimate",
     "random_range",
     "LowRankEig",
@@ -147,6 +148,13 @@ def random_range(
         return _power_iterate(operator, basis, power)
 
     # --- adaptive: grow until a fresh block is nearly in the span ------
+    #
+    # Only the *new* block is orthogonalised, against a basis that is already
+    # orthonormal, and the residuals that test tells us are kept and reused as
+    # the vectors to extend by. Rebuilding the whole basis each round instead
+    # -- orthonormal_basis(basis + block) -- redoes every earlier vector's work
+    # and throws the residuals away, which turns a linear cost into a cubic
+    # one. That is v1's arrangement.
     basis: list[Any] = []
     scale: float | None = None
     while len(basis) < ceiling:
@@ -155,11 +163,18 @@ def random_range(
             scale = max((codomain.norm(y) for y in block), default=0.0)
             if scale == 0.0:
                 return []
-        residual = max(
-            codomain.norm(codomain._orthogonalise_against(y, basis)[0]) for y in block
-        )
-        basis = codomain.orthonormal_basis(basis + block)
-        if residual <= rtol * scale:
+
+        residuals, largest = [], 0.0
+        for probe in block:
+            residual, norm, _ = codomain._orthogonalise_against(probe, basis)
+            largest = max(largest, norm)
+            if norm > 1e-12 * scale:
+                residuals.append(codomain.scale_inplace(1.0 / norm, residual))
+
+        # The residuals are orthogonal to the basis but not yet to each other.
+        room = ceiling - len(basis)
+        basis.extend(codomain.orthonormal_basis(residuals)[:room])
+        if largest <= rtol * scale or not residuals:
             break
     return _power_iterate(operator, basis, power)
 

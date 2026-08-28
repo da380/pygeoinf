@@ -2,7 +2,9 @@
 
 from .convex import (
     BallIndicator,
+    BundleResult,
     NormFunctional,
+    ProximalBundleMethod,
     ProximalGradient,
     ProximalPoint,
     SquaredDistance,
@@ -29,6 +31,7 @@ from .randomised import (
     LowRankCholesky,
     LowRankEig,
     LowRankSVD,
+    deflated_diagonal,
     random_cholesky,
     random_diagonal,
     random_eig,
@@ -62,6 +65,16 @@ from .preconditioners import (
     SpectralPreconditioner,
     WoodburyPreconditioner,
 )
+from .quadratic_forms import (
+    weighted_chi2_cdf,
+    weighted_chi2_quantile,
+)
+from .root_find import (
+    DampedSolves,
+    Evaluation,
+    RootResult,
+    monotone_root,
+)
 from .solvers import (
     BiCGStabSolver,
     CGSolver,
@@ -83,6 +96,15 @@ from .solvers import (
 )
 
 __all__ = [
+    "weighted_chi2_quantile",
+    "weighted_chi2_cdf",
+    "RootResult",
+    "Evaluation",
+    "DampedSolves",
+    "monotone_root",
+    "deflated_diagonal",
+    "BundleResult",
+    "ProximalBundleMethod",
     "ArmijoLineSearch",
     "BallIndicator",
     "NormFunctional",

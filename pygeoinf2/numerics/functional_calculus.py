@@ -189,7 +189,23 @@ def apply_operator_function(
 
     Convergence is judged on the change in the answer between successive
     Krylov dimensions, which is the honest test when nothing is known about
-    ``f``.
+    ``f`` -- but judged on the *coefficients* ``f(T) e_1``, not on the vector
+    they combine to. The two say the same thing, since ``Q`` is orthonormal,
+    and only one of them is cheap: recombining at every step to compare costs
+    ``O(k^2)`` vector operations over the run and makes the convergence test
+    more expensive than the iteration it is testing. The basis is combined
+    once, at the end. That is v1's arrangement.
+
+    Args:
+        operator: a self-adjoint ``A``.
+        function: applied to the eigenvalues.
+        x: the vector to apply ``f(A)`` to.
+        max_iterations: the Krylov dimension to stop at.
+        rtol: relative change in the coefficients to stop at.
+        reorthogonalise: keep the Krylov basis orthogonal.
+
+    Returns:
+        ``f(A) x``.
     """
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "Applying an operator function")
@@ -198,17 +214,26 @@ def apply_operator_function(
     if norm == 0.0:
         return space.zero()
 
-    previous: Any | None = None
-    result: Any = space.zero()
+    previous: np.ndarray | None = None
+    final_basis: Sequence[Any] = ()
+    weights = np.ones(1)
     for basis, matrix in iter_lanczos_tridiagonalise(
         operator, x, max_iterations, reorthogonalise=reorthogonalise
     ):
-        result = _combine(space, basis, matrix, function, norm)
+        values, vectors = _eigh_tridiagonal(matrix)
+        weights = vectors @ (np.asarray(function(values)) * vectors[0, :])
+        final_basis = basis
         if previous is not None:
-            change = space.norm(space.subtract(result, previous))
-            if change <= rtol * max(space.norm(result), 1e-300):
-                return result
-        previous = result
+            padded = np.zeros_like(weights)
+            padded[: previous.size] = previous
+            change = float(np.linalg.norm(weights - padded))
+            if change <= rtol * max(float(np.linalg.norm(weights)), 1e-300):
+                break
+        previous = weights
+
+    result = space.zero()
+    for weight, vector in zip(weights, final_basis):
+        result = space.axpy(norm * float(weight), vector, result)
     return result
 
 
@@ -243,6 +268,7 @@ def operator_quadratic_form(
     /,
     *,
     max_iterations: int = 30,
+    rtol: float = 1e-10,
     reorthogonalise: bool = True,
 ) -> float:
     """``(x, f(A) x)``, by Gauss quadrature on the Lanczos spectrum.
@@ -251,6 +277,22 @@ def operator_quadratic_form(
     of the eigenvector matrix is needed. This is the kernel of stochastic
     Lanczos quadrature, which is how a log-determinant gets estimated without
     a factorisation.
+
+    Stops when the quadrature settles, as v1 did. It used to run every one of
+    ``max_iterations`` however early the value converged, which for the outer
+    stochastic estimator -- many probes, each its own Lanczos run -- is the
+    cost that matters.
+
+    Args:
+        operator: a self-adjoint ``A``.
+        function: applied to the eigenvalues.
+        x: the vector.
+        max_iterations: the Krylov dimension to stop at.
+        rtol: relative change in the value to stop at.
+        reorthogonalise: keep the Krylov basis orthogonal.
+
+    Returns:
+        ``(x, f(A) x)``.
     """
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "An operator quadratic form")
@@ -260,12 +302,18 @@ def operator_quadratic_form(
         return 0.0
 
     estimate = 0.0
+    previous: float | None = None
     for _, matrix in iter_lanczos_tridiagonalise(
         operator, x, max_iterations, reorthogonalise=reorthogonalise
     ):
         values, vectors = _eigh_tridiagonal(matrix)
         # The Gauss quadrature weights are the squared first components.
         estimate = float(np.dot(vectors[0, :] ** 2, np.asarray(function(values))))
+        if previous is not None and abs(estimate - previous) <= rtol * max(
+            abs(estimate), 1e-300
+        ):
+            break
+        previous = estimate
     return squared_norm * estimate
 
 

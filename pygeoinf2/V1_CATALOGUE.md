@@ -170,7 +170,7 @@ addtional information as you suggest will be very useful. |
 | `random_range` | Ported | same name; no longer routes mass-weighted spaces through the broken white-noise measure (§9) | |
 | `random_trace` | Ported | same name, returning an `Estimate` with a standard error | |
 | `random_diagonal` | Ported | same name (Bekas–Kokiopoulou–Saad) | |
-| `deflated_diagonal` | Ported | Not ported. Diagonal estimation with a low-rank part removed first | follows `deflated_pointwise_variance`, which you flagged as possibly never having worked |
+| `deflated_diagonal` | Ported | `numerics.randomised.deflated_diagonal`. Diagonal estimation with a low-rank part removed first; the row said "not ported" while the function was there | follows `deflated_pointwise_variance`, which you flagged as possibly never having worked |
 | `white_noise_measure` | Dropped | The v1 defect of §9: it produced covariance `G`, not `I`. Replaced by `HilbertSpace.white_noise` | |
 
 ## `nonlinear_optimisation.py` → `numerics/optimisation.py`, `line_search.py`
@@ -208,14 +208,14 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `SubgradientDescent`, `SubgradientResult` | Ported | `SubgradientDescent`, `_ConvexResult` | |
 | `Cut`, `Bundle` | Ported | M5 stage 5.9 | |
 | `ProximalBundleMethod`, `LevelBundleMethod`, `BundleResult` | Ported (proximal) | M5 stage 5.9 — the dual route for a general convex prior | |
-| `QPSolver`, `QPResult` | Planned | M5 stage 5.9 | |
-| `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Planned | M5 stage 5.9. Coordinates are fine here: the QP lives in a finite-dimensional, canonically Euclidean space | |
+| `QPSolver`, `QPResult` | Dropped | Per DESIGN 22.7: nothing left in v2 poses a general QP. The bundle subproblem is solved on the simplex inside `ProximalBundleMethod` | |
+| `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Dropped | Per DESIGN 22.7, with `QPSolver`. Worth revisiting only if the bundle subproblem's accuracy becomes the limiting factor | |
 | `best_available_qp_solver` | Planned | M5 stage 5.9 | |
-| `PrimalKKTSolver`, `KKTResult` | Ported | M5 stage 5.9 — this is `work/sphere_dli_example.py`'s solver, so it gates reproducing that example | |
+| `PrimalKKTSolver`, `KKTResult` | Subsumed | `monotone_root` and `ProximalBundleMethod`, as used in `inference/backus.py`. The KKT system v1 solved by hand is the damping sweep plus the bundle subproblem | |
 | `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Planned | M5 stage 5.9 | |
 | `ChambollePockSolver`, `ChambollePockResult` | Planned | M5 stage 5.9 | |
-| `solve_support_values` | Ported | M5 stage 5.9; becomes support-function evaluation on a `ConvexSet` | |
-| `solve_primal_feasibility` | Ported | M5 stage 5.8 — the inclusion test of §18.5 | |
+| `solve_support_values` | Subsumed | Support-function evaluation on a `ConvexSet`, over `ProximalBundleMethod` | |
+| `solve_primal_feasibility` | Subsumed | The inclusion test of DESIGN 18.5, over the same machinery | |
 
 ## `subsets.py` → `geometry/sets.py`, `geometry/convex.py`
 
@@ -306,7 +306,7 @@ deliberately not started.
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
 | `weighted_chi2_cdf` | Ported | M5. The distribution of a quadratic form in Gaussians — what a credible set of a chi-squared statistic needs | |
-| `weighted_chi2_quantile` | Ported | M5. Imhof, Wood–Saddlepoint, and Monte Carlo methods with an automatic choice | |
+| `weighted_chi2_quantile` | Ported | Imhof (exact to a tolerance), a moment-matched approximation, and Monte Carlo, with an automatic choice. **No Wood saddlepoint** -- the row claimed one and there is none | |
 
 ## `dynamical_system.py`
 

@@ -475,3 +475,69 @@ class TestDiagonalLogDeterminant:
         assert estimate.value == pytest.approx(
             float(np.sum(np.log(values))), abs=5.0 * estimate.standard_error
         )
+
+
+class TestLanczosStopsEarly:
+    """Both Lanczos routines ran to their iteration cap however early they
+    converged, and one of them recombined the whole Krylov basis at every step
+    just to notice."""
+
+    @staticmethod
+    def spectrum(space, eigenvalues, rng):
+        basis, _ = np.linalg.qr(rng.standard_normal((space.dim, space.dim)))
+        matrix = basis @ np.diag(eigenvalues) @ basis.T
+        operator = LinearOperator.self_adjoint(
+            space,
+            lambda c: matrix @ c,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        return operator, basis
+
+    def test_a_clustered_spectrum_stops_at_once(self, rng):
+        """Two distinct eigenvalues need two Lanczos steps, not thirty.
+        Measured: 2 applications against 30, exact to nine digits."""
+        space = EuclideanSpace(200)
+        eigenvalues = np.concatenate([np.full(100, 2.0), np.full(100, 5.0)])
+        operator, basis = self.spectrum(space, eigenvalues, rng)
+        vector = space.random(rng=rng)
+
+        counted = {"n": 0}
+        original = operator._value
+        object.__setattr__(
+            operator,
+            "_value",
+            lambda c: (counted.__setitem__("n", counted["n"] + 1), original(c))[1],
+        )
+
+        value = operator_quadratic_form(operator, np.log, vector)
+        exact = float(
+            vector @ (basis @ np.diag(np.log(eigenvalues)) @ basis.T @ vector)
+        )
+        assert value == pytest.approx(exact, rel=1e-8)
+        assert counted["n"] < 10
+
+    def test_the_answer_is_unchanged_and_the_work_is_halved(self, rng):
+        """The convergence test moved into coefficient space, where it is the
+        same test -- Q is orthonormal -- and costs nothing. Recombining the
+        basis at every step to compare cost O(k^2) vector operations over the
+        run: measured 2595 axpy against 1371, for the same answer to every
+        digit."""
+        space = EuclideanSpace(300)
+        eigenvalues = np.linspace(1.0, 40.0, 300)
+        operator, basis = self.spectrum(space, eigenvalues, rng)
+        vector = space.random(rng=rng)
+
+        counted = {"n": 0}
+        original = type(space).axpy
+        type(space).axpy = lambda self, a, x, y: (
+            counted.__setitem__("n", counted["n"] + 1),
+            original(self, a, x, y),
+        )[1]
+        try:
+            result = apply_operator_function(operator, np.sqrt, vector)
+        finally:
+            type(space).axpy = original
+
+        exact = basis @ np.diag(np.sqrt(eigenvalues)) @ basis.T @ vector
+        assert np.linalg.norm(result - exact) < 1e-8 * np.linalg.norm(exact)
+        assert counted["n"] < 2000  # the O(k^2) route needed 2595

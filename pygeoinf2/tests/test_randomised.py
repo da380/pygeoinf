@@ -20,7 +20,7 @@ from pygeoinf2.numerics.randomised import (
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import DenseMetricSpace, make_weighted_space
 from .doubles import NoCoordinatesError, Opaque, OpaqueSpace, StrictSpace
 
 N, RANK = 40, 6
@@ -311,3 +311,139 @@ class TestCoordinateFreedom:
         _, A, values = opaque_problem
         estimate = random_trace(A, samples=4000, rng=rng)
         assert abs(estimate.value - values.sum()) < 4.0 * estimate.standard_error
+
+
+def dense_metric(n, rng):
+    """A space whose Gram matrix is dense, which is the only kind that tells a
+    metric-correct method from a metric-naive one.
+
+    Kept well conditioned on purpose: the point of the fixture is that the
+    metric is *not diagonal*, and a Gram condition number in the hundred
+    thousands would only test floating point.
+    """
+    root = np.eye(n) + 0.15 * np.tril(rng.standard_normal((n, n)), -1)
+    return DenseMetricSpace(root @ root.T)
+
+
+class TestAdaptiveRangeIsIncremental:
+    """The adaptive range finder rebuilt its whole basis every round, redoing
+    every earlier vector's orthogonalisation and throwing away the residuals it
+    had just computed to test convergence."""
+
+    @staticmethod
+    def low_rank(space, true_rank, rng):
+        basis, _ = np.linalg.qr(rng.standard_normal((space.dim, space.dim)))
+        eigenvalues = np.concatenate(
+            [np.linspace(10.0, 1.0, true_rank), np.zeros(space.dim - true_rank)]
+        )
+        matrix = basis @ np.diag(eigenvalues) @ basis.T
+        return matrix, LinearOperator.self_adjoint(
+            space, lambda c: matrix @ c, traits=Traits.SELF_ADJOINT
+        )
+
+    def test_it_finds_the_range_with_far_less_work(self, rng):
+        """Measured at dim 600 and rank 120: 33749 inner products against
+        82788, and the same rank at the same 8e-16 projection error."""
+        space = EuclideanSpace(600)
+        matrix, operator = self.low_rank(space, 120, rng)
+
+        counted = {"n": 0}
+        original = type(space).inner_product
+        type(space).inner_product = lambda self, a, b: (
+            counted.__setitem__("n", counted["n"] + 1),
+            original(self, a, b),
+        )[1]
+        try:
+            basis = random_range(
+                operator,
+                rtol=1e-8,
+                block_size=10,
+                max_rank=200,
+                rng=np.random.default_rng(1),
+            )
+        finally:
+            type(space).inner_product = original
+
+        assert len(basis) == 120
+        stacked = np.array(basis)
+        residual = matrix - stacked.T @ (stacked @ matrix)
+        assert np.linalg.norm(residual) < 1e-10 * np.linalg.norm(matrix)
+        assert counted["n"] < 60000  # the rebuilding route needed 82788
+
+    def test_the_basis_is_still_orthonormal(self, rng):
+        """Which is the thing the rebuilding was there to guarantee."""
+        space = EuclideanSpace(200)
+        _, operator = self.low_rank(space, 40, rng)
+        basis = random_range(
+            operator, rtol=1e-8, block_size=8, max_rank=100, rng=np.random.default_rng(2)
+        )
+        stacked = np.array(basis)
+        assert stacked @ stacked.T == pytest.approx(np.eye(len(basis)), abs=1e-10)
+
+
+class TestRandomisedOnADenseMetric:
+    """The review found these tested only on diagonal Gram matrices, which
+    cannot tell a metric-correct implementation from a metric-naive one."""
+
+    def test_random_diagonal_reads_the_galerkin_diagonal(self, rng):
+        space = dense_metric(30, rng)
+        values = rng.uniform(1.0, 5.0, 30)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            np.diag(values),
+            form="components",
+            traits=Traits.SELF_ADJOINT,
+        )
+
+        estimate = random_diagonal(
+            operator, samples=4000, form="galerkin", rng=np.random.default_rng(3)
+        )
+        exact = np.diag(space.apply_gram(np.diag(values)))
+        assert estimate == pytest.approx(exact, rel=0.2)
+
+    def test_random_trace_is_the_trace(self, rng):
+        space = dense_metric(20, rng)
+        matrix = rng.standard_normal((20, 20))
+        matrix = matrix @ matrix.T
+        operator = LinearOperator.from_matrix(
+            space, space, matrix, form="galerkin", traits=Traits.SELF_ADJOINT
+        )
+
+        estimate = random_trace(operator, samples=6000, rng=np.random.default_rng(4))
+        exact = np.trace(space.solve_gram(matrix))
+        assert estimate.value == pytest.approx(exact, rel=0.15)
+
+    def test_random_eig_recovers_the_operator(self, rng):
+        space = dense_metric(24, rng)
+        matrix = rng.standard_normal((24, 6))
+        matrix = matrix @ matrix.T
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            matrix,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+
+        decomposition = random_eig(operator, rank=6, rng=np.random.default_rng(5))
+        check_operator(decomposition, rng=rng)
+        for _ in range(5):
+            vector = space.random(rng=rng)
+            assert space.norm(
+                space.subtract(decomposition(vector), operator(vector))
+            ) < 1e-8 * space.norm(operator(vector))
+
+    def test_random_svd_recovers_the_operator(self, rng):
+        space = dense_metric(20, rng)
+        other = EuclideanSpace(12)
+        matrix = rng.standard_normal((12, 20))
+        operator = LinearOperator.from_matrix(space, other, matrix, form="galerkin")
+
+        decomposition = random_svd(operator, rank=12, rng=np.random.default_rng(6))
+        check_operator(decomposition, rng=rng)
+        for _ in range(5):
+            vector = space.random(rng=rng)
+            assert other.norm(
+                other.subtract(decomposition(vector), operator(vector))
+            ) < 1e-8 * max(other.norm(operator(vector)), 1e-30)
