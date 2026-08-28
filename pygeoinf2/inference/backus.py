@@ -977,14 +977,14 @@ class DualFeasibleProperty(SetEstimator):
         cost = self.dual_cost(direction, data)
         origin = self.data_space.zero() if start is None else start
         result = self._method.minimise(cost, origin)
-        if not result.converged and result.minimum < -_UNBOUNDED:
+        if not result.converged and result.value < -_UNBOUNDED:
             raise ValueError(
-                f"The dual fell to {result.minimum:.3g} without converging, "
+                f"The dual fell to {result.value:.3g} without converging, "
                 "which means no model lies both inside the prior set and "
                 "within the noise set of the data. Check the two against each "
                 "other before checking this."
             )
-        return result.minimum
+        return result.value
 
     def certificate(self, direction: Any, data: Any, /) -> Any:
         """The optimal ``lambda``: the linear combination of data that bounds.

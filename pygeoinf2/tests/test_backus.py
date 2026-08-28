@@ -356,7 +356,7 @@ class TestBundleMethod:
         )
         best = np.clip(anchor, -1.0, 1.0)
         assert result.converged
-        assert result.minimum == pytest.approx(
+        assert result.value == pytest.approx(
             float(np.abs(best - anchor).sum() + 0.5 * best @ best), abs=1e-6
         )
         assert np.allclose(result.minimiser, best, atol=1e-5)
@@ -379,7 +379,7 @@ class TestBundleMethod:
             functional, space.zero()
         )
         best = np.linalg.solve(matrix, offset)
-        assert result.minimum == pytest.approx(
+        assert result.value == pytest.approx(
             float(0.5 * best @ matrix @ best - offset @ best), abs=1e-7
         )
         assert result.gap >= 0.0

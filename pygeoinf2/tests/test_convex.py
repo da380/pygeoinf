@@ -398,3 +398,176 @@ class TestCoordinateFreedom:
         h = SupportFunction.of_ball(opaque, radius=2.0)
         y = opaque.random(rng=rng)
         assert h(y) == pytest.approx(2.0 * opaque.norm(y))
+
+
+class TestTheBundleLearnsFromNullSteps:
+    """The subgradient used to be taken at the centre at the top of each
+    iteration. A null step leaves the centre where it is, so it added a cut
+    identical to one already in the bundle and learned nothing from the trial
+    point it had just paid to evaluate -- and duplicate cuts make the model's
+    Gram matrix exactly singular."""
+
+    @staticmethod
+    def piecewise_linear(rng, n=50, m=30):
+        """``|A x - b|_1``: convex, non-smooth, and with a known minimum of
+        zero when the system is solvable."""
+        from pygeoinf2.algebra.operators import Functional, LinearFunctional
+
+        space = EuclideanSpace(n)
+        matrix = rng.standard_normal((m, n))
+        offset = rng.standard_normal(m)
+
+        return space, Functional.from_callables(
+            space,
+            lambda c: float(np.abs(matrix @ c - offset).sum()),
+            derivative=lambda c: LinearFunctional.from_derivative_components(
+                space, matrix.T @ np.sign(matrix @ c - offset)
+            ),
+        )
+
+    def test_it_converges_in_far_fewer_iterations(self, rng):
+        """Measured on ``|A x - b|_1``: 44 iterations against 255 at n=50,
+        and 13 against 32 at n=20, for the same minimum."""
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        space, functional = self.piecewise_linear(rng)
+        result = ProximalBundleMethod(iterations=300, tolerance=1e-8).minimise(
+            functional, space.zero()
+        )
+        assert result.converged
+        assert result.value == pytest.approx(0.0, abs=1e-6)
+        assert result.iterations < 120
+
+    def test_every_cut_after_the_first_is_taken_at_a_new_point(self, rng):
+        """Which is what makes a null step informative."""
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        space, functional = self.piecewise_linear(rng, n=20, m=10)
+        seen = []
+        original = functional.subgradient
+
+        def watched(point):
+            seen.append(np.array(point))
+            return original(point)
+
+        ProximalBundleMethod(iterations=40).minimise(
+            functional, space.zero(), subgradient=watched
+        )
+        distinct = {tuple(np.round(point, 12)) for point in seen}
+        assert len(distinct) == len(seen)
+
+
+class TestTheBundleSubproblem:
+    """Accelerated, and it says when it has not converged."""
+
+    @staticmethod
+    def hard_problem(rng, k=12):
+        """Near-parallel cuts, which is what a converging bundle produces and
+        what makes the Gram matrix badly conditioned."""
+        vectors = rng.standard_normal((k, 40))
+        vectors[3:] = vectors[:1] + 0.01 * rng.standard_normal((k - 3, 40))
+        return vectors @ vectors.T, rng.uniform(0.0, 1.0, k)
+
+    def test_acceleration_usually_wins_and_wins_big(self, rng):
+        """Against the plain projected gradient it replaced, on the same
+        problems and the same number of steps.
+
+        Asserted over a *set* of problems, because it is not uniformly better:
+        momentum is not monotone, and on 2 of the 30 measured it still ends
+        behind. Over the 30 it is ahead on 93 per cent of them, by a median
+        factor of 3300. A single instance would have said either 3e10 or 0.9,
+        and the first version of this test picked one and claimed it.
+        """
+        from pygeoinf2.numerics.convex import (
+            _minimise_on_simplex,
+            _project_on_simplex,
+        )
+
+        def residual(quadratic, linear, weights):
+            gradient = quadratic @ weights - linear
+            return float(gradient[weights > 0].max() - gradient.min())
+
+        ratios = []
+        for seed in range(30):
+            generator = np.random.default_rng(seed)
+            size = int(generator.integers(5, 25))
+            vectors = generator.standard_normal((size, 40))
+            vectors[3:] = vectors[:1] + 0.01 * generator.standard_normal(
+                (size - 3, 40)
+            )
+            quadratic = vectors @ vectors.T
+            linear = generator.uniform(0.0, 1.0, size)
+
+            step = 1.0 / max(float(np.linalg.eigvalsh(quadratic).max()), 1e-12)
+            plain = np.full(size, 1.0 / size)
+            for _ in range(400):
+                plain = _project_on_simplex(
+                    plain - step * (quadratic @ plain - linear)
+                )
+            accelerated = _minimise_on_simplex(
+                quadratic, linear, iterations=400, tolerance=0.0, warn_above=np.inf
+            )
+            ratios.append(
+                residual(quadratic, linear, plain)
+                / max(residual(quadratic, linear, accelerated), 1e-300)
+            )
+
+        ratios = np.array(ratios)
+        assert (ratios > 1.0).mean() >= 0.85
+        assert np.median(ratios) > 100.0
+
+    def test_it_returns_a_point_of_the_simplex(self, rng):
+        from pygeoinf2.numerics.convex import _minimise_on_simplex
+
+        quadratic, linear = self.hard_problem(rng)
+        weights = _minimise_on_simplex(quadratic, linear, iterations=1000)
+        assert weights.sum() == pytest.approx(1.0)
+        assert np.all(weights >= 0.0)
+
+    def test_it_warns_when_it_gives_up_badly(self, rng):
+        """Silence used to be the only report, and a bundle calls this at
+        every step -- so a failing subproblem showed up only as an outer
+        method that would not settle."""
+        from pygeoinf2.numerics.convex import _minimise_on_simplex
+
+        quadratic, linear = self.hard_problem(rng)
+        with pytest.warns(RuntimeWarning, match="did not converge"):
+            _minimise_on_simplex(
+                quadratic, linear, iterations=2, tolerance=1e-14, warn_above=1e-12
+            )
+
+    def test_a_small_residual_passes_without_a_warning(self, rng):
+        """The threshold to warn at is separate from the one to stop at,
+        because the residual has a floor that no iteration count removes."""
+        import warnings
+
+        from pygeoinf2.numerics.convex import _minimise_on_simplex
+
+        quadratic, linear = self.hard_problem(rng)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            _minimise_on_simplex(quadratic, linear, iterations=1000)
+
+
+class TestBundleResultReadsLikeAnOptimisationResult:
+    def test_the_field_names_match(self):
+        from dataclasses import fields
+
+        from pygeoinf2.numerics.convex import BundleResult
+        from pygeoinf2.numerics.optimisation import OptimisationResult
+
+        shared = {f.name for f in fields(BundleResult)} & {
+            f.name for f in fields(OptimisationResult)
+        }
+        assert {"value", "minimiser", "iterations", "evaluations", "converged",
+                "message"} <= shared
+
+    def test_the_evaluations_are_counted(self, rng):
+        from pygeoinf2.numerics.convex import ProximalBundleMethod
+
+        space, functional = TestTheBundleLearnsFromNullSteps.piecewise_linear(
+            rng, n=20, m=10
+        )
+        result = ProximalBundleMethod(iterations=50).minimise(functional, space.zero())
+        assert result.evaluations >= result.iterations
+        assert result.message
