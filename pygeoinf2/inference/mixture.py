@@ -174,7 +174,7 @@ class LinearGaussianMixtureInversion(MeasureEstimator):
         """The posterior mixture for this data."""
         return GaussianMixture(
             [inversion(data) for inversion in self._inversions],
-            self.weights(data),
+            weights=self.weights(data),
         )
 
     def push_forward(self, operator: Any, /) -> "_PushedMixture":
@@ -215,7 +215,7 @@ class _PushedMixture(MeasureEstimator):
         """The posterior mixture on the property space."""
         return GaussianMixture(
             [estimator(data) for estimator in self._pushed],
-            self._base.weights(data),
+            weights=self._base.weights(data),
         )
 
     def push_forward(self, operator: Any, /) -> "_PushedMixture":

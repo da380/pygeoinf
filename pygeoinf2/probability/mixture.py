@@ -58,8 +58,9 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
     def __init__(
         self,
         components: Sequence[GaussianMeasure[X]],
-        weights: Any = None,
         /,
+        *,
+        weights: Any = None,
     ) -> None:
         """
         Args:
@@ -122,7 +123,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
             parameters: the parameter values in the support.
             weights: their probabilities. Uniform if omitted.
         """
-        return cls([build(parameter) for parameter in parameters], weights)
+        return cls([build(parameter) for parameter in parameters], weights=weights)
 
     @classmethod
     def from_parameter_samples(
@@ -189,7 +190,7 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         What a data update produces: the components move, but a reweighting
         alone is the whole of what a *model comparison* does to a mixture.
         """
-        return GaussianMixture(self._components, weights)
+        return GaussianMixture(self._components, weights=weights)
 
     # ----------------------------------------------------------------- #
     #                             Sampling                              #
@@ -327,12 +328,13 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
                 component.affine_map(operator, translation=translation)
                 for component in self._components
             ],
-            self._weights,
+            weights=self._weights,
         )
 
     def _combine_scale(self, alpha: float) -> "GaussianMixture":
         return GaussianMixture(
-            [component * alpha for component in self._components], self._weights
+            [component * alpha for component in self._components],
+            weights=self._weights,
         )
 
     def marginal_probabilities(self, x: X, /) -> np.ndarray:

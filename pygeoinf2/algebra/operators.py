@@ -1440,11 +1440,13 @@ class Functional[X](Operator[X, float]):
     :class:`Reals`, so it inherits the whole algebra instead of duplicating it.
     """
 
-    def __init__(
+    def __init__(  # noqa: positional - cooperative __init__, see below
         self, domain: HilbertSpace[X], codomain: HilbertSpace[float] | None = None
     ) -> None:
-        # The codomain argument exists so that this cooperates with
-        # LinearOperator.__init__ in LinearFunctional's MRO. It is always Reals.
+        # The codomain argument is positional *and* optional, which the
+        # keyword-only rule otherwise forbids, because LinearFunctional's MRO
+        # has LinearOperator.__init__ calling it as __init__(domain, codomain).
+        # Making it keyword-only breaks that chain. It is always Reals.
         if codomain is not None and codomain != REALS:
             raise ValueError(f"A functional maps into Reals, not {codomain!r}.")
         super().__init__(domain, REALS)
@@ -1642,7 +1644,7 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
     See DESIGN.md section 5.6.
     """
 
-    def __init__(
+    def __init__(  # noqa: positional - cooperative __init__, see below
         self,
         domain: HilbertSpace[X],
         codomain: HilbertSpace[float] | None = None,

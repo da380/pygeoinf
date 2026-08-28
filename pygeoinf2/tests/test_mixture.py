@@ -44,7 +44,7 @@ class TestGaussianMixture:
         space = EuclideanSpace(2)
         return space, GaussianMixture(
             [isotropic(space, [-2.0, 0.0], 0.3), isotropic(space, [3.0, 1.0], 0.5)],
-            [0.3, 0.7],
+            weights=[0.3, 0.7],
         )
 
     def test_the_expectation_is_the_weighted_mean(self, mixture):
@@ -176,9 +176,9 @@ class TestGaussianMixture:
                 [mix.components[0], isotropic(EuclideanSpace(3), [0, 0, 0], 1.0)]
             )
         with pytest.raises(ValueError, match="weights for"):
-            GaussianMixture(mix.components, [1.0])
+            GaussianMixture(mix.components, weights=[1.0])
         with pytest.raises(ValueError, match="non-negative"):
-            GaussianMixture(mix.components, [-1.0, 2.0])
+            GaussianMixture(mix.components, weights=[-1.0, 2.0])
 
 
 class TestMixtureInversion:
@@ -230,7 +230,7 @@ class TestMixtureInversion:
         first = np.full(model.dim, -1.0)
         second = np.full(model.dim, 2.0)
         prior = GaussianMixture(
-            [component(first, 0.2), component(second, 1.0)], [0.4, 0.6]
+            [component(first, 0.2), component(second, 1.0)], weights=[0.4, 0.6]
         )
         return problem, prior, model, data
 

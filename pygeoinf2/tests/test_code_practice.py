@@ -57,6 +57,11 @@ def is_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
 
+def source_line(path, number: int) -> str:
+    """One line of a file, for reading an inline escape comment."""
+    return path.read_text().split("\n")[number - 1]
+
+
 @pytest.mark.parametrize("path", source_files(), ids=lambda p: p.name)
 class TestCodePractice:
     def test_public_definitions_have_docstrings(self, path):
@@ -77,10 +82,20 @@ class TestCodePractice:
         for node, owner in functions_and_classes(path):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            if is_dunder(node.name):
+            # __init__ is *not* exempt here, unlike the other rules: a
+            # constructor is exactly where a positional argument's position
+            # gets locked into every call site in the wild.
+            if is_dunder(node.name) and node.name != "__init__":
                 continue
             args = node.args
             if not args.defaults:
+                continue
+            # An explicit escape, for the case the rule genuinely cannot
+            # accommodate: cooperative multiple inheritance, where a superclass
+            # calls __init__ positionally and a keyword-only argument would
+            # break the chain. It must be written on the def line with a
+            # reason, so it is a decision rather than an oversight.
+            if "noqa: positional" in source_line(path, node.lineno):
                 continue
             positional = list(args.posonlyargs) + list(args.args)
             named = [a.arg for a in positional[len(positional) - len(args.defaults) :]]
