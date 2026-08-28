@@ -576,6 +576,51 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         """A point brought back into ``[0, L)`` on each axis."""
         return np.asarray(point, dtype=float) % np.asarray(self._lengths, dtype=float)
 
+    def to_coefficients(self, x: np.ndarray, /) -> np.ndarray:
+        """The field's complex Fourier coefficients, in numpy's convention.
+
+        The other half of the seam that components open: components are this
+        library's packed *real* vector, ordered by the packing and scaled to be
+        orthonormal in ``L2``, and this is exactly what ``rfftn`` returns for
+        the same field -- half the spectrum, on the unnormalised scale numpy
+        and scipy share, shaped like the grid. The two differ by a factor: a
+        component is its coefficient times ``_component_scale``, and times a
+        further ``sqrt(2)`` where the coefficient has a conjugate partner that
+        the half-spectrum drops.
+
+        That convention rather than this library's, because the point of
+        handing out coefficients is to hand them to something else.
+
+        Args:
+            x: a field on this box.
+
+        Returns:
+            A complex array of shape ``rfftn(x).shape``.
+        """
+        return rfftn(np.asarray(x, dtype=float), s=self._shape)
+
+    def from_coefficients(self, coefficients: np.ndarray, /) -> np.ndarray:
+        """The field with the given complex Fourier coefficients.
+
+        The inverse of :meth:`to_coefficients`, and it inverts it exactly: the
+        Hermitian symmetry ``irfftn`` imposes is the symmetry a real field
+        already has.
+
+        Args:
+            coefficients: a complex array shaped as :meth:`to_coefficients`
+                returns.
+
+        Returns:
+            A field on this box.
+        """
+        expected = self._packing.rfft_shape
+        array = np.asarray(coefficients, dtype=complex)
+        if array.shape != expected:
+            raise ValueError(
+                f"Coefficients have shape {expected}, got {array.shape}."
+            )
+        return irfftn(array, s=self._shape)
+
     # ----------------------------------------------------------------- #
     #                            Resolution                             #
     # ----------------------------------------------------------------- #

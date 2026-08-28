@@ -212,6 +212,110 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             keep, traits=Traits.SELF_ADJOINT | Traits.IDEMPOTENT
         )
 
+    def coefficient_operator(
+        self, /, *, lmax: int | None = None, lmin: int = 0
+    ) -> LinearOperator:
+        """Analysis: a field in, a band of its coefficients out.
+
+        The property operator of Al-Attar (2021): estimate finitely many
+        spectral coefficients from a finite set of point values. On a space
+        whose components already *are* those coefficients this is a selection,
+        so it is matrix-free and costs nothing.
+
+        On the base rather than on the sphere, because a band of degrees means
+        the same thing on every geometry here -- on a box the degree of a
+        component is ``floor(|k|)``, so the band is an annulus in wavenumber
+        rather than a range of harmonic degrees, but it is still a band.
+        """
+        from ..algebra.spaces import EuclideanSpace
+
+        selected = self._band(lmin, lmax)
+
+        def value(x: Any) -> np.ndarray:
+            return self.to_components(x)[selected]
+
+        def derivative_components(y: np.ndarray) -> np.ndarray:
+            total = np.zeros(self.dim)
+            total[selected] = np.asarray(y, dtype=float)
+            return total
+
+        return LinearOperator.from_derivative_callables(
+            self, EuclideanSpace(selected.size), value, derivative_components
+        )
+
+    def from_coefficient_operator(
+        self, /, *, lmax: int | None = None, lmin: int = 0
+    ) -> LinearOperator:
+        """Synthesis: a band of coefficients in, a field out.
+
+        The companion of :meth:`coefficient_operator`, and *not* its adjoint.
+        The adjoint of analysis carries this space's metric, so on anything but
+        ``L2`` it is not synthesis at all -- v1 papered over the difference by
+        writing ``* radius**2`` into the adjoint by hand, which is right for
+        Lebesgue and wrong for every Sobolev order. Here each is built from its
+        own value map and its own derivative, and the metric looks after
+        itself.
+        """
+        from ..algebra.spaces import EuclideanSpace
+
+        selected = self._band(lmin, lmax)
+
+        def value(c: np.ndarray) -> Any:
+            total = np.zeros(self.dim)
+            total[selected] = np.asarray(c, dtype=float)
+            return self.from_components(total)
+
+        def derivative_components(x: Any) -> np.ndarray:
+            return self.apply_gram(self.to_components(x))[selected]
+
+        return LinearOperator.from_derivative_callables(
+            EuclideanSpace(selected.size), self, value, derivative_components
+        )
+
+    def _band(self, lmin: int, lmax: int | None, /) -> np.ndarray:
+        """Which components fall in a band of degrees."""
+        degrees = self.degrees
+        highest = int(degrees.max())
+        top = highest if lmax is None else int(lmax)
+        if not 0 <= lmin <= top <= highest:
+            raise ValueError(
+                f"Degrees must satisfy 0 <= lmin <= lmax <= {highest}, "
+                f"got lmin={lmin}, lmax={top}."
+            )
+        return np.flatnonzero((degrees >= lmin) & (degrees <= top))
+
+    def power_spectrum(self, x: Any, /) -> np.ndarray:
+        """Total power at each degree, indexed from zero.
+
+        The sum of the squared components over each degree -- what v1 got at,
+        on the sphere only, by drawing samples and calling
+        ``SHCoeffs.spectrum``. It is a property of the field, so it needs no
+        samples; run it over a measure's ``samples`` to recover v1's
+        ``sample_power_measure``.
+
+        A property of the *field*, not of the metric it is being read in:
+        components are the same coefficients whatever the Sobolev order, so
+        this is the ``L2`` spectrum either way. On the sphere it is ``4 pi``
+        times what ``SHCoeffs.spectrum`` reports, that being the difference
+        between pyshtools' scale and orthonormality in ``L2``.
+
+        It is the counterpart of :meth:`power_measure` on a Lebesgue space,
+        where a draw from ``power_measure(p)`` has expected spectrum ``p``.
+        **On a Sobolev space the two differ**, and by a known factor: the
+        eigenvalues :meth:`invariant_measure` is given are the covariance
+        *operator's*, in that space's metric, so a draw's coefficients have
+        variance ``eigenvalue / gram_diagonal`` and the spectrum comes out
+        divided by the Sobolev symbol. Whether ``power_measure`` should mean
+        the ``H^s`` spectrum it currently means, or the ``L2`` one a modeller
+        more often writes down, is a question for the API and not for this
+        method, which reports what is there.
+        """
+        components = self.to_components(x)
+        degrees = self.degrees
+        return np.bincount(
+            degrees, weights=components**2, minlength=int(degrees.max()) + 1
+        )
+
     def order_inclusion_operator(self, target: "SymmetricSpace", /) -> LinearOperator:
         """The identity, read from this space into one of a different order.
 

@@ -454,7 +454,9 @@ different metric. So the union of method names is the honest comparison.
 | `geodesic_distance`, `geodesic_quadrature`, `geodesic_ball_quadrature` | Ported | same names | |
 | `geodesic_ball_integral`, `geodesic_ball_average` | Ported | `geodesic_ball_average_operator` | |
 | `spherical_cap_integral`, `spherical_cap_average` | Ported | same names, exact in the harmonic basis | |
-| `to_coefficient_operator`, `from_coefficient_operator` | Ported | `coefficient_operator` | |
+| `to_coefficient_operator`, `from_coefficient_operator` | Ported | `coefficient_operator` and `from_coefficient_operator`, on the base rather than the sphere. Both are built, so neither is the other's adjoint: on anything but `L2` the adjoint of analysis carries the metric, and v1 wrote that difference in by hand as `* radius**2`, which is right for Lebesgue and wrong for every Sobolev order | |
+| `to_coefficients`, `from_coefficients` | Ported | same names, restored. An `SHCoeffs` on the sphere and a complex `rfftn` array on a box, in pyshtools' and numpy's conventions rather than this library's -- the point of handing out coefficients being to hand them to something else. The scaling to components is documented on each |  |
+| `sample_power_measure` | Ported | `power_spectrum(x)`, which is a property of the field and so needs no samples. Run it over a measure's `samples` for v1's behaviour. On the sphere it is `4 pi R^2` times `SHCoeffs.spectrum` |  |
 | `with_degree`, `degree_transfer_operator` | Ported | same names, and now on the boxes too, not just the sphere. `with_shape` is the primitive there, since a box is resolved per-axis; `with_degree(l)` is the isotropic `2l` points on each. Transfer matches components by `(wavevector, cosine-or-sine)` as v1's torus does, not by degree -- on a box many wavevectors share a degree | |
 | `with_order` | Ported | same name | |
 | `order_inclusion_operator` | Ported | The embedding `H^s -> H^t`. Not ported | This is useful |

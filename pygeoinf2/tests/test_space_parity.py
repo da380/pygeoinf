@@ -252,3 +252,116 @@ class TestPowerPerDegree:
         counts = np.bincount(degrees)[degrees]
         expected = np.array([np.count_nonzero(degrees == d) for d in degrees])
         assert np.array_equal(counts, expected)
+
+
+class TestCoefficientAccess:
+    """The public way out to coefficients, and the operators either side."""
+
+    def test_coefficients_round_trip(self, geometry, rng):
+        """An SHCoeffs on the sphere, a complex rfftn array on a box. Either
+        way it is the object the rest of the world takes, and reading it back
+        in returns the same field."""
+        _, space = geometry
+        field = space.random(rng=rng)
+        recovered = space.from_coefficients(space.to_coefficients(field))
+        assert space.norm(space.subtract(recovered, field)) < 1e-12 * space.norm(field)
+
+    def test_the_power_spectrum_is_the_power(self, geometry, rng):
+        """Summing over the degrees gives the whole squared L2 norm, which is
+        what says nothing was double-counted or dropped between them."""
+        _, space = geometry
+        field = space.random(rng=rng)
+        components = space.to_components(field)
+        assert space.power_spectrum(field).sum() == pytest.approx(
+            np.sum(components**2)
+        )
+
+    def test_a_lebesgue_measures_power_is_the_power_it_was_given(self, geometry, rng):
+        """On L2 the two meet: draws from ``power_measure(p)`` have spectrum
+        ``p``. This is the scale check -- an error of a factor of ``2l + 1``,
+        which is the multiplicity the method exists to divide out, would show
+        at any degree above zero."""
+        _, base = geometry
+        space = base.with_order(0.0)
+        degrees = space.degrees
+        measure = space.power_measure(np.full(degrees.max() + 1, 4.0))
+
+        drawn = np.mean(
+            [space.power_spectrum(measure.sample(rng=rng)) for _ in range(400)],
+            axis=0,
+        )
+        present = np.unique(degrees)
+        assert np.all(drawn[present] > 2.0)
+        assert np.all(drawn[present] < 8.0)
+
+    def test_on_a_sobolev_space_the_metric_shows(self, geometry, rng):
+        """And it shows by a *known* factor, not an unexplained one. The
+        eigenvalues an invariant measure is given are the covariance operator's
+        in that space's metric, so a draw's coefficients carry
+        ``eigenvalue / gram``. Checked exactly rather than by sampling."""
+        _, space = geometry
+        degrees = space.degrees
+        measure = space.power_measure(np.full(degrees.max() + 1, 4.0))
+
+        expected = np.bincount(
+            degrees,
+            weights=measure.covariance.eigenvalues / space.apply_gram(np.ones(space.dim)),
+        )
+        drawn = np.mean(
+            [space.power_spectrum(measure.sample(rng=rng)) for _ in range(400)],
+            axis=0,
+        )
+        present = np.unique(degrees)
+        assert drawn[present] == pytest.approx(expected[present], rel=0.35)
+
+    def test_analysis_and_synthesis_invert_each_other(self, geometry, rng):
+        """And are *not* each other's adjoint on anything but L2 -- which is
+        why there are two of them, rather than one and its adjoint. v1 wrote
+        the difference into the adjoint by hand as a power of the radius."""
+        from pygeoinf2.testing import check_operator
+
+        _, space = geometry
+        analysis = space.coefficient_operator(lmax=3, lmin=1)
+        synthesis = space.from_coefficient_operator(lmax=3, lmin=1)
+        check_operator(analysis, rng=rng)
+        check_operator(synthesis, rng=rng)
+
+        coefficients = rng.standard_normal(synthesis.domain.dim)
+        assert analysis(synthesis(coefficients)) == pytest.approx(coefficients)
+
+    def test_synthesis_is_not_the_adjoint_of_analysis(self, geometry, rng):
+        """Stated as a test because it is the trap: on a Sobolev space the
+        adjoint carries the metric, so using it as synthesis is wrong by the
+        Sobolev symbol."""
+        _, space = geometry
+        analysis = space.coefficient_operator(lmax=3, lmin=1)
+        synthesis = space.from_coefficient_operator(lmax=3, lmin=1)
+
+        coefficients = rng.standard_normal(synthesis.domain.dim)
+        theirs = analysis.adjoint(coefficients)
+        mine = synthesis(coefficients)
+        assert space.norm(space.subtract(theirs, mine)) > 1e-8 * space.norm(mine)
+
+    def test_a_band_outside_the_space_is_refused(self, geometry):
+        _, space = geometry
+        with pytest.raises(ValueError, match="lmin <= lmax"):
+            space.coefficient_operator(lmax=space.degrees.max() + 1)
+        with pytest.raises(ValueError, match="lmin <= lmax"):
+            space.from_coefficient_operator(lmin=3, lmax=2)
+
+
+class TestPowerSpectrumAgainstPyshtools:
+    """v1 got a spectrum by drawing samples and calling SHCoeffs.spectrum.
+    This is the same number, on this library's scale."""
+
+    def test_it_is_pyshtools_spectrum_up_to_the_orthonormal_scale(self, rng):
+        sh = pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(8, 2.0, 0.3, radius=2.0)
+        field = space.random(rng=rng)
+
+        mine = space.power_spectrum(field)
+        theirs = space.to_coefficients(field).spectrum(convention="power")
+        area = 4.0 * np.pi * space.radius**2
+        assert mine == pytest.approx(area * theirs)

@@ -386,6 +386,69 @@ class Sphere(SymmetricSpace[Any]):
             )
         )
 
+    def to_coefficients(self, x: Any, /) -> Any:
+        """The field's coefficients as a pyshtools ``SHCoeffs``.
+
+        The other half of the seam that :meth:`grid_values` opens: components
+        are this library's packed real vector, and this is the object
+        pyshtools' own plotting, rotation and spectrum routines take. Anyone
+        with an existing pyshtools workflow, or writing pyslfp-style interop,
+        wants this and not the packed vector.
+
+        These are pyshtools' orthonormal coefficients, with no Condon-Shortley
+        phase, on their own scale. The relation to components is a single
+        factor: a component is ``radius`` times the coefficient it comes from,
+        read through the packing, and :meth:`from_coefficients` inverts this
+        exactly.
+
+        Args:
+            x: a field on this sphere.
+
+        Returns:
+            An ``SHCoeffs`` of degree ``lmax``.
+        """
+        from pyshtools import SHCoeffs
+        from pyshtools.expand import SHExpandDH
+
+        field = self.grid_values(x)
+        if field.shape != self.grid_shape:
+            raise ValueError(f"A field has shape {self.grid_shape}, got {field.shape}.")
+        return SHCoeffs.from_array(
+            SHExpandDH(
+                field,
+                norm=_ORTHONORMAL,
+                sampling=self._sampling,
+                csphase=_NO_CONDON_SHORTLEY,
+                lmax_calc=self._lmax,
+            ),
+            normalization="ortho",
+            csphase=_NO_CONDON_SHORTLEY,
+        )
+
+    def from_coefficients(self, coefficients: Any, /) -> Any:
+        """The field with the given ``SHCoeffs``.
+
+        The inverse of :meth:`to_coefficients`. Coefficients above this space's
+        ``lmax`` are dropped and missing ones taken as zero, so a set expanded
+        elsewhere can be read in without matching degrees up first.
+
+        Args:
+            coefficients: an ``SHCoeffs``, or a ``(2, l + 1, l + 1)`` array in
+                pyshtools' orthonormal convention.
+
+        Returns:
+            A field on this sphere.
+        """
+        array = np.asarray(getattr(coefficients, "coeffs", coefficients), dtype=float)
+        if array.ndim != 3 or array.shape[0] != 2 or array.shape[1] != array.shape[2]:
+            raise ValueError(
+                f"Coefficients have shape (2, l + 1, l + 1), got {array.shape}."
+            )
+        padded = np.zeros((2, self._lmax + 1, self._lmax + 1))
+        shared = min(array.shape[1], self._lmax + 1)
+        padded[:, :shared, :shared] = array[:, :shared, :shared]
+        return self.from_components(self._radius * padded[self._packing])
+
     # ----------------------------------------------------------------- #
     #                          Points and grids                         #
     # ----------------------------------------------------------------- #
@@ -1066,39 +1129,6 @@ class Sphere(SymmetricSpace[Any]):
     # ----------------------------------------------------------------- #
     #                          Coefficients                             #
     # ----------------------------------------------------------------- #
-
-    def coefficient_operator(
-        self, /, *, lmax: int | None = None, lmin: int = 0
-    ) -> LinearOperator:
-        """The harmonic coefficients of a field, as an operator.
-
-        The property operator of Al-Attar (2021): estimate finitely many
-        spherical harmonic coefficients from a finite set of point values. On a
-        space whose components already *are* those coefficients this is a
-        selection, so it is matrix-free and costs nothing.
-        """
-        from ..algebra.spaces import EuclideanSpace
-
-        top = self._lmax if lmax is None else int(lmax)
-        if not 0 <= lmin <= top <= self._lmax:
-            raise ValueError(
-                f"Degrees must satisfy 0 <= lmin <= lmax <= {self._lmax}, "
-                f"got lmin={lmin}, lmax={top}."
-            )
-        degrees = self._packing[1]
-        selected = np.flatnonzero((degrees >= lmin) & (degrees <= top))
-
-        def value(x: np.ndarray) -> np.ndarray:
-            return self.to_components(x)[selected]
-
-        def derivative_components(y: np.ndarray) -> np.ndarray:
-            total = np.zeros(self.dim)
-            total[selected] = np.asarray(y, dtype=float)
-            return total
-
-        return LinearOperator.from_derivative_callables(
-            self, EuclideanSpace(selected.size), value, derivative_components
-        )
 
     # ----------------------------------------------------------------- #
     #                       Acquisition geometry                        #
