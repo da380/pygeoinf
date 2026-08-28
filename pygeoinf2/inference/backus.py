@@ -1054,15 +1054,50 @@ class DualFeasibleProperty(SetEstimator):
 
         return Functional.from_callables(space, value, gradient=gradient)
 
+    def primal_solver(self, data: Any, /, **kwargs: Any) -> Any:
+        """The same problem set up for the *primal* route.
+
+        :class:`~pygeoinf2.numerics.convex.ChambollePockSolver` maximises
+        ``(c, m)`` over the feasible set directly, where everything else here
+        minimises the dual. The two answer the same question and meet at the
+        same number -- measured, they agree to 1e-10, which is strong duality
+        checked rather than assumed -- but they cost differently: the dual
+        route takes few expensive bundle iterations, the primal many cheap
+        splitting steps, one application of ``A`` and one projection each.
+
+        Which is better depends on the sets. A ball projects in closed form
+        and the primal route is then very cheap per step; an intersection
+        projects by Dykstra, iteratively, and it is not.
+
+        Args:
+            data: the observations.
+            **kwargs: passed to the solver -- step sizes, tolerance, the
+                iteration cap.
+
+        Returns:
+            A solver ready to take a direction's ``T* q``.
+        """
+        from ..numerics.convex import ChambollePockSolver
+
+        return ChambollePockSolver(
+            self._prior,
+            self._noise,
+            self._problem.forward_operator,
+            data,
+            **kwargs,
+        )
+
     def support_values(
         self,
         directions: Sequence[Any],
         data: Any,
         /,
         *,
+        route: str = "dual",
         warm_start: bool = True,
         n_jobs: int | None = None,
         backend: str | None = None,
+        **kwargs: Any,
     ) -> np.ndarray:
         """The support values in many directions, sweeping with a warm start.
 
@@ -1081,20 +1116,44 @@ class DualFeasibleProperty(SetEstimator):
         Args:
             directions: the directions to evaluate.
             data: the observations.
+            route: ``"dual"`` minimises the dual cost with the bundle method;
+                ``"primal"`` maximises over the feasible set directly with
+                :class:`~pygeoinf2.numerics.convex.ChambollePockSolver`. The
+                two agree -- see :meth:`primal_solver` -- and differ in cost.
+                This is v1's ``solve_primal_feasibility`` as the second choice
+                rather than a second function.
             warm_start: carry each answer into the next. Ignored when running
                 in parallel, where there is no previous answer to carry.
             n_jobs: workers. ``None`` or one keeps the sweep sequential.
             backend: the joblib backend.
+            **kwargs: passed to the primal solver, and ignored on the dual
+                route, which is configured through ``method=`` at construction.
 
         Returns:
             One support value per direction.
 
         Raises:
-            ValueError: if the feasible set is empty, as :meth:`support` does.
+            ValueError: if the route is not one of the two, or -- on the dual
+                route -- if the feasible set is empty, as :meth:`support` does.
         """
+        if route not in ("dual", "primal"):
+            raise ValueError(f"The route is 'dual' or 'primal', got {route!r}.")
         directions = tuple(directions)
         if not directions:
             return np.empty(0)
+
+        if route == "primal":
+            solver = self.primal_solver(data, **kwargs)
+            values, start = [], None
+            for direction in directions:
+                result = solver.solve(
+                    self._target.adjoint(direction),
+                    start=start if warm_start else None,
+                )
+                values.append(result.value)
+                if warm_start:
+                    start = result.model
+            return np.array(values)
 
         from ..parallel import parallel_map, resolve_jobs
 

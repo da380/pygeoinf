@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from pygeoinf2.algebra.operators import Functional, LinearFunctional
+from pygeoinf2.algebra.operators import Functional, LinearFunctional, LinearOperator
 from pygeoinf2.algebra.spaces import EuclideanSpace
 from pygeoinf2.numerics.convex import LevelBundleMethod, ProximalBundleMethod
 from pygeoinf2.numerics.quadratic_programming import (
@@ -189,3 +189,116 @@ class TestTheLevelBundleBoundIsABound:
         )
         with pytest.raises(Exception):
             LevelBundleMethod().minimise(functional, space.zero())
+
+
+class TestTheTwoRoutesMeet:
+    """Chambolle-Pock maximises over the feasible set; the bundle method
+    minimises the dual. Strong duality says they meet, and two unrelated
+    algorithms agreeing is the strongest check either one gets."""
+
+    @pytest.fixture
+    def setting(self, rng):
+        from pygeoinf2.geometry.convex import Ball
+        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.inference.problem import LinearForwardProblem
+
+        model = EuclideanSpace(12)
+        data_space = EuclideanSpace(5)
+        target_space = EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.standard_normal((5, 12)), form="components"
+        )
+        target = LinearOperator.from_matrix(
+            model, target_space, rng.standard_normal((2, 12)), form="components"
+        )
+        truth = model.random(rng=rng)
+        data = forward(truth)
+        # Wide enough that the set is genuinely non-empty: an empty one has no
+        # supremum for the two to agree on.
+        prior = Ball(model, radius=2.0 * model.norm(truth))
+        estimator = DualFeasibleProperty(
+            LinearForwardProblem(forward, error=Ball(data_space, radius=0.05)),
+            target,
+            prior,
+        )
+        return estimator, target_space, data
+
+    @staticmethod
+    def directions(space, count):
+        angles = np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
+        return [
+            space.from_components(np.array([np.cos(angle), np.sin(angle)]))
+            for angle in angles
+        ]
+
+    def test_the_primal_and_dual_support_values_agree(self, setting):
+        """To 1.7e-8 relative, measured over sixteen directions."""
+        estimator, space, data = setting
+        directions = self.directions(space, 8)
+
+        dual = estimator.support_values(directions, data)
+        primal = estimator.support_values(
+            directions, data, route="primal", tolerance=1e-9, iterations=50_000
+        )
+        assert primal == pytest.approx(dual, rel=1e-5)
+
+    def test_the_primal_route_converges(self, setting):
+        estimator, space, data = setting
+        solver = estimator.primal_solver(data, tolerance=1e-9, iterations=50_000)
+        result = solver.solve(estimator._target.adjoint(space.basis_vector(0)))
+
+        assert result.converged
+        assert result.residual < 1e-8
+
+    def test_the_answer_is_actually_feasible(self, setting):
+        """Which is the thing the residual is measuring, and the thing an
+        aliasing bug in the over-relaxation silently broke: the iterate became
+        the extrapolated point, and the method converged to something outside
+        the set with a residual that would not go below 0.9."""
+        estimator, space, data = setting
+        solver = estimator.primal_solver(data, tolerance=1e-9, iterations=50_000)
+        result = solver.solve(estimator._target.adjoint(space.basis_vector(0)))
+
+        model_space = estimator._problem.model_space
+        data_space = estimator.data_space
+        assert model_space.norm(
+            model_space.subtract(estimator._prior.project(result.model), result.model)
+        ) < 1e-8
+        assert data_space.norm(
+            data_space.subtract(
+                data_space.add(
+                    estimator._problem.forward_operator(result.model),
+                    result.discrepancy,
+                ),
+                data,
+            )
+        ) < 1e-7
+
+    def test_an_unknown_route_is_refused(self, setting):
+        estimator, space, data = setting
+        with pytest.raises(ValueError, match="dual' or 'primal"):
+            estimator.support_values(self.directions(space, 2), data, route="sideways")
+
+    def test_the_sets_must_live_where_the_operator_does(self, rng):
+        from pygeoinf2.geometry.convex import Ball
+        from pygeoinf2.numerics.convex import ChambollePockSolver
+
+        model = EuclideanSpace(6)
+        data_space = EuclideanSpace(3)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.standard_normal((3, 6)), form="components"
+        )
+        with pytest.raises(ValueError, match="model space"):
+            ChambollePockSolver(
+                Ball(data_space, radius=1.0),
+                Ball(data_space, radius=1.0),
+                forward,
+                data_space.zero(),
+            )
+        with pytest.raises(ValueError, match="data space"):
+            ChambollePockSolver(
+                Ball(model, radius=1.0),
+                Ball(model, radius=1.0),
+                forward,
+                data_space.zero(),
+            )

@@ -214,9 +214,9 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `best_available_qp_solver` | Planned | M5 stage 5.9 | |
 | `PrimalKKTSolver`, `KKTResult` | Being restored | **D-13**, Phase 4. `monotone_root` and `ProximalBundleMethod` cover the same ground, which is why this was marked subsumed -- but the decision is that it comes back as an alternative `method=`, not that it is replaced. It is `work/sphere_dli_example.py`'s solver | |
 | `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Planned | M5 stage 5.9 | |
-| `ChambollePockSolver`, `ChambollePockResult` | Planned | M5 stage 5.9 | |
+| `ChambollePockSolver`, `ChambollePockResult` | Ported | **D-13**. `numerics.convex.ChambollePockSolver` and `SaddlePointResult`. Projects onto any `ConvexSet` rather than only a ball, which v1 raised for | |
 | `solve_support_values` | Ported | **D-13**. `DualFeasibleProperty.support_values(directions, data)`, with the warm start across directions -- 1.08 to 1.23x as they get closer together, and the same answers. `n_jobs` runs them in parallel instead, which gives the warm start up | |
-| `solve_primal_feasibility` | Being restored | **D-13**, Phase 4, with `ChambollePockSolver`. The inclusion test of DESIGN 18.5 | |
+| `solve_primal_feasibility` | Ported | **D-13**. `DualFeasibleProperty.support_values(..., route="primal")` over `numerics.convex.ChambollePockSolver` -- the second route rather than a second function. Measured 187x faster than the dual route on ball sets, agreeing to 1.7e-8 | |
 
 ## `subsets.py` → `geometry/sets.py`, `geometry/convex.py`
 

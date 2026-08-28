@@ -33,12 +33,15 @@ from typing import Any, Literal
 import warnings
 
 import numpy as np
+from numpy.random import Generator
 
 from ..algebra.operators import Functional, LinearFunctional, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from .optimisation import OptimisationResult, Optimiser
 
 __all__ = [
+    "ChambollePockSolver",
+    "SaddlePointResult",
     "ProximalBundleMethod",
     "LevelBundleMethod",
     "BundleResult",
@@ -1396,4 +1399,237 @@ class LevelBundleMethod:
         return BundleResult(
             upper, best_point, self._iterations, evaluations, False, message,
             upper - lower,
+        )
+
+
+@dataclass(frozen=True)
+class SaddlePointResult:
+    """The outcome of a primal-dual feasibility solve."""
+
+    value: float
+    """``(c, m)`` at the point found: the support value being sought."""
+
+    model: Any
+    """The maximising model."""
+
+    discrepancy: Any
+    """The data-error vector ``v`` that goes with it."""
+
+    certificate: Any
+    """The dual variable, which is the same object the dual route calls a
+    certificate: a weighting of the data."""
+
+    residual: float
+    """``||G m + v - d||``, the feasibility gap. This is what convergence is
+    declared on -- not the objective, which is monotone in neither variable."""
+
+    iterations: int
+    converged: bool
+
+    def __repr__(self) -> str:
+        return (
+            f"SaddlePointResult(value={self.value:.6g}, "
+            f"residual={self.residual:.3g}, converged={self.converged})"
+        )
+
+
+class ChambollePockSolver:
+    """Maximise a linear functional over a feasible set, by primal-dual splitting.
+
+    The primal form of the same question the dual route answers:
+
+    .. code-block:: text
+
+        maximise    (c, m)
+        subject to  m in prior, v in noise, G m + v == d
+
+    Chambolle and Pock's first-order method (2011) on the saddle-point form,
+    with ``K == [G; I]``. Each step is one application of ``G``, one of its
+    adjoint, and a *projection* onto each of the two sets -- so the cost per
+    iteration is small and the number of them is large, which is the opposite
+    trade to the bundle methods and the reason to have both.
+
+    Converges at ``O(1/N)`` in the primal-dual gap when
+    ``tau sigma ||K||^2 <= 1``; the step sizes are chosen to satisfy that from
+    a power-iteration estimate of ``||G||`` unless given.
+
+    **It projects rather than supports.** v1's version could only handle a
+    ball, because it implemented the projection itself and raised for anything
+    else. Here every :class:`~pygeoinf2.geometry.convex.ConvexSet` knows its
+    own nearest point, so a polytope or an intersection works without a case
+    for it -- and an intersection projects by Dykstra, which is iterative, so
+    the cost per step is then no longer small. That is a real trade and worth
+    knowing about before choosing this route for such a set.
+
+    It is at its best when the objective ``c`` changes and the feasible set
+    does not: the step sizes and the operator norm are then computed once, and
+    only the linear term moves.
+
+    A port of v1's ``ChambollePockSolver``.
+
+    References:
+        Chambolle, A. and Pock, T. (2011). A first-order primal-dual algorithm
+        for convex problems with applications to imaging. *Journal of
+        Mathematical Imaging and Vision* 40(1), 120-145.
+    """
+
+    def __init__(
+        self,
+        prior: Any,
+        noise: Any,
+        forward: LinearOperator,
+        data: Any,
+        /,
+        *,
+        sigma: float | None = None,
+        tau: float | None = None,
+        theta: float = 1.0,
+        iterations: int = 1000,
+        tolerance: float = 1e-6,
+        rng: Generator | None = None,
+    ) -> None:
+        """
+        Args:
+            prior: the convex set the model lies in.
+            noise: the convex set the data error lies in.
+            forward: ``G``, from the model space to the data space.
+            data: the observations.
+            sigma: the dual step. Chosen with *tau* from ``||G||`` if unset.
+            tau: the primal step.
+            theta: the over-relaxation, one being the standard choice.
+            iterations: the cap.
+            tolerance: on the feasibility residual.
+            rng: for the power iteration that estimates ``||G||``.
+
+        Raises:
+            ValueError: if the sets do not live in the operator's spaces, or
+                the steps are not positive.
+        """
+        if prior.domain != forward.domain:
+            raise ValueError("The prior set must live in the model space.")
+        if noise.domain != forward.codomain:
+            raise ValueError("The noise set must live in the data space.")
+        if theta < 0.0:
+            raise ValueError(f"theta must be non-negative, got {theta}.")
+
+        self._prior = prior
+        self._noise = noise
+        self._forward = forward
+        self._data = data
+        self._theta = theta
+        self._iterations = iterations
+        self._tolerance = tolerance
+
+        if sigma is None or tau is None:
+            chosen_sigma, chosen_tau = self._steps(rng)
+            sigma = chosen_sigma if sigma is None else sigma
+            tau = chosen_tau if tau is None else tau
+        if sigma <= 0.0 or tau <= 0.0:
+            raise ValueError("The step sizes must be positive.")
+        self._sigma, self._tau = sigma, tau
+
+    def _steps(self, rng: Generator | None) -> tuple[float, float]:
+        """Steps satisfying ``tau sigma ||K||^2 <= 0.99``.
+
+        ``||K||^2 <= ||G||^2 + 1`` since ``K == [G; I]``, and ``||G||`` comes
+        from twenty power iterations -- enough for a step size, which needs an
+        estimate rather than a number.
+        """
+        model_space = self._forward.domain
+        vector = model_space.random(rng=rng)
+        norm = model_space.norm(vector)
+        if norm == 0.0:  # pragma: no cover - a zero draw
+            return 1.0, 1.0
+        vector = model_space.scale(1.0 / norm, vector)
+
+        estimate = 0.0
+        for _ in range(20):
+            image = self._forward.adjoint(self._forward(vector))
+            estimate = model_space.norm(image)
+            if estimate == 0.0:
+                break
+            vector = model_space.scale(1.0 / estimate, image)
+        operator_norm = float(np.sqrt(max(estimate, 0.0)) ** 2 + 1.0)
+        step = float(np.sqrt(0.99 / max(operator_norm, 1e-30)))
+        return step, step
+
+    def solve(self, objective: Any, /, *, start: Any = None) -> SaddlePointResult:
+        """Maximise ``(objective, m)`` over the feasible set.
+
+        Args:
+            objective: ``c``, in the model space. Typically ``T* q``.
+            start: an initial model. Defaults to zero, and is the warm start
+                when sweeping directions.
+
+        Returns:
+            The result, whose ``converged`` says whether the feasibility
+            residual reached the tolerance.
+        """
+        model_space = self._forward.domain
+        data_space = self._forward.codomain
+
+        model = model_space.zero() if start is None else model_space.copy(start)
+        discrepancy = data_space.zero()
+        certificate = data_space.zero()
+        model_bar, discrepancy_bar = model, discrepancy
+        residual = float("inf")
+
+        for iteration in range(1, self._iterations + 1):
+            # Dual ascent on the extrapolated primal point.
+            gap = data_space.subtract(
+                data_space.add(self._forward(model_bar), discrepancy_bar), self._data
+            )
+            certificate = data_space.axpy(self._sigma, gap, certificate)
+
+            # Primal descent, then back onto each set.
+            pulled = self._forward.adjoint(certificate)
+            step = model_space.axpy(-self._tau, pulled, model_space.copy(model))
+            step = model_space.axpy(self._tau, objective, step)
+            next_model = self._prior.project(step)
+
+            next_discrepancy = self._noise.project(
+                data_space.axpy(-self._tau, certificate, data_space.copy(discrepancy))
+            )
+
+            # Over-relaxation: the extrapolation that buys the O(1/N) rate.
+            # Onto *copies*: axpy writes into its third argument, so relaxing
+            # into next_model would leave the iterate itself extrapolated --
+            # and the method then converges to something that is not a point
+            # of the feasible set at all.
+            model_bar = model_space.axpy(
+                self._theta,
+                model_space.subtract(next_model, model),
+                model_space.copy(next_model),
+            )
+            discrepancy_bar = data_space.axpy(
+                self._theta,
+                data_space.subtract(next_discrepancy, discrepancy),
+                data_space.copy(next_discrepancy),
+            )
+            model, discrepancy = next_model, next_discrepancy
+
+            residual = data_space.norm(
+                data_space.subtract(
+                    data_space.add(self._forward(model), discrepancy), self._data
+                )
+            )
+            if residual < self._tolerance:
+                return SaddlePointResult(
+                    float(model_space.inner_product(objective, model)),
+                    model,
+                    discrepancy,
+                    certificate,
+                    residual,
+                    iteration,
+                    True,
+                )
+
+        return SaddlePointResult(
+            float(model_space.inner_product(objective, model)),
+            model,
+            discrepancy,
+            certificate,
+            residual,
+            self._iterations,
+            False,
         )
