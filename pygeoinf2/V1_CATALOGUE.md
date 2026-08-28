@@ -264,6 +264,8 @@ deliberately not started.
 | `BackusInference` | Ported | M5 stages 5.7 and 5.9, with four routes (§18.3) | |
 | `DualMasterCostFunction` | Ported | M5 stage 5.9. Its docstring already *is* BGP eq. (28) — the support function of an image | |
 
+| `test_data_compatibility` | Ported | `is_feasible(data)` on all three noisy routes, so "is there any model at all" can be asked without waiting for an exception | |
+
 ## `symmetric_space/`
 
 | v1 | Status | v2 / reason | Your notes |
@@ -542,7 +544,7 @@ Four of these are inversion; §18.9 has the disposition of the rest.
 | `sparse_localized_preconditioner` | Ported | `inference.LocalisedPreconditioner`, likewise. Blocks may overlap; `R`'s off-diagonal is dropped, now documented and tested as such | |
 | `surrogate_inversion` | Ported | `LinearGaussianInversion.surrogate` / `NormalOperator.surrogate`. Returns the surrogate *normal operator*, which is the only part of a surrogate problem ever used, and may live on a different model space (DESIGN §23.2) | |
 | `surrogate_normal_preconditioner`, `surrogate_woodbury_data_preconditioner`, `surrogate_woodbury_model_preconditioner` | Subsumed | Passing cheap factors *is* the surrogate case: `WoodburyPreconditioner.from_normal(inversion.surrogate(...))` | |
-| `parameterized_inversion`, `data_reduced_inversion` | Dropped | They forward to the `ForwardProblem` methods of the same name (§18.9) | |
+| `parameterized_inversion`, `data_reduced_inversion` | Ported | `parameterised` and `data_reduced` on the estimators, forwarding to the `ForwardProblem` methods of the same name (§18.9). Now on the *constrained* estimators too, where they raised: the constraint is pulled back as `(B M) p == w`, which is v1's construction and needs the subspace to remember its equation | |
 | `normal_residual_callback` | Ported | `LeastSquares.residual_callback`, wired to *these* normal equations so the number reported is the one the solve is driving down | |
 
 ## `LinearForwardProblem` (12 methods)
