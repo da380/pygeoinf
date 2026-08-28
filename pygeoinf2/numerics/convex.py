@@ -40,6 +40,7 @@ from .optimisation import OptimisationResult, Optimiser
 
 __all__ = [
     "ProximalBundleMethod",
+    "LevelBundleMethod",
     "BundleResult",
     "SquaredDistance",
     "NormFunctional",
@@ -1147,3 +1148,252 @@ def _minimise_on_simplex(
             stacklevel=2,
         )
     return weights
+
+
+class LevelBundleMethod:
+    """Minimise a convex function, with a *certified* bound on how far off it is.
+
+    The other bundle method here, :class:`ProximalBundleMethod`, stops on its
+    model's predicted decrease, which behaves like a bound and is not one. This
+    one keeps a genuine global lower bound and stops on the gap between it and
+    the best value seen -- so when it says the answer is within a tolerance,
+    that is a statement about the minimum and not about the method.
+
+    The bound comes from the cutting-plane model itself. Every cut is an affine
+    *under*-estimate of a convex function everywhere, so the model
+    ``max_j [f_j + (g_j, x - x_j)]`` lies below ``f``, and *its* minimum lies
+    below ``f*``. That minimum is a linear programme -- minimise ``t`` subject
+    to every cut being at or below it -- and it is solved as one, by the
+    simplex method, which is more reliable on a nearly unbounded LP than
+    handing it to a QP solver.
+
+    Each step then asks for a point that reaches a *level* between the bound
+    and the best value, and is as close as possible to the stability centre:
+
+    .. code-block:: text
+
+        minimise    ||x - centre||^2 / 2
+        subject to  f_j + (g_j, x - x_j) <= t   for every cut
+                    t <= level
+
+    with ``level == alpha * lower + (1 - alpha) * upper``. Small ``alpha`` aims
+    close to the lower bound and makes fast progress when it succeeds; the QP
+    can then be infeasible, because no point reaches that level. That is
+    handled rather than raised: ``alpha`` is widened towards one and retried,
+    and if it still fails a proximal step is taken instead, so the centre and
+    the bundle always advance.
+
+    **Needs a coordinate space.** The master problem is a QP in the domain's
+    components, so unlike the proximal method -- which works through inner
+    products alone -- this one cannot run on a space without a basis. In
+    practice the variable is a dual one on the data space, which has one.
+
+    A port of v1's ``LevelBundleMethod``. Its author's view on the API is to be
+    sought before it is changed beyond the port.
+    """
+
+    def __init__(
+        self,
+        /,
+        *,
+        alpha: float = 0.1,
+        tolerance: float = 1e-6,
+        iterations: int = 500,
+        capacity: int = 100,
+        qp_solver: Any = None,
+    ) -> None:
+        """
+        Args:
+            alpha: where between the lower bound and the best value the level
+                is set. Towards zero aims at the bound and is aggressive;
+                towards one is cautious. In ``(0, 1)``.
+            tolerance: stop when the gap falls to this fraction of the best
+                value. **Relative**, unlike a bare number would suggest.
+            iterations: the cap on oracle calls.
+            capacity: how many cuts to keep. The oldest are dropped.
+            qp_solver: the backend for the master problem. Defaults to
+                :func:`~pygeoinf2.numerics.quadratic_programming.best_available_qp_solver`.
+
+        Raises:
+            ValueError: if *alpha* is not in ``(0, 1)``.
+        """
+        if not 0.0 < alpha < 1.0:
+            raise ValueError(f"alpha lies in (0, 1), got {alpha}.")
+        self._alpha = alpha
+        self._tolerance = tolerance
+        self._iterations = iterations
+        self._capacity = capacity
+        self._qp_solver = qp_solver
+
+    @property
+    def qp_solver(self) -> Any:
+        """The backend the master problem is handed to."""
+        if self._qp_solver is None:
+            from .quadratic_programming import best_available_qp_solver
+
+            self._qp_solver = best_available_qp_solver()
+        return self._qp_solver
+
+    @staticmethod
+    def _cut_rows(
+        space: Any, cuts: list[tuple[np.ndarray, float, np.ndarray]]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The cuts as ``[g_j, -1] z <= (g_j, x_j) - f_j``.
+
+        With ``z == [x, t]``: the constraint ``f_j + (g_j, x - x_j) <= t``
+        rearranged so that every term in ``x`` and ``t`` is on the left.
+        """
+        rows, bounds = [], []
+        for gradient, value, point in cuts:
+            components = space.to_components(gradient)
+            rows.append(np.append(components, -1.0))
+            bounds.append(float(components @ space.to_components(point)) - value)
+        return np.asarray(rows, dtype=float), np.asarray(bounds, dtype=float)
+
+    def _lower_bound(self, space: Any, cuts: list) -> float:
+        """The cutting-plane model's own minimum: a global lower bound.
+
+        A linear programme, and solved as one. The model underestimates the
+        function everywhere, so this underestimates the minimum -- which is
+        what makes the gap a bound rather than an indication.
+
+        Returns ``-inf`` when the LP is unbounded or infeasible, which is the
+        honest answer early on: one cut does not bound a function below.
+        """
+        from scipy.optimize import linprog
+
+        rows, bounds = self._cut_rows(space, cuts)
+        size = space.dim
+        objective = np.zeros(size + 1)
+        objective[size] = 1.0
+
+        outcome = linprog(
+            objective,
+            A_ub=rows,
+            b_ub=bounds,
+            bounds=[(None, None)] * (size + 1),
+            method="highs",
+        )
+        return float(outcome.x[size]) if outcome.status == 0 else -np.inf
+
+    def _master(
+        self, space: Any, cuts: list, centre: np.ndarray, level: float | None
+    ) -> np.ndarray | None:
+        """The level QP, or the proximal fallback when *level* is ``None``.
+
+        Returns the new point's components, or ``None`` if the programme was
+        infeasible -- which for the level problem is expected and handled, and
+        for the fallback means something has gone properly wrong.
+        """
+        rows, bounds = self._cut_rows(space, cuts)
+        size = space.dim
+
+        # 0.5 ||x - centre||^2 == 0.5 x'x - centre'x + const, and t is free of
+        # the quadratic; the fallback adds t to the linear part instead.
+        quadratic = np.zeros((size + 1, size + 1))
+        quadratic[:size, :size] = np.eye(size)
+        linear = np.append(-centre, 0.0 if level is not None else 1.0)
+
+        if level is not None:
+            level_row = np.zeros(size + 1)
+            level_row[size] = 1.0
+            rows = np.vstack([rows, level_row])
+            bounds = np.append(bounds, level)
+
+        result = self.qp_solver.solve(
+            quadratic,
+            linear,
+            rows,
+            np.full(bounds.size, -np.inf),
+            bounds,
+        )
+        if not result.solved:
+            return None
+        return np.asarray(result.x[:size], dtype=float)
+
+    def minimise(
+        self,
+        functional: Functional,
+        start: Any,
+        /,
+        *,
+        subgradient: Callable[[Any], Any] | None = None,
+    ) -> BundleResult:
+        """Minimise a convex functional from a starting point.
+
+        Args:
+            functional: convex, and able to supply a subgradient.
+            start: where to begin.
+            subgradient: an override, called with a point and returning a
+                subgradient. Defaults to the functional's own.
+
+        Returns:
+            The minimum, a minimiser, and a gap that is a genuine bound on the
+            distance to the true minimum.
+
+        Raises:
+            TypeError: if the domain has no component map.
+        """
+        from ..algebra.operators import require_coordinates
+
+        space = functional.domain
+        require_coordinates(space, space)
+        slope = subgradient or functional.subgradient
+
+        centre = space.copy(start)
+        best_point = space.copy(start)
+        upper = float(functional(centre))
+        evaluations = 1
+        cuts: list[tuple[Any, float, Any]] = [
+            (space.copy(slope(centre)), upper, space.copy(centre))
+        ]
+        lower = -np.inf
+        message = "iteration limit reached"
+
+        for iteration in range(1, self._iterations + 1):
+            lower = max(lower, self._lower_bound(space, cuts))
+            gap = upper - lower
+            if gap <= self._tolerance * max(abs(upper), 1.0):
+                return BundleResult(
+                    upper, best_point, iteration, evaluations, True,
+                    "gap tolerance reached", gap,
+                )
+
+            centre_components = space.to_components(centre)
+            candidate = None
+            alpha = self._alpha
+            # A level too close to the bound can be unreachable. Widen towards
+            # caution and retry before giving up on the level step entirely.
+            for _ in range(3):
+                if not np.isfinite(lower):
+                    break
+                candidate = self._master(
+                    space, cuts, centre_components, alpha * lower + (1.0 - alpha) * upper
+                )
+                if candidate is not None:
+                    break
+                alpha = min(alpha * 1.5, 0.9)
+            if candidate is None:
+                # No reachable level, or no bound yet to set one from. A
+                # proximal step still improves the centre and the bundle, which
+                # is what the next lower bound is built from.
+                candidate = self._master(space, cuts, centre_components, None)
+            if candidate is None:
+                message = "the master problem could not be solved"
+                break
+
+            point = space.from_components(candidate)
+            value = float(functional(point))
+            evaluations += 1
+            cuts.append((space.copy(slope(point)), value, space.copy(point)))
+            if len(cuts) > self._capacity:
+                cuts.pop(0)
+
+            if value < upper:
+                upper, best_point = value, space.copy(point)
+            centre = point
+
+        return BundleResult(
+            upper, best_point, self._iterations, evaluations, False, message,
+            upper - lower,
+        )

@@ -1,6 +1,7 @@
 """Numerical methods built on the algebraic core."""
 
 from .convex import (
+    LevelBundleMethod,
     BallIndicator,
     BundleResult,
     NormFunctional,
@@ -75,6 +76,14 @@ from .root_find import (
     RootResult,
     monotone_root,
 )
+from .quadratic_programming import (
+    ClarabelQPSolver,
+    OSQPQPSolver,
+    QPResult,
+    QPSolver,
+    SciPyQPSolver,
+    best_available_qp_solver,
+)
 from .solvers import (
     BiCGStabSolver,
     CGSolver,
@@ -96,6 +105,13 @@ from .solvers import (
 )
 
 __all__ = [
+    "LevelBundleMethod",
+    "best_available_qp_solver",
+    "SciPyQPSolver",
+    "QPSolver",
+    "QPResult",
+    "OSQPQPSolver",
+    "ClarabelQPSolver",
     "weighted_chi2_quantile",
     "weighted_chi2_cdf",
     "RootResult",
