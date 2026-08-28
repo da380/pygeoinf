@@ -178,6 +178,12 @@ def require_coordinates(*spaces: HilbertSpace) -> None:
     Numerical methods that need components call this at construction time, so
     the failure names the missing capability instead of surfacing three calls
     deeper as an ``AttributeError``.
+
+    Args:
+        *spaces: the spaces to check.
+
+    Raises:
+        TypeError: naming the first space that provides no component map.
     """
     for space in spaces:
         if not isinstance(space, CoordinateSpace):
@@ -399,6 +405,19 @@ class Operator[X, Y]:
 
         Supply ``linearise`` when a single call yields value and derivative
         together; that is the whole reason ``at()`` exists.
+
+        Args:
+            domain: the operator's domain.
+            codomain: its codomain.
+            value: the action.
+            derivative: ``x -> A'(x)``, a linear operator at each point.
+            second_derivative: ``x -> A''(x)[.,.]``, for a Newton method.
+            linearise: ``x -> Linearisation``, when one backend call yields
+                the value and the derivative together. Given this, the two
+                above are not needed.
+
+        Returns:
+            The operator.
         """
         return _CallableOperator(
             domain,
@@ -772,6 +791,13 @@ class LinearOperator[X, Y](Operator[X, Y]):
             offsets: which diagonals, ``0`` being the main one.
             form: which matrix representation to read.
             probe: how to obtain the entries.
+
+        Returns:
+            One row per offset, aligned as ``scipy.sparse.spdiags`` expects.
+
+        Raises:
+            ValueError: for an unknown form or probe, or an empty offset
+                list.
         """
         require_coordinates(self.domain, self.codomain)
         offsets = tuple(int(offset) for offset in offsets)
@@ -893,7 +919,21 @@ class LinearOperator[X, Y](Operator[X, Y]):
         adjoint: Callable[[Y], X] | None = None,
         traits: Traits = Traits.NONE,
     ) -> LinearOperator[X, Y]:
-        """Build a linear operator from its action and, ideally, its adjoint."""
+        """Build a linear operator from its action and, ideally, its adjoint.
+
+        Args:
+            domain: the operator's domain.
+            codomain: its codomain.
+            value: the action.
+            adjoint: the adjoint's action. Without it the adjoint is derived
+                by solving, which is correct and far more expensive -- so
+                supply it whenever it is known.
+            traits: claims about the operator. Not verified here;
+                ``testing.check_traits`` does that.
+
+        Returns:
+            The operator.
+        """
         return _CallableLinearOperator(
             domain, codomain, value, adjoint=adjoint, traits=traits
         )
@@ -907,7 +947,17 @@ class LinearOperator[X, Y](Operator[X, Y]):
         *,
         traits: Traits = Traits.NONE,
     ) -> LinearOperator[X, X]:
-        """A self-adjoint operator, whose adjoint action is its own."""
+        """A self-adjoint operator, whose adjoint action is its own.
+
+        Args:
+            domain: the space it acts on.
+            value: the action, which is also the adjoint's.
+            traits: further claims. Self-adjointness is added to whatever is
+                given, that being the point of this constructor.
+
+        Returns:
+            The operator.
+        """
         return _CallableLinearOperator(
             domain,
             domain,
@@ -931,7 +981,17 @@ class LinearOperator[X, Y](Operator[X, Y]):
         *,
         codomain: HilbertSpace[Y] | None = None,
     ) -> LinearOperator[X, Y]:
-        """The zero operator, into ``codomain`` or back into ``domain``."""
+        """The zero operator, into ``codomain`` or back into ``domain``.
+
+        Args:
+            domain: the domain.
+            codomain: the codomain. The domain itself if omitted, which makes
+                the result an endomorphism and lets it claim
+                self-adjointness.
+
+        Returns:
+            The zero operator.
+        """
         from .nodes import _Zero
 
         return _Zero(domain, domain if codomain is None else codomain)
@@ -960,6 +1020,12 @@ class LinearOperator[X, Y](Operator[X, Y]):
             vectors: the family, as a sequence.
             orthonormal: claim that the family is orthonormal. Verified by
                 ``testing.check_traits``, not here.
+
+        Returns:
+            The operator from coefficients into the space.
+
+        Raises:
+            ValueError: if no vectors are given.
         """
         vectors = tuple(vectors)
         if not vectors:
@@ -992,6 +1058,16 @@ class LinearOperator[X, Y](Operator[X, Y]):
         Not a tensor product of *spaces* — see DESIGN.md 3.3 — but the operator
         construction that shares the name, and the building block of every
         low-rank representation.
+
+        Args:
+            left: the vector on the left of the product.
+            right: the vector on the right.
+            domain: the space *right* belongs to. Taken from the vectors when
+                they carry one.
+            codomain: the space *left* belongs to.
+
+        Returns:
+            The rank-one operator ``x -> (right, x) left``.
         """
 
         def value(x: X) -> Y:
@@ -1221,6 +1297,22 @@ class LinearOperator[X, Y](Operator[X, Y]):
         Passing an adjoint to :meth:`from_callables` instead means passing a
         *gradient*-valued map, and getting that wrong is the error of DESIGN.md
         section 5.6 in the setting where it is hardest to see. Prefer this.
+
+        Args:
+            domain: the operator's domain.
+            codomain: its codomain.
+            value: the action.
+            derivative_components: the derivative's action in *components*,
+                which is where the metric would otherwise creep in.
+            traits: claims about the operator, unverified here.
+
+        Returns:
+            The operator, with an adjoint derived from the components.
+
+        Raises:
+            TypeError: if the domain provides no component map. Only the
+                domain needs one -- which is the right way round, the model
+                space being the one worth keeping matrix-free.
         """
         require_coordinates(domain)
 
@@ -1384,7 +1476,18 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
         conversion, which is still ``dim`` *Gram* applications rather than
         ``dim`` applications of the operator.
 
-        ``by`` is accepted and ignored: there is nothing to fill in.
+        Args:
+            form: which representation to return -- ``"components"``,
+                ``"galerkin"``, or ``"auto"`` to take the Galerkin form for
+                a self-adjoint operator.
+            by: accepted and ignored. There is nothing to fill in: the array
+                is stored, so this is a read rather than a probe.
+
+        Returns:
+            The matrix.
+
+        Raises:
+            ValueError: for an unknown form.
         """
         if form == "auto":
             form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
@@ -1402,7 +1505,18 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
     ) -> np.ndarray:
         """Selected diagonals, read off the stored matrix.
 
-        Exact whatever *probe* says, because there is nothing to probe.
+        Args:
+            offsets: which diagonals, zero being the main one.
+            form: which matrix's diagonals.
+            probe: accepted so the signature matches the base, and ignored --
+                the entries are read, not probed, so the result is exact
+                whatever this says.
+
+        Returns:
+            One row per offset.
+
+        Raises:
+            ValueError: for an unknown form, or an empty offset list.
         """
         offsets = tuple(int(offset) for offset in offsets)
         if not offsets:
@@ -1488,6 +1602,17 @@ class Functional[X](Operator[X, float]):
 
         Like the gradient, this is a vector rather than a functional, so the
         metric is applied exactly once and in one place.
+
+        Args:
+            x: where to take it.
+
+        Returns:
+            A subgradient, as a vector of the domain.
+
+        Raises:
+            NotImplementedError: unless the functional supplies one. A
+                differentiable functional's gradient is a subgradient, and is
+                used when no explicit one is given.
         """
         if self.has_derivative:
             return self.gradient(x)
@@ -1510,6 +1635,18 @@ class Functional[X](Operator[X, float]):
         what makes a proximal method mesh-independent, and it is why the
         closed forms in the convex module are written with norms and
         directions rather than with components.
+
+        Args:
+            x: the point to take the proximal step from.
+            step: the step size.
+
+        Returns:
+            The proximal point.
+
+        Raises:
+            NotImplementedError: unless the functional supplies one. Not every
+                convex functional has a proximal operator in closed form, and
+                a numerical one is a different object.
         """
         raise NotImplementedError(
             f"{type(self).__name__} provides no proximal operator."
@@ -1526,6 +1663,13 @@ class Functional[X](Operator[X, float]):
         A functional on the *same* space, which is a small dividend of Riesz
         identification: without it the conjugate would live on the dual and
         every duality argument would carry a transport map.
+
+        Returns:
+            The convex conjugate, on the same space.
+
+        Raises:
+            NotImplementedError: unless the functional supplies one. A
+                conjugate has no general closed form.
         """
         raise NotImplementedError(f"{type(self).__name__} provides no conjugate.")
 
@@ -1549,6 +1693,23 @@ class Functional[X](Operator[X, float]):
         genuinely hold one, but supplying a derivative array there is the
         classic error of DESIGN.md section 5.6; ``testing.check_gradient``
         catches it.
+
+        Args:
+            domain: the functional's domain.
+            value: the action.
+            derivative: ``x -> LinearFunctional``, the derivative proper.
+            gradient: ``x -> vector``, its Riesz representer. Give one or the
+                other, not both -- they are the same information and
+                supplying both invites them to disagree.
+            hessian: ``x -> LinearOperator``, self-adjoint.
+            subgradient: ``x -> vector``, for a non-differentiable functional.
+            prox: ``(x, step) -> vector``, for a proximal method.
+
+        Returns:
+            The functional.
+
+        Raises:
+            ValueError: if both a derivative and a gradient are given.
         """
         if derivative is not None and gradient is not None:
             raise ValueError("Supply either derivative or gradient, not both.")
@@ -1626,7 +1787,18 @@ class _CallableFunctional[X](Functional[X]):
         return self._prox_fn is not None
 
     def prox(self, x: X, step: float, /) -> X:
-        """The supplied proximal operator."""
+        """The supplied proximal operator.
+
+        Args:
+            x: the point to step from.
+            step: the step size.
+
+        Returns:
+            The proximal point.
+
+        Raises:
+            NotImplementedError: if this functional was built without one.
+        """
         if self._prox_fn is None:
             raise NotImplementedError("No proximal operator was supplied.")
         return self._prox_fn(x, step)
@@ -1769,6 +1941,16 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
         This is the derivative convention. The representer is obtained by
         applying the inverse metric, which happens inside ``adjoint`` — so the
         correction is structural rather than something a caller must remember.
+
+        Args:
+            domain: the functional's domain.
+            components: the derivative's components, *not* the gradient's.
+
+        Returns:
+            The linear functional.
+
+        Raises:
+            ValueError: if the component count is not the dimension.
         """
         require_coordinates(domain)
         g = np.asarray(g, dtype=float)

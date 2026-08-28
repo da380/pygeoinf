@@ -280,7 +280,6 @@ CONVENTIONAL = {"rng", "n_jobs", "backend"}
 # never grow, and a file that reaches zero is removed from it so that it cannot
 # regress. This is the documentation debt, counted rather than described.
 DOCUMENTATION_DEBT = {
-    "algebra/operators.py": 21,
     "symmetric_space/base.py": 35,
     "symmetric_space/sphere.py": 20,
 }
