@@ -135,7 +135,21 @@ class Optimiser(ABC):
         return ArmijoLineSearch()
 
     def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise ``functional`` starting from ``x0``."""
+        """Minimise ``functional`` starting from ``x0``.
+
+        Args:
+            functional: what to minimise. What it must supply -- a gradient, a
+                Hessian, a subgradient, a proximal operator -- depends on the
+                method; each says so.
+            x0: where to start.
+
+        Returns:
+            The optimisation result, whose ``converged`` and ``message`` say
+            how it stopped.
+
+        Raises:
+            ValueError: if the functional cannot supply what the method needs.
+        """
         if not functional.has_derivative:
             raise ValueError(
                 f"{type(self).__name__} needs a functional with a derivative. "
@@ -531,7 +545,18 @@ class NewtonCG(Optimiser):
         super().__init__(**kwargs)
 
     def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring a Hessian as well as a gradient."""
+        """Minimise, requiring a Hessian as well as a gradient.
+
+        Args:
+            functional: what to minimise, which must supply both.
+            x0: where to start.
+
+        Returns:
+            The optimisation result.
+
+        Raises:
+            ValueError: if the functional carries no Hessian.
+        """
         if not functional.has_hessian:
             raise ValueError(
                 "NewtonCG needs a functional with a Hessian. Use LBFGS when "
@@ -650,7 +675,18 @@ class TrustRegionNewton(Optimiser):
         super().__init__(**kwargs)
 
     def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring a Hessian as well as a gradient."""
+        """Minimise, requiring a Hessian as well as a gradient.
+
+        Args:
+            functional: what to minimise, which must supply both.
+            x0: where to start.
+
+        Returns:
+            The optimisation result.
+
+        Raises:
+            ValueError: if the functional carries no Hessian.
+        """
         if not functional.has_hessian:
             raise ValueError("TrustRegionNewton needs a functional with a Hessian.")
         return super().minimise(functional, x0)
@@ -745,6 +781,18 @@ def truncated_cg(
 
     Coordinate-free, like every other Krylov method here.
 
+    Args:
+        hessian: the (approximate) Hessian ``H``, self-adjoint but not
+            necessarily definite -- indefiniteness is a case this handles
+            rather than refuses.
+        rhs: the right-hand side, usually the negated gradient.
+        rtol: stop when the residual falls to this fraction of its initial
+            norm. Loose by default: an inexact Newton step is the point, and
+            solving accurately far from the optimum is wasted work.
+        max_iterations: the cap. The dimension, or ten, if omitted.
+        radius: the trust-region radius. Unbounded if omitted, which makes
+            this ordinary CG with an early stop.
+
     Returns:
         The step and a word saying which condition stopped it.
     """
@@ -827,6 +875,13 @@ def gauss_newton_hessian(
         point: where to linearise.
         weighting: ``W``, typically an inverse data covariance. Defaults to the
             identity on the codomain.
+
+    Returns:
+        The operator ``J* W J``, positive semidefinite by construction.
+
+    Raises:
+        ValueError: if the operator cannot supply a derivative at the point,
+            or the weighting does not act on its codomain.
     """
     jacobian = operator.derivative(point)
     if weighting is None:

@@ -270,7 +270,17 @@ class SupportFunction(Functional):
     def of_ball(
         domain: HilbertSpace, /, *, radius: float = 1.0, centre: Any = None
     ) -> SupportFunction:
-        """The support function of a ball: ``r ||y|| + (centre, y)``."""
+        """The support function of a ball: ``r ||y|| + (centre, y)``.
+
+        Args:
+            domain: the space the ball lives in.
+            radius: its radius, in the space's own norm.
+            centre: its centre. The origin if omitted, which makes the
+                support function the norm alone.
+
+        Returns:
+            The support function.
+        """
         return _BallSupport(domain, radius=radius, centre=centre)
 
     @staticmethod
@@ -297,6 +307,16 @@ class SupportFunction(Functional):
         the codomain and ``h_{AK}(y) == h_K(A* y)``. So the result is a
         functional on the **codomain**, and the operator must map *out of* the
         set's space rather than into it.
+
+        Args:
+            operator: ``A``, whose domain is this set's space.
+
+        Returns:
+            The support function of the image, on the codomain.
+
+        Raises:
+            ValueError: if the operator does not map out of this space -- the
+                commonest way to get this wrong is to pass the adjoint.
         """
         if operator.domain != self.domain:
             raise ValueError(
@@ -461,7 +481,19 @@ class SubgradientDescent(Optimiser):
         super().__init__(**kwargs)
 
     def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring only a subgradient."""
+        """Minimise, requiring only a subgradient.
+
+        Args:
+            functional: convex, and able to supply a subgradient. It need not
+                be differentiable, which is the point of this method.
+            x0: where to start.
+
+        Returns:
+            The optimisation result.
+
+        Raises:
+            ValueError: if the functional cannot supply a subgradient.
+        """
         if not functional.has_subgradient:
             raise ValueError(
                 "SubgradientDescent needs a functional with a subgradient. "
@@ -577,6 +609,14 @@ class ProximalGradient(Optimiser):
             x0: the starting point.
             nonsmooth: the part ``g`` with a proximal operator. When absent,
                 this is plain gradient descent with a backtracked step.
+
+        Returns:
+            The optimisation result.
+
+        Raises:
+            ValueError: if the two parts live on different spaces, or the
+                nonsmooth one has no proximal operator -- without which this
+                is not a proximal method.
         """
         if not smooth.has_derivative:
             raise ValueError("The smooth part needs a gradient.")
@@ -743,7 +783,19 @@ class ProximalPoint(Optimiser):
         super().__init__(**kwargs)
 
     def minimise(self, functional: Functional, x0: Any, /) -> OptimisationResult:
-        """Minimise, requiring a proximal operator."""
+        """Minimise, requiring a proximal operator.
+
+        Args:
+            functional: convex, with a proximal operator. A set's indicator
+                is the usual case, its prox being the projection.
+            x0: where to start.
+
+        Returns:
+            The optimisation result.
+
+        Raises:
+            ValueError: if the functional has no proximal operator.
+        """
         if not functional.has_prox:
             raise ValueError("ProximalPoint needs a functional with a prox.")
         return self._minimise(functional, x0)

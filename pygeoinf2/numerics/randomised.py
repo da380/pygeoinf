@@ -132,6 +132,10 @@ def random_range(
     Returns:
         An orthonormal list of vectors in the codomain. It may be shorter than
         requested when the operator's range is genuinely smaller.
+
+    Raises:
+        ValueError: for a non-positive rank or block size, or a tolerance
+            outside ``(0, 1)``.
     """
     codomain = operator.codomain
     ceiling = (
@@ -353,6 +357,21 @@ def random_eig(
     Builds a range basis ``Q``, forms the small matrix ``T`` with
     ``T_ij == (A q_i, q_j)`` — a ``k x k`` array assembled from inner products
     alone — and diagonalises it. The eigenvectors come back as ``Q S``.
+
+    Args:
+        operator: a self-adjoint endomorphism.
+        rank: how many eigenpairs to keep. Adaptive if omitted, growing the
+            basis until a fresh block adds nothing.
+        rng: the generator for the probes.
+        **kwargs: passed to :func:`random_range` -- oversampling, power
+            iterations, the adaptive tolerance.
+
+    Returns:
+        The decomposition, itself an operator.
+
+    Raises:
+        ValueError: if the operator does not claim self-adjointness, or is not
+            an endomorphism -- an eigendecomposition needs both.
     """
     if Traits.SELF_ADJOINT & operator.traits != Traits.SELF_ADJOINT:
         raise ValueError(
@@ -407,6 +426,19 @@ def random_svd(
     ``C == S L S^T`` gives ``sigma == sqrt(L)``, left vectors ``Q S`` and right
     vectors ``(A* Q) S / sigma``. Every step is an inner product, so no
     component map is used.
+
+    Args:
+        operator: any linear operator; unlike :func:`random_eig` it need not
+            be self-adjoint or square.
+        rank: how many singular triplets to keep. Adaptive if omitted.
+        rng: the generator for the probes.
+        **kwargs: passed to :func:`random_range`.
+
+    Returns:
+        The decomposition, itself an operator.
+
+    Raises:
+        ValueError: for a rank exceeding the smaller dimension.
     """
     domain, codomain = operator.domain, operator.codomain
     basis = random_range(operator, rank=rank, rng=rng, **kwargs)
@@ -459,6 +491,20 @@ def random_cholesky(
     eigenvalues into the factor, so ``L == U D^(1/2)``. The result is directly
     usable as a covariance factor, which is how a low-rank Gaussian gets
     sampled.
+
+    Args:
+        operator: self-adjoint and positive semidefinite. The definiteness is
+            what makes the square root real, and it is required rather than
+            assumed.
+        rank: how many eigenpairs to keep. Adaptive if omitted.
+        rng: the generator for the probes.
+        **kwargs: passed to :func:`random_range`.
+
+    Returns:
+        The factor ``L``, as an operator.
+
+    Raises:
+        ValueError: if the operator does not claim positive semidefiniteness.
     """
     if Traits.POSITIVE_SEMIDEFINITE & operator.traits != Traits.POSITIVE_SEMIDEFINITE:
         raise ValueError(
@@ -609,6 +655,10 @@ def deflated_diagonal(
 
     Returns:
         The diagonal, as an array.
+
+    Raises:
+        ValueError: for a non-positive rank or sample count, or an unknown
+            form.
     """
     require_coordinates(operator.domain, operator.codomain)
     if rank < 0:

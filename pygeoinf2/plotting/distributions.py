@@ -74,6 +74,10 @@ def moments(
         samples: draws to take, when sampling is the route.
         rng: the generator for those draws.
 
+    Raises:
+        TypeError: for a measure that can be neither read exactly nor
+            sampled, there being nothing to plot.
+
     Returns:
         ``(mean, covariance, draws)`` in components, with ``draws`` None when
         the measure was Gaussian and nothing had to be sampled.
@@ -214,7 +218,8 @@ def plot_densities(
         labels, prior_labels: legend entries. Means are used if omitted.
         width: half-width of the window, in standard deviations.
         fill: shade under the curves.
-        samples, rng: for measures that must be sampled.
+        samples: draws to take when the measure has no covariance to read.
+        rng: the generator for those draws.
         xlabel: label for the shared x-axis.
         title: a title for the axes. Every pyslfp call passes one, and without
             it a caller has to reach past the return value to set it.
@@ -222,6 +227,10 @@ def plot_densities(
     Returns:
         The axes drawn on, or ``(posterior_axes, prior_axes)`` when priors were
         given and a second axis was made.
+
+    Raises:
+        ValueError: if *index* is outside the measure's dimension, or a
+            measure can be neither read nor sampled.
     """
     import matplotlib.pyplot as plt
 
@@ -399,17 +408,25 @@ def plot_corner(
         sigmas: how many contours to draw, before opening up for the truth.
         width: half-width of each panel, in standard deviations.
         fill: shade the contours rather than drawing them as lines.
-        colormap, colour: for the filled and unfilled cases respectively.
-        samples, rng: for measures that must be sampled.
+        colormap: the filled case's colour map.
+        colour: the unfilled case's line colour, and the mean marker's.
+        samples: draws to take when the measure has no covariance to read.
+        rng: the generator for those draws.
         title: a title for the figure. Every pyslfp call passes one.
         legend: draw a key in the empty upper triangle, which is otherwise
             wasted space -- and without it the dotted prior, the solid
             posterior and the starred truth are three unlabelled marks. v1
             had one; v2 lost it.
-        posterior_label, prior_label, truth_label: what the key calls them.
+        posterior_label: what the key calls the posterior.
+        prior_label: what it calls the prior.
+        truth_label: what it calls the truth.
 
     Returns:
         The ``N x N`` array of axes.
+
+    Raises:
+        ValueError: if the measure has fewer than two components -- a corner
+            plot of one is a marginal, and :func:`plot_densities` draws that.
     """
     import matplotlib.pyplot as plt
     from scipy.stats import chi2
