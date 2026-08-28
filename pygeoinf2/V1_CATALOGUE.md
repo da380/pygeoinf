@@ -226,7 +226,7 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `EmptySet`, `UniversalSet` | Ported | same names | |
 | `Complement`, `Intersection`, `Union` | Ported | same names | |
 | `ConvexSubset` | Ported | `ConvexSet`, now carrying `project`, `indicator` and `support_function` as three views of one object (§16.1) | |
-| `ConvexIntersection` | Subsumed | `Intersection` of convex sets, which reports itself convex | |
+| `ConvexIntersection` | Ported | `geometry.convex.ConvexIntersection`, returned by `&` when both parts are convex. The row said the plain `Intersection` subsumed it; it does not, having no projection -- and without one there is no proximal step, no Dykstra and no use as a prior. Its `support_function` refuses and `support_bound` gives the `min_i h_i` upper bound v1 returned under the wrong name | |
 | `Ball` | Ported | `Ball` | |
 | `Ellipsoid` | Ported | `Ellipsoid` | |
 | `NormalisedEllipsoid` | Subsumed | `Ellipsoid` with a scaled shape operator | |

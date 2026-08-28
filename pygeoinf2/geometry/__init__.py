@@ -1,6 +1,7 @@
 """Subsets of a Hilbert space: predicates, convex sets, and subspaces."""
 
 from .convex import (
+    ConvexIntersection,
     Polytope,
     BallSurface,
     EllipsoidSurface,
@@ -19,6 +20,7 @@ __all__ = [
     "BallSurface",
     "Complement",
     "ConvexSet",
+    "ConvexIntersection",
     "Ellipsoid",
     "EllipsoidSurface",
     "EmptySet",

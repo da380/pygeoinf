@@ -29,7 +29,7 @@ offering an approximation under the same name.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -40,6 +40,7 @@ from ..traits import Traits
 from .sets import Subset
 
 __all__ = [
+    "ConvexIntersection",
     "Polytope",
     "BallSurface",
     "EllipsoidSurface",
@@ -53,6 +54,19 @@ __all__ = [
 
 class ConvexSet(Subset):
     """A closed convex subset, which knows its own nearest point."""
+
+    def intersect(self, other: Subset, /) -> Subset:
+        """The intersection, which stays *convex* when the other set is.
+
+        Convexity is preserved by intersection, and saying so is what keeps
+        the projection available -- and with it every proximal method, the
+        primal-dual route, and any use as a prior. Falls back to the general
+        :class:`~pygeoinf2.geometry.sets.Intersection` otherwise, which tests
+        membership and nothing else.
+        """
+        if isinstance(other, ConvexSet):
+            return ConvexIntersection([self, other])
+        return super().intersect(other)
 
     @abstractmethod
     def project(self, x: Any, /) -> Any:
@@ -297,6 +311,39 @@ class _MinkowskiSum(ConvexSet):
         return f"MinkowskiSum({self._first!r}, {self._second!r})"
 
 
+def _dykstra(space: Any, parts: Sequence[Any], x: Any, iterations: int) -> Any:
+    """The nearest point of an intersection, by Dykstra's algorithm.
+
+    Cycling the projections on their own -- alternating projection -- reaches
+    *a* point of the intersection, not the nearest one. Dykstra is the same
+    cycle carrying one correction vector per part: each is added back before
+    its projection and re-formed after it, which is what makes the limit the
+    projection onto the intersection rather than merely a point of it.
+
+    Args:
+        space: the space the sets live in.
+        parts: the sets, each of which must project.
+        x: the point to project.
+        iterations: the maximum number of cycles, each one projection per part.
+
+    Returns:
+        The nearest point, to the accuracy the cycle reached.
+    """
+    corrections = [space.zero() for _ in parts]
+    current = space.copy(x)
+    for _ in range(iterations):
+        start = space.copy(current)
+        for index, part in enumerate(parts):
+            shifted = space.add(current, corrections[index])
+            current = part.project(shifted)
+            corrections[index] = space.subtract(shifted, current)
+        if space.norm(space.subtract(current, start)) <= 1e-14 * max(
+            space.norm(current), 1.0
+        ):
+            break
+    return current
+
+
 class Polytope(ConvexSet):
     """An intersection of half-spaces, which remembers which side it is on.
 
@@ -347,7 +394,7 @@ class Polytope(ConvexSet):
             for plane in self._half_spaces
         )
 
-    def project(self, x: Any, /, *, iterations: int = 200) -> Any:
+    def project(self, x: Any, /, *, iterations: int = 1000) -> Any:
         """The nearest point of the polytope, by Dykstra's algorithm.
 
         Cycling the half-space projections on their own — alternating
@@ -366,25 +413,19 @@ class Polytope(ConvexSet):
         Args:
             x: the point to project.
             iterations: the maximum number of cycles. Each is one projection
-                per half-space.
+                per half-space. A thousand rather than the two hundred this
+                used to allow: measured on a ball cut by a half-space in a
+                sixteen-dimensional Sobolev space, two hundred cycles leave
+                the answer 3.7e-4 off the boundary and a thousand reach it
+                exactly, the cycle then stopping itself. An under-converged
+                projection is a wrong prox, which is the whole reason Dykstra
+                is here rather than alternating projection.
 
         Returns:
             The nearest point of the polytope, to the accuracy the cycle
             reached.
         """
-        space = self.domain
-        corrections = [space.zero() for _ in self._half_spaces]
-        current = space.copy(x)
-        for _ in range(iterations):
-            start = space.copy(current)
-            for index, plane in enumerate(self._half_spaces):
-                shifted = space.add(current, corrections[index])
-                current = plane.project(shifted)
-                corrections[index] = space.subtract(shifted, current)
-            moved = space.norm(space.subtract(current, start))
-            if moved <= 1e-14 * max(space.norm(current), 1.0):
-                break
-        return current
+        return _dykstra(self.domain, self._half_spaces, x, iterations)
 
     def __and__(self, other: "Polytope") -> "Polytope":
         """Both sets of constraints, which tightens an outer bound."""
@@ -722,20 +763,76 @@ class Ellipsoid(ConvexSet):
         """True when the Mahalanobis distance is at most one."""
         return self.mahalanobis_squared(x) <= 1.0 + rtol
 
-    def project(self, x: Any, /) -> Any:
-        """Not available in closed form.
+    def project(
+        self,
+        x: Any,
+        /,
+        *,
+        solver: Any = None,
+        rtol: float = 1e-12,
+        iterations: int = 100,
+    ) -> Any:
+        """The nearest point of the ellipsoid, by Newton on the secular equation.
 
-        The nearest point on an ellipsoid satisfies a secular equation in a
-        scalar multiplier, and each evaluation of it needs a linear solve. That
-        is a genuine algorithm rather than a formula, so it is not offered here
-        under the same name as the closed forms; use a proximal method on the
-        indicator's smooth surrogate, or intersect with a ball instead.
+        There is no closed form. The nearest point satisfies
+        ``y + lambda P y == x - c`` for a multiplier ``lambda >= 0``, so
+        ``y(lambda) == (I + lambda P)^-1 (x - c)`` and the constraint becomes a
+        scalar equation ``phi(lambda) == (P y, y) - 1 == 0``. That is genuinely
+        an algorithm rather than a formula -- each evaluation costs a linear
+        solve -- which is why this used to raise.
+
+        It raises no longer, because a set that cannot project cannot be used
+        by anything that needs a proximal step: the primal-dual route, a
+        proximal method, an intersection by Dykstra. Costing a few solves is a
+        better answer than not being available.
+
+        ``phi`` is decreasing in ``lambda``, so Newton from zero converges from
+        above and cannot overshoot into negative multipliers. A point already
+        inside is returned unchanged, which is where ``lambda == 0``.
+
+        Args:
+            x: the point to project.
+            solver: how to invert ``I + lambda P``. Defaults to a Cholesky
+                factorisation, which the operator admits, being positive
+                definite. On a space with no component map, pass an iterative
+                one.
+            rtol: on the constraint residual.
+            iterations: the Newton cap.
+
+        Returns:
+            The nearest point of the ellipsoid.
         """
-        raise NotImplementedError(
-            "An ellipsoid has no closed-form projection: it requires solving a "
-            "secular equation with a linear solve per iteration. Ball, "
-            "HalfSpace and Hyperplane do have one."
-        )
+        from ..algebra.operators import LinearOperator
+        from ..numerics.solvers import CholeskySolver
+
+        space = self.domain
+        offset = space.subtract(x, self._centre)
+        if float(space.inner_product(self._precision(offset), offset)) <= 1.0:
+            return space.copy(x)
+
+        chosen = solver if solver is not None else CholeskySolver()
+        identity = LinearOperator.identity(space)
+
+        multiplier = 0.0
+        point = offset
+        for _ in range(iterations):
+            weighted = self._precision(point)
+            residual = float(space.inner_product(weighted, point)) - 1.0
+            if abs(residual) <= rtol:
+                break
+            # phi'(lambda) == -2 (P y, (I + lambda P)^-1 P y).
+            shifted = chosen(identity + multiplier * self._precision)
+            derivative = -2.0 * float(
+                space.inner_product(weighted, shifted.solve(weighted).solution)
+            )
+            if derivative == 0.0:  # pragma: no cover - a degenerate ellipsoid
+                break
+            multiplier = max(multiplier - residual / derivative, 0.0)
+            point = (
+                chosen(identity + multiplier * self._precision).solve(offset).solution
+            )
+
+        return space.add(self._centre, point)
 
     def support_function(self) -> SupportFunction:
         """``(centre, y) + sqrt((y, C y))`` with ``C`` the covariance."""
@@ -921,3 +1018,134 @@ class EllipsoidSurface(Subset):
 
     def __repr__(self) -> str:
         return f"EllipsoidSurface({self.domain!r})"
+
+
+class ConvexIntersection(ConvexSet):
+    """The points in every one of several *convex* sets.
+
+    An intersection of convex sets is convex, and v2 was returning a plain
+    :class:`~pygeoinf2.geometry.sets.Intersection` for it -- which knows only
+    how to test membership. That loses everything downstream: no projection, so
+    no proximal step, no Dykstra, no primal-dual route, and no use as a prior
+    in anything that needs one.
+
+    The projection is Dykstra's algorithm over the parts, which is the same
+    machinery :class:`Polytope` already uses over its half-spaces -- a polytope
+    being the special case where every part is a half-space.
+
+    **The support function is only an upper bound.** ``min_i h_i`` bounds the
+    intersection's support from above and is not equal to it: the minimising
+    point of one set need not lie in the others. v1 offered that as the support
+    function; here it is :meth:`support_bound`, under a name that says what it
+    is, and :meth:`support_function` raises rather than return it as the truth.
+    """
+
+    def __init__(self, subsets: Sequence[ConvexSet], /) -> None:
+        """
+        Args:
+            subsets: convex sets in a common space. Nested intersections are
+                flattened.
+
+        Raises:
+            ValueError: if none are given.
+            TypeError: if any is not convex.
+        """
+        parts: list[ConvexSet] = []
+        for subset in subsets:
+            if isinstance(subset, ConvexIntersection):
+                parts.extend(subset.subsets)
+            else:
+                parts.append(subset)
+        if not parts:
+            raise ValueError("An intersection needs at least one subset.")
+        for part in parts:
+            if not isinstance(part, ConvexSet):
+                raise TypeError(
+                    f"Every part must be convex for the intersection to be; "
+                    f"got {type(part).__name__}. Use Intersection for the "
+                    "general case, which tests membership and nothing else."
+                )
+        super().__init__(parts[0].domain)
+        for part in parts[1:]:
+            self._check_domain(part)
+        self._subsets = tuple(parts)
+
+    @property
+    def subsets(self) -> tuple[ConvexSet, ...]:
+        """The intersected sets."""
+        return self._subsets
+
+    def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
+        """True when every part contains the point."""
+        return all(part.contains(x, rtol=rtol) for part in self._subsets)
+
+    def project(self, x: Any, /, *, iterations: int = 1000) -> Any:
+        """The nearest point of the intersection, by Dykstra's algorithm.
+
+        Args:
+            x: the point to project.
+            iterations: the maximum number of cycles, each one projection per
+                part. A part that projects iteratively -- an ellipsoid, say --
+                makes each of those a small solve of its own. The default is
+                a thousand for the reason given in :meth:`Polytope.project`.
+
+        Returns:
+            The nearest point, to the accuracy the cycle reached.
+        """
+        return _dykstra(self.domain, self._subsets, x, iterations)
+
+    def support_bound(self, direction: Any, /) -> float:
+        """``min_i h_i(direction)``: an *upper bound* on the support value.
+
+        Every part contains the intersection, so each part's support value
+        bounds it from above and the least of them is the best such bound. It
+        is not the support function: the point of one set attaining its own
+        support need not lie in the others, and then the bound is strict.
+
+        A part with no support function -- a half-space, which is unbounded --
+        simply contributes nothing. Its bound is infinite, so leaving it out
+        loses nothing, and requiring every part to be bounded would make this
+        unavailable on exactly the intersections that need it: a bounded set
+        cut by unbounded ones.
+
+        Args:
+            direction: the direction to bound in.
+
+        Returns:
+            The bound.
+
+        Raises:
+            NotImplementedError: if no part has a support function, in which
+                case there is no bound to give.
+        """
+        bounds = []
+        for part in self._subsets:
+            try:
+                bounds.append(float(part.support_function()(direction)))
+            except NotImplementedError:
+                continue
+        if not bounds:
+            raise NotImplementedError(
+                "No part of this intersection has a support function, so "
+                "there is no upper bound to report."
+            )
+        return min(bounds)
+
+    def support_function(self) -> SupportFunction:
+        """Not available.
+
+        Raises:
+            NotImplementedError: always. There is no formula for the support
+                function of an intersection. :meth:`support_bound` gives the
+                upper bound ``min_i h_i``, which is what v1 returned under this
+                name, and the Backus-Gilbert routes compute the true value by
+                minimisation.
+        """
+        raise NotImplementedError(
+            "An intersection has no closed-form support function. Use "
+            "support_bound() for the upper bound min_i h_i, and the "
+            "inference.backus routes for the true value."
+        )
+
+    def __repr__(self) -> str:
+        return f"ConvexIntersection({', '.join(repr(s) for s in self._subsets)})"

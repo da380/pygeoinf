@@ -61,10 +61,27 @@ class TestSetAlgebra:
         assert both.contains(point) == small.contains(point)
 
     def test_nested_operations_flatten(self, X):
+        """And an intersection of *convex* sets stays convex, so it keeps its
+        projection -- and with it every proximal method that needs one."""
+        from pygeoinf2.geometry.convex import ConvexIntersection
+
         balls = [Ball(X, radius=r) for r in (1.0, 2.0, 3.0)]
         combined = (balls[0] & balls[1]) & balls[2]
-        assert isinstance(combined, Intersection)
+        assert isinstance(combined, ConvexIntersection)
         assert len(combined.subsets) == 3
+
+    def test_intersecting_with_a_general_set_falls_back(self, X):
+        """Convexity is what buys the projection; without it there is nothing
+        to keep, and the plain Intersection tests membership and no more."""
+        from pygeoinf2.geometry.sets import Intersection, Subset
+
+        class Blob(Subset):
+            def contains(self, x, /, *, rtol=1e-9):
+                return True
+
+        combined = Ball(X, radius=1.0) & Blob(X)
+        assert isinstance(combined, Intersection)
+        assert not hasattr(combined, "project")
 
     def test_mismatched_domains_are_refused(self, X):
         with pytest.raises(ValueError, match="share a domain"):
@@ -217,10 +234,55 @@ class TestEllipsoid:
         assert ellipsoid.contains(maximiser, rtol=1e-8)
         assert X.inner_product(maximiser, y) == pytest.approx(support(y))
 
-    def test_the_projection_says_it_is_not_available(self, X, ellipsoid, rng):
-        """Rather than offering an approximation under the same name."""
-        with pytest.raises(NotImplementedError, match="secular equation"):
-            ellipsoid.project(X.random(rng=rng))
+    def test_the_projection_lands_on_the_boundary(self, X, ellipsoid, rng):
+        """It used to raise. A set that cannot project cannot be used by
+        anything needing a proximal step -- the primal-dual route, a proximal
+        method, an intersection by Dykstra -- so a few linear solves is a
+        better answer than not being available.
+
+        Newton on the secular equation ``(P y, y) == 1``, which is exact to
+        twelve digits."""
+        for _ in range(4):
+            point = X.random(rng=rng)
+            if ellipsoid.contains(point):
+                continue
+            projected = ellipsoid.project(point)
+            offset = X.subtract(projected, ellipsoid.centre)
+            assert X.inner_product(
+                ellipsoid._precision(offset), offset
+            ) == pytest.approx(1.0, abs=1e-10)
+
+    def test_a_point_inside_is_left_where_it_is(self, X, ellipsoid):
+        centre = ellipsoid.centre
+        assert X.norm(X.subtract(ellipsoid.project(centre), centre)) < 1e-14
+
+    def test_it_is_the_nearest_point(self, X, ellipsoid, rng):
+        """Checked against a constrained optimiser, not merely against the
+        constraint: landing on the boundary is necessary and not sufficient."""
+        from scipy.optimize import minimize
+
+        def constraint(components):
+            """The ellipsoid's own, through the space's inner product -- which
+            on a non-diagonal metric is not the component dot product."""
+            offset = X.subtract(X.from_components(components), ellipsoid.centre)
+            return 1.0 - X.inner_product(ellipsoid._precision(offset), offset)
+
+        for _ in range(3):
+            point = X.scale(3.0, X.random(rng=rng))
+            if ellipsoid.contains(point):
+                continue
+            components = X.to_components(point)
+            projected = ellipsoid.project(point)
+
+            reference = minimize(
+                lambda z: X.squared_norm(X.subtract(X.from_components(z), point)),
+                X.to_components(projected),
+                constraints=[{"type": "ineq", "fun": constraint}],
+            )
+            assert X.norm(X.subtract(projected, point)) == pytest.approx(
+                X.norm(X.subtract(X.from_components(reference.x), point)),
+                rel=1e-5,
+            )
 
     def test_an_indefinite_precision_is_refused(self, X, rng):
         bad = LinearOperator.self_adjoint(X, lambda x: x)
@@ -420,3 +482,94 @@ class TestPolytopeProjection:
         assert polytope.indicator().prox(point, 0.7) == pytest.approx(
             polytope.project(point), abs=1e-10
         )
+
+
+class TestConvexIntersection:
+    """An intersection of convex sets is convex, and v2 returned a plain
+    Intersection for it -- which knows only how to test membership. That loses
+    the projection, and with it every proximal method, the primal-dual route,
+    and any use as a prior."""
+
+    @pytest.fixture
+    def parts(self, X):
+        return Ball(X, radius=1.0), HalfSpace(X, X.basis_vector(0), offset=-0.2)
+
+    def test_it_projects(self, X, parts, rng):
+        """Against a constrained optimiser. Dykstra, not alternating
+        projection: the latter reaches a point of the intersection, not the
+        nearest one."""
+        from scipy.optimize import minimize
+
+        ball, half = parts
+        combined = ball & half
+
+        for _ in range(3):
+            point = X.scale(3.0, X.random(rng=rng))
+            projected = combined.project(point)
+            assert combined.contains(projected, rtol=1e-6)
+
+            reference = minimize(
+                lambda z: X.squared_norm(X.subtract(X.from_components(z), point)),
+                X.to_components(projected),
+                constraints=[
+                    {
+                        "type": "ineq",
+                        "fun": lambda z: 1.0
+                        - X.norm(X.from_components(z)),
+                    },
+                    {
+                        "type": "ineq",
+                        "fun": lambda z: -0.2
+                        - X.inner_product(
+                            X.basis_vector(0), X.from_components(z)
+                        ),
+                    },
+                ],
+            )
+            assert X.norm(X.subtract(projected, point)) == pytest.approx(
+                X.norm(X.subtract(X.from_components(reference.x), point)),
+                rel=1e-4,
+            )
+
+    def test_the_support_function_is_refused_and_the_bound_is_not(self, X, parts):
+        """``min_i h_i`` bounds the support from above and is not equal to it:
+        the point of one set attaining its own support need not lie in the
+        others. v1 returned it as the support function."""
+        ball, half = parts
+        combined = ball & half
+
+        with pytest.raises(NotImplementedError, match="support_bound"):
+            combined.support_function()
+        # The half-space is unbounded and contributes nothing, which is right:
+        # its own bound is infinite. What is left is the ball's own support,
+        # which is its radius times the direction's norm -- not the radius,
+        # this space's basis not being orthonormal.
+        direction = X.basis_vector(1)
+        assert combined.support_bound(direction) == pytest.approx(
+            ball.support_function()(direction)
+        )
+
+    def test_a_non_convex_part_is_refused(self, X):
+        from pygeoinf2.geometry.convex import ConvexIntersection
+        from pygeoinf2.geometry.sets import Subset
+
+        class Blob(Subset):
+            def contains(self, x, /, *, rtol=1e-9):
+                return True
+
+        with pytest.raises(TypeError, match="convex"):
+            ConvexIntersection([Ball(X, radius=1.0), Blob(X)])
+
+    def test_an_empty_intersection_is_refused(self):
+        from pygeoinf2.geometry.convex import ConvexIntersection
+
+        with pytest.raises(ValueError, match="at least one"):
+            ConvexIntersection([])
+
+    def test_it_can_be_used_where_a_projection_is_needed(self, X, parts, rng):
+        """The point of the change: a proximal method takes the indicator's
+        prox, which is the projection."""
+        ball, half = parts
+        indicator = (ball & half).indicator()
+        point = X.scale(2.0, X.random(rng=rng))
+        assert (ball & half).contains(indicator.prox(point, 1.0), rtol=1e-6)
