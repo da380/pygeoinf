@@ -29,6 +29,7 @@ from numpy.random import Generator
 from scipy.fft import irfftn, rfftn
 
 from ..algebra.operators import LinearOperator
+from ..algebra.spaces import ArrayVectorMixin
 from .base import SymmetricSpace, lift_formal_adjoint
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
@@ -94,7 +95,7 @@ class _FourierPacking:
         )
 
 
-class PeriodicBox(SymmetricSpace):
+class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
     """A field on a periodic box, in any number of dimensions.
 
     Vectors are real grid arrays of shape ``shape``; components are
@@ -569,25 +570,48 @@ class PeriodicBox(SymmetricSpace):
         )
 
 
-def Lebesgue(
-    shape: Sequence[int], /, *, lengths: Sequence[float] | None = None
-) -> PeriodicBox:
-    """The ``L2`` space on a periodic box, with an orthonormal spectral basis."""
-    return PeriodicBox(shape, lengths=lengths, order=0.0)
+class Lebesgue(PeriodicBox):
+    """The ``L2`` space on a periodic box, with an orthonormal spectral basis.
+
+    A class rather than a factory function, so ``isinstance(x, Lebesgue)``
+    answers what it looks like it answers. Nothing is added: it is
+    :class:`PeriodicBox` at order zero.
+    """
+
+    def __init__(
+        self, shape: Sequence[int], /, *, lengths: Sequence[float] | None = None
+    ) -> None:
+        """
+        Args:
+            shape: grid points along each axis.
+            lengths: the period along each axis. Unit lengths by default.
+        """
+        super().__init__(shape, lengths=lengths, order=0.0)
 
 
-def Sobolev(
-    shape: Sequence[int],
-    order: float,
-    length_scale: float,
-    /,
-    *,
-    lengths: Sequence[float] | None = None,
-) -> PeriodicBox:
+class Sobolev(PeriodicBox):
     """The Sobolev space ``H^order`` on a periodic box.
 
-    The same coordinate map as :func:`Lebesgue`, with
-    ``(1 + length_scale^2 |k|^2)^order`` as its metric — so it is a diagonal-metric space rather than a mass-weighted
-    one, and every invariant operator on it stays diagonal.
+    The same coordinate map as :class:`Lebesgue`, with
+    ``(1 + length_scale^2 |k|^2)^order`` as its metric — so it is a
+    diagonal-metric space rather than a mass-weighted one, and every invariant
+    operator on it stays diagonal.
     """
-    return PeriodicBox(shape, lengths=lengths, order=order, length_scale=length_scale)
+
+    def __init__(
+        self,
+        shape: Sequence[int],
+        order: float,
+        length_scale: float,
+        /,
+        *,
+        lengths: Sequence[float] | None = None,
+    ) -> None:
+        """
+        Args:
+            shape: grid points along each axis.
+            order: the Sobolev order.
+            length_scale: the length at which the Sobolev weight turns over.
+            lengths: the period along each axis. Unit lengths by default.
+        """
+        super().__init__(shape, lengths=lengths, order=order, length_scale=length_scale)

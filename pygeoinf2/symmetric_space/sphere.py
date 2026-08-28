@@ -63,13 +63,24 @@ def _require_pyshtools() -> object:
     return pyshtools
 
 
-class Sphere(SymmetricSpace):
+class Sphere(SymmetricSpace[Any]):
     """A field on a sphere, expanded in spherical harmonics.
 
-    Vectors are grid arrays of shape ``(n, 2n)`` with ``n == 2 (lmax + 1)``,
-    holding values on a Driscoll-Healy grid. Components are the real harmonic
-    coefficients, scaled so that the Lebesgue basis is orthonormal on a sphere
-    of the given radius.
+    Vectors are ``pyshtools.SHGrid`` objects on a Driscoll-Healy grid, not bare
+    arrays. That a vector may be any object at all is a point of the library,
+    and here it earns something concrete: a field arrives able to plot, rotate
+    and expand itself through the library that produced it, and it is the type
+    every caller with an existing pyshtools workflow already holds. The values
+    are reachable as ``x.data``, or through
+    :meth:`~pygeoinf2.symmetric_space.base.SymmetricSpace.grid_values`.
+
+    Components are the real harmonic coefficients, scaled so that the Lebesgue
+    basis is orthonormal on a sphere of the given radius.
+
+    The grid has ``n == 2 (lmax + 1)`` rows and ``sampling * n`` columns.
+    ``sampling`` defaults to 1, the square grid, which is pyshtools' default
+    and halves the memory of every field and the cost of every pointwise
+    operation against the rectangular one.
     """
 
     def __init__(
@@ -80,6 +91,7 @@ class Sphere(SymmetricSpace):
         radius: float = 1.0,
         order: float = 0.0,
         length_scale: float = 1.0,
+        sampling: int = 1,
     ) -> None:
         """
         Args:
@@ -90,6 +102,16 @@ class Sphere(SymmetricSpace):
             length_scale: the length at which the Sobolev weight turns over.
                 Named in full because ``scale`` is the vector-scaling
                 operation.
+            sampling: grid columns per row, 1 or 2. One gives the square
+                Driscoll-Healy grid, which is pyshtools' default and this
+                one; two doubles the longitude resolution, and the memory.
+                Both represent the same functions exactly -- the transforms
+                cost the same and the components are identical -- so this is a
+                statement about the grid, not about the space.
+
+        Raises:
+            ValueError: if lmax is negative, the radius or length scale is not
+                positive, or the sampling is not 1 or 2.
         """
         if lmax < 0:
             raise ValueError("lmax must be non-negative.")
@@ -97,12 +119,15 @@ class Sphere(SymmetricSpace):
             raise ValueError("radius must be positive.")
         if length_scale <= 0.0:
             raise ValueError("length_scale must be positive.")
+        if sampling not in (1, 2):
+            raise ValueError(f"sampling is 1 or 2, got {sampling}.")
         _require_pyshtools()
 
         self._lmax = int(lmax)
         self._radius = float(radius)
         self._order = float(order)
         self._length_scale = float(length_scale)
+        self._sampling = int(sampling)
         self._latitudes = 2 * (self._lmax + 1)
 
         degrees = self._degree_of_component
@@ -141,8 +166,13 @@ class Sphere(SymmetricSpace):
 
     @property
     def grid_shape(self) -> tuple[int, int]:
-        """The shape of a field array: latitudes by longitudes."""
-        return (self._latitudes, 2 * self._latitudes)
+        """The shape of a field's values: latitudes by longitudes."""
+        return (self._latitudes, self._sampling * self._latitudes)
+
+    @property
+    def sampling(self) -> int:
+        """Grid columns per row: 1 for the square grid, 2 for the wide one."""
+        return self._sampling
 
     @property
     def area(self) -> float:
@@ -165,11 +195,22 @@ class Sphere(SymmetricSpace):
         return self._laplacian_eigenvalues
 
     def _key(self) -> Hashable:
-        return (self._lmax, self._radius, self._order, self._length_scale)
+        return (
+            self._lmax,
+            self._radius,
+            self._order,
+            self._length_scale,
+            self._sampling,
+        )
 
     def _coordinate_key(self) -> Hashable:
-        """The grid, which the order and length scale do not touch."""
-        return (type(self), self._lmax, self._radius)
+        """The grid, which the order and length scale do not touch.
+
+        Tagged by geometry rather than by ``type(self)``: ``Lebesgue`` and
+        ``Sobolev`` are thin subclasses over the same grid, and keying on the
+        concrete class would say two views of one field were different fields.
+        """
+        return ("sphere", self._lmax, self._radius, self._sampling)
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
@@ -235,17 +276,74 @@ class Sphere(SymmetricSpace):
         """The harmonic degree attached to each component."""
         return self._packing[1].astype(float)
 
-    def to_components(self, x: np.ndarray) -> np.ndarray:
+    # ----------------------------------------------------------------- #
+    #                        Vectors, which are grids                   #
+    # ----------------------------------------------------------------- #
+
+    def grid_values(self, x: Any, /) -> np.ndarray:
+        """The field's values, reaching past the ``SHGrid`` wrapper.
+
+        Args:
+            x: a field of this space.
+
+        Returns:
+            The grid values, of shape :attr:`grid_shape`. Not a copy: this is
+            the grid's own array.
+
+        A bare array is accepted too, and returned as it is. That is a
+        deliberate kindness at the boundary — grid values arrive from all
+        sorts of places — and not an invitation to treat the two as
+        interchangeable: :meth:`from_components` and everything downstream of
+        it produce ``SHGrid``.
+        """
+        if isinstance(x, np.ndarray):
+            return np.asarray(x, dtype=float)
+        return np.asarray(x.data, dtype=float)
+
+    def from_grid_values(self, values: np.ndarray, /) -> Any:
+        """A field holding the given values.
+
+        Args:
+            values: an array of shape :attr:`grid_shape`.
+
+        Returns:
+            An ``SHGrid`` over those values.
+
+        Raises:
+            ValueError: if the shape is wrong.
+        """
+        from pyshtools import SHGrid
+
+        array = np.asarray(values, dtype=float)
+        if array.shape != self.grid_shape:
+            raise ValueError(f"A field has shape {self.grid_shape}, got {array.shape}.")
+        return SHGrid.from_array(array, grid="DH", copy=False)
+
+    def copy(self, x: Any) -> Any:
+        """An independent copy of the field."""
+        return self.from_grid_values(self.grid_values(x).copy())
+
+    def axpy(self, a: float, x: Any, y: Any) -> Any:
+        """``y += a x``, in place on the grid's own array."""
+        y.data += a * self.grid_values(x)
+        return y
+
+    def scale_inplace(self, a: float, x: Any) -> Any:
+        """``x *= a``, in place."""
+        x.data *= a
+        return x
+
+    def to_components(self, x: Any) -> np.ndarray:
         """Harmonic coefficients of a field, orthonormal in ``L2``."""
         from pyshtools.expand import SHExpandDH
 
-        field = np.asarray(x, dtype=float)
+        field = self.grid_values(x)
         if field.shape != self.grid_shape:
             raise ValueError(f"A field has shape {self.grid_shape}, got {field.shape}.")
         coefficients = SHExpandDH(
             field,
             norm=_ORTHONORMAL,
-            sampling=2,
+            sampling=self._sampling,
             csphase=_NO_CONDON_SHORTLEY,
             lmax_calc=self._lmax,
         )
@@ -262,12 +360,14 @@ class Sphere(SymmetricSpace):
         coefficients = np.zeros((2, self._lmax + 1, self._lmax + 1))
         parts, degrees, orders = self._packing
         coefficients[parts, degrees, orders] = components / self._radius
-        return MakeGridDH(
-            coefficients,
-            norm=_ORTHONORMAL,
-            sampling=2,
-            csphase=_NO_CONDON_SHORTLEY,
-            lmax=self._lmax,
+        return self.from_grid_values(
+            MakeGridDH(
+                coefficients,
+                norm=_ORTHONORMAL,
+                sampling=self._sampling,
+                csphase=_NO_CONDON_SHORTLEY,
+                lmax=self._lmax,
+            )
         )
 
     # ----------------------------------------------------------------- #
@@ -282,7 +382,8 @@ class Sphere(SymmetricSpace):
     @cached_property
     def longitudes(self) -> np.ndarray:
         """The grid longitudes, in radians."""
-        return np.arange(2 * self._latitudes) * np.pi / self._latitudes
+        columns = self._sampling * self._latitudes
+        return np.arange(columns) * 2.0 * np.pi / columns
 
     def basis_at(self, point: Any, /) -> np.ndarray:
         """The value of each orthonormal harmonic at a point.
@@ -401,14 +502,14 @@ class Sphere(SymmetricSpace):
         live = weights > 0.0
         scaled = np.zeros(self.grid_shape)
         scaled[live] = values[live] / weights[live, None]
-        total = self.to_components(scaled)
+        total = self.to_components(self.from_grid_values(scaled))
         for row in np.flatnonzero(~live):
             total = total + values[row].sum() * self.basis_at(
                 np.array([float(self.colatitudes[row]), 0.0])
             )
         return total
 
-    def _double(self, field: np.ndarray, /) -> np.ndarray:
+    def _double(self, x: Any, /) -> np.ndarray:
         """The double-Fourier-sphere extension, sampled on a doubled grid.
 
         ``g(theta, phi) == f(theta, phi)`` on ``[0, pi]`` and
@@ -417,10 +518,11 @@ class Sphere(SymmetricSpace):
         torus, which is what makes one FFT of it exact.
         """
         rows, columns = self.grid_shape
+        field = self.grid_values(x)
         doubled = np.empty((2 * rows, columns))
         doubled[:rows] = field
         # theta == pi is the south pole: not a grid row, so it is evaluated.
-        doubled[rows] = float(self._south_pole_basis @ self.to_components(field))
+        doubled[rows] = float(self._south_pole_basis @ self.to_components(x))
         doubled[rows + 1 :] = np.roll(field[1:][::-1], columns // 2, axis=1)
         return doubled
 
@@ -550,7 +652,7 @@ class Sphere(SymmetricSpace):
                 for theta, phi in zip(colatitudes.ravel(), longitudes.ravel())
             ]
         )
-        return values.reshape(self.grid_shape)
+        return self.from_grid_values(values.reshape(self.grid_shape))
 
     @property
     def reference_point(self) -> np.ndarray:
@@ -1032,6 +1134,7 @@ class Sphere(SymmetricSpace):
             radius=self._radius,
             order=self._order,
             length_scale=self._length_scale,
+            sampling=self._sampling,
         )
 
     def degree_transfer_operator(self, target: Sphere, /) -> LinearOperator:
@@ -1074,6 +1177,7 @@ class Sphere(SymmetricSpace):
             radius=self._radius,
             order=order,
             length_scale=(self._length_scale if length_scale is None else length_scale),
+            sampling=self._sampling,
         )
 
 
@@ -1118,18 +1222,61 @@ def _subsample(
     return [points[index] for index in chosen]
 
 
-def Lebesgue(lmax: int, /, *, radius: float = 1.0) -> Sphere:
-    """The ``L2`` space on a sphere, with an orthonormal harmonic basis."""
-    return Sphere(lmax, radius=radius, order=0.0)
+class Lebesgue(Sphere):
+    """The ``L2`` space on a sphere, with an orthonormal harmonic basis.
+
+    A class rather than a factory function, so that ``isinstance(x, Lebesgue)``
+    answers what it looks like it answers and ``type(x).__name__`` names the
+    geometry. Nothing is added: it is :class:`Sphere` at order zero.
+    """
+
+    def __init__(
+        self,
+        lmax: int,
+        /,
+        *,
+        radius: float = 1.0,
+        sampling: int = 1,
+    ) -> None:
+        """
+        Args:
+            lmax: the maximum spherical harmonic degree.
+            radius: the sphere's radius.
+            sampling: grid columns per row, 1 or 2.
+        """
+        super().__init__(lmax, radius=radius, order=0.0, sampling=sampling)
 
 
-def Sobolev(
-    lmax: int, order: float, length_scale: float, /, *, radius: float = 1.0
-) -> Sphere:
+class Sobolev(Sphere):
     """The Sobolev space ``H^order`` on a sphere.
 
-    The same expansion as :func:`Lebesgue`, with
+    The same expansion as :class:`Lebesgue`, with
     ``(1 + length_scale^2 l(l+1)/radius^2)^order`` as its metric — a
     diagonal-metric space, so every invariant operator on it stays diagonal.
     """
-    return Sphere(lmax, radius=radius, order=order, length_scale=length_scale)
+
+    def __init__(
+        self,
+        lmax: int,
+        order: float,
+        length_scale: float,
+        /,
+        *,
+        radius: float = 1.0,
+        sampling: int = 1,
+    ) -> None:
+        """
+        Args:
+            lmax: the maximum spherical harmonic degree.
+            order: the Sobolev order.
+            length_scale: the length at which the Sobolev weight turns over.
+            radius: the sphere's radius.
+            sampling: grid columns per row, 1 or 2.
+        """
+        super().__init__(
+            lmax,
+            radius=radius,
+            order=order,
+            length_scale=length_scale,
+            sampling=sampling,
+        )

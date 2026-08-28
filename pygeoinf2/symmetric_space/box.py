@@ -31,7 +31,7 @@ from ..algebra.operators import LinearOperator
 from ..traits import Traits
 from .fourier import PeriodicBox
 
-__all__ = ["Box", "Interval"]
+__all__ = ["Box", "Interval", "Lebesgue", "Sobolev"]
 
 
 class Box(PeriodicBox):
@@ -262,3 +262,53 @@ def Interval(
         order=order,
         length_scale=length_scale,
     )
+
+
+class Lebesgue(Box):
+    """The ``L2`` space on a bounded box."""
+
+    def __init__(
+        self,
+        shape: Sequence[int],
+        /,
+        *,
+        bounds: Sequence[tuple[float, float]],
+        padding: Sequence[float] | float | None = None,
+    ) -> None:
+        """
+        Args:
+            shape: grid points along each axis, spanning the padded domain.
+            bounds: the ``(lower, upper)`` extent on each axis.
+            padding: periodic padding on each side of each axis.
+        """
+        super().__init__(shape, bounds=bounds, padding=padding, order=0.0)
+
+
+class Sobolev(Box):
+    """The Sobolev space ``H^order`` on a bounded box."""
+
+    def __init__(
+        self,
+        shape: Sequence[int],
+        order: float,
+        length_scale: float,
+        /,
+        *,
+        bounds: Sequence[tuple[float, float]],
+        padding: Sequence[float] | float | None = None,
+    ) -> None:
+        """
+        Args:
+            shape: grid points along each axis, spanning the padded domain.
+            order: the Sobolev order.
+            length_scale: the length at which the Sobolev weight turns over.
+            bounds: the ``(lower, upper)`` extent on each axis.
+            padding: periodic padding on each side of each axis.
+        """
+        super().__init__(
+            shape,
+            bounds=bounds,
+            padding=padding,
+            order=order,
+            length_scale=length_scale,
+        )

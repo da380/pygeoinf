@@ -155,7 +155,7 @@ class TestSphere:
             j = int(rng.integers(0, space.grid_shape[1]))
             point = np.array([space.colatitudes[i], space.longitudes[j]])
             assert components @ space.basis_at(point) == pytest.approx(
-                field[i, j], abs=1e-10
+                space.grid_values(field)[i, j], abs=1e-10
             )
 
     def test_the_radius_enters_the_norm(self, rng):
@@ -239,3 +239,104 @@ class TestSphere:
     def test_a_point_needs_two_coordinates(self):
         with pytest.raises(ValueError, match="colatitude"):
             sphere_module.Lebesgue(4).basis_at(np.array([0.1]))
+
+
+class TestSphereVectorsAreGrids:
+    """D-1: a field is an ``SHGrid``, not a bare array."""
+
+    def test_a_field_is_an_shgrid(self, rng):
+        space = sphere_module.Lebesgue(8)
+        field = space.random(rng=rng)
+        assert isinstance(field, pyshtools.SHGrid)
+        # And so it can do what pyshtools fields do.
+        assert field.expand() is not None
+        assert space.grid_values(field).shape == space.grid_shape
+
+    @pytest.mark.parametrize("sampling", [1, 2])
+    def test_both_samplings_represent_the_same_functions(self, sampling, rng):
+        """The grid is a choice about storage, not about the space: the
+        components are the same numbers either way."""
+        square = sphere_module.Sobolev(8, 2.0, 0.2, sampling=1)
+        wide = sphere_module.Sobolev(8, 2.0, 0.2, sampling=2)
+        assert square.dim == wide.dim
+        assert square.grid_shape == (18, 18)
+        assert wide.grid_shape == (18, 36)
+
+        components = rng.normal(size=square.dim)
+        assert square.to_components(
+            square.from_components(components)
+        ) == pytest.approx(components)
+        assert wide.to_components(wide.from_components(components)) == pytest.approx(
+            components
+        )
+
+    def test_the_default_is_the_square_grid(self):
+        """v1's default, and half the memory of the wide one."""
+        assert sphere_module.Lebesgue(8).sampling == 1
+
+    def test_the_two_grids_are_different_spaces(self):
+        """They hold different arrays, so a vector of one is not a vector of
+        the other and the formal-adjoint lift must not move one silently."""
+        assert not sphere_module.Lebesgue(8).shares_vectors_with(
+            sphere_module.Lebesgue(8, sampling=2)
+        )
+        assert sphere_module.Lebesgue(8) != sphere_module.Lebesgue(8, sampling=2)
+
+    def test_an_impossible_sampling_is_refused(self):
+        with pytest.raises(ValueError, match="sampling is 1 or 2"):
+            sphere_module.Lebesgue(8, sampling=3)
+
+    def test_the_vector_operations_act_on_the_grid(self, rng):
+        space = sphere_module.Lebesgue(8)
+        first, second = space.random(rng=rng), space.random(rng=rng)
+        before = space.grid_values(first).copy()
+
+        total = space.axpy(2.0, second, space.copy(first))
+        assert space.grid_values(total) == pytest.approx(
+            before + 2.0 * space.grid_values(second)
+        )
+        # The copy really was one: the original is untouched.
+        assert space.grid_values(first) == pytest.approx(before)
+
+
+class TestGeometrySubmodules:
+    """D-3: one submodule per geometry, exporting classes."""
+
+    def test_the_sphere_spaces_are_classes(self):
+        from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev, Sphere
+
+        space = sphere_module.Sobolev(8, 2.0, 0.2)
+        assert isinstance(space, Sobolev)
+        assert isinstance(space, Sphere)
+        assert type(space).__name__ == "Sobolev"
+        assert isinstance(Lebesgue(8), Sphere)
+
+    @pytest.mark.parametrize(
+        "module, build",
+        [
+            ("circle", lambda m: m.Sobolev(16, 2.0, 0.2)),
+            ("torus", lambda m: m.Sobolev((8, 8), 2.0, 0.2)),
+            ("line", lambda m: m.Sobolev(16, 2.0, 0.2)),
+            (
+                "plane",
+                lambda m: m.Sobolev((8, 8), 2.0, 0.2, bounds=((0.0, 1.0), (0.0, 1.0))),
+            ),
+            (
+                "box",
+                lambda m: m.Sobolev((8,), 2.0, 0.2, bounds=((0.0, 1.0),)),
+            ),
+        ],
+    )
+    def test_each_geometry_names_itself(self, module, build):
+        import importlib
+
+        imported = importlib.import_module(f"pygeoinf2.symmetric_space.{module}")
+        space = build(imported)
+        assert isinstance(space, imported.Sobolev)
+        assert space.dim > 0
+
+    def test_a_torus_has_two_axes_and_says_so(self):
+        from pygeoinf2.symmetric_space import torus
+
+        with pytest.raises(ValueError, match="two axes"):
+            torus.Lebesgue((4, 4, 4))

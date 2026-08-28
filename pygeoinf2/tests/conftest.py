@@ -85,3 +85,16 @@ def make_dense_metric_space() -> DenseMetricSpace:
         [[1.0, 0.0, 0.0], [0.4, 1.2, 0.0], [-0.3, 0.5, 0.9]],
     )
     return DenseMetricSpace(root @ root.T)
+
+
+def values(space, *fields):
+    """Grid values of one or more fields, for comparing with plain numpy.
+
+    A sphere's vectors are ``SHGrid`` objects, so ``np.allclose(a, b)`` on two
+    of them raises rather than comparing. Where a test is checking numbers
+    against an independently computed array this is the honest unwrapping;
+    where it is checking two vectors of the same space against each other,
+    ``space.norm(space.subtract(a, b))`` says it better.
+    """
+    unwrapped = [space.grid_values(field) for field in fields]
+    return unwrapped[0] if len(unwrapped) == 1 else unwrapped

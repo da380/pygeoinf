@@ -52,7 +52,7 @@ def _(
 @plot.register
 def _(
     space: Sphere,
-    field: np.ndarray,
+    field: Any,
     /,
     *,
     ax: Any = None,
@@ -70,7 +70,8 @@ def _(
 
     Args:
         space: the sphere.
-        field: a grid array of the space.
+        field: a field of the space, as an ``SHGrid`` or a bare array of its
+            grid values.
         ax: axes to draw on. A new figure is made if omitted.
         cmap: colour map.
         symmetric: put zero at the middle of the colour scale. Use it for
@@ -92,7 +93,7 @@ def _(
     if ax is None:
         _, ax = subplots(space)
 
-    values = np.asarray(field, dtype=float)
+    values = space.grid_values(field)
     if values.shape != space.grid_shape:
         raise ValueError(
             f"A field on this sphere has shape {space.grid_shape}, got "

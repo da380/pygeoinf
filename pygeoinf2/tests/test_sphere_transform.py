@@ -104,11 +104,12 @@ class TestDoubling:
         X = Lebesgue(8)
         rows, columns = X.grid_shape
         field = X.random(rng=rng)
+        values = X.grid_values(field)
         doubled = X._double(field)
-        assert np.allclose(doubled[:rows], field)
+        assert np.allclose(doubled[:rows], values)
         # beyond the equator: g(2 pi - theta, phi) == f(theta, phi + pi)
         assert np.allclose(
-            doubled[rows + 1 :], np.roll(field[1:][::-1], columns // 2, axis=1)
+            doubled[rows + 1 :], np.roll(values[1:][::-1], columns // 2, axis=1)
         )
 
     def test_the_middle_row_is_the_south_pole(self, rng):

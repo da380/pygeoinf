@@ -682,7 +682,9 @@ class TestFormalAdjointLift:
 
         # Same action, adjoint taken in the new inner product.
         probe = target.random(rng=rng)
-        assert lifted(probe) == pytest.approx(operator(probe))
+        assert target.grid_values(lifted(probe)) == pytest.approx(
+            target.grid_values(operator(probe))
+        )
         check_operator(lifted, rng=rng)
 
     def test_it_lifts_onto_a_direct_sum_with_a_euclidean_summand(self, rng):

@@ -35,7 +35,6 @@ from numpy.random import Generator
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import (
-    ArrayVectorMixin,
     DiagonalMetricSpace,
     HilbertModule,
     HilbertSpace,
@@ -49,14 +48,20 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = ["SymmetricSpace", "lift_formal_adjoint"]
 
 
-class SymmetricSpace(
-    ArrayVectorMixin, HilbertModule[np.ndarray], DiagonalMetricSpace[np.ndarray]
-):
+class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     """A coordinate space whose basis diagonalises the Laplacian.
 
     Subclasses supply :meth:`to_components`, :meth:`from_components`,
     :attr:`laplacian_eigenvalues`, :meth:`basis_at` and ``_key``. Everything
     below is then available, and none of it needs re-implementing per space.
+
+    Generic in the vector type, because the vectors are not always arrays. A
+    box's are, and it mixes in
+    :class:`~pygeoinf2.algebra.spaces.ArrayVectorMixin` to say so; a sphere's
+    are ``pyshtools.SHGrid`` objects, so that a field can be plotted, rotated
+    or expanded by the library that made it. Everything here that touches
+    values pointwise goes through :meth:`grid_values` and
+    :meth:`from_grid_values` rather than assuming an array.
     """
 
     def __init__(self, metric_values: np.ndarray, /) -> None:
@@ -763,7 +768,39 @@ class SymmetricSpace(
     #                          Pointwise algebra                        #
     # ----------------------------------------------------------------- #
 
-    def truncate(self, x: np.ndarray, /) -> np.ndarray:
+    def grid_values(self, x: V, /) -> np.ndarray:
+        """The field's values on the grid, as a plain array.
+
+        The seam between a vector and its numbers. Most spaces here *are* their
+        grid arrays and this is the identity, but a sphere's vectors are
+        ``pyshtools.SHGrid`` objects — so that they can be plotted, rotated and
+        expanded by the library that produced them — and the arithmetic done
+        pointwise has to reach past the wrapper.
+
+        Args:
+            x: a vector of this space.
+
+        Returns:
+            The grid values.
+        """
+        return np.asarray(x)
+
+    def from_grid_values(self, values: np.ndarray, /) -> V:
+        """A vector of this space holding the given grid values.
+
+        The inverse of :meth:`grid_values`. Note that it does *not* truncate:
+        the values are taken as they are, and it is :meth:`truncate` that
+        settles them into the span of the basis.
+
+        Args:
+            values: an array of shape :attr:`grid_shape`.
+
+        Returns:
+            A vector of this space.
+        """
+        return values
+
+    def truncate(self, x: V, /) -> V:
         """The vector of this space with the same components as ``x``.
 
         The identity whenever the grid has exactly as many points as the space
@@ -790,11 +827,13 @@ class SymmetricSpace(
         committed to once, consistently, rather than resolved differently by
         each caller.
         """
-        return self.truncate(np.asarray(x) * np.asarray(y))
+        return self.truncate(
+            self.from_grid_values(self.grid_values(x) * self.grid_values(y))
+        )
 
     def sqrt(self, x: np.ndarray) -> np.ndarray:
         """The pointwise square root, truncated back into the space."""
-        return self.truncate(np.sqrt(np.asarray(x)))
+        return self.truncate(self.from_grid_values(np.sqrt(self.grid_values(x))))
 
     def multiplication_operator(self, f: np.ndarray, /) -> LinearOperator:
         """The operator ``u -> f u``, with the metric handled.
@@ -856,11 +895,18 @@ class SymmetricSpace(
     #                               Flexure                             #
     # ----------------------------------------------------------------- #
 
-    def _as_field(self, value: np.ndarray | float, /) -> np.ndarray:
-        """A scalar as a constant field, or a field unchanged."""
+    def _as_field(self, value: Any, /) -> V:
+        """A scalar as a constant field, or a field unchanged.
+
+        Not ``np.asarray``: on a space whose vectors are not arrays that wraps
+        the field in a zero-dimensional object array, which then survives every
+        arithmetic operation and fails somewhere far away.
+        """
         if isinstance(value, (int, float, np.floating, np.integer)):
             return self.project_function(lambda _: float(value))
-        return np.asarray(value)
+        if isinstance(value, np.ndarray) and value.dtype != object:
+            return self.from_grid_values(value)
+        return value
 
     def flexural_operator(
         self,

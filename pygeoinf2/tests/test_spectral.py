@@ -20,7 +20,7 @@ from pygeoinf2.symmetric_space import Sobolev as BoxSobolev
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import make_weighted_space, values
 
 pyshtools = pytest.importorskip("pyshtools")
 
@@ -61,7 +61,7 @@ class TestSpectralOperators:
         check_traits(projection, rng=rng)
         assert Traits.IDEMPOTENT & projection.traits
         x = X.random(rng=rng)
-        assert np.allclose(projection(projection(x)), projection(x))
+        assert np.allclose(*values(X, projection(projection(x)), projection(x)))
 
     def test_the_band_projection_keeps_exactly_its_band(self, rng):
         X = Sobolev(8, 2.0, 0.2)
@@ -88,7 +88,7 @@ class TestOrderInclusion:
         inclusion = X.order_inclusion_operator(X.with_order(1.0))
         check_operator(inclusion, rng=rng)
         x = X.random(rng=rng)
-        assert np.allclose(inclusion(x), x)
+        assert np.allclose(*values(X, inclusion(x), x))
 
     def test_its_adjoint_is_not_the_identity(self, rng):
         """Which is the whole content: the metrics differ, so the adjoint does.
@@ -100,7 +100,7 @@ class TestOrderInclusion:
         target = X.with_order(1.0)
         inclusion = X.order_inclusion_operator(target)
         y = target.random(rng=rng)
-        assert not np.allclose(inclusion.adjoint(y), y)
+        assert not np.allclose(*values(X, inclusion.adjoint(y), y))
 
     def test_mismatched_dimensions_are_refused(self):
         X = Lebesgue(6)

@@ -53,7 +53,10 @@ problem = LinearForwardProblem(forward, error=noise)
 # a pointwise standard deviation you can actually have an opinion about.
 prior = X.heat_measure(0.03, pointwise_std=0.05)
 truth, data = problem.synthetic_model_and_data(prior, rng=rng)
-print(f"truth has pointwise rms {truth.std():.4f}; data rms {data.std():.4f}")
+print(
+    f"truth has pointwise rms {X.grid_values(truth).std():.4f}; "
+    f"data rms {data.std():.4f}"
+)
 print(
     f"chi-squared of the truth: {problem.chi_squared(truth, data):.1f} "
     f"on {problem.data_space.dim} data"

@@ -18,6 +18,8 @@ from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
 from pygeoinf2.testing import check_operator
 from pygeoinf2.traits import Traits
 
+from .conftest import values
+
 pyshtools = pytest.importorskip("pyshtools")
 
 from pygeoinf2.symmetric_space.sphere import Lebesgue, Sobolev  # noqa: E402
@@ -66,7 +68,9 @@ class TestPointwiseAlgebra:
         X = Sobolev(12, 2.0, 0.2)
         f = X.project_function(lambda p: 1.5 + np.cos(p[0]))
         u = X.random(rng=rng)
-        assert np.allclose(X.multiplication_operator(f)(u), X.multiply(f, u))
+        assert np.allclose(
+            *values(X, X.multiplication_operator(f)(u), X.multiply(f, u))
+        )
 
     def test_a_product_is_truncated_back_into_the_space(self, rng):
         """Otherwise a product is not a well-defined function of its factors.
@@ -79,11 +83,11 @@ class TestPointwiseAlgebra:
         X = Lebesgue(12)
         f = X.project_function(lambda p: 1.5 + np.cos(p[0]))
         u = X.random(rng=rng)
-        raw = np.asarray(f) * np.asarray(u)
+        raw = X.from_grid_values(values(X, f) * values(X, u))
         truncated = X.multiply(f, u)
-        assert not np.allclose(raw, truncated)
+        assert not np.allclose(*values(X, raw, truncated))
         assert np.allclose(X.to_components(raw), X.to_components(truncated))
-        assert np.allclose(truncated, X.truncate(truncated))
+        assert np.allclose(*values(X, truncated, X.truncate(truncated)))
 
     def test_truncation_is_free_on_a_box(self, rng):
         """One component per grid point, so there is nothing to remove."""
@@ -157,8 +161,7 @@ class TestBochnerIdentity:
         X = Lebesgue(24)
         f = X.project_function(lambda p: np.cos(p[0]))
         g = X.project_function(lambda p: np.sin(p[0]) * np.cos(p[1]))
-        exact = 2.0 * f * g
-        got = self._hessian_trace(X, f, g)
+        exact, got = values(X, 2.0 * f * g, self._hessian_trace(X, f, g))
         assert np.allclose(got, exact, atol=1e-8 * np.abs(exact).max())
 
     @pytest.mark.parametrize("factor", [0.0, 2.0, -1.0])
@@ -170,8 +173,9 @@ class TestBochnerIdentity:
         laplacian, products = X.laplacian, X.gradient_dot_product
         block = -0.5 * laplacian(products(f, g))
         block = block + 0.5 * (products(f, laplacian(g)) + products(g, laplacian(f)))
-        wrong = block - factor * X.gaussian_curvature * products(f, g)
-        exact = 2.0 * f * g
+        wrong, exact = values(
+            X, block - factor * X.gaussian_curvature * products(f, g), 2.0 * f * g
+        )
         assert not np.allclose(wrong, exact, atol=1e-3 * np.abs(exact).max())
 
 
@@ -249,7 +253,7 @@ class TestFlexureAgainstIndependentComputations:
         )
         w = X.random(rng=rng)
         assert np.allclose(
-            X.flexural_operator(rigidity, poisson, buoyancy)(w), symbol(w)
+            *values(X, X.flexural_operator(rigidity, poisson, buoyancy)(w), symbol(w))
         )
 
 
@@ -278,7 +282,9 @@ class TestFlexureStructure:
         check_operator(A, rng=rng)
         base = X.with_order(0.0)
         w = X.random(rng=rng)
-        assert np.allclose(A(w), base.flexural_operator(rigidity, 0.25, 2.0)(w))
+        assert np.allclose(
+            *values(X, A(w), base.flexural_operator(rigidity, 0.25, 2.0)(w))
+        )
 
 
 class TestFlexureInverse:
@@ -288,7 +294,7 @@ class TestFlexureInverse:
         A = X.flexural_operator(rigidity, poisson, buoyancy)
         inverse = X.inverse_flexural_operator(rigidity, poisson, buoyancy)
         w = X.random(rng=rng)
-        assert np.allclose(A(inverse(w)), w, rtol=1e-10)
+        assert np.allclose(*values(X, A(inverse(w)), w), rtol=1e-10)
 
     def test_a_varying_rigidity_inverts_by_preconditioned_cg(self, rng):
         X = BoxLebesgue((128,), lengths=(1.0,))
