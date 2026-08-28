@@ -54,6 +54,8 @@ __all__ = [
     "EigenSolver",
     "IterativeSolver",
     "CGSolver",
+    "FlexibleCGSolver",
+    "GMRESSolver",
     "MinResSolver",
     "BiCGStabSolver",
     "LeastSquaresSolver",
@@ -907,6 +909,13 @@ class MinResSolver(IterativeSolver):
     The Paige-Saunders recurrences: Lanczos tridiagonalisation with Givens
     rotations applied on the fly, so the least-squares problem over the Krylov
     space is solved without storing it.
+
+    Preconditioning is supported, and needs a *positive-definite* one: the
+    method runs in the inner product ``M`` induces, so an indefinite ``M``
+    gives a negative squared norm and is refused with a message saying so
+    rather than producing a NaN some iterations later. That is the only extra
+    condition -- the operator itself may still be indefinite, which is the
+    reason to reach for MINRES over CG in the first place.
     """
 
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
@@ -918,24 +927,47 @@ class MinResSolver(IterativeSolver):
         b: Any,
         x0: Any | None,
     ) -> SolveResult:
-        if preconditioner is not None:
-            raise NotImplementedError(
-                "Preconditioned MINRES needs a positive-definite preconditioner "
-                "and the inner product it induces; it is not implemented."
-            )
         space = operator.domain
         x, r = self._initial(operator, b, x0)
-        tolerance = self._tolerance(operator.codomain, b)
+
+        # Preconditioned MINRES runs the same recurrences in the inner product
+        # the preconditioner induces: the Lanczos vectors are M-orthonormal, so
+        # every norm below is ``sqrt((u, M u))`` rather than ``sqrt((u, u))``.
+        # With no preconditioner M is the identity and this is the plain
+        # method, term for term.
+        def preconditioned(vector: Any) -> Any:
+            return vector if preconditioner is None else preconditioner(vector)
+
+        def m_norm(vector: Any, image: Any, /) -> float:
+            """``sqrt((u, M u))``, from ``u`` and ``M u`` already in hand."""
+            squared = space.inner_product(vector, image)
+            if squared < 0.0:
+                raise ValueError(
+                    "MINRES needs a positive-definite preconditioner: the "
+                    f"inner product it induces gave {squared:.3e} for a "
+                    "vector's own norm."
+                )
+            return float(np.sqrt(squared))
+
+        # Relative to the M-norm of the right-hand side, since that is the norm
+        # phi_bar below is measured in.
+        tolerance = max(
+            self._rtol * m_norm(b, preconditioned(b)), self._atol
+        )
 
         history: list[float] = []
-        beta = space.norm(r)
+        z = preconditioned(r)
+        beta = m_norm(r, z)
         self._record(0, beta, history)
         if beta <= tolerance:
             return SolveResult(x, 0, beta, True, tuple(history))
 
-        # Lanczos state: v_{k-1}, v_k, and beta_k.
+        # Lanczos state: the two previous *unpreconditioned* residuals, which
+        # are what the three-term recurrence runs on, and v_k == M r_k / beta.
+        r_prev = space.zero()
+        r_current = r
         v_prev = space.zero()
-        v = space.scale(1.0 / beta, r)
+        v = space.scale(1.0 / beta, z)
 
         # Givens state. c = -1, s = 0 makes the first sweep act as no rotation.
         c, s = -1.0, 0.0
@@ -947,14 +979,20 @@ class MinResSolver(IterativeSolver):
         w_prev = space.zero()
         w = space.zero()
         residual = beta
+        beta_prev = 1.0
 
         for iteration in range(1, self._limit(operator) + 1):
             # --- Lanczos step: extend the tridiagonalisation ----------
+            # The recurrence is carried on the residuals rather than on the
+            # M-orthonormal vectors: p is the next unpreconditioned residual,
+            # and M p is what gives both the next vector and its norm.
             p = operator(v)
             alpha = space.inner_product(v, p)
-            p = space.axpy(-alpha, v, p)
-            p = space.axpy(-beta, v_prev, p)
-            beta_next = space.norm(p)
+            p = space.axpy(-alpha / beta, r_current, p)
+            if iteration > 1:
+                p = space.axpy(-beta / beta_prev, r_prev, p)
+            z_next = preconditioned(p)
+            beta_next = m_norm(p, z_next)
 
             # --- apply the previous rotation to the new column --------
             delta = c * delta_bar + s * alpha
@@ -988,8 +1026,9 @@ class MinResSolver(IterativeSolver):
 
             # --- roll the state ---------------------------------------
             w_prev, w = w, w_next
-            v_prev, v = v, space.scale(1.0 / beta_next, p)
-            beta = beta_next
+            v_prev, v = v, space.scale(1.0 / beta_next, z_next)
+            r_prev, r_current = r_current, p
+            beta_prev, beta = beta, beta_next
             delta_bar = delta_bar_next
             epsilon = epsilon_next
 

@@ -867,13 +867,45 @@ class TestPreconditioners:
         count, residual = self.iterations(operator, BlockPreconditioner(blocks), vector)
         assert residual < 1e-8
 
-    def test_blocks_that_do_not_partition_are_refused(self, rng):
+    def test_blocks_need_not_cover_everything(self, rng):
+        """What is left out keeps its own diagonal, so the preconditioner is
+        still invertible there and degrades to Jacobi rather than refusing.
+        v2 required a partition, which rules out the clusterings a real
+        geometry gives."""
         from pygeoinf2.numerics.preconditioners import BlockPreconditioner
 
         space = self.sphere(4)
         operator = self.spread(space, rng)
-        with pytest.raises(ValueError, match="partition"):
-            BlockPreconditioner([[0, 1]])(operator)
+        count, residual = self.iterations(
+            operator, BlockPreconditioner([[0, 1]]), space.random(rng=rng)
+        )
+        assert residual < 1e-8
+
+    def test_blocks_may_overlap(self, rng):
+        """A point near two clusters belongs to both. The entries come from
+        the operator itself rather than from summed block inverses, so an
+        index in two blocks is not counted twice."""
+        from pygeoinf2.numerics.preconditioners import BlockPreconditioner
+
+        space = self.sphere(4)
+        operator = self.spread(space, rng)
+        vector = space.random(rng=rng)
+
+        blocks = [list(range(0, 12)), list(range(8, 20)), list(range(18, space.dim))]
+        count, residual = self.iterations(
+            operator, BlockPreconditioner(blocks), vector
+        )
+        assert residual < 1e-8
+
+    def test_a_block_outside_the_space_is_refused(self, rng):
+        from pygeoinf2.numerics.preconditioners import BlockPreconditioner
+
+        space = self.sphere(4)
+        operator = self.spread(space, rng)
+        with pytest.raises(ValueError, match="has"):
+            BlockPreconditioner([[0, space.dim]])(operator)
+        with pytest.raises(ValueError, match="non-negative"):
+            BlockPreconditioner([[-1, 0]])
 
     def test_a_nonsense_rank_or_bandwidth_is_refused(self):
         from pygeoinf2.numerics.preconditioners import (
