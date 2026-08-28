@@ -21,27 +21,44 @@ genuinely independent and each expensive:
 for. It is an optional extra: with ``n_jobs`` unset, or joblib absent, the loop
 runs serially and nothing is imported.
 
-**Do not use the threading backend with the spectral transforms.** This is not
-a performance note. ``pyshtools``' transforms are compiled with OpenMP and are
-not re-entrant: calling them from two Python threads at once segfaults the
-interpreter, and it does so silently -- no exception, no traceback, a dropped
-core file. Measured here on ``pointwise_variance_at`` over a handful of points
-on a sphere, which crashed under ``backend="threading"`` and was correct under
-the default.
+**Processes, not threads, for anything spectral.** joblib's default backend is
+``loky``, which runs processes, and that is what v1 uses everywhere and what
+these loops use unless told otherwise. It is not merely the faster choice: the
+``pyshtools`` transforms crash the interpreter when called from two Python
+threads at once -- silently, with no exception and no traceback, a dropped core
+file. Measured on this machine, with ``ThreadPoolExecutor`` and no joblib
+involved at all:
 
-The default backend is joblib's, which is processes, and that is safe: each
-worker has its own OpenMP state. The cost is that the work must be picklable,
-which a closure over a local is not. ``backend="threading"`` remains available
-because it is right for anything that stays in NumPy -- a Euclidean space, a
-dense operator -- and wrong for anything that reaches a transform.
+===================  ===============================  ==================
+routine              threads                          processes
+===================  ===============================  ==================
+``SHExpandDH``       crash; survives ``OMP_NUM_THREADS=1``   fine
+``MakeGridDH``       crash, whatever OpenMP is set to        fine
+``PlmON``            fine                                   fine
+===================  ===============================  ==================
 
-The related performance note stands too: ``finufft`` and ``pyshtools``
-parallelise internally and by default take every core, so nesting them inside
-an outer parallel loop oversubscribes the machine. The review measured a single
-sphere evaluation at 173-794 ms with the default thread count against 20 ms
-with one. Set the inner library to one thread when running an outer loop; this
-module does not do it for you, because it cannot know what a caller's operator
-reaches for.
+So it is not one problem but two: ``SHExpandDH`` is oversubscribing OpenMP and
+can be tamed by limiting it, while ``MakeGridDH`` is unsafe under threads
+however it is configured. Since ``from_components`` calls the second, that is
+effectively every field-valued operation on a sphere.
+
+``backend="threading"`` is still worth having, and is right for work that stays
+in NumPy -- a Euclidean space, a dense operator, anything releasing the GIL. It
+must not be used on a sphere.
+
+**What a process backend asks of you.** The work has to be picklable. Bound
+methods of ordinary objects are, and so are closures over them, which is why
+the loops here can pass small lambdas; a function defined in ``__main__`` is
+serialised *by value* and drags its module globals with it, so one that has a
+Fortran extension in scope fails with ``cannot pickle 'fortran' object``. That
+is the reason v1 keeps its workers in a module of top-level functions.
+
+**Oversubscription.** ``finufft`` and ``pyshtools`` parallelise internally and
+by default take every core, so nesting them inside an outer parallel loop
+competes with itself. The review measured a single sphere evaluation at
+173-794 ms with the default thread count against 20 ms with one. Set the inner
+library to one thread when running an outer loop; this module does not do it
+for you, because it cannot know what a caller's operator reaches for.
 """
 
 from __future__ import annotations

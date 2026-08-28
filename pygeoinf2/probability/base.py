@@ -98,11 +98,9 @@ class ProbabilityMeasure[X](ABC):
             n: how many draws.
             rng: the generator. Draws are spawned from it when parallel.
             n_jobs: workers. Serial by default.
-            backend: joblib's backend. Processes by default. A sampler that
-                closes over local state cannot be pickled and needs
-                ``"threading"`` -- but see :mod:`pygeoinf2.parallel` first, as
-                that backend segfaults on anything reaching a spectral
-                transform.
+            backend: joblib's backend. Processes by default, which is the
+                right choice on a sphere -- ``"threading"`` crashes the
+                interpreter there. See :mod:`pygeoinf2.parallel`.
 
         Returns:
             The draws.

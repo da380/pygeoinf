@@ -650,6 +650,25 @@ class TestParallelLoops:
                     operator.matrix(form=form, by=by, n_jobs=2, backend="threading")
                 )
 
+    @pytest.mark.slow
+    def test_the_process_backend_works_on_a_sphere(self, rng):
+        """The default, and the only safe one there: the pyshtools transforms
+        crash the interpreter when called from two Python threads at once, so
+        ``backend="threading"`` is for work that stays in NumPy."""
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(10, 2.0, 0.3)
+        measure = space.sobolev_measure(2.0, 0.3, pointwise_std=1.5)
+        points = space.random_points(6, rng=rng)
+
+        serial = space.pointwise_variance_at(measure, points)
+        parallel = space.pointwise_variance_at(measure, points, n_jobs=2)
+        assert parallel == pytest.approx(serial)
+
+        draws = measure.samples(4, rng=np.random.default_rng(1), n_jobs=2)
+        assert len(draws) == 4
+
     def test_the_job_count_is_validated(self):
         from pygeoinf2.parallel import resolve_jobs
 
