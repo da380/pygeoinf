@@ -149,6 +149,11 @@ Recorded rather than settled, so nobody has to rediscover them.
 - **Iteration-cap naming.** `maxiter`, `max_iterations` and `iterations` all
   appear. One should win.
 - **`random_domain_points`** (land/ocean rejection sampling) is not ported.
+- **Docstring contract.** `Raises:` where a function raises, and `Args:` for
+  parameters carrying a choice, are enforced by `test_code_practice.py` against
+  a *shrinking* list: a file at zero cannot regress, and no file may get worse.
+  269 gaps remain across 35 files; `algebra/spaces.py` and
+  `algebra/direct_sum.py` are clear.
 
 ## 8. Decisions
 

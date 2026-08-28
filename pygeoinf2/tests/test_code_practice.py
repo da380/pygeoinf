@@ -268,3 +268,138 @@ class TestTheCatalogueMatchesTheCode:
             }
         )
         assert not missing, f"named in the catalogue but not in the code: {missing}"
+
+
+# Parameters whose meaning is fixed across the whole library and documented in
+# one place, so repeating them in every signature is noise rather than
+# information: `rng` is always the generator, `n_jobs` and `backend` are always
+# joblib's, and DESIGN.md 7 and pygeoinf2/parallel.py say so once.
+CONVENTIONAL = {"rng", "n_jobs", "backend"}
+
+# Files not yet at zero, with the count they are at. The list shrinks; it must
+# never grow, and a file that reaches zero is removed from it so that it cannot
+# regress. This is the documentation debt, counted rather than described.
+DOCUMENTATION_DEBT = {
+    "algebra/diagonal.py": 4,
+    "algebra/operators.py": 22,
+    "backends/mfem.py": 9,
+    "compat.py": 3,
+    "geometry/convex.py": 20,
+    "geometry/sets.py": 5,
+    "geometry/subspaces.py": 8,
+    "inference/backus.py": 4,
+    "inference/estimators.py": 3,
+    "inference/gaussian.py": 6,
+    "inference/normal.py": 5,
+    "inference/point.py": 5,
+    "inference/preconditioners.py": 4,
+    "inference/problem.py": 9,
+    "inference/tikhonov.py": 5,
+    "numerics/convex.py": 5,
+    "numerics/functional_calculus.py": 4,
+    "numerics/optimisation.py": 5,
+    "numerics/preconditioners.py": 2,
+    "numerics/quadratic_forms.py": 1,
+    "numerics/quadratic_programming.py": 4,
+    "numerics/randomised.py": 8,
+    "numerics/root_find.py": 4,
+    "numerics/solvers.py": 4,
+    "plotting/base.py": 3,
+    "plotting/distributions.py": 6,
+    "probability/base.py": 7,
+    "probability/gaussian.py": 25,
+    "probability/mixture.py": 3,
+    "symmetric_space/base.py": 35,
+    "symmetric_space/box.py": 1,
+    "symmetric_space/fourier.py": 6,
+    "symmetric_space/sphere.py": 20,
+    "testing.py": 10,
+    "traits.py": 4,
+}
+
+
+def relative(path) -> str:
+    """The path within the package, since several files share a bare name.
+
+    Three modules are called ``base.py`` and two ``convex.py``; keying the
+    debt list on the bare name silently merged them.
+    """
+    root = pathlib.Path(__file__).resolve().parent.parent
+    return str(pathlib.Path(path).resolve().relative_to(root))
+
+
+def documentation_gaps(path) -> list[str]:
+    """Public functions whose docstring omits part of their contract.
+
+    Two things, and deliberately not a blanket "document every parameter":
+
+    * **Raises**, wherever the body raises. What a function refuses is part of
+      its contract and is the one thing a reader cannot guess.
+    * **Args**, for parameters carrying a *choice* -- anything optional or
+      keyword-only. Those are the ones a caller has to understand. A required
+      ``x`` on ``copy(x)``, whose summary already says what it copies, is not.
+
+    The blanket rule was tried first and would have added "Args: x: the
+    vector." to some fifty vector-algebra methods, diluting docstrings that
+    currently explain *why*. This targets what a reader cannot infer.
+    """
+    gaps = []
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name.startswith("_"):
+            continue
+        doc = ast.get_docstring(node) or ""
+        if (
+            any(isinstance(n, ast.Raise) and n.exc is not None for n in ast.walk(node))
+            and "Raises:" not in doc
+        ):
+            gaps.append(f"{path.name}:{node.lineno} {node.name} (no Raises)")
+
+        args = node.args
+        choices = [a.arg for a in args.kwonlyargs]
+        positional = list(args.posonlyargs) + list(args.args)
+        if args.defaults:
+            choices += [a.arg for a in positional[len(positional) - len(args.defaults) :]]
+        choices = [
+            c for c in choices if c not in ("self", "cls") and c not in CONVENTIONAL
+        ]
+        if choices and not (
+            "Args:" in doc and all(f"{c}:" in doc for c in choices)
+        ):
+            gaps.append(f"{path.name}:{node.lineno} {node.name} -> {choices}")
+    return gaps
+
+
+@pytest.mark.parametrize("path", source_files(), ids=lambda p: p.name)
+class TestDocstringsCarryTheContract:
+    """What a function refuses, and what its options mean.
+
+    K Should-12. The rule is enforced against a *shrinking* list: a file at
+    zero is not in it and cannot regress, and a file in it may not get worse.
+    That makes the standard real today rather than after the whole backlog is
+    cleared.
+    """
+
+    def test_no_file_gets_worse(self, path):
+        gaps = documentation_gaps(path)
+        allowed = DOCUMENTATION_DEBT.get(relative(path), 0)
+        assert len(gaps) <= allowed, (
+            f"{path.name} has {len(gaps)} documentation gaps, above its "
+            f"recorded {allowed}. Document the new ones, or if you have "
+            f"cleared some, lower the number.\n  "
+            + "\n  ".join(gaps[: allowed + 5])
+        )
+
+    def test_the_debt_list_has_no_stale_entries(self, path):
+        """A file that has reached its recorded number exactly is fine; one
+        that is well below it means the list is stale and hiding progress."""
+        gaps = len(documentation_gaps(path))
+        allowed = DOCUMENTATION_DEBT.get(relative(path))
+        if allowed is None:
+            return
+        assert gaps >= allowed - 3, (
+            f"{path.name} is recorded as having {allowed} documentation gaps "
+            f"but has {gaps}. Lower or remove its entry."
+        )

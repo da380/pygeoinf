@@ -164,7 +164,18 @@ class HilbertSpace[V](ABC):
         return float(np.sqrt(self.squared_norm(x)))
 
     def mean(self, vectors: Sequence[V]) -> V:
-        """The sample mean of a sequence of vectors."""
+        """The sample mean of a sequence of vectors.
+
+        Args:
+            vectors: at least one vector.
+
+        Returns:
+            Their mean.
+
+        Raises:
+            ValueError: if the sequence is empty, there being no mean of
+                nothing rather than a zero.
+        """
         n = len(vectors)
         if n == 0:
             raise ValueError("Cannot take the mean of an empty sequence.")
@@ -176,8 +187,19 @@ class HilbertSpace[V](ABC):
     def gram_schmidt(self, vectors: Sequence[V], /, *, rtol: float = 1e-12) -> list[V]:
         """Orthonormalise a sequence of linearly independent vectors.
 
-        Raises if the vectors are dependent. Use :meth:`orthonormal_basis` when
-        a rank-deficient set should be reduced rather than rejected.
+        Args:
+            vectors: the vectors, which must be independent.
+            rtol: a vector is taken as dependent when what is left of it after
+                projecting off its predecessors is this small a fraction of
+                what went in. Relative, so it does not depend on scale.
+
+        Returns:
+            An orthonormal sequence spanning the same space.
+
+        Raises:
+            ValueError: on the first dependent vector, naming it. Use
+                :meth:`orthonormal_basis` when a rank-deficient set should be
+                reduced rather than rejected.
         """
         result: list[V] = []
         for i, vector in enumerate(vectors):
@@ -198,6 +220,16 @@ class HilbertSpace[V](ABC):
         What a rank-revealing method wants: a randomised range finder feeds in
         blocks of probes that may well be numerically dependent, and needs the
         independent part rather than an exception.
+
+        Args:
+            vectors: the vectors, which need not be independent.
+            rtol: the dependence threshold, as in :meth:`gram_schmidt`. Looser
+                here by default, since dropping a marginal vector costs less
+                than keeping a numerically dependent one.
+
+        Returns:
+            An orthonormal basis for the span, which may be shorter than the
+            input.
         """
         result: list[V] = []
         for vector in vectors:
@@ -239,6 +271,13 @@ class HilbertSpace[V](ABC):
 
         This is **not** white noise: no claim is made about its covariance.
         Use :meth:`white_noise` when the distribution matters.
+
+        Returns:
+            A vector of this space.
+
+        Raises:
+            NotImplementedError: unless the space provides one. The checks in
+                :mod:`pygeoinf2.testing` and the randomised algorithms need it.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement random(). It is needed "
@@ -248,7 +287,17 @@ class HilbertSpace[V](ABC):
     def white_noise(self, *, rng: Generator | None = None) -> V:
         """A sample whose covariance is the identity *on this space*.
 
-        That is, ``E[(x, u) (x, v)] == (u, v)`` for all ``u``, ``v``.
+        That is, ``E[(x, u) (x, v)] == (u, v)`` for all ``u``, ``v``. Note this
+        is a statement about the space's own inner product, not about the
+        components -- on a space with a non-trivial metric the two differ, and
+        that difference is the reason this is a method rather than a call to
+        ``standard_normal``.
+
+        Returns:
+            A draw.
+
+        Raises:
+            NotImplementedError: unless the space provides one.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement white_noise()."
@@ -368,7 +417,19 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
         return self.from_components(np.zeros(self.dim))
 
     def basis_vector(self, i: int) -> V:
-        """The ``i``-th basis vector."""
+        """The ``i``-th basis vector.
+
+        Args:
+            i: which one, from zero.
+
+        Returns:
+            The vector whose components are one there and zero elsewhere.
+            Note this is a *basis* vector, orthonormal only where the metric
+            is the identity.
+
+        Raises:
+            IndexError: if the index is outside the dimension.
+        """
         if not 0 <= i < self.dim:
             raise IndexError(f"Basis index {i} out of range for dim {self.dim}.")
         c = np.zeros(self.dim)
@@ -495,6 +556,12 @@ def require_module(*spaces: HilbertSpace) -> None:
     The counterpart of :func:`~pygeoinf2.algebra.operators.require_coordinates`,
     so an operation that needs fields to multiply fails by name rather than by
     ``AttributeError``.
+
+    Args:
+        *spaces: the spaces to check.
+
+    Raises:
+        TypeError: if any of them is not a ``HilbertModule``.
     """
     for space in spaces:
         if not isinstance(space, HilbertModule):

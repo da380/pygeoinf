@@ -138,7 +138,20 @@ class DirectSum[V](HilbertSpace[tuple]):
         return self._spaces
 
     def index(self, key: int | str) -> int:
-        """Resolve a label or index to a position."""
+        """Resolve a label or index to a position.
+
+        Args:
+            key: a summand's label, or its position.
+
+        Returns:
+            The position.
+
+        Raises:
+            KeyError: if a label is given and the sum has none, or none
+                matching -- with the available labels in the message, since
+                that is what the caller needs next.
+            IndexError: if a position is out of range.
+        """
         if isinstance(key, str):
             if self._labels is None:
                 raise KeyError(f"This direct sum has no labels, so no {key!r}.")
