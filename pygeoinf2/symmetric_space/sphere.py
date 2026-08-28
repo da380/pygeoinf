@@ -54,9 +54,19 @@ _CHUNK_ENTRIES = 4_000_000
 # When the transform route wins. Its cost is fixed in the number of points --
 # one analysis, one FFT, one NUFFT -- while the direct sum costs one basis
 # evaluation per point per component, so the crossover is a threshold on both.
-# Measured at lmax 32, 64 and 128 across four point counts; see DESIGN.md 21.15.
-_TRANSFORM_MIN_POINTS = 512
-_TRANSFORM_MIN_DIM = 512
+#
+# Retuned once the NUFFT stopped running on every core (see Sphere.evaluate).
+# It was 512 and 512, measured when finufft's default threading was making the
+# transform 4 to 20 times slower than it needed to be, which pushed the
+# crossover out. Measured again at lmax 4, 8, 16, 32 and 64 across six point
+# counts: the transform now wins from about 200 points once the dimension is a
+# few hundred, and the old thresholds were leaving a factor of 13 on the table
+# at lmax 64 and 1000 points (34 ms direct against 2.6 ms). Below dim 256 the
+# two are within a millisecond of each other either way, so the dimension
+# threshold is there to avoid paying the fixed cost for nothing.
+# See DESIGN.md 21.15.
+_TRANSFORM_MIN_POINTS = 200
+_TRANSFORM_MIN_DIM = 256
 
 # pyshtools spells "leave the Condon-Shortley phase out" as csphase=1.
 _NO_CONDON_SHORTLEY = 1
@@ -666,7 +676,13 @@ class Sphere(SymmetricSpace[Any]):
         return count >= _TRANSFORM_MIN_POINTS and self.dim >= _TRANSFORM_MIN_DIM
 
     def evaluate(
-        self, x: np.ndarray, points: Sequence[Any], /, *, eps: float = 1.0e-10
+        self,
+        x: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float = 1.0e-10,
+        nthreads: int = 1,
     ) -> np.ndarray:
         """Field values at scattered points.
 
@@ -679,6 +695,13 @@ class Sphere(SymmetricSpace[Any]):
             x: a field of this space.
             points: ``(latitude, longitude)`` pairs in degrees.
             eps: the NUFFT's requested accuracy, when it is used.
+            nthreads: threads for the NUFFT. One by default, and measured:
+                finufft's own default is every core, and on a 16-core machine
+                that is 4 to 20 times *slower* here than a single thread --
+                4.4 ms against 21 ms at ``lmax`` 128, at every point count from
+                200 to 10000. These transforms are too small to pay for the
+                threading, and a call inside a ``joblib`` loop would
+                oversubscribe on top of that. Pass zero for finufft's default.
         """
         points = tuple(points)
         if not self._use_transform(len(points)):
@@ -701,11 +724,18 @@ class Sphere(SymmetricSpace[Any]):
             np.ascontiguousarray(np.fft.fftshift(coefficients)),
             isign=+1,
             eps=eps,
+            nthreads=nthreads,
         )
         return np.ascontiguousarray(np.atleast_1d(values).real)
 
     def accumulate(
-        self, weights: np.ndarray, points: Sequence[Any], /, *, eps: float = 1.0e-10
+        self,
+        weights: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float = 1.0e-10,
+        nthreads: int = 1,
     ) -> np.ndarray:
         """The derivative components of ``x -> sum_i y_i x(r_i)``.
 
@@ -713,6 +743,9 @@ class Sphere(SymmetricSpace[Any]):
         that used a type-2, the same FFT — the discrete Fourier matrix is
         symmetric, so it is its own transpose — and then the transposes of the
         fold and of synthesis onto the grid.
+
+        ``eps`` and ``nthreads`` mean what they do in :meth:`evaluate`, and
+        ``nthreads`` defaults to one for the reason measured there.
         """
         points = tuple(points)
         values = np.asarray(weights, dtype=float)
@@ -739,6 +772,7 @@ class Sphere(SymmetricSpace[Any]):
             (2 * rows, columns),
             isign=+1,
             eps=eps,
+            nthreads=nthreads,
         )
         doubled = np.fft.fft2(np.fft.ifftshift(spectrum)) / (2 * rows * columns)
         return self._double_adjoint(doubled.real)

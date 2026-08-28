@@ -412,7 +412,13 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         ]
 
     def evaluate(
-        self, x: np.ndarray, points: Sequence[Any], /, *, eps: float = 1.0e-12
+        self,
+        x: np.ndarray,
+        points: Sequence[Any],
+        /,
+        *,
+        eps: float = 1.0e-12,
+        nthreads: int = 1,
     ) -> np.ndarray:
         """Field values at scattered points, by type-2 non-uniform FFT.
 
@@ -421,12 +427,21 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         which is what makes a tomography problem on a fine grid tractable.
 
         Falls back to the direct sum above three dimensions or without finufft.
-        """
-        import finufft
 
+        Args:
+            x: a field on this box.
+            points: where to evaluate it.
+            eps: the NUFFT's requested accuracy.
+            nthreads: threads for the NUFFT, one by default. finufft's own
+                default is every core, which at these transform sizes costs
+                more in threading than it saves in work. Pass zero for it.
+        """
         layout = self._nufft_layout
         if layout is None:
             return super().evaluate(x, points)
+
+        import finufft
+
         sizes, plus, minus, amplitude, fixed = layout
 
         components = self.to_components(x)
@@ -446,6 +461,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             spectrum.reshape(sizes),
             isign=+1,
             eps=eps,
+            nthreads=nthreads,
         )
         return np.ascontiguousarray(np.atleast_1d(values).real)
 
@@ -456,18 +472,22 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         /,
         *,
         eps: float = 1.0e-12,
+        nthreads: int = 1,
     ) -> np.ndarray:
         """The derivative components of ``x -> sum_i y_i x(r_i)``.
 
         The adjoint of :meth:`evaluate`, and a type-1 NUFFT is *literally* the
         adjoint of the type-2 one — so this is the same transform run the other
         way rather than a second implementation to keep in step.
-        """
-        import finufft
 
+        ``eps`` and ``nthreads`` mean what they do in :meth:`evaluate`.
+        """
         layout = self._nufft_layout
         if layout is None:
             return super().accumulate(weights, points)
+
+        import finufft
+
         sizes, plus, _, amplitude, fixed = layout
 
         transform = (finufft.nufft1d1, finufft.nufft2d1, finufft.nufft3d1)[
@@ -479,6 +499,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             sizes,
             isign=-1,
             eps=eps,
+            nthreads=nthreads,
         )
         at_plus = spectrum.reshape(-1)[plus]
 

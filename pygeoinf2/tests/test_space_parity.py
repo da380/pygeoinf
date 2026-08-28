@@ -365,3 +365,100 @@ class TestPowerSpectrumAgainstPyshtools:
         theirs = space.to_coefficients(field).spectrum(convention="power")
         area = 4.0 * np.pi * space.radius**2
         assert mine == pytest.approx(area * theirs)
+
+
+class TestTransformOptions:
+    """The NUFFT's accuracy and thread count, reachable from the operator."""
+
+    def test_the_route_does_not_change_the_answer(self, geometry, rng):
+        """Whichever side of the crossover, and whatever the thread count.
+        The thresholds were retuned, so this is what says the retuning was a
+        change of speed and not of result."""
+        _, space = geometry
+        field = space.random(rng=rng)
+        points = space.random_points(300, rng=rng)
+
+        reference = space.evaluate(field, points)
+        for nthreads in (1, 2, 0):
+            assert space.evaluate(field, points, nthreads=nthreads) == pytest.approx(
+                reference, rel=1e-7, abs=1e-9
+            )
+
+    def test_a_loose_accuracy_is_looser(self, geometry, rng):
+        """eps reaches the transform: asking for less gets less. On the direct
+        route there is no transform to ask, and it is ignored -- which is why
+        this only asserts a bound, not a difference."""
+        _, space = geometry
+        field = space.random(rng=rng)
+        points = space.random_points(300, rng=rng)
+
+        exact = space.basis_matrix(points) @ space.to_components(field)
+        loose = space.evaluate(field, points, eps=1e-4)
+        assert loose == pytest.approx(exact, rel=1e-3, abs=1e-4 * np.abs(exact).max())
+
+    def test_the_operator_passes_them_down(self, geometry, rng):
+        _, space = geometry
+        field = space.random(rng=rng)
+        points = space.random_points(300, rng=rng)
+
+        operator = space.point_evaluation_operator(points, nthreads=2, eps=1e-8)
+        assert operator(field) == pytest.approx(
+            space.evaluate(field, points), rel=1e-6, abs=1e-8
+        )
+        assert operator.adjoint(operator(field)) is not None
+
+    def test_the_defaults_are_left_to_the_geometry(self, geometry, rng):
+        """Passing nothing must not impose a common eps: a sphere's default is
+        1e-10 and a box's 1e-12, and the operator has no business flattening
+        that."""
+        _, space = geometry
+        points = space.random_points(10, rng=rng)
+        assert space._transform_options(None, None) == {}
+        assert space._transform_options(1e-6, None) == {"eps": 1e-6}
+        assert space._transform_options(None, 3) == {"nthreads": 3}
+
+
+class TestBothEvaluationRoutesAgree:
+    """The direct sum and the non-uniform FFT are the same map.
+
+    They have to be, since which one runs is a performance threshold the
+    caller never sees. On a padded Box they were not: the NUFFT route took
+    the point's own coordinate where the direct route took it relative to the
+    enclosing grid, so the field came out displaced by exactly the padding.
+    It went unseen because the old crossover needed 512 points to reach it.
+    """
+
+    def test_the_two_routes_agree(self, geometry, rng):
+        _, space = geometry
+        field = space.random(rng=rng)
+        points = space.random_points(400, rng=rng)
+
+        direct = space.basis_matrix(points) @ space.to_components(field)
+        assert space.evaluate(field, points) == pytest.approx(
+            direct, rel=1e-8, abs=1e-8 * np.abs(direct).max()
+        )
+
+    def test_the_two_adjoint_routes_agree(self, geometry, rng):
+        _, space = geometry
+        points = space.random_points(400, rng=rng)
+        weights = rng.standard_normal(400)
+
+        direct = space.basis_matrix(points).T @ weights
+        assert space.accumulate(weights, points) == pytest.approx(
+            direct, rel=1e-8, abs=1e-8 * np.abs(direct).max()
+        )
+
+    def test_it_is_the_padding_that_was_wrong(self, rng):
+        """Named directly, because the general test above only says the two
+        disagree and not why. A Box with no padding never showed the bug."""
+        from pygeoinf2.symmetric_space import box as box_module
+
+        space = box_module.Sobolev((64,), 2.0, 0.3, bounds=((5.0, 6.0),), padding=0.25)
+        assert space.grid_axes[0][0] == pytest.approx(4.75)
+
+        field = space.random(rng=rng)
+        points = space.random_points(400, rng=rng)
+        direct = space.basis_matrix(points) @ space.to_components(field)
+        assert space.evaluate(field, points) == pytest.approx(
+            direct, rel=1e-8, abs=1e-8 * np.abs(direct).max()
+        )

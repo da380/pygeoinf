@@ -1132,7 +1132,14 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         return total
 
     def point_evaluation_operator(
-        self, points: Sequence[Any], /, *, dense: bool = False, unsafe: bool = False
+        self,
+        points: Sequence[Any],
+        /,
+        *,
+        dense: bool = False,
+        unsafe: bool = False,
+        eps: float | None = None,
+        nthreads: int | None = None,
     ) -> LinearOperator:
         """Evaluation at several points, as an operator into a Euclidean space.
 
@@ -1158,6 +1165,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             points: where to evaluate.
             dense: assemble the derivative matrix.
             unsafe: build it even on a space too rough to admit it.
+            eps: accuracy for the non-uniform FFT, where one is used. Defaults
+                to the geometry's own, which is not the same on all of them.
+            nthreads: threads for that transform. Defaults to the geometry's
+                own, which is one: finufft's default of every core is slower
+                here at every size measured, and would oversubscribe inside an
+                outer parallel loop. Both are ignored on the direct route.
 
         Returns:
             The operator.
@@ -1178,12 +1191,29 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             return LinearOperator.from_matrix(
                 self, codomain, self.basis_matrix(points), form="galerkin"
             )
+        options = self._transform_options(eps, nthreads)
         return LinearOperator.from_derivative_callables(
             self,
             codomain,
-            lambda x: self.evaluate(x, points),
-            lambda y: self.accumulate(y, points),
+            lambda x: self.evaluate(x, points, **options),
+            lambda y: self.accumulate(y, points, **options),
         )
+
+    def _transform_options(
+        self, eps: float | None, nthreads: int | None, /
+    ) -> dict[str, Any]:
+        """Whichever transform settings were actually asked for.
+
+        Left out when they are ``None``, so each geometry keeps its own
+        defaults rather than having a common one imposed on it here -- the
+        accuracy a sphere wants is not the accuracy a box wants.
+        """
+        options: dict[str, Any] = {}
+        if eps is not None:
+            options["eps"] = eps
+        if nthreads is not None:
+            options["nthreads"] = nthreads
+        return options
 
     # ----------------------------------------------------------------- #
     #                          Pointwise algebra                        #
@@ -1550,6 +1580,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         count: int | None = None,
         weight: Callable[[Any], float] | None = None,
         dense: bool = False,
+        eps: float | None = None,
+        nthreads: int | None = None,
     ) -> LinearOperator:
         """Line integrals along a set of geodesic paths.
 
@@ -1586,7 +1618,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             ValueError: if no paths are given.
         """
         return self._path_operator(
-            paths, count=count, weight=weight, dense=dense, normalise=False
+            paths,
+            count=count,
+            weight=weight,
+            dense=dense,
+            normalise=False,
+            eps=eps,
+            nthreads=nthreads,
         )
 
     def path_average_operator(
@@ -1597,6 +1635,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         count: int | None = None,
         weight: Callable[[Any], float] | None = None,
         dense: bool = False,
+        eps: float | None = None,
+        nthreads: int | None = None,
     ) -> LinearOperator:
         """Averages along a set of geodesic paths.
 
@@ -1616,7 +1656,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
                 so no average.
         """
         return self._path_operator(
-            paths, count=count, weight=weight, dense=dense, normalise=True
+            paths,
+            count=count,
+            weight=weight,
+            dense=dense,
+            normalise=True,
+            eps=eps,
+            nthreads=nthreads,
         )
 
     def _path_operator(
@@ -1628,6 +1674,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         weight: Callable[[Any], float] | None,
         dense: bool,
         normalise: bool,
+        eps: float | None = None,
+        nthreads: int | None = None,
     ) -> LinearOperator:
         """The integral or the average, which differ only by a scaling."""
         paths = tuple(paths)
@@ -1669,7 +1717,9 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         # this one is bounded only for order above 1/2 rather than for every
         # order -- a weaker condition than point evaluation's, and one this
         # class does not check.
-        return weights @ self.point_evaluation_operator(nodes, unsafe=True)
+        return weights @ self.point_evaluation_operator(
+            nodes, unsafe=True, eps=eps, nthreads=nthreads
+        )
 
     def geodesic_ball_average_operator(
         self,

@@ -151,6 +151,18 @@ class Box(PeriodicBox):
         """The basis functions at a point of the domain."""
         return super().basis_at(self._to_enclosing(point))
 
+    def _angles(self, points: Sequence[Any]) -> list[np.ndarray]:
+        """Points as angles, through the same seam :meth:`basis_at` uses.
+
+        The enclosing box's grid does not start where the domain does -- the
+        padding sits in between -- so a point has to be moved into the
+        enclosing coordinates before it becomes an angle. :meth:`basis_at`
+        already did this and this did not, which meant the non-uniform FFT
+        route evaluated the field displaced by exactly the padding while the
+        direct route got it right. Both are now the same map.
+        """
+        return super()._angles([self._to_enclosing(point) for point in points])
+
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point drawn uniformly from the domain, never from the padding."""
         generator = np.random.default_rng() if rng is None else rng

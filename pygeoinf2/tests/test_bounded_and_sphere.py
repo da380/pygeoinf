@@ -70,17 +70,32 @@ class TestBoundedDomains:
         assert np.all(field[~space.interior_mask] == 0.0)
 
     def test_the_taper_removes_most_of_the_ringing(self):
-        """Measured, because the point of it is a number."""
+        """Measured, because the point of it is a number.
+
+        Measured *pointwise*, which is where Gibbs ringing actually lives: a
+        path integral averages the overshoot and undershoot against each
+        other, so it understates the ringing by an order of magnitude and is
+        the wrong instrument for this. The earlier version of this test used
+        one, and the large error it was reading turned out to be a coordinate
+        bug in the NUFFT route on a padded box rather than ringing at all.
+        With that fixed: 0.0508 against 0.0002, a factor of 250.
+        """
         space = Interval(128, lower=0.0, upper=1.0)
-        start, end = np.array([0.05]), np.array([0.95])
-        exact = 0.9
+        interior = [np.array([x]) for x in np.linspace(0.02, 0.98, 200)]
 
         tapered = space.project_function(lambda t: 1.0)
         hard = space.project_function(lambda t: 1.0, taper=False)
-        integral = space.path_integral_operator([(start, end)], count=40)
 
-        assert abs(integral(hard)[0] - exact) > 0.04
-        assert abs(integral(tapered)[0] - exact) < 0.02
+        assert np.abs(space.evaluate(hard, interior) - 1.0).max() > 0.04
+        assert np.abs(space.evaluate(tapered, interior) - 1.0).max() < 0.001
+
+        # And it still gets the integral right, to a two-hundredth of what
+        # the hard cutoff manages: 8.1e-6 against 1.7e-3.
+        start, end = np.array([0.05]), np.array([0.95])
+        integral = space.path_integral_operator([(start, end)], count=40)
+        exact = 0.9
+        assert abs(integral(tapered)[0] - exact) < 1e-4
+        assert abs(integral(hard)[0] - exact) > 1e-3
 
     def test_the_function_is_never_called_outside_the_domain(self):
         """It need not be defined there, which is why the padding is zeroed."""
