@@ -596,6 +596,21 @@ class DiscrepancyPrinciple(Operator):
         model, _, _ = self._resolve(data)
         return model
 
+    def _linearise(self, data: Any) -> Any:
+        """The model and its derivative from a *single* damping search.
+
+        ``at(data)`` otherwise called :meth:`_value` and :meth:`_derivative`
+        in turn, and each of those runs :meth:`_resolve` -- so the root find
+        over the damping, which is the whole cost of this operator, ran twice
+        for one linearisation. Nothing else about the two paths differs.
+        """
+        from ..algebra.operators import Linearisation
+
+        resolved = self._resolve(data)
+        return Linearisation(
+            data, resolved[0], self._derivative_from(data, *resolved)
+        )
+
     def estimator_at(self, damping: float, /) -> LeastSquares:
         """The fixed-damping estimator this collapses to at one damping."""
         return LeastSquares(
@@ -606,7 +621,12 @@ class DiscrepancyPrinciple(Operator):
         )
 
     def _derivative(self, data: Any) -> LinearOperator:
-        model, damping, moves = self._resolve(data)
+        return self._derivative_from(data, *self._resolve(data))
+
+    def _derivative_from(
+        self, data: Any, model: Any, damping: float, moves: bool, /
+    ) -> LinearOperator:
+        """The derivative, given a search that has already been run."""
         model_space = self._problem.model_space
         data_space = self._problem.data_space
         if damping == 0.0:
@@ -772,13 +792,109 @@ class ConstrainedLeastSquares(LinearPointEstimator):
     def parameterised(
         self, parameterisation: LinearOperator, /, **kwargs: Any
     ) -> "ConstrainedLeastSquares":
-        """The same estimator restricted to a parameter space."""
-        raise NotImplementedError(
-            "Parameterising a constrained inversion needs the constraint "
-            "expressed in the parameter space, which the parameterisation "
-            "alone does not determine. Build the reduced problem and its "
-            "subspace explicitly."
+        """The same estimator restricted to a parameter space.
+
+        The constraint is pulled back with the problem: ``B u == w`` in the
+        model space becomes ``(B M) p == w`` in the parameter space, where
+        ``M`` is the parameterisation. That is v1's construction, and it works
+        because a constraint written as an equation says what it means about
+        any model, including one built from parameters.
+
+        This used to refuse outright, on the grounds that the parameterisation
+        alone does not determine the constraint. It does when the subspace
+        remembers the equation it was built from -- which is what
+        :attr:`~pygeoinf2.geometry.subspaces.AffineSubspace.has_explicit_equation`
+        reports -- and only then, which is what the refusal below is for.
+
+        Args:
+            parameterisation: ``M``, from the parameter space into the model
+                space.
+            **kwargs: passed to the reduced problem's own parameterisation.
+
+        Returns:
+            The estimator on the parameter space.
+
+        Raises:
+            NotImplementedError: if the subspace was built from a basis rather
+                than an equation. A basis fixes the solution set but not which
+                equation defines it, and any equation invented here would be a
+                different one.
+            ValueError: if the parameter space is too small to carry the
+                constraints.
+        """
+        subspace = _parameterised_subspace(self._subspace, parameterisation)
+        return type(self)(
+            self._problem.parameterised(parameterisation, **kwargs),
+            subspace,
+            damping=self._damping,
+            solver=self._solver,
+            formalism=self._formalism,
         )
+
+    def _parameterised_subspace(
+        self, parameterisation: LinearOperator, /
+    ) -> AffineSubspace:
+        """The constraint, read in the parameter space."""
+        return _parameterised_subspace(self._subspace, parameterisation)
+
+
+    def data_reduced(self, *args: Any, **kwargs: Any) -> "ConstrainedLeastSquares":
+        """The same estimator on a reduced set of data.
+
+        The constraint lives in the *model* space and a data reduction does not
+        touch it, so unlike :meth:`parameterised` there is nothing to pull
+        back: the reduction applies to the problem alone.
+        """
+        return type(self)(
+            self._problem.data_reduced(*args, **kwargs),
+            self._subspace,
+            damping=self._damping,
+            solver=self._solver,
+            formalism=self._formalism,
+        )
+
+
+def _parameterised_subspace(
+    subspace: AffineSubspace, parameterisation: LinearOperator, /
+) -> AffineSubspace:
+    """A constraint pulled back through a parameterisation.
+
+    ``B u == w`` in the model space becomes ``(B M) p == w`` in the parameter
+    space. That is v1's construction, and it works because a constraint written
+    as an equation says what it means about any model, including one assembled
+    from parameters.
+
+    Args:
+        subspace: the constraint, which must remember its equation.
+        parameterisation: ``M``, from the parameter space into the model space.
+
+    Returns:
+        The constraint in the parameter space.
+
+    Raises:
+        NotImplementedError: if the subspace was built from a basis rather than
+            an equation. A basis fixes the solution set but not which equation
+            defines it, and any equation invented here would be a different
+            one with the same solutions.
+        ValueError: if the parameter space is too small to carry the
+            constraints.
+    """
+    if not subspace.has_explicit_equation:
+        raise NotImplementedError(
+            "Parameterising a constrained inversion needs the constraint as "
+            "an equation, and this subspace was built from a basis. Rebuild "
+            "it with AffineSubspace.from_linear_equation, or use "
+            "to_hyperplanes() for an equation with the same solution set."
+        )
+    constraint = subspace.constraint_operator
+    if constraint.codomain.dim > parameterisation.domain.dim:
+        raise ValueError(
+            f"The parameter space has dimension {parameterisation.domain.dim}, "
+            f"which cannot carry {constraint.codomain.dim} constraints."
+        )
+    return AffineSubspace.from_linear_equation(
+        constraint @ parameterisation, subspace.constraint_value
+    )
 
 
 def _reduced_problem(
@@ -845,6 +961,11 @@ class ConstrainedMinimumNorm(Operator):
             rtol=rtol,
         )
         self._offset = problem.forward_operator(self._translation)
+        # Kept so parameterised() and data_reduced() can rebuild with the
+        # same settings; the inner method does not expose all of them.
+        self._level = level
+        self._solver = solver
+        self._formalism = formalism
 
     @property
     def subspace(self) -> AffineSubspace:
@@ -855,6 +976,37 @@ class ConstrainedMinimumNorm(Operator):
     def reduced(self) -> DiscrepancyPrinciple:
         """The unconstrained method on the reduced problem."""
         return self._inner
+
+    def parameterised(
+        self, parameterisation: LinearOperator, /, **kwargs: Any
+    ) -> "ConstrainedMinimumNorm":
+        """The same method restricted to a parameter space.
+
+        As :meth:`ConstrainedLeastSquares.parameterised`: the constraint
+        ``B u == w`` is pulled back to ``(B M) p == w``, which needs the
+        subspace to remember the equation it was built from.
+        """
+        return type(self)(
+            self._problem.parameterised(parameterisation, **kwargs),
+            _parameterised_subspace(self._subspace, parameterisation),
+            level=self._level,
+            solver=self._solver,
+            formalism=self._formalism,
+        )
+
+    def data_reduced(self, *args: Any, **kwargs: Any) -> "ConstrainedMinimumNorm":
+        """The same method on a reduced set of data.
+
+        The constraint is in the model space, so a data reduction leaves it
+        alone and only the problem changes.
+        """
+        return type(self)(
+            self._problem.data_reduced(*args, **kwargs),
+            self._subspace,
+            level=self._level,
+            solver=self._solver,
+            formalism=self._formalism,
+        )
 
     def _shifted(self, data: Any) -> Any:
         return self._problem.data_space.subtract(data, self._offset)

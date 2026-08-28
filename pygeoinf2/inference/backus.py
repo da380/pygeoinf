@@ -349,8 +349,36 @@ class BackusInference(SetEstimator):
         model = self.minimum_norm_model(data)
         return self._radius**2 - self._problem.model_space.squared_norm(model)
 
+    def is_feasible(self, data: Any, /) -> bool:
+        """Whether any model within the prior bound fits these data at all.
+
+        v1's ``test_data_compatibility``, and the question every other method
+        here assumes has been answered: the smallest model reproducing the data
+        exactly is ``A* (A A*)^-1 d``, and if even that lies outside the prior
+        ball then no model does and the feasible set is empty. That is a
+        statement about the data and the prior together -- usually that the
+        prior bound is too tight, or the data too noisy to be fitted exactly.
+
+        A predicate, so a caller can ask *before* being told by an exception.
+        :meth:`__call__` raises on the same condition, which is right when a
+        set was asked for and unhelpful when the question was whether one
+        exists.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            Whether the feasible set is non-empty.
+        """
+        return self.budget(data) >= 0.0
+
     def __call__(self, data: Any) -> ConvexSet:
-        """The feasible property set, as an ellipsoid."""
+        """The feasible property set, as an ellipsoid.
+
+        Raises:
+            ValueError: if no model within the prior bound fits the data. Ask
+                :meth:`is_feasible` first to test that without an exception.
+        """
         budget = self.budget(data)
         if budget < 0.0:
             raise ValueError(
@@ -366,6 +394,22 @@ class BackusInference(SetEstimator):
             centre=centre,
             covariance=covariance,
         )
+
+    @cached_property
+    def _joint_spectrum(self) -> tuple[Any, np.ndarray, np.ndarray]:
+        """The spectrum of ``C C*`` for Parker's joint map ``C == (A, T)``.
+
+        Depends only on the problem and the target, not on the data or the
+        value -- so it is formed once, as
+        :attr:`FeasibleProperty._reduced` already is for the reduced problem.
+        Rebuilding it per call made every sweep over property values pay for a
+        full eigendecomposition of a ``dim(D) + dim(P)`` operator.
+        """
+        from ..algebra.direct_sum import ColumnLinearOperator
+
+        joint = ColumnLinearOperator([self._problem.forward_operator, self._target])
+        values, vectors = _self_adjoint_spectrum(joint @ joint.adjoint)
+        return joint.codomain, values, vectors
 
     def inclusion_norm(self, value: Any, data: Any, /) -> float:
         """``min { ||m|| : A m == d, T m == p }``, the cost of a property value.
@@ -384,10 +428,7 @@ class BackusInference(SetEstimator):
         part in the kernel, and if it is non-zero the answer is ``inf``, which
         is a statement about the value and not a failure to converge.
         """
-        from ..algebra.direct_sum import ColumnLinearOperator
-
-        joint = ColumnLinearOperator([self._problem.forward_operator, self._target])
-        space = joint.codomain
+        space, values, vectors = self._joint_spectrum
         target = space.from_components(
             np.concatenate(
                 [
@@ -396,7 +437,6 @@ class BackusInference(SetEstimator):
                 ]
             )
         )
-        values, vectors = _self_adjoint_spectrum(joint @ joint.adjoint)
         beta = _spectral_components(space, vectors, target)
         live = values > _SPECTRUM_FLOOR * max(values.max(initial=0.0), 1.0)
         if float(np.linalg.norm(beta[~live])) > _SPECTRUM_FLOOR * max(
@@ -714,8 +754,39 @@ class FeasibleProperty(SetEstimator):
             self._target.adjoint(direction), model
         )
 
+    def is_feasible(self, data: Any, /) -> bool:
+        """Whether any model lies in both the prior set and the noise set.
+
+        v1's ``test_data_compatibility``, for the bounded-noise route. The
+        question every other method here assumes has been answered: if the
+        prior ball and the data's noise ball do not intersect under ``A``,
+        there is no feasible set and a support value has nothing to be the
+        support of.
+
+        Answered by attempting one support evaluation, so it costs one -- and
+        that is the honest price, because on this route emptiness is not a
+        cheap closed-form test as it is for
+        :meth:`BackusInference.is_feasible`. A caller sweeping many directions
+        should ask once, not per direction.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            Whether the feasible set is non-empty.
+        """
+        try:
+            self.support(self.target_space.basis_vector(0), data)
+        except ValueError:
+            return False
+        return True
+
     def __call__(self, data: Any) -> ConvexSet:
-        """The feasible property set, as a support-function oracle."""
+        """The feasible property set, as a support-function oracle.
+
+        The oracle raises on data no model can match; :meth:`is_feasible`
+        tests that in advance.
+        """
         return ConvexSet.from_support_function(
             self.target_space,
             lambda direction: self.support(direction, data),
@@ -996,8 +1067,32 @@ class DualFeasibleProperty(SetEstimator):
         cost = self.dual_cost(direction, data)
         return self._method.minimise(cost, self.data_space.zero()).minimiser
 
+    def is_feasible(self, data: Any, /) -> bool:
+        """Whether any model lies in both the prior set and the noise set.
+
+        The dual's own diagnosis: an unbounded dual *is* an empty primal, which
+        is why :meth:`support` refuses rather than returning the large negative
+        number the minimisation was heading towards. This asks the same
+        question without the exception, and costs the same one minimisation.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            Whether the feasible set is non-empty.
+        """
+        try:
+            self.support(self.target_space.basis_vector(0), data)
+        except ValueError:
+            return False
+        return True
+
     def __call__(self, data: Any) -> ConvexSet:
-        """The feasible property set, as a support-function oracle."""
+        """The feasible property set, as a support-function oracle.
+
+        The oracle raises on data no model can match; :meth:`is_feasible`
+        tests that in advance.
+        """
         return ConvexSet.from_support_function(
             self.target_space, lambda direction: self.support(direction, data)
         )

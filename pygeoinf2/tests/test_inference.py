@@ -93,11 +93,28 @@ class TestForwardProblem:
         ForwardProblem(nonlinear)  # the general class accepts it
 
     def test_a_set_may_stand_in_for_a_measure(self, problem):
+        """And asking for it as a measure is a *type* error, not a missing
+        attribute: bounded errors are a different kind of problem, not a
+        problem missing a field, and the message says where they are
+        handled."""
         ball = Ball(problem.data_space, radius=0.3)
         with_set = LinearForwardProblem(problem.forward_operator, error=ball)
         assert with_set.error_set is ball
-        with pytest.raises(AttributeError, match="not a measure"):
+        with pytest.raises(TypeError, match="backus"):
             with_set.error_measure
+
+    def test_a_measure_is_not_a_set_either(self, problem):
+        with pytest.raises(TypeError, match="gaussian"):
+            problem.error_set
+
+    def test_no_error_at_all_is_still_a_missing_attribute(self, problem):
+        """Which it is: nothing was supplied, so there is nothing to be the
+        wrong type."""
+        bare = LinearForwardProblem(problem.forward_operator)
+        with pytest.raises(AttributeError):
+            bare.error_measure
+        with pytest.raises(AttributeError):
+            bare.error_set
 
     def test_synthetic_data_carries_the_error(self, problem, prior, rng):
         model = prior.sample(rng=rng)
@@ -675,3 +692,285 @@ class TestPosteriorSampling:
         assert not estimator.push_forward(
             LinearOperator.identity(problem.model_space)
         ).can_sample
+
+
+class TestJointInversionEndToEnd:
+    """Two problems, different noise, joined and inverted -- against a dense
+    reference. The review asked for exactly this: the pieces were each tested
+    and the combination was not."""
+
+    @pytest.fixture
+    def parts(self, rng):
+        import pygeoinf2 as gi
+
+        model = EuclideanSpace(24)
+        first_data = EuclideanSpace(10)
+        second_data = EuclideanSpace(6)
+
+        first = LinearOperator.from_matrix(
+            model, first_data, rng.standard_normal((10, 24)), form="components"
+        )
+        second = LinearOperator.from_matrix(
+            model, second_data, rng.standard_normal((6, 24)), form="components"
+        )
+        # Deliberately different noise levels: a joint inversion that ignored
+        # the weighting would still look plausible on equal ones.
+        problems = [
+            LinearForwardProblem(
+                first, error=gi.GaussianMeasure.from_standard_deviation(first_data, 0.05)
+            ),
+            LinearForwardProblem(
+                second,
+                error=gi.GaussianMeasure.from_standard_deviation(second_data, 0.50),
+            ),
+        ]
+        prior = gi.GaussianMeasure.from_standard_deviation(model, 1.0)
+        truth = prior.sample(rng=rng)
+        data = (first(truth), second(truth))
+        return problems, prior, truth, data
+
+    @staticmethod
+    def dense_reference(problems, prior, data):
+        """``(Q^-1 + A* R^-1 A)^-1 A* R^-1 d``, assembled in components."""
+        forward = np.vstack(
+            [
+                problem.forward_operator.matrix(form="components")
+                for problem in problems
+            ]
+        )
+        noise = np.diag(
+            np.concatenate(
+                [
+                    np.full(
+                        problem.data_space.dim,
+                        problem.error_measure.covariance.eigenvalues[0],
+                    )
+                    for problem in problems
+                ]
+            )
+        )
+        covariance = np.diag(prior.covariance.eigenvalues)
+        stacked = np.concatenate([np.asarray(part) for part in data])
+        gain = covariance @ forward.T @ np.linalg.inv(
+            forward @ covariance @ forward.T + noise
+        )
+        return gain @ stacked
+
+    @pytest.mark.parametrize("formalism", ["data_space", "model_space"])
+    def test_both_formalisms_match_a_dense_reference(self, parts, formalism):
+        problems, prior, truth, data = parts
+        joint = LinearForwardProblem.from_direct_sum(problems)
+        inversion = LinearGaussianInversion(joint, prior, formalism=formalism)
+
+        estimate = inversion(joint.data_space.from_components(
+            np.concatenate([np.asarray(part) for part in data])
+        ))
+        reference = self.dense_reference(problems, prior, data)
+        assert np.asarray(estimate.expectation) == pytest.approx(reference, rel=1e-6)
+
+    def test_a_blocked_preconditioner_gets_the_same_answer(self, parts, rng):
+        """On the direct-sum data space, where the blocks are the two
+        instruments."""
+        from pygeoinf2.inference.preconditioners import NormalDiagonalPreconditioner
+        from pygeoinf2.numerics.solvers import CGSolver
+
+        problems, prior, truth, data = parts
+        joint = LinearForwardProblem.from_direct_sum(problems)
+        stacked = joint.data_space.from_components(
+            np.concatenate([np.asarray(part) for part in data])
+        )
+
+        plain = LinearGaussianInversion(joint, prior)(stacked)
+        preconditioned = LinearGaussianInversion(
+            joint,
+            prior,
+            solver=CGSolver(rtol=1e-12).with_preconditioner(
+                NormalDiagonalPreconditioner()
+            ),
+        )(stacked)
+
+        assert np.asarray(preconditioned.expectation) == pytest.approx(
+            np.asarray(plain.expectation), rel=1e-6
+        )
+
+    def test_the_evidence_and_a_push_forward_come_through(self, parts):
+        problems, prior, truth, data = parts
+        joint = LinearForwardProblem.from_direct_sum(problems)
+        inversion = LinearGaussianInversion(joint, prior)
+        stacked = joint.data_space.from_components(
+            np.concatenate([np.asarray(part) for part in data])
+        )
+
+        assert np.isfinite(inversion.log_evidence(stacked))
+
+        summary = LinearOperator.from_matrix(
+            joint.model_space,
+            EuclideanSpace(2),
+            np.ones((2, 24)) / 24.0,
+            form="components",
+        )
+        pushed = inversion.push_forward(summary)(stacked)
+        assert np.asarray(pushed.expectation).shape == (2,)
+
+
+class TestConstrainedEstimatorsCanBeReduced:
+    """Both used to raise. The constraint is pulled back with the problem:
+    ``B u == w`` becomes ``(B M) p == w``, which is v1's construction."""
+
+    @pytest.fixture
+    def setting(self, rng):
+        import pygeoinf2 as gi
+        from pygeoinf2.geometry.subspaces import AffineSubspace
+
+        model = EuclideanSpace(20)
+        data_space = EuclideanSpace(8)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.standard_normal((8, 20)), form="components"
+        )
+        constraint = LinearOperator.from_matrix(
+            model, EuclideanSpace(2), rng.standard_normal((2, 20)), form="components"
+        )
+        values = np.array([0.3, -0.2])
+        subspace = AffineSubspace.from_linear_equation(constraint, values)
+        problem = LinearForwardProblem(
+            forward,
+            error=gi.GaussianMeasure.from_standard_deviation(data_space, 0.05),
+        )
+        parameterisation = LinearOperator.from_matrix(
+            EuclideanSpace(6), model, rng.standard_normal((20, 6)), form="components"
+        )
+        data = forward(model.random(rng=rng))
+        return problem, subspace, constraint, values, parameterisation, data
+
+    def test_the_constraint_still_holds_in_the_parameter_space(self, setting):
+        from pygeoinf2.inference.point import ConstrainedLeastSquares
+
+        problem, subspace, constraint, values, parameterisation, data = setting
+        estimator = ConstrainedLeastSquares(problem, subspace, damping=1e-3)
+
+        reduced = estimator.parameterised(parameterisation)
+        parameters = reduced(data)
+        assert (constraint @ parameterisation)(parameters) == pytest.approx(
+            values, abs=1e-8
+        )
+
+    def test_the_minimum_norm_route_too(self, setting, rng):
+        """With data the reduced problem can actually fit -- generated from a
+        model inside the parameterisation's range, since a discrepancy search
+        on data outside it has no root to find and says so."""
+        from pygeoinf2.inference.point import ConstrainedMinimumNorm
+
+        problem, subspace, constraint, values, _, _ = setting
+        # Enough parameters to fit: 8 data and 2 constraints, so 6 would leave
+        # only 4 free and the discrepancy target would be unreachable -- which
+        # is a fact about the reduced problem, not about the pull-back.
+        parameterisation = LinearOperator.from_matrix(
+            EuclideanSpace(14),
+            problem.model_space,
+            rng.standard_normal((20, 14)),
+            form="components",
+        )
+        reachable = parameterisation(parameterisation.domain.random(rng=rng))
+        data = problem.forward_operator(subspace.project(reachable))
+
+        method = ConstrainedMinimumNorm(problem, subspace)
+        parameters = method.parameterised(parameterisation)(data)
+        assert (constraint @ parameterisation)(parameters) == pytest.approx(
+            values, abs=1e-6
+        )
+
+    def test_a_subspace_without_an_equation_is_still_refused(self, setting, rng):
+        """A basis fixes the solution set but not which equation defines it,
+        and inventing one would be a different equation."""
+        from pygeoinf2.geometry.subspaces import AffineSubspace
+        from pygeoinf2.inference.point import ConstrainedLeastSquares
+
+        from pygeoinf2.geometry.subspaces import OrthogonalProjector
+
+        problem, _, _, _, parameterisation, _ = setting
+        model = problem.model_space
+        basis = [model.basis_vector(index) for index in range(3)]
+        from_basis = AffineSubspace(OrthogonalProjector.from_basis(model, basis))
+
+        estimator = ConstrainedLeastSquares(problem, from_basis, damping=1e-3)
+        with pytest.raises(NotImplementedError, match="built from a basis"):
+            estimator.parameterised(parameterisation)
+
+    def test_too_few_parameters_for_the_constraints_is_refused(self, setting, rng):
+        from pygeoinf2.inference.point import ConstrainedLeastSquares
+
+        problem, subspace, _, _, _, _ = setting
+        tiny = LinearOperator.from_matrix(
+            EuclideanSpace(1),
+            problem.model_space,
+            rng.standard_normal((20, 1)),
+            form="components",
+        )
+        estimator = ConstrainedLeastSquares(problem, subspace, damping=1e-3)
+        with pytest.raises(ValueError, match="cannot carry"):
+            estimator.parameterised(tiny)
+
+    def test_a_data_reduction_leaves_the_constraint_alone(self, setting, rng):
+        """It lives in the model space, so there is nothing to pull back."""
+        from pygeoinf2.inference.point import ConstrainedLeastSquares
+
+        problem, subspace, constraint, values, _, data = setting
+        estimator = ConstrainedLeastSquares(problem, subspace, damping=1e-3)
+
+        # Combine the eight observations into four.
+        reduction = LinearOperator.from_matrix(
+            problem.data_space,
+            EuclideanSpace(4),
+            np.repeat(np.eye(4), 2, axis=1) / 2.0,
+            form="components",
+        )
+        reduced = estimator.data_reduced(reduction)
+        assert reduced.subspace is subspace
+
+
+class TestFeasibilityIsAskable:
+    """All three noisy routes reported an empty feasible set only by raising,
+    which is right when a set was asked for and unhelpful when the question was
+    whether one exists. v1 had ``test_data_compatibility``."""
+
+    @pytest.fixture
+    def setting(self, rng):
+        model = EuclideanSpace(12)
+        data_space = EuclideanSpace(5)
+        target_space = EuclideanSpace(1)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.standard_normal((5, 12)), form="components"
+        )
+        target = LinearOperator.from_matrix(
+            model, target_space, rng.standard_normal((1, 12)), form="components"
+        )
+        return model, forward, target, forward(model.random(rng=rng))
+
+    def test_a_tight_prior_is_infeasible_and_a_roomy_one_is_not(self, setting):
+        from pygeoinf2.inference import (
+            BackusInference,
+            DualFeasibleProperty,
+            FeasibleProperty,
+        )
+
+        model, forward, target, data = setting
+        exact = LinearForwardProblem(forward)
+        noisy = LinearForwardProblem(forward, error=Ball(forward.codomain, radius=1e-6))
+
+        assert not BackusInference(exact, target, Ball(model, radius=1e-3)).is_feasible(data)
+        assert BackusInference(exact, target, Ball(model, radius=100.0)).is_feasible(data)
+
+        for route in (FeasibleProperty, DualFeasibleProperty):
+            assert not route(noisy, target, Ball(model, radius=1e-3)).is_feasible(data)
+            assert route(noisy, target, Ball(model, radius=100.0)).is_feasible(data)
+
+    def test_the_predicate_agrees_with_the_exception(self, setting):
+        from pygeoinf2.inference import BackusInference
+
+        model, forward, target, data = setting
+        estimator = BackusInference(
+            LinearForwardProblem(forward), target, Ball(model, radius=1e-3)
+        )
+        assert not estimator.is_feasible(data)
+        with pytest.raises(ValueError, match="No model"):
+            estimator(data)

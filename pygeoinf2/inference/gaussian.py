@@ -135,6 +135,9 @@ class LinearGaussianInversion(GaussianEstimator):
         self._inverse = inverse
         self._gain = gain
         self._formalism = normal.formalism
+        # Log-determinants already computed, keyed on the settings that
+        # produced them. See normal_log_determinant.
+        self._log_determinants: dict[tuple, Any] = {}
         self._solver = solver
 
     @staticmethod
@@ -424,9 +427,28 @@ class LinearGaussianInversion(GaussianEstimator):
 
         if not self._problem.has_error:
             raise ValueError("The evidence needs a data error measure.")
+
+        # The volume term does not depend on the data, and a mixture asks for
+        # it once per component per call to weights() -- so without a memo the
+        # single most expensive part of an evidence calculation is repeated
+        # for every datum compared against the same model.
+        #
+        # Stochastic estimates are cached too, deliberately. Repeating them
+        # would make a mixture's weights jitter between two calls with the
+        # same data, which reads as instability in the model comparison rather
+        # than in the estimator. Pass an ``rng`` to control what is cached;
+        # the settings are part of the key, so asking for a different method
+        # or more samples recomputes.
+        key = (method, samples, tuple(sorted(kwargs.items())))
+        cached = self._log_determinants.get(key)
+        if cached is not None:
+            return cached
+
         settings = dict(method=method, samples=samples, rng=rng, **kwargs)
         if self._formalism == "data_space":
-            return log_determinant(self._normal, **settings)
+            result = log_determinant(self._normal, **settings)
+            self._log_determinants[key] = result
+            return result
 
         from ..numerics.randomised import Estimate
 
@@ -445,7 +467,9 @@ class LinearGaussianInversion(GaussianEstimator):
         total = sum(part.value for part in parts)
         # Independent estimates, so the errors add in quadrature.
         error = float(np.sqrt(sum(part.standard_error**2 for part in parts)))
-        return Estimate(float(total), error, min(part.samples for part in parts))
+        result = Estimate(float(total), error, min(part.samples for part in parts))
+        self._log_determinants[key] = result
+        return result
 
     def evidence_terms(self, data: Any, /, **kwargs: Any) -> tuple[float, float]:
         """The two halves of the log evidence: misfit and volume.

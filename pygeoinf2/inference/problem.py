@@ -85,18 +85,45 @@ class ForwardProblem:
 
     @property
     def error_measure(self) -> ProbabilityMeasure:
-        """The data uncertainty, when it is a measure."""
+        """The data uncertainty, when it is a measure.
+
+        Raises:
+            AttributeError: if the problem has no uncertainty at all.
+            TypeError: if it has one but it is a *set*. That is not a missing
+                attribute, it is a different kind of problem: bounded errors
+                are handled by the Backus-Gilbert routes, which give a range
+                of admissible values rather than a distribution over them.
+                Saying so by type, and by name, saves the caller working out
+                which of the two situations they are in.
+        """
+        if self._error is None:
+            raise AttributeError("This problem has no data uncertainty.")
         if not isinstance(self._error, ProbabilityMeasure):
-            raise AttributeError(
-                "The data uncertainty of this problem is not a measure."
+            raise TypeError(
+                "This method needs a Gaussian error measure; the problem's "
+                f"uncertainty is a set ({type(self._error).__name__}). Bounded "
+                "errors are handled by the Backus-Gilbert routes -- see "
+                "pygeoinf2.inference.backus."
             )
         return self._error
 
     @property
     def error_set(self) -> Subset:
-        """The data uncertainty, when it is a set."""
+        """The data uncertainty, when it is a set.
+
+        Raises:
+            AttributeError: if the problem has no uncertainty at all.
+            TypeError: if it has one but it is a measure. The counterpart of
+                :attr:`error_measure`, and refused the same way.
+        """
+        if self._error is None:
+            raise AttributeError("This problem has no data uncertainty.")
         if not isinstance(self._error, Subset):
-            raise AttributeError("The data uncertainty of this problem is not a set.")
+            raise TypeError(
+                "This method needs a set-valued error; the problem's "
+                f"uncertainty is a measure ({type(self._error).__name__}). Use "
+                "the Gaussian routes -- see pygeoinf2.inference.gaussian."
+            )
         return self._error
 
     def __repr__(self) -> str:
