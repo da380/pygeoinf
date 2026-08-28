@@ -1,5 +1,7 @@
 # pygeoinf 2.0 refactor — review
 
+> **Looking for what the package is now, rather than how it got there?** `CURRENT_STATE.md` is the short version: the package map, the conventions and units, what is exact and what is estimated, where a dense matrix is still formed, how to write a backend, and the questions still open (**D-10**).
+
 Date: 2026-08-27. Reviewed: `pygeoinf2/` at commit `5d4e0e4` against `pygeoinf/` (v1), `pygeoinf2/DESIGN.md`, `pygeoinf2/V1_CATALOGUE.md`, and the downstream usage in `/home/david/dev/pyslfp` (package and `Heathcote2026/` scripts).
 
 This file is the synthesis. The detail — method-by-method tables, measurements, `file:line` references and per-area Must/Should/Consider lists — is in `pygeoinf2/review/`:

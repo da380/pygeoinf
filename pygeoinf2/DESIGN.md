@@ -1,6 +1,26 @@
 # pygeoinf 2.0 — design of the algebraic core
 
-Status: design agreed, not yet implemented.
+> **Looking for what the package is now, rather than how it got there?** `CURRENT_STATE.md` is the short version: the package map, the conventions and units, what is exact and what is estimated, where a dense matrix is still formed, how to write a backend, and the questions still open (**D-10**).
+
+Status: **implemented**. This document is the journal -- it records how each
+decision was reached, in the order it was reached, and the line above said "not
+yet implemented" from the day it was written until the code caught up. What the
+package *is* now is `CURRENT_STATE.md`.
+
+> **Read the sections below as a record of what was agreed, not as a
+> description of what shipped.** Where the two differ, the code and
+> `CURRENT_STATE.md` win. The 2026-08-27 review identified these sections as
+> having diverged, and they are annotated in place where they have since been
+> corrected:
+>
+> §3.1-3.2, §3.5, §5.3, §5.4, §5.5, §7, §11.7, §13.4, §14, §18.7, §18.8,
+> §18.11, §21.12, §24.3, §25.1, §33.4.
+>
+> Corrected so far: §11.7 (steepest descent does use a strong Wolfe search),
+> §13.4 and §21.12 (the Condon-Shortley phase is *excluded*; `DHaj` *is*
+> exposed), §14 (one foreign backend, not two), §18.8 (`route=` selects the
+> Backus solver strategy), §33.4 (sparsity survives `restrict`). The rest
+> remain as written, and are journal rather than reference.
 Scope of this document: the base classes only — `HilbertSpace`, `Operator` /
 `LinearOperator`, `LinearSolver`, `ProbabilityMeasure` / `GaussianMeasure`, and
 the trait system that ties them together. Numerics, inversion, geometry and the
@@ -1994,7 +2014,12 @@ The sequence: spaces, coordinates, operators and adjoints, traits, **the
 derivative-and-gradient distinction**, nonlinear operators and `at()`, solvers,
 functional calculus, randomised methods, measures, direct sums and the joint
 model, optimisation, convex methods, concrete fields, a worked inverse problem,
-the two foreign backends, and the geometry of sets and subspaces.
+the MFEM backend, and the geometry of sets and subspaces.
+
+*(Written when two foreign backends were planned. PETSc was deferred as a
+packaging question -- see §11.9 -- so MFEM is the one that exists, and the
+passages below that speak of "a PETSc-backed space" should be read as saying
+what a coordinate-free backend would get, not as describing one that ships.)*
 
 Number 5 is the one that matters. The distinction between a derivative and a
 gradient is why most of the rest of the design looks as it does, and the
