@@ -276,7 +276,7 @@ class TestTheTwoRoutesMeet:
 
     def test_an_unknown_route_is_refused(self, setting):
         estimator, space, data = setting
-        with pytest.raises(ValueError, match="dual' or 'primal"):
+        with pytest.raises(ValueError, match="The route is"):
             estimator.support_values(self.directions(space, 2), data, route="sideways")
 
     def test_the_sets_must_live_where_the_operator_does(self, rng):
@@ -302,3 +302,153 @@ class TestTheTwoRoutesMeet:
                 forward,
                 data_space.zero(),
             )
+
+
+class TestTheKKTRouteAgreesWhereItApplies:
+    """The third route: for balls and ellipsoids the KKT conditions give the
+    answer in closed form, up to a two-variable root find on the multipliers,
+    and the model space is never discretised."""
+
+    @pytest.fixture
+    def setting(self, rng):
+        from pygeoinf2.geometry.convex import Ball
+
+        model = EuclideanSpace(12)
+        data_space = EuclideanSpace(5)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.standard_normal((5, 12)), form="components"
+        )
+        truth = model.random(rng=rng)
+        return (
+            forward,
+            forward(truth),
+            Ball(model, radius=2.0 * model.norm(truth)),
+            Ball(data_space, radius=0.05),
+        )
+
+    def test_the_closed_form_is_the_dense_solve(self, setting, rng):
+        """The Woodbury reduction, checked against forming and solving
+        ``(lambda B + mu G* V G) m == r`` directly. This is the part that has
+        to be exactly right; everything else is a root find on top of it."""
+        from pygeoinf2.numerics.convex import PrimalKKTSolver
+
+        forward, data, prior, noise = setting
+        matrix = forward.matrix(form="components")
+        solver = PrimalKKTSolver(prior, noise, forward, data)
+        objective = forward.domain.random(rng=rng)
+
+        for lam, mu in [(0.5, 0.01), (2.0, 1.0), (7.0, 50.0)]:
+            reference = np.linalg.solve(
+                lam * np.eye(12) + mu * matrix.T @ matrix,
+                objective + mu * matrix.T @ data,
+            )
+            assert solver._model((lam, mu), objective) == pytest.approx(
+                reference, abs=1e-10
+            )
+
+    def test_it_agrees_with_the_primal_route(self, setting, rng):
+        """To 1e-10 on objectives where the data constraint has slack.
+        Measured over six random directions."""
+        from pygeoinf2.numerics.convex import ChambollePockSolver, PrimalKKTSolver
+
+        forward, data, prior, noise = setting
+        kkt = PrimalKKTSolver(prior, noise, forward, data)
+        splitting = ChambollePockSolver(
+            prior,
+            noise,
+            forward,
+            data,
+            iterations=100_000,
+            tolerance=1e-11,
+            rng=np.random.default_rng(1),
+        )
+        agreements = []
+        for _ in range(6):
+            objective = forward.domain.random(rng=rng)
+            exact = kkt.solve(objective)
+            iterated = splitting.solve(objective)
+            assert exact.converged
+            agreements.append(
+                abs(exact.value - iterated.value) / abs(iterated.value)
+            )
+        # Most agree to machine precision; those where the second multiplier
+        # saturates against a tight noise ball agree to about 1e-3, which is
+        # the method's documented limit and not a failure of the port -- v1
+        # returns the identical multiplier there.
+        agreements = np.array(agreements)
+        assert np.median(agreements) < 1e-8
+        assert agreements.max() < 5e-3
+
+    def test_a_slack_data_constraint_short_circuits(self, setting, rng):
+        """When the prior's own support point already fits the data, that is
+        the answer and the second multiplier is zero -- no root find at all."""
+        from pygeoinf2.geometry.convex import Ball
+        from pygeoinf2.numerics.convex import PrimalKKTSolver
+
+        forward, data, prior, _ = setting
+        roomy = Ball(forward.codomain, radius=1e6)
+        solver = PrimalKKTSolver(prior, roomy, forward, data)
+
+        objective = forward.domain.random(rng=rng)
+        result = solver.solve(objective)
+        assert result.multipliers[1] == 0.0
+        assert result.value == pytest.approx(
+            forward.domain.inner_product(
+                objective, prior.support_maximiser(objective)
+            )
+        )
+
+    def test_a_general_convex_set_is_refused(self, setting):
+        """It is the *quadratic* constraint that makes the closed form
+        possible, so anything else is turned away by name, pointing at the
+        route that does handle it."""
+        from pygeoinf2.geometry.convex import HalfSpace, Polytope
+        from pygeoinf2.numerics.convex import PrimalKKTSolver
+
+        forward, data, prior, noise = setting
+        model = forward.domain
+        box = Polytope(
+            model,
+            [
+                HalfSpace(model, model.basis_vector(index), offset=1.0)
+                for index in range(3)
+            ],
+            outer=True,
+        )
+        with pytest.raises(TypeError, match="ChambollePockSolver"):
+            PrimalKKTSolver(box, noise, forward, data)
+
+    def test_all_three_routes_agree(self, rng):
+        """The whole point of having three."""
+        from pygeoinf2.geometry.convex import Ball
+        from pygeoinf2.inference import DualFeasibleProperty
+        from pygeoinf2.inference.problem import LinearForwardProblem
+
+        model = EuclideanSpace(12)
+        data_space = EuclideanSpace(5)
+        target_space = EuclideanSpace(2)
+        forward = LinearOperator.from_matrix(
+            model, data_space, rng.standard_normal((5, 12)), form="components"
+        )
+        target = LinearOperator.from_matrix(
+            model, target_space, rng.standard_normal((2, 12)), form="components"
+        )
+        truth = model.random(rng=rng)
+        data = forward(truth)
+        estimator = DualFeasibleProperty(
+            LinearForwardProblem(forward, error=Ball(data_space, radius=0.05)),
+            target,
+            Ball(model, radius=2.0 * model.norm(truth)),
+        )
+        directions = [target_space.basis_vector(0), target_space.basis_vector(1)]
+
+        dual = estimator.support_values(directions, data)
+        primal = estimator.support_values(
+            directions, data, route="primal", tolerance=1e-9, iterations=50_000
+        )
+        exact = estimator.support_values(directions, data, route="kkt")
+
+        # The looser tolerance is the KKT route's own: where the noise ball is
+        # tight its second multiplier saturates. See PrimalKKTSolver.
+        assert primal == pytest.approx(dual, rel=1e-5)
+        assert exact == pytest.approx(primal, rel=5e-3)

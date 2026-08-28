@@ -1,7 +1,11 @@
 """Numerical methods built on the algebraic core."""
 
 from .convex import (
+    ChambollePockSolver,
+    KKTResult,
     LevelBundleMethod,
+    PrimalKKTSolver,
+    SaddlePointResult,
     BallIndicator,
     BundleResult,
     NormFunctional,
@@ -105,6 +109,10 @@ from .solvers import (
 )
 
 __all__ = [
+    "SaddlePointResult",
+    "PrimalKKTSolver",
+    "KKTResult",
+    "ChambollePockSolver",
     "LevelBundleMethod",
     "best_available_qp_solver",
     "SciPyQPSolver",

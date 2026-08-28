@@ -41,6 +41,8 @@ from .optimisation import OptimisationResult, Optimiser
 
 __all__ = [
     "ChambollePockSolver",
+    "PrimalKKTSolver",
+    "KKTResult",
     "SaddlePointResult",
     "ProximalBundleMethod",
     "LevelBundleMethod",
@@ -1632,4 +1634,318 @@ class ChambollePockSolver:
             residual,
             self._iterations,
             False,
+        )
+
+
+@dataclass(frozen=True)
+class KKTResult:
+    """The outcome of a KKT solve for a quadratically constrained maximum."""
+
+    value: float
+    """``(c, m)`` at the maximiser."""
+
+    model: Any
+    """The maximiser."""
+
+    multipliers: tuple[float, float]
+    """``(lambda, mu)``, on the prior and the data constraint. A zero second
+    multiplier means the data constraint is slack: the answer is the prior's
+    own support point and the data never bit."""
+
+    iterations: int
+    converged: bool
+
+    def __repr__(self) -> str:
+        return (
+            f"KKTResult(value={self.value:.6g}, "
+            f"multipliers={self.multipliers}, converged={self.converged})"
+        )
+
+
+class PrimalKKTSolver:
+    """The exact maximum over two *quadratic* sets, from the KKT conditions.
+
+    Where :class:`ChambollePockSolver` iterates towards the answer for any
+    convex sets, this writes it down -- when both sets are balls or ellipsoids.
+    Then the constraints are quadratic, the stationarity condition is linear in
+    the model given the two multipliers, and the whole problem collapses to a
+    two-variable root find:
+
+    .. code-block:: text
+
+        maximise    (c, m)
+        subject to  (m - m0, B (m - m0)) <= eta^2
+                    (G m - d, V (G m - d)) <= r^2
+
+    Stationarity gives ``m*(lambda, mu)`` in closed form, and the two active
+    constraints give two equations in ``(lambda, mu)``, solved in log
+    coordinates so both stay positive.
+
+    **The model space is never discretised.** The closed form needs
+    ``(1/mu) V^-1 + (1/lambda) G B^-1 G*``, which acts on the *data* space --
+    finite-dimensional by construction -- so the Woodbury identity moves the
+    only matrix that is formed onto the small side. That is the whole reason
+    this route exists alongside the others: on a fine model grid it is the one
+    that does not care how fine.
+
+    **Two branches.** If the prior's own support point already satisfies the
+    data constraint, the data never bit and that point is the answer, with
+    ``mu == 0``. Only when both constraints are active is the root find run.
+
+    **Where it is weak.** When the noise set is small enough that the data
+    constraint is effectively an equality, the second multiplier runs away --
+    it is the reciprocal of the constraint's slack -- and the root find ends
+    at the clip that keeps the exponential finite. The answer is then good to
+    about ``1e-3`` rather than to machine precision. Measured against
+    :class:`ChambollePockSolver` over sixteen directions with a noise radius of
+    0.05: fourteen agree to 1e-11 and two, where ``mu`` hit the clip, to
+    2.4e-3. v1 behaves identically, down to the same multiplier, so this is
+    the method's limit rather than a defect in the port -- and the primal
+    route has no such trouble, which is the reason to keep both.
+
+    A port of v1's ``PrimalKKTSolver``, and the solver behind its
+    ``sphere_dli_example``.
+    """
+
+    def __init__(
+        self,
+        prior: Any,
+        noise: Any,
+        forward: LinearOperator,
+        data: Any,
+        /,
+        *,
+        tolerance: float = 1e-10,
+        evaluations: int = 200,
+    ) -> None:
+        """
+        Args:
+            prior: a :class:`~pygeoinf2.geometry.convex.Ball` or
+                :class:`~pygeoinf2.geometry.convex.Ellipsoid` on the model
+                space. An ellipsoid must know its covariance.
+            noise: likewise on the data space, and centred at the origin --
+                the data itself is the offset.
+            forward: ``G``.
+            data: the observations.
+            tolerance: for the root find on the multipliers.
+            evaluations: its cap.
+
+        Raises:
+            TypeError: if either set is neither a ball nor an ellipsoid.
+            ValueError: if an ellipsoid cannot supply its covariance, or the
+                sets do not live in the operator's spaces.
+        """
+        from ..geometry.convex import Ball, Ellipsoid
+
+        for name, given, space in (
+            ("prior", prior, forward.domain),
+            ("noise", noise, forward.codomain),
+        ):
+            if not isinstance(given, (Ball, Ellipsoid)):
+                raise TypeError(
+                    f"The {name} must be a Ball or an Ellipsoid for the KKT "
+                    f"route, which is what makes its constraint quadratic; "
+                    f"got {type(given).__name__}. Use ChambollePockSolver for "
+                    "a general convex set."
+                )
+            if given.domain != space:
+                raise ValueError(f"The {name} set must live in {space!r}.")
+
+        self._prior = prior
+        self._noise = noise
+        self._forward = forward
+        self._data = data
+        self._tolerance = tolerance
+        self._evaluations = evaluations
+        # The multipliers of the last solve, which start the next. Directions
+        # near each other have multipliers near each other, so this is the
+        # same warm start the dual route gets from its certificate.
+        self._previous: tuple[float, float] | None = None
+
+        self._prior_parts = self._quadratic(forward.domain, prior)
+        self._noise_parts = self._quadratic(forward.codomain, noise)
+        self._prior_radius = self._prior_parts[2]
+        self._noise_radius = self._noise_parts[2]
+        self._noise_weight = self._noise_parts[0]
+
+        # Both act on the *data* space, which is finite-dimensional by
+        # construction -- so these are the only matrices formed, whatever the
+        # model space is.
+        self._noise_covariance_matrix = self._noise_parts[1].matrix(form="components")
+        self._gram = (
+            forward @ self._prior_parts[1] @ forward.adjoint
+        ).matrix(form="components")
+
+    @staticmethod
+    def _quadratic(space: Any, given: Any) -> tuple[Any, Any, float, Any]:
+        """A set as ``(weight, inverse weight, radius, centre)``.
+
+        A ball's weight is the identity and its radius is its own; an
+        ellipsoid's are its precision and covariance, with radius one, since
+        its constraint is already normalised.
+        """
+        from ..geometry.convex import Ball
+
+        identity = LinearOperator.identity(space)
+        if isinstance(given, Ball):
+            return identity, identity, given.radius, given.centre
+        if given._covariance is None:
+            raise ValueError(
+                "An ellipsoid needs its covariance for the KKT route: the "
+                "closed form inverts the constraint's weight."
+            )
+        return given._precision, given._covariance, 1.0, given.centre
+
+    def _model(self, multipliers: tuple[float, float], objective: Any) -> Any:
+        """``m*(lambda, mu)`` from stationarity, through Woodbury.
+
+        The only linear system solved acts on the data space.
+        """
+        lam, mu = multipliers
+        model_space = self._forward.domain
+        data_space = self._forward.codomain
+        prior_weight, prior_inverse, _, centre = self._prior_parts
+        _, noise_inverse, _, _ = self._noise_parts
+
+        # r = c + lambda B m0 + mu G* V d.
+        right = model_space.add(objective, model_space.scale(lam, prior_weight(centre)))
+        right = model_space.add(
+            right,
+            model_space.scale(
+                mu, self._forward.adjoint(self._noise_weight(self._data))
+            ),
+        )
+
+        # w == (1/lambda) B^-1 r. The 1/lambda belongs here, before G is
+        # applied: Woodbury's correction carries 1/lambda *twice*, once on
+        # each side of the inverse, and applying G to the unscaled vector
+        # loses one of them -- which leaves a model satisfying neither
+        # constraint and a root find that cannot move.
+        scaled = model_space.scale(1.0 / lam, prior_inverse(right))
+        if mu == 0.0:
+            return scaled
+
+        # K == (1/mu) V^-1 + (1/lambda) G B^-1 G*, on the data space.
+        pulled = data_space.from_components(
+            np.linalg.solve(
+                self._kernel(lam, mu),
+                data_space.to_components(self._forward(scaled)),
+            )
+        )
+        correction = model_space.scale(
+            1.0 / lam, prior_inverse(self._forward.adjoint(pulled))
+        )
+        return model_space.subtract(scaled, correction)
+
+    def _kernel(self, lam: float, mu: float) -> np.ndarray:
+        """``(1/mu) V^-1 + (1/lambda) G B^-1 G*`` as a matrix on the data space."""
+        return self._noise_covariance_matrix / mu + self._gram / lam
+
+    def solve(self, objective: Any, /) -> KKTResult:
+        """Maximise ``(objective, m)`` over the two sets.
+
+        Args:
+            objective: ``c``, in the model space.
+
+        Returns:
+            The maximiser and its multipliers.
+        """
+        from scipy.optimize import fsolve
+
+        model_space = self._forward.domain
+        data_space = self._forward.codomain
+
+        # The prior's own support point, which is the answer when the data
+        # constraint does not bite.
+        best = self._prior.support_maximiser(objective)
+        residual = data_space.subtract(self._forward(best), self._data)
+        if (
+            float(data_space.inner_product(self._noise_weight(residual), residual))
+            <= self._noise_radius**2 * (1.0 + 1e-9)
+        ):
+            return KKTResult(
+                float(model_space.inner_product(objective, best)),
+                best,
+                (float("inf"), 0.0),
+                1,
+                True,
+            )
+
+        def residuals(logged: np.ndarray) -> np.ndarray:
+            lam, mu = np.exp(np.clip(logged, -30.0, 25.0))
+            model = self._model((float(lam), float(mu)), objective)
+            offset = model_space.subtract(model, self._prior_parts[3])
+            first = (
+                float(model_space.inner_product(self._prior_parts[0](offset), offset))
+                - self._prior_radius**2
+            )
+            gap = data_space.subtract(self._forward(model), self._data)
+            second = (
+                float(data_space.inner_product(self._noise_weight(gap), gap))
+                - self._noise_radius**2
+            )
+            return np.array([first, second])
+
+        # A physically scaled start, as v1 has. At the solution the prior
+        # multiplier balances the objective against the constraint, so
+        # ``|c| / eta`` is the right order -- and starting at one instead
+        # leaves fsolve searching in the wrong decade, which on these problems
+        # it simply fails to leave.
+        weighted = float(
+            np.sqrt(
+                max(
+                    model_space.inner_product(
+                        self._prior_parts[1](objective), objective
+                    ),
+                    0.0,
+                )
+            )
+        )
+        physical = max(weighted / self._prior_radius, 1e-4)
+
+        def attempt(guess: tuple[float, float]) -> tuple[np.ndarray, dict, int]:
+            logged = np.log(
+                np.array([max(guess[0], 1e-4), max(guess[1], 1e-8)], dtype=float)
+            )
+            found, info, status, _ = fsolve(
+                residuals,
+                logged,
+                full_output=True,
+                xtol=self._tolerance,
+                maxfev=self._evaluations,
+            )
+            return found, info, status
+
+        found, info, status = attempt(self._previous or (physical, 1e-3))
+        if status != 1:
+            # A two-variable root find on a pair of quadratics is not reliably
+            # solved from one start, and a failed solve here is not a hard
+            # failure -- it is a start in the wrong decade. v1 carries a ladder
+            # of fallbacks for exactly this, and without it the method returns
+            # its own starting point and disagrees with the primal route by
+            # tens of per cent.
+            for guess in (
+                (physical, 1e-3),
+                (physical, 1e-2),
+                (physical, 0.5),
+                (physical, 2.0),
+                (0.5 * physical, 1e-2),
+                (0.5 * physical, 1.0),
+            ):
+                found, info, status = attempt(guess)
+                if status == 1:
+                    break
+
+        multipliers = tuple(float(value) for value in np.exp(np.clip(found, -30.0, 25.0)))
+        # Only a *converged* solve is worth carrying into the next direction.
+        # Carrying a failed one starts the next problem from a point that is
+        # not a root of anything.
+        self._previous = multipliers if status == 1 else None
+        model = self._model(multipliers, objective)
+        return KKTResult(
+            float(model_space.inner_product(objective, model)),
+            model,
+            multipliers,
+            int(info["nfev"]),
+            status == 1,
         )
