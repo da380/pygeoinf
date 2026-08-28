@@ -325,11 +325,31 @@ class TestFlexureInverse:
             X.inverse_flexural_operator(rigidity, 0.25, 3.0, solver=CholeskySolver())
 
     def test_an_explicit_preconditioner_is_kept(self):
-        """``with_preconditioner`` must not overrule a caller who set one."""
-        from pygeoinf2.numerics.solvers import CGSolver
+        """The routine must not overrule a caller who set one.
+
+        It now asks rather than relying on ``with_preconditioner`` to keep the
+        existing one quietly -- which read as success while discarding
+        whichever of the two the caller meant.
+        """
         from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.numerics.solvers import CGSolver
 
         X = BoxLebesgue((16,), lengths=(1.0,))
         chosen = LinearOperator.identity(X)
-        solver = CGSolver(preconditioner=chosen)
-        assert solver.with_preconditioner(LinearOperator.zero(X)) is solver
+        rigidity = X.project_function(lambda p: 1.0)
+
+        inverse = X.inverse_flexural_operator(
+            rigidity, 0.25, 3.0, solver=CGSolver(preconditioner=chosen)
+        )
+        assert inverse.solver.preconditioner is chosen
+
+    def test_replacing_a_preconditioner_is_refused(self):
+        """Rather than returning the solver unchanged, which is not the same
+        thing as having attached one."""
+        from pygeoinf2.algebra.operators import LinearOperator
+        from pygeoinf2.numerics.solvers import CGSolver
+
+        X = BoxLebesgue((16,), lengths=(1.0,))
+        solver = CGSolver(preconditioner=LinearOperator.identity(X))
+        with pytest.raises(ValueError, match="already has a preconditioner"):
+            solver.with_preconditioner(LinearOperator.zero(X))

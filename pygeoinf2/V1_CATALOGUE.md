@@ -144,12 +144,12 @@ addtional information as you suggest will be very useful. |
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
 | `IdentityPreconditioningMethod` | Ported | `IdentityPreconditioner` | |
-| `JacobiPreconditioningMethod` | Ported | `JacobiPreconditioner` | |
-| `BandedPreconditioningMethod` | Ported | M5. Needs `extract_diagonals` | |
-| `ColumnThresholdedPreconditioningMethod` | Ported | `ColumnThresholdedPreconditioner`. The pattern is symmetrised — v1's column-wise dropping gives an asymmetric matrix, which CG cannot use (DESIGN §23.8) | |
-| `ExactBlockPreconditioningMethod` | Ported | M5 | |
-| `SpectralPreconditioningMethod` | Ported | M5; `random_eig` is already there | |
-| `IterativePreconditioningMethod` | Ported | M5; wants `FCGSolver` | |
+| `JacobiPreconditioningMethod` | Ported | `JacobiPreconditioner`, with v1's stochastic estimate back as `samples=`. Exact by default here, because an operator that knows its own diagonal gives it up for nothing; `samples=20` builds in 0.6 ms against 12.1 on a matrix-free one, at 14 CG iterations against 13 | |
+| `BandedPreconditioningMethod` | Ported | `BandedPreconditioner`, over `LinearOperator.diagonals`, which has both an exact and a banded probe | |
+| `ColumnThresholdedPreconditioningMethod` | Ported | `ColumnThresholdedPreconditioner`. The pattern is symmetrised — v1's column-wise dropping gives an asymmetric matrix, which CG cannot use (DESIGN §23.8). Columns are probed one at a time as v1 did, so the memory grows with the dimension rather than its square: 1.2 MB at dim 2000 against 97 to form the dense matrix | |
+| `ExactBlockPreconditioningMethod` | Ported | `BlockPreconditioner`, with v1's overlapping and partial blocks — a point near two clusters belongs to both, and what no block claims keeps its diagonal. Column-probed and sparse throughout: 3.5 MB at dim 2000 against 97 | |
+| `SpectralPreconditioningMethod` | Ported | `SpectralPreconditioner`, over `random_eig` | |
+| `IterativePreconditioningMethod` | Ported | Subsumed: pass an `IterativeSolver(strict=False)` as the `preconditioner=`. `FlexibleCGSolver` is the outer solver to use when that inner solve is inexact, since the preconditioner is then not quite symmetric | |
 
 ## `functional_calculus.py` → `numerics/functional_calculus.py`
 

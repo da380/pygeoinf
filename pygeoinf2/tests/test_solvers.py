@@ -713,3 +713,114 @@ class TestPreconditionersStaySparse:
         )
         assert result.converged
         assert space.norm(space.subtract(result.solution, wanted)) < 1e-8
+
+
+class TestJacobiCanEstimate:
+    """v1 estimated the diagonal from 20 probes by default. v2 could only read
+    it exactly, at one operator application per component -- which on a large
+    matrix-free operator is the whole reason someone reached for a
+    preconditioner in the first place."""
+
+    @staticmethod
+    def problem(rng, n=400):
+        matrix = rng.standard_normal((n, n))
+        matrix = matrix @ matrix.T / n + np.diag(rng.uniform(1.0, 20.0, n))
+        space = EuclideanSpace(n)
+        # Matrix-free, so nothing can read the diagonal off a stored array.
+        operator = LinearOperator.self_adjoint(
+            space, lambda c: matrix @ c, traits=Traits.POSITIVE_DEFINITE
+        )
+        return space, operator
+
+    def test_an_estimate_preconditions_about_as_well(self, rng):
+        """Measured: 20 probes builds in 0.6 ms against 12.1 exact, and costs
+        14 CG iterations against 13. Unpreconditioned is 38."""
+        space, operator = self.problem(rng)
+        wanted = space.random(rng=rng)
+        right_hand_side = operator(wanted)
+
+        counts = {}
+        for label, preconditioner in [
+            ("exact", JacobiPreconditioner()),
+            ("estimated", JacobiPreconditioner(samples=20, rng=np.random.default_rng(1))),
+        ]:
+            result = (
+                CGSolver(rtol=1e-10, maxiter=2000)
+                .with_preconditioner(preconditioner)(operator)
+                .solve(right_hand_side)
+            )
+            assert result.converged
+            counts[label] = result.iterations
+
+        plain = CGSolver(rtol=1e-10, maxiter=2000)(operator).solve(right_hand_side)
+        assert counts["estimated"] <= counts["exact"] + 5
+        assert counts["estimated"] < plain.iterations / 2
+
+    def test_it_costs_fewer_applications(self, rng):
+        """The point of it. Exact is one application per component."""
+        space, operator = self.problem(rng)
+        counted = {"n": 0}
+        original = operator._value
+
+        def counting(x):
+            counted["n"] += 1
+            return original(x)
+
+        object.__setattr__(operator, "_value", counting)
+
+        JacobiPreconditioner(samples=20, rng=np.random.default_rng(1))(operator)
+        assert counted["n"] <= 20
+
+    def test_no_samples_at_all_is_refused(self):
+        with pytest.raises(ValueError, match="At least one sample"):
+            JacobiPreconditioner(samples=0)
+
+
+class TestPreconditionerReplacement:
+    """Returning the solver unchanged is not the same thing as attaching."""
+
+    def test_replacing_one_is_refused(self, rng):
+        space = EuclideanSpace(8)
+        solver = CGSolver(preconditioner=LinearOperator.identity(space))
+        with pytest.raises(ValueError, match="already has a preconditioner"):
+            solver.with_preconditioner(JacobiPreconditioner())
+
+    def test_attaching_to_a_bare_solver_still_works(self, rng):
+        space = EuclideanSpace(8)
+        attached = CGSolver().with_preconditioner(JacobiPreconditioner())
+        assert isinstance(attached.preconditioner, JacobiPreconditioner)
+        assert CGSolver().preconditioner is None
+
+
+class TestSquareMeansTheSameSpace:
+    """Matching dimensions are not enough: every iterative method here adds
+    the iterate to the residual, so the two must be vectors of one space. Two
+    spaces of equal dimension over the same vectors but different metrics
+    would give a plausible wrong answer rather than an error."""
+
+    def test_a_metric_mismatch_is_refused(self, rng):
+        space = EuclideanSpace(4)
+        other = make_weighted_space()
+        assert space.dim == other.dim
+
+        operator = LinearOperator.from_matrix(
+            space, other, np.eye(4), form="components"
+        )
+        with pytest.raises(ValueError, match="not the same space"):
+            CGSolver()(operator)
+
+
+class TestWoodburyInnerDefault:
+    """A strict inner solver aborts the outer solve, and inner precision does
+    not show in the answer: a preconditioner is an approximation."""
+
+    def test_the_default_inner_solver_is_loose_and_forgiving(self):
+        from pygeoinf2.numerics.preconditioners import WoodburyPreconditioner
+
+        space = EuclideanSpace(6)
+        identity = LinearOperator.identity(space)
+        preconditioner = WoodburyPreconditioner(identity, identity, identity)
+
+        inner = preconditioner._inner_solver()
+        assert not inner._strict
+        assert inner._rtol >= 1e-4

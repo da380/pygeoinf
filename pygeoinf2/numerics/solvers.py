@@ -114,6 +114,19 @@ class LinearSolver(ABC):
                 f"dimension {operator.codomain.dim}. For a rectangular system "
                 f"use a LeastSquaresSolver."
             )
+        if operator.domain != operator.codomain:
+            # Matching dimensions are not enough. Every iterative method here
+            # adds the iterate to the residual, so the two must be vectors of
+            # the *same* space; two spaces of equal dimension over the same
+            # vectors but different metrics would give a plausible wrong
+            # answer rather than an error.
+            raise ValueError(
+                f"{type(self).__name__} inverts an operator from a space to "
+                f"itself; this one maps {operator.domain!r} to "
+                f"{operator.codomain!r}. They have the same dimension but are "
+                "not the same space, so the residual and the iterate do not "
+                "live together."
+            )
         missing = self.requires & ~operator.traits
         if missing:
             raise ValueError(
@@ -542,11 +555,31 @@ class IterativeSolver(LinearSolver):
 
         Exists so that a caller can hand in a configured solver — tolerances,
         iteration cap, callbacks — and a library routine can still supply the
-        preconditioner it knows how to build. An explicit preconditioner on the
-        original is kept; the caller knows something the routine does not.
+        preconditioner it knows how to build.
+
+        **Refuses to replace one that is already set.** It used to return the
+        solver unchanged instead, which reads as success and is not: a caller
+        writing ``solver.with_preconditioner(mine)`` on a solver that already
+        had one got their preconditioner silently discarded and no way to tell.
+        A library routine that means "supply one only if the caller did not"
+        should ask, through :attr:`preconditioner`, and say so.
+
+        Args:
+            preconditioner: the preconditioner to attach.
+
+        Returns:
+            A copy of this solver carrying it.
+
+        Raises:
+            ValueError: if this solver already has one.
         """
         if self._preconditioner is not None:
-            return self
+            raise ValueError(
+                f"{type(self).__name__} already has a preconditioner "
+                f"({type(self._preconditioner).__name__}). Replacing it "
+                "silently would discard whichever of the two the caller meant; "
+                "check .preconditioner first, or build a fresh solver."
+            )
         clone = copy.copy(self)
         clone._preconditioner = preconditioner
         return clone

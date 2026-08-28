@@ -72,6 +72,31 @@ class _Identity[X](LinearOperator[X, X]):
     def _combine_rcompose(self, other: Operator) -> Operator | None:
         return other
 
+    def _combine_scale(self, alpha: float) -> Operator | None:
+        """A multiple of the identity is a diagonal operator, and saying so
+        is what lets it keep folding.
+
+        ``sigma * I`` was a scaled node, which nothing downstream recognises,
+        so ``(sigma I) (sigma I)`` -- the covariance every
+        ``from_standard_deviation`` measure has -- stayed a composition and
+        had to be probed a column at a time to give up its own diagonal. As a
+        diagonal operator the two fold to ``sigma^2 I`` and the diagonal is
+        already there.
+
+        Only where the space has a basis to be diagonal in; elsewhere the
+        scaled node is still the best available.
+        """
+        import numpy as np
+
+        from ..algebra.spaces import CoordinateSpace
+        from .diagonal import DiagonalLinearOperator
+
+        if not isinstance(self.domain, CoordinateSpace):
+            return None
+        return DiagonalLinearOperator(
+            self.domain, np.full(self.domain.dim, float(alpha))
+        )
+
     def __repr__(self) -> str:
         return f"Identity({self.domain!r})"
 

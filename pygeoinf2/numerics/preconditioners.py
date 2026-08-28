@@ -19,7 +19,7 @@ from numpy.random import Generator
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, HilbertSpace
 from ..traits import Traits
-from .randomised import random_eig
+from .randomised import random_diagonal, random_eig
 from .solvers import (
     CGSolver,
     InverseOperator,
@@ -55,20 +55,56 @@ class JacobiPreconditioner(LinearSolver):
     Galerkin form is the right one for the same reason the direct solvers use
     it: it is the representation in which a self-adjoint operator is symmetric,
     so its diagonal is the one a symmetric preconditioner wants.
+
+    The diagonal is read exactly by default, and can be *estimated* from a few
+    random probes instead -- v1's behaviour, and what makes this usable on a
+    large matrix-free operator, where exact costs one application per
+    component. See ``samples``.
     """
 
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
     requires_coordinates: ClassVar[bool] = True
 
-    def __init__(self, /, *, floor: float = 1e-14) -> None:
+    def __init__(
+        self,
+        /,
+        *,
+        floor: float = 1e-14,
+        samples: int | None = None,
+        rng: Generator | None = None,
+    ) -> None:
+        """
+        Args:
+            floor: entries smaller than this in magnitude are left alone
+                rather than inverted.
+            samples: estimate the diagonal from this many random probes
+                instead of reading it exactly. **Exact costs one operator
+                application per component**, which for a large space is the
+                whole reason someone reached for a preconditioner; v1
+                estimated by default, from 20 probes. Exact is kept as the
+                default here because an operator that knows its own diagonal
+                -- diagonal, matrix-backed, or a sum or scaling of those --
+                gives it up for nothing, and only a general matrix-free
+                operator pays the full price.
+            rng: the generator for those probes.
+        """
+        if samples is not None and samples < 1:
+            raise ValueError(f"At least one sample is needed, got {samples}.")
         self._floor = floor
+        self._samples = samples
+        self._rng = rng
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         domain: CoordinateSpace = operator.domain
         codomain: CoordinateSpace = operator.codomain
         require_coordinates(domain, codomain)
 
-        diagonal = operator.diagonals(offsets=(0,), form="galerkin")[0]
+        if self._samples is None:
+            diagonal = operator.diagonals(offsets=(0,), form="galerkin")[0]
+        else:
+            diagonal = random_diagonal(
+                operator, samples=self._samples, form="galerkin", rng=self._rng
+            )
         safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
         inverse_diagonal = 1.0 / safe
 
@@ -438,8 +474,12 @@ class WoodburyPreconditioner(LinearSolver):
             prior_covariance: the prior covariance ``Q`` on the model space.
             noise_covariance: the data error covariance ``R``.
             solver: inverts the inner operator. This is the one that should be
-                cheap; it defaults to conjugate gradients, which assumes the
-                inner operator is positive definite, as both are.
+                cheap: it defaults to conjugate gradients at ``rtol=1e-3``
+                with ``strict=False``, which assumes the inner operator is
+                positive definite, as both are. Loose because a preconditioner
+                is an approximation and inner precision does not show in the
+                answer; not strict because a strict inner solver raises on
+                slow convergence and takes the outer solve down with it.
             prior_solver: inverts ``Q``, for the data form only. Defaults to
                 *solver*. Ignored when *prior_inverse* is given.
             noise_solver: inverts ``R``, for the data form only. Defaults to
@@ -532,7 +572,12 @@ class WoodburyPreconditioner(LinearSolver):
     def _inner_solver(self) -> LinearSolver:
         if self._solver is not None:
             return self._solver
-        return CGSolver()
+        # Loose, and not strict. A preconditioner is an approximation, so an
+        # inner solve to 1e-8 is precision spent where it does not show, and a
+        # *strict* inner solver turns a slow inner convergence into an
+        # exception that aborts the whole outer solve -- a preconditioner
+        # failing should cost iterations, never the answer.
+        return CGSolver(rtol=1e-3, maxiter=200, strict=False)
 
     def _resolve(
         self,

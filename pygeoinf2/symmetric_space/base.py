@@ -1563,7 +1563,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         operator = self.flexural_operator(
             rigidity, poisson_ratio, buoyancy
         ).with_traits(Traits.POSITIVE_DEFINITE)
-        return solver.with_preconditioner(preconditioner)(operator)
+        # Only if the caller did not bring their own -- they know something
+        # this routine does not. Asked explicitly, because
+        # with_preconditioner now refuses to replace one rather than
+        # discarding it quietly.
+        if preconditioner is not None and solver.preconditioner is None:
+            solver = solver.with_preconditioner(preconditioner)
+        return solver(operator)
 
     # ----------------------------------------------------------------- #
     #                              Geodesics                            #
