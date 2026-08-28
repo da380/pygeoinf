@@ -18,6 +18,7 @@ operator is the identity, so there is one code path.
 See DESIGN.md section 18.
 """
 
+from .laplace import LaplaceResult, MaximumAPosteriori
 from .backus import (
     BackusGilbert,
     BackusInference,
@@ -53,6 +54,8 @@ from .point import (
 from .problem import ForwardProblem, LinearForwardProblem
 
 __all__ = [
+    "LaplaceResult",
+    "MaximumAPosteriori",
     "BackusGilbert",
     "BackusInference",
     "LinearGaussianInversion",

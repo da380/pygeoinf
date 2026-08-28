@@ -656,9 +656,21 @@ class HalfSpace(ConvexSet):
         return Hyperplane(self._domain, self._normal, offset=self._offset)
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """True when the inequality holds to tolerance."""
+        """True when the inequality holds to tolerance.
+
+        Scaled by the same three quantities :meth:`Hyperplane.contains` uses,
+        which is what makes a point on the boundary of a half-space and a
+        point on its bounding hyperplane agree about whether they are on it.
+        The offset alone is not enough: a constraint through the origin has
+        offset zero, and the tolerance would then not scale with the point at
+        all.
+        """
         residual = self._domain.inner_product(self._normal, x) - self._offset
-        scale = max(abs(self._offset), 1.0)
+        scale = max(
+            abs(self._offset),
+            self._domain.norm(x) * self._domain.norm(self._normal),
+            1.0,
+        )
         return residual <= rtol * scale
 
     def project(self, x: Any, /) -> Any:

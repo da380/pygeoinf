@@ -400,8 +400,19 @@ class AffineSubspace(ConvexSet):
         return self._equation[1]
 
     def with_translation(self, translation: Any, /) -> AffineSubspace:
-        """The same tangent space, through a different point."""
-        return AffineSubspace(self._projector, translation=translation)
+        """The same tangent space, through a different point.
+
+        The equation moves with it: if the tangent space is ``{A x == 0}``
+        then the translated affine space is ``{A x == A t}``, so the equation
+        is kept with its value updated rather than dropped. v1 does the same,
+        and without it a translated kernel forgets what defined it.
+        """
+        moved = AffineSubspace(self._projector, translation=translation)
+        if self._equation is not None:
+            operator, _ = self._equation
+            moved._equation = (operator, operator(translation))
+            moved._solver = self._solver
+        return moved
 
     def with_constraint_value(self, value: Any, /) -> AffineSubspace:
         """The same constraint operator, set equal to a different value.
@@ -494,8 +505,18 @@ class LinearSubspace(AffineSubspace):
     def from_kernel(
         cls, operator: LinearOperator, /, *, solver: LinearSolver | None = None
     ) -> LinearSubspace:
-        """The kernel of an operator."""
-        return cls(OrthogonalProjector.onto_kernel(operator, solver=solver))
+        """The kernel of an operator.
+
+        The equation is recorded: a kernel *is* ``A x == 0``, so the subspace
+        knows which equation defines it and everything that needs one --
+        :meth:`with_constraint_value`, and the constraint pull-back a
+        parameterised inversion does -- works on it. It did not before, and a
+        kernel is the commonest way such a subspace gets built.
+        """
+        subspace = cls(OrthogonalProjector.onto_kernel(operator, solver=solver))
+        subspace._equation = (operator, operator.codomain.zero())
+        subspace._solver = solver
+        return subspace
 
     def __repr__(self) -> str:
         return f"LinearSubspace({self._domain!r})"

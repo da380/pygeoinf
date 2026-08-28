@@ -326,6 +326,34 @@ G Should-1/2/3/7/8/10 (convex intersections, subspace equations, ellipsoid proje
 
 **D-7, nonlinear inference.** In scope for 2.0: `MaximumAPosteriori(problem, prior, optimiser=...)` minimising `chi²(m, d) + prior.mahalanobis(m)` via `Operator.at`/`gauss_newton_hessian`, returning a Laplace `GaussianEstimator`-like object whose covariance is the inverse of `NormalOperator(F.derivative(m_map), prior, error, formalism="model_space")` (I Consider-19). Design it so a later MCMC layer (pCN / Stuart-style function-space samplers) plugs in: it needs only `prior.sample`, `log_density`/`grad_log_density` on the posterior, and the forward problem — all of which exist. Add an example.
 
+**Phase 5 outcome (2026-08-28).** Done: G Should-1 (`ConvexIntersection`, with
+Dykstra shared with `Polytope` and the `min_i h_i` bound renamed to
+`support_bound`), Should-2 (`from_kernel` records its equation and
+`with_translation` keeps it), Should-3 (`Ellipsoid.project` by Newton on the
+secular equation), Should-7 (the sphere map's `map_extent`, contours,
+`gridlines_kwargs`, `colorbar_kwargs`, `borders`/`rivers`, `title`), Should-8
+(`plot_error_bounds`), Should-10 (`HalfSpace.contains` scaled as
+`Hyperplane.contains` is), and Must-7 (`title` on both distribution plots,
+`plot_corner`'s legend, and the rename table in the module docstring).
+
+Dykstra's cycle cap went from 200 to 1000 on the measurement: at 200 the
+projection is 3.7e-4 off the boundary on a sixteen-dimensional Sobolev space,
+and an under-converged projection is a wrong prox.
+
+**D-7 done.** `inference/laplace.py`: `MaximumAPosteriori` minimises
+`chi^2 + (m - m0, P (m - m0))` and returns the mode with the Gaussian whose
+covariance is the inverse of the linearised `NormalOperator`. Verified exact on
+a linear problem -- mean to 5.8e-8 and covariance to 8.4e-14 against
+`LinearGaussianInversion` -- which is the check that the construction is right
+rather than merely plausible. The sampler hooks D-7 asks for are all present
+and tested: `prior.sample`, `log_posterior` with its gradient, and the problem
+itself, so a pCN layer is the sampler and nothing else. Example 28 draws the
+true posterior against its approximation and reports where they part: log
+densities differing by 0.010 at one sigma, 0.075 at two and 0.253 at three.
+
+Still open from this appendix: G Consider-1 (`plot_slice`), K Should-9/10 (the
+least-squares and nonlinear examples with assertions rather than prose).
+
 ### Phase 6 — tests, docs, packaging, design documents
 K Must-3/5/6/7/8 (exports, wheel, `v2/` deletion, example fixes), K Must-4 (dense-Gram fixtures in the eight test files listed), K Should-12/13/14/15/16/17/18 (docstring-content check, rule-3 violations, slow markers, backend recipe, Sphinx for v2, catalogue reconciliation, missing tests), the Args/Returns/Raises pass per appendix §4 (start with `algebra/spaces.py`, `algebra/operators.py`, `algebra/direct_sum.py`, `probability/base.py`, `inference/gaussian.py`, `symmetric_space/*` units), the false docstrings in §3.8, and **D-10**: DESIGN.md stays as the journal (`DESIGN_LOG.md`), and a short current-state document is written (package map, contracts, conventions and units, the dense-fallback list, the backend recipe, the decisions of §11).
 
