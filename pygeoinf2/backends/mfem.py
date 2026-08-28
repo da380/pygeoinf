@@ -237,7 +237,7 @@ class MfemSpace(CoordinateSpace):
         """Whether an essential boundary condition has been imposed."""
         return self._essential.size > 0
 
-    def restrict(self, matrix: Any, /) -> np.ndarray:
+    def restrict(self, matrix: Any, /) -> Any:
         """The free-free block of a matrix assembled over all degrees of freedom.
 
         A bilinear form assembled on the full space is the Galerkin matrix of
@@ -246,13 +246,29 @@ class MfemSpace(CoordinateSpace):
         *that* space — which is what the constrained problem is, and why
         eliminating rows and columns is the whole of what a homogeneous
         Dirichlet condition does.
+
+        **Sparsity survives.** A finite element matrix is sparse because the
+        basis functions have local support, and that is the only reason a large
+        problem fits in memory at all: at 1e5 degrees of freedom a dense block
+        is 80 GB. This used to call ``.toarray()`` unconditionally, so
+        :func:`operator_from_bilinear_form` handed a dense array to
+        ``from_derivative_matrix`` and :func:`solver_from_bilinear_form`
+        densified it only to re-sparsify it immediately.
+
+        Args:
+            matrix: an ``mfem.SparseMatrix`` or a NumPy array over all dofs.
+
+        Returns:
+            The free block, sparse when the input was sparse.
         """
-        dense = (
-            matrix if isinstance(matrix, np.ndarray) else _to_scipy(matrix).toarray()
-        )
+        if isinstance(matrix, np.ndarray):
+            return matrix[np.ix_(self._free, self._free)] if self.is_constrained else matrix
+        sparse = _to_scipy(matrix)
         if not self.is_constrained:
-            return dense
-        return dense[np.ix_(self._free, self._free)]
+            return sparse
+        # Row slice then column slice, as _scipy_mass does: CSR does both
+        # without ever forming the dense block.
+        return sp.csr_matrix(sparse[self._free][:, self._free])
 
     def restrict_vector(self, values: Any, /) -> np.ndarray:
         """The free entries of a vector assembled over all degrees of freedom.
@@ -426,7 +442,12 @@ def _to_mfem(matrix: Any) -> Any:
     """A SciPy sparse matrix as an ``mfem.SparseMatrix``.
 
     Built entry by entry, which is not elegant and is not the bottleneck: it
-    happens once per operator, against a solve that happens many times.
+    happens once per operator, against a solve that happens many times, and it
+    is linear in the number of *stored* entries — 16 ms for 33k of them. The
+    CSR constructor that would replace it is not reachable from Python in this
+    binding: pymfem exposes only ``SparseMatrix(nrows, ncols)`` and raw-pointer
+    overloads, so the array-based form has nowhere to bind. What did matter was
+    the dense intermediate this used to be handed; see :meth:`MfemSpace.restrict`.
 
     The alternative was ``BilinearForm.FormSystemMatrix``, MFEM's own way of
     imposing essential conditions. It is not used here because it **takes

@@ -19,7 +19,7 @@ exists, and why this class checks it rather than assuming it.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Literal, Sequence
 
 import numpy as np
 
@@ -197,6 +197,54 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         """``log(A)``. Requires positive definiteness."""
         self._require(Traits.POSITIVE_DEFINITE, "a logarithm")
         return self.apply_function(np.log)
+
+    def diagonals(
+        self,
+        /,
+        *,
+        offsets: Sequence[int] = (0,),
+        form: Literal["auto", "components", "galerkin"] = "auto",
+        probe: Literal["exact", "banded"] = "exact",
+    ) -> np.ndarray:
+        """The diagonals, read off the spectrum rather than probed.
+
+        The base implementation costs one application per column, so extracting
+        the diagonal of a diagonal operator cost ``dim`` matvecs — and it is
+        asked for on exactly the operators most likely to be diagonal: the
+        error covariance inside every structure-aware preconditioner, and
+        whatever Jacobi is handed.
+
+        Only the main diagonal is non-zero. In the Galerkin form the metric
+        multiplies it, which is free on a diagonal metric and needs the Gram
+        matrix otherwise — so that case defers to the base implementation
+        rather than guessing.
+        """
+        from .spaces import DiagonalMetricSpace, OrthonormalSpace
+
+        offsets = tuple(int(offset) for offset in offsets)
+        if not offsets:
+            raise ValueError("At least one offset is needed.")
+        if form == "auto":
+            form = "galerkin" if Traits.SELF_ADJOINT & self.traits else "components"
+        if form not in ("components", "galerkin"):
+            raise ValueError(f"Unknown matrix form {form!r}.")
+
+        space = self.domain
+        if form == "galerkin":
+            if isinstance(space, OrthonormalSpace):
+                values = self._eigenvalues
+            elif isinstance(space, DiagonalMetricSpace):
+                values = space.metric_values * self._eigenvalues
+            else:
+                return super().diagonals(offsets=offsets, form=form, probe=probe)
+        else:
+            values = self._eigenvalues
+
+        result = np.zeros((len(offsets), space.dim))
+        for index, offset in enumerate(offsets):
+            if offset == 0:
+                result[index] = values
+        return result
 
     @property
     def log_determinant(self) -> float:

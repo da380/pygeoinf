@@ -451,6 +451,47 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
         return _Adjoint(self)
 
+    def _link_adjoint(self, other: LinearOperator[Y, X], /) -> None:
+        """Record that *other* is this operator's adjoint, without building it.
+
+        The memo is what makes the structural recognition in ``nodes.py`` work
+        — it compares factors by identity — so an operator that can produce its
+        adjoint cheaply says so here rather than writing into ``__dict__`` by
+        name, which seven call sites in three modules were doing.
+        """
+        self.__dict__["_adjoint_cache"] = other
+
+    @staticmethod
+    def adjoints_are_linked(first: LinearOperator, second: LinearOperator, /) -> bool:
+        """Whether two operators are *already known* to be adjoint to each other.
+
+        Reads the memo; never fills it. That distinction is the whole point.
+        Asking ``first.adjoint is second`` *constructs* the adjoint when it has
+        not been built, and for the inverse of a direct solver that means
+        extracting a second matrix and factorising it — so testing whether a
+        composition happened to be a palindrome cost an ``O(n^3)`` detour, at
+        composition time, on an expression that may never be applied. Measured:
+        ``solver(A) @ B`` cost 60 applications of ``A`` at dimension 60, while
+        ``B @ solver(A)`` cost none.
+
+        Nothing is lost by reading only. Two operators that are adjoint but
+        unlinked would fail the identity test anyway; the links that matter are
+        made by writing ``A.adjoint`` in the expression itself, which happens
+        before the composition is built.
+
+        Args:
+            first, second: the operators to test.
+
+        Returns:
+            True when the adjoint relation is already recorded.
+        """
+        if first is second:
+            return bool(Traits.SELF_ADJOINT & first.traits)
+        return (
+            first.__dict__.get("_adjoint_cache") is second
+            or second.__dict__.get("_adjoint_cache") is first
+        )
+
     def _adjoint_value(self, y: Y) -> X:
         """The action of the adjoint. Subclasses that know it override this."""
         raise NotImplementedError(
@@ -814,6 +855,58 @@ class LinearOperator[X, Y](Operator[X, Y]):
         )
 
     @classmethod
+    def from_matrix(
+        cls,
+        domain: CoordinateSpace[X],
+        codomain: CoordinateSpace[Y],
+        matrix: Any,
+        /,
+        *,
+        form: Literal["components", "galerkin"],
+        traits: Traits = Traits.NONE,
+    ) -> LinearOperator[X, Y]:
+        """From a matrix, saying which representation it is in.
+
+        ``form`` is **required**, because no trait implies it and the two
+        differ by a factor of the metric:
+
+        .. code-block:: text
+
+            "components"   M == A_c        c_{Ax} == M c_x
+            "galerkin"     M == G_Y A_c    M_ij   == (A e_j, e_i)_Y
+
+        They coincide exactly when the codomain's basis is orthonormal, which
+        is why a wrong choice is invisible on a Euclidean space and wrong
+        everywhere else. Round-trips exactly with :meth:`matrix`: what
+        ``matrix(form=f)`` returns is what ``from_matrix(..., form=f)`` takes.
+
+        Which one you have depends on where it came from. A matrix of numbers
+        read off a discretisation is usually in components. A matrix assembled
+        from a bilinear form, or handed back by a numerical adjoint method as
+        rows of derivative components, is in Galerkin form — that is what makes
+        a symmetric operator's matrix symmetric.
+
+        Args:
+            domain: the domain, which must have coordinates.
+            codomain: the codomain, which must have coordinates.
+            matrix: the array, dense or sparse. A sparse one stays sparse.
+            form: which representation *matrix* is in.
+            traits: claims about the operator.
+
+        Returns:
+            A :class:`MatrixLinearOperator`, which keeps the array rather than
+            capturing it in a closure, so :meth:`matrix`, :meth:`diagonals` and
+            :meth:`assembled` are reads and a direct solver factorises what it
+            was given instead of re-deriving it.
+
+        Raises:
+            ValueError: if the shape is wrong or the form is not one of the two.
+        """
+        return MatrixLinearOperator(
+            domain, codomain, matrix, form=form, traits=traits
+        )
+
+    @classmethod
     def from_component_matrix(
         cls,
         domain: CoordinateSpace[X],
@@ -823,22 +916,26 @@ class LinearOperator[X, Y](Operator[X, Y]):
         *,
         traits: Traits = Traits.NONE,
     ) -> LinearOperator[X, Y]:
-        """From ``M`` with ``c_{Ax} == M c_x``."""
-        require_coordinates(domain, codomain)
-        matrix = _as_matrix(matrix)
-        expected = (codomain.dim, domain.dim)
-        if matrix.shape != expected:
-            raise ValueError(f"Matrix has shape {matrix.shape}, expected {expected}.")
+        """From ``M`` with ``c_{Ax} == M c_x``.
 
-        def value(x: X) -> Y:
-            return codomain.from_components(matrix @ domain.to_components(x))
+        :meth:`from_matrix` with ``form="components"``.
 
-        def adjoint(y: Y) -> X:
-            cy = codomain.apply_gram(codomain.to_components(y))
-            return domain.from_components(domain.solve_gram(matrix.T @ cy))
+        Args:
+            domain: the domain, which must have coordinates.
+            codomain: the codomain, which must have coordinates.
+            matrix: the component matrix, dense or sparse.
+            traits: claims about the operator.
 
-        return _CallableLinearOperator(
-            domain, codomain, value, adjoint=adjoint, traits=traits
+        Returns:
+            A :class:`MatrixLinearOperator`, which keeps the array: asking it
+            for its matrix or its diagonals is a read rather than ``dim``
+            applications.
+
+        Raises:
+            ValueError: if the matrix has the wrong shape.
+        """
+        return MatrixLinearOperator(
+            domain, codomain, matrix, form="components", traits=traits
         )
 
     @classmethod
@@ -853,29 +950,29 @@ class LinearOperator[X, Y](Operator[X, Y]):
     ) -> LinearOperator[X, Y]:
         """From ``M == G_Y A_c``, whose rows are derivative components.
 
+        :meth:`from_matrix` with ``form="galerkin"``. The name says where such
+        a matrix comes from; the form says what it is.
+
         Row ``i`` holds the derivative components of the ``i``-th output
         functional, which is the form a numerical adjoint method produces. The
         adjoint then applies ``G_X^-1`` on its own, which is what makes ``A*``
         return representers rather than raw component arrays. See DESIGN.md
         section 5.6.
+
+        Args:
+            domain: the domain, which must have coordinates.
+            codomain: the codomain, which must have coordinates.
+            matrix: the Galerkin matrix ``G_Y A_c``, dense or sparse.
+            traits: claims about the operator.
+
+        Returns:
+            A :class:`MatrixLinearOperator` holding the array in Galerkin form.
+
+        Raises:
+            ValueError: if the matrix has the wrong shape.
         """
-        require_coordinates(domain, codomain)
-        matrix = _as_matrix(matrix)
-        expected = (codomain.dim, domain.dim)
-        if matrix.shape != expected:
-            raise ValueError(f"Matrix has shape {matrix.shape}, expected {expected}.")
-
-        def value(x: X) -> Y:
-            return codomain.from_components(
-                codomain.solve_gram(matrix @ domain.to_components(x))
-            )
-
-        def adjoint(y: Y) -> X:
-            cy = codomain.to_components(y)
-            return domain.from_components(domain.solve_gram(matrix.T @ cy))
-
-        return _CallableLinearOperator(
-            domain, codomain, value, adjoint=adjoint, traits=traits
+        return MatrixLinearOperator(
+            domain, codomain, matrix, form="galerkin", traits=traits
         )
 
     @classmethod
@@ -955,6 +1052,177 @@ class _CallableLinearOperator[X, Y](LinearOperator[X, Y]):
                 "prohibitively expensive, so it is not done implicitly."
             )
         return self._adjoint_fn(y)
+
+
+class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
+    """A linear operator that remembers the matrix it was built from.
+
+    The matrix constructors used to hand back a closure with the array captured
+    inside it, so an operator built *from* a matrix could not produce one:
+    :meth:`matrix` re-derived it by ``dim`` applications, :meth:`diagonals`
+    likewise, :meth:`assembled` extracted an already-assembled operator, and
+    every direct solver paid a full extraction before factorising something it
+    had been given outright. At dimension 1200 that is 50-70 ms per call and
+    grows as ``n^3``; here each is a read.
+
+    The stored *form* is part of the object, because no trait implies it (see
+    DESIGN.md section 5.3): ``"components"`` means ``A_c`` with
+    ``c_{Ax} == A_c c_x``, and ``"galerkin"`` means ``G_Y A_c``, the matrix of
+    the bilinear form. The two differ on any space whose basis is not
+    orthonormal, and the difference is a metric factor that has to enter
+    exactly once.
+
+    The array may be sparse, and stays sparse: nothing here densifies it except
+    :meth:`matrix`, which is asked for a dense array by name.
+    """
+
+    def __init__(
+        self,
+        domain: CoordinateSpace[X],
+        codomain: CoordinateSpace[Y],
+        matrix: Any,
+        /,
+        *,
+        form: Literal["components", "galerkin"],
+        traits: Traits = Traits.NONE,
+    ) -> None:
+        """
+        Args:
+            domain: the domain, which must have coordinates.
+            codomain: the codomain, which must have coordinates.
+            matrix: the array, dense or sparse.
+            form: which representation *matrix* is in. Required, because no
+                trait implies it.
+            traits: claims about the operator.
+
+        Raises:
+            ValueError: if the shape is wrong or the form is not one of the two.
+        """
+        require_coordinates(domain, codomain)
+        if form not in ("components", "galerkin"):
+            raise ValueError(
+                f"The form is 'components' or 'galerkin', got {form!r}."
+            )
+        stored = _as_matrix(matrix)
+        expected = (codomain.dim, domain.dim)
+        if stored.shape != expected:
+            raise ValueError(
+                f"Matrix has shape {stored.shape}, expected {expected}."
+            )
+        super().__init__(domain, codomain, traits=traits)
+        self._stored = stored
+        self._form = form
+
+    @property
+    def stored_form(self) -> str:
+        """Which representation :attr:`stored_matrix` is in."""
+        return self._form
+
+    @property
+    def stored_matrix(self) -> Any:
+        """The array as given, dense or sparse.
+
+        Returned rather than copied, so treat it as read-only: the operator is
+        immutable and this is its state.
+        """
+        return self._stored
+
+    def _value(self, x: X) -> Y:
+        components = self._stored @ self.domain.to_components(x)
+        if self._form == "galerkin":
+            # M c_x == G_Y c_{Ax}, so the metric comes off here.
+            components = self.codomain.solve_gram(components)
+        return self.codomain.from_components(components)
+
+    def _adjoint_value(self, y: Y) -> X:
+        components = self.codomain.to_components(y)
+        if self._form == "components":
+            components = self.codomain.apply_gram(components)
+        return self.domain.from_components(
+            self.domain.solve_gram(self._stored.T @ components)
+        )
+
+    def _dense(self) -> np.ndarray:
+        from scipy.sparse import issparse
+
+        if issparse(self._stored):
+            return np.asarray(self._stored.todense())
+        return self._stored
+
+    def _in_form(self, form: str) -> np.ndarray:
+        """The stored matrix in the requested form, converting if need be."""
+        dense = self._dense()
+        if form == self._form:
+            return dense
+        convert = (
+            self.codomain.apply_gram
+            if form == "galerkin"
+            else self.codomain.solve_gram
+        )
+        # Column by column: apply_gram takes a component vector, and handing it
+        # a matrix is right only for a diagonal metric.
+        return np.column_stack([convert(column) for column in dense.T])
+
+    def matrix(
+        self,
+        /,
+        *,
+        form: Literal["auto", "components", "galerkin"] = "auto",
+        by: Literal["auto", "columns", "rows"] = "auto",
+    ) -> np.ndarray:
+        """The matrix, read rather than re-derived.
+
+        Free when the requested form is the stored one. Otherwise one metric
+        conversion, which is still ``dim`` *Gram* applications rather than
+        ``dim`` applications of the operator.
+
+        ``by`` is accepted and ignored: there is nothing to fill in.
+        """
+        if form == "auto":
+            form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
+        if form not in ("components", "galerkin"):
+            raise ValueError(f"Unknown matrix form {form!r}.")
+        return self._in_form(form)
+
+    def diagonals(
+        self,
+        /,
+        *,
+        offsets: Sequence[int] = (0,),
+        form: Literal["auto", "components", "galerkin"] = "auto",
+        probe: Literal["exact", "banded"] = "exact",
+    ) -> np.ndarray:
+        """Selected diagonals, read off the stored matrix.
+
+        Exact whatever *probe* says, because there is nothing to probe.
+        """
+        offsets = tuple(int(offset) for offset in offsets)
+        if not offsets:
+            raise ValueError("At least one offset is needed.")
+        if form == "auto":
+            form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
+        if probe not in ("exact", "banded"):
+            raise ValueError(f"Unknown probe {probe!r}.")
+
+        dense = self._in_form(form)
+        size = min(self.domain.dim, self.codomain.dim)
+        result = np.zeros((len(offsets), size))
+        for index, offset in enumerate(offsets):
+            for column in range(size):
+                row = column - offset
+                if 0 <= row < size:
+                    result[index, column] = dense[row, column]
+        return result
+
+    def assembled(self) -> LinearOperator[X, Y]:
+        """Itself: it is already assembled."""
+        return self
+
+    def __repr__(self) -> str:
+        return (
+            f"MatrixLinearOperator({self.domain!r} -> {self.codomain!r}, "
+            f"form={self._form!r})"
+        )
 
 
 class Functional[X](Operator[X, float]):

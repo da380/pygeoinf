@@ -213,9 +213,10 @@ class TestEssentialBoundaryConditions:
         # Unconstrained, the same form is singular: a constant function is in
         # its kernel, so the smallest eigenvalue of the Galerkin matrix is zero.
         whole = MfemSpace(elements)
-        matrix = whole.restrict(form.SpMat())
+        # restrict keeps the matrix sparse, so densify here rather than there.
+        matrix = np.asarray(whole.restrict(form.SpMat()).todense())
         assert np.linalg.eigvalsh(0.5 * (matrix + matrix.T)).min() < 1e-10
-        restricted = space.restrict(form.SpMat())
+        restricted = np.asarray(space.restrict(form.SpMat()).todense())
         assert np.linalg.eigvalsh(0.5 * (restricted + restricted.T)).min() > 1e-6
 
     def test_a_load_vector_is_restricted_too(self, constrained):
@@ -566,3 +567,52 @@ class TestMaternMeasure:
             matern_measure(space, correlation_length=0.0)
         with pytest.raises(ValueError, match="correlation lengths for"):
             matern_measure(space, correlation_length=[0.1, 0.2, 0.3])
+
+
+class TestSparsitySurvives:
+    """A finite element matrix is sparse, and must stay sparse.
+
+    The one property nothing else in the suite pins, which is how ``restrict``
+    came to call ``.toarray()`` unconditionally and go unnoticed: every test
+    ran on a mesh small enough that a dense block was merely wasteful. At 1e5
+    degrees of freedom it is 80 GB.
+    """
+
+    @pytest.fixture
+    def poisson(self):
+        mesh = mfem.Mesh.MakeCartesian2D(30, 30, mfem.Element.QUADRILATERAL)
+        collection = mfem.H1_FECollection(1, mesh.Dimension())
+        elements = mfem.FiniteElementSpace(mesh, collection)
+        form = mfem.BilinearForm(elements)
+        form.AddDomainIntegrator(mfem.DiffusionIntegrator())
+        form.Assemble()
+        form.Finalize()
+        return elements, form
+
+    def test_restrict_keeps_the_matrix_sparse(self, poisson):
+        import scipy.sparse as sp
+
+        elements, form = poisson
+        space = MfemSpace(elements)
+        restricted = space.restrict(form.SpMat())
+
+        assert sp.issparse(restricted)
+        size = restricted.shape[0]
+        # A P1 Laplacian on a quadrilateral mesh has at most nine entries a row.
+        assert restricted.nnz < 10 * size
+        assert restricted.nnz < 0.05 * size * size
+
+    def test_the_assembled_operator_holds_the_sparse_matrix(self, poisson):
+        import scipy.sparse as sp
+
+        from pygeoinf2.algebra.operators import MatrixLinearOperator
+
+        elements, form = poisson
+        space = MfemSpace(elements)
+        operator = operator_from_bilinear_form(
+            space, form, traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
+        )
+
+        assert isinstance(operator, MatrixLinearOperator)
+        assert sp.issparse(operator.stored_matrix)
+        assert operator.stored_matrix.nnz < 10 * space.dim

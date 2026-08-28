@@ -38,7 +38,7 @@ from scipy.linalg import cho_factor, cho_solve, eigh, lu_factor, lu_solve
 
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, HilbertSpace
-from ..traits import Traits, inverse_traits
+from ..traits import Traits, adjoint_traits, inverse_traits
 
 __all__ = [
     "SolverLike",
@@ -200,7 +200,24 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         /,
         *,
         traits: Traits | None = None,
+        adjoint_solve_fn: Callable[[X, Y | None], SolveResult[Y]] | None = None,
     ) -> None:
+        """
+        Args:
+            operator: the operator being inverted.
+            solver: the solver that produced this inverse.
+            solve_fn: ``(y, x0) -> SolveResult``. Note that **each application
+                runs the solve again**: an ``InverseOperator`` is a recipe, not
+                a stored factorisation, so applying one ``n`` times costs ``n``
+                solves.
+            traits: claims about the inverse. Deduced from the operator's when
+                omitted.
+            adjoint_solve_fn: how to solve ``A* w == x``, when the solver can
+                do it without redoing its work. A direct solver can: the same
+                factorisation solves the transposed system. Without it the
+                adjoint has to be inverted from scratch, which for LU means a
+                second matrix extraction and a second factorisation.
+        """
         if traits is None:
             # A pseudo-inverse of a rectangular operator is not an inverse, and
             # must not inherit the claim that it is one.
@@ -213,6 +230,7 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         self._operator = operator
         self._solver = solver
         self._solve_fn = solve_fn
+        self._adjoint_solve_fn = adjoint_solve_fn
 
     @property
     def operator(self) -> LinearOperator[X, Y]:
@@ -232,21 +250,34 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         return self._solve_fn(y, None).solution
 
     def _adjoint_value(self, x: X) -> Y:
-        return self.adjoint_inverse(x)
+        return self.adjoint(x)
 
     def adjoint_inverse(self, x: X) -> Y:
-        """Apply ``(A^-1)* == (A*)^-1``."""
-        cached = self.__dict__.get("_adjoint_inverse_op")
-        if cached is None:
-            cached = self._solver(self._operator.adjoint)
-            self.__dict__["_adjoint_inverse_op"] = cached
-        return cached(x)
+        """Apply ``(A^-1)* == (A*)^-1``.
+
+        Kept as a name; it is :attr:`adjoint` applied. It used to hold a
+        *second* cache of its own, so ``inv.adjoint(x)`` and this each built
+        their own inverse of ``A*`` and the operator ended up inverted twice.
+        """
+        return self.adjoint(x)
 
     def _make_adjoint(self) -> LinearOperator[X, Y]:
-        """``(A^-1)* == (A*)^-1``, built as an inverse rather than a wrapper."""
-        result = self._solver(self._operator.adjoint)
+        """``(A^-1)* == (A*)^-1``, built as an inverse rather than a wrapper.
+
+        Reuses the solver's own transposed solve where there is one, so a
+        direct factorisation is not repeated for the adjoint.
+        """
+        if self._adjoint_solve_fn is not None:
+            result = InverseOperator(
+                self._operator.adjoint,
+                self._solver,
+                self._adjoint_solve_fn,
+                traits=adjoint_traits(self.traits),
+            )
+        else:
+            result = self._solver(self._operator.adjoint)
         # Close the loop, for the same reason the sum and composition nodes do.
-        result.__dict__["_adjoint_cache"] = self
+        result._link_adjoint(self)
         return result
 
     def __repr__(self) -> str:
@@ -285,11 +316,39 @@ class DirectSolver(LinearSolver):
             cx = apply_inverse(cy)
             return SolveResult(domain.from_components(cx), 0, 0.0, True)
 
-        return InverseOperator(operator, self, solve_fn)
+        adjoint_solve_fn = None
+        apply_transposed = self._factorise_transposed(matrix)
+        if apply_transposed is not None:
+
+            def adjoint_solve_fn(x, w0):
+                # Solve A* w == x for w in the codomain. With M the components
+                # form, A* has component matrix G_X^-1 M^T G_Y, so
+                # c_w == G_Y^-1 M^-T G_X c_x; with M the Galerkin form the
+                # trailing G_Y is already in M and the last solve drops out.
+                cx = domain.apply_gram(domain.to_components(x))
+                cw = apply_transposed(cx)
+                if self.form == "components":
+                    cw = codomain.solve_gram(cw)
+                return SolveResult(codomain.from_components(cw), 0, 0.0, True)
+
+        return InverseOperator(
+            operator, self, solve_fn, adjoint_solve_fn=adjoint_solve_fn
+        )
 
     @abstractmethod
     def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
         """Factorise once, returning something that applies the inverse."""
+
+    def _factorise_transposed(
+        self, matrix: np.ndarray
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        """Apply ``M^-T`` using the factorisation already taken, if it can.
+
+        None by default, meaning "invert the adjoint from scratch". A symmetric
+        factorisation needs no override: its operator is self-adjoint, so the
+        inverse is too and its adjoint is itself.
+        """
+        return None
 
 
 class LUSolver(DirectSolver):
@@ -300,6 +359,18 @@ class LUSolver(DirectSolver):
     def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
         factor = lu_factor(matrix)
         return lambda c: lu_solve(factor, c)
+
+    def _factorise_transposed(
+        self, matrix: np.ndarray
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        """``M^-T`` from the same factors, which is what ``trans=1`` is for.
+
+        The adjoint of an LU inverse used to be built by inverting ``A*`` from
+        scratch: a second matrix extraction and a second factorisation of what
+        is, up to a transpose, the same matrix.
+        """
+        factor = lu_factor(matrix)
+        return lambda c: lu_solve(factor, c, trans=1)
 
 
 class CholeskySolver(DirectSolver):

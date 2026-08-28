@@ -107,7 +107,7 @@ class _Adjoint[X, Y](LinearOperator[Y, X]):
         super().__init__(base.codomain, base.domain, traits=adjoint_traits(base.traits))
         self._base = base
         # A.adjoint.adjoint is A, without building a second wrapper.
-        self.__dict__["_adjoint_cache"] = base
+        self._link_adjoint(base)
 
     @property
     def base(self) -> LinearOperator[X, Y]:
@@ -203,7 +203,7 @@ class _Sum[X, Y](LinearOperator[X, Y]):
         # Close the loop, so that A.adjoint.adjoint is A. This is not tidiness:
         # the palindrome rule below compares factors by identity and would not
         # fire on an operator whose adjoint had been rebuilt.
-        result.__dict__["_adjoint_cache"] = self
+        result._link_adjoint(self)
         return result
 
     def __repr__(self) -> str:
@@ -248,7 +248,7 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         if n < 2 or not square:
             return Traits.NONE
         for i in range(n // 2):
-            if factors[i].adjoint is not factors[n - 1 - i]:
+            if not LinearOperator.adjoints_are_linked(factors[i], factors[n - 1 - i]):
                 return Traits.NONE
 
         outer_invertible = all(
@@ -258,7 +258,7 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         if n % 2 == 0:
             return gramian_traits(invertible=outer_invertible)
         middle = factors[n // 2]
-        if middle.adjoint is not middle:
+        if not LinearOperator.adjoints_are_linked(middle, middle):
             return Traits.NONE
         return congruence_traits(middle.traits, outer_invertible=outer_invertible)
 
@@ -282,7 +282,7 @@ class _Composition[X, Y](LinearOperator[X, Y]):
     def _make_adjoint(self) -> LinearOperator[Y, X]:
         """``(A B ... Z)* == Z* ... B* A*``."""
         result = _Composition([factor.adjoint for factor in reversed(self._factors)])
-        result.__dict__["_adjoint_cache"] = self
+        result._link_adjoint(self)
         return result
 
     def __repr__(self) -> str:

@@ -495,3 +495,169 @@ class TestWithTraits:
         operator = LinearOperator.zero(EuclideanSpace(3), codomain=EuclideanSpace(4))
         with pytest.raises(ValueError, match="SELF_ADJOINT"):
             operator.with_traits(Traits.SELF_ADJOINT)
+
+
+class TestCompositionCosts:
+    """Building an expression must not do the work of applying it."""
+
+    def test_composing_with_an_inverse_costs_no_applications(self, rng):
+        """The palindrome rule compares factors by identity, and asking an
+        operator for its adjoint *builds* one. For the inverse of a direct
+        solver that means extracting a second matrix and factorising it, so
+        testing whether a composition happened to be a palindrome cost an
+        O(n^3) detour at composition time -- on an expression that might never
+        be applied. Measured at dimension 60: 60 applications for
+        ``inverse @ B`` and none for ``B @ inverse``.
+        """
+        from pygeoinf2.numerics.solvers import LUSolver
+
+        space = EuclideanSpace(40)
+        matrix = rng.normal(size=(40, 40)) + 40.0 * np.identity(40)
+        applications = 0
+
+        def value(x):
+            nonlocal applications
+            applications += 1
+            return matrix @ x
+
+        def adjoint(y):
+            nonlocal applications
+            applications += 1
+            return matrix.T @ y
+
+        operator = LinearOperator.from_callables(
+            space, space, value, adjoint=adjoint
+        )
+        other = LinearOperator.from_component_matrix(
+            space, space, rng.normal(size=(40, 40))
+        )
+        inverse = LUSolver()(operator)
+
+        applications = 0
+        _ = inverse @ other
+        assert applications == 0
+        _ = other @ inverse
+        assert applications == 0
+
+    def test_the_palindrome_traits_still_fire(self, rng):
+        """Reading the link rather than building it must not cost deduction.
+        The links that matter are made by writing ``A.adjoint`` in the
+        expression, which happens before the composition is built."""
+        space = EuclideanSpace(5)
+        operator = LinearOperator.from_component_matrix(
+            space, space, rng.normal(size=(5, 5))
+        )
+        middle = LinearOperator.from_component_matrix(
+            space,
+            space,
+            np.identity(5) * 2.0,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+
+        assert Traits.POSITIVE_SEMIDEFINITE & (operator @ operator.adjoint).traits
+        assert (
+            Traits.POSITIVE_SEMIDEFINITE
+            & (operator @ middle @ operator.adjoint).traits
+        )
+        assert Traits.SELF_ADJOINT & (operator.adjoint @ operator).traits
+
+
+class TestMatrixLinearOperator:
+    """An operator built from a matrix must be able to produce one."""
+
+    @pytest.fixture(params=["euclidean", "weighted", "dense-metric"])
+    def domain(self, request):
+        from .conftest import make_dense_metric_space, make_weighted_space
+
+        return {
+            "euclidean": lambda: EuclideanSpace(4),
+            "weighted": make_weighted_space,
+            "dense-metric": make_dense_metric_space,
+        }[request.param]()
+
+    @pytest.mark.parametrize("form", ["components", "galerkin"])
+    def test_the_matrix_round_trips_in_its_own_form(self, domain, form, rng):
+        codomain = EuclideanSpace(3)
+        matrix = rng.normal(size=(3, domain.dim))
+        operator = LinearOperator.from_matrix(
+            domain, codomain, matrix, form=form
+        )
+        assert operator.matrix(form=form) == pytest.approx(matrix)
+
+    @pytest.mark.parametrize("form", ["components", "galerkin"])
+    def test_it_agrees_with_the_probed_route(self, domain, form, rng):
+        """Both forms and both diagonals, against the generic implementation
+        that fills the matrix in by applying the operator. A dense Gram is what
+        separates the two representations, so it has to be one of the cases."""
+        codomain = EuclideanSpace(3)
+        matrix = rng.normal(size=(3, domain.dim))
+        stored = LinearOperator.from_matrix(domain, codomain, matrix, form=form)
+        probed = LinearOperator.from_callables(
+            domain,
+            codomain,
+            stored,
+            adjoint=lambda y, s=stored: s.adjoint(y),
+        )
+
+        for wanted in ("components", "galerkin"):
+            assert stored.matrix(form=wanted) == pytest.approx(
+                probed.matrix(form=wanted)
+            )
+            assert stored.diagonals(offsets=(0,), form=wanted) == pytest.approx(
+                probed.diagonals(offsets=(0,), form=wanted)
+            )
+
+    def test_the_matrix_is_read_rather_than_re_derived(self, rng):
+        """It was captured in a closure, so an operator built from a matrix
+        could not produce one: ``matrix()`` re-derived it by ``dim``
+        applications, and so did every direct solver before factorising."""
+        space = EuclideanSpace(40)
+        matrix = rng.normal(size=(40, 40))
+        applications = 0
+
+        class Counting(EuclideanSpace):
+            pass
+
+        operator = LinearOperator.from_matrix(
+            space, space, matrix, form="components"
+        )
+        original = type(operator)._value
+
+        def counting(self, x):
+            nonlocal applications
+            applications += 1
+            return original(self, x)
+
+        type(operator)._value = counting
+        try:
+            operator.matrix(form="components")
+            operator.diagonals(offsets=(0,), form="components")
+            assembled = operator.assembled()
+        finally:
+            type(operator)._value = original
+
+        assert applications == 0
+        assert assembled is operator
+
+    def test_a_sparse_matrix_stays_sparse(self, rng):
+        import scipy.sparse as sp
+
+        space = EuclideanSpace(50)
+        sparse = sp.diags([np.ones(49), np.full(50, 2.0), np.ones(49)], [-1, 0, 1])
+        operator = LinearOperator.from_matrix(
+            space, space, sparse, form="components"
+        )
+        assert sp.issparse(operator.stored_matrix)
+        assert operator.stored_matrix.nnz == 148
+        # And it still applies correctly.
+        probe = rng.normal(size=50)
+        assert operator(probe) == pytest.approx(sparse @ probe)
+
+    def test_the_form_must_be_given(self, rng):
+        space = EuclideanSpace(3)
+        with pytest.raises(TypeError):
+            LinearOperator.from_matrix(space, space, np.identity(3))
+        with pytest.raises(ValueError, match="components' or 'galerkin"):
+            LinearOperator.from_matrix(
+                space, space, np.identity(3), form="derivative"
+            )

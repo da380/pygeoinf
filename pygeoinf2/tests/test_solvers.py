@@ -399,3 +399,59 @@ class TestLeastSquares:
     def test_negative_damping_is_refused(self):
         with pytest.raises(ValueError, match="non-negative"):
             LSQRSolver(damping=-1.0)
+
+
+class TestDirectInverseAdjoint:
+    """The adjoint of a factorised inverse must reuse the factorisation."""
+
+    def test_it_does_not_refactorise(self, rng):
+        """``inv.adjoint`` inverted ``A*`` from scratch: a second matrix
+        extraction and a second factorisation of what is, up to a transpose,
+        the same matrix. And ``_adjoint_value`` went through a *second* cache,
+        so both paths built their own.
+        """
+        space = EuclideanSpace(50)
+        matrix = rng.normal(size=(50, 50)) + 50.0 * np.identity(50)
+        applications = 0
+
+        def value(x):
+            nonlocal applications
+            applications += 1
+            return matrix @ x
+
+        def adjoint(y):
+            nonlocal applications
+            applications += 1
+            return matrix.T @ y
+
+        operator = LinearOperator.from_callables(
+            space, space, value, adjoint=adjoint
+        )
+        inverse = LUSolver()(operator)
+
+        applications = 0
+        probe = rng.normal(size=50)
+        recovered = inverse.adjoint(probe)
+        assert applications == 0
+        # Second path, which used to build its own inverse.
+        inverse.adjoint_inverse(probe)
+        assert applications == 0
+
+        # And it is the right operator: A* (A*)^-1 x == x.
+        applications = 0
+        assert operator.adjoint(recovered) == pytest.approx(probe)
+
+    def test_it_is_right_on_a_weighted_space(self, rng):
+        """The transposed solve carries the metric, and that is where a sign or
+        a Gram in the wrong place would show."""
+        space = make_weighted_space()
+        size = space.dim
+        matrix = rng.normal(size=(size, size)) + size * np.identity(size)
+        operator = LinearOperator.from_matrix(
+            space, space, matrix, form="components"
+        )
+        inverse = LUSolver()(operator)
+
+        probe = space.random(rng=rng)
+        recovered = operator.adjoint(inverse.adjoint(probe))
+        assert space.norm(space.subtract(recovered, probe)) < 1e-10 * space.norm(probe)

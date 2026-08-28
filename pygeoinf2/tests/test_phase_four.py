@@ -121,10 +121,21 @@ class TestDiagonals:
         )
 
     def test_the_banded_probe_is_wrong_on_a_full_one(self, rng):
-        """The negative control. It sums in the out-of-band entries, and says so."""
+        """The negative control. It sums in the out-of-band entries, and says so.
+
+        Built from callables rather than from a matrix: an operator that holds
+        its matrix reads the diagonals off it and is exact whatever ``probe``
+        asks for, so there is no approximation left to catch.
+        """
         X = make_weighted_space()
-        operator = LinearOperator.from_component_matrix(
-            X, X, rng.normal(size=(X.dim, X.dim))
+        matrix = rng.normal(size=(X.dim, X.dim))
+        operator = LinearOperator.from_callables(
+            X,
+            X,
+            lambda x: X.from_components(matrix @ X.to_components(x)),
+            adjoint=lambda y: X.from_components(
+                X.solve_gram(matrix.T @ X.apply_gram(X.to_components(y)))
+            ),
         )
         assert not np.allclose(
             operator.diagonals(offsets=[-1, 0, 1], form="components"),
@@ -813,11 +824,24 @@ class TestPreconditioners:
 
     def test_it_can_make_matters_worse_on_a_dense_operator(self, rng):
         """Recorded, not guarded against: nothing here can detect the structure
-        for you, which is why the bandwidth is a required argument."""
+        for you, which is why the bandwidth is a required argument.
+
+        The operator is wrapped as callables so that the *probe* is what is
+        being tested. An operator holding its own matrix reads the band off it
+        exactly, which makes the banded preconditioner a genuine approximation
+        rather than a contaminated one — and then it converges.
+        """
         from pygeoinf2.numerics.preconditioners import BandedPreconditioner
 
         space = self.sphere()
-        operator = self.spread(space, rng)
+        assembled = self.spread(space, rng)
+        operator = LinearOperator.from_callables(
+            space,
+            space,
+            assembled,
+            adjoint=assembled,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
         vector = space.random(rng=rng)
         plain, _ = self.iterations(operator, None, vector)
         count, residual = self.iterations(

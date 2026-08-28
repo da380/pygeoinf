@@ -29,6 +29,7 @@ from .algebra.operators import (
     Functional,
     LinearFunctional,
     LinearOperator,
+    MatrixLinearOperator,
     Operator,
     require_coordinates,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "Functional",
     "LinearFunctional",
     "LinearOperator",
+    "MatrixLinearOperator",
     "Operator",
     "require_coordinates",
     # algebra.diagonal

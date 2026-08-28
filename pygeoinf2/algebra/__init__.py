@@ -18,6 +18,7 @@ from .operators import (
     Functional,
     LinearFunctional,
     LinearOperator,
+    MatrixLinearOperator,
     Operator,
     require_coordinates,
 )
@@ -52,6 +53,7 @@ __all__ = [
     "Linearisation",
     "LinearFunctional",
     "LinearOperator",
+    "MatrixLinearOperator",
     "Operator",
     "OrthonormalSpace",
     "QuadraticModel",

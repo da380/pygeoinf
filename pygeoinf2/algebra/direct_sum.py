@@ -340,7 +340,7 @@ def _block_traits(
     n = len(blocks)
     for i in range(n):
         for j in range(n):
-            if blocks[i][j].adjoint is not blocks[j][i]:
+            if not LinearOperator.adjoints_are_linked(blocks[i][j], blocks[j][i]):
                 return Traits.NONE
     return close(Traits.SELF_ADJOINT)
 
@@ -441,7 +441,7 @@ class BlockLinearOperator(BlockOperator, LinearOperator):
                 for j in range(self.col_dim)
             ]
         )
-        result.__dict__["_adjoint_cache"] = self
+        result._link_adjoint(self)
         return result
 
     def __repr__(self) -> str:
@@ -519,7 +519,7 @@ class ColumnLinearOperator(ColumnOperator, LinearOperator):
 
     def _make_adjoint(self) -> LinearOperator:
         result = RowLinearOperator([op.adjoint for op in self._operators])
-        result.__dict__["_adjoint_cache"] = self
+        result._link_adjoint(self)
         return result
 
 
@@ -592,7 +592,7 @@ class RowLinearOperator(RowOperator, LinearOperator):
 
     def _make_adjoint(self) -> LinearOperator:
         result = ColumnLinearOperator([op.adjoint for op in self._operators])
-        result.__dict__["_adjoint_cache"] = self
+        result._link_adjoint(self)
         return result
 
 
@@ -660,5 +660,5 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
 
     def _make_adjoint(self) -> LinearOperator:
         result = BlockDiagonalLinearOperator([op.adjoint for op in self._operators])
-        result.__dict__["_adjoint_cache"] = self
+        result._link_adjoint(self)
         return result
