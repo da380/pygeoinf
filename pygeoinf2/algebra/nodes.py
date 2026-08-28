@@ -29,8 +29,14 @@ from ..traits import (
     scale_traits,
     sum_traits,
 )
-from .linearisation import Linearisation
-from .operators import LinearOperator, Operator
+from .linearisation import Linearisation, QuadraticModel
+from .operators import (
+    REALS,
+    Functional,
+    LinearFunctional,
+    LinearOperator,
+    Operator,
+)
 from .spaces import HilbertSpace
 
 __all__ = ["make_sum", "make_scaled", "make_composition"]
@@ -159,7 +165,7 @@ class _Scaled[X, Y](LinearOperator[X, Y]):
         product = self._alpha * alpha
         if product == 1.0:
             return self._base
-        return _Scaled(product, self._base)
+        return linear_scaled(product, self._base)
 
     def __repr__(self) -> str:
         return f"Scaled({self._alpha!r}, {self._base!r})"
@@ -419,15 +425,197 @@ class _OperatorComposition[X, Y](Operator[X, Y]):
         ) @ inner_prime + outer_prime @ self._inner.second_derivative(x, dx)
 
 
+class _LinearFunctionalSum[X](_Sum[X, float], LinearFunctional[X]):
+    """``f + g`` for linear functionals, still one."""
+
+
+class _LinearFunctionalScaled[X](_Scaled[X, float], LinearFunctional[X]):
+    """``alpha f`` for a linear functional, still one."""
+
+
+class _LinearFunctionalComposition[X](_Composition[X, float], LinearFunctional[X]):
+    """``f @ A`` for a linear functional, still one."""
+
+
+def linear_sum(terms: Sequence[LinearOperator]) -> LinearOperator:
+    """A linear sum node, staying a functional when the terms are.
+
+    The node classes carry the *value* of a functional correctly whatever they
+    are called; what they lose is the type, and with it ``representer``,
+    ``derivative_components``, and an ``at()`` that returns a quadratic model
+    rather than a linearisation. Nothing here computes anything new -- all
+    three of those are already derivable from the adjoint -- but they live on
+    :class:`LinearFunctional`, so the type is what makes them reachable.
+    """
+    if terms[0].codomain == REALS:
+        return _LinearFunctionalSum(terms)
+    return _Sum(terms)
+
+
+def linear_scaled(alpha: float, base: LinearOperator) -> LinearOperator:
+    """A linear scaling node, staying a functional when the base is."""
+    if base.codomain == REALS:
+        return _LinearFunctionalScaled(alpha, base)
+    return _Scaled(alpha, base)
+
+
+def linear_composition(factors: Sequence[LinearOperator]) -> LinearOperator:
+    """A linear composition node, staying a functional when the result is."""
+    if factors[0].codomain == REALS:
+        return _LinearFunctionalComposition(factors)
+    return _Composition(factors)
+
+
+# --------------------------------------------------------------------- #
+#            The same nodes, closed over scalar-valued operators        #
+# --------------------------------------------------------------------- #
+#
+# A functional is an operator into Reals, so the nodes above already carry its
+# *value* correctly. What they lose is its type, and with it everything a
+# functional adds: at() returns a Linearisation rather than a QuadraticModel,
+# so there is no `.gradient`; there is no `.hessian`; and `isinstance(_,
+# Functional)` is False, which is what an optimiser checks.
+#
+# That mattered concretely. A misfit plus a regulariser is a sum of
+# functionals, and `numerics.optimisation` asks for `functional.at(x).gradient`
+# — so every composed objective, which is to say every real one, raised
+# AttributeError.
+#
+# The Hessian rules are DESIGN.md section 5.5's, and each is available exactly
+# when its ingredients are.
+
+
+class _FunctionalSum[X](_OperatorSum[X, float], Functional[X]):
+    """``phi + psi``, still a functional."""
+
+    def _linearise(self, x: X) -> QuadraticModel[X]:
+        parts = [term.at(x) for term in self._terms]
+        value = parts[0].value
+        derivative = parts[0].derivative
+        for part in parts[1:]:
+            value = value + part.value
+            derivative = derivative + part.derivative
+        hessian = self._hessian(x) if self.has_hessian else None
+        return QuadraticModel(x, value, derivative, hessian)
+
+    @property
+    def has_hessian(self) -> bool:
+        """True when every term has one."""
+        return all(
+            isinstance(term, Functional) and term.has_hessian for term in self._terms
+        )
+
+    def _hessian(self, x: X) -> LinearOperator[X, X]:
+        """The sum of the terms' Hessians."""
+        total = self._terms[0].hessian(x)
+        for term in self._terms[1:]:
+            total = total + term.hessian(x)
+        return total
+
+
+class _FunctionalScaled[X](_OperatorScaled[X, float], Functional[X]):
+    """``alpha * phi``, still a functional."""
+
+    def _linearise(self, x: X) -> QuadraticModel[X]:
+        part = self._base.at(x)
+        hessian = self._hessian(x) if self.has_hessian else None
+        return QuadraticModel(
+            x,
+            self._alpha * part.value,
+            part.derivative * self._alpha,
+            hessian,
+        )
+
+    @property
+    def has_hessian(self) -> bool:
+        """True when the scaled functional has one."""
+        return isinstance(self._base, Functional) and self._base.has_hessian
+
+    def _hessian(self, x: X) -> LinearOperator[X, X]:
+        """``alpha H``."""
+        return self._base.hessian(x) * self._alpha
+
+
+class _FunctionalComposition[X](_OperatorComposition[X, float], Functional[X]):
+    """``phi @ F``, still a functional."""
+
+    def _linearise(self, x: X) -> QuadraticModel[X]:
+        inner = self._inner.at(x)
+        outer = self._outer.at(inner.value)
+        hessian = None
+        if self.has_hessian:
+            hessian = self._compose_hessian(inner, outer)
+        return QuadraticModel(
+            x, outer.value, outer.derivative @ inner.derivative, hessian
+        )
+
+    @property
+    def has_hessian(self) -> bool:
+        """True when the chain rule for second derivatives can be applied.
+
+        The outer functional needs a Hessian and the inner map a derivative.
+        The inner map's *second* derivative is needed only when it has one:
+        a linear inner map has none and needs none, which is the common case
+        (``phi @ A``) and the one where the rule collapses to ``A* H A``.
+        """
+        if not isinstance(self._outer, Functional):
+            return False
+        return (
+            self._outer.has_hessian
+            and self._inner.has_derivative
+            and (
+                isinstance(self._inner, LinearOperator)
+                or self._inner.has_second_derivative
+            )
+        )
+
+    def _hessian(self, x: X) -> LinearOperator[X, X]:
+        inner = self._inner.at(x)
+        return self._compose_hessian(inner, self._outer.at(inner.value))
+
+    def _compose_hessian(
+        self, inner: Linearisation, outer: QuadraticModel
+    ) -> LinearOperator[X, X]:
+        r"""``F'* H F' + F''[.]* grad``, the chain rule differentiated once more.
+
+        The first term is the Gauss-Newton one: it is what a least-squares
+        problem keeps and the whole Hessian when the inner map is linear. The
+        second is the curvature of the inner map, weighted by the outer
+        gradient, and it is the term that makes the Hessian indefinite far from
+        a minimum.
+        """
+        derivative = inner.derivative
+        curved = isinstance(self._inner, Operator) and not isinstance(
+            self._inner, LinearOperator
+        )
+
+        def action(dx: X) -> X:
+            step = derivative(dx)
+            result = derivative.adjoint(outer.hessian(step))
+            if curved and self._inner.has_second_derivative:
+                second = self._inner.second_derivative(inner.point, dx)
+                result = self.domain.add(result, second.adjoint(outer.gradient))
+            return result
+
+        return LinearOperator.self_adjoint(self.domain, action)
+
+
 # --------------------------------------------------------------------- #
 #                               Constructors                            #
 # --------------------------------------------------------------------- #
 
 
 def make_sum(a: Operator, b: Operator) -> Operator:
-    """A sum node of the right kind for the operands."""
+    """A sum node of the right kind for the operands.
+
+    "The right kind" includes staying a functional when both operands are: an
+    algebra that is not closed loses, at the first ``+``, everything the type
+    was carrying.
+    """
     if isinstance(a, LinearOperator) and isinstance(b, LinearOperator):
-        return _Sum([a, b])
+        return linear_sum([a, b])
+    if isinstance(a, Functional) and isinstance(b, Functional):
+        return _FunctionalSum([a, b])
     return _OperatorSum([a, b])
 
 
@@ -435,11 +623,15 @@ def make_scaled(alpha: float, base: Operator) -> Operator:
     """A scaling node of the right kind for the operand."""
     if isinstance(base, LinearOperator):
         return base * alpha
+    if isinstance(base, Functional):
+        return _FunctionalScaled(alpha, base)
     return _OperatorScaled(alpha, base)
 
 
 def make_composition(outer: Operator, inner: Operator) -> Operator:
     """A composition node of the right kind for the operands."""
     if isinstance(outer, LinearOperator) and isinstance(inner, LinearOperator):
-        return _Composition([outer, inner])
+        return linear_composition([outer, inner])
+    if isinstance(outer, Functional):
+        return _FunctionalComposition(outer, inner)
     return _OperatorComposition(outer, inner)

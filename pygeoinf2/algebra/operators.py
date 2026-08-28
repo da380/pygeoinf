@@ -807,9 +807,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
             for candidate in (self._combine_add(other), other._combine_radd(self)):
                 if candidate is not None:
                     return candidate
-            from .nodes import _Sum
+            from .nodes import linear_sum
 
-            return _Sum([self, other])
+            return linear_sum([self, other])
         return super().__add__(other)
 
     def __mul__(self, alpha: float) -> Operator:
@@ -819,11 +819,11 @@ class LinearOperator[X, Y](Operator[X, Y]):
         candidate = self._combine_scale(alpha)
         if candidate is not None:
             return candidate
-        from .nodes import _Scaled
+        from .nodes import linear_scaled
 
         if alpha == 1.0:
             return self
-        return _Scaled(alpha, self)
+        return linear_scaled(alpha, self)
 
     def __matmul__(self, other: Operator) -> Operator:
         if isinstance(other, LinearOperator):
@@ -838,9 +838,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
             ):
                 if candidate is not None:
                     return candidate
-            from .nodes import _Composition
+            from .nodes import linear_composition
 
-            return _Composition([self, other])
+            return linear_composition([self, other])
         return super().__matmul__(other)
 
     # ----------------------------------------------------------------- #
@@ -1608,8 +1608,19 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
     """
 
     def __init__(
-        self, domain: HilbertSpace[X], /, *, traits: Traits = Traits.NONE
+        self,
+        domain: HilbertSpace[X],
+        codomain: HilbertSpace[float] | None = None,
+        /,
+        *,
+        traits: Traits = Traits.NONE,
     ) -> None:
+        # The codomain argument exists for the same reason Functional's does:
+        # so that the expression nodes, which call
+        # ``super().__init__(domain, codomain, traits=...)``, can have this in
+        # their MRO and stay linear functionals. It is always Reals.
+        if codomain is not None and codomain != REALS:
+            raise ValueError(f"A functional maps into Reals, not {codomain!r}.")
         LinearOperator.__init__(self, domain, REALS, traits=traits)
 
     @property
@@ -1649,6 +1660,65 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
         return self.domain.apply_gram(self.domain.to_components(self.representer))
 
     @classmethod
+    def from_callables(  # type: ignore[override]
+        cls,
+        domain: HilbertSpace[X],
+        value: Callable[[X], float],
+        /,
+        *,
+        representer: Callable[[], X] | None = None,
+        derivative_components: Callable[[], np.ndarray] | None = None,
+        traits: Traits = Traits.NONE,
+    ) -> LinearFunctional[X]:
+        """A linear functional from its action, and one of its two readings.
+
+        There was no way to build one of these from a mapping at all: this name
+        resolved by MRO to :meth:`LinearOperator.from_callables`, which wants a
+        codomain and an adjoint and hands back a plain operator — so v1's
+        ``LinearForm(domain, mapping=...)`` had no counterpart.
+
+        Exactly one of *representer* and *derivative_components* is needed, and
+        which one you have says which convention you are in. They differ by the
+        metric, and confusing them is the error of DESIGN.md section 5.6:
+
+        * the **representer** is the gradient, the vector ``v`` with
+          ``f(x) == (v, x)``;
+        * the **derivative components** are the row ``g`` with
+          ``f(x) == g . c_x``.
+
+        They are given as callables rather than values so that a functional
+        whose representer costs a solve does not pay for it until asked.
+
+        Args:
+            domain: the space the functional acts on.
+            value: the action, ``x -> f(x)``.
+            representer: returns the Riesz representer.
+            derivative_components: returns the derivative components. Needs a
+                domain with coordinates.
+            traits: claims about the functional.
+
+        Returns:
+            The functional.
+
+        Raises:
+            ValueError: if neither reading is supplied, or if both are.
+        """
+        supplied = (representer is not None) + (derivative_components is not None)
+        if supplied != 1:
+            raise ValueError(
+                "Supply exactly one of representer and derivative_components. "
+                "They differ by the metric, so which one you hold is not a "
+                "detail the library can guess."
+            )
+        return _CallableLinearFunctional(
+            domain,
+            value,
+            representer=representer,
+            derivative_components=derivative_components,
+            traits=traits,
+        )
+
+    @classmethod
     def from_representer(cls, domain: HilbertSpace[X], v: X) -> LinearFunctional[X]:
         """The functional ``x -> (v, x)``, from a gradient you already hold."""
         return _RepresenterFunctional(domain, v)
@@ -1668,6 +1738,44 @@ class LinearFunctional[X](LinearOperator[X, float], Functional[X]):
         if g.shape != (domain.dim,):
             raise ValueError(f"Expected shape {(domain.dim,)}, got {g.shape}.")
         return _RepresenterFunctional(domain, domain.representer(g))
+
+
+class _CallableLinearFunctional[X](LinearFunctional[X]):
+    """A linear functional given by its action and one of its two readings."""
+
+    def __init__(
+        self,
+        domain: HilbertSpace[X],
+        value: Callable[[X], float],
+        /,
+        *,
+        representer: Callable[[], X] | None,
+        derivative_components: Callable[[], np.ndarray] | None,
+        traits: Traits = Traits.NONE,
+    ) -> None:
+        super().__init__(domain, traits=traits)
+        self._value_fn = value
+        self._representer_fn = representer
+        self._components_fn = derivative_components
+
+    def _value(self, x: X) -> float:
+        return float(self._value_fn(x))
+
+    def _adjoint_value(self, t: float) -> X:
+        return self.domain.scale(float(t), self.representer)
+
+    @property
+    def representer(self) -> X:
+        """The Riesz representer, from whichever reading was supplied."""
+        cached = self.__dict__.get("_representer_cache")
+        if cached is None:
+            if self._representer_fn is not None:
+                cached = self._representer_fn()
+            else:
+                require_coordinates(self.domain)
+                cached = self.domain.representer(np.asarray(self._components_fn()))
+            self.__dict__["_representer_cache"] = cached
+        return cached
 
 
 class _RepresenterFunctional[X](LinearFunctional[X]):
