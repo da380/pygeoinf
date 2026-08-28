@@ -48,7 +48,10 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "MfemSpace",
+    "essential_dofs_of",
     "operator_from_bilinear_form",
+    "operator_from_linear_forms",
+    "solver_from_bilinear_form",
     "functional_from_linear_form",
 ]
 

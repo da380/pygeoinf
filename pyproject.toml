@@ -31,10 +31,24 @@ interactive = ["plotly>=5.0.0"]
 mfem = ["mfem>=4.8.0"]
 
 [tool.poetry]
-packages = [{ include = "pygeoinf" }]
+# Both packages ship for the dev period: pygeoinf2 is the 2.0 refactor and is
+# not yet the one imported by default, but its data files were already listed
+# below and without it in `packages` they would have gone into a wheel that
+# does not contain the package they belong to.
+packages = [
+    { include = "pygeoinf" },
+    { include = "pygeoinf2" },
+]
 include = [
     { path = "pygeoinf/data/*.csv", format = ["sdist", "wheel"] },
     { path = "pygeoinf2/data/*.csv", format = ["sdist", "wheel"] },
+    { path = "pygeoinf/py.typed", format = ["sdist", "wheel"] },
+    { path = "pygeoinf2/py.typed", format = ["sdist", "wheel"] },
+]
+# Tests are run from the repository, not from an installed wheel.
+exclude = [
+    "pygeoinf/tests",
+    "pygeoinf2/tests",
 ]
 
 [tool.poetry.group.dev]
@@ -79,9 +93,6 @@ exclude = ["work"]
 "pygeoinf/symmetric_space/sphere.py" = ["E741"]
 "pygeoinf/symmetric_space/sh_tools.py" = ["E741"]
 "pygeoinf/symmetric_space/wigner.py" = ["E741"]
-"pygeoinf/symmetric_space_new/sphere.py" = ["E741"]
-"pygeoinf/symmetric_space_new/sh_tools.py" = ["E741"]
-"pygeoinf/rough_work/*" = ["E741"]
 
 [tool.pytest.ini_options]
 # The default run excludes `slow`. Those tests are not less important — several

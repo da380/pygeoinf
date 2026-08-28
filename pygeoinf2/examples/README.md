@@ -45,15 +45,26 @@ failing test rather than a surprise later.
 
 ## The ones with optional dependencies
 
-Number 16 needs `mfem`, 19 needs `pyshtools`, and 20 to 23 need `cartopy`.
-Each skips without them.
+Each skips without what it needs. The list is the one `tests/test_examples.py`
+enforces, so it cannot drift from what actually runs.
+
+| needs | examples |
+|---|---|
+| `mfem` | 16, 27 |
+| `pyshtools` | 19, 24, 25 |
+| `cartopy` | 20, 21, 22, 23 |
 
 ```
 poetry install --extras mfem
 poetry install --extras sphere
 ```
 
-It answers the question the rest of the suite cannot: whether the
+Examples 20 to 23 draw coastlines, which makes cartopy fetch a Natural Earth
+shapefile the first time; after that it is cached.
+
+## Why the finite element examples are here
+
+Numbers 16 and 27 answer the question the rest of the suite cannot: whether the
 coordinate-free design really holds up when the vectors belong to somebody
 else. A finite element space is the case the design was built for -- the mass
 matrix *is* the Gram matrix, an assembled bilinear form *is* a Galerkin matrix,

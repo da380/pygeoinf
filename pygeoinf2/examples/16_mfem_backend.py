@@ -19,7 +19,6 @@ import mfem.ser as mfem
 
 from pygeoinf2.backends.mfem import (
     MfemSpace,
-    _to_scipy,
     functional_from_linear_form,
     operator_from_bilinear_form,
 )
@@ -93,8 +92,11 @@ right_hand_side = functional.representer
 solution = CGSolver(rtol=1e-12)(A).solve(right_hand_side)
 
 # What that operator does, spelled out: A x == M^-1 K x, which is what a
-# bilinear form means and what one otherwise writes by hand.
-stiffness_matrix = _to_scipy(stiffness.SpMat()).toarray()
+# bilinear form means and what one otherwise writes by hand. The stiffness
+# matrix is read through the operator's own public interface rather than
+# through the backend's private converter -- an example that reaches into a
+# module's internals teaches the wrong thing.
+stiffness_matrix = A.matrix(form="galerkin")
 direct = np.linalg.solve(
     stiffness_matrix, V.gram_matrix() @ V.to_components(right_hand_side)
 )

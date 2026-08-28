@@ -80,10 +80,26 @@ def make_weighted_space() -> WeightedSpace:
     return WeightedSpace(np.array([1.0, 4.0, 9.0, 0.25]))
 
 
-def make_dense_metric_space() -> DenseMetricSpace:
-    root = np.array(
-        [[1.0, 0.0, 0.0], [0.4, 1.2, 0.0], [-0.3, 0.5, 0.9]],
-    )
+def make_dense_metric_space(dim: int = 3) -> DenseMetricSpace:
+    """A space whose Gram matrix is dense, at any dimension.
+
+    The size is a parameter so this can stand in for
+    :func:`make_weighted_space` wherever a test fixes a dimension -- which is
+    what the metric rule needs, since only a non-diagonal Gram distinguishes
+    metric-correct code from code that merely agrees with the components.
+
+    Built from a lower-triangular root with a strong diagonal, so the Gram is
+    positive definite and well conditioned: the point of the fixture is that
+    the metric is not diagonal, not that floating point is hard.
+    """
+    if dim == 3:
+        # The original, kept exactly so tests written against it do not move.
+        root = np.array(
+            [[1.0, 0.0, 0.0], [0.4, 1.2, 0.0], [-0.3, 0.5, 0.9]],
+        )
+        return DenseMetricSpace(root @ root.T)
+    generator = np.random.default_rng(20260828)
+    root = np.eye(dim) + 0.3 * np.tril(generator.standard_normal((dim, dim)), -1)
     return DenseMetricSpace(root @ root.T)
 
 

@@ -31,12 +31,23 @@ from pygeoinf2.numerics.solvers import CholeskySolver
 from pygeoinf2.probability.gaussian import GaussianMeasure
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
+
+
+@pytest.fixture(
+    params=[make_weighted_space, make_dense_metric_space],
+    ids=["weighted", "dense-metric"],
+)
+def model_space(request):
+    """The metric rule: only a *non-diagonal* Gram matrix distinguishes
+    metric-correct inference from inference that happens to agree with the
+    components. A weighted space does not."""
+    return request.param()
 
 
 @pytest.fixture
-def problem(rng):
-    model = make_weighted_space()
+def problem(rng, model_space):
+    model = model_space
     data = EuclideanSpace(4)
     operator = LinearOperator.from_matrix(
         model, data, rng.normal(size=(data.dim, model.dim)), form="galerkin"

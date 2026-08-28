@@ -20,7 +20,7 @@ from pygeoinf2.symmetric_space import Sobolev as BoxSobolev
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space, values
+from .conftest import make_dense_metric_space, make_weighted_space, values
 
 pyshtools = pytest.importorskip("pyshtools")
 
@@ -157,9 +157,20 @@ class TestTruncationDegree:
 
 
 class TestMeasureStatistics:
+    @pytest.fixture(
+        params=[make_weighted_space, make_dense_metric_space],
+        ids=["weighted", "dense-metric"],
+    )
+    def metric(self, request):
+        """A KL divergence is metric-sensitive throughout -- the trace term,
+        the quadratic form and the log-determinant each involve the Gram --
+        and a diagonal one cannot tell a correct implementation from one that
+        works in components."""
+        return request.param()
+
     @pytest.fixture
-    def pair(self, rng):
-        X = make_weighted_space()
+    def pair(self, rng, metric):
+        X = metric
         size = X.dim
         first = rng.normal(size=(size, size))
         second = rng.normal(size=(size, size))

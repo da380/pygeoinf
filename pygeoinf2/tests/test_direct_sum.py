@@ -33,21 +33,44 @@ from pygeoinf2.testing import (
 from pygeoinf2.traits import Traits
 
 from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space
 from .doubles import OpaqueSpace
 
 
-def build_sum(labels=None):
-    return DirectSum([make_weighted_space(), EuclideanSpace(3)], labels=labels)
+def build_sum(labels=None, first=None):
+    return DirectSum(
+        [make_weighted_space() if first is None else first, EuclideanSpace(3)],
+        labels=labels,
+    )
+
+
+@pytest.fixture(
+    params=[lambda dim: make_weighted_space(), make_dense_metric_space],
+    ids=["weighted", "dense-metric"],
+)
+def summand(request):
+    """The first summand's metric.
+
+    Over both: a direct sum's Gram is block diagonal over the summands, and a
+    summand whose own Gram is diagonal cannot tell whether the block structure
+    is being handled or merely the diagonal. Four dimensions either way, so the
+    tests that count them stay honest.
+    """
+    return lambda: request.param(4)
 
 
 @pytest.fixture
-def S():
-    return build_sum(("model", "data"))
+def S(summand):
+    return build_sum(("model", "data"), first=summand())
 
 
 class TestDirectSumSpace:
-    def test_axioms(self, S, rng):
-        check_space(S, rng=rng, rebuild=lambda: build_sum(("model", "data")))
+    def test_axioms(self, S, summand, rng):
+        # The rebuild has to use the same summand, or the check is comparing
+        # two different spaces and reporting the difference as a key failure.
+        check_space(
+            S, rng=rng, rebuild=lambda: build_sum(("model", "data"), first=summand())
+        )
 
     def test_coordinates(self, S, rng):
         check_coordinates(S, rng=rng)
