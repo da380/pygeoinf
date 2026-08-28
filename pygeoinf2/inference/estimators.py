@@ -124,7 +124,19 @@ class LinearPointEstimator(AffineOperator):
 
     @property
     def resolution(self) -> LinearOperator:
-        """``B A``: what the estimate reports when the truth is ``m``."""
+        """``B A``: what the estimate reports when the truth is ``m``.
+
+        The resolution operator, and the honest answer to "what am I actually
+        estimating": it is the identity only for a perfectly resolved problem,
+        and its departure from the identity is the blurring the data impose.
+
+        Returns:
+            The operator on the target space.
+
+        Raises:
+            AttributeError: if the estimator was built without a forward
+                operator, in which case there is no ``A`` to compose with.
+        """
         if self._forward_operator is None:
             raise AttributeError(
                 "This estimator was built without a forward operator, so it "
@@ -133,7 +145,18 @@ class LinearPointEstimator(AffineOperator):
         return self._operator @ self._forward_operator
 
     def propagated_covariance(self) -> LinearOperator:
-        """``B R B*``: the data error, as a covariance on the target space."""
+        """``B R B*``: the data error, as a covariance on the target space.
+
+        What the noise becomes once it has been through the estimator, which
+        is the other half of the error budget alongside :meth:`resolution`.
+
+        Returns:
+            The covariance operator on the target space.
+
+        Raises:
+            AttributeError: if the estimator was built without a data error
+                measure, there being no ``R`` to propagate.
+        """
         if self._error is None:
             raise AttributeError(
                 "This estimator was built without a data error measure."

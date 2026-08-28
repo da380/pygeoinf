@@ -157,6 +157,17 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
         Exact, and costs one array operation. This is the fast path that
         ``numerics.functional_calculus.operator_function`` dispatches to.
+
+        Args:
+            function: applied to the whole eigenvalue array at once, so it
+                must be vectorised and must not change the shape.
+
+        Returns:
+            The diagonal operator with the transformed spectrum.
+
+        Raises:
+            ValueError: if the function returns a different shape, which is
+                the sign of one written for a scalar.
         """
         values = np.asarray(function(self._eigenvalues), dtype=float)
         if values.shape != self._eigenvalues.shape:
@@ -168,7 +179,16 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
     @property
     def inverse(self) -> DiagonalLinearOperator[V]:
-        """``A^-1``. Requires every eigenvalue to be nonzero."""
+        """``A^-1``, by reciprocating the spectrum.
+
+        Returns:
+            The inverse, itself diagonal.
+
+        Raises:
+            ZeroDivisionError: if any eigenvalue is zero. A singular operator
+                has no inverse, and returning infinities instead would push
+                the failure somewhere further away.
+        """
         if np.any(self._eigenvalues == 0.0):
             raise ZeroDivisionError(
                 "The operator is singular: some eigenvalues are zero."
@@ -218,6 +238,20 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         multiplies it, which is free on a diagonal metric and needs the Gram
         matrix otherwise — so that case defers to the base implementation
         rather than guessing.
+
+        Args:
+            offsets: which diagonals, zero being the main one. Every other
+                offset comes back zero, this operator having nothing there.
+            form: which matrix's diagonals. ``"galerkin"`` multiplies by the
+                metric; ``"auto"`` picks it for a self-adjoint operator.
+            probe: accepted so the signature matches the base, and unused --
+                there is nothing to probe when the spectrum is stored.
+
+        Returns:
+            One row per offset, aligned as ``scipy.sparse.spdiags`` expects.
+
+        Raises:
+            ValueError: for an unknown *form* or *probe*.
         """
         from .spaces import DiagonalMetricSpace, OrthonormalSpace
 

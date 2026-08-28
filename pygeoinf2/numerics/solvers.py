@@ -181,6 +181,10 @@ def resolve_solver(
 
     Returns:
         A :class:`LinearSolver`.
+
+    Raises:
+        TypeError: if a factory returns something that is not one, or the
+            argument is neither a solver, a callable, nor None.
     """
     if solver is None:
         return CGSolver() if default is None else default
@@ -259,7 +263,17 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         return self._solver
 
     def solve(self, y: Y, /, *, x0: X | None = None) -> SolveResult[X]:
-        """Solve ``A x == y``, returning the solution and its diagnostics."""
+        """Solve ``A x == y``, returning the solution and its diagnostics.
+
+        Args:
+            y: the right-hand side.
+            x0: a starting guess. A direct solver ignores it, having nothing
+                to iterate; an iterative one starts there, which is what makes
+                a damping sweep cheap.
+
+        Returns:
+            The solution with its iteration count, residual and history.
+        """
         return self._solve_fn(y, x0)
 
     def _value(self, y: Y) -> X:

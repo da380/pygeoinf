@@ -92,7 +92,19 @@ def sum_traits(a: Traits, b: Traits) -> Traits:
 
 
 def scale_traits(traits: Traits, alpha: float, *, square: bool) -> Traits:
-    """Traits of ``alpha * A``. ``square`` is whether domain equals codomain."""
+    """Traits of ``alpha * A``.
+
+    Args:
+        traits: what ``A`` claims.
+        alpha: the scalar. Its *sign* is what matters: a negative one turns
+            positive semidefinite into negative semidefinite, and zero leaves
+            nothing definite at all.
+        square: whether the domain equals the codomain. Self-adjointness is
+            only meaningful when it does.
+
+    Returns:
+        What ``alpha * A`` may claim.
+    """
     traits = close(traits)
     if alpha == 0.0:
         # The zero operator is self-adjoint and positive semidefinite, but only
@@ -135,6 +147,16 @@ def compose_traits(a: Traits, b: Traits, *, square: bool) -> Traits:
     ``L @ L.adjoint`` and ``S @ C @ S.adjoint`` needs the operators themselves
     and lives with the expression nodes; see ``congruence_traits`` and
     ``gramian_traits`` for the trait half of those rules.
+
+    Args:
+        a: the outer operator's traits.
+        b: the inner operator's.
+        square: whether the composition maps a space to itself.
+
+    Returns:
+        What the composition may claim, which is little: two self-adjoint
+        operators compose to a self-adjoint one only if they commute, and
+        that is not a fact about traits.
     """
     a, b = close(a), close(b)
     result = _T.NONE
@@ -159,7 +181,21 @@ def inverse_traits(traits: Traits) -> Traits:
 
 
 def congruence_traits(inner: Traits, *, outer_invertible: bool) -> Traits:
-    """Traits of ``S @ A @ S.adjoint`` given the traits of ``A``."""
+    """Traits of ``S @ A @ S.adjoint`` given the traits of ``A``.
+
+    A congruence preserves self-adjointness and semidefiniteness whatever
+    ``S`` is, which is what makes this rule worth having separately from
+    :func:`compose_traits`.
+
+    Args:
+        inner: what ``A`` claims.
+        outer_invertible: whether ``S`` is invertible. Definiteness survives
+            only then -- a singular ``S`` can send a positive definite ``A``
+            to something merely semidefinite, by collapsing a direction.
+
+    Returns:
+        What the congruence may claim.
+    """
     inner = close(inner)
     result = _T.NONE
     if _has(inner, _T.SELF_ADJOINT):
@@ -172,7 +208,18 @@ def congruence_traits(inner: Traits, *, outer_invertible: bool) -> Traits:
 
 
 def gramian_traits(*, invertible: bool) -> Traits:
-    """Traits of ``L @ L.adjoint``, which is positive semidefinite always."""
+    """Traits of ``L @ L.adjoint``, which is positive semidefinite always.
+
+    The palindrome rule, and the reason a covariance built as a factor times
+    its own adjoint needs no assertion from anyone.
+
+    Args:
+        invertible: whether ``L`` has full rank. Positive *definiteness*
+            needs it; semidefiniteness does not.
+
+    Returns:
+        What the product may claim.
+    """
     result = _T.SELF_ADJOINT | _T.POSITIVE_SEMIDEFINITE
     if invertible:
         result |= _T.POSITIVE_DEFINITE

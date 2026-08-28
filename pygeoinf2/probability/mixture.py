@@ -150,6 +150,13 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
                 samplable.
             count: how many parameter values to draw.
             rng: the generator for those draws.
+
+        Returns:
+            The mixture, with equal weights.
+
+        Raises:
+            ValueError: if *count* is not positive, or the parameter measure
+                cannot be sampled -- the whole construction is a sample.
         """
         if not parameters.can_sample:
             raise ValueError(
@@ -293,6 +300,17 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         Summed in the exponent rather than by exponentiating and adding, since
         a mixture's whole point is that one component may be many orders of
         magnitude more likely than another at a given point.
+
+        Args:
+            x: where to evaluate it.
+
+        Returns:
+            The log density, fully normalised.
+
+        Raises:
+            NotImplementedError: if any component cannot supply its own
+                normalising constant -- which needs a log-determinant, and so
+                a covariance the component can decompose.
         """
         from scipy.special import logsumexp
 
@@ -343,6 +361,16 @@ class GaussianMixture[X](ProbabilityMeasure[X]):
         The posterior over the component label given the vector, by Bayes.
         Useful in its own right — it is how a mixture answers "which scenario
         is this?" — and it is what a classification built on one would report.
+
+        Args:
+            x: the vector to attribute.
+
+        Returns:
+            One probability per component, summing to one.
+
+        Raises:
+            NotImplementedError: if any component cannot supply its
+                normalising constant, as for :meth:`log_density`.
         """
         from scipy.special import softmax
 

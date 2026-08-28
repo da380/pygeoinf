@@ -199,6 +199,14 @@ class Box(PeriodicBox):
         Overridden so the result is still a ``Box``: the base class would give
         back the enclosing periodic domain, which has the same components but
         not the same idea of where the boundary is.
+
+        Args:
+            order: the new Sobolev order.
+            length_scale: the new length scale. Kept as it is if omitted,
+                which is what makes this a change of *order* alone.
+
+        Returns:
+            The same domain and padding, in the new metric.
         """
         return Box(
             self._shape,

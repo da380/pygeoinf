@@ -93,7 +93,15 @@ class EmptySet(Subset):
     """The subset containing nothing."""
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Always false."""
+        """Always false.
+
+        Args:
+            x: a vector of the space.
+            rtol: unused; the empty set contains nothing to any tolerance.
+
+        Returns:
+            ``False``.
+        """
         return False
 
     def complement(self) -> Subset:
@@ -105,7 +113,16 @@ class UniversalSet(Subset):
     """The whole space."""
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """Always true."""
+        """Always true.
+
+        Args:
+            x: a vector of the space.
+            rtol: unused; the universal set contains everything to any
+                tolerance.
+
+        Returns:
+            ``True``.
+        """
         return True
 
     def complement(self) -> Subset:
@@ -130,7 +147,18 @@ class Complement(Subset):
         return self._subset
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """True when the point is not in the underlying subset."""
+        """True when the point is not in the underlying subset.
+
+        Args:
+            x: a vector of the space.
+            rtol: passed to the underlying subset. Note the tolerance then
+                works the other way round: a point just outside the original
+                set counts as *inside* its complement only if it is outside
+                to within this.
+
+        Returns:
+            Whether the complement contains it.
+        """
         return not self._subset.contains(x, rtol=rtol)
 
     def complement(self) -> Subset:
@@ -169,7 +197,15 @@ class Intersection(Subset):
         return self._subsets
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """True when every subset contains the point."""
+        """True when every subset contains the point.
+
+        Args:
+            x: a vector of the space.
+            rtol: passed to each subset in turn.
+
+        Returns:
+            Whether all of them contain it.
+        """
         return all(subset.contains(x, rtol=rtol) for subset in self._subsets)
 
     def __repr__(self) -> str:
@@ -203,7 +239,15 @@ class Union(Subset):
         return self._subsets
 
     def contains(self, x: Any, /, *, rtol: float = 1e-9) -> bool:
-        """True when some subset contains the point."""
+        """True when some subset contains the point.
+
+        Args:
+            x: a vector of the space.
+            rtol: passed to each subset in turn.
+
+        Returns:
+            Whether any of them contains it.
+        """
         return any(subset.contains(x, rtol=rtol) for subset in self._subsets)
 
     def __repr__(self) -> str:

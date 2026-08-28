@@ -311,7 +311,16 @@ class AdaptedOperator(LinearOperator):
 
 
 def adapt_space(space: Any, /, *, gram: str = "auto") -> CoordinateSpace:
-    """Present a v1 space as a v2 ``CoordinateSpace``."""
+    """Present a v1 space as a v2 ``CoordinateSpace``.
+
+    Args:
+        space: the v1 space.
+        gram: how to obtain the metric. ``"auto"`` uses the space's own Gram
+            if it has one and the identity otherwise.
+
+    Returns:
+        A v2 space over the same vectors.
+    """
     if isinstance(space, CoordinateSpace):
         return space
     return AdaptedSpace(space, gram=gram)
@@ -325,7 +334,20 @@ def adapt_operator(
     codomain: CoordinateSpace | None = None,
     traits: Traits = Traits.NONE,
 ) -> LinearOperator:
-    """Present a v1 linear operator as a v2 ``LinearOperator``."""
+    """Present a v1 linear operator as a v2 ``LinearOperator``.
+
+    Args:
+        operator: the v1 operator.
+        domain: the adapted domain. Adapted from the operator's own if
+            omitted; pass one to share a space across several operators, which
+            is what keeps their compositions type-correct.
+        codomain: likewise.
+        traits: claims about the adapted operator. Nothing is deduced from
+            the v1 side, which has no trait system to deduce from.
+
+    Returns:
+        A v2 operator with the same action and adjoint.
+    """
     if isinstance(operator, LinearOperator):
         return operator
     return AdaptedOperator(operator, domain=domain, codomain=codomain, traits=traits)
@@ -340,6 +362,13 @@ def adapt_form(
     convention — ``<f, x> == dot(components, c_x)`` — so this is exactly
     ``from_derivative_components``. The representer, which v1 obtains with
     ``from_dual``, is then ``f.adjoint(1.0)``. See DESIGN.md section 5.6.
+
+    Args:
+        form: the v1 ``LinearForm``.
+        domain: the adapted domain, adapted from the form's own if omitted.
+
+    Returns:
+        A v2 linear functional with the same action.
     """
     space = adapt_space(form.domain) if domain is None else domain
     return LinearFunctional.from_derivative_components(space, form.components)

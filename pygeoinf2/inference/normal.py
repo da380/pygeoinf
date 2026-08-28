@@ -68,6 +68,19 @@ def choose_formalism(
     the normal equations belong unless there is a reason otherwise, and the
     model-space formalism is kept for when there *is* one — an overdetermined
     problem with a cheap precision, or a surrogate. See DESIGN.md §18.6, §27.
+
+    Args:
+        model_space: where the models live.
+        data_space: where the data live.
+        formalism: ``"model_space"``, ``"data_space"``, or ``"auto"`` to pick
+            by dimension. Read the paragraph above before reaching for
+            ``"auto"``: it compares sizes, which is not the question.
+
+    Returns:
+        The formalism to use.
+
+    Raises:
+        ValueError: for an unrecognised formalism.
     """
     if formalism not in ("auto", "model_space", "data_space"):
         raise ValueError(
@@ -373,6 +386,22 @@ class NormalOperator(FactoredNormalOperator):
         exactly why the data-space formalism is the one that survives the
         substitution: ``A Q A* + R`` acts on the data space whatever the model
         space is.
+
+        Args:
+            forward: a cheaper ``A``. May map from a different model space,
+                in which case *prior* must be given too.
+            prior: a cheaper ``Q``, on the surrogate's own model space.
+            error: a cheaper ``R``, on the shared data space.
+            formalism: which space to assemble in. Inherited if omitted.
+
+        Returns:
+            The surrogate normal operator.
+
+        Raises:
+            ValueError: if the surrogate does not share the data space, or if
+                a new forward operator is given on a different model space
+                without a prior to match it -- the prior it would otherwise
+                inherit lives somewhere else.
         """
         replacement_forward = self._forward if forward is None else forward
         replacement_prior = self._prior if prior is None else prior
@@ -402,6 +431,15 @@ class NormalOperator(FactoredNormalOperator):
         """``A* R^-1``, or ``A*`` when the problem is noise-free.
 
         The piece the model-space formalism applies to the data residual.
+
+        Returns:
+            The operator from the data space to the model space.
+
+        Raises:
+            ValueError: if there is an error measure but it carries no
+                precision. The model-space formalism is built on ``R^-1``, and
+                a measure that cannot supply one cannot be used that way --
+                the data-space formalism needs only ``R`` itself.
         """
         if self._error is None:
             return self._forward.adjoint

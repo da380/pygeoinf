@@ -146,15 +146,23 @@ def monotone_root(
             special case.
         initial: where to start bracketing.
         iterations: bisection steps once bracketed.
-        rtol, atol: the bracket is closed when its width falls below
+        rtol: the bracket is closed when its width falls below
             ``atol + rtol * (low + high)``.
+        atol: the absolute half of that criterion, which matters when the
+            root sits near zero and a relative test never closes.
         expansions: how far to widen, in factors of ten, before concluding
             that no root exists in that direction.
         warm_start: pass each probe the previous solution.
 
     Returns:
         A :class:`RootResult`. Check ``converged`` and ``exhausted`` — a
-        search that could not bracket has still returned the useful endpoint.
+        search that could not bracket has still returned the useful endpoint —
+        and ``breakdown``, which carries the exception when a probe could not
+        be computed at all.
+
+    Raises:
+        ValueError: for a non-positive ``initial``, or tolerances that cannot
+            close a bracket.
 
     The bisection is *geometric*, taking the square root of the endpoints
     rather than their mean, because a multiplier of this kind ranges over
@@ -382,7 +390,17 @@ class DampedSolves:
     def solve(
         self, multiplier: float, right_hand_side: Any, /, *, x0: Any = None
     ) -> Any:
-        """One solve, warm-started from *x0*, returning the full result."""
+        """One solve, warm-started from *x0*, returning the full result.
+
+        Args:
+            multiplier: which member of the family.
+            right_hand_side: the vector to solve against.
+            x0: a starting guess. Ignored by a direct solver, which does not
+                iterate and so has nothing to start from.
+
+        Returns:
+            The solver's own result, with its diagnostics.
+        """
         operator = self.operator(multiplier)
         solver = self._solver_for(multiplier, operator)
         return solver(operator).solve(right_hand_side, x0=x0)

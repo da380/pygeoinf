@@ -184,7 +184,16 @@ class SciPyQPSolver:
         *,
         x0: np.ndarray | None = None,
     ) -> QPResult:
-        """Solve the programme with SLSQP."""
+        """Solve the programme with SLSQP.
+
+        Args:
+            P, q, A, lower, upper: the programme, as
+                :meth:`QPSolver.solve` describes it.
+            x0: a starting point. SLSQP is a descent method and uses it.
+
+        Returns:
+            The result.
+        """
         from scipy.optimize import minimize
 
         P, q, A, lower, upper = _validate(P, q, A, lower, upper)
@@ -280,7 +289,15 @@ class OSQPQPSolver:
         *,
         x0: np.ndarray | None = None,
     ) -> QPResult:
-        """Solve the programme with OSQP."""
+        """Solve the programme with OSQP.
+
+        Args:
+            P, q, A, lower, upper: the programme.
+            x0: a warm start, which OSQP uses directly.
+
+        Returns:
+            The result.
+        """
         import osqp
         import scipy.sparse as sparse
 
@@ -370,8 +387,18 @@ class ClarabelQPSolver:
     ) -> QPResult:
         """Solve the programme with Clarabel.
 
-        ``x0`` is accepted and ignored, so that the three backends remain
-        interchangeable. An interior-point method has no use for it.
+        Args:
+            P, q, A, lower, upper: the programme.
+            x0: accepted and ignored, so that the three backends remain
+                interchangeable. An interior-point method starts from its own
+                central point and has no use for someone else's.
+
+        Returns:
+            The result.
+
+        Raises:
+            ValueError: for a malformed programme, or one with no constraints
+                at all -- Clarabel needs at least one cone.
         """
         import clarabel
         import scipy.sparse as sparse

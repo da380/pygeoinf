@@ -280,41 +280,26 @@ CONVENTIONAL = {"rng", "n_jobs", "backend"}
 # never grow, and a file that reaches zero is removed from it so that it cannot
 # regress. This is the documentation debt, counted rather than described.
 DOCUMENTATION_DEBT = {
-    "algebra/diagonal.py": 4,
-    "algebra/operators.py": 22,
-    "backends/mfem.py": 9,
-    "compat.py": 3,
+    "algebra/operators.py": 21,
+    "backends/mfem.py": 7,
     "geometry/convex.py": 20,
-    "geometry/sets.py": 5,
     "geometry/subspaces.py": 8,
     "inference/backus.py": 4,
-    "inference/estimators.py": 3,
     "inference/gaussian.py": 6,
-    "inference/normal.py": 5,
     "inference/point.py": 5,
-    "inference/preconditioners.py": 4,
+    "inference/preconditioners.py": 1,
     "inference/problem.py": 9,
     "inference/tikhonov.py": 5,
     "numerics/convex.py": 5,
-    "numerics/functional_calculus.py": 4,
     "numerics/optimisation.py": 5,
-    "numerics/preconditioners.py": 2,
-    "numerics/quadratic_forms.py": 1,
-    "numerics/quadratic_programming.py": 4,
     "numerics/randomised.py": 8,
-    "numerics/root_find.py": 4,
-    "numerics/solvers.py": 4,
-    "plotting/base.py": 3,
-    "plotting/distributions.py": 6,
+    "plotting/distributions.py": 5,
     "probability/base.py": 7,
-    "probability/gaussian.py": 25,
-    "probability/mixture.py": 3,
+    "probability/gaussian.py": 21,
     "symmetric_space/base.py": 35,
-    "symmetric_space/box.py": 1,
     "symmetric_space/fourier.py": 6,
     "symmetric_space/sphere.py": 20,
     "testing.py": 10,
-    "traits.py": 4,
 }
 
 
@@ -345,9 +330,19 @@ def documentation_gaps(path) -> list[str]:
     """
     gaps = []
     tree = ast.parse(path.read_text())
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
+    # Only what a caller can reach: module-level functions and methods. A
+    # closure defined inside one is an implementation detail, and requiring
+    # its arguments to be documented documents nothing.
+    reachable = []
+    for parent in [tree] + [
+        n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
+    ]:
+        reachable.extend(
+            n
+            for n in parent.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+    for node in reachable:
         if node.name.startswith("_"):
             continue
         doc = ast.get_docstring(node) or ""
@@ -365,10 +360,11 @@ def documentation_gaps(path) -> list[str]:
         choices = [
             c for c in choices if c not in ("self", "cls") and c not in CONVENTIONAL
         ]
-        if choices and not (
-            "Args:" in doc and all(f"{c}:" in doc for c in choices)
-        ):
-            gaps.append(f"{path.name}:{node.lineno} {node.name} -> {choices}")
+        undocumented = (
+            [c for c in choices if f"{c}:" not in doc] if "Args:" in doc else choices
+        )
+        if undocumented:
+            gaps.append(f"{path.name}:{node.lineno} {node.name} -> {undocumented}")
     return gaps
 
 

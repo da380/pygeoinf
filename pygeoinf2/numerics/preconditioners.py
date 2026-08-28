@@ -532,6 +532,19 @@ class WoodburyPreconditioner(LinearSolver):
         This is the ordinary way to build the preconditioner: the arguments are
         exactly what an inversion already holds, so there is no reason for a
         caller to reassemble them.
+
+        Args:
+            normal: the normal operator to read the factors off.
+            solver: inverts the inner operator; see the constructor.
+            prior_solver: inverts ``Q``, for the data form.
+            noise_solver: inverts ``R``, likewise.
+
+        Returns:
+            The preconditioner.
+
+        Raises:
+            TypeError: if the object does not expose the three factors.
+            ValueError: if they do not fit together.
         """
         for attribute in ("forward", "prior_covariance", "error_covariance"):
             if not hasattr(normal, attribute):

@@ -137,6 +137,14 @@ def weighted_chi2_cdf(
         tolerance: for Imhof.
         samples: for Monte Carlo.
         rng: for Monte Carlo.
+
+    Returns:
+        The probability.
+
+    Raises:
+        ValueError: for an unknown method, or weights that are negative or
+            all zero -- a weighted sum of squares with no positive weight is
+            not a distribution this can invert.
     """
     live = _validate(weights)
     if value <= 0.0:

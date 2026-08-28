@@ -37,6 +37,11 @@ def subplots(space: Any, /, *, rows: int = 1, columns: int = 1, **kwargs: Any) -
 
     Returns:
         The ``(figure, axes)`` pair ``plt.subplots`` returns.
+
+    Raises:
+        NotImplementedError: for a space with no registered renderer. The
+            dispatch is by type, so a new space needs its own registration
+            rather than inheriting one that would draw the wrong thing.
     """
     raise NotImplementedError(f"No renderer is registered for {type(space).__name__}.")
 
@@ -53,6 +58,9 @@ def plot(space: Any, field: Any, /, **kwargs: Any) -> Any:
     Returns:
         An ``(axes, mappable)`` pair, so the caller can set a title, restyle
         the colourbar, or add to the axes afterwards.
+
+    Raises:
+        NotImplementedError: for a space with no registered renderer.
     """
     raise NotImplementedError(f"No renderer is registered for {type(space).__name__}.")
 
@@ -71,6 +79,17 @@ def colour_limits(
     diverging colour map, limits that are not symmetric put the neutral colour
     somewhere other than zero, and the eye reads the resulting picture as
     having a bias the data does not have.
+
+    Args:
+        values: the field's values.
+        vmin: the lower limit. The data's minimum if omitted.
+        vmax: the upper limit. The data's maximum if omitted.
+        symmetric: widen the limits to be equal and opposite. An explicit
+            *vmin* or *vmax* is respected, so this cannot silently override
+            what a caller asked for.
+
+    Returns:
+        The ``(low, high)`` pair.
     """
     data = np.asarray(values, dtype=float)
     low = float(np.nanmin(data)) if vmin is None else vmin

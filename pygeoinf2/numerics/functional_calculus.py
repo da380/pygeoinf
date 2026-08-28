@@ -99,6 +99,10 @@ def iter_lanczos_tridiagonalise(
     Yields:
         ``(basis, T)`` after each step, with ``T`` symmetric tridiagonal of
         size equal to the basis.
+
+    Raises:
+        ValueError: if the operator does not claim self-adjointness, or the
+            starting vector is zero -- which generates no Krylov space at all.
     """
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "Lanczos tridiagonalisation")
@@ -167,7 +171,19 @@ def lanczos_tridiagonalise(
     *,
     reorthogonalise: bool = True,
 ) -> tuple[list[Any], np.ndarray]:
-    """Run Lanczos to completion, returning the final basis and matrix."""
+    """Run Lanczos to completion, returning the final basis and matrix.
+
+    Args:
+        operator: a self-adjoint operator.
+        start: the vector whose Krylov space is built.
+        max_iterations: the dimension to stop at.
+        reorthogonalise: keep the basis orthogonal against rounding. Worth
+            the cost: without it the Lanczos vectors lose orthogonality
+            exactly as the method converges.
+
+    Returns:
+        The basis and the tridiagonal matrix.
+    """
     basis, matrix = [], np.zeros((0, 0))
     for basis, matrix in iter_lanczos_tridiagonalise(
         operator, start, max_iterations, reorthogonalise=reorthogonalise
@@ -528,7 +544,8 @@ def log_determinant(
             block of them when *sample_rtol* is given.
         rng: the generator for those probes.
         dense_limit: the dimension above which ``"auto"`` goes stochastic.
-        max_iterations, rtol: the Lanczos budget for each ``log(A) z``. Note
+        max_iterations: the Krylov dimension allowed for each ``log(A) z``.
+        rtol: the Lanczos budget for each ``log(A) z``. Note
             this ``rtol`` is the *inner* one: it says how well each
             ``log(A) z`` is computed, not how well the trace over them is
             estimated. The two are separate budgets and tightening the wrong
@@ -542,6 +559,11 @@ def log_determinant(
         An :class:`~pygeoinf2.numerics.randomised.Estimate`. The dense route
         reports a standard error of zero, so a caller can treat the two
         uniformly and still see which it got.
+
+    Raises:
+        ValueError: if the operator is not a positive definite endomorphism,
+            or the method is unknown. A determinant needs the first and a
+            *logarithm* of one needs the definiteness.
     """
     from ..algebra.diagonal import DiagonalLinearOperator
     from .randomised import Estimate, random_trace
