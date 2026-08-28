@@ -17,9 +17,11 @@ See DESIGN.md section 20.5, O8.
 from .base import colour_limits, plot, subplots
 from .distributions import moments, plot_corner, plot_densities
 from . import fourier as _fourier  # noqa: F401  (registers the box renderer)
+from .fourier import plot_error_bounds
 from .sphere import plot_paths, plot_points
 
 __all__ = [
+    "plot_error_bounds",
     "plot",
     "subplots",
     "colour_limits",

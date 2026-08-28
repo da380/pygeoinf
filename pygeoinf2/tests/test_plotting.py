@@ -336,3 +336,181 @@ class TestDensityResolution:
         sampled = centre_minus_corner(samples=4000, rng=rng)
         assert exact != pytest.approx(0.0, abs=5.0)
         assert (exact > 0.0) == (sampled > 0.0)
+
+
+class TestPyslfpNeeds:
+    """The keywords the review found every pyslfp call passing, and v2 not
+    accepting. A caller who cannot title a plot has to reach past the return
+    value to do it, and a corner plot with no legend has three unlabelled
+    marks on it."""
+
+    @pytest.fixture
+    def measure(self, rng):
+        import pygeoinf2 as gi
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        space = EuclideanSpace(3)
+        root = rng.standard_normal((3, 3))
+        return (
+            gi.GaussianMeasure.from_covariance_matrix(
+                space, root @ root.T + np.eye(3), form="components"
+            ),
+            gi.GaussianMeasure.from_standard_deviation(space, 5.0),
+        )
+
+    def test_the_corner_plot_takes_a_title(self, measure):
+        from pygeoinf2.plotting.distributions import plot_corner
+
+        posterior, prior = measure
+        axes = plot_corner(posterior, prior=prior, title="a corner plot")
+        assert axes[0, 0].get_figure()._suptitle.get_text() == "a corner plot"
+
+    def test_the_corner_plot_has_a_legend(self, measure):
+        """In the empty upper triangle, which costs no space."""
+        from pygeoinf2.plotting.distributions import plot_corner
+
+        posterior, prior = measure
+        axes = plot_corner(
+            posterior, prior=prior, truth=np.array([0.1, -0.2, 0.3])
+        )
+        legend = axes[0, 2].get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == [
+            "posterior",
+            "prior",
+            "truth",
+        ]
+
+    def test_the_legend_names_only_what_was_drawn(self, measure):
+        from pygeoinf2.plotting.distributions import plot_corner
+
+        posterior, _ = measure
+        axes = plot_corner(posterior)
+        assert [
+            text.get_text() for text in axes[0, 2].get_legend().get_texts()
+        ] == ["posterior"]
+
+    def test_it_can_be_turned_off(self, measure):
+        from pygeoinf2.plotting.distributions import plot_corner
+
+        posterior, _ = measure
+        axes = plot_corner(posterior, legend=False)
+        assert axes[0, 2].get_legend() is None
+
+    def test_the_density_plot_takes_a_title(self, measure):
+        from pygeoinf2.plotting.distributions import plot_densities
+
+        posterior, prior = measure
+        drawn = plot_densities(posterior, prior=prior, title="a density")
+        axis = drawn[0] if isinstance(drawn, tuple) else drawn
+        assert axis.get_title() == "a density"
+
+
+class TestSphereMapOptions:
+    """The field-plot keywords v1 had and v2 dropped."""
+
+    @pytest.fixture
+    def field(self):
+        pytest.importorskip("cartopy")
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Lebesgue
+
+        space = Lebesgue(16)
+        return space, space.project_function(
+            lambda point: np.sin(np.radians(point[0]))
+        )
+
+    def test_a_map_extent_replaces_the_global_view(self, field):
+        """Not both: ``set_global`` would undo the extent that was asked for,
+        which is why this is a branch rather than an extra call."""
+        from pygeoinf2.plotting import plot
+
+        space, values = field
+        axis, _ = plot(space, values, map_extent=(-30.0, 40.0, 20.0, 70.0))
+        extent = axis.get_extent()
+        whole, _ = plot(space, values)
+        assert extent[1] - extent[0] < (whole.get_extent()[1] - whole.get_extent()[0])
+
+    def test_contours_and_lines(self, field):
+        from pygeoinf2.plotting import plot
+
+        space, values = field
+        axis, mappable = plot(
+            space, values, contour=True, contour_lines=True, levels=8
+        )
+        assert hasattr(axis, "contour_set")
+        assert mappable is not None
+
+    def test_gridline_intervals_become_locators(self, field):
+        """cartopy wants tick arrays; a caller thinks in intervals."""
+        from pygeoinf2.plotting import plot
+
+        space, values = field
+        axis, _ = plot(
+            space,
+            values,
+            gridlines=True,
+            gridlines_kwargs={"lat_interval": 30.0, "lon_interval": 60.0},
+        )
+        assert axis.gridliner is not None
+
+    def test_the_colourbar_takes_its_own_options(self, field):
+        from pygeoinf2.plotting import plot
+
+        space, values = field
+        axis, mappable = plot(
+            space, values, colorbar_kwargs={"orientation": "horizontal"}
+        )
+        assert mappable.colorbar.orientation == "horizontal"
+
+    def test_a_title(self, field):
+        from pygeoinf2.plotting import plot
+
+        space, values = field
+        axis, _ = plot(space, values, title="a map")
+        assert axis.get_title() == "a map"
+
+
+class TestErrorBounds:
+    """A bound above and below is what an inference produces; a pair of lines
+    reads as two estimates rather than one with an uncertainty."""
+
+    @pytest.fixture
+    def setting(self):
+        from pygeoinf2.symmetric_space.circle import Lebesgue
+
+        space = Lebesgue(64)
+        middle = space.project_function(np.sin)
+        return space, middle - 0.3, middle, middle + 0.3
+
+    def test_it_shades_the_band(self, setting):
+        from pygeoinf2.plotting import plot_error_bounds
+
+        space, low, middle, high = setting
+        axis, band = plot_error_bounds(space, low, high, centre=middle)
+        assert band is not None
+        assert hasattr(axis, "centre_line")
+
+    def test_crossed_bounds_are_drawn_not_refused(self, setting):
+        """A band that crosses over is what an inconsistent bound looks like,
+        and refusing to draw it would hide the case worth seeing."""
+        from pygeoinf2.plotting import plot_error_bounds
+
+        space, low, _, high = setting
+        axis, band = plot_error_bounds(space, high, low)
+        assert band is not None
+
+    def test_more_than_one_dimension_is_refused(self):
+        from pygeoinf2.plotting import plot_error_bounds
+        from pygeoinf2.symmetric_space.torus import Lebesgue
+
+        space = Lebesgue((8, 8))
+        with pytest.raises(ValueError, match="one-dimensional"):
+            plot_error_bounds(space, np.zeros((8, 8)), np.ones((8, 8)))
+
+    def test_a_wrong_shape_is_refused(self, setting):
+        from pygeoinf2.plotting import plot_error_bounds
+
+        space, low, _, high = setting
+        with pytest.raises(ValueError, match="lower bound"):
+            plot_error_bounds(space, np.zeros(5), high)

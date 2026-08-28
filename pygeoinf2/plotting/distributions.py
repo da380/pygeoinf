@@ -6,6 +6,23 @@ posterior nobody can look at; :meth:`push_forward` turns it into a measure on a
 handful of properties, and this draws *that* — which is what makes the property
 space the thing worth asking about rather than a convenience.
 
+**Renamed from v1.** The arguments were shortened when these were ported, and
+the table is here so that porting a v1 script is a lookup rather than a hunt:
+
+============================ =====================
+v1                           v2
+============================ =====================
+``prior_measure``            ``prior``
+``true_values``              ``truth``
+``posterior_labels``         ``labels``
+``fill_density``             ``fill``
+``num_sigmas``               ``sigmas``
+``width_scaling``            ``width``
+``contour_color``            ``colour``
+``plot_1d_distributions``    :func:`plot_densities`
+``plot_corner_distributions`` :func:`plot_corner`
+============================ =====================
+
 Two entry points, and both take either kind of measure:
 
 * a :class:`~pygeoinf2.probability.gaussian.GaussianMeasure` is drawn exactly,
@@ -179,6 +196,7 @@ def plot_densities(
     samples: int = 20000,
     rng: Any = None,
     xlabel: str = "property value",
+    title: str | None = None,
 ) -> Any:
     """One component's marginal, for one or several measures.
 
@@ -198,6 +216,8 @@ def plot_densities(
         fill: shade under the curves.
         samples, rng: for measures that must be sampled.
         xlabel: label for the shared x-axis.
+        title: a title for the axes. Every pyslfp call passes one, and without
+            it a caller has to reach past the return value to set it.
 
     Returns:
         The axes drawn on, or ``(posterior_axes, prior_axes)`` when priors were
@@ -307,6 +327,8 @@ def plot_densities(
         extra, extra_texts = prior_axis.get_legend_handles_labels()
         handles, texts = handles + extra, texts + extra_texts
     axis.legend(handles, texts, loc="upper right", fontsize="small")
+    if title is not None:
+        axis.set_title(title)
     return axis if prior_axis is None else (axis, prior_axis)
 
 
@@ -353,6 +375,11 @@ def plot_corner(
     colour: str = "darkblue",
     samples: int = 20000,
     rng: Any = None,
+    title: str | None = None,
+    legend: bool = True,
+    posterior_label: str = "posterior",
+    prior_label: str = "prior",
+    truth_label: str = "truth",
 ) -> Any:
     """The joint distribution of a measure's components, panel by panel.
 
@@ -374,6 +401,12 @@ def plot_corner(
         fill: shade the contours rather than drawing them as lines.
         colormap, colour: for the filled and unfilled cases respectively.
         samples, rng: for measures that must be sampled.
+        title: a title for the figure. Every pyslfp call passes one.
+        legend: draw a key in the empty upper triangle, which is otherwise
+            wasted space -- and without it the dotted prior, the solid
+            posterior and the starred truth are three unlabelled marks. v1
+            had one; v2 lost it.
+        posterior_label, prior_label, truth_label: what the key calls them.
 
     Returns:
         The ``N x N`` array of axes.
@@ -552,4 +585,61 @@ def plot_corner(
             elif column > 0:
                 axis.set_yticklabels([])
 
+    if legend and size > 1:
+        # The upper triangle is empty by construction, so the key costs no
+        # space. The top-right panel is the furthest from the data.
+        _corner_legend(
+            axes[0, size - 1],
+            colour=colour,
+            with_prior=prior_summary is not None,
+            with_truth=truth_values is not None,
+            posterior_label=posterior_label,
+            prior_label=prior_label,
+            truth_label=truth_label,
+        )
+
+    if title is not None:
+        figure = axes[0, 0].get_figure()
+        figure.suptitle(title)
+
     return axes
+
+
+def _corner_legend(
+    axis: Any,
+    /,
+    *,
+    colour: str,
+    with_prior: bool,
+    with_truth: bool,
+    posterior_label: str,
+    prior_label: str,
+    truth_label: str,
+) -> None:
+    """A key drawn in one of the corner plot's empty panels.
+
+    The handles are made rather than collected: the panels draw densities and
+    contours in several calls each, so gathering real artists would give a
+    legend of whichever happened to be labelled.
+    """
+    from matplotlib.lines import Line2D
+
+    handles = [Line2D([], [], color=colour, ls="-", label=posterior_label)]
+    if with_prior:
+        handles.append(
+            Line2D([], [], color=_PRIOR_COLOURS[0], ls=":", label=prior_label)
+        )
+    if with_truth:
+        handles.append(
+            Line2D(
+                [],
+                [],
+                color="black",
+                ls="none",
+                marker="*",
+                ms=10,
+                label=truth_label,
+            )
+        )
+    axis.set_axis_off()
+    axis.legend(handles=handles, loc="center", frameon=False)

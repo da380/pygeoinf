@@ -7,7 +7,7 @@ deferred to the call, so registering the renderer costs nothing.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -63,7 +63,16 @@ def _(
     colorbar: bool = True,
     colorbar_label: str | None = None,
     coasts: bool = False,
+    borders: bool = False,
+    rivers: bool = False,
     gridlines: bool = False,
+    gridlines_kwargs: dict | None = None,
+    colorbar_kwargs: dict | None = None,
+    map_extent: Sequence[float] | None = None,
+    contour: bool = False,
+    contour_lines: bool = False,
+    levels: Any = None,
+    title: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Draw a field on a sphere as a map.
@@ -82,9 +91,24 @@ def _(
             ``.colorbar``, so it can be restyled afterwards.
         colorbar_label: label for the colourbar.
         coasts: draw coastlines.
+        borders: draw national borders.
+        rivers: draw rivers.
         gridlines: draw a latitude and longitude graticule, left on the axes as
             ``.gridliner``.
-        **kwargs: passed through to ``pcolormesh``.
+        gridlines_kwargs: passed to ``gridlines``. ``lat_interval`` and
+            ``lon_interval`` are translated into the locators cartopy wants,
+            since those are what a caller actually has in mind.
+        colorbar_kwargs: passed to ``figure.colorbar``, over the defaults.
+        map_extent: ``(west, east, south, north)`` in degrees. Without it the
+            map is global; with it ``set_global`` is skipped, which is the
+            whole point -- calling both leaves the extent overridden.
+        contour: draw filled contours rather than a pcolormesh.
+        contour_lines: overlay contour lines. Can be combined with either.
+        levels: the contour levels, or a count. Passed to ``contourf`` and
+            ``contour``.
+        title: a title for the axes.
+        **kwargs: passed through to whichever of ``pcolormesh``, ``contourf``
+            and ``contour`` is drawing.
 
     Returns:
         The ``(axes, mappable)`` pair.
@@ -108,27 +132,73 @@ def _(
     values = np.concatenate([values, values[:, :1]], axis=1)
 
     low, high = colour_limits(values, vmin=vmin, vmax=vmax, symmetric=symmetric)
-    mappable = ax.pcolormesh(
-        longitudes,
-        latitudes,
-        values,
-        transform=crs.PlateCarree(),
-        cmap=cmap,
-        vmin=low,
-        vmax=high,
-        shading="auto",
-        **kwargs,
-    )
-    ax.set_global()
+    common = dict(transform=crs.PlateCarree(), cmap=cmap, vmin=low, vmax=high)
+
+    if contour:
+        mappable = ax.contourf(
+            longitudes, latitudes, values, levels=levels, **common, **kwargs
+        )
+    else:
+        mappable = ax.pcolormesh(
+            longitudes, latitudes, values, shading="auto", **common, **kwargs
+        )
+    if contour_lines:
+        # Left on the axes rather than returned, since the mappable a caller
+        # wants for a colourbar is the filled one.
+        ax.contour_set = ax.contour(
+            longitudes,
+            latitudes,
+            values,
+            levels=levels,
+            transform=crs.PlateCarree(),
+            colors="black",
+            linewidths=0.5,
+        )
+
+    if map_extent is None:
+        ax.set_global()
+    else:
+        # Not both: set_global would undo the extent that was asked for.
+        ax.set_extent(list(map_extent), crs=crs.PlateCarree())
+
     if coasts:
         ax.coastlines(linewidth=0.5)
+    if borders or rivers:
+        import cartopy.feature as feature
+
+        if borders:
+            ax.add_feature(feature.BORDERS, linewidth=0.3)
+        if rivers:
+            ax.add_feature(feature.RIVERS, linewidth=0.3)
     if gridlines:
-        ax.gridliner = ax.gridlines(draw_labels=True, linewidth=0.3, alpha=0.5)
+        ax.gridliner = ax.gridlines(**_gridline_options(gridlines_kwargs))
     if colorbar:
-        bar = ax.figure.colorbar(mappable, ax=ax, shrink=0.7, pad=0.03)
+        options = dict(shrink=0.7, pad=0.03)
+        options.update(colorbar_kwargs or {})
+        bar = ax.figure.colorbar(mappable, ax=ax, **options)
         if colorbar_label is not None:
             bar.set_label(colorbar_label)
+    if title is not None:
+        ax.set_title(title)
     return ax, mappable
+
+
+def _gridline_options(given: dict | None, /) -> dict:
+    """Graticule options, with the intervals a caller thinks in.
+
+    cartopy wants ``xlocs``/``ylocs`` as tick arrays; what anyone actually has
+    in mind is "a line every 30 degrees". ``lat_interval`` and ``lon_interval``
+    say that, and are translated here.
+    """
+    options = dict(draw_labels=True, linewidth=0.3, alpha=0.5)
+    options.update(given or {})
+    latitude = options.pop("lat_interval", None)
+    longitude = options.pop("lon_interval", None)
+    if latitude is not None:
+        options["ylocs"] = np.arange(-90.0, 90.0 + latitude, latitude)
+    if longitude is not None:
+        options["xlocs"] = np.arange(-180.0, 180.0 + longitude, longitude)
+    return options
 
 
 def plot_points(

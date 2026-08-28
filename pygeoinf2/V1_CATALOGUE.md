@@ -283,7 +283,7 @@ deliberately not started.
 | `line.Lebesgue/Sobolev` | Ported | `Interval` | |
 | `sphere.Lebesgue/Sobolev` | Ported | `Sphere` | |
 | *(3D periodic box)* | *(new)* | Free, from the N-dimensional `rfftn` construction | |
-| `plot`, `plot_error_bounds`, `plot_geodesic`, `plot_geodesic_network`, `plot_points`, `create_map_figure` | Ported (O8, in part) | **O8**. Its own layer dispatching on space type, not methods on the spaces | yes, we need this. create_map_figure can probably be replaced by writing a kind of overload for plt.subplots adapted to cartopy, and hence allowing for mutliple panels etc.|
+| `plot`, `plot_error_bounds`, `plot_geodesic`, `plot_geodesic_network`, `plot_points`, `create_map_figure` | Ported | `plotting.plot` (dispatching on the space), `plot_error_bounds` on the one-dimensional box, `plot_points` and `plot_paths`, `subplots`. The sphere map regains `map_extent`, `contour`/`contour_lines`/`levels`, `gridlines_kwargs` with `lat_interval`/`lon_interval`, `colorbar_kwargs`, `borders`/`rivers` and `title` | |
 
 ## `checks/` → `testing.py`
 
@@ -336,7 +336,7 @@ Seven classes and 37 functions across `core.py` and the pendulum examples.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `plot.py` — `plot_1d_distributions`, `plot_corner_distributions` | Ported | `plotting.plot_densities` and `plotting.plot_corner`, taking a Gaussian *or* any measure that can be sampled, so a non-linear push-forward is drawn as what it is (DESIGN §30) | |
+| `plot.py` — `plot_1d_distributions`, `plot_corner_distributions` | Ported | `plotting.plot_densities` and `plotting.plot_corner`, taking a Gaussian *or* any measure that can be sampled, so a non-linear push-forward is drawn as what it is (DESIGN §30) Both now take a `title`, and `plot_corner` has its legend back in the empty upper triangle. The argument renames are tabulated in the module docstring. | |
 | `plot.py` — `SubspaceSlicePlotter`, `plot_slice` | Planned | The larger and more independent half of O8: slicing a `Subset` along a 1/2/3-D affine subspace. v2 has `Subset`, `ConvexSet`, `Ball`, `Ellipsoid`, `Polytope`, `HalfSpace` with `contains` and `support_function`, so all three of v1's rendering paths have something to stand on | |
 | `parallel.py` — `parallel_mat_mat`, `parallel_compute_dense_matrix_from_scipy_op` | Dropped | The joblib branches doubled every operator and each carried its own copy of the adjoint. finufft and pyshtools thread internally; parallelism belongs around an operator, not inside it (§20.8) | I'm happy to take your lead here, but I think it is viable for the action of some operators to be parallelised. And indeed, for large problems this will almost certainly be the case, though that will be implemented elsewhere.  |
 | `utils.py` — `configure_threading` | Dropped | Thread-count control. Still wanted, but as a package-level setting rather than a call every script makes? | This basically doesn't work. In practice I just end up setting environement variables at run time. So this can go.  |
