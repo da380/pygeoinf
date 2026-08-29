@@ -30,7 +30,7 @@ from scipy.fft import irfftn, rfftn
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import ArrayVectorMixin
-from .base import SymmetricSpace, lift_formal_adjoint
+from .base import PreparedPoints, SymmetricSpace, _gauss_legendre, lift_formal_adjoint
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
 
@@ -234,8 +234,16 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         return (self._shape, self._lengths, self._order, self._length_scale)
 
     def _coordinate_key(self) -> Hashable:
-        """The grid, which the order and length scale do not touch."""
-        return (type(self), self._shape, self._lengths)
+        """The grid, which the order and length scale do not touch.
+
+        Tagged by geometry rather than by ``type(self)``, as the sphere's is
+        and for the same reason: ``Circle``, ``Torus``, ``Lebesgue`` and
+        ``Sobolev`` are thin subclasses over one grid and one point map, so
+        keying on the concrete class said two views of one field were different
+        fields -- and a formal-adjoint lift between them round-tripped through
+        components instead of passing the vector straight through.
+        """
+        return ("periodic_box", self._shape, self._lengths)
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
@@ -408,6 +416,28 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
     def _angles(self, points: Sequence[Any]) -> list[np.ndarray]:
         """Points as one contiguous array of angles per axis."""
+        return self.prepare_points(points).data
+
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points as one contiguous array of angles per axis.
+
+        The conversion the non-uniform FFT starts with, done once for an
+        operator rather than once per application: it was 32 of 61 ms on a
+        512-square torus at 10^5 points (REVIEW2 4.2.7).
+
+        Args:
+            points: points of the box, or an already prepared set.
+
+        Returns:
+            The prepared points, carrying one angle array per axis.
+
+        Raises:
+            ValueError: if the points do not have this box's number of
+                coordinates.
+        """
+        if isinstance(points, PreparedPoints):
+            return points
+        points = tuple(points)
         positions = np.asarray(
             [np.atleast_1d(np.asarray(point, dtype=float)) for point in points]
         )
@@ -416,10 +446,11 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 f"Points need {self.spatial_dimension} coordinates each, got "
                 f"shape {positions.shape}."
             )
-        return [
+        angles = [
             np.ascontiguousarray(2.0 * np.pi * positions[:, axis] / self._lengths[axis])
             for axis in range(self.spatial_dimension)
         ]
+        return PreparedPoints(points, data=angles)
 
     def evaluate(
         self,
@@ -606,9 +637,9 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         offset = self._separation(start, end)
         length = float(np.linalg.norm(offset))
 
-        abscissae, weights = np.polynomial.legendre.leggauss(count)
+        abscissae, weights = _gauss_legendre(count)
         fractions = 0.5 * (abscissae + 1.0)
-        nodes = [self._wrap(first + fraction * offset) for fraction in fractions]
+        nodes = list(self._wrap(first[None, :] + fractions[:, None] * offset[None, :]))
         return nodes, 0.5 * length * weights
 
     def _wrap(self, point: np.ndarray, /) -> np.ndarray:
@@ -688,12 +719,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             raise ValueError(
                 f"This box has {self.spatial_dimension} axes, got {len(shape)}."
             )
-        return PeriodicBox(
-            shape,
-            lengths=self._lengths,
-            order=self._order,
-            length_scale=self._length_scale,
-        )
+        return self._rebuilt(shape=shape)
 
     def with_degree(self, degree: int, /) -> "PeriodicBox":
         """The same domain, resolved to a given wavenumber on every axis.
@@ -820,26 +846,26 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         first = self._as_point(centre)
 
         if dimension == 1:
-            abscissae, weights = np.polynomial.legendre.leggauss(max(count, 1))
+            abscissae, weights = _gauss_legendre(max(count, 1))
             offsets = radius * abscissae
-            nodes = [self._wrap(first + np.array([offset])) for offset in offsets]
+            nodes = list(self._wrap(first[None, :] + offsets[:, None]))
             return nodes, radius * weights
 
         rings = max(1, int(np.sqrt(count)))
         spokes = max(1, count // rings)
-        abscissae, weights = np.polynomial.legendre.leggauss(rings)
+        abscissae, weights = _gauss_legendre(rings)
         radii = 0.5 * radius * (abscissae + 1.0)
         # r dr from the area element, and the half-width of the mapping.
         radial = 0.5 * radius * weights * radii
         angles = 2.0 * np.pi * np.arange(spokes) / spokes
 
-        nodes, values = [], []
-        for ring_radius, ring_weight in zip(radii, radial):
-            for angle in angles:
-                offset = ring_radius * np.array([np.cos(angle), np.sin(angle)])
-                nodes.append(self._wrap(first + offset))
-                values.append(ring_weight * 2.0 * np.pi / spokes)
-        return nodes, np.array(values)
+        # The outer product of rings and spokes, taken as one array rather
+        # than as a double Python loop wrapping a point at a time.
+        directions = np.column_stack([np.cos(angles), np.sin(angles)])
+        offsets = (radii[:, None, None] * directions[None, :, :]).reshape(-1, 2)
+        nodes = list(self._wrap(first[None, :] + offsets))
+        values = np.repeat(radial * 2.0 * np.pi / spokes, spokes)
+        return nodes, values
 
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[Any]:
         """Points at given distances from a point, along the first axis.
@@ -949,14 +975,41 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 change of order alone.
 
         Returns:
-            The same domain and grid, in the new metric.
+            The same domain and grid in the new metric, as :class:`Lebesgue` at
+            order zero and :class:`Sobolev` otherwise.
         """
-        return PeriodicBox(
-            self._shape,
-            lengths=self._lengths,
-            order=order,
-            length_scale=(self._length_scale if length_scale is None else length_scale),
-        )
+        return self._rebuilt(order=order, length_scale=length_scale)
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "PeriodicBox":
+        """The same domain with some of its parameters changed.
+
+        **Returns the D-3 subclass its order names** rather than the base
+        class, which is what makes ``isinstance(X.with_order(0.0), Lebesgue)``
+        true (REVIEW2 3.7). Each geometry over this one -- a circle, a torus, a
+        bounded box -- overrides this and nothing else, so there is a single
+        place per family that knows which class goes with which order.
+
+        Args:
+            shape: the new grid. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(shape, lengths=self._lengths)
+        return Sobolev(shape, order, scale, lengths=self._lengths)
 
 
 class Lebesgue(PeriodicBox):

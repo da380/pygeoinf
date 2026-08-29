@@ -41,7 +41,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearFunctional, LinearOperator
-from .base import SymmetricSpace, _distribute
+from .base import PreparedPoints, SymmetricSpace, _distribute, _gauss_legendre
 
 __all__ = ["Sphere", "Lebesgue", "Sobolev"]
 
@@ -77,6 +77,11 @@ _NO_CONDON_SHORTLEY = 1
 # whole point, since with_order is what makes new spaces in a hot loop. A plain
 # dict rather than an lru_cache because the value is computed from an instance.
 _QUADRATURES: dict[tuple[int, int, float], np.ndarray] = {}
+
+# The south pole row weights, on the same key and for the same reason: they
+# are built from the quadrature and from Legendre values, neither of which
+# knows the Sobolev order.
+_SOUTH_POLE_KERNELS: dict[tuple[int, int, float], np.ndarray] = {}
 
 
 @lru_cache(maxsize=8)
@@ -357,10 +362,23 @@ class Sphere(SymmetricSpace[Any]):
             values: an array of shape :attr:`grid_shape`.
 
         Returns:
-            An ``SHGrid`` over those values.
+            An ``SHGrid`` over a copy of those values -- the caller's array is
+            not adopted, and a later in-place operation on the field does not
+            reach back into it.
 
         Raises:
             ValueError: if the shape is wrong.
+        """
+        return self._own_grid_values(np.array(values, dtype=float))
+
+    def _own_grid_values(self, values: np.ndarray, /) -> Any:
+        """An ``SHGrid`` over an array this space has just allocated.
+
+        ``SHGrid.from_array(..., copy=False)``, which is what
+        :meth:`from_grid_values` used to do with the *caller's* array: `axpy`
+        then wrote through the wrapper into it. Here the array is one this
+        module made and holds the only reference to, so the wrap is free and
+        safe. The copy it saves is 2 MB at ``lmax`` 256, on every synthesis.
         """
         from pyshtools import SHGrid
 
@@ -371,7 +389,7 @@ class Sphere(SymmetricSpace[Any]):
 
     def copy(self, x: Any) -> Any:
         """An independent copy of the field."""
-        return self.from_grid_values(self.grid_values(x).copy())
+        return self._own_grid_values(self.grid_values(x).copy())
 
     def axpy(self, a: float, x: Any, y: Any) -> Any:
         """``y += a x``, in place on the grid's own array."""
@@ -382,6 +400,69 @@ class Sphere(SymmetricSpace[Any]):
         """``x *= a``, in place."""
         x.data *= a
         return x
+
+    def inner_product(self, x: Any, y: Any) -> float:
+        r"""``(x, y)``, by the grid's own quadrature on a Lebesgue space.
+
+        The ``L2`` inner product is an integral, and the Driscoll-Healy grid
+        comes with a quadrature that integrates it exactly. Analysis on this
+        grid *is* that quadrature -- coefficient ``k`` is
+        ``sum_j w_j sum_i phi_k(p_ji) v_ji`` -- so with ``S`` synthesis and
+        ``W`` the cell weights, ``A == S^T W`` and ``A S == I``, whence
+        ``S^T W S == I`` and
+
+        .. code-block:: text
+
+            (x, y) == (A x) . (A y) == sum_j w_j sum_i x_ji y_ji
+
+        for fields in the span of the basis. Two transforms become none:
+        5.44 ms against 0.055 ms at ``lmax`` 128 (REVIEW2 4.1.g). Agrees with
+        the component route to 6e-15 at every truncation, radius and sampling
+        tested, and to 2e-14 when one argument is a raw pointwise product.
+
+        **Where the two routes part, and why this one is right.** Since
+        DESIGN.md 35 a pointwise product is left on the grid, and a grid array
+        outside the span has a projection but no equal in the span. If *both*
+        arguments are such arrays the quadrature integrates the product of what
+        the grid holds, while the component route integrates the product of the
+        two projections -- 0.05% to 2% apart on the cases measured. The
+        quadrature is the more accurate of the two, and it is the same
+        decision as 35's: the grid is the representation, and what it holds is
+        not thrown away on the way past. With either argument in the span the
+        two agree exactly, which covers every inner product this package takes.
+
+        On a Sobolev space there is no such form -- the metric weights the
+        modes and the grid knows nothing of that -- so the base class's
+        component route is used.
+
+        Args:
+            x: one field.
+            y: the other.
+
+        Returns:
+            The inner product.
+        """
+        if self._order != 0.0:
+            return super().inner_product(x, y)
+        return float(
+            np.einsum(
+                "j,ji,ji->", self._quadrature, self.grid_values(x), self.grid_values(y)
+            )
+        )
+
+    def squared_norm(self, x: Any) -> float:
+        """``(x, x)``, by the same quadrature as :meth:`inner_product`.
+
+        Args:
+            x: a field.
+
+        Returns:
+            The squared norm.
+        """
+        if self._order != 0.0:
+            return super().squared_norm(x)
+        values = self.grid_values(x)
+        return float(np.einsum("j,ji,ji->", self._quadrature, values, values))
 
     def to_components(self, x: Any) -> np.ndarray:
         """Harmonic coefficients of a field, orthonormal in ``L2``.
@@ -430,7 +511,7 @@ class Sphere(SymmetricSpace[Any]):
         coefficients = np.zeros((2, self._lmax + 1, self._lmax + 1))
         parts, degrees, orders = self._packing
         coefficients[parts, degrees, orders] = components / self._radius
-        return self.from_grid_values(
+        return self._own_grid_values(
             MakeGridDH(
                 coefficients,
                 norm=_ORTHONORMAL,
@@ -632,7 +713,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         from pyshtools.legendre import PlmON
 
-        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
+        positions = self.prepare_points(points).data
 
         indices = self._legendre_indices
         count = positions.shape[0]
@@ -654,11 +735,17 @@ class Sphere(SymmetricSpace[Any]):
         return result / self._radius
 
     def _in_chunks(self, points: Sequence[Any], /) -> Any:
-        """Split points so one basis matrix at a time stays a sensible size."""
-        points = tuple(points)
+        """Split points so one basis matrix at a time stays a sensible size.
+
+        The chunks stay prepared, so the conversion is not redone per chunk.
+        """
+        prepared = self.prepare_points(points)
         per_chunk = max(1, _CHUNK_ENTRIES // max(self.dim, 1))
-        for start in range(0, len(points), per_chunk):
-            yield points[start : start + per_chunk]
+        for start in range(0, len(prepared), per_chunk):
+            stop = start + per_chunk
+            yield PreparedPoints(
+                prepared.points[start:stop], data=prepared.data[start:stop]
+            )
 
     # ----------------------------------------------------------------- #
     #                    The double Fourier sphere                      #
@@ -741,6 +828,65 @@ class Sphere(SymmetricSpace[Any]):
         """The basis at colatitude ``pi``, which the grid does not sample."""
         return self.basis_at(np.array([-90.0, 0.0]))
 
+    @cached_property
+    def _south_pole_kernel(self) -> np.ndarray:
+        r"""Row weights taking a field's row means to its value at the south pole.
+
+        The pole is not a grid row, so :meth:`_double` has to evaluate the
+        field there. It did that with a full analysis, which at ``lmax`` 256
+        was 19 ms of a 67 ms forward evaluation -- 35% of it, spent to read one
+        number out (REVIEW2 4.2.8).
+
+        There is a closed form, and it is a row weighting. Analysis on this
+        grid is a quadrature, so
+
+        .. code-block:: text
+
+            f(pi) == sum_k phi_k(pi) c_k
+                  == sum_j w_j sum_i f_ji sum_k phi_k(pi) phi_k(p_ji)
+
+        and the inner sum kills every order but ``m == 0``: an associated
+        Legendre function of order ``m > 0`` vanishes at the pole. The ``m ==
+        0`` harmonics do not depend on longitude, so what is left of the middle
+        sum is the row's total, and
+
+        .. code-block:: text
+
+            K_j == columns * w_j * sum_l Ybar_l0(pi) Ybar_l0(theta_j) / R^2
+            f(pi) == K . row_means(f)
+
+        The zonal harmonics come from one ``PlmON`` call at ``z == 1``, which
+        is exactly their normalisation since ``P_l(1) == 1``, times a Legendre
+        Vandermonde over the grid's cosines -- so the convention is pyshtools'
+        own rather than one asserted here, and no per-row transform is needed.
+        Agrees with the analysis route to 6e-14 at every truncation, radius and
+        sampling tested; 0.06 ms against 19 ms.
+
+        Shared between spaces of the same grid, as the quadrature is.
+        """
+        from pyshtools.legendre import PlmON
+
+        key = (self._lmax, self._sampling, self._radius)
+        cached = _SOUTH_POLE_KERNELS.get(key)
+        if cached is not None:
+            return cached
+
+        _, columns = self.grid_shape
+        degrees = np.arange(self._lmax + 1)
+        # PlmIndex(l, 0), the zonal entries of the packed Legendre array.
+        zonal_indices = degrees * (degrees + 1) // 2
+        # P_l(1) == 1, so this is the normalisation of each zonal harmonic.
+        norms = PlmON(self._lmax, 1.0, csphase=_NO_CONDON_SHORTLEY)[zonal_indices]
+        at_pole = norms * (-1.0) ** degrees
+        legendre = np.polynomial.legendre.legvander(
+            np.cos(self.colatitudes), self._lmax
+        )
+        rows = (legendre * norms) @ at_pole / self._radius**2
+        kernel = columns * self._quadrature * rows
+        kernel.flags.writeable = False
+        _SOUTH_POLE_KERNELS[key] = kernel
+        return kernel
+
     def _synthesis_adjoint(self, values: np.ndarray, /) -> np.ndarray:
         """``sum_jk v_jk phi(p_jk)``: the transpose of synthesis onto the grid.
 
@@ -752,7 +898,7 @@ class Sphere(SymmetricSpace[Any]):
         live = weights > 0.0
         scaled = np.zeros(self.grid_shape)
         scaled[live] = values[live] / weights[live, None]
-        total = self.to_components(self.from_grid_values(scaled))
+        total = self.to_components(self._own_grid_values(scaled))
         for row in np.flatnonzero(~live):
             total = total + values[row].sum() * self.basis_at(
                 np.array([90.0 - np.degrees(float(self.colatitudes[row])), 0.0])
@@ -766,13 +912,16 @@ class Sphere(SymmetricSpace[Any]):
         ``g(2 pi - theta, phi) == f(theta, phi + pi)`` beyond it. For a
         band-limited ``f`` the result is a *trigonometric polynomial* on the
         torus, which is what makes one FFT of it exact.
+
+        Costs no transform: the south pole is the one value the grid does not
+        hold, and :attr:`_south_pole_kernel` reads it off the row means.
         """
         rows, columns = self.grid_shape
         field = self.grid_values(x)
         doubled = np.empty((2 * rows, columns))
         doubled[:rows] = field
         # theta == pi is the south pole: not a grid row, so it is evaluated.
-        doubled[rows] = float(self._south_pole_basis @ self.to_components(x))
+        doubled[rows] = float(self._south_pole_kernel @ field.mean(axis=1))
         doubled[rows + 1 :] = np.roll(field[1:][::-1], columns // 2, axis=1)
         return doubled
 
@@ -787,11 +936,32 @@ class Sphere(SymmetricSpace[Any]):
 
     def _angles(self, points: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
         """Points as two contiguous arrays of radians, for the NUFFT."""
-        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
+        positions = self.prepare_points(points).data
         return (
             np.ascontiguousarray(positions[:, 0]),
             np.ascontiguousarray(positions[:, 1]),
         )
+
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points as ``(colatitude, longitude)`` in radians, converted once.
+
+        The conversion every route here starts with: the non-uniform FFT wants
+        the two angles as contiguous arrays and :meth:`basis_matrix` wants the
+        pair. Doing it per application cost 14.5 of 37 ms at 10^5 points
+        (REVIEW2 4.2.7).
+
+        Args:
+            points: ``(latitude, longitude)`` pairs in degrees, or an already
+                prepared set.
+
+        Returns:
+            The prepared points, carrying the ``(n, 2)`` array of radians.
+        """
+        if isinstance(points, PreparedPoints):
+            return points
+        points = tuple(points)
+        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
+        return PreparedPoints(points, data=positions)
 
     def _use_transform(self, count: int) -> bool:
         """Whether the transform route is cheaper than summing the basis.
@@ -836,7 +1006,7 @@ class Sphere(SymmetricSpace[Any]):
                 threading, and a call inside a ``joblib`` loop would
                 oversubscribe on top of that. Pass zero for finufft's default.
         """
-        points = tuple(points)
+        points = self.prepare_points(points)
         if not self._use_transform(len(points)):
             components = self.to_components(x)
             return np.concatenate(
@@ -891,7 +1061,7 @@ class Sphere(SymmetricSpace[Any]):
         Raises:
             ValueError: if the weight count does not match the points.
         """
-        points = tuple(points)
+        points = self.prepare_points(points)
         values = np.asarray(weights, dtype=float)
         if values.size != len(points):
             raise ValueError(f"Got {values.size} weights for {len(points)} points.")
@@ -937,7 +1107,7 @@ class Sphere(SymmetricSpace[Any]):
                 for latitude, azimuth in zip(latitudes, azimuths)
             ]
         )
-        return self.from_grid_values(values.reshape(self.grid_shape))
+        return self._own_grid_values(values.reshape(self.grid_shape))
 
     @property
     def reference_point(self) -> np.ndarray:
@@ -962,20 +1132,99 @@ class Sphere(SymmetricSpace[Any]):
             ]
         )
 
+    def covariance_function(
+        self, measure: Any, distances: np.ndarray, /
+    ) -> np.ndarray:
+        r"""An invariant measure's covariance as a function of distance.
+
+        The addition theorem collapses the sum over the basis to a sum over
+        degrees, whenever the measure's spectrum is *isotropic* -- constant
+        within each degree, which is what "a function of the Laplacian
+        eigenvalue" means and what every measure built here has:
+
+        .. code-block:: text
+
+            sum_m phi_lm(p) phi_lm(q) == (2l + 1) P_l(cos gamma) / (4 pi R^2)
+
+            c(d) == sum_l r_l (2l + 1) P_l(cos(d / R)) / (4 pi R^2),
+            r_l == s_l / g_l
+
+        That is one Legendre series per distance rather than one row of the
+        basis: 1.2 ms against 24 ms for 50 distances at ``lmax`` 256
+        (REVIEW2 4.2.4). ``cos`` is even and periodic, so a walk past the pole
+        needs no special case.
+
+        ``invariant_measure`` does not *require* an isotropic spectrum -- it
+        takes one variance per component -- and with an anisotropic one the
+        covariance is not a function of distance alone. So the spectrum is
+        checked rather than assumed, and the base class's exact sum over the
+        basis is used where the check fails.
+
+        Args:
+            measure: the measure.
+            distances: the separations, as *physical* distances.
+
+        Returns:
+            One covariance per distance.
+
+        Raises:
+            ValueError: if the Sobolev order is at or below one, so that point
+                values on a surface do not exist.
+        """
+        variances = self._spectral_variances(measure)
+        if variances is None:
+            return super().covariance_function(measure, distances)
+
+        ratio = variances / self.metric_values
+        degrees = self.degrees
+        counts = np.bincount(degrees)
+        per_degree = np.bincount(degrees, weights=ratio) / counts
+        tolerance = 1.0e-12 * float(np.max(ratio, initial=0.0))
+        if not np.allclose(ratio, per_degree[degrees], rtol=1e-12, atol=tolerance):
+            return super().covariance_function(measure, distances)
+
+        self._require_point_evaluation("A covariance function", unsafe=False)
+        orders = np.arange(per_degree.size, dtype=float)
+        coefficients = per_degree * (2.0 * orders + 1.0) / (4.0 * np.pi * self._radius**2)
+        angles = np.asarray(distances, dtype=float) / self._radius
+        return np.polynomial.legendre.legval(np.cos(angles), coefficients)
+
     def walk_from(self, point: Any, distances: np.ndarray, /) -> list[np.ndarray]:
         """Points at given distances from a point, along a meridian.
 
         Any direction would do, the sphere being homogeneous *and* isotropic;
         a meridian is the one that needs no tangent frame.
+
+        **The walk continues past the pole**, which is where this used to go
+        wrong: adding the angle to the colatitude and stopping there returned
+        latitudes below -90 -- a distance of ``3 pi R / 2`` from the equator
+        gave latitude -250 -- and the two evaluation routes then read that as
+        two different points. The direct sum takes the colatitude at face value
+        and lands at ``(2 pi - theta, phi)``; the non-uniform FFT sees the
+        doubled grid, on which the same colatitude is ``(2 pi - theta,
+        phi + pi)``. On a non-zonal field they disagreed by 1.02 on a field of
+        maximum 0.47. Passing the pole reflects the meridian to the far side,
+        which is what walking over a pole does, and both routes then agree.
+
+        Args:
+            point: where to start, ``(latitude, longitude)`` in degrees.
+            distances: how far to walk, as *physical* distances. Negative
+                distances walk the other way, over the north pole.
+
+        Returns:
+            One ``(latitude, longitude)`` point per distance.
         """
         position = self._radians(point)
         angles = np.asarray(distances, dtype=float) / self._radius
-        return [
-            self.to_latitude_degrees(
-                np.array([float(position[0] + angle), float(position[1])])
-            )[0]
-            for angle in angles
-        ]
+        colatitudes = (position[0] + angles) % (2.0 * np.pi)
+        # Past a pole the meridian continues down the far side: reflect the
+        # colatitude back into [0, pi] and turn the longitude through pi.
+        beyond = colatitudes > np.pi
+        colatitudes = np.where(beyond, 2.0 * np.pi - colatitudes, colatitudes)
+        longitudes = np.where(beyond, position[1] + np.pi, position[1])
+        return list(
+            self.to_latitude_degrees(np.column_stack([colatitudes, longitudes]))
+        )
 
     # ----------------------------------------------------------------- #
     #                              Geometry                             #
@@ -1010,9 +1259,24 @@ class Sphere(SymmetricSpace[Any]):
                 f"Points are (latitude, longitude) pairs in degrees, got an "
                 f"array of shape {np.shape(points)}."
             )
+        latitudes = positions[:, 0]
+        # The check the docstring has always promised and never performed. It
+        # is what catches colatitudes passed in by mistake, and it is what
+        # would have caught walk_from returning -250 (§3.4). The tolerance is
+        # for a latitude that came back from an arcsine as 90 + 1e-14; a
+        # genuine error is degrees out, not nanodegrees.
+        outside = np.abs(latitudes) > 90.0 + 1.0e-9
+        if np.any(outside):
+            worst = float(latitudes[np.argmax(np.abs(latitudes))])
+            raise ValueError(
+                f"A latitude lies in [-90, 90] degrees, got {worst}. Points "
+                f"are (latitude, longitude) pairs in degrees; this is the "
+                f"usual sign that colatitudes, or radians, have been passed "
+                f"in instead."
+            )
         return np.column_stack(
             [
-                np.radians(90.0 - positions[:, 0]),
+                np.radians(90.0 - np.clip(latitudes, -90.0, 90.0)),
                 np.radians(positions[:, 1]) % (2.0 * np.pi),
             ]
         )
@@ -1063,16 +1327,33 @@ class Sphere(SymmetricSpace[Any]):
     @staticmethod
     def _to_point(vector: np.ndarray) -> np.ndarray:
         """A unit vector as a ``(latitude, longitude)`` pair in degrees."""
-        unit = np.asarray(vector, dtype=float)
-        unit = unit / np.linalg.norm(unit)
+        return Sphere._to_points(np.atleast_2d(np.asarray(vector, dtype=float)))[0]
+
+    @staticmethod
+    def _to_points(vectors: np.ndarray, /) -> np.ndarray:
+        """Many vectors as ``(latitude, longitude)`` pairs in degrees.
+
+        The batched form of :meth:`_to_point`, and the reason a quadrature
+        rule can be built without a Python loop over its nodes: one path of
+        32 nodes made 32 of these calls, and a tomographic geometry of 2000
+        paths made 64 000 (REVIEW2 4.2.6).
+
+        Args:
+            vectors: an ``(n, 3)`` array. Need not be normalised.
+
+        Returns:
+            An ``(n, 2)`` array of points.
+        """
+        array = np.asarray(vectors, dtype=float)
+        unit = array / np.linalg.norm(array, axis=-1, keepdims=True)
         return Sphere.to_latitude_degrees(
-            np.array(
+            np.column_stack(
                 [
-                    float(np.arccos(np.clip(unit[2], -1.0, 1.0))),
-                    float(np.arctan2(unit[1], unit[0]) % (2.0 * np.pi)),
+                    np.arccos(np.clip(unit[:, 2], -1.0, 1.0)),
+                    np.arctan2(unit[:, 1], unit[:, 0]) % (2.0 * np.pi),
                 ]
             )
-        )[0]
+        )
 
     @staticmethod
     def _tangent_frame(centre: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1144,16 +1425,16 @@ class Sphere(SymmetricSpace[Any]):
             )
 
         arc_length = self._radius * angle
-        abscissae, weights = np.polynomial.legendre.leggauss(count)
+        abscissae, weights = _gauss_legendre(count)
         parameters = 0.5 * (abscissae + 1.0)
         sine = np.sin(angle)
-        nodes = [
-            self._to_point(
-                (np.sin((1.0 - s) * angle) * first + np.sin(s * angle) * second) / sine
-            )
-            for s in parameters
-        ]
-        return nodes, weights * (0.5 * arc_length)
+        # The slerp, over every node at once. Node for node the same points as
+        # the loop it replaces, to 4e-13 degrees.
+        vectors = (
+            np.sin((1.0 - parameters) * angle)[:, None] * first[None, :]
+            + np.sin(parameters * angle)[:, None] * second[None, :]
+        ) / sine
+        return list(self._to_points(vectors)), weights * (0.5 * arc_length)
 
     def geodesic_ball_quadrature(
         self, centre: Any, radius: float, /, *, count: int
@@ -1189,7 +1470,7 @@ class Sphere(SymmetricSpace[Any]):
         angular_radius = radius / self._radius
         cosine = np.cos(angular_radius)
         ring_count = min(count, max(1, int(np.sqrt(count))))
-        abscissae, weights = np.polynomial.legendre.leggauss(ring_count)
+        abscissae, weights = _gauss_legendre(ring_count)
         half_width = 0.5 * (1.0 - cosine)
         heights = half_width * (abscissae + 1.0) + cosine
         ring_weights = half_width * weights
@@ -1199,21 +1480,24 @@ class Sphere(SymmetricSpace[Any]):
         centre_vector = self._to_vector(centre)
         first, second = self._tangent_frame(centre_vector)
 
-        nodes: list[np.ndarray] = []
-        node_weights: list[float] = []
-        for height, weight, ring_radius, points_here in zip(
-            heights, ring_weights, ring_radii, counts
-        ):
-            azimuths = 2.0 * np.pi * np.arange(points_here, dtype=float) / points_here
-            vectors = height * centre_vector[None, :] + ring_radius * (
-                np.cos(azimuths)[:, None] * first[None, :]
-                + np.sin(azimuths)[:, None] * second[None, :]
-            )
-            nodes.extend(self._to_point(vector) for vector in vectors)
-            share = self._radius**2 * 2.0 * np.pi * weight / points_here
-            node_weights.extend([share] * points_here)
-
-        return nodes, np.asarray(node_weights)
+        # Every ring's azimuths at once, then every node converted at once:
+        # the rings differ only in how many points they hold, so the whole
+        # rule is three concatenations and one vectorised conversion.
+        azimuths = np.concatenate(
+            [
+                2.0 * np.pi * np.arange(points_here, dtype=float) / points_here
+                for points_here in counts
+            ]
+        )
+        ring_of_node = np.repeat(np.arange(counts.size), counts)
+        vectors = heights[ring_of_node, None] * centre_vector[None, :] + ring_radii[
+            ring_of_node, None
+        ] * (
+            np.cos(azimuths)[:, None] * first[None, :]
+            + np.sin(azimuths)[:, None] * second[None, :]
+        )
+        shares = self._radius**2 * 2.0 * np.pi * ring_weights / counts
+        return list(self._to_points(vectors)), shares[ring_of_node]
 
     # ----------------------------------------------------------------- #
     #                          Cap averages                             #
@@ -1247,39 +1531,84 @@ class Sphere(SymmetricSpace[Any]):
             ValueError: if the angular radius is outside ``[0, 180]``, or if an
                 average over a cap of zero area is asked for.
         """
+        rows = self.cap_integral_components(
+            [centre], angular_radius, normalise=normalise
+        )
+        return LinearFunctional.from_derivative_components(self, rows[0])
+
+    def cap_integral_components(
+        self,
+        centres: Sequence[Any],
+        angular_radius: float,
+        /,
+        *,
+        normalise: bool = False,
+    ) -> np.ndarray:
+        r"""The derivative components of many cap integrals, in closed form.
+
+        The row of an observation operator that averages over a cap, for every
+        centre at once. What the functional needs is
+        ``g_k == integral over the cap of phi_k``, and the addition theorem
+        gives that in one line: rotate the cap to the pole, where only the
+        zonal harmonic survives the azimuthal integral, and rotate back.
+
+        .. code-block:: text
+
+            g_k == 2 pi R^2 I_l(cos alpha) phi_k(centre)
+
+            I_0(x) == 1 - x
+            I_l(x) == (P_{l-1}(x) - P_{l+1}(x)) / (2l + 1)
+
+        so the whole set of caps is one Legendre evaluation at a single point
+        and one :meth:`basis_matrix`.
+
+        This replaces ``SHCoeffs.from_cap``, which builds the indicator at the
+        pole and *rotates* it to the centre -- 8.5 ms a centre at ``lmax`` 128
+        -- and then a functional whose representer had to be synthesised for
+        nobody to read. Measured at ``lmax`` 128 over 100 centres: 21 ms
+        against 1437 ms, agreeing to 1e-12 (REVIEW2 4.2.5).
+
+        Args:
+            centres: the cap centres, ``(latitude, longitude)`` in degrees.
+            angular_radius: the caps' common half-angle, **in degrees**.
+            normalise: divide by the cap's area, giving the average rather
+                than the integral.
+
+        Returns:
+            A ``(len(centres), dim)`` array, one row per centre.
+
+        Raises:
+            ValueError: if the angular radius is outside ``[0, 180]``, or if an
+                average over a cap of zero area is asked for.
+        """
         if angular_radius < 0.0 or angular_radius > 180.0:
             raise ValueError(
                 f"A cap's angular radius lies in [0, 180] degrees, got "
                 f"{angular_radius}."
             )
-        area_fraction = 0.5 * (1.0 - np.cos(np.radians(angular_radius)))
-        if area_fraction <= 0.0:
+        centres = tuple(centres)
+        cosine = float(np.cos(np.radians(angular_radius)))
+        if 1.0 - cosine <= 0.0:
             if normalise:
                 raise ValueError("A cap of zero area has no average.")
-            return LinearFunctional.from_derivative_components(self, np.zeros(self.dim))
+            return np.zeros((len(centres), self.dim))
 
-        from pyshtools import SHCoeffs
+        # P_0 ... P_{lmax+1} at the single point cos(alpha).
+        legendre = np.polynomial.legendre.legvander(
+            np.array([cosine]), self._lmax + 1
+        )[0]
+        degrees = np.arange(self._lmax + 1)
+        integrals = np.empty(self._lmax + 1)
+        integrals[0] = 1.0 - cosine
+        if self._lmax >= 1:
+            rest = degrees[1:]
+            integrals[1:] = (legendre[rest - 1] - legendre[rest + 1]) / (2 * rest + 1)
 
-        position = np.atleast_2d(np.asarray(centre, dtype=float))[0]
-        cap = SHCoeffs.from_cap(
-            float(angular_radius),
-            self._lmax,
-            clat=float(position[0]),
-            clon=float(position[1]),
-            normalization="ortho",
-            csphase=_NO_CONDON_SHORTLEY,
-            kind="real",
-            degrees=True,
-        )
-        parts, degrees, orders = self._packing
-        coefficients = cap.to_array(lmax=self._lmax)[parts, degrees, orders]
-
-        # from_cap normalises the indicator to global average one. Undo that,
-        # then either keep the physical integral or divide by the cap area.
-        components = coefficients / (self._radius * 4.0 * np.pi)
-        if not normalise:
-            components = components * self.area * area_fraction
-        return LinearFunctional.from_derivative_components(self, components)
+        scale = 2.0 * np.pi * self._radius**2
+        rows = self.basis_matrix(centres) * (scale * integrals[self.degrees])
+        if normalise:
+            rows = rows / (scale * (1.0 - cosine))
+        return rows
 
     def spherical_cap_average(
         self, centre: Any, angular_radius: float, /
@@ -1339,15 +1668,10 @@ class Sphere(SymmetricSpace[Any]):
         from ..algebra.spaces import EuclideanSpace
 
         # `radius` here is a *physical* distance, in the units of self.radius;
-        # spherical_cap_integral takes the half-angle in degrees.
+        # cap_integral_components takes the half-angle in degrees.
         angular_radius = np.degrees(radius / self._radius)
-        rows = np.stack(
-            [
-                self.spherical_cap_integral(
-                    centre, angular_radius, normalise=normalise
-                ).derivative_components
-                for centre in centres
-            ]
+        rows = self.cap_integral_components(
+            centres, angular_radius, normalise=normalise
         )
         return LinearOperator.from_matrix(
             self, EuclideanSpace(len(centres)), rows, form="galerkin"
@@ -1518,15 +1842,54 @@ class Sphere(SymmetricSpace[Any]):
     #                            Resolution                             #
     # ----------------------------------------------------------------- #
 
-    def with_degree(self, lmax: int, /) -> Sphere:
-        """The same space, truncated at or extended to a different degree."""
-        return Sphere(
-            lmax,
-            radius=self._radius,
-            order=self._order,
-            length_scale=self._length_scale,
-            sampling=self._sampling,
+    def _rebuilt(
+        self,
+        /,
+        *,
+        lmax: int | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> Sphere:
+        """The same sphere with some of its parameters changed.
+
+        **Returns the D-3 subclass its order names**, not a bare
+        :class:`Sphere`. That is the whole point of D-3: ``Lebesgue`` and
+        ``Sobolev`` exist so that ``isinstance`` answers what it looks like it
+        answers, and a ``with_order``/``with_degree`` that handed back the base
+        class defeated it on every derived space -- pyslfp's ``sl/utils.py``
+        dispatches on exactly that check.
+
+        The one hook the resolution methods build on, so there is one place
+        that knows which class goes with which order.
+
+        Args:
+            lmax: the new truncation. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The sphere, as ``Lebesgue`` at order zero and ``Sobolev``
+            otherwise.
+        """
+        lmax = self._lmax if lmax is None else int(lmax)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(lmax, radius=self._radius, sampling=self._sampling)
+        return Sobolev(
+            lmax, order, scale, radius=self._radius, sampling=self._sampling
         )
+
+    def with_degree(self, lmax: int, /) -> Sphere:
+        """The same space, truncated at or extended to a different degree.
+
+        Args:
+            lmax: the new maximum degree.
+
+        Returns:
+            The space at that truncation, as the subclass its order names.
+        """
+        return self._rebuilt(lmax=lmax)
 
     def degree_transfer_operator(self, target: Sphere, /) -> LinearOperator:
         """Truncation to, or prolongation into, another degree.
@@ -1581,16 +1944,11 @@ class Sphere(SymmetricSpace[Any]):
                 this is a change of order alone.
 
         Returns:
-            The same expansion in the new metric. The components are
-            unchanged; only the inner product moves.
+            The same expansion in the new metric, as :class:`Lebesgue` at order
+            zero and :class:`Sobolev` otherwise. The components are unchanged;
+            only the inner product moves.
         """
-        return Sphere(
-            self._lmax,
-            radius=self._radius,
-            order=order,
-            length_scale=(self._length_scale if length_scale is None else length_scale),
-            sampling=self._sampling,
-        )
+        return self._rebuilt(order=order, length_scale=length_scale)
 
 
 def _read_table(name: str) -> dict[str, np.ndarray]:

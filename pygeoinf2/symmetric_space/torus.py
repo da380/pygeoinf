@@ -41,6 +41,35 @@ class Torus(PeriodicBox):
             raise ValueError(f"A torus has two axes, got {len(shape)}.")
         super().__init__(shape, lengths=lengths, order=order, length_scale=length_scale)
 
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "Torus":
+        """The same torus with some of its parameters changed.
+
+        Overridden so that ``with_order`` and ``with_shape`` give back a torus
+        of the right D-3 subclass rather than a bare
+        :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox`.
+
+        Args:
+            shape: the new grid, two axes. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(shape, lengths=self._lengths)
+        return Sobolev(shape, order, scale, lengths=self._lengths)
+
 
 class Lebesgue(Torus):
     """The ``L2`` space on a torus."""

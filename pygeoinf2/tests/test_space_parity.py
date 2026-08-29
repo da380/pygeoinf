@@ -133,6 +133,254 @@ class TestEveryGeometryHasTheGeometry:
         )
 
 
+class TestChangingTheMetricKeepsTheSubclass:
+    """REVIEW2 3.7 / D-3. ``with_order`` returned the bare geometry class, so
+    ``isinstance(X.with_order(0.0), Lebesgue)`` was false on every derived
+    space -- defeating the reason D-3 gives for the subclasses existing, and
+    the check pyslfp's ``sl/utils.py`` dispatches on."""
+
+    @staticmethod
+    def _module(space):
+        import importlib
+
+        return importlib.import_module(type(space).__module__)
+
+    def test_the_order_names_the_class(self, geometry):
+        _, space = geometry
+        module = self._module(space)
+        assert isinstance(space, module.Sobolev)
+        assert isinstance(space.with_order(0.0), module.Lebesgue)
+        assert isinstance(space.with_order(1.5), module.Sobolev)
+
+    def test_changing_the_resolution_keeps_it(self, geometry):
+        _, space = geometry
+        module = self._module(space)
+        assert isinstance(space.with_degree(space.degrees.max() + 2), module.Sobolev)
+        assert isinstance(
+            space.with_order(0.0).with_degree(space.degrees.max() + 2),
+            module.Lebesgue,
+        )
+
+    def test_the_geometry_survives_the_change(self, geometry):
+        """Not only the label: the new space is over the same grid and the
+        same point map, which is what makes it a *view* of this one."""
+        _, space = geometry
+        lebesgue = space.with_order(0.0)
+        assert lebesgue.dim == space.dim
+        assert lebesgue._coordinate_key() == space._coordinate_key()
+        assert space.shares_vectors_with(lebesgue)
+        assert lebesgue.shares_vectors_with(space)
+        point = space.reference_point
+        assert np.allclose(space.basis_at(point), lebesgue.basis_at(point))
+
+    def test_a_lebesgue_view_of_a_lebesgue_space_is_itself(self, geometry):
+        _, space = geometry
+        lebesgue = space.with_order(0.0)
+        assert lebesgue.with_order(0.0) == lebesgue
+
+
+class TestAdoptingAnArray:
+    """REVIEW2, the smaller list: ``from_grid_values`` aliased the caller's
+    array, so a later in-place operation rewrote it. v1's ``from_array``
+    copies."""
+
+    def test_the_caller_keeps_their_array(self, geometry, rng):
+        _, space = geometry
+        shape = space.grid_values(space.random(rng=rng)).shape
+        original = rng.normal(size=shape)
+        kept = original.copy()
+
+        field = space.from_grid_values(original)
+        space.axpy(1.0, field, field)
+        space.scale_inplace(3.0, field)
+
+        assert np.allclose(original, kept)
+        assert np.allclose(space.grid_values(field), 6.0 * kept)
+
+    def test_a_field_this_space_made_is_not_copied_again(self, geometry, rng):
+        """The other half: the internal form wraps without copying, because
+        the array is one the space has just allocated and holds alone."""
+        _, space = geometry
+        shape = space.grid_values(space.random(rng=rng)).shape
+        values = rng.normal(size=shape)
+        field = space._own_grid_values(values)
+        space.scale_inplace(2.0, field)
+        assert np.allclose(values, space.grid_values(field))
+
+
+class TestPointsAreConvertedOnce:
+    """REVIEW2 4.2.7. The conversion from points to whatever the transform
+    consumes depends only on the points, and an observation operator is built
+    once and applied thousands of times. It used to run per application: 91% of
+    one on a bounded box, whose conversion is a Python loop."""
+
+    def test_an_operator_converts_them_once(self, geometry, rng, monkeypatch):
+        from pygeoinf2.symmetric_space.base import PreparedPoints
+
+        _, space = geometry
+        conversions = []
+        original = type(space).prepare_points
+
+        def counting(self, points, /):
+            if not isinstance(points, PreparedPoints):
+                conversions.append(len(tuple(points)))
+            return original(self, points)
+
+        monkeypatch.setattr(type(space), "prepare_points", counting)
+
+        points = space.random_points(12, rng=rng)
+        A = space.point_evaluation_operator(points, unsafe=True)
+        assert len(conversions) == 1
+
+        field = space.random(rng=rng)
+        for _ in range(4):
+            A(field)
+            A.adjoint(rng.normal(size=12))
+        assert len(conversions) == 1
+
+    def test_preparing_twice_is_free(self, geometry, rng):
+        _, space = geometry
+        points = space.random_points(5, rng=rng)
+        prepared = space.prepare_points(points)
+        assert space.prepare_points(prepared) is prepared
+        assert len(prepared) == 5
+        assert list(prepared) == list(points)
+
+    def test_the_prepared_points_give_the_same_answers(self, geometry, rng):
+        _, space = geometry
+        points = space.random_points(7, rng=rng)
+        field = space.random(rng=rng)
+        weights = rng.normal(size=7)
+        prepared = space.prepare_points(points)
+        assert np.allclose(space.evaluate(field, prepared), space.evaluate(field, points))
+        assert np.allclose(
+            space.accumulate(weights, prepared), space.accumulate(weights, points)
+        )
+        assert np.allclose(
+            space.basis_matrix(prepared), space.basis_matrix(points)
+        )
+
+
+class TestAnInvariantDrawIsTakenInComponents:
+    """REVIEW2 4.2.3. The draw went through the covariance factor, which
+    synthesised white noise onto the grid so that a diagonal operator could
+    analyse it again and synthesise the result: three transforms for numbers
+    that are `sqrt(s / g) * standard normal` in components."""
+
+    def test_it_is_the_draw_the_factor_would_have_given(self, geometry):
+        """Exactly, not statistically: both routes consume one standard normal
+        per component, in the same order, so a shared seed pins the draw."""
+        _, space = geometry
+        measure = space.sobolev_measure(2.0, 0.3)
+        factor = measure.covariance_factor
+
+        drawn = measure.sample(rng=np.random.default_rng(20260830))
+        through = factor(space.white_noise(rng=np.random.default_rng(20260830)))
+        assert np.allclose(
+            space.to_components(drawn), space.to_components(through), atol=1e-12
+        )
+
+    def test_the_metric_is_in_it(self, geometry):
+        """The negative control. Dropping the `1/sqrt(g)` is invisible on a
+        Lebesgue space and wrong everywhere else."""
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        drawn = space.to_components(measure.sample(rng=np.random.default_rng(7)))
+        naive = np.sqrt(variances) * np.random.default_rng(7).standard_normal(space.dim)
+        assert not np.allclose(drawn, naive)
+        assert np.allclose(drawn, naive / np.sqrt(space.metric_values))
+
+    def test_scaling_the_measure_keeps_the_sampler(self, geometry, rng):
+        """`_rebuild` carries `sample=`, so a scaled or translated measure is
+        still drawn in components rather than falling back to the factor."""
+        _, space = geometry
+        measure = space.sobolev_measure(2.0, 0.3)
+        scaled = 2.0 * measure
+        assert scaled.can_sample
+        drawn = space.to_components(scaled.sample(rng=np.random.default_rng(3)))
+        once = space.to_components(measure.sample(rng=np.random.default_rng(3)))
+        assert np.allclose(drawn, 2.0 * once)
+
+
+class TestTwoPointQuantitiesInClosedForm:
+    """REVIEW2 4.2.4. An invariant measure's covariance is diagonal, so both
+    two-point quantities are sums over the basis rather than applications of
+    the operator to a Dirac's representer."""
+
+    @staticmethod
+    def _by_hand(space, variances, first, second):
+        """`sum_k s_k phi_k(p) phi_k(q) / g_k`, written out."""
+        return float(
+            np.sum(
+                variances
+                * space.basis_at(first)
+                * space.basis_at(second)
+                / space.metric_values
+            )
+        )
+
+    def test_the_covariance_function_is_the_sum_over_the_basis(self, geometry):
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        anchor = space.reference_point
+        distances = np.array([0.0, 0.05, 0.13, 0.4])
+        expected = [
+            self._by_hand(space, variances, anchor, point)
+            for point in space.walk_from(anchor, distances)
+        ]
+        assert np.allclose(
+            space.covariance_function(measure, distances), expected, rtol=1e-10
+        )
+
+    def test_at_zero_it_is_the_pointwise_variance(self, geometry):
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        assert space.covariance_function(measure, np.array([0.0]))[
+            0
+        ] == pytest.approx(space.pointwise_variance(variances))
+
+    def test_the_pointwise_variance_at_points_is_the_same_sum(self, geometry, rng):
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        points = space.random_points(6, rng=rng)
+        expected = [self._by_hand(space, variances, p, p) for p in points]
+        assert np.allclose(
+            space.pointwise_variance_at(measure, points), expected, rtol=1e-10
+        )
+
+    def test_a_measure_that_is_not_invariant_still_works(self, geometry, rng):
+        """The general route stays: a posterior is not invariant, and its
+        pointwise variance is the interesting one."""
+        _, space = geometry
+        prior = space.sobolev_measure(2.0, 0.3)
+        points = space.random_points(3, rng=rng)
+        operator = space.point_evaluation_operator(points)
+        posterior = prior.condition(operator, np.zeros(3))
+        assert space._spectral_variances(prior) is not None
+        assert space._spectral_variances(posterior) is None
+        variances = space.pointwise_variance_at(posterior, points)
+        by_dirac = [
+            posterior.directional_variance(space.dirac(p).representer) for p in points
+        ]
+        assert np.allclose(variances, by_dirac)
+
+    def test_the_order_guard_is_not_weakened(self, geometry):
+        """Q4: D-11 is a guard on the space. The closed form needs no Dirac,
+        so the guard is asked for explicitly rather than arriving through one.
+        """
+        _, space = geometry
+        lebesgue = space.with_order(0.0)
+        measure = lebesgue.invariant_measure(lebesgue.sobolev_symbol(-2.0, 0.3))
+        with pytest.raises(ValueError, match="Sobolev order"):
+            lebesgue.covariance_function(measure, np.array([0.0, 0.1]))
+        with pytest.raises(ValueError, match="Sobolev order"):
+            lebesgue.pointwise_variance_at(measure, [lebesgue.reference_point])
+
+
 class TestNeighbourSearchAndClustering:
     """On the base, so every geometry has them, and by KD-tree."""
 

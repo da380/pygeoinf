@@ -29,6 +29,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator
 from ..traits import Traits
+from .base import PreparedPoints
 from .fourier import PeriodicBox
 
 __all__ = ["Box", "Interval", "Lebesgue", "Sobolev"]
@@ -115,8 +116,16 @@ class Box(PeriodicBox):
         )
 
     def _coordinate_key(self) -> Hashable:
-        """The grid, which the order and length scale do not touch."""
-        return (type(self), self._shape, self._bounds, self._padding)
+        """The grid and where its points are, which the metric does not touch.
+
+        Tagged by geometry rather than by ``type(self)``, as the sphere's and
+        the periodic box's are: ``Line``, ``Plane``, ``Lebesgue`` and
+        ``Sobolev`` are thin subclasses over one grid and one point map. The
+        bounds and padding stay in the key because they *are* the point map --
+        a bounded box and its enclosing periodic one share a grid but not an
+        idea of where a grid index sits.
+        """
+        return ("box", self._shape, self._bounds, self._padding)
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
@@ -151,17 +160,32 @@ class Box(PeriodicBox):
         """The basis functions at a point of the domain."""
         return super().basis_at(self._to_enclosing(point))
 
-    def _angles(self, points: Sequence[Any]) -> list[np.ndarray]:
-        """Points as angles, through the same seam :meth:`basis_at` uses.
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points as angles, through the same seam :meth:`basis_at` uses.
 
         The enclosing box's grid does not start where the domain does -- the
         padding sits in between -- so a point has to be moved into the
         enclosing coordinates before it becomes an angle. :meth:`basis_at`
-        already did this and this did not, which meant the non-uniform FFT
-        route evaluated the field displaced by exactly the padding while the
-        direct route got it right. Both are now the same map.
+        already did this and the angle conversion did not, which meant the
+        non-uniform FFT route evaluated the field displaced by exactly the
+        padding while the direct route got it right. Both are the same map.
+
+        The move is a Python loop over the points, which is why doing it once
+        per operator rather than once per application matters most here: it
+        was 230 of 254 ms -- 91% -- of an application at 10^5 points
+        (REVIEW2 4.2.7).
+
+        Args:
+            points: points of the domain, or an already prepared set.
+
+        Returns:
+            The prepared points, carrying one angle array per axis.
         """
-        return super()._angles([self._to_enclosing(point) for point in points])
+        if isinstance(points, PreparedPoints):
+            return points
+        points = tuple(points)
+        inside = [self._to_enclosing(point) for point in points]
+        return PreparedPoints(points, data=super().prepare_points(inside).data)
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point drawn uniformly from the domain, never from the padding."""
@@ -206,14 +230,43 @@ class Box(PeriodicBox):
                 which is what makes this a change of *order* alone.
 
         Returns:
-            The same domain and padding, in the new metric.
+            The same domain and padding in the new metric, as
+            :class:`Lebesgue` at order zero and :class:`Sobolev` otherwise.
         """
-        return Box(
-            self._shape,
-            bounds=self._bounds,
-            padding=self._padding,
-            order=order,
-            length_scale=(self._length_scale if length_scale is None else length_scale),
+        return self._rebuilt(order=order, length_scale=length_scale)
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "Box":
+        """The same bounded domain with some of its parameters changed.
+
+        Overridden from
+        :meth:`~pygeoinf2.symmetric_space.fourier.PeriodicBox._rebuilt` so that
+        the result is a ``Box`` and keeps this box's bounds and padding -- the
+        base class's version would hand back the enclosing periodic domain,
+        which has the same components but not the same idea of where the
+        boundary is -- and so that it is the D-3 subclass its order names.
+
+        Args:
+            shape: the new grid. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(shape, bounds=self._bounds, padding=self._padding)
+        return Sobolev(
+            shape, order, scale, bounds=self._bounds, padding=self._padding
         )
 
     # ----------------------------------------------------------------- #

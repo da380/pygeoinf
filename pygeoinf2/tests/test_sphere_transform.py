@@ -105,6 +105,68 @@ class TestQuadratureWeights:
         assert not np.allclose(without_pole, X._synthesis_adjoint(values))
 
 
+class TestTheLebesgueInnerProductIsTheQuadrature:
+    """REVIEW2 4.1.g. Analysis on this grid *is* the quadrature, so the L2
+    inner product of two band-limited fields is a weighted sum over the grid
+    and costs no transform at all."""
+
+    @pytest.mark.parametrize("lmax", [4, 8, 17])
+    @pytest.mark.parametrize("radius,sampling", [(1.0, 1), (2.5, 1), (1.7, 2)])
+    def test_it_agrees_with_the_component_route(self, lmax, radius, sampling, rng):
+        from pygeoinf2.algebra.spaces import DiagonalMetricSpace
+
+        X = Lebesgue(lmax, radius=radius, sampling=sampling)
+        for _ in range(3):
+            x, y = X.random(rng=rng), X.random(rng=rng)
+            components = DiagonalMetricSpace.inner_product(X, x, y)
+            assert X.inner_product(x, y) == pytest.approx(components, rel=1e-12)
+            assert X.squared_norm(x) == pytest.approx(
+                DiagonalMetricSpace.squared_norm(X, x), rel=1e-12
+            )
+
+    def test_it_costs_no_transform(self, rng, monkeypatch):
+        X = Lebesgue(12)
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        X._quadrature  # the weights probe the transform once, then are cached
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("the inner product analysed a field")
+
+        monkeypatch.setattr(type(X), "to_components", refuse)
+        assert X.inner_product(x, y) != 0.0
+        assert X.norm(x) > 0.0
+
+    def test_one_raw_product_still_agrees(self, rng):
+        """The case that matters after DESIGN.md 35: a pointwise product is
+        left on the grid, and pairing one with a field of the space gives the
+        same number either way -- exactly, not nearly."""
+        from pygeoinf2.algebra.spaces import DiagonalMetricSpace
+
+        X = Lebesgue(10)
+        f = X.project_function(lambda p: 1.5 + np.cos(np.radians(p[0])))
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        product = X.multiply(f, x)
+        assert X.inner_product(product, y) == pytest.approx(
+            DiagonalMetricSpace.inner_product(X, product, y), rel=1e-11
+        )
+
+    def test_a_sobolev_space_keeps_the_component_route(self, rng):
+        """There is no grid form of a weighted inner product."""
+        from pygeoinf2.algebra.spaces import DiagonalMetricSpace
+
+        X = Sobolev(10, 2.0, 0.2)
+        x, y = X.random(rng=rng), X.random(rng=rng)
+        assert X.inner_product(x, y) == pytest.approx(
+            DiagonalMetricSpace.inner_product(X, x, y)
+        )
+        quadrature = float(
+            np.einsum(
+                "j,ji,ji->", X._quadrature, X.grid_values(x), X.grid_values(y)
+            )
+        )
+        assert not np.isclose(X.inner_product(x, y), quadrature)
+
+
 class TestDoubling:
     def test_the_extension_agrees_with_the_field_it_extends(self, rng):
         X = Lebesgue(8)
@@ -137,6 +199,31 @@ class TestDoubling:
         frequencies = np.fft.fftfreq(rows, d=1.0 / rows)
         beyond = np.abs(frequencies) > X.lmax + 1
         assert np.abs(coefficients[beyond]).max() < 1e-9 * np.abs(coefficients).max()
+
+    @pytest.mark.parametrize("lmax", [4, 8, 17, 32])
+    @pytest.mark.parametrize("radius,sampling", [(1.0, 1), (1.7, 1), (1.0, 2)])
+    def test_the_south_pole_comes_from_the_row_means(self, lmax, radius, sampling, rng):
+        """REVIEW2 4.2.8. The pole value used to cost a full analysis -- 35% of
+        a forward evaluation at lmax 256 -- to read one number out. Only the
+        zonal harmonics are non-zero at a pole and they do not depend on
+        longitude, so it is a weighting of the row means."""
+        X = Sobolev(lmax, 2.0, 0.2, radius=radius, sampling=sampling)
+        rows, _ = X.grid_shape
+        field = X.random(rng=rng)
+        analysis = float(X._south_pole_basis @ X.to_components(field))
+        assert X._double(field)[rows][0] == pytest.approx(analysis, rel=1e-11)
+
+    def test_the_pole_value_costs_no_transform(self, rng, monkeypatch):
+        """The point of the closed form: nothing in the extension analyses."""
+        X = Lebesgue(12)
+        field = X.random(rng=rng)
+        X._double(field)  # warm the cached kernel, which does probe once
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("_double analysed the field")
+
+        monkeypatch.setattr(type(X), "to_components", refuse)
+        assert X._double(field) is not None
 
     def test_doubling_and_its_adjoint_are_adjoint(self, rng):
         X = Lebesgue(6)
@@ -205,6 +292,59 @@ class TestBothRoutesAgree:
         X = Lebesgue(8)
         with pytest.raises(ValueError, match="weights for"):
             X.accumulate(np.ones(3), X.random_points(4, rng=rng))
+
+
+class TestWalkingOverThePole:
+    """REVIEW2 3.4. A walk longer than a quarter circumference used to run the
+    colatitude past ``pi`` and return a latitude below -90, which the two
+    evaluation routes then read as two different points."""
+
+    def test_it_stays_on_the_sphere(self):
+        X = Lebesgue(8)
+        distances = np.linspace(0.0, 2.0 * np.pi, 41)
+        points = np.stack(X.walk_from([20.0, 40.0], distances))
+        assert np.all(np.abs(points[:, 0]) <= 90.0)
+
+    def test_it_reflects_through_the_pole(self):
+        """Half a circumference from a point is its antipode, and the meridian
+        continues down the far side rather than off the end of the sphere."""
+        X = Lebesgue(8)
+        (antipode,) = X.walk_from([20.0, 40.0], np.array([np.pi]))
+        assert np.allclose(antipode, [-20.0, -140.0])
+        (past,) = X.walk_from([20.0, 40.0], np.array([1.5 * np.pi]))
+        assert np.allclose(past, [70.0, -140.0])
+
+    def test_the_distance_walked_is_the_distance_asked_for(self):
+        X = Lebesgue(8)
+        start = np.array([20.0, 40.0])
+        distances = np.linspace(0.0, 2.0 * np.pi, 41)
+        expected = np.minimum(distances, 2.0 * np.pi - distances)
+        walked = [X.geodesic_distance(start, p) for p in X.walk_from(start, distances)]
+        assert np.allclose(walked, expected)
+
+    def test_both_evaluation_routes_agree_past_the_pole(self, rng):
+        """The symptom. On a non-zonal field the two routes differed by 1.02
+        on a field of maximum 0.47, because the direct sum read the bad
+        colatitude as ``(2 pi - theta, phi)`` and the doubled grid read it as
+        ``(2 pi - theta, phi + pi)``."""
+        X = Sobolev(16, 2.0, 0.2)
+        field = X.random(rng=rng)
+        points = X.walk_from([20.0, 40.0], np.linspace(0.0, 2.0 * np.pi, 400))
+        reference = SymmetricSpace.evaluate(X, field, points)
+        scale = np.abs(reference).max()
+        with forced(transform=True):
+            assert np.allclose(X.evaluate(field, points), reference, atol=1e-8 * scale)
+
+    def test_a_latitude_out_of_range_is_refused(self):
+        """The check the docstring promised and the code never made, and the
+        one that would have caught the bug above."""
+        X = Lebesgue(4)
+        with pytest.raises(ValueError, match=r"\[-90, 90\]"):
+            X.to_colatitude_radians([[-126.0, 0.0]])
+        with pytest.raises(ValueError, match=r"\[-90, 90\]"):
+            X.to_colatitude_radians([[10.0, 0.0], [91.0, 0.0]])
+        # A pole that arrived from an arcsine is not an error.
+        assert X.to_colatitude_radians([[90.0 + 1e-13, 0.0]])[0, 0] == 0.0
 
 
 class TestQuadratureFromDriscollHealy:

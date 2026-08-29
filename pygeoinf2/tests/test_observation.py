@@ -127,6 +127,33 @@ class TestGeodesics:
         exact = 2.0 * np.pi * RADIUS**2 * (1.0 - np.cos(radius / RADIUS))
         assert weights.sum() == pytest.approx(exact, rel=1e-12)
 
+    def test_ball_nodes_lie_inside_the_ball(self, space, rng):
+        """The rule is now built as one array rather than ring by ring, so
+        this pins that the rings and their azimuths still line up."""
+        centre = space.random_point(rng=rng)
+        radius = 0.3 * RADIUS
+        nodes, weights = space.geodesic_ball_quadrature(centre, radius, count=200)
+        assert len(nodes) == weights.size == 200
+        distances = np.array(
+            [space.geodesic_distance(centre, node) for node in nodes]
+        )
+        assert distances.max() <= radius + 1e-12
+        assert distances.max() > 0.5 * radius
+
+    def test_a_gauss_rule_is_computed_once(self):
+        """REVIEW2 4.2.6: `leggauss` solves an eigenproblem, and every path
+        asks for the same few counts -- 0.8 s for 2000 of them."""
+        from pygeoinf2.symmetric_space.base import _gauss_legendre
+
+        abscissae, weights = _gauss_legendre(12)
+        again = _gauss_legendre(12)
+        assert again[0] is abscissae and again[1] is weights
+        reference = np.polynomial.legendre.leggauss(12)
+        assert np.array_equal(abscissae, reference[0])
+        assert np.array_equal(weights, reference[1])
+        with pytest.raises(ValueError):
+            abscissae[0] = 0.0
+
 
 class TestAverages:
     """Constant fields are the calibration: an average of one must be one."""
@@ -144,6 +171,58 @@ class TestAverages:
         assert lebesgue.spherical_cap_integral(centre, angular)(one) == pytest.approx(
             area
         )
+
+    def test_the_closed_form_agrees_with_the_rotated_indicator(self, lebesgue, rng):
+        """REVIEW2 4.2.5. The components used to come from
+        ``SHCoeffs.from_cap``, which builds the cap at the pole and rotates it
+        -- 8.5 ms a centre at lmax 128, against 0.2 ms for the addition
+        theorem. This is the check that they are the same components."""
+        from pyshtools import SHCoeffs
+
+        from pygeoinf2.symmetric_space.sphere import _NO_CONDON_SHORTLEY
+
+        centres = lebesgue.random_points(5, rng=rng)
+        for angular in (2.0, 37.0, 90.0, 172.0):
+            rotated = []
+            for centre in centres:
+                cap = SHCoeffs.from_cap(
+                    angular,
+                    lebesgue.lmax,
+                    clat=float(centre[0]),
+                    clon=float(centre[1]),
+                    normalization="ortho",
+                    csphase=_NO_CONDON_SHORTLEY,
+                    kind="real",
+                    degrees=True,
+                )
+                parts, degrees, orders = lebesgue._packing
+                coefficients = cap.to_array(lmax=lebesgue.lmax)[parts, degrees, orders]
+                fraction = 0.5 * (1.0 - np.cos(np.radians(angular)))
+                rotated.append(
+                    coefficients
+                    / (lebesgue.radius * 4.0 * np.pi)
+                    * lebesgue.area
+                    * fraction
+                )
+            closed = lebesgue.cap_integral_components(centres, angular)
+            assert np.allclose(closed, np.stack(rotated), atol=1e-10)
+
+    def test_the_closed_form_normalises_by_the_cap_area(self, lebesgue, rng):
+        centres = lebesgue.random_points(3, rng=rng)
+        angular = 24.0
+        area = (
+            2.0 * np.pi * lebesgue.radius**2 * (1.0 - np.cos(np.radians(angular)))
+        )
+        integrals = lebesgue.cap_integral_components(centres, angular)
+        averages = lebesgue.cap_integral_components(centres, angular, normalise=True)
+        assert np.allclose(averages * area, integrals)
+
+    def test_a_cap_of_zero_area_has_no_average(self, lebesgue):
+        assert np.allclose(lebesgue.cap_integral_components([[0.0, 0.0]], 0.0), 0.0)
+        with pytest.raises(ValueError, match="no average"):
+            lebesgue.cap_integral_components([[0.0, 0.0]], 0.0, normalise=True)
+        with pytest.raises(ValueError, match=r"\[0, 180\]"):
+            lebesgue.cap_integral_components([[0.0, 0.0]], 181.0)
 
     def test_exact_and_quadrature_cap_averages_agree(self, lebesgue, rng):
         """The whole reason for the exact route is that it is cheaper."""
@@ -354,6 +433,58 @@ class TestPointwiseVariance:
         )
         assert space.pointwise_variance(variances) == pytest.approx(direct)
 
+    @pytest.mark.parametrize("shape", [(6, 4), (7, 5)])
+    def test_it_is_the_same_at_every_grid_point_of_a_box(self, shape):
+        """The homogeneity the docstring now claims, and the one that holds:
+        the basis is orthonormal against the grid's own quadrature, so the sum
+        of its squares is the reciprocal of the cell weight at every sample.
+
+        A flat spectrum on a coarse grid, which is the worst case there is.
+        """
+        import itertools
+
+        from pygeoinf2.symmetric_space.fourier import Lebesgue as PeriodicLebesgue
+
+        X = PeriodicLebesgue(shape, lengths=(1.0, 2.0))
+        variances = np.ones(X.dim)
+        expected = X.pointwise_variance(variances)
+        for point in itertools.product(*X.grid_axes):
+            basis = X.basis_at(np.array(point))
+            assert np.isclose(
+                float(np.sum(variances * basis**2 / X.metric_values)), expected
+            )
+
+    def test_between_the_grid_points_an_even_axis_is_the_exception(self, rng):
+        """The claim the docstring used to make and could not keep, pinned
+        both ways round. An even axis holds a Nyquist cosine whose sine the
+        grid cannot see, so the basis is orthonormal on the grid and not
+        isotropic off it, and the interpolated variance dips between samples.
+        With every axis odd there is no such mode and the value is constant
+        everywhere.
+        """
+        from pygeoinf2.symmetric_space.fourier import Lebesgue as PeriodicLebesgue
+
+        def spread(shape):
+            X = PeriodicLebesgue(shape, lengths=(1.0, 2.0))
+            variances = np.ones(X.dim)
+            between = [
+                float(
+                    np.sum(
+                        variances
+                        * X.basis_at(X.random_point(rng=rng)) ** 2
+                        / X.metric_values
+                    )
+                )
+                for _ in range(50)
+            ]
+            return X.pointwise_variance(variances), min(between)
+
+        odd_value, odd_lowest = spread((7, 5))
+        assert odd_lowest == pytest.approx(odd_value)
+
+        even_value, even_lowest = spread((6, 4))
+        assert even_lowest < 0.95 * even_value
+
     def test_dropping_the_metric_would_give_a_different_answer(self, space):
         """The negative control for the 1/g factor in pointwise_variance.
 
@@ -405,13 +536,74 @@ class TestWeightOperator:
     """The sparse half of the W E factorisation."""
 
     def test_it_is_its_own_transpose_adjoint(self, rng):
-        from pygeoinf2.symmetric_space.base import _weight_operator
+        from pygeoinf2.symmetric_space.base import _weight_matrix, _weight_operator
 
-        W = _weight_operator(2, 4, [0, 0, 1, 1], [0, 1, 2, 3], [1.0, 2.0, 3.0, 4.0])
+        sparse = _weight_matrix(
+            2, 4, [0, 0, 1, 1], [0, 1, 2, 3], [1.0, 2.0, 3.0, 4.0]
+        )
+        W = _weight_operator(sparse)
         check_operator(W, rng=rng)
         assert isinstance(W, LinearOperator)
         assert W.domain == EuclideanSpace(4)
         assert np.allclose(W(np.array([1.0, 1.0, 1.0, 1.0])), [3.0, 7.0])
+
+    def test_the_dense_route_never_densifies_the_weights(self, space, rng):
+        """REVIEW2 4.2.6. `weights.matrix()` built a (paths, nodes) array that
+        holds one entry per node: 1.59 s against 0.018 s at 2000 paths."""
+        paths = list(
+            zip(space.random_points(6, rng=rng), space.random_points(6, rng=rng))
+        )
+        field = space.random(rng=rng)
+        free = space.path_integral_operator(paths, count=8)
+        dense = space.path_integral_operator(paths, count=8, dense=True)
+        assert np.allclose(free(field), dense(field))
+        assert np.allclose(
+            space.to_components(free.adjoint(np.arange(1.0, 7.0))),
+            space.to_components(dense.adjoint(np.arange(1.0, 7.0))),
+        )
+
+
+class TestTheCovarianceFunctionOnASphere:
+    """REVIEW2 4.2.4. The addition theorem collapses the sum over the basis to
+    a Legendre series, when the spectrum is isotropic -- which is what a
+    measure built from a symbol has and what a per-component spectrum need not.
+    """
+
+    def test_it_matches_the_sum_over_the_basis(self, space):
+        from pygeoinf2.symmetric_space.base import SymmetricSpace
+
+        distances = np.linspace(0.0, 2.0 * np.pi * RADIUS, 41)
+        for measure in (
+            space.sobolev_measure(2.0, 0.2),
+            space.heat_measure(0.3),
+            space.power_measure(lambda degree: (1.0 + degree) ** -3.0),
+        ):
+            legendre = space.covariance_function(measure, distances)
+            basis = SymmetricSpace.covariance_function(space, measure, distances)
+            assert np.allclose(legendre, basis, rtol=1e-10)
+
+    def test_it_is_even_about_the_antipode(self, space):
+        """The walk continues past the pole and `cos` is even, so no special
+        case is needed: the covariance at `2 pi R - d` is the one at `d`."""
+        measure = space.heat_measure(0.4)
+        circumference = 2.0 * np.pi * RADIUS
+        distances = np.array([0.3, 1.1, 2.0])
+        near = space.covariance_function(measure, distances)
+        far = space.covariance_function(measure, circumference - distances)
+        assert np.allclose(near, far)
+
+    def test_an_anisotropic_spectrum_falls_back(self, space, rng):
+        """`invariant_measure` takes one variance per component, and with an
+        anisotropic one the covariance is not a function of distance alone --
+        so the collapse to degrees is checked rather than assumed."""
+        from pygeoinf2.symmetric_space.base import SymmetricSpace
+
+        measure = space.invariant_measure(rng.uniform(0.5, 1.5, space.dim))
+        distances = np.linspace(0.0, 1.0, 9)
+        assert np.array_equal(
+            space.covariance_function(measure, distances),
+            SymmetricSpace.covariance_function(space, measure, distances),
+        )
 
 
 class TestPointConvention:
