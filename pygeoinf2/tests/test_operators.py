@@ -776,6 +776,32 @@ class TestFormalAdjointLift:
         assert lifted(probe) == pytest.approx(operator(probe))
         check_operator(lifted, rng=rng)
 
+    def test_the_base_may_be_an_equal_but_distinct_space(self, rng):
+        """``EuclideanSpace(n)`` is minted freely -- ``from_vectors`` and
+        ``coordinate_projection`` both do it -- so a lift over a mass-weighted
+        space must not require the *same object* as the operator's base."""
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+        from pygeoinf2.testing import check_operator
+
+        base = make_dense_metric_space(4)
+        symmetric = rng.normal(size=(4, 4))
+        symmetric = symmetric @ symmetric.T + 4.0 * np.identity(4)
+        mass = LinearOperator.from_matrix(
+            base, base, symmetric, form="galerkin"
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+        weighted = MassWeightedSpace(base, mass)
+
+        # A second, equal base: what the caller normally has to hand.
+        other = make_dense_metric_space(4)
+        assert other == base and other is not base
+        operator = LinearOperator.from_matrix(
+            other, other, rng.normal(size=(4, 4)), form="components"
+        )
+        lifted = LinearOperator.from_formal_adjoint(weighted, other, operator)
+        probe = weighted.random(rng=rng)
+        assert lifted(probe) == pytest.approx(operator(probe))
+        check_operator(lifted, rng=rng)
+
     def test_mismatched_dimensions_are_refused(self, rng):
         base = EuclideanSpace(4)
         operator = LinearOperator.from_matrix(
@@ -828,3 +854,147 @@ class TestColumnOperator:
         operator = LinearOperator.from_vectors(strict, [strict.random(rng=rng)])
         assert not hasattr(operator, "columns")
         operator(np.ones(1))
+
+
+class TestLinearisationIdentity:
+    """``Linearisation`` and ``QuadraticModel`` are frozen dataclasses whose
+    fields hold *vectors*. With the default ``eq=True`` the generated ``==``
+    compared them field by field, which on an array-backed space returns an
+    array whose truth value is an error, and the ``__hash__`` that
+    ``frozen=True`` generates alongside it raised ``TypeError: unhashable
+    type: 'numpy.ndarray'``. ``eq=False`` gives identity for both, which is
+    the only equality a record of one evaluation can honestly offer."""
+
+    @staticmethod
+    def model(rng):
+        from pygeoinf2.algebra.linearisation import Linearisation, QuadraticModel
+
+        space = make_dense_metric_space(4)
+        derivative = LinearOperator.from_matrix(
+            space, space, rng.standard_normal((4, 4)), form="components"
+        )
+        point = space.random(rng=rng)
+        from pygeoinf2.algebra.operators import LinearFunctional
+
+        functional = LinearFunctional.from_representer(space, space.random(rng=rng))
+        return (
+            Linearisation(point, space.random(rng=rng), derivative),
+            QuadraticModel(point, 1.0, functional),
+        )
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_it_hashes(self, index, rng):
+        record = self.model(rng)[index]
+        assert hash(record) == hash(record)
+        assert {record: 1}[record] == 1
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_equality_is_identity_and_does_not_raise(self, index, rng):
+        record = self.model(rng)[index]
+        other = self.model(rng)[index]
+        assert record == record
+        assert record != other
+        assert bool(record != other) is True
+
+
+class TestFunctionalConstructorSignature:
+    """The codomain of a functional is always ``Reals``. It stays positional
+    -- ``LinearOperator.__init__`` calls the next ``__init__`` in the MRO as
+    ``__init__(domain, codomain)``, and twenty-odd subclasses call
+    ``super().__init__(domain)`` -- but it is now positional-*only*, so the
+    parameter's name is not part of the API."""
+
+    def test_the_codomain_is_positional_only(self):
+        import inspect
+
+        from pygeoinf2.algebra.operators import Functional, LinearFunctional
+
+        for cls in (Functional, LinearFunctional):
+            parameter = inspect.signature(cls.__init__).parameters["codomain"]
+            assert parameter.kind is inspect.Parameter.POSITIONAL_ONLY, cls.__name__
+
+    def test_both_call_shapes_still_work(self):
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.algebra.spaces import Reals
+
+        space = EuclideanSpace(3)
+        assert Functional(space).codomain == Reals()
+        assert Functional(space, Reals()).codomain == Reals()
+        with pytest.raises(ValueError, match="maps into Reals"):
+            Functional(space, space)
+
+
+class TestAssembledStoresTheComponentsForm:
+    """``assembled()`` exists to make applications cheap, and the components
+    form is the one in which an application is a bare matrix product. Storing
+    the Galerkin form ``G A_c`` meant undoing the metric again on every
+    forward application: measured at dimension 2000 over a dense Gram, 3.80 ms
+    per application against 0.77 ms, and CG 624 ms against 511 ms.
+
+    The Galerkin form is still what a symmetric factorisation wants, and it
+    still gets it — converted once, at build time, through ``_in_form``.
+    """
+
+    @staticmethod
+    def problem(rng, dim=12):
+        space = make_dense_metric_space(dim)
+        symmetric = rng.standard_normal((dim, dim))
+        symmetric = symmetric @ symmetric.T + dim * np.identity(dim)
+        stored = LinearOperator.from_matrix(
+            space,
+            space,
+            symmetric,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        # Matrix-free, so that `assembled` has something to assemble.
+        free = LinearOperator.self_adjoint(
+            space,
+            lambda x, s=stored: s(x),
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        return space, symmetric, free
+
+    def test_it_stores_components_and_reproduces_the_operator(self, rng):
+        space, _, free = self.problem(rng)
+        assembled = free.assembled()
+        assert assembled.stored_form == "components"
+        probe = space.random(rng=rng)
+        assert space.to_components(assembled(probe)) == pytest.approx(
+            space.to_components(free(probe))
+        )
+        check_operator(assembled, rng=rng)
+        check_traits(assembled, rng=rng)
+
+    def test_a_forward_application_no_longer_undoes_the_metric(self, rng):
+        """The whole point: one ``solve_gram`` per application, gone."""
+        space, _, free = self.problem(rng)
+        assembled = free.assembled()
+        solves = 0
+        original = type(space).solve_gram
+
+        def counting(self, c):
+            nonlocal solves
+            solves += 1
+            return original(self, c)
+
+        type(space).solve_gram = counting
+        try:
+            assembled(space.random(rng=rng))
+        finally:
+            type(space).solve_gram = original
+        assert solves == 0
+
+    def test_a_direct_solver_still_gets_the_symmetric_matrix(self, rng):
+        """Converted once through ``_in_form``, against the factorisation's
+        own cost."""
+        from pygeoinf2.numerics import CholeskySolver
+
+        space, symmetric, free = self.problem(rng)
+        assembled = free.assembled()
+        assert assembled.matrix(form="galerkin") == pytest.approx(symmetric)
+
+        right = space.random(rng=rng)
+        solution = CholeskySolver()(assembled)(right)
+        residual = space.subtract(assembled(solution), right)
+        assert space.norm(residual) < 1e-9 * space.norm(right)

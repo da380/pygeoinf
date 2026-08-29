@@ -33,7 +33,11 @@ from scipy.linalg import eigh_tridiagonal
 
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearOperator
-from ..algebra.spaces import _REORTHOGONALISATION_THRESHOLD, CoordinateSpace, HilbertSpace
+from ..algebra.spaces import (
+    _REORTHOGONALISATION_THRESHOLD,
+    CoordinateSpace,
+    HilbertSpace,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from .randomised import Estimate
@@ -351,11 +355,57 @@ def apply_operator_function(
     return result
 
 
+# Below this order the dense symmetric solver beats the tridiagonal one, whose
+# cost at these sizes is Python argument validation rather than arithmetic.
+# Measured, microseconds per call, one BLAS thread:
+#
+#     k             3     5    10    20    40
+#     eigh_tridiagonal   7.6   8.4  12.5  26.2  65.9
+#     np.linalg.eigh     3.5   4.5   8.6  22.7  80.4
+#
+# and a Lanczos run that stops on its own rarely reaches 20. The two agree to
+# rounding, and both uses here -- ``V f(L) V^T e_1`` and ``V[0]^2`` -- are
+# invariant under the eigenvector sign conventions the two drivers may differ
+# on.
+#
+# The alternative the review proposed -- check every k steps rather than every
+# step -- was prototyped and is a *regression*, so it is not done. Skipping a
+# check never saves an operator application: the application for a step has
+# already happened by the time the step is yielded, so a coarser check can
+# only make the iteration run further before it notices it has converged.
+# Measured over 200 probes, ``log`` at ``rtol=1e-3``, one BLAS thread:
+#
+#     check every        1        2        3
+#     dim 300      0.037 s  0.038 s  0.041 s   (1399 / 1606 / 1809 steps)
+#     dim 2000     1.06 s   1.23 s   1.37 s    (1400 / 1600 / 1800 steps)
+#
+# It loses even where the operator is cheapest, and loses badly where it is
+# dear -- which is the case stochastic Lanczos quadrature exists for. Making
+# the check cheaper is the version of the idea that works.
+_DENSE_EIGH_LIMIT = 32
+
+
 def _eigh_tridiagonal(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Eigendecompose a small symmetric tridiagonal matrix."""
+    """Eigendecompose a small symmetric tridiagonal matrix.
+
+    Called once per Lanczos step by the two convergence tests, so its
+    per-call overhead is the convergence check's whole cost: measured at 27 %
+    of a stochastic log-determinant on a 300-dimensional operator, where the
+    operator itself is cheap.
+
+    Args:
+        matrix: the tridiagonal matrix, dense.
+
+    Returns:
+        Its eigenvalues and eigenvectors, ascending.
+    """
     k = matrix.shape[0]
     if k == 1:
         return matrix[0].copy(), np.ones((1, 1))
+    if k <= _DENSE_EIGH_LIMIT:
+        # The dense matrix is already in hand; the tridiagonal driver would
+        # only re-extract its two bands from it.
+        return np.linalg.eigh(matrix)
     return eigh_tridiagonal(np.diag(matrix), np.diag(matrix, 1))
 
 
@@ -487,16 +537,28 @@ def operator_function(
     A diagonal operator evaluates ``f`` on its eigenvalues, exactly. Anything
     else gets a lazily-applied :class:`OperatorFunction`.
 
-    **Self-adjointness is required on both routes.** It always was on the
-    Lanczos one, and the diagonal one used to skip the check -- so the same
-    request was refused for a general operator and quietly accepted for a
-    diagonal one. It is not a formality: an operator diagonal *in components*
-    is self-adjoint only if its values commute with the metric, which on a
-    non-diagonal Gram matrix they do not. What the exact route computes there
-    is ``f`` applied component by component, which is a functional calculus in
-    the basis but not the spectral one the name promises, and the two differ.
+    **Self-adjointness is required on both routes**, so that one request gets
+    one answer: it always was on the Lanczos route, and the diagonal one used
+    to skip the check.
+
+    The requirement belongs to *this* function rather than to the calculus.
+    The Lanczos route needs it outright -- a three-term recurrence in the
+    space's own inner product computes ``f(A)`` only for self-adjoint ``A`` --
+    and the named helpers below attach traits to the result, ``operator_sqrt``
+    claiming ``POSITIVE_SEMIDEFINITE`` of what it returns, which is true only
+    of the self-adjoint case. An operator diagonal *in components* is
+    self-adjoint only where its values commute with the metric, which on a
+    non-diagonal Gram matrix they do not.
+
+    Where the metric is not diagonal and the exact answer is still wanted,
+    :class:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator` carries its
+    own calculus -- :attr:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator.sqrt`,
+    :attr:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator.log`,
     :meth:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator.apply_function`
-    is the component-wise operation, for when that is what is wanted.
+    -- which gates on the spectrum instead. That is exact on any metric,
+    because an eigendecomposition is a property of the map; what it does not
+    give there is a self-adjoint result, and it says so through the traits it
+    returns rather than by refusing.
 
     On a Euclidean space, and on every symmetric space here, a diagonal
     operator's metric is diagonal in the same basis, so it commutes and the
@@ -583,7 +645,7 @@ def log_determinant(
     method: Literal["auto", "dense", "stochastic"] = "auto",
     samples: int = 100,
     rng: Generator | None = None,
-    dense_limit: int = 512,
+    dense_limit: int = 4000,
     max_iterations: int = 40,
     rtol: float = 1e-3,
     sample_rtol: float | None = None,
@@ -608,13 +670,33 @@ def log_determinant(
     Args:
         operator: a positive definite self-adjoint operator.
         method: ``"dense"`` forms the matrix; ``"stochastic"`` never does;
-            ``"auto"`` takes the dense route when the space is small enough to
-            afford it and has a component map, and the stochastic one
-            otherwise.
+            ``"auto"`` takes the dense route when the space has a component
+            map, is small enough to hold and factorise the matrix
+            (*dense_limit*), and either the operator can hand its matrix over
+            or probing it costs no more than the stochastic route's own
+            budget of applications. The dense route is exact, so where the
+            two cost the same it is the one to take.
         samples: Hutchinson probes, for the stochastic route -- or the first
             block of them when *sample_rtol* is given.
         rng: the generator for those probes.
-        dense_limit: the dimension above which ``"auto"`` goes stochastic.
+        dense_limit: the largest dimension at which ``"auto"`` will form and
+            factorise a ``dim x dim`` matrix. It is a **memory and
+            factorisation** budget, not a statement about applications:
+            ``dim**2`` doubles is 128 MB at 4000 and the ``slogdet`` is
+            ``O(dim**3)``, measured at 0.8 s on one thread. The default was
+            512, which sent a 960-dimensional evidence to a stochastic
+            estimate of +/-30 nats in 4.8 s where the dense route was exact
+            in 2.8 s; measured against the stochastic route on a
+            well-conditioned operator, the dense one is 4.2x faster at 2000
+            and 3.6x at 3000, and exact at both. It is 4000 rather than 4096
+            deliberately: this BLAS is pathological at that power of two,
+            2.0 s against 0.8 s at 4000.
+
+            Whether the *probe* is affordable is decided separately, since a
+            matrix that must be probed costs ``dim`` applications: above
+            ``samples * max_iterations`` -- the stochastic route's own
+            application budget -- the dense route is taken only when the
+            operator can write its matrix down without being applied.
         max_iterations: the Krylov dimension allowed for each ``log(A) z``.
         rtol: the Lanczos budget for each ``log(A) z``. Note
             this ``rtol`` is the *inner* one: it says how well each
@@ -659,14 +741,27 @@ def log_determinant(
         # (measured: 455.4 +/- 2.8 against an exact 456.7 at dimension 1000).
         return Estimate(operator.log_determinant, 0.0, 0)
 
+    matrix: np.ndarray | None = None
     if method == "auto":
         from ..algebra.spaces import CoordinateSpace
 
-        affordable = isinstance(space, CoordinateSpace) and space.dim <= dense_limit
-        method = "dense" if affordable else "stochastic"
+        if not isinstance(space, CoordinateSpace) or space.dim > dense_limit:
+            method = "stochastic"
+        else:
+            # Above the probe budget the dense route is taken only if the
+            # matrix can be *read*: ``_known_matrix`` applies the operator
+            # zero times by contract, so this costs nothing when it answers
+            # None, and hands over the matrix when it does not.
+            matrix = operator._known_matrix("galerkin")
+            method = (
+                "dense"
+                if matrix is not None or space.dim <= samples * max_iterations
+                else "stochastic"
+            )
 
     if method == "dense":
-        matrix = operator.matrix(form="galerkin")
+        if matrix is None:
+            matrix = operator.matrix(form="galerkin")
         sign, logarithm = np.linalg.slogdet(0.5 * (matrix + matrix.T))
         if sign <= 0:
             raise ValueError(
@@ -674,7 +769,12 @@ def log_determinant(
                 "log determinant. It was claimed POSITIVE_DEFINITE; verify that "
                 "with testing.check_traits()."
             )
-        _, metric = np.linalg.slogdet(space.gram_matrix())
+        # ``log det I == 0``. Worth the branch: at dimension 3000 the
+        # factorisation of the identity cost 0.37 s, as much as the operator's
+        # own, and doubled the memory.
+        metric = 0.0
+        if not space.is_orthonormal:
+            _, metric = np.linalg.slogdet(space.gram_matrix())
         return Estimate(float(logarithm - metric), 0.0, 0)
 
     return random_trace(

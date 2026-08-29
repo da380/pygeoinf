@@ -34,7 +34,15 @@ import numpy as np
 
 from ..algebra.operators import LinearOperator
 from ..traits import Traits
-from .solvers import ConvergenceError, IterativeSolver, LinearSolver
+from .solvers import (
+    ConvergenceError,
+    DirectSolver,
+    IterativeSolver,
+    LinearSolver,
+)
+
+_UNSET: Any = object()
+"""Distinguishes "not looked yet" from "looked, and there is nothing to do"."""
 
 # A probe that fails this way has reached the end of the usable range rather
 # than encountered a bug: a damping small enough leaves the normal operator
@@ -383,6 +391,7 @@ class DampedSolves:
     _cache: dict = field(default_factory=dict, repr=False)
     _prepared: LinearSolver | None = field(default=None, repr=False)
     _prepared_at: float | None = field(default=None, repr=False)
+    _family_matrices: Any = field(default=_UNSET, repr=False)
 
     def operator(self, multiplier: float) -> LinearOperator:
         """The member at one multiplier, assembled once and kept.
@@ -400,11 +409,60 @@ class DampedSolves:
             if self.assemble is not None:
                 assembled = self.assemble(multiplier)
             else:
-                assembled = self.base + multiplier * self.shift
+                assembled = self._sum_member(multiplier)
             if self.traits is not None:
                 assembled = assembled.with_traits(self.traits)
             self._cache[multiplier] = assembled
         return self._cache[multiplier]
+
+    def _sum_member(self, multiplier: float) -> LinearOperator:
+        """``base + multiplier * shift``, as a matrix where that pays.
+
+        A direct solver factorises a *matrix*, and it gets one by asking the
+        member for it. Where the member cannot write its own matrix down --
+        a normal operator, a composition, anything the ``_known_matrix``
+        chain cannot read -- that costs ``dim`` applications, and the sweep
+        pays it again at every multiplier although only the scalar changed.
+        Extracting the two matrices once and adding them costs ``dim``
+        applications twice, whatever the length of the sweep.
+
+        Nothing is done when the member already knows its matrix: the sum of
+        two matrix-backed operators reads its own, keeps a sparse array
+        sparse, and there is nothing here to improve on.
+        """
+        member = self.base + multiplier * self.shift
+        matrices = self._matrices()
+        if matrices is None:
+            return member
+        base_matrix, shift_matrix, form = matrices
+        return LinearOperator.from_matrix(
+            member.domain,
+            member.codomain,
+            base_matrix + multiplier * shift_matrix,
+            form=form,
+            traits=member.traits,
+        )
+
+    def _matrices(self) -> tuple[np.ndarray, np.ndarray, str] | None:
+        """The two matrices in the direct solver's form, extracted once.
+
+        ``None`` when there is nothing to gain: no direct solver, or a member
+        that can already read its own matrix.
+        """
+        if self._family_matrices is _UNSET:
+            self._family_matrices = None
+            if isinstance(self.solver, DirectSolver):
+                form = type(self.solver).form
+                # One probe of the chain, discarded: it says whether the
+                # member reads its matrix or has to be applied for it, and
+                # asking costs no applications either way.
+                if (self.base + self.shift)._known_matrix(form) is None:
+                    self._family_matrices = (
+                        self.base.matrix(form=form),
+                        self.shift.matrix(form=form),
+                        form,
+                    )
+        return self._family_matrices
 
     def _solver_for(self, multiplier: float, operator: LinearOperator) -> LinearSolver:
         """The solver to use, with any deferred preconditioner already built."""

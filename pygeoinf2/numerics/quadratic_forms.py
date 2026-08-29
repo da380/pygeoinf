@@ -14,13 +14,48 @@ cheap approximation to fall back on.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from numpy.random import Generator
-from scipy.integrate import quad
-from scipy.optimize import brentq
-from scipy.stats import chi2
 
 __all__ = ["weighted_chi2_cdf", "weighted_chi2_quantile"]
+
+
+# ``scipy.stats`` and ``scipy.optimize`` are imported on first use, not at
+# module scope. This module is reached by ``import pygeoinf2`` through the
+# ``numerics`` package, so every session paid for them, and measured on this
+# machine the two cost 0.26 s of a 0.48 s import -- more than half of it --
+# for functions most sessions never call. ``scipy.integrate.quad`` was
+# imported here too and never used: the Imhof integral is a vectorised
+# trapezoid rule, for the reason ``_imhof`` gives.
+#
+# One other module still imports ``scipy.stats`` eagerly --
+# ``inference/problem.py``, for a single ``chi2.ppf`` -- and until that one
+# follows, this change saves nothing at all: measured 0.48 s either way, and
+# 0.22 s once both are lazy.
+
+
+def _chi2() -> "Any":
+    """``scipy.stats.chi2``, imported on first use.
+
+    Returns:
+        The frozen-distribution factory.
+    """
+    from scipy.stats import chi2
+
+    return chi2
+
+
+def _brentq() -> "Any":
+    """``scipy.optimize.brentq``, imported on first use.
+
+    Returns:
+        The bracketed root finder.
+    """
+    from scipy.optimize import brentq
+
+    return brentq
 
 
 def _validate(weights: np.ndarray) -> np.ndarray:
@@ -112,7 +147,7 @@ def _matched(weights: np.ndarray, value: float) -> float:
     second = float(np.sum(weights**2))
     scale = second / first
     degrees = first**2 / second
-    return float(chi2.cdf(value / scale, degrees))
+    return float(_chi2().cdf(value / scale, degrees))
 
 
 def weighted_chi2_cdf(
@@ -154,7 +189,7 @@ def weighted_chi2_cdf(
     # also the case Imhof handles worst: with one or two terms the integrand
     # decays slowest and the quadrature is only good to about 1e-3 in the tail.
     if np.allclose(live, live[0]):
-        return float(chi2.cdf(value / live[0], live.size))
+        return float(_chi2().cdf(value / live[0], live.size))
     if method == "matched":
         return _matched(live, value)
     if method == "monte_carlo":
@@ -212,7 +247,7 @@ def weighted_chi2_quantile(
         raise ValueError(f"A probability lies in (0, 1), got {probability}.")
     live = _validate(weights)
     if np.allclose(live, live[0]):
-        return float(live[0] * chi2.ppf(probability, live.size))
+        return float(live[0] * _chi2().ppf(probability, live.size))
 
     if method == "monte_carlo":
         generator = np.random.default_rng() if rng is None else rng
@@ -221,7 +256,7 @@ def weighted_chi2_quantile(
 
     first = float(np.sum(live))
     second = float(np.sum(live**2))
-    guess = (second / first) * float(chi2.ppf(probability, first**2 / second))
+    guess = (second / first) * float(_chi2().ppf(probability, first**2 / second))
 
     low, high = 0.5 * guess, 2.0 * guess
     for _ in range(60):
@@ -238,7 +273,7 @@ def weighted_chi2_quantile(
         high *= 2.0
 
     return float(
-        brentq(
+        _brentq()(
             lambda value: weighted_chi2_cdf(
                 live, value, method=method, tolerance=tolerance
             )

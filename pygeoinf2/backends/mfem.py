@@ -53,6 +53,8 @@ __all__ = [
     "operator_from_linear_forms",
     "solver_from_bilinear_form",
     "functional_from_linear_form",
+    "white_noise_load",
+    "matern_measure",
 ]
 
 
@@ -466,11 +468,20 @@ def _to_mfem(matrix: Any) -> Any:
 
     Built entry by entry, which is not elegant and is not the bottleneck: it
     happens once per operator, against a solve that happens many times, and it
-    is linear in the number of *stored* entries — 16 ms for 33k of them. The
-    CSR constructor that would replace it is not reachable from Python in this
-    binding: pymfem exposes only ``SparseMatrix(nrows, ncols)`` and raw-pointer
-    overloads, so the array-based form has nowhere to bind. What did matter was
-    the dense intermediate this used to be handed; see :meth:`MfemSpace.restrict`.
+    is linear in the number of *stored* entries — 16 ms for 33k of them. What
+    did matter was the dense intermediate this used to be handed; see
+    :meth:`MfemSpace.restrict`.
+
+    **The CSR constructor is bound, and must not be used here.**
+    ``mfem.SparseMatrix([indptr, indices, data, rows, columns])`` exists in
+    this binding and builds a matrix whose ``Mult`` is correct — the earlier
+    claim that it "has nowhere to bind" was simply wrong, and would invite
+    someone to swap it in. The reason it is unusable is that MFEM then *owns*
+    the three NumPy buffers it was handed and frees them in its destructor,
+    while NumPy still owns them too: the process ends in ``double free or
+    corruption``, reproducibly, whether or not the Python arrays are still
+    alive. Anyone tempted by the faster constructor is being offered a
+    segfault, not a speed-up.
 
     The alternative was ``BilinearForm.FormSystemMatrix``, MFEM's own way of
     imposing essential conditions. It is not used here because it **takes

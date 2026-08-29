@@ -455,3 +455,97 @@ class TestJointModel:
         assert np.mean([d[1][0] for d in draws]) == pytest.approx(2.0, rel=0.1)
         # And the model half is untouched by the map.
         assert np.mean([d[0][0] for d in draws]) == pytest.approx(0.0, abs=0.1)
+
+
+class TestBlocksDoNotAllocateForNothing:
+    """A block row used to start from ``codomain.zero()`` — a synthesis on a
+    spectral space — and then ``axpy`` every block including the structurally
+    zero ones, whose value is another fresh zero vector.
+    ``[[I, 0], [I, I]]`` on two spheres cost three syntheses per application
+    where none are needed: 12.2 ms against 0.13 ms at lmax 128.
+    """
+
+    @staticmethod
+    def pieces(dim=6):
+        from pygeoinf2.algebra.nodes import _Identity, _Zero
+
+        space = make_dense_metric_space(dim)
+        return space, _Identity(space), _Zero(space, space)
+
+    @staticmethod
+    def naive(codomain, images):
+        """The route these used to take, kept as the reference."""
+        total = codomain.zero()
+        for image in images:
+            total = codomain.axpy(1.0, image, total)
+        return total
+
+    def test_a_block_operator_agrees_with_the_naive_sum(self, rng):
+        space, identity, zero = self.pieces()
+        matrix = LinearOperator.from_matrix(
+            space, space, rng.standard_normal((6, 6)), form="components"
+        )
+        operator = BlockLinearOperator([[identity, zero], [matrix, identity]])
+        x = (space.random(rng=rng), space.random(rng=rng))
+
+        got = operator(x)
+        expected = (
+            self.naive(space, [identity(x[0]), zero(x[1])]),
+            self.naive(space, [matrix(x[0]), identity(x[1])]),
+        )
+        for a, b in zip(got, expected):
+            assert space.to_components(a) == pytest.approx(space.to_components(b))
+
+    def test_the_adjoint_agrees_and_is_still_the_adjoint(self, rng):
+        """On a Gram matrix that is not diagonal, which is where an adjoint
+        that skipped the wrong term would show."""
+        space, identity, zero = self.pieces()
+        matrix = LinearOperator.from_matrix(
+            space, space, rng.standard_normal((6, 6)), form="components"
+        )
+        operator = BlockLinearOperator([[identity, zero], [matrix, identity]])
+        check_operator(operator, rng=rng)
+        check_operator(ColumnLinearOperator([identity, zero]), rng=rng)
+        check_operator(RowLinearOperator([zero, matrix]), rng=rng)
+
+    def test_a_zero_block_is_never_applied(self, rng):
+        """Its value is a fresh zero vector, which is the allocation being
+        avoided; adding it changes nothing."""
+        from pygeoinf2.algebra.nodes import _Zero
+
+        space, identity, zero = self.pieces()
+        applications = []
+        original = _Zero._value
+
+        def counting(self, x):
+            applications.append(1)
+            return original(self, x)
+
+        _Zero._value = counting
+        try:
+            x = (space.random(rng=rng), space.random(rng=rng))
+            BlockLinearOperator([[identity, zero], [zero, identity]])(x)
+            RowLinearOperator([identity, zero])(x)
+            ColumnLinearOperator([identity, zero]).adjoint(x)
+        finally:
+            _Zero._value = original
+        assert applications == []
+
+    def test_the_result_does_not_alias_the_argument(self, rng):
+        """``_Identity`` returns its argument unchanged, so a row that starts
+        from the first image rather than from a zero has to copy it."""
+        space, identity, zero = self.pieces()
+        x = (space.random(rng=rng), space.random(rng=rng))
+        before = space.to_components(x[0]).copy()
+
+        y = BlockLinearOperator([[identity, zero], [zero, identity]])(x)
+        assert y[0] is not x[0]
+        space.scale_inplace(2.0, y[0])
+        assert space.to_components(x[0]) == pytest.approx(before)
+
+    def test_a_row_of_nothing_but_zeros_is_still_zero(self, rng):
+        space, _, zero = self.pieces()
+        x = (space.random(rng=rng), space.random(rng=rng))
+        y = BlockLinearOperator([[zero, zero], [zero, zero]])(x)
+        for part in y:
+            assert space.norm(part) == pytest.approx(0.0)

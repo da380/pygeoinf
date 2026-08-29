@@ -86,8 +86,8 @@ spectral path is missing along with `kl_divergence` itself;
 | `OrthonormalHilbertSpace` | Ported | `OrthonormalSpace` | |
 | `OrthogonalHilbertSpace` | Ported | `DiagonalMetricSpace` | |
 | `DualHilbertSpace` | Dropped | No dual spaces in v2. Riesz identification throughout, so a functional is a `LinearFunctional` on the space itself (§1) | |
-| `MassWeightedHilbertSpace` | Subsumed | Any `CoordinateSpace` with a non-trivial Gram matrix. The mass matrix *is* the Gram matrix (§3.2, §15.1) | |
-| `MassWeightedHilbertModule` | Subsumed | As above; the module structure is `vector_multiply`, which is **Open** below | |
+| `MassWeightedHilbertSpace` | Ported | `algebra.spaces.MassWeightedSpace`: `(x, y)_V == (M x, y)_base`, deriving `M^-1` from a solver rather than making the caller supply it. The row used to say "Subsumed" into any `CoordinateSpace` with a non-trivial Gram matrix; that is a different construction — a Gram matrix weights the *components*, a mass operator weights *another inner product* on the same vectors, and only the second works over a backend with no component map (§3.2, §15.1). `LinearOperator.from_formal_adjoint` exists for it | |
+| `MassWeightedHilbertModule` | Not ported | `MassWeightedSpace` carries the weighting but not the module structure: it is a `HilbertSpace`, not a `HilbertModule`, so it has no `multiply`. Chain it over a module and the pointwise algebra is lost. `vector_multiply` is **Open** below | |
 | `HilbertModuleMixin` | Ported | `algebra.spaces.HilbertModule`, which `SymmetricSpace` inherits: `multiply`, `sqrt` and the rest of the pointwise algebra. `flexural_operator` is built on it | We do want this functionality in some form|
 
 ## `linear_operators.py` → `algebra/operators.py`, `nodes.py`, `diagonal.py`
@@ -97,7 +97,7 @@ spectral path is missing along with `kl_divergence` itself;
 | `LinearOperator` | Ported | `LinearOperator`, with traits and memoised adjoints | |
 | `MatrixLinearOperator` | Ported | `algebra.operators.MatrixLinearOperator`, built by `LinearOperator.from_matrix`. It stores the array, so `matrix`, `diagonals` and `assembled` are reads rather than probes | A point of this specialisation is to have easy access to the matrix elements which can be useful. Same with the other specialisation below. So we don't need the classes, but that aspect is helpful. |
 | `DenseMatrixLinearOperator` | Ported | as above, plus `assembled()` | |
-| `SparseMatrixLinearOperator` | Ported | No sparse-backed operator in v2. `_weight_operator` in `symmetric_space/base.py` does it privately for one case; it probably wants to be public | Yes, this form is useful in practice. |
+| `SparseMatrixLinearOperator` | Ported | `MatrixLinearOperator` stores a SciPy sparse array as readily as a dense one and leaves it sparse — `from_matrix` does not densify, and `matrix`, `diagonals` and `apply_block` read the sparse array directly — so no separate class is needed. (The row used to say "No sparse-backed operator in v2", which contradicted its own status.) `_weight_operator` in `symmetric_space/base.py` still builds one privately and could be public | Yes, this form is useful in practice. |
 | `DiagonalSparseMatrixLinearOperator` | Ported | `DiagonalLinearOperator`, with a closed algebra and exact functional calculus | |
 
 ## `linear_forms.py`, `nonlinear_forms.py`, `nonlinear_operators.py`, `affine_operators.py`
@@ -235,7 +235,7 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 | `_EllipsoidalGeometry` | Subsumed | `_EllipsoidSupport` | |
 | `Sphere` | Ported | The *surface* of a ball. Not convex, so it has no support function; used for sampling on a shell. Worth keeping? | Worth keeping with an eye to constrained optimiseation. Same for ellipsoid below.|
 | `EllipsoidSurface` | Ported | As above | |
-| `LevelSet`, `SublevelSet` | Ported | Sets defined by a functional. §18.5's inclusion test produces exactly a sublevel set, so this arrives with M5 stage 5.8 | |
+| `LevelSet`, `SublevelSet` | Not ported | Neither class exists in v2; §18.5's inclusion test produces exactly a sublevel set, so they are planned for M5 stage 5.8. `geometry/convex.py`'s `_SetIndicator` is the nearest thing and is not one | |
 | `PolyhedralSet` | Ported | §18.12: `Polytope`, with a recorded inner/outer status so §18.4's sandwich is a type rather than a convention | |
 
 ## `subspaces.py` → `geometry/subspaces.py`
@@ -378,7 +378,7 @@ methods, and a class marked *Ported* above can still have shed half of them.
 | `matrix` | Ported | `matrix(form=..., by=...)`, filling from the cheaper side | |
 | `with_dense_matrix` | Ported | `assembled()`, and it is now on every operator rather than a constructor flag | |
 | `from_matrix`, `self_adjoint_from_matrix` | Ported | `LinearOperator.from_matrix(..., form="components"\|"galerkin")` — the caller must say which representation their array is in (§5.3). **D-4** renamed the two separate constructors to this one | |
-| `from_vectors`, `from_vector` | Ported | `from_vectors(..., orthonormal=)` | |
+| `from_vectors`, `from_vector` | Ported, transposed | `LinearOperator.from_vectors(codomain, vectors, orthonormal=)` is the **adjoint** of v1's: v1 mapped the space to `R^n` by `x -> [(v_i, x)]`, v2 maps `R^n` to the space by `c -> sum_i c_i v_i`. Take `.adjoint` for v1's direction. The change makes a low-rank factor `U` the primitive, so `U D U*` is recognisable. `from_vector` has no separate v2 form: use `LinearFunctional.from_representer` for v1's, or a one-element `from_vectors` for its adjoint | |
 | `from_tensor_product`, `self_adjoint_from_tensor_product` | Ported | `from_tensor_product` | |
 | `from_linear_forms`, `from_linear_form` | Subsumed | `from_derivative_matrix`, whose rows *are* the forms | As a comment, I don't find from_derivative_matrix the clearest naming, so worth some thought |
 | `from_formal_adjoint` | Ported | `lift_formal_adjoint` in `symmetric_space` (§3.5) | |
@@ -413,7 +413,7 @@ concentration of things to decide about.
 | `with_regularized_inverse` | Ported | `GaussianMeasure.with_regularized_inverse`: the precision of a rank-deficient covariance, with a floor | Has been used, so probably worth keeping. |
 | `with_sparse_approximation` | Ported | Thresholded sparse covariance. Wanted by the localised preconditioners | Has been used, so probably worth keeping.  |
 | `sample_pointwise_variance`, `sample_pointwise_std` | Subsumed | `pointwise_variance` on a `SymmetricSpace` computes this exactly, without sampling — but only for an *invariant* measure. The sampled version is still the general answer | |
-| `deflated_pointwise_variance`, `deflated_pointwise_std` | Ported | Pointwise variance with a low-rank part removed. Needs `deflated_diagonal` | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
+| `deflated_pointwise_variance`, `deflated_pointwise_std` | Not ported | No such method exists in v2 — the row said "Ported" and nothing answered to the name. Pointwise variance with a low-rank part removed; `numerics.randomised.deflated_diagonal` is the piece it would be built on | Seems like a good idea, though I'm not sure it's ever worked properly. Worthlooking|
 | `two_point_covariance` | Ported | `GaussianMeasure.two_point_covariance` | A useful method. Needs thinking about how to generalise (say to direct sum spaces)|
 | `directional_statistics`, `directional_covariance`, `directional_variance` | Ported | `GaussianMeasure.directional_variance` and `rescale_directional_variance` | Yes. useful. |
 | `rescale_directional_variance` | Ported | as above | Again, useful|
@@ -435,7 +435,7 @@ different metric. So the union of method names is the honest comparison.
 | `to_components`, `from_components`, `project_function` | Ported | same names | |
 | `to_coefficients`, `from_coefficients` | Subsumed | v2 components *are* the coefficients | Just to check this is correct given the coefficients can be complex even when the coefficients are not|
 | `radius`, `radius_x`, `radius_y`, `bounds_x`, `bounds_y`, `a`, `b`, `c` | Subsumed | `lengths` on a box, `radius` on the sphere | |
-| `kmax`, `lmax`, `degree`, `points`, `angles`, `point_spacing` | Ported | `lmax`, `grid_shape`, `colatitudes`, `longitudes`, `grid_axes` | |
+| `kmax`, `lmax`, `degree`, `points`, `angles`, `point_spacing` | Ported | `lmax`, `grid_shape`, `colatitudes` and `longitudes` on the sphere; `grid_axes` on `Box` and the Fourier spaces only, where the axes are separable — the sphere has no such method | |
 | `grid`, `grid_type`, `sampling`, `extend`, `normalization`, `csphase` | Subsumed | Fixed conventions, pinned by test rather than configurable (§13.4) | |
 | `index_to_integer`, `integer_to_index`, `representative_index`, `wavevector_indices`, `indices` | Subsumed | `_packing` handles the layout; none of it is public because none of it should be | |
 | `laplacian_eigenvalue`, `laplacian_eigenvalues` | Ported | `laplacian_eigenvalues`, as an array | |

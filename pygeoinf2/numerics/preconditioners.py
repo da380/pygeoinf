@@ -192,6 +192,54 @@ class SpectralPreconditioner(LinearSolver):
         return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
 
 
+def _sparse_inverse_traits(operator: LinearOperator, /, *, galerkin: bool) -> Traits:
+    """What a sparse approximate inverse of *operator* may honestly claim.
+
+    :class:`BandedPreconditioner` and :class:`BlockPreconditioner` both keep a
+    *symmetric pattern* of entries -- a band, or every pair inside a block --
+    from one of the operator's two matrices, factor it, and solve with the
+    result. The operator they return therefore has component matrix ``B^-1 G``
+    when the entries came from the Galerkin matrix and ``B^-1`` when they came
+    from the components matrix, and an operator on a coordinate space is
+    self-adjoint exactly when ``G C`` is symmetric:
+
+    ==================  ============  ======================================
+    entries taken from  ``G C``       symmetric when
+    ==================  ============  ======================================
+    Galerkin            ``G B^-1 G``  ``B`` is: a symmetric pattern truncates
+                                      a symmetric matrix to a symmetric one,
+                                      and the Galerkin matrix is symmetric
+                                      exactly when the operator is
+                                      self-adjoint
+    components          ``G B^-1``    ``B`` is *and* ``G`` is the identity
+    ==================  ============  ======================================
+
+    So the claim is not free, and both classes used to make it unconditionally:
+    ``form="components"`` on an operator that is not self-adjoint, or on any
+    space whose metric is not the identity, gave an inverse that is not
+    self-adjoint while saying it was. ``check_traits`` caught it on a dense
+    Gram; conjugate gradients would not have, it would merely have converged
+    to something else.
+
+    Note the claim is inherited from the operator's own, as claims are here:
+    it is exact for ``probe="exact"``, and for ``probe="banded"`` it holds
+    under that probe's stated precondition, that the operator really is banded
+    so the fold adds nothing.
+
+    Args:
+        operator: the operator being approximated.
+        galerkin: whether the entries were taken from the Galerkin matrix.
+
+    Returns:
+        ``SELF_ADJOINT`` where that is true, ``NONE`` otherwise.
+    """
+    domain = operator.domain
+    self_adjoint = bool(Traits.SELF_ADJOINT & operator.traits) and (
+        galerkin or bool(getattr(domain, "is_orthonormal", False))
+    )
+    return Traits.SELF_ADJOINT if self_adjoint else Traits.NONE
+
+
 class BandedPreconditioner(LinearSolver):
     """Keep a band of the operator's matrix and factor it.
 
@@ -223,7 +271,11 @@ class BandedPreconditioner(LinearSolver):
         Args:
             bandwidth: sub- and super-diagonals to keep on each side. One gives
                 a tridiagonal preconditioner.
-            form: which matrix representation to band.
+            form: which matrix representation to band. The Galerkin form is
+                the one in which a self-adjoint operator is symmetric, so it
+                is the only one from which the resulting inverse can claim
+                self-adjointness unless the space's metric is the identity;
+                see :func:`_sparse_inverse_traits`.
             probe: how to extract the diagonals. ``"exact"`` by default even
                 though the result is an approximation either way: the fast
                 probe sums the out-of-band entries into the band, and on an
@@ -248,7 +300,7 @@ class BandedPreconditioner(LinearSolver):
         ).tocsc()
         factorisation = sparse_linalg.splu(banded)
         galerkin = self._form == "galerkin" or (
-            self._form == "auto" and Traits.SELF_ADJOINT & operator.traits
+            self._form == "auto" and bool(Traits.SELF_ADJOINT & operator.traits)
         )
 
         def solve_fn(y, x0):
@@ -259,7 +311,12 @@ class BandedPreconditioner(LinearSolver):
                 space.from_components(factorisation.solve(components)), 1, 0.0, True
             )
 
-        return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+        return InverseOperator(
+            operator,
+            self,
+            solve_fn,
+            traits=_sparse_inverse_traits(operator, galerkin=galerkin),
+        )
 
 
 def _probe_columns(
@@ -338,7 +395,10 @@ class BlockPreconditioner(LinearSolver):
                 than being refused. v2 required a partition, which rules out
                 exactly the clusterings a real geometry produces -- a station
                 near two clusters belongs to both.
-            form: which matrix representation to take entries from.
+            form: which matrix representation to take entries from. As for
+                :class:`BandedPreconditioner`, only the Galerkin form lets the
+                resulting inverse claim self-adjointness on a space whose
+                metric is not the identity; see :func:`_sparse_inverse_traits`.
 
         Raises:
             ValueError: if no blocks are given, or an index is negative.
@@ -412,7 +472,12 @@ class BlockPreconditioner(LinearSolver):
                 space.from_components(factorised.solve(components)), 1, 0.0, True
             )
 
-        return InverseOperator(operator, self, solve_fn, traits=Traits.SELF_ADJOINT)
+        return InverseOperator(
+            operator,
+            self,
+            solve_fn,
+            traits=_sparse_inverse_traits(operator, galerkin=galerkin),
+        )
 
 
 class WoodburyPreconditioner(LinearSolver):
@@ -769,9 +834,7 @@ class ColumnThresholdedPreconditioner(LinearSolver):
         # whole matrix is never held: at dim 2000 with 20 entries kept per
         # column that is 0.6 MB against 32 MB.
         kept_rows, kept_columns, kept_values = [], [], []
-        for index, column in _probe_columns(
-            operator, range(dimension), galerkin=True
-        ):
+        for index, column in _probe_columns(operator, range(dimension), galerkin=True):
             keep = self._keep(column, index)
             kept_rows.append(keep)
             kept_columns.append(np.full(keep.size, index))

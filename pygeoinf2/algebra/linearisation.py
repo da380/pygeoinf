@@ -24,7 +24,14 @@ if TYPE_CHECKING:
 __all__ = ["Linearisation", "QuadraticModel"]
 
 
-@dataclass(frozen=True)
+# ``eq=False``, so both of these keep object identity for ``==`` and ``hash``.
+# The generated field-wise versions cannot work here: the fields hold vectors,
+# which on every array-backed space are NumPy arrays, so ``==`` returned an
+# array and ``bool()`` of it raised, and the ``__hash__`` that ``frozen=True``
+# generates alongside ``eq=True`` raised ``TypeError: unhashable type:
+# 'numpy.ndarray'``. A linearisation is a record of one evaluation at one
+# point; identity is the only equality it can honestly offer.
+@dataclass(frozen=True, eq=False)
 class Linearisation[X, Y]:
     """An operator's value and derivative at a point."""
 
@@ -44,7 +51,7 @@ class Linearisation[X, Y]:
         return f"{type(self).__name__}(derivative={self.derivative!r})"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class QuadraticModel[X](Linearisation[X, float]):
     """A scalar-valued operator's local quadratic model.
 

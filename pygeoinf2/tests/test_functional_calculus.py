@@ -24,7 +24,11 @@ from pygeoinf2.numerics.functional_calculus import (
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import (
+    DenseMetricSpace,
+    make_dense_metric_space,
+    make_weighted_space,
+)
 from .doubles import NoCoordinatesError, OpaqueSpace, StrictSpace
 
 N = 16
@@ -308,6 +312,97 @@ class TestDiagonalOperator:
             singular.inverse
 
 
+class TestTheDiagonalCalculusOnANonDiagonalMetric:
+    """The calculus gates on the spectrum, not on the traits.
+
+    A diagonal operator's eigenvectors are the basis vectors and its
+    eigenvalues are the stored values whatever the inner product, so ``f(A)``
+    is ``diag(f(d))`` on any space. Gating on ``POSITIVE_SEMIDEFINITE``
+    instead refused ``sqrt``, ``log``, ``log_determinant`` and fractional
+    powers on every space whose Gram matrix is not diagonal, where the trait
+    is never deduced however positive the spectrum.
+    """
+
+    @pytest.fixture
+    def dense(self):
+        space = make_dense_metric_space(6)
+        assert not space.has_diagonal_metric
+        values = np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0])
+        operator = DiagonalLinearOperator(space, values)
+        assert operator.traits == Traits.NONE
+        return space, values, operator
+
+    def test_the_square_root_squares_to_the_operator(self, dense, rng):
+        space, values, operator = dense
+        root = operator.sqrt
+        assert np.allclose(root.eigenvalues, np.sqrt(values))
+        probe = space.random(rng=rng)
+        assert space.norm(
+            space.subtract(root(root(probe)), operator(probe))
+        ) < 1e-12 * space.norm(operator(probe))
+
+    def test_but_it_is_not_self_adjoint_there_and_says_so(self, dense, rng):
+        """The metric decides what the result *is*; the traits report it, so
+        a caller needing ``L L* == C`` rather than ``B B == A`` can see that
+        it did not get one."""
+        space, _, operator = dense
+        root = operator.sqrt
+        assert not (Traits.SELF_ADJOINT & root.traits)
+        check_operator(root, rng=rng)
+        probe = space.random(rng=rng)
+        assert space.norm(
+            space.subtract(root(root.adjoint(probe)), operator(probe))
+        ) > 1e-6 * space.norm(operator(probe))
+
+    def test_the_logarithm_exponentiates_back(self, dense, rng):
+        space, values, operator = dense
+        assert np.allclose(operator.log.eigenvalues, np.log(values))
+        assert np.allclose(operator.log.exp.eigenvalues, values)
+
+    def test_the_log_determinant_is_the_sum_of_the_logs(self, dense):
+        """``det`` is a property of the map, not of the metric: the component
+        matrix's determinant, with no Gram correction."""
+        _, values, operator = dense
+        assert operator.log_determinant == pytest.approx(np.sum(np.log(values)))
+
+    def test_fractional_powers_and_the_inverse_root(self, dense):
+        _, values, operator = dense
+        assert np.allclose((operator**0.5).eigenvalues, values**0.5)
+        assert np.allclose(operator.inverse_sqrt.eigenvalues, 1.0 / np.sqrt(values))
+
+    def test_a_bad_spectrum_is_still_refused_and_named(self, dense):
+        space, _, _ = dense
+        indefinite = DiagonalLinearOperator(
+            space, np.array([1.0, -2.0, 3.0, 4.0, 5.0, 6.0])
+        )
+        with pytest.raises(ValueError, match="eigenvalue 1 is -2"):
+            indefinite.sqrt
+        with pytest.raises(ValueError, match="strictly positive"):
+            indefinite.log_determinant
+
+    def test_a_diagonal_metric_is_unaffected(self, rng):
+        """The generalisation must not move the answer where the trait was
+        deduced: there ``d >= 0`` and ``POSITIVE_SEMIDEFINITE`` say the same
+        thing."""
+        space = make_weighted_space()
+        values = np.array([1.0, 2.0, 3.0, 4.0])
+        operator = DiagonalLinearOperator(space, values)
+        assert Traits.POSITIVE_DEFINITE & operator.traits
+        assert Traits.SELF_ADJOINT & operator.sqrt.traits
+        assert np.allclose(operator.sqrt.eigenvalues, np.sqrt(values))
+        assert operator.log_determinant == pytest.approx(np.sum(np.log(values)))
+
+    def test_operator_function_still_requires_self_adjointness(self, dense):
+        """The free function keeps its gate: its Lanczos route needs
+        self-adjointness outright, and ``operator_sqrt`` claims
+        ``POSITIVE_SEMIDEFINITE`` of what it returns."""
+        _, _, operator = dense
+        with pytest.raises(ValueError, match="self-adjoint"):
+            operator_function(operator, np.sqrt)
+        with pytest.raises(ValueError, match="POSITIVE_SEMIDEFINITE"):
+            operator_sqrt(operator)
+
+
 class TestCoordinateFreedom:
     def test_lanczos_never_touches_components(self, rng):
         """The whole point: f(A) on a space with no component map."""
@@ -576,7 +671,9 @@ class TestLanczosOnComponents:
         assert fast_matrix == pytest.approx(slow_matrix, rel=1e-9, abs=1e-9)
         for a, b in zip(fast_basis, slow_basis):
             assert space.norm(space.subtract(a, b)) < 1e-8
-        assert space.norm(space.subtract(fast_root, slow_root)) < 1e-8 * space.norm(slow_root)
+        assert space.norm(space.subtract(fast_root, slow_root)) < 1e-8 * space.norm(
+            slow_root
+        )
         gram = np.array(
             [[space.inner_product(a, b) for b in fast_basis] for a in fast_basis]
         )
@@ -604,9 +701,154 @@ class TestLanczosOnComponents:
         monkeypatch.setattr(expand, "SHExpandDH", count)
         steps = 10
         apply_operator_function(
-            operator, np.sqrt, space.random(rng=np.random.default_rng(3)), max_iterations=steps, rtol=0.0
+            operator,
+            np.sqrt,
+            space.random(rng=np.random.default_rng(3)),
+            max_iterations=steps,
+            rtol=0.0,
         )
         # Two per step -- the operator's own and the result's -- plus the
         # start vector's and its norm's. The coordinate-free route needed
         # 2k + 4 per step.
         assert counts["analysis"] <= 2 * steps + 3
+
+
+class TestTheConvergenceCheckIsCheap:
+    """The Lanczos convergence test eigendecomposes the tridiagonal matrix at
+    every step, so its per-call overhead is the whole cost of the test —
+    measured at 27 % of a stochastic log-determinant on a 300-dimensional
+    operator. Below order 32 the dense symmetric solver is about twice as
+    fast as the tridiagonal one, whose cost at these sizes is argument
+    validation rather than arithmetic, and the dense matrix is already in
+    hand."""
+
+    @pytest.mark.parametrize("k", [1, 2, 5, 31, 32, 33, 60])
+    def test_it_agrees_with_the_tridiagonal_driver(self, k, rng):
+        from pygeoinf2.numerics.functional_calculus import _eigh_tridiagonal
+
+        diagonal = rng.uniform(1.0, 3.0, k)
+        off = rng.uniform(0.1, 0.6, max(k - 1, 0))
+        matrix = np.diag(diagonal) + np.diag(off, 1) + np.diag(off, -1)
+
+        values, vectors = _eigh_tridiagonal(matrix)
+        if k == 1:
+            reference = (diagonal.copy(), np.ones((1, 1)))
+        else:
+            reference = sla.eigh_tridiagonal(diagonal, off)
+
+        assert values == pytest.approx(reference[0], abs=1e-12)
+        # The two uses in this module, both invariant under eigenvector sign.
+        assert vectors[0, :] ** 2 == pytest.approx(reference[1][0, :] ** 2, abs=1e-12)
+        combined = vectors @ (np.sqrt(values) * vectors[0, :])
+        expected = reference[1] @ (np.sqrt(reference[0]) * reference[1][0, :])
+        assert combined == pytest.approx(expected, abs=1e-10)
+
+    def test_a_stochastic_log_determinant_is_unchanged(self, rng):
+        """The end-to-end check: the same estimate, to the bit, from the same
+        probes. The eigendecomposition changed driver, not meaning."""
+        from pygeoinf2.numerics.functional_calculus import log_determinant
+
+        space = EuclideanSpace(60)
+        root = rng.standard_normal((60, 60))
+        matrix = root @ root.T / 60.0 + np.identity(60)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            matrix,
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        estimate = log_determinant(
+            operator,
+            method="stochastic",
+            samples=40,
+            rng=np.random.default_rng(7),
+            max_iterations=30,
+            rtol=1e-4,
+        )
+        exact = float(np.linalg.slogdet(matrix)[1])
+        assert abs(estimate.value - exact) < 4.0 * estimate.standard_error + 0.5
+
+
+class TestTheDenseLimit:
+    """``dense_limit`` was 512, which sent a 960-dimensional evidence to a
+    stochastic estimate of +/-30 nats in 4.8 s where the dense route was
+    exact in 2.8 s. It is now 4000, and the decision is in two parts: whether
+    the matrix can be *held and factorised* (that is what the limit means),
+    and separately whether it can be *probed* — a matrix that has to be
+    probed costs ``dim`` applications, against the stochastic route's budget
+    of ``samples * max_iterations``."""
+
+    @staticmethod
+    def problem(rng, dim):
+        space = EuclideanSpace(dim)
+        root = rng.standard_normal((dim, dim))
+        matrix = root @ root.T / dim + np.identity(dim)
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        stored = LinearOperator.from_matrix(
+            space, space, matrix, form="components", traits=traits
+        )
+        free = LinearOperator.self_adjoint(
+            space, lambda x, m=matrix: m @ x, traits=traits
+        )
+        return matrix, stored, free
+
+    def test_a_dimension_between_the_old_and_new_limits_is_now_exact(self, rng):
+        matrix, stored, _ = self.problem(rng, 600)
+        estimate = log_determinant(stored)
+        assert estimate.standard_error == 0.0
+        assert estimate.value == pytest.approx(float(np.linalg.slogdet(matrix)[1]))
+
+    def test_above_the_limit_it_is_still_stochastic(self, rng):
+        _, stored, _ = self.problem(rng, 40)
+        assert log_determinant(stored, dense_limit=10).standard_error > 0.0
+
+    def test_a_matrix_that_must_be_probed_respects_the_probe_budget(self, rng):
+        """Below the limit but above ``samples * max_iterations``: reading a
+        matrix is free, probing one is ``dim`` applications, and the two are
+        not the same decision. The stored operator goes dense, the
+        matrix-free one does not."""
+        _, stored, free = self.problem(rng, 60)
+        budget = dict(samples=2, max_iterations=5, dense_limit=1000)
+        assert log_determinant(stored, **budget).standard_error == 0.0
+        assert (
+            log_determinant(free, rng=np.random.default_rng(4), **budget).standard_error
+            > 0.0
+        )
+
+    def test_the_metric_determinant_is_still_subtracted(self, rng):
+        """The Gram factorisation is skipped only where ``log det G == 0``.
+        On a dense Gram it is not, and the answer is the *component* matrix's
+        determinant either way."""
+        # Scaled, so that ``log det G`` is 30 log 3 rather than zero: the
+        # fixture's root is unit lower triangular, so its own determinant is
+        # one and would hide the correction entirely.
+        space = DenseMetricSpace(3.0 * make_dense_metric_space(30).gram_matrix())
+        root = rng.standard_normal((30, 30))
+        # A symmetric Galerkin matrix is what makes the operator self-adjoint
+        # here; its components matrix is then ``G^-1 S``, which is not
+        # symmetric, and it is that one whose determinant is wanted.
+        galerkin = root @ root.T / 30.0 + np.identity(30)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            galerkin,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        components = np.linalg.solve(space.gram_matrix(), galerkin)
+        estimate = log_determinant(operator, method="dense")
+        assert estimate.value == pytest.approx(
+            float(np.linalg.slogdet(components)[1]), rel=1e-10
+        )
+        assert estimate.value != pytest.approx(
+            float(np.linalg.slogdet(galerkin)[1]), rel=1e-6
+        )
+
+    def test_an_orthonormal_space_agrees_with_the_general_route(self, rng):
+        """``log det I == 0``, so the branch that skips it must not move the
+        answer."""
+        matrix, stored, _ = self.problem(rng, 40)
+        assert log_determinant(stored, method="dense").value == pytest.approx(
+            float(np.linalg.slogdet(matrix)[1])
+        )

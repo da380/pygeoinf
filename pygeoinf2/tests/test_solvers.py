@@ -21,7 +21,11 @@ from pygeoinf2.numerics import (
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import DenseMetricSpace, make_weighted_space
+from .conftest import (
+    DenseMetricSpace,
+    make_dense_metric_space,
+    make_weighted_space,
+)
 from .doubles import NoCoordinatesError, StrictSpace
 
 N = 12
@@ -563,9 +567,9 @@ class TestPreconditionedMinRes:
             .solve(operator(wanted))
         )
         assert result.converged
-        assert space.norm(
-            space.subtract(result.solution, wanted)
-        ) < 1e-8 * space.norm(wanted)
+        assert space.norm(space.subtract(result.solution, wanted)) < 1e-8 * space.norm(
+            wanted
+        )
 
     def test_it_is_what_makes_a_dense_metric_solvable(self, rng):
         """The measurement that says the preconditioning is real rather than
@@ -742,7 +746,10 @@ class TestJacobiCanEstimate:
         counts = {}
         for label, preconditioner in [
             ("exact", JacobiPreconditioner()),
-            ("estimated", JacobiPreconditioner(samples=20, rng=np.random.default_rng(1))),
+            (
+                "estimated",
+                JacobiPreconditioner(samples=20, rng=np.random.default_rng(1)),
+            ),
         ]:
             result = (
                 CGSolver(rtol=1e-10, maxiter=2000)
@@ -824,3 +831,174 @@ class TestWoodburyInnerDefault:
         inner = preconditioner._inner_solver()
         assert not inner._strict
         assert inner._rtol >= 1e-4
+
+
+class TestSparsePreconditionerTraits:
+    """A sparse approximate inverse may claim self-adjointness only where it
+    has it.
+
+    Both classes claimed ``SELF_ADJOINT`` unconditionally -- on a
+    non-self-adjoint operator, and on ``form="components"`` of a self-adjoint
+    one over a space whose metric is not the identity, where the inverse's
+    component matrix is ``B^-1`` and ``G B^-1`` is not symmetric.
+    ``check_traits`` fails on a dense Gram, and preconditioned CG would have
+    converged quietly to something else.
+    """
+
+    @staticmethod
+    def preconditioners(form):
+        from pygeoinf2.numerics.preconditioners import (
+            BandedPreconditioner,
+            BlockPreconditioner,
+        )
+
+        return [
+            BandedPreconditioner(1, form=form),
+            BlockPreconditioner([[0, 1], [2, 3]], form=form),
+        ]
+
+    @staticmethod
+    def dense_metric_operator(rng, dim, *, self_adjoint):
+        space = make_dense_metric_space(dim)
+        matrix = rng.standard_normal((dim, dim)) + dim * np.identity(dim)
+        if not self_adjoint:
+            return LinearOperator.from_matrix(space, space, matrix, form="components")
+        symmetric = matrix @ matrix.T + dim * np.identity(dim)
+        return LinearOperator.from_matrix(
+            space,
+            space,
+            symmetric,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_a_non_self_adjoint_operator_gives_no_claim(self, index, rng):
+        operator = self.dense_metric_operator(rng, 8, self_adjoint=False)
+        inverse = self.preconditioners("components")[index](operator)
+        assert not (Traits.SELF_ADJOINT & inverse.traits)
+        check_traits(inverse, rng=rng)
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_the_components_form_gives_no_claim_on_a_dense_metric(self, index, rng):
+        """The operator *is* self-adjoint; the banded components matrix still
+        does not represent a self-adjoint inverse there."""
+        operator = self.dense_metric_operator(rng, 8, self_adjoint=True)
+        inverse = self.preconditioners("components")[index](operator)
+        assert not (Traits.SELF_ADJOINT & inverse.traits)
+        check_traits(inverse, rng=rng)
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_the_galerkin_form_keeps_the_claim(self, index, rng):
+        """Where it is true, it is still made: ``G B^-1 G`` is symmetric."""
+        operator = self.dense_metric_operator(rng, 8, self_adjoint=True)
+        inverse = self.preconditioners("galerkin")[index](operator)
+        assert Traits.SELF_ADJOINT & inverse.traits
+        check_traits(inverse, rng=rng)
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_an_orthonormal_space_keeps_it_in_components(self, index, rng):
+        """There ``G`` is the identity and the two forms coincide."""
+        space = EuclideanSpace(8)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            spd(rng, 8),
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        inverse = self.preconditioners("components")[index](operator)
+        assert Traits.SELF_ADJOINT & inverse.traits
+        check_traits(inverse, rng=rng)
+
+
+class TestDampedSolvesExtractsItsMatricesOnce:
+    """A direct solver factorises a matrix, and it gets one by asking the
+    member of the family for it. Where the member cannot write its own matrix
+    down that costs ``dim`` applications, and the sweep used to pay it again
+    at every multiplier although only the scalar had changed: measured, a
+    nine-multiplier sweep at dimension 200 spent 1800 applications where 200
+    do.
+    """
+
+    @staticmethod
+    def family(space, solver, *, counter=None, stored=False):
+        from pygeoinf2.numerics import DampedSolves
+
+        rng = np.random.default_rng(20260830)
+        matrix = rng.standard_normal((space.dim, space.dim))
+        matrix = matrix @ matrix.T + space.dim * np.identity(space.dim)
+
+        if stored:
+            base = LinearOperator.from_matrix(
+                space,
+                space,
+                matrix,
+                form="galerkin",
+                traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+            )
+        else:
+            # Matrix-free, so nothing can read its matrix: the case the
+            # caching exists for. The action is the Galerkin matrix's, so the
+            # operator is self-adjoint on whatever metric the space carries.
+            def apply(x):
+                if counter is not None:
+                    counter.append(1)
+                return space.from_components(
+                    space.solve_gram(matrix @ space.to_components(x))
+                )
+
+            base = LinearOperator.self_adjoint(
+                space, apply, traits=Traits.POSITIVE_SEMIDEFINITE
+            )
+        return matrix, DampedSolves(
+            base,
+            LinearOperator.identity(space),
+            solver,
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    def test_the_sweep_costs_one_extraction_not_one_per_multiplier(self, rng):
+        space = EuclideanSpace(20)
+        counter: list[int] = []
+        matrix, solves = self.family(space, CholeskySolver(), counter=counter)
+        vector = space.random(rng=rng)
+
+        for damping in (0.25, 0.5, 1.0, 2.0, 4.0, 8.0):
+            solution = solves.solve(damping, vector).solution
+            expected = np.linalg.solve(
+                matrix + damping * np.identity(space.dim), vector
+            )
+            assert solution == pytest.approx(expected, rel=1e-9)
+
+        # One extraction of the base, and none of the identity, which reads
+        # its own matrix. Six multipliers used to cost six.
+        assert len(counter) == space.dim
+
+    def test_it_is_right_on_a_metric_that_is_not_diagonal(self, rng):
+        """The two matrices are added in the solver's own form, so the metric
+        has to be carried by the extraction rather than by the sum. Checked
+        against the member built the old way."""
+        space = make_dense_metric_space(12)
+        _, solves = self.family(space, CholeskySolver())
+        vector = space.random(rng=rng)
+
+        for damping in (0.5, 3.0):
+            solution = solves.solve(damping, vector).solution
+            member = solves.base + damping * solves.shift
+            residual = space.subtract(member(solution), vector)
+            assert space.norm(residual) < 1e-9 * space.norm(vector)
+
+    def test_a_member_that_knows_its_matrix_is_left_alone(self):
+        """The sum of two matrix-backed operators reads its own matrix, keeps
+        a sparse array sparse, and there is nothing here to improve on."""
+        space = EuclideanSpace(20)
+        _, solves = self.family(space, CholeskySolver(), stored=True)
+        assert solves._matrices() is None
+
+    def test_an_iterative_solver_is_left_alone(self):
+        """Nothing to factorise, so nothing to extract: an iterative solver
+        must keep the member it can precondition against."""
+        space = EuclideanSpace(20)
+        _, solves = self.family(space, CGSolver())
+        assert solves._matrices() is None
