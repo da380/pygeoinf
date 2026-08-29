@@ -28,7 +28,7 @@ See DESIGN.md section 3.3.
 
 from __future__ import annotations
 
-from typing import Hashable, Sequence
+from typing import Any, Hashable, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -298,6 +298,28 @@ class _CoordinateDirectSum(DirectSum, CoordinateSpace):
             [space.solve_gram(c[s]) for space, s in zip(self._spaces, self._slices)]
         )
 
+    def apply_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        """``G`` on every column, one summand's block of rows at a time."""
+        return np.concatenate(
+            [
+                space.apply_gram_to_columns(columns[s])
+                for space, s in zip(self._spaces, self._slices)
+            ]
+        )
+
+    def gram_diagonal(self) -> np.ndarray:
+        """The summands' Gram diagonals, concatenated."""
+        return np.concatenate([space.gram_diagonal() for space in self._spaces])
+
+    def solve_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        """``G^-1`` on every column, one summand's block of rows at a time."""
+        return np.concatenate(
+            [
+                space.solve_gram_to_columns(columns[s])
+                for space, s in zip(self._spaces, self._slices)
+            ]
+        )
+
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Independent white noise components on each summand."""
         return np.concatenate(
@@ -367,6 +389,63 @@ def _block_traits(
             if not LinearOperator.adjoints_are_linked(blocks[i][j], blocks[j][i]):
                 return Traits.NONE
     return close(Traits.SELF_ADJOINT)
+
+
+def _known_block_matrix(
+    blocks: Sequence[Sequence[LinearOperator]],
+    domain: HilbertSpace,
+    codomain: HilbertSpace,
+    form: str,
+) -> np.ndarray | None:
+    """The dense matrix of a grid of blocks, when every block knows its own.
+
+    Assembled in the components form, where blocks simply tile, and converted
+    to the Galerkin form afterwards with the direct sum's block-diagonal
+    metric. ``None`` if either side lacks coordinates or any block answers
+    ``None``.
+    """
+    if not isinstance(domain, CoordinateSpace) or not isinstance(
+        codomain, CoordinateSpace
+    ):
+        return None
+    rows = []
+    for row in blocks:
+        known = [block._known_matrix("components") for block in row]
+        if any(part is None for part in known):
+            return None
+        rows.append(known)
+    matrix = np.block(rows)
+    if form == "components":
+        return matrix
+    return codomain.apply_gram_to_columns(matrix)
+
+
+def _known_block_diagonals(
+    diagonal_blocks: Sequence[LinearOperator],
+    domains: Sequence[HilbertSpace],
+    codomains: Sequence[HilbertSpace],
+    offsets: tuple[int, ...],
+    form: str,
+) -> np.ndarray | None:
+    """The main diagonal of a block operator, from its diagonal blocks.
+
+    Only the main diagonal: an off-diagonal of the whole crosses block
+    boundaries, and only the main one is what a Jacobi or a structure-aware
+    preconditioner reads. The off-diagonal blocks contribute nothing to it
+    when every diagonal block is square, which is the case handled; otherwise
+    ``None`` and the base class probes.
+    """
+    if tuple(offsets) != (0,):
+        return None
+    if any(d.dim != c.dim for d, c in zip(domains, codomains)):
+        return None
+    parts = []
+    for block in diagonal_blocks:
+        known = block._known_diagonals((0,), form)
+        if known is None:
+            return None
+        parts.append(known[0])
+    return np.concatenate(parts)[None, :]
 
 
 class BlockOperator(Operator):
@@ -467,6 +546,22 @@ class BlockLinearOperator(BlockOperator, LinearOperator):
         )
         result._link_adjoint(self)
         return result
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        return _known_block_matrix(self._blocks, self.domain, self.codomain, form)
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        if self.row_dim != self.col_dim:
+            return None
+        return _known_block_diagonals(
+            [self._blocks[i][i] for i in range(self.row_dim)],
+            self._domains,
+            self._codomains,
+            offsets,
+            form,
+        )
 
     def __repr__(self) -> str:
         return f"BlockLinearOperator({self.row_dim}x{self.col_dim})"
@@ -686,3 +781,58 @@ class BlockDiagonalLinearOperator(BlockDiagonalOperator, LinearOperator):
         result = BlockDiagonalLinearOperator([op.adjoint for op in self._operators])
         result._link_adjoint(self)
         return result
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        count = len(self._operators)
+        grid = [
+            [
+                self._operators[i]
+                if i == j
+                else LinearOperator.zero(
+                    self._operators[j].domain, codomain=self._operators[i].codomain
+                )
+                for j in range(count)
+            ]
+            for i in range(count)
+        ]
+        return _known_block_matrix(grid, self.domain, self.codomain, form)
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        return _known_block_diagonals(
+            self._operators,
+            tuple(op.domain for op in self._operators),
+            tuple(op.codomain for op in self._operators),
+            offsets,
+            form,
+        )
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """Each block applied to its summand's vectors as a block.
+
+        Args:
+            vectors: the inputs, tuples with one entry per summand.
+            n_jobs: workers, passed to each block.
+
+        Returns:
+            The images, in order.
+        """
+        vectors = list(vectors)
+        parts = [
+            operator.apply_block([x[i] for x in vectors], n_jobs=n_jobs)
+            for i, operator in enumerate(self._operators)
+        ]
+        return [tuple(part[k] for part in parts) for k in range(len(vectors))]
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        vectors = list(vectors)
+        parts = [
+            operator._adjoint_apply_block([y[i] for y in vectors], n_jobs=n_jobs)
+            for i, operator in enumerate(self._operators)
+        ]
+        return [tuple(part[k] for part in parts) for k in range(len(vectors))]

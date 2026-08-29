@@ -115,9 +115,17 @@ class ProbabilityMeasure[X](ABC):
             lambda stream: self.sample(rng=stream), parent.spawn(n), n_jobs=n_jobs
         )
 
-    def sample_expectation(self, n: int, *, rng: Generator | None = None) -> X:
-        """The sample mean of ``n`` draws."""
-        return self._domain.mean(self.samples(n, rng=rng))
+    def sample_expectation(
+        self, n: int, *, rng: Generator | None = None, n_jobs: int | None = None
+    ) -> X:
+        """The sample mean of ``n`` draws.
+
+        Args:
+            n: how many draws.
+            rng: the generator, as for :meth:`samples`.
+            n_jobs: workers for the draws, as for :meth:`samples`.
+        """
+        return self._domain.mean(self.samples(n, rng=rng, n_jobs=n_jobs))
 
     # ----------------------------------------------------------------- #
     #                              Moments                              #

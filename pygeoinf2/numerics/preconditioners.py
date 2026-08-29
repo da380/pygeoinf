@@ -72,6 +72,7 @@ class JacobiPreconditioner(LinearSolver):
         floor: float = 1e-14,
         samples: int | None = None,
         rng: Generator | None = None,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Args:
@@ -79,20 +80,26 @@ class JacobiPreconditioner(LinearSolver):
                 rather than inverted.
             samples: estimate the diagonal from this many random probes
                 instead of reading it exactly. **Exact costs one operator
-                application per component**, which for a large space is the
-                whole reason someone reached for a preconditioner; v1
-                estimated by default, from 20 probes. Exact is kept as the
-                default here because an operator that knows its own diagonal
-                -- diagonal, matrix-backed, or a sum or scaling of those --
-                gives it up for nothing, and only a general matrix-free
-                operator pays the full price.
+                application per component** on an operator that has to be
+                probed, which for a large space is the whole reason someone
+                reached for a preconditioner; v1 estimated by default, from
+                20 probes. Exact is kept as the default here because an
+                operator that knows its own diagonal gives it up for nothing:
+                one built from a matrix, a diagonal one, a sum, scaling or
+                adjoint of those, or a block-diagonal arrangement of them --
+                ``M + t I`` is read. A *composition* is not: ``A* A`` and
+                the normal operators built on it cannot be read and pay the
+                probe, and on those this is the argument to pass.
             rng: the generator for those probes.
+            n_jobs: workers for the exact probe, where one is needed. Serial
+                by default.
         """
         if samples is not None and samples < 1:
             raise ValueError(f"At least one sample is needed, got {samples}.")
         self._floor = floor
         self._samples = samples
         self._rng = rng
+        self._n_jobs = n_jobs
 
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         domain: CoordinateSpace = operator.domain
@@ -100,10 +107,16 @@ class JacobiPreconditioner(LinearSolver):
         require_coordinates(domain, codomain)
 
         if self._samples is None:
-            diagonal = operator.diagonals(offsets=(0,), form="galerkin")[0]
+            diagonal = operator.diagonals(
+                offsets=(0,), form="galerkin", n_jobs=self._n_jobs
+            )[0]
         else:
             diagonal = random_diagonal(
-                operator, samples=self._samples, form="galerkin", rng=self._rng
+                operator,
+                samples=self._samples,
+                form="galerkin",
+                rng=self._rng,
+                n_jobs=self._n_jobs,
             )
         safe = np.where(np.abs(diagonal) > self._floor, diagonal, 1.0)
         inverse_diagonal = 1.0 / safe

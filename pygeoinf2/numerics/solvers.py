@@ -221,6 +221,7 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         *,
         traits: Traits | None = None,
         adjoint_solve_fn: Callable[[X, Y | None], SolveResult[Y]] | None = None,
+        known_matrix: Callable[[str], np.ndarray] | None = None,
     ) -> None:
         """
         Args:
@@ -237,6 +238,12 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
                 factorisation solves the transposed system. Without it the
                 adjoint has to be inverted from scratch, which for LU means a
                 second matrix extraction and a second factorisation.
+            known_matrix: ``form -> dense matrix`` of the *inverse*, for a
+                solver holding a factorisation that can produce it -- a
+                direct solver applies its factors to the identity. Lets
+                ``inverse.matrix()`` and everything built on it (a
+                preconditioner reading it, a composition assembling) skip
+                ``dim`` solves.
         """
         if traits is None:
             # A pseudo-inverse of a rectangular operator is not an inverse, and
@@ -251,6 +258,7 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         self._solver = solver
         self._solve_fn = solve_fn
         self._adjoint_solve_fn = adjoint_solve_fn
+        self._known_matrix_fn = known_matrix
 
     @property
     def operator(self) -> LinearOperator[X, Y]:
@@ -282,6 +290,11 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
     def _adjoint_value(self, x: X) -> Y:
         return self.adjoint(x)
 
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        if self._known_matrix_fn is None:
+            return None
+        return self._known_matrix_fn(form)
+
     def adjoint_inverse(self, x: X) -> Y:
         """Apply ``(A^-1)* == (A*)^-1``.
 
@@ -298,11 +311,24 @@ class InverseOperator[X, Y](LinearOperator[Y, X]):
         direct factorisation is not repeated for the adjoint.
         """
         if self._adjoint_solve_fn is not None:
+            known_adjoint = None
+            if self._known_matrix_fn is not None:
+
+                def known_adjoint(form: str) -> np.ndarray:
+                    # Galerkin((A^-1)*) == Galerkin(A^-1)^T; its components
+                    # form carries the codomain's inverse metric, as any
+                    # adjoint's does.
+                    transposed = np.array(self._known_matrix_fn("galerkin").T)
+                    if form == "galerkin":
+                        return transposed
+                    return self._operator.codomain.solve_gram_to_columns(transposed)
+
             result = InverseOperator(
                 self._operator.adjoint,
                 self._solver,
                 self._adjoint_solve_fn,
                 traits=adjoint_traits(self.traits),
+                known_matrix=known_adjoint,
             )
         else:
             result = self._solver(self._operator.adjoint)
@@ -378,6 +404,13 @@ class ProgressCallback:
         )
 
 
+_Factors = tuple[
+    Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray] | None
+]
+"""What a direct solver's factorisation yields: ``(apply_inverse,
+apply_transposed)``, the second ``None`` when the factors cannot give it."""
+
+
 class DirectSolver(LinearSolver):
     """A solver that factorises a matrix representation.
 
@@ -391,11 +424,22 @@ class DirectSolver(LinearSolver):
     requires_coordinates: ClassVar[bool] = True
     form: ClassVar[str] = "components"
 
+    def __init__(self, /, *, n_jobs: int | None = None) -> None:
+        """
+        Args:
+            n_jobs: workers for extracting the matrix when the operator has
+                to be probed for it, one column per worker. An operator that
+                knows its matrix -- built from one, or a sum or composition
+                of such -- is read, and the setting is not used. Serial by
+                default; see :mod:`pygeoinf2.parallel`.
+        """
+        self._n_jobs = n_jobs
+
     def _invert(self, operator: LinearOperator) -> InverseOperator:
         domain: CoordinateSpace = operator.domain
         codomain: CoordinateSpace = operator.codomain
-        matrix = operator.matrix(form=self.form)
-        apply_inverse = self._factorise(matrix)
+        matrix = operator.matrix(form=self.form, n_jobs=self._n_jobs)
+        apply_inverse, apply_transposed = self._factorise(matrix)
 
         def solve_fn(y, x0):
             cy = codomain.to_components(y)
@@ -405,8 +449,18 @@ class DirectSolver(LinearSolver):
             cx = apply_inverse(cy)
             return SolveResult(domain.from_components(cx), 0, 0.0, True)
 
+        def known_matrix(form: str) -> np.ndarray:
+            # (A^-1)_c is M^-1 for M the components form, and M^-1 G_Y for M
+            # the Galerkin form G_Y A_c: the factors applied to a matrix.
+            if self.form == "components":
+                inverse = apply_inverse(np.identity(domain.dim))
+            else:
+                inverse = apply_inverse(codomain.gram_matrix())
+            if form == "components":
+                return inverse
+            return domain.apply_gram_to_columns(inverse)
+
         adjoint_solve_fn = None
-        apply_transposed = self._factorise_transposed(matrix)
         if apply_transposed is not None:
 
             def adjoint_solve_fn(x, w0):
@@ -421,23 +475,27 @@ class DirectSolver(LinearSolver):
                 return SolveResult(codomain.from_components(cw), 0, 0.0, True)
 
         return InverseOperator(
-            operator, self, solve_fn, adjoint_solve_fn=adjoint_solve_fn
+            operator,
+            self,
+            solve_fn,
+            adjoint_solve_fn=adjoint_solve_fn,
+            known_matrix=known_matrix,
         )
 
     @abstractmethod
-    def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
-        """Factorise once, returning something that applies the inverse."""
+    def _factorise(self, matrix: np.ndarray) -> _Factors:
+        """Factorise **once**, returning ``(apply_inverse, apply_transposed)``.
 
-    def _factorise_transposed(
-        self, matrix: np.ndarray
-    ) -> Callable[[np.ndarray], np.ndarray] | None:
-        """Apply ``M^-T`` using the factorisation already taken, if it can.
-
-        None by default, meaning "invert the adjoint from scratch". A symmetric
-        factorisation needs no override: its operator is self-adjoint, so the
+        Both accept a vector or a matrix of columns. The second applies
+        ``M^-T`` from the same factors and is ``None`` when the factorisation
+        cannot, which means "invert the adjoint from scratch"; a symmetric
+        factorisation needs no second: its operator is self-adjoint, so the
         inverse is too and its adjoint is itself.
+
+        One call, deliberately. The first version had a second method for the
+        transposed solve and it factorised again -- the O(n^3) step, twice,
+        for a solver whose whole point is to do it once.
         """
-        return None
 
 
 class LUSolver(DirectSolver):
@@ -445,21 +503,11 @@ class LUSolver(DirectSolver):
 
     form: ClassVar[str] = "components"
 
-    def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
+    def _factorise(self, matrix: np.ndarray) -> _Factors:
         factor = lu_factor(matrix)
-        return lambda c: lu_solve(factor, c)
-
-    def _factorise_transposed(
-        self, matrix: np.ndarray
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        """``M^-T`` from the same factors, which is what ``trans=1`` is for.
-
-        The adjoint of an LU inverse used to be built by inverting ``A*`` from
-        scratch: a second matrix extraction and a second factorisation of what
-        is, up to a transpose, the same matrix.
-        """
-        factor = lu_factor(matrix)
-        return lambda c: lu_solve(factor, c, trans=1)
+        # ``trans=1`` is M^-T from the same factors: the adjoint of an LU
+        # inverse costs no second factorisation.
+        return (lambda c: lu_solve(factor, c), lambda c: lu_solve(factor, c, trans=1))
 
 
 class CholeskySolver(DirectSolver):
@@ -472,10 +520,10 @@ class CholeskySolver(DirectSolver):
     requires: ClassVar[Traits] = Traits.POSITIVE_DEFINITE
     form: ClassVar[str] = "galerkin"
 
-    def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
+    def _factorise(self, matrix: np.ndarray) -> _Factors:
         symmetric = 0.5 * (matrix + matrix.T)
         factor = cho_factor(symmetric)
-        return lambda c: cho_solve(factor, c)
+        return (lambda c: cho_solve(factor, c), None)
 
 
 class EigenSolver(DirectSolver):
@@ -484,16 +532,34 @@ class EigenSolver(DirectSolver):
     requires: ClassVar[Traits] = Traits.SELF_ADJOINT
     form: ClassVar[str] = "galerkin"
 
-    def __init__(self, /, *, rtol: float = 1e-12) -> None:
+    def __init__(self, /, *, rtol: float = 1e-12, n_jobs: int | None = None) -> None:
+        """
+        Args:
+            rtol: eigenvalues below this fraction of the largest in magnitude
+                are treated as zero and their directions dropped.
+            n_jobs: workers for extracting the matrix, as for
+                :class:`DirectSolver`.
+        """
+        super().__init__(n_jobs=n_jobs)
         self._rtol = rtol
 
-    def _factorise(self, matrix: np.ndarray) -> Callable[[np.ndarray], np.ndarray]:
+    def _factorise(self, matrix: np.ndarray) -> _Factors:
         symmetric = 0.5 * (matrix + matrix.T)
         values, vectors = eigh(symmetric)
         largest = np.max(np.abs(values)) if values.size else 0.0
         threshold = self._rtol * largest
         inverted = np.where(np.abs(values) > threshold, 1.0 / values, 0.0)
-        return lambda c: vectors @ (inverted * (vectors.T @ c))
+
+        def apply(c: np.ndarray) -> np.ndarray:
+            coefficients = vectors.T @ c
+            scaled = (
+                inverted[:, None] * coefficients
+                if coefficients.ndim == 2
+                else inverted * coefficients
+            )
+            return vectors @ scaled
+
+        return (apply, None)
 
 
 # --------------------------------------------------------------------- #

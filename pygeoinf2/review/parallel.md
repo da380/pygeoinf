@@ -250,6 +250,8 @@ MPI program is a non-starter and should be documented as such.
 
 ## 5. Recommendations
 
+> **Status (2026-08-29, branch `refactor-r2`):** R1–R6 implemented in `parallel.py` and the five loops; R7 follows the algebra hooks (`apply_block`, `_known_matrix`); R8–R10 as recorded. The `Parallel(inner_max_num_threads=)` keyword turned out to be ignored by joblib 1.5.3's reusable executor — the `parallel_config` context form works and is what is used, pinned by a test that reads the workers' environment.
+
 Ordered by value; the first four are small edits to `parallel.py`.
 
 **R1. Cap inner threads to one, by default.** In `parallel_map`, run under

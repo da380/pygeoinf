@@ -999,7 +999,8 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             samples: estimate rather than compute exactly. Exact costs one
                 covariance application per point.
             rng: the generator for those probes.
-            n_jobs: workers for the exact route, whose points are independent.
+            n_jobs: workers: for the points on the exact route, and for the
+                operator applications on the sampling one.
 
         Returns:
             One variance per point.
@@ -1025,7 +1026,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         from ..numerics.randomised import deflated_diagonal
 
         return deflated_diagonal(
-            operator, rank=rank, samples=samples, form="components", rng=rng
+            operator,
+            rank=rank,
+            samples=samples,
+            form="components",
+            rng=rng,
+            n_jobs=n_jobs,
         )
 
     def _embedding(self, points: Sequence[Any], /) -> tuple[np.ndarray, Any]:

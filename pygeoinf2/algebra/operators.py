@@ -41,6 +41,20 @@ __all__ = [
 REALS = Reals()
 
 
+def _read_diagonals(
+    dense: np.ndarray, offsets: tuple[int, ...], size: int
+) -> np.ndarray:
+    """Diagonals of a dense array in the ``spdiags`` layout ``diagonals`` uses:
+    ``result[index, column] == dense[column - offset, column]``."""
+    result = np.zeros((len(offsets), size))
+    for index, offset in enumerate(offsets):
+        values = np.diagonal(dense, offset=offset)
+        start = max(offset, 0)
+        stop = min(size, start + values.size)
+        result[index, start:stop] = values[: stop - start]
+    return result
+
+
 def _as_matrix(matrix: Any) -> Any:
     """A dense array, or a sparse matrix left alone.
 
@@ -716,6 +730,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
             by = "rows" if self.codomain.dim < self.domain.dim else "columns"
         if by not in ("columns", "rows"):
             raise ValueError(f"Unknown fill direction {by!r}.")
+        known = self._known_matrix(form)
+        if known is not None:
+            return known
 
         from ..parallel import parallel_map
 
@@ -733,12 +750,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
                 else np.zeros((self.codomain.dim, 0))
             )
             if form == "galerkin":
-                matrix = np.column_stack(
-                    [
-                        self.codomain.apply_gram(matrix[:, j])
-                        for j in range(self.domain.dim)
-                    ]
-                )
+                matrix = self.codomain.apply_gram_to_columns(matrix)
             return matrix
 
         # Row i of the Galerkin matrix holds the derivative components of
@@ -754,10 +766,71 @@ class LinearOperator[X, Y](Operator[X, Y]):
         matrix = np.stack(rows) if rows else np.zeros((0, self.domain.dim))
         if form == "components":
             # A_c == G_Y^-1 M, so the inverse metric acts down each column.
-            matrix = np.column_stack(
-                [self.codomain.solve_gram(matrix[:, j]) for j in range(self.domain.dim)]
-            )
+            matrix = self.codomain.solve_gram_to_columns(matrix)
         return matrix
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        """The dense matrix in *form*, if the operator can produce it without
+        applying itself; ``None`` otherwise.
+
+        The hook behind :meth:`matrix`. An operator built from a matrix reads
+        it; a diagonal one writes its spectrum down; the expression nodes ask
+        their parts and combine what they get -- a sum adds, a composition
+        multiplies, an adjoint transposes the Galerkin form -- and answer
+        ``None`` as soon as any part does, at which point :meth:`matrix`
+        probes. So ``(A + t I).matrix()`` on a matrix-backed ``A`` costs a
+        read, and a direct solver handed it factorises without ``dim``
+        applications first.
+
+        *form* is ``"components"`` or ``"galerkin"``, already resolved.
+        """
+        return None
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        """Selected diagonals, if the operator can produce them without being
+        applied; ``None`` otherwise.
+
+        The hook behind :meth:`diagonals`, kept separate from
+        :meth:`_known_matrix` because a diagonal is wanted precisely where the
+        matrix would not fit: a Jacobi preconditioner on a space of ``10^4``
+        components must not form ``10^8`` entries to read ``10^4``. Same
+        layout as :meth:`diagonals`: one row per offset, aligned as
+        ``scipy.sparse.spdiags`` expects.
+        """
+        return None
+
+    def apply_block(
+        self, vectors: Sequence[X], /, *, n_jobs: int | None = None
+    ) -> list[Y]:
+        """The operator applied to several vectors.
+
+        One at a time by default, in parallel when asked -- this is where the
+        ``n_jobs`` of the randomised routines lands, as one probe per worker.
+        An operator that can do better does: a matrix-backed one applies its
+        array to all the components at once, a diagonal one broadcasts, and
+        the expression nodes pass a block through their parts so a product
+        of matrix-backed operators stays a product of matrix products.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: workers for the one-at-a-time route. Serial by default.
+
+        Returns:
+            The images, in order.
+        """
+        from ..parallel import parallel_map
+
+        return parallel_map(self, list(vectors), n_jobs=n_jobs)
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Y], /, *, n_jobs: int | None = None
+    ) -> list[X]:
+        """:meth:`apply_block` for the adjoint, overridden alongside it."""
+        from ..parallel import parallel_map
+
+        return parallel_map(self.adjoint, list(vectors), n_jobs=n_jobs)
 
     def diagonals(
         self,
@@ -766,6 +839,7 @@ class LinearOperator[X, Y](Operator[X, Y]):
         offsets: Sequence[int] = (0,),
         form: Literal["auto", "components", "galerkin"] = "auto",
         probe: Literal["exact", "banded"] = "exact",
+        n_jobs: int | None = None,
     ) -> np.ndarray:
         """Selected diagonals of the operator's matrix, without forming it.
 
@@ -781,10 +855,18 @@ class LinearOperator[X, Y](Operator[X, Y]):
         and sums in the out-of-band entries when it is not: an approximation,
         and named as one.
 
+        An operator that knows its diagonals -- one built from a matrix, a
+        diagonal one, a sum or scaling or adjoint of those, a block-diagonal
+        arrangement of them -- gives them up without being applied, whatever
+        *probe* says; see :meth:`_known_diagonals`. A composition does not,
+        and pays the probe.
+
         Args:
             offsets: which diagonals, ``0`` being the main one.
             form: which matrix representation to read.
-            probe: how to obtain the entries.
+            probe: how to obtain the entries, when they have to be probed.
+            n_jobs: workers for the exact probe, whose columns are
+                independent. Serial by default.
 
         Returns:
             One row per offset, aligned as ``scipy.sparse.spdiags`` expects.
@@ -801,7 +883,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
             form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
         if probe not in ("exact", "banded"):
             raise ValueError(f"Unknown probe {probe!r}.")
-
+        known = self._known_diagonals(offsets, form)
+        if known is not None:
+            return known
         size = min(self.domain.dim, self.codomain.dim)
         result = np.zeros((len(offsets), size))
 
@@ -812,8 +896,14 @@ class LinearOperator[X, Y](Operator[X, Y]):
             return components
 
         if probe == "exact":
-            for column in range(size):
-                entries = read(self(self.domain.basis_vector(column)))
+            from ..parallel import parallel_map
+
+            def probe_column(column: int) -> np.ndarray:
+                return read(self(self.domain.basis_vector(column)))
+
+            for column, entries in enumerate(
+                parallel_map(probe_column, range(size), n_jobs=n_jobs)
+            ):
                 for index, offset in enumerate(offsets):
                     row = column - offset
                     if 0 <= row < size:
@@ -832,22 +922,28 @@ class LinearOperator[X, Y](Operator[X, Y]):
                 result[index, columns[keep]] = entries[rows[keep]]
         return result
 
-    def assembled(self) -> LinearOperator[X, Y]:
+    def assembled(self, /, *, n_jobs: int | None = None) -> LinearOperator[X, Y]:
         """The same operator, with its matrix formed once and stored.
 
         Trades memory for repeated application. Nothing else changes: the
         matrix is extracted in Galerkin form and handed back to
-        :meth:`from_matrix` in Galerkin form, so the metric still enters
-        once, inside the adjoint, and the traits are carried across.
+        :meth:`from_matrix` in Galerkin form, and the traits are carried
+        across. The stored form is the one a symmetric factorisation wants; a
+        forward application of the stored operator pays one ``solve_gram``
+        for it, which is nothing on a diagonal metric.
 
         This is why no observation operator needs a ``matrix_free`` flag. Build
         it matrix-free, and assemble it here if it is small enough to be worth
         assembling.
+
+        Args:
+            n_jobs: workers for the extraction, one column per worker. Serial
+                by default.
         """
         return LinearOperator.from_matrix(
             self.domain,
             self.codomain,
-            self.matrix(form="galerkin"),
+            self.matrix(form="galerkin", n_jobs=n_jobs),
             form="galerkin",
             traits=self._traits,
         )
@@ -1417,6 +1513,36 @@ class _ColumnOperator[Y](LinearOperator[np.ndarray, Y]):
         weighted = self.codomain.apply_gram(self.codomain.to_components(y))
         return self.columns.T @ weighted
 
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        # The domain is R^k with the standard basis, so the components matrix
+        # is the columns themselves.
+        if form == "components":
+            return np.array(self.columns, dtype=float)
+        return self.codomain.apply_gram_to_columns(self.columns)
+
+    def apply_block(
+        self, vectors: Sequence[np.ndarray], /, *, n_jobs: int | None = None
+    ) -> list[Y]:
+        """One product of the columns with all the coefficient vectors.
+
+        Args:
+            vectors: coefficient arrays in ``R^k``.
+            n_jobs: accepted for the protocol and unused.
+
+        Returns:
+            The images, in order.
+        """
+        coefficients = np.stack([np.asarray(c, dtype=float) for c in vectors], axis=1)
+        return self.codomain.vectors_from(self.columns @ coefficients)
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Y], /, *, n_jobs: int | None = None
+    ) -> list[np.ndarray]:
+        weighted = self.codomain.apply_gram_to_columns(
+            self.codomain.components_of(vectors)
+        )
+        return list((self.columns.T @ weighted).T)
+
     def __repr__(self) -> str:
         return f"ColumnOperator(k={self.domain.dim}, into={self.codomain!r})"
 
@@ -1547,87 +1673,59 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
         dense = self._dense()
         if form == self._form:
             return dense
-        convert = (
-            self.codomain.apply_gram if form == "galerkin" else self.codomain.solve_gram
-        )
-        # Column by column: apply_gram takes a component vector, and handing it
-        # a matrix is right only for a diagonal metric.
-        return np.column_stack([convert(column) for column in dense.T])
+        if form == "galerkin":
+            return self.codomain.apply_gram_to_columns(dense)
+        return self.codomain.solve_gram_to_columns(dense)
 
-    def matrix(
-        self,
-        /,
-        *,
-        form: Literal["auto", "components", "galerkin"] = "auto",
-        by: Literal["auto", "columns", "rows"] = "auto",
-    ) -> np.ndarray:
-        """The matrix, read rather than re-derived.
-
-        Free when the requested form is the stored one. Otherwise one metric
-        conversion, which is still ``dim`` *Gram* applications rather than
-        ``dim`` applications of the operator.
-
-        Args:
-            form: which representation to return -- ``"components"``,
-                ``"galerkin"``, or ``"auto"`` to take the Galerkin form for
-                a self-adjoint operator.
-            by: accepted and ignored. There is nothing to fill in: the array
-                is stored, so this is a read rather than a probe.
-
-        Returns:
-            The matrix.
-
-        Raises:
-            ValueError: for an unknown form.
-        """
-        if form == "auto":
-            form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
-        if form not in ("components", "galerkin"):
-            raise ValueError(f"Unknown matrix form {form!r}.")
+    def _known_matrix(self, form: str) -> np.ndarray | None:
         return self._in_form(form)
 
-    def diagonals(
-        self,
-        /,
-        *,
-        offsets: Sequence[int] = (0,),
-        form: Literal["auto", "components", "galerkin"] = "auto",
-        probe: Literal["exact", "banded"] = "exact",
-    ) -> np.ndarray:
-        """Selected diagonals, read off the stored matrix.
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        from scipy.sparse import issparse
+
+        size = min(self.domain.dim, self.codomain.dim)
+        if form == self._form and issparse(self._stored):
+            # Read off the sparse array without densifying it.
+            result = np.zeros((len(offsets), size))
+            for index, offset in enumerate(offsets):
+                # spdiags alignment: result[index, column] == M[column - offset, column]
+                values = np.asarray(self._stored.diagonal(offset)).ravel()
+                start = max(offset, 0)
+                stop = min(size, start + values.size)
+                result[index, start:stop] = values[: stop - start]
+            return result
+        return _read_diagonals(self._in_form(form), offsets, size)
+
+    def apply_block(
+        self, vectors: Sequence[X], /, *, n_jobs: int | None = None
+    ) -> list[Y]:
+        """One matrix product for all the vectors' components.
 
         Args:
-            offsets: which diagonals, zero being the main one.
-            form: which matrix's diagonals.
-            probe: accepted so the signature matches the base, and ignored --
-                the entries are read, not probed, so the result is exact
-                whatever this says.
+            vectors: the inputs.
+            n_jobs: accepted for the protocol and unused: the product is
+                one BLAS call, which threads on its own.
 
         Returns:
-            One row per offset.
-
-        Raises:
-            ValueError: for an unknown form, or an empty offset list.
+            The images, in order.
         """
-        offsets = tuple(int(offset) for offset in offsets)
-        if not offsets:
-            raise ValueError("At least one offset is needed.")
-        if form == "auto":
-            form = "galerkin" if Traits.SELF_ADJOINT & self._traits else "components"
-        if probe not in ("exact", "banded"):
-            raise ValueError(f"Unknown probe {probe!r}.")
+        images = np.asarray(self._stored @ self.domain.components_of(vectors))
+        if self._form == "galerkin":
+            images = self.codomain.solve_gram_to_columns(images)
+        return self.codomain.vectors_from(images)
 
-        dense = self._in_form(form)
-        size = min(self.domain.dim, self.codomain.dim)
-        result = np.zeros((len(offsets), size))
-        for index, offset in enumerate(offsets):
-            for column in range(size):
-                row = column - offset
-                if 0 <= row < size:
-                    result[index, column] = dense[row, column]
-        return result
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Y], /, *, n_jobs: int | None = None
+    ) -> list[X]:
+        components = self.codomain.components_of(vectors)
+        if self._form == "components":
+            components = self.codomain.apply_gram_to_columns(components)
+        pulled = np.asarray(self._stored.T @ components)
+        return self.domain.vectors_from(self.domain.solve_gram_to_columns(pulled))
 
-    def assembled(self) -> LinearOperator[X, Y]:
+    def assembled(self, /, *, n_jobs: int | None = None) -> LinearOperator[X, Y]:
         """Itself: it is already assembled."""
         return self
 

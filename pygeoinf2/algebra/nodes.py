@@ -17,7 +17,9 @@ See DESIGN.md sections 5.4 and 4.1.
 
 from __future__ import annotations
 
-from typing import Sequence
+import numpy as np
+
+from typing import Any, Sequence
 
 from ..traits import (
     Traits,
@@ -66,6 +68,45 @@ class _Identity[X](LinearOperator[X, X]):
     def _adjoint_value(self, y: X) -> X:
         return y
 
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        from .spaces import CoordinateSpace
+
+        if not isinstance(self.domain, CoordinateSpace):
+            return None
+        if form == "components":
+            return np.identity(self.domain.dim)
+        return self.domain.gram_matrix()
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        from .diagonal import DiagonalLinearOperator
+        from .spaces import CoordinateSpace
+
+        if not isinstance(self.domain, CoordinateSpace):
+            return None
+        ones = DiagonalLinearOperator(self.domain, np.ones(self.domain.dim))
+        return ones._known_diagonals(offsets, form)
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """Block application through the node; see ``LinearOperator.apply_block``.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: workers, passed down to the parts. Serial by default.
+
+        Returns:
+            The images, in order.
+        """
+        return list(vectors)
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        return list(vectors)
+
     def _combine_compose(self, other: Operator) -> Operator | None:
         return other
 
@@ -93,8 +134,14 @@ class _Identity[X](LinearOperator[X, X]):
 
         if not isinstance(self.domain, CoordinateSpace):
             return None
+        # The traits a scaled identity has in *any* metric: self-adjoint, and
+        # definite with the sign of alpha. A diagonal operator on a
+        # non-diagonal metric cannot deduce them from its values alone, so
+        # they are stated here, where they are known.
         return DiagonalLinearOperator(
-            self.domain, np.full(self.domain.dim, float(alpha))
+            self.domain,
+            np.full(self.domain.dim, float(alpha)),
+            traits=scale_traits(self.traits, alpha, square=True),
         )
 
     def __repr__(self) -> str:
@@ -117,6 +164,45 @@ class _Zero[X, Y](LinearOperator[X, Y]):
 
     def _adjoint_value(self, y: Y) -> X:
         return self.domain.zero()
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        from .spaces import CoordinateSpace
+
+        if not isinstance(self.domain, CoordinateSpace) or not isinstance(
+            self.codomain, CoordinateSpace
+        ):
+            return None
+        return np.zeros((self.codomain.dim, self.domain.dim))
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        from .spaces import CoordinateSpace
+
+        if not isinstance(self.domain, CoordinateSpace) or not isinstance(
+            self.codomain, CoordinateSpace
+        ):
+            return None
+        return np.zeros((len(offsets), min(self.domain.dim, self.codomain.dim)))
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """Block application through the node; see ``LinearOperator.apply_block``.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: workers, passed down to the parts. Serial by default.
+
+        Returns:
+            The images, in order.
+        """
+        return [self.codomain.zero() for _ in vectors]
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        return [self.domain.zero() for _ in vectors]
 
     def _combine_add(self, other: Operator) -> Operator | None:
         return other
@@ -151,6 +237,59 @@ class _Adjoint[X, Y](LinearOperator[Y, X]):
     def _adjoint_value(self, x: X) -> Y:
         return self._base(x)
 
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        # Galerkin(A*) == Galerkin(A)^T exactly: (A* e_j, e_i)_X == (e_j, A e_i)_Y.
+        # The components form then needs the domain's inverse metric down each
+        # column, since A*_c == G_X^-1 Galerkin(A)^T.
+        galerkin = self._base._known_matrix("galerkin")
+        if galerkin is None:
+            return None
+        transposed = np.array(galerkin.T)
+        if form == "galerkin":
+            return transposed
+        return self.codomain.solve_gram_to_columns(transposed)
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        if form != "galerkin":
+            # Only the Galerkin form transposes cleanly; the components form of
+            # an adjoint carries G_X^-1 across the rows.
+            return None
+        size = min(self.domain.dim, self.codomain.dim)
+        # Transposing swaps offset k for -k, and in the spdiags alignment the
+        # entries slide by k columns: (A^T)[c - k, c] == A[c, c - k].
+        mirrored = self._base._known_diagonals(tuple(-k for k in offsets), form)
+        if mirrored is None:
+            return None
+        result = np.zeros((len(offsets), size))
+        for index, offset in enumerate(offsets):
+            row = mirrored[index]
+            if offset >= 0:
+                result[index, offset:] = row[: size - offset]
+            else:
+                result[index, : size + offset] = row[-offset:]
+        return result
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """Block application through the node; see ``LinearOperator.apply_block``.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: workers, passed down to the parts. Serial by default.
+
+        Returns:
+            The images, in order.
+        """
+        return self._base._adjoint_apply_block(vectors, n_jobs=n_jobs)
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        return self._base.apply_block(vectors, n_jobs=n_jobs)
+
     def __repr__(self) -> str:
         return f"Adjoint({self._base!r})"
 
@@ -184,6 +323,41 @@ class _Scaled[X, Y](LinearOperator[X, Y]):
 
     def _adjoint_value(self, y: Y) -> X:
         return self.domain.scale(self._alpha, self._base.adjoint(y))
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        known = self._base._known_matrix(form)
+        return None if known is None else self._alpha * known
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        known = self._base._known_diagonals(offsets, form)
+        return None if known is None else self._alpha * known
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """Block application through the node; see ``LinearOperator.apply_block``.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: workers, passed down to the parts. Serial by default.
+
+        Returns:
+            The images, in order.
+        """
+        return [
+            self.codomain.scale(self._alpha, y)
+            for y in self._base.apply_block(vectors, n_jobs=n_jobs)
+        ]
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        return [
+            self.domain.scale(self._alpha, x)
+            for x in self._base._adjoint_apply_block(vectors, n_jobs=n_jobs)
+        ]
 
     def _combine_scale(self, alpha: float) -> Operator | None:
         """Fold nested scalings rather than nesting nodes."""
@@ -228,6 +402,61 @@ class _Sum[X, Y](LinearOperator[X, Y]):
         for term in self._terms[1:]:
             result = self.domain.add(result, term.adjoint(y))
         return result
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        total = None
+        for term in self._terms:
+            known = term._known_matrix(form)
+            if known is None:
+                return None
+            total = np.array(known) if total is None else total + known
+        return total
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
+        total = None
+        for term in self._terms:
+            known = term._known_diagonals(offsets, form)
+            if known is None:
+                return None
+            total = np.array(known) if total is None else total + known
+        return total
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """Block application through the node; see ``LinearOperator.apply_block``.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: workers, passed down to the parts. Serial by default.
+
+        Returns:
+            The images, in order.
+        """
+        vectors = list(vectors)
+        images = self._terms[0].apply_block(vectors, n_jobs=n_jobs)
+        for term in self._terms[1:]:
+            images = [
+                self.codomain.add(a, b)
+                for a, b in zip(images, term.apply_block(vectors, n_jobs=n_jobs))
+            ]
+        return images
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        vectors = list(vectors)
+        images = self._terms[0]._adjoint_apply_block(vectors, n_jobs=n_jobs)
+        for term in self._terms[1:]:
+            images = [
+                self.domain.add(a, b)
+                for a, b in zip(
+                    images, term._adjoint_apply_block(vectors, n_jobs=n_jobs)
+                )
+            ]
+        return images
 
     def _make_adjoint(self) -> LinearOperator[Y, X]:
         result = _Sum([term.adjoint for term in self._terms])
@@ -308,6 +537,44 @@ class _Composition[X, Y](LinearOperator[X, Y]):
         result = y
         for factor in self._factors:
             result = factor.adjoint(result)
+        return result
+
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        # Components matrices compose by multiplication; the Galerkin form of
+        # the product is then the codomain's metric on the result.
+        product = None
+        for factor in self._factors:
+            known = factor._known_matrix("components")
+            if known is None:
+                return None
+            product = np.array(known) if product is None else product @ known
+        if form == "components":
+            return product
+        return self.codomain.apply_gram_to_columns(product)
+
+    def apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        """Block application through the node; see ``LinearOperator.apply_block``.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: workers, passed down to the parts. Serial by default.
+
+        Returns:
+            The images, in order.
+        """
+        result = list(vectors)
+        for factor in reversed(self._factors):
+            result = factor.apply_block(result, n_jobs=n_jobs)
+        return result
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[Any], /, *, n_jobs: int | None = None
+    ) -> list[Any]:
+        result = list(vectors)
+        for factor in self._factors:
+            result = factor._adjoint_apply_block(result, n_jobs=n_jobs)
         return result
 
     def _make_adjoint(self) -> LinearOperator[Y, X]:

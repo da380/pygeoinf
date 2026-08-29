@@ -481,6 +481,36 @@ class CoordinateSpace[V](HilbertSpace[V], ABC):
             return columns.copy()
         return np.stack([self.apply_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1)
 
+    def gram_diagonal(self) -> np.ndarray:
+        """The diagonal of the Gram matrix, ``(e_i, e_i)`` for each basis vector.
+
+        What the Galerkin diagonal of a diagonal operator needs on a metric
+        that is not itself diagonal. The default reads it one basis vector at
+        a time through :meth:`apply_gram`, which costs ``dim`` metric
+        applications and never forms the matrix; a space that holds its
+        metric overrides it with a read.
+        """
+        diagonal = np.empty(self.dim)
+        c = np.zeros(self.dim)
+        for i in range(self.dim):
+            c[i] = 1.0
+            diagonal[i] = self.apply_gram(c)[i]
+            c[i] = 0.0
+        return diagonal
+
+    def solve_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        """``G^-1`` applied to every column of an array.
+
+        The counterpart of :meth:`apply_gram_to_columns`; the same default and
+        the same invitation to override. Converting a Galerkin matrix to the
+        components form is this applied to it, so on a space with a dense
+        Gram matrix the override is one multi-right-hand-side solve rather
+        than ``dim`` separate ones.
+        """
+        if columns.shape[1] == 0:
+            return columns.copy()
+        return np.stack([self.solve_gram(columns[:, j]) for j in range(columns.shape[1])], axis=1)
+
     def _orthonormalise_columns(
         self,
         columns: np.ndarray,
@@ -946,6 +976,14 @@ class DiagonalMetricSpace[V](CoordinateSpace[V], ABC):
         """``G`` on every column: one broadcast multiply."""
         return self._metric_values[:, None] * columns
 
+    def solve_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        """``G^-1`` on every column: one broadcast divide."""
+        return columns / self._metric_values[:, None]
+
+    def gram_diagonal(self) -> np.ndarray:
+        """The metric values themselves."""
+        return np.array(self._metric_values)
+
     def white_noise_components(self, *, rng: Generator | None = None) -> np.ndarray:
         """Components drawn from ``N(0, G^-1)``, using the diagonal factor."""
         xi = _resolve_rng(rng).standard_normal(self.dim)
@@ -982,6 +1020,14 @@ class OrthonormalSpace[V](CoordinateSpace[V], ABC):
     def apply_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
         """The columns themselves, copied: ``G`` is the identity."""
         return columns.copy()
+
+    def solve_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        """The columns themselves, copied: ``G`` is the identity."""
+        return columns.copy()
+
+    def gram_diagonal(self) -> np.ndarray:
+        """All ones: ``G`` is the identity."""
+        return np.ones(self.dim)
 
     def inner_product(self, x: V, y: V) -> float:
         """The plain component dot product."""

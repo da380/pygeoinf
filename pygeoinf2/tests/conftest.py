@@ -53,8 +53,15 @@ class DenseMetricSpace(ArrayVectorMixin, CoordinateSpace[np.ndarray]):
     """
 
     def __init__(self, gram: np.ndarray) -> None:
+        from scipy.linalg import cho_factor
+
         self._gram = np.asarray(gram, dtype=float)
         self._chol = np.linalg.cholesky(self._gram)
+        # Factorised once: ``solve_gram`` used to call ``np.linalg.solve`` on
+        # the full matrix every time, which at dimension 2000 made a
+        # ``solve_gram_to_columns`` -- 2000 solves -- run for hours, and made
+        # the fixture useless for measuring anything the metric enters.
+        self._factor = cho_factor(self._gram)
 
     @property
     def dim(self) -> int:
@@ -73,7 +80,23 @@ class DenseMetricSpace(ArrayVectorMixin, CoordinateSpace[np.ndarray]):
         return self._gram @ c
 
     def solve_gram(self, c: np.ndarray) -> np.ndarray:
-        return np.linalg.solve(self._gram, c)
+        from scipy.linalg import cho_solve
+
+        return cho_solve(self._factor, c)
+
+    def apply_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        return self._gram @ columns
+
+    def solve_gram_to_columns(self, columns: np.ndarray, /) -> np.ndarray:
+        from scipy.linalg import cho_solve
+
+        return cho_solve(self._factor, columns)
+
+    def gram_matrix(self) -> np.ndarray:
+        return self._gram.copy()
+
+    def gram_diagonal(self) -> np.ndarray:
+        return np.diagonal(self._gram).copy()
 
 
 def make_weighted_space() -> WeightedSpace:

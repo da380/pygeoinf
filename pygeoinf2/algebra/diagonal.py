@@ -23,7 +23,7 @@ from typing import Callable, Literal, Sequence
 
 import numpy as np
 
-from ..traits import Traits, close
+from ..traits import Traits, close, compose_traits, scale_traits, sum_traits
 from .operators import LinearOperator, Operator
 from .spaces import CoordinateSpace
 
@@ -127,9 +127,18 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         """Build an operator of this class. Subclasses override to stay in theirs."""
         return DiagonalLinearOperator(self.domain, eigenvalues)
 
+    # Each combination carries the traits that follow from the operands',
+    # on top of what the new eigenvalues let the constructor deduce. On a
+    # diagonal metric the two agree; on any other the constructor deduces
+    # nothing, and without this a product of two self-adjoint diagonals --
+    # ``(sigma I)(sigma I)``, the covariance of every isotropic measure --
+    # came out claiming nothing at all.
+
     def _combine_add(self, other: Operator) -> Operator | None:
         if isinstance(other, DiagonalLinearOperator) and other.domain == self.domain:
-            return self._rebuild(self._eigenvalues + other.eigenvalues)
+            return self._rebuild(self._eigenvalues + other.eigenvalues).with_traits(
+                sum_traits(self.traits, other.traits)
+            )
         return None
 
     def _combine_radd(self, other: Operator) -> Operator | None:
@@ -137,14 +146,28 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
     def _combine_compose(self, other: Operator) -> Operator | None:
         if isinstance(other, DiagonalLinearOperator) and other.domain == self.domain:
-            return self._rebuild(self._eigenvalues * other.eigenvalues)
+            traits = compose_traits(self.traits, other.traits, square=True)
+            # Diagonal in one basis, the two commute, so a product of
+            # self-adjoint factors is self-adjoint, and definiteness carries.
+            shared = self.traits & other.traits
+            traits |= shared & (
+                Traits.SELF_ADJOINT
+                | Traits.POSITIVE_SEMIDEFINITE
+                | Traits.POSITIVE_DEFINITE
+                | Traits.INVERTIBLE
+            )
+            return self._rebuild(self._eigenvalues * other.eigenvalues).with_traits(
+                traits
+            )
         return None
 
     def _combine_rcompose(self, other: Operator) -> Operator | None:
         return self._combine_compose(other)
 
     def _combine_scale(self, alpha: float) -> Operator | None:
-        return self._rebuild(alpha * self._eigenvalues)
+        return self._rebuild(alpha * self._eigenvalues).with_traits(
+            scale_traits(self.traits, alpha, square=True)
+        )
 
     # ----------------------------------------------------------------- #
     #                         Functional calculus                       #
@@ -218,50 +241,26 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         self._require(Traits.POSITIVE_DEFINITE, "a logarithm")
         return self.apply_function(np.log)
 
-    def diagonals(
-        self,
-        /,
-        *,
-        offsets: Sequence[int] = (0,),
-        form: Literal["auto", "components", "galerkin"] = "auto",
-        probe: Literal["exact", "banded"] = "exact",
-    ) -> np.ndarray:
+    def _known_matrix(self, form: str) -> np.ndarray | None:
+        matrix = np.diag(self._eigenvalues)
+        if form == "components":
+            return matrix
+        return self.domain.apply_gram_to_columns(matrix)
+
+    def _known_diagonals(
+        self, offsets: tuple[int, ...], form: str
+    ) -> np.ndarray | None:
         """The diagonals, read off the spectrum rather than probed.
 
-        The base implementation costs one application per column, so extracting
-        the diagonal of a diagonal operator cost ``dim`` matvecs — and it is
-        asked for on exactly the operators most likely to be diagonal: the
-        error covariance inside every structure-aware preconditioner, and
-        whatever Jacobi is handed.
-
-        Only the main diagonal is non-zero. In the Galerkin form the metric
-        multiplies it, which is free on a diagonal metric and needs the Gram
-        matrix otherwise — so that case defers to the base implementation
-        rather than guessing.
-
-        Args:
-            offsets: which diagonals, zero being the main one. Every other
-                offset comes back zero, this operator having nothing there.
-            form: which matrix's diagonals. ``"galerkin"`` multiplies by the
-                metric; ``"auto"`` picks it for a self-adjoint operator.
-            probe: accepted so the signature matches the base, and unused --
-                there is nothing to probe when the spectrum is stored.
-
-        Returns:
-            One row per offset, aligned as ``scipy.sparse.spdiags`` expects.
-
-        Raises:
-            ValueError: for an unknown *form* or *probe*.
+        Only the main diagonal is non-zero in the components form. In the
+        Galerkin form the metric multiplies the matrix, ``G diag(d)``, which
+        stays diagonal on a diagonal metric and does not otherwise: there
+        the main diagonal is still a read, ``G_ii d_i``, and any other
+        offset is ``G_ij d_j`` -- an entry of the Gram matrix this class does
+        not hold, so for those the answer is ``None`` and the base class
+        probes rather than guessing.
         """
         from .spaces import DiagonalMetricSpace, OrthonormalSpace
-
-        offsets = tuple(int(offset) for offset in offsets)
-        if not offsets:
-            raise ValueError("At least one offset is needed.")
-        if form == "auto":
-            form = "galerkin" if Traits.SELF_ADJOINT & self.traits else "components"
-        if form not in ("components", "galerkin"):
-            raise ValueError(f"Unknown matrix form {form!r}.")
 
         space = self.domain
         if form == "galerkin":
@@ -269,16 +268,46 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
                 values = self._eigenvalues
             elif isinstance(space, DiagonalMetricSpace):
                 values = space.metric_values * self._eigenvalues
+            elif all(offset == 0 for offset in offsets):
+                values = space.gram_diagonal() * self._eigenvalues
             else:
-                return super().diagonals(offsets=offsets, form=form, probe=probe)
+                return None
         else:
             values = self._eigenvalues
-
         result = np.zeros((len(offsets), space.dim))
         for index, offset in enumerate(offsets):
             if offset == 0:
                 result[index] = values
         return result
+
+    def apply_block(
+        self, vectors: Sequence[V], /, *, n_jobs: int | None = None
+    ) -> list[V]:
+        """The spectrum broadcast over the vectors' components at once.
+
+        Args:
+            vectors: the inputs.
+            n_jobs: accepted for the protocol and unused: one broadcast
+                multiply is the whole cost.
+
+        Returns:
+            The images, in order.
+        """
+        space: CoordinateSpace = self.domain
+        return space.vectors_from(
+            self._eigenvalues[:, None] * space.components_of(vectors)
+        )
+
+    def _adjoint_apply_block(
+        self, vectors: Sequence[V], /, *, n_jobs: int | None = None
+    ) -> list[V]:
+        if Traits.SELF_ADJOINT & self.traits:
+            return self.apply_block(vectors, n_jobs=n_jobs)
+        space: CoordinateSpace = self.domain
+        weighted = space.apply_gram_to_columns(space.components_of(vectors))
+        return space.vectors_from(
+            space.solve_gram_to_columns(self._eigenvalues[:, None] * weighted)
+        )
 
     @property
     def log_determinant(self) -> float:

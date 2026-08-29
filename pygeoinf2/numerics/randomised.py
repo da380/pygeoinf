@@ -73,15 +73,29 @@ class Estimate:
 
 
 def _probe_range(
-    operator: LinearOperator, count: int, rng: Generator | None
+    operator: LinearOperator,
+    count: int,
+    rng: Generator | None,
+    *,
+    n_jobs: int | None = None,
 ) -> list[Any]:
-    """Apply the operator to white-noise probes drawn on its domain."""
+    """Apply the operator to white-noise probes drawn on its domain.
+
+    The probes are drawn in order from *rng* and applied as one block, so a
+    matrix-backed operator does one product and a parallel run gives the same
+    numbers as a serial one.
+    """
     domain = operator.domain
-    return [operator(domain.white_noise(rng=rng)) for _ in range(count)]
+    probes = [domain.white_noise(rng=rng) for _ in range(count)]
+    return operator.apply_block(probes, n_jobs=n_jobs)
 
 
 def _power_iterate(
-    operator: LinearOperator, basis: Sequence[Any], power: int
+    operator: LinearOperator,
+    basis: Sequence[Any],
+    power: int,
+    *,
+    n_jobs: int | None = None,
 ) -> list[Any]:
     """Sharpen a range basis by alternating with the adjoint.
 
@@ -92,10 +106,12 @@ def _power_iterate(
     domain, codomain = operator.domain, operator.codomain
     result = list(basis)
     for _ in range(power):
-        pulled = domain.orthonormal_basis([operator.adjoint(q) for q in result])
+        pulled = domain.orthonormal_basis(
+            operator.adjoint.apply_block(result, n_jobs=n_jobs)
+        )
         if not pulled:
             break
-        result = codomain.orthonormal_basis([operator(z) for z in pulled])
+        result = codomain.orthonormal_basis(operator.apply_block(pulled, n_jobs=n_jobs))
         if not result:
             break
     return result
@@ -103,7 +119,14 @@ def _power_iterate(
 
 def _range_options(kwargs: dict) -> dict:
     """The ``random_range`` options a factorisation forwards, with defaults."""
-    unknown = set(kwargs) - {"oversampling", "power", "block_size", "rtol", "max_rank"}
+    unknown = set(kwargs) - {
+        "oversampling",
+        "power",
+        "block_size",
+        "rtol",
+        "max_rank",
+        "n_jobs",
+    }
     if unknown:
         raise TypeError(f"Unexpected keyword arguments: {sorted(unknown)}.")
     return {
@@ -112,6 +135,7 @@ def _range_options(kwargs: dict) -> dict:
         "block_size": kwargs.get("block_size", 10),
         "rtol": kwargs.get("rtol", 1e-4),
         "max_rank": kwargs.get("max_rank", None),
+        "n_jobs": kwargs.get("n_jobs", None),
     }
 
 
@@ -139,6 +163,7 @@ def _range_with_columns(
     rtol: float,
     max_rank: int | None,
     rng: Generator | None,
+    n_jobs: int | None = None,
 ) -> tuple[list[Any], np.ndarray | None]:
     """``random_range``, also returning the basis as component columns.
 
@@ -160,10 +185,10 @@ def _range_with_columns(
                 rtol=rtol,
                 max_rank=max_rank,
                 rng=rng,
+                n_jobs=n_jobs,
             ),
             None,
         )
-
     ceiling = max_rank if max_rank is not None else min(domain.dim, codomain.dim)
     if ceiling <= 0:
         return [], None
@@ -171,21 +196,24 @@ def _range_with_columns(
         if rank <= 0:
             raise ValueError("rank must be positive.")
         count = min(rank + oversampling, ceiling)
-        columns = _orthonormal_columns(codomain, _probe_range(operator, count, rng))
+        columns = _orthonormal_columns(
+            codomain, _probe_range(operator, count, rng, n_jobs=n_jobs)
+        )
     else:
         columns = _adaptive_range_on_components(
-            operator, codomain, ceiling, block_size, rtol, rng
+            operator, codomain, ceiling, block_size, rtol, rng, n_jobs=n_jobs
         )
     for _ in range(power):
         if columns.shape[1] == 0:
             break
         pulled = _orthonormal_columns(
-            domain, [operator.adjoint(q) for q in codomain.vectors_from(columns)]
+            domain,
+            operator.adjoint.apply_block(codomain.vectors_from(columns), n_jobs=n_jobs),
         )
         if pulled.shape[1] == 0:
             break
         columns = _orthonormal_columns(
-            codomain, [operator(z) for z in domain.vectors_from(pulled)]
+            codomain, operator.apply_block(domain.vectors_from(pulled), n_jobs=n_jobs)
         )
     return codomain.vectors_from(columns), columns
 
@@ -201,6 +229,7 @@ def random_range(
     rtol: float = 1e-4,
     max_rank: int | None = None,
     rng: Generator | None = None,
+    n_jobs: int | None = None,
 ) -> list[Any]:
     """An orthonormal basis for an approximate range of the operator.
 
@@ -217,6 +246,10 @@ def random_range(
         rtol: relative residual at which the adaptive mode stops.
         max_rank: hard ceiling, defaulting to the smaller dimension.
         rng: generator for the probes.
+        n_jobs: workers for applying the operator to a block of probes, one
+            probe per worker, where the operator cannot apply a block at
+            once itself. The probes are drawn before they are applied, so
+            the result does not depend on this. Serial by default.
 
     Returns:
         An orthonormal list of vectors in the codomain. It may be shorter than
@@ -237,8 +270,8 @@ def random_range(
         if rank <= 0:
             raise ValueError("rank must be positive.")
         count = min(rank + oversampling, ceiling)
-        basis = codomain.orthonormal_basis(_probe_range(operator, count, rng))
-        return _power_iterate(operator, basis, power)
+        basis = codomain.orthonormal_basis(_probe_range(operator, count, rng, n_jobs=n_jobs))
+        return _power_iterate(operator, basis, power, n_jobs=n_jobs)
 
     # --- adaptive: grow until a fresh block is nearly in the span ------
     #
@@ -250,14 +283,15 @@ def random_range(
     # one. That is v1's arrangement.
     if _fast(codomain):
         columns = _adaptive_range_on_components(
-            operator, codomain, ceiling, block_size, rtol, rng
+            operator, codomain, ceiling, block_size, rtol, rng, n_jobs=n_jobs
         )
-        return _power_iterate(operator, codomain.vectors_from(columns), power)
-
+        return _power_iterate(operator, codomain.vectors_from(columns), power, n_jobs=n_jobs)
     basis: list[Any] = []
     scale: float | None = None
     while len(basis) < ceiling:
-        block = _probe_range(operator, min(block_size, ceiling - len(basis)), rng)
+        block = _probe_range(
+            operator, min(block_size, ceiling - len(basis)), rng, n_jobs=n_jobs
+        )
         if scale is None:
             scale = max((codomain.norm(y) for y in block), default=0.0)
             if scale == 0.0:
@@ -275,7 +309,7 @@ def random_range(
         basis.extend(codomain.orthonormal_basis(residuals)[:room])
         if largest <= rtol * scale or not residuals:
             break
-    return _power_iterate(operator, basis, power)
+    return _power_iterate(operator, basis, power, n_jobs=n_jobs)
 
 
 def _adaptive_range_on_components(
@@ -285,6 +319,8 @@ def _adaptive_range_on_components(
     block_size: int,
     rtol: float,
     rng: Generator | None,
+    *,
+    n_jobs: int | None = None,
 ) -> np.ndarray:
     """The adaptive loop with the basis kept as component columns.
 
@@ -300,7 +336,7 @@ def _adaptive_range_on_components(
     scale: float | None = None
     while count < ceiling:
         block = codomain.components_of(
-            _probe_range(operator, min(block_size, ceiling - count), rng)
+            _probe_range(operator, min(block_size, ceiling - count), rng, n_jobs=n_jobs)
         )
         weighted = codomain.apply_gram_to_columns(block)
         norms = np.sqrt(np.maximum(np.einsum("ij,ij->j", block, weighted), 0.0))
@@ -518,7 +554,7 @@ def random_eig(
             basis until a fresh block adds nothing.
         rng: the generator for the probes.
         **kwargs: passed to :func:`random_range` -- oversampling, power
-            iterations, the adaptive tolerance.
+            iterations, the adaptive tolerance, ``n_jobs``.
 
     Returns:
         The decomposition, itself an operator.
@@ -533,11 +569,11 @@ def random_eig(
             f"this one claims {operator.traits!s}. Use random_svd otherwise."
         )
     space = operator.domain
-    basis, columns = _range_with_columns(operator, rank=rank, rng=rng, **_range_options(kwargs))
+    options = _range_options(kwargs)
+    basis, columns = _range_with_columns(operator, rank=rank, rng=rng, **options)
     if not basis:
         raise ValueError("The operator's range appears to be trivial.")
-
-    images = [operator(q) for q in basis]
+    images = operator.apply_block(basis, n_jobs=options["n_jobs"])
     if columns is not None:
         # T == Q^T G (A Q) on component columns: k analyses, not k^2.
         projected = columns.T @ space.apply_gram_to_columns(space.components_of(images))
@@ -601,11 +637,11 @@ def random_svd(
         ValueError: for a rank exceeding the smaller dimension.
     """
     domain, codomain = operator.domain, operator.codomain
-    basis, columns = _range_with_columns(operator, rank=rank, rng=rng, **_range_options(kwargs))
+    options = _range_options(kwargs)
+    basis, columns = _range_with_columns(operator, rank=rank, rng=rng, **options)
     if not basis:
         raise ValueError("The operator's range appears to be trivial.")
-
-    pulled = [operator.adjoint(q) for q in basis]
+    pulled = operator.adjoint.apply_block(basis, n_jobs=options["n_jobs"])
     fast = columns is not None
     if fast:
         pulled_columns = domain.components_of(pulled)
@@ -803,6 +839,7 @@ def deflated_diagonal(
     samples: int = 100,
     form: Literal["galerkin", "components"] = "galerkin",
     rng: Generator | None = None,
+    n_jobs: int | None = None,
 ) -> np.ndarray:
     """A diagonal estimate with the dominant eigenvalues removed first.
 
@@ -824,6 +861,8 @@ def deflated_diagonal(
         samples: probes for the remainder.
         form: which matrix's diagonal, as for :func:`random_diagonal`.
         rng: the generator.
+        n_jobs: workers for the operator applications, in the
+            eigendecomposition and in the probes alike. Serial by default.
 
     Returns:
         The diagonal, as an array.
@@ -836,10 +875,11 @@ def deflated_diagonal(
     if rank < 0:
         raise ValueError(f"The rank must be non-negative, got {rank}.")
     if rank == 0:
-        return random_diagonal(operator, samples=samples, form=form, rng=rng)
-
+        return random_diagonal(
+            operator, samples=samples, form=form, rng=rng, n_jobs=n_jobs
+        )
     generator = rng if rng is not None else np.random.default_rng()
-    low_rank = random_eig(operator, rank=rank, rng=generator)
+    low_rank = random_eig(operator, rank=rank, rng=generator, n_jobs=n_jobs)
     domain: CoordinateSpace = operator.domain
 
     # diag(U L U*) exactly. The operator's component matrix is
@@ -865,7 +905,9 @@ def deflated_diagonal(
         exact = np.einsum("i,ij,ij->j", low_rank.eigenvalues, columns, weighted)
 
     remainder = operator - low_rank
-    return exact + random_diagonal(remainder, samples=samples, form=form, rng=generator)
+    return exact + random_diagonal(
+        remainder, samples=samples, form=form, rng=generator, n_jobs=n_jobs
+    )
 
 
 def random_diagonal(
@@ -878,6 +920,7 @@ def random_diagonal(
     block_size: int = 20,
     form: Literal["galerkin", "components"] = "galerkin",
     rng: Generator | None = None,
+    n_jobs: int | None = None,
 ) -> np.ndarray:
     """The Bekas-Kokiopoulou-Saad diagonal estimate.
 
@@ -911,6 +954,9 @@ def random_diagonal(
         block_size: probes added per round.
         form: which matrix's diagonal.
         rng: the generator.
+        n_jobs: workers for applying the operator to a block of probes. The
+            probes are drawn before they are applied, so the estimate does
+            not depend on this. Serial by default.
 
     Returns:
         One value per component.
@@ -938,9 +984,14 @@ def random_diagonal(
 
     def probe_block(count: int) -> None:
         nonlocal drawn
-        for _ in range(count):
-            probe = generator.integers(0, 2, size=domain.dim) * 2.0 - 1.0
-            image = codomain.to_components(operator(domain.from_components(probe)))
+        probes = [
+            generator.integers(0, 2, size=domain.dim) * 2.0 - 1.0 for _ in range(count)
+        ]
+        images = operator.apply_block(
+            [domain.from_components(probe) for probe in probes], n_jobs=n_jobs
+        )
+        for probe, vector in zip(probes, images):
+            image = codomain.to_components(vector)
             if form == "galerkin":
                 image = codomain.apply_gram(image)
             contribution = probe[:dimension] * image[:dimension]
