@@ -261,6 +261,48 @@ class TestPointsAreConvertedOnce:
         )
 
 
+class TestAnInvariantDrawIsTakenInComponents:
+    """REVIEW2 4.2.3. The draw went through the covariance factor, which
+    synthesised white noise onto the grid so that a diagonal operator could
+    analyse it again and synthesise the result: three transforms for numbers
+    that are `sqrt(s / g) * standard normal` in components."""
+
+    def test_it_is_the_draw_the_factor_would_have_given(self, geometry):
+        """Exactly, not statistically: both routes consume one standard normal
+        per component, in the same order, so a shared seed pins the draw."""
+        _, space = geometry
+        measure = space.sobolev_measure(2.0, 0.3)
+        factor = measure.covariance_factor
+
+        drawn = measure.sample(rng=np.random.default_rng(20260830))
+        through = factor(space.white_noise(rng=np.random.default_rng(20260830)))
+        assert np.allclose(
+            space.to_components(drawn), space.to_components(through), atol=1e-12
+        )
+
+    def test_the_metric_is_in_it(self, geometry):
+        """The negative control. Dropping the `1/sqrt(g)` is invisible on a
+        Lebesgue space and wrong everywhere else."""
+        _, space = geometry
+        variances = space.sobolev_symbol(-2.0, 0.3)
+        measure = space.invariant_measure(variances)
+        drawn = space.to_components(measure.sample(rng=np.random.default_rng(7)))
+        naive = np.sqrt(variances) * np.random.default_rng(7).standard_normal(space.dim)
+        assert not np.allclose(drawn, naive)
+        assert np.allclose(drawn, naive / np.sqrt(space.metric_values))
+
+    def test_scaling_the_measure_keeps_the_sampler(self, geometry, rng):
+        """`_rebuild` carries `sample=`, so a scaled or translated measure is
+        still drawn in components rather than falling back to the factor."""
+        _, space = geometry
+        measure = space.sobolev_measure(2.0, 0.3)
+        scaled = 2.0 * measure
+        assert scaled.can_sample
+        drawn = space.to_components(scaled.sample(rng=np.random.default_rng(3)))
+        once = space.to_components(measure.sample(rng=np.random.default_rng(3)))
+        assert np.allclose(drawn, 2.0 * once)
+
+
 class TestNeighbourSearchAndClustering:
     """On the base, so every geometry has them, and by KD-tree."""
 

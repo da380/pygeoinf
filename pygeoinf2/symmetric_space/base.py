@@ -670,10 +670,13 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
     ) -> GaussianMeasure:
         """A Gaussian whose covariance is diagonal in the spectral basis.
 
-        The factor is the exact square root of the covariance, so sampling is a
-        single spectral multiply of white noise — and the white noise carries
-        the ``1/sqrt(g)`` that a non-trivial metric demands, rather than that
-        correction being written out here.
+        The factor is the exact square root of the covariance, and the draw is
+        taken in components: ``sqrt(s / g)`` times a standard normal, which is
+        one synthesis. Going through the factor synthesises white noise onto
+        the grid only for a diagonal operator to analyse it again, at three
+        transforms for the same numbers. The ``1/sqrt(g)`` is the metric's,
+        and it is white noise's rather than this method's invention: white
+        noise has components ``N(0, G^-1)``.
 
         ``pointwise_std`` rescales the whole spectrum so that
         :meth:`pointwise_variance` comes out as its square, leaving the shape
@@ -734,11 +737,28 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             if np.all(variances > 0.0)
             else None
         )
+
+        # A draw in components: one synthesis, where the factor route costs
+        # three transforms. White noise is synthesised on the grid only for
+        # the diagonal operator to analyse it again and synthesise the result,
+        # and none of that is work -- the whole draw is
+        # `sqrt(s / g) * standard normal` in components, since white noise's
+        # components are `N(0, G^-1)` (REVIEW2 4.2.3). Centred, because
+        # GaussianMeasure.sample adds the expectation itself.
+        deviations = np.sqrt(variances / self.metric_values)
+
+        def sample(rng: Generator | None) -> V:
+            generator = np.random.default_rng() if rng is None else rng
+            return self.from_components(
+                deviations * generator.standard_normal(self.dim)
+            )
+
         return GaussianMeasure(
             self,
             expectation=expectation,
             covariance_factor=factor,
             precision=precision,
+            sample=sample,
         )
 
     def sobolev_measure(
