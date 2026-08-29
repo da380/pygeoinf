@@ -138,6 +138,31 @@ class TestDoubling:
         beyond = np.abs(frequencies) > X.lmax + 1
         assert np.abs(coefficients[beyond]).max() < 1e-9 * np.abs(coefficients).max()
 
+    @pytest.mark.parametrize("lmax", [4, 8, 17, 32])
+    @pytest.mark.parametrize("radius,sampling", [(1.0, 1), (1.7, 1), (1.0, 2)])
+    def test_the_south_pole_comes_from_the_row_means(self, lmax, radius, sampling, rng):
+        """REVIEW2 4.2.8. The pole value used to cost a full analysis -- 35% of
+        a forward evaluation at lmax 256 -- to read one number out. Only the
+        zonal harmonics are non-zero at a pole and they do not depend on
+        longitude, so it is a weighting of the row means."""
+        X = Sobolev(lmax, 2.0, 0.2, radius=radius, sampling=sampling)
+        rows, _ = X.grid_shape
+        field = X.random(rng=rng)
+        analysis = float(X._south_pole_basis @ X.to_components(field))
+        assert X._double(field)[rows][0] == pytest.approx(analysis, rel=1e-11)
+
+    def test_the_pole_value_costs_no_transform(self, rng, monkeypatch):
+        """The point of the closed form: nothing in the extension analyses."""
+        X = Lebesgue(12)
+        field = X.random(rng=rng)
+        X._double(field)  # warm the cached kernel, which does probe once
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("_double analysed the field")
+
+        monkeypatch.setattr(type(X), "to_components", refuse)
+        assert X._double(field) is not None
+
     def test_doubling_and_its_adjoint_are_adjoint(self, rng):
         X = Lebesgue(6)
         rows, columns = X.grid_shape

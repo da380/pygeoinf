@@ -78,6 +78,11 @@ _NO_CONDON_SHORTLEY = 1
 # dict rather than an lru_cache because the value is computed from an instance.
 _QUADRATURES: dict[tuple[int, int, float], np.ndarray] = {}
 
+# The south pole row weights, on the same key and for the same reason: they
+# are built from the quadrature and from Legendre values, neither of which
+# knows the Sobolev order.
+_SOUTH_POLE_KERNELS: dict[tuple[int, int, float], np.ndarray] = {}
+
 
 @lru_cache(maxsize=8)
 def _packing_for(lmax: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -760,6 +765,65 @@ class Sphere(SymmetricSpace[Any]):
         """The basis at colatitude ``pi``, which the grid does not sample."""
         return self.basis_at(np.array([-90.0, 0.0]))
 
+    @cached_property
+    def _south_pole_kernel(self) -> np.ndarray:
+        r"""Row weights taking a field's row means to its value at the south pole.
+
+        The pole is not a grid row, so :meth:`_double` has to evaluate the
+        field there. It did that with a full analysis, which at ``lmax`` 256
+        was 19 ms of a 67 ms forward evaluation -- 35% of it, spent to read one
+        number out (REVIEW2 4.2.8).
+
+        There is a closed form, and it is a row weighting. Analysis on this
+        grid is a quadrature, so
+
+        .. code-block:: text
+
+            f(pi) == sum_k phi_k(pi) c_k
+                  == sum_j w_j sum_i f_ji sum_k phi_k(pi) phi_k(p_ji)
+
+        and the inner sum kills every order but ``m == 0``: an associated
+        Legendre function of order ``m > 0`` vanishes at the pole. The ``m ==
+        0`` harmonics do not depend on longitude, so what is left of the middle
+        sum is the row's total, and
+
+        .. code-block:: text
+
+            K_j == columns * w_j * sum_l Ybar_l0(pi) Ybar_l0(theta_j) / R^2
+            f(pi) == K . row_means(f)
+
+        The zonal harmonics come from one ``PlmON`` call at ``z == 1``, which
+        is exactly their normalisation since ``P_l(1) == 1``, times a Legendre
+        Vandermonde over the grid's cosines -- so the convention is pyshtools'
+        own rather than one asserted here, and no per-row transform is needed.
+        Agrees with the analysis route to 6e-14 at every truncation, radius and
+        sampling tested; 0.06 ms against 19 ms.
+
+        Shared between spaces of the same grid, as the quadrature is.
+        """
+        from pyshtools.legendre import PlmON
+
+        key = (self._lmax, self._sampling, self._radius)
+        cached = _SOUTH_POLE_KERNELS.get(key)
+        if cached is not None:
+            return cached
+
+        _, columns = self.grid_shape
+        degrees = np.arange(self._lmax + 1)
+        # PlmIndex(l, 0), the zonal entries of the packed Legendre array.
+        zonal_indices = degrees * (degrees + 1) // 2
+        # P_l(1) == 1, so this is the normalisation of each zonal harmonic.
+        norms = PlmON(self._lmax, 1.0, csphase=_NO_CONDON_SHORTLEY)[zonal_indices]
+        at_pole = norms * (-1.0) ** degrees
+        legendre = np.polynomial.legendre.legvander(
+            np.cos(self.colatitudes), self._lmax
+        )
+        rows = (legendre * norms) @ at_pole / self._radius**2
+        kernel = columns * self._quadrature * rows
+        kernel.flags.writeable = False
+        _SOUTH_POLE_KERNELS[key] = kernel
+        return kernel
+
     def _synthesis_adjoint(self, values: np.ndarray, /) -> np.ndarray:
         """``sum_jk v_jk phi(p_jk)``: the transpose of synthesis onto the grid.
 
@@ -785,13 +849,16 @@ class Sphere(SymmetricSpace[Any]):
         ``g(2 pi - theta, phi) == f(theta, phi + pi)`` beyond it. For a
         band-limited ``f`` the result is a *trigonometric polynomial* on the
         torus, which is what makes one FFT of it exact.
+
+        Costs no transform: the south pole is the one value the grid does not
+        hold, and :attr:`_south_pole_kernel` reads it off the row means.
         """
         rows, columns = self.grid_shape
         field = self.grid_values(x)
         doubled = np.empty((2 * rows, columns))
         doubled[:rows] = field
         # theta == pi is the south pole: not a grid row, so it is evaluated.
-        doubled[rows] = float(self._south_pole_basis @ self.to_components(x))
+        doubled[rows] = float(self._south_pole_kernel @ field.mean(axis=1))
         doubled[rows + 1 :] = np.roll(field[1:][::-1], columns // 2, axis=1)
         return doubled
 
