@@ -355,11 +355,57 @@ def apply_operator_function(
     return result
 
 
+# Below this order the dense symmetric solver beats the tridiagonal one, whose
+# cost at these sizes is Python argument validation rather than arithmetic.
+# Measured, microseconds per call, one BLAS thread:
+#
+#     k             3     5    10    20    40
+#     eigh_tridiagonal   7.6   8.4  12.5  26.2  65.9
+#     np.linalg.eigh     3.5   4.5   8.6  22.7  80.4
+#
+# and a Lanczos run that stops on its own rarely reaches 20. The two agree to
+# rounding, and both uses here -- ``V f(L) V^T e_1`` and ``V[0]^2`` -- are
+# invariant under the eigenvector sign conventions the two drivers may differ
+# on.
+#
+# The alternative the review proposed -- check every k steps rather than every
+# step -- was prototyped and is a *regression*, so it is not done. Skipping a
+# check never saves an operator application: the application for a step has
+# already happened by the time the step is yielded, so a coarser check can
+# only make the iteration run further before it notices it has converged.
+# Measured over 200 probes, ``log`` at ``rtol=1e-3``, one BLAS thread:
+#
+#     check every        1        2        3
+#     dim 300      0.037 s  0.038 s  0.041 s   (1399 / 1606 / 1809 steps)
+#     dim 2000     1.06 s   1.23 s   1.37 s    (1400 / 1600 / 1800 steps)
+#
+# It loses even where the operator is cheapest, and loses badly where it is
+# dear -- which is the case stochastic Lanczos quadrature exists for. Making
+# the check cheaper is the version of the idea that works.
+_DENSE_EIGH_LIMIT = 32
+
+
 def _eigh_tridiagonal(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Eigendecompose a small symmetric tridiagonal matrix."""
+    """Eigendecompose a small symmetric tridiagonal matrix.
+
+    Called once per Lanczos step by the two convergence tests, so its
+    per-call overhead is the convergence check's whole cost: measured at 27 %
+    of a stochastic log-determinant on a 300-dimensional operator, where the
+    operator itself is cheap.
+
+    Args:
+        matrix: the tridiagonal matrix, dense.
+
+    Returns:
+        Its eigenvalues and eigenvectors, ascending.
+    """
     k = matrix.shape[0]
     if k == 1:
         return matrix[0].copy(), np.ones((1, 1))
+    if k <= _DENSE_EIGH_LIMIT:
+        # The dense matrix is already in hand; the tridiagonal driver would
+        # only re-extract its two bands from it.
+        return np.linalg.eigh(matrix)
     return eigh_tridiagonal(np.diag(matrix), np.diag(matrix, 1))
 
 

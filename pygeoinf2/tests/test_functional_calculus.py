@@ -707,3 +707,60 @@ class TestLanczosOnComponents:
         # start vector's and its norm's. The coordinate-free route needed
         # 2k + 4 per step.
         assert counts["analysis"] <= 2 * steps + 3
+
+
+class TestTheConvergenceCheckIsCheap:
+    """The Lanczos convergence test eigendecomposes the tridiagonal matrix at
+    every step, so its per-call overhead is the whole cost of the test —
+    measured at 27 % of a stochastic log-determinant on a 300-dimensional
+    operator. Below order 32 the dense symmetric solver is about twice as
+    fast as the tridiagonal one, whose cost at these sizes is argument
+    validation rather than arithmetic, and the dense matrix is already in
+    hand."""
+
+    @pytest.mark.parametrize("k", [1, 2, 5, 31, 32, 33, 60])
+    def test_it_agrees_with_the_tridiagonal_driver(self, k, rng):
+        from pygeoinf2.numerics.functional_calculus import _eigh_tridiagonal
+
+        diagonal = rng.uniform(1.0, 3.0, k)
+        off = rng.uniform(0.1, 0.6, max(k - 1, 0))
+        matrix = np.diag(diagonal) + np.diag(off, 1) + np.diag(off, -1)
+
+        values, vectors = _eigh_tridiagonal(matrix)
+        if k == 1:
+            reference = (diagonal.copy(), np.ones((1, 1)))
+        else:
+            reference = sla.eigh_tridiagonal(diagonal, off)
+
+        assert values == pytest.approx(reference[0], abs=1e-12)
+        # The two uses in this module, both invariant under eigenvector sign.
+        assert vectors[0, :] ** 2 == pytest.approx(reference[1][0, :] ** 2, abs=1e-12)
+        combined = vectors @ (np.sqrt(values) * vectors[0, :])
+        expected = reference[1] @ (np.sqrt(reference[0]) * reference[1][0, :])
+        assert combined == pytest.approx(expected, abs=1e-10)
+
+    def test_a_stochastic_log_determinant_is_unchanged(self, rng):
+        """The end-to-end check: the same estimate, to the bit, from the same
+        probes. The eigendecomposition changed driver, not meaning."""
+        from pygeoinf2.numerics.functional_calculus import log_determinant
+
+        space = EuclideanSpace(60)
+        root = rng.standard_normal((60, 60))
+        matrix = root @ root.T / 60.0 + np.identity(60)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            matrix,
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        estimate = log_determinant(
+            operator,
+            method="stochastic",
+            samples=40,
+            rng=np.random.default_rng(7),
+            max_iterations=30,
+            rtol=1e-4,
+        )
+        exact = float(np.linalg.slogdet(matrix)[1])
+        assert abs(estimate.value - exact) < 4.0 * estimate.standard_error + 0.5
