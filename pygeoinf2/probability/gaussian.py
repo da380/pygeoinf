@@ -39,6 +39,69 @@ __all__ = ["GaussianMeasure"]
 _REQUIRED = Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
 
 
+def _semidefinite_factors(
+    symmetric: np.ndarray, /, *, rtol: float
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """A square root of a symmetric PSD matrix, and its inverse when it exists.
+
+    Cholesky first, because it is the cheaper factorisation and because
+    succeeding is a proof that the matrix is numerically definite. When it
+    fails the matrix is singular or has drifted slightly negative, and a
+    symmetric eigendecomposition decides which: eigenvalues below
+    ``-rtol * max|lambda|`` mean the caller's matrix is not a covariance, and
+    smaller negative ones are floating-point noise and are clipped, with a
+    warning, exactly as v1 did.
+
+    Args:
+        symmetric: the matrix, already symmetrised.
+        rtol: how negative an eigenvalue may be, relative to the largest in
+            magnitude, before the matrix is refused rather than clipped.
+
+    Returns:
+        ``(R, Rinv)`` with ``R R^T == symmetric``. ``Rinv`` is ``None`` when
+        the matrix is singular, there being no inverse to report.
+
+    Raises:
+        ValueError: if the matrix has a significantly negative eigenvalue.
+    """
+    import warnings
+
+    from scipy.linalg import solve_triangular
+
+    dimension = symmetric.shape[0]
+    try:
+        root = np.linalg.cholesky(symmetric)
+    except np.linalg.LinAlgError:
+        pass
+    else:
+        return root, solve_triangular(root, np.eye(dimension), lower=True)
+
+    eigenvalues, vectors = np.linalg.eigh(symmetric)
+    largest = float(np.max(np.abs(eigenvalues))) if dimension else 0.0
+    smallest = float(np.min(eigenvalues)) if dimension else 0.0
+    if smallest < -rtol * largest:
+        raise ValueError(
+            f"The covariance matrix has an eigenvalue {smallest:.3e} against a "
+            f"largest magnitude {largest:.3e}, so it is not positive "
+            f"semidefinite in this representation."
+        )
+    if smallest < 0.0:
+        warnings.warn(
+            "The covariance matrix has small negative eigenvalues, which is "
+            "what a positive semidefinite matrix assembled in floating point "
+            "looks like. Clipping them to zero.",
+            UserWarning,
+            stacklevel=3,
+        )
+        eigenvalues = np.clip(eigenvalues, 0.0, None)
+
+    deviations = np.sqrt(eigenvalues)
+    root = vectors * deviations
+    if dimension and np.min(deviations) > np.sqrt(rtol) * np.max(deviations):
+        return root, (vectors / deviations).T
+    return root, None
+
+
 class GaussianMeasure[X](ProbabilityMeasure[X]):
     """A Gaussian measure, defined by any of covariance, factor or precision."""
 
@@ -339,13 +402,40 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         *,
         form: Literal["galerkin", "components"] = "galerkin",
         expectation: X | None = None,
+        rtol: float = 1e-10,
     ) -> GaussianMeasure[X]:
         """From an explicit covariance matrix.
 
         ``form`` says which representation the array is in, because no trait
         implies it (DESIGN.md 5.3). The Galerkin form is the natural one here:
         a covariance is self-adjoint, so that is the representation in which it
-        is symmetric, and the one a Cholesky factorisation wants.
+        is symmetric.
+
+        A covariance is required to be positive *semi*definite, so a Cholesky
+        factorisation alone is not enough: it refuses every singular
+        covariance — a measure supported on a subspace, an empirical
+        covariance from fewer samples than dimensions, a pushforward through a
+        rank-deficient map — and it refuses a matrix that is semidefinite in
+        exact arithmetic but has eigenvalues of size ``-1e-17`` after being
+        assembled in floating point. v1 took a symmetric eigendecomposition,
+        clipped small negative eigenvalues to zero with a warning, and built
+        both factors from it; this does the same. A strictly definite matrix
+        still takes the Cholesky route, which is the cheaper one and which
+        proves definiteness by succeeding.
+
+        The measure carries a precision factor whenever the covariance is
+        nonsingular, so that it has a density — v1 attached one and v2 had
+        stopped doing so, leaving :meth:`mahalanobis_squared`,
+        :meth:`log_density` and :meth:`grad_log_density` refusing on every
+        measure built this way. A *singular* covariance gets none: the measure
+        is degenerate, its density with respect to the space's own volume
+        measure does not exist, and a pseudo-inverse in the precision slot
+        would answer those three methods with a finite number that is not the
+        thing they name.
+
+        Cost is cubic in ``domain.dim`` and the result holds two dense
+        matrices (three when a precision is attached, the Gram matrix being
+        the third).
 
         Args:
             domain: the space.
@@ -353,6 +443,8 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             form: which representation *matrix* is in. No default: guessing
                 wrong is a silent error of one factor of the Gram matrix.
             expectation: the mean. Zero if omitted.
+            rtol: how negative an eigenvalue may be, relative to the largest in
+                magnitude, before the matrix is refused rather than clipped.
 
         Returns:
             The measure.
@@ -377,13 +469,44 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             raise ValueError(f"Unknown form {form!r}.")
 
         symmetric = 0.5 * (matrix + matrix.T)
-        root = np.linalg.cholesky(symmetric)
+        root, inverse_root = _semidefinite_factors(symmetric, rtol=rtol)
+
         # from_matrix(E, X, R, form="galerkin") has component matrix G^-1 R, and
         # (G^-1 R)(G^-1 R)* has Galerkin matrix R R^T == the covariance.
+        coefficients = EuclideanSpace(domain.dim)
         factor = LinearOperator.from_matrix(
-            EuclideanSpace(domain.dim), domain, root, form="galerkin"
+            coefficients, domain, root, form="galerkin"
         )
-        return cls(domain, expectation=expectation, covariance_factor=factor)
+
+        precision = None
+        precision_factor = None
+        if inverse_root is not None:
+            # Li: X -> E with component matrix M has (Li* Li)_c == G^-1 M^T M,
+            # and the precision's component matrix is C_c^-1 == C_gal^-1 G. So
+            # M^T M must be G C_gal^-1 G, which M == R^-1 G delivers. The Gram
+            # matrix appears twice because the precision is a form on the
+            # space, not on its components; dropping it is right only for an
+            # orthonormal basis, which is v1's version of this line.
+            precision_factor = LinearOperator.from_matrix(
+                domain,
+                coefficients,
+                inverse_root @ domain.gram_matrix(),
+                form="components",
+            )
+            # The palindrome rule gives Li* Li only semidefiniteness, but the
+            # factorisation earned more than that: it returned an inverse
+            # root, which it does only for a covariance that is numerically
+            # nonsingular. Definiteness is what a credible set asks for.
+            precision = (precision_factor.adjoint @ precision_factor).with_traits(
+                Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+            )
+        return cls(
+            domain,
+            expectation=expectation,
+            covariance_factor=factor,
+            precision=precision,
+            precision_factor=precision_factor,
+        )
 
     # ----------------------------------------------------------------- #
     #                              Moments                              #

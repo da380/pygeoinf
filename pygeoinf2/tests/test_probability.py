@@ -1,5 +1,7 @@
 """Measures: sampling, moments, pushforward, and the white-noise correction."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -100,6 +102,104 @@ class TestConstruction:
         _, logdet = np.linalg.slogdet(components)
         expected = -0.5 * X.dim * np.log(2.0 * np.pi) - 0.5 * logdet
         assert mu.log_normalising_constant() == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "build",
+        [lambda: EuclideanSpace(3), make_weighted_space, make_dense_metric_space],
+    )
+    def test_a_covariance_matrix_brings_its_precision(self, build, rng):
+        """v1 attached the inverse factor and v2 had stopped, which left every
+        measure built this way without a density.
+
+        The closed form carries the metric twice: the precision's component
+        matrix is ``C_c^-1``, so the factor's is ``R^-1 G`` and not ``R^-1``.
+        """
+        X = build()
+        galerkin = spd(rng, X.dim)
+        mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+        components = np.column_stack([X.solve_gram(c) for c in galerkin.T])
+
+        assert mu.precision is not None
+        assert mu.precision.matrix(form="components") == pytest.approx(
+            np.linalg.inv(components)
+        )
+        x = X.random(rng=rng)
+        coordinates = X.to_components(x)
+        expected = coordinates @ X.gram_matrix() @ np.linalg.inv(components) @ coordinates
+        assert mu.mahalanobis_squared(x) == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "build",
+        [lambda: EuclideanSpace(4), make_weighted_space, make_dense_metric_space],
+    )
+    def test_a_singular_covariance_is_accepted(self, build, rng):
+        """A covariance is positive *semi*definite, and the Cholesky route
+        refused every degenerate one. v1 took an eigendecomposition and so
+        accepted them; the measure is still samplable, and still has no
+        density, which is the truth about a degenerate Gaussian."""
+        X = build()
+        rotation, _ = np.linalg.qr(rng.standard_normal((X.dim, X.dim)))
+        spectrum = np.zeros(X.dim)
+        spectrum[: X.dim - 2] = np.arange(1, X.dim - 1, dtype=float)
+        galerkin = rotation @ np.diag(spectrum) @ rotation.T
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        assert mu.covariance.matrix(form="galerkin") == pytest.approx(
+            galerkin, abs=1e-12
+        )
+        assert mu.can_sample
+        assert mu.precision is None
+        with pytest.raises(NotImplementedError, match="no precision"):
+            mu.mahalanobis_squared(X.random(rng=rng))
+
+    def test_a_slightly_negative_eigenvalue_is_clipped_with_a_warning(self, rng):
+        """What a semidefinite matrix assembled in floating point looks like."""
+        X = make_dense_metric_space(5)
+        rotation, _ = np.linalg.qr(rng.standard_normal((5, 5)))
+        spectrum = np.array([3.0, 2.0, 1.0, -1e-17, -2e-17])
+        galerkin = rotation @ np.diag(spectrum) @ rotation.T
+
+        with pytest.warns(UserWarning, match="small negative eigenvalues"):
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+        assert mu.covariance.matrix(form="galerkin") == pytest.approx(
+            galerkin, abs=1e-12
+        )
+
+    def test_a_genuinely_indefinite_matrix_is_still_refused(self, rng):
+        X = make_weighted_space()
+        rotation, _ = np.linalg.qr(rng.standard_normal((X.dim, X.dim)))
+        spectrum = np.ones(X.dim)
+        spectrum[-1] = -1.0
+        galerkin = rotation @ np.diag(spectrum) @ rotation.T
+
+        with pytest.raises(ValueError, match="not positive"):
+            GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+    def test_the_singular_sample_stays_in_the_range(self, rng):
+        """The check that the accepted factor is the right one: every draw
+        lies in the covariance's range, and the sample covariance of the
+        components is ``G^-1 C_gal G^-1``."""
+        X = make_dense_metric_space(4)
+        gram = X.gram_matrix()
+        rotation, _ = np.linalg.qr(rng.standard_normal((4, 4)))
+        galerkin = rotation @ np.diag([4.0, 2.0, 0.0, 0.0]) @ rotation.T
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            mu = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        draws = np.array([X.to_components(mu.sample(rng=rng)) for _ in range(4000)])
+        inverse = np.linalg.inv(gram)
+        expected = inverse @ galerkin @ inverse
+        assert np.cov(draws.T) == pytest.approx(expected, abs=0.2)
+        # every draw is in the range: the two null directions carry nothing.
+        # The residue is the square root of eigh's own error on a zero
+        # eigenvalue, so 1e-16 in the spectrum is 1e-8 in the factor.
+        null = rotation[:, 2:]
+        assert np.max(np.abs(draws @ gram @ null)) < 1e-6
 
     def test_the_normalising_constant_is_exact_for_a_diagonal_covariance(self):
         """The diagonal route is taken before any retraiting, so it stays exact."""
