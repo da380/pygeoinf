@@ -477,3 +477,55 @@ class TestTheNamespaceHasNoHoles:
         for name in names:
             assert hasattr(module, name), f"{package}.{name} is not reachable"
             assert name in module.__all__, f"{package}.{name} is not in __all__"
+
+
+class TestImportCost:
+    """``import pygeoinf2`` pays for what it imports.
+
+    At the first review it cost 0.32 s; at the second, 0.43 s, and half of
+    the growth was `scipy.stats` and `scipy.optimize` imported at module
+    scope by two modules that most sessions never call. They are reached
+    through the package's own ``__init__``, so a session that only builds a
+    space and solves a system still pays for them.
+    """
+
+    def test_the_quadratic_form_module_does_not_import_scipy_at_module_scope(self):
+        """Loaded on its own, in a fresh interpreter: neither ``scipy.stats``
+        nor ``scipy.optimize`` may appear. It cannot be imported through the
+        package for this check, because ``pygeoinf2.inference.problem`` still
+        imports ``scipy.stats`` eagerly and would satisfy it for the wrong
+        reason."""
+        import subprocess
+        import sys
+        import textwrap
+
+        module = PACKAGE / "numerics" / "quadratic_forms.py"
+        program = textwrap.dedent(
+            f"""
+            import importlib.util, sys
+            spec = importlib.util.spec_from_file_location("qf", {str(module)!r})
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            heavy = [
+                name
+                for name in ("scipy.stats", "scipy.optimize", "scipy.integrate")
+                if name in sys.modules
+            ]
+            print(",".join(heavy))
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program], capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr
+        assert (
+            result.stdout.strip() == ""
+        ), f"imported at module scope: {result.stdout.strip()}"
+
+    def test_the_lazy_helpers_still_return_what_they_promise(self):
+        from pygeoinf2.numerics import quadratic_forms
+
+        assert quadratic_forms._chi2().ppf(0.5, 1) > 0.0
+        assert quadratic_forms._brentq()(lambda t: t - 1.0, 0.0, 2.0) == pytest.approx(
+            1.0
+        )
