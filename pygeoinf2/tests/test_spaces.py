@@ -294,6 +294,28 @@ class TestMassWeightedSpace:
         base, _, space = weighted
         assert space.shares_vectors_with(base)
 
+    def test_it_shares_its_vectors_with_an_equal_base(self, weighted):
+        """An equal-but-distinct base is the same space by every property
+        that matters, and ``EuclideanSpace(n)`` is minted freely inside the
+        library, so identity is the wrong test."""
+        _, _, space = weighted
+        assert space.shares_vectors_with(EuclideanSpace(4))
+
+    def test_equal_spaces_share_vectors_by_default(self):
+        """The default on :class:`HilbertSpace`, which the mass-weighted
+        space delegates to for its base."""
+        assert EuclideanSpace(4).shares_vectors_with(EuclideanSpace(4))
+        assert not EuclideanSpace(4).shares_vectors_with(EuclideanSpace(5))
+
+    def test_equal_mass_operators_give_equal_spaces(self, weighted):
+        """The key holds the mass operator, not ``id`` of it: identical
+        equality, but no stale address to alias a different operator."""
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+
+        base, mass, space = weighted
+        assert space == MassWeightedSpace(EuclideanSpace(4), mass)
+        assert hash(space) == hash(MassWeightedSpace(EuclideanSpace(4), mass))
+
     def test_a_mass_operator_must_claim_what_it_needs(self, weighted):
         from pygeoinf2.algebra.spaces import MassWeightedSpace
 

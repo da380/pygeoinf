@@ -776,6 +776,32 @@ class TestFormalAdjointLift:
         assert lifted(probe) == pytest.approx(operator(probe))
         check_operator(lifted, rng=rng)
 
+    def test_the_base_may_be_an_equal_but_distinct_space(self, rng):
+        """``EuclideanSpace(n)`` is minted freely -- ``from_vectors`` and
+        ``coordinate_projection`` both do it -- so a lift over a mass-weighted
+        space must not require the *same object* as the operator's base."""
+        from pygeoinf2.algebra.spaces import MassWeightedSpace
+        from pygeoinf2.testing import check_operator
+
+        base = make_dense_metric_space(4)
+        symmetric = rng.normal(size=(4, 4))
+        symmetric = symmetric @ symmetric.T + 4.0 * np.identity(4)
+        mass = LinearOperator.from_matrix(
+            base, base, symmetric, form="galerkin"
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+        weighted = MassWeightedSpace(base, mass)
+
+        # A second, equal base: what the caller normally has to hand.
+        other = make_dense_metric_space(4)
+        assert other == base and other is not base
+        operator = LinearOperator.from_matrix(
+            other, other, rng.normal(size=(4, 4)), form="components"
+        )
+        lifted = LinearOperator.from_formal_adjoint(weighted, other, operator)
+        probe = weighted.random(rng=rng)
+        assert lifted(probe) == pytest.approx(operator(probe))
+        check_operator(lifted, rng=rng)
+
     def test_mismatched_dimensions_are_refused(self, rng):
         base = EuclideanSpace(4)
         operator = LinearOperator.from_matrix(

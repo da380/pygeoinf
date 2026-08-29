@@ -93,10 +93,15 @@ class HilbertSpace[V](ABC):
         vector between them is a no-op rather than a round trip through
         components, which on a spectral space is two transforms.
 
-        Conservative by default: only a space itself. A family that knows
-        better says so.
+        Conservative by default: a space itself, and any space *equal* to it.
+        Equality is structural (:meth:`_key`), so an equal space holds the
+        same vectors with the same inner product; testing identity alone made
+        ``from_formal_adjoint`` refuse a good lift whenever the caller had
+        minted a second ``EuclideanSpace(n)`` -- which the library itself
+        does, in ``from_vectors`` and ``coordinate_projection``. A family that
+        knows better says so.
         """
-        return self is other
+        return self is other or self == other
 
     @abstractmethod
     def zero(self) -> V:
@@ -894,13 +899,22 @@ class MassWeightedSpace[V](HilbertSpace[V]):
         return self._base.dim
 
     def _key(self) -> Hashable:
-        return (self._base, id(self._mass))
+        # The mass operator itself, not ``id`` of it: the two give the same
+        # equality -- operators compare by identity -- but a raw ``id`` can be
+        # reused once the operator is freed, so a key that outlived its space
+        # could alias a different one. The ``_key`` rule asks for the
+        # operator's *parameters*; a general operator has none to offer, so
+        # two spaces built from separately constructed but equal mass
+        # operators do compare unequal. That is why ``shares_vectors_with``
+        # below, and ``_relating_mass``, work through the base rather than
+        # through equality of the weighted spaces.
+        return (self._base, self._mass)
 
     def shares_vectors_with(self, other: HilbertSpace, /) -> bool:
         """True for the base and for anything the base shares vectors with."""
         if self is other:
             return True
-        if other is self._base or self._base.shares_vectors_with(other):
+        if other == self._base or self._base.shares_vectors_with(other):
             return True
         return isinstance(other, MassWeightedSpace) and self._base.shares_vectors_with(
             other.base
