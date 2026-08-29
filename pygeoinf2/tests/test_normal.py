@@ -960,3 +960,76 @@ class TestTheSharedSolve:
         counter["solves"] = 0
         pushed(data.random(rng=rng))
         assert counter["solves"] == 3
+
+
+class TestThePosteriorCovarianceAppliesThePriorTwice:
+    """``(I - K A) Q`` rather than ``Q - K A Q``.
+
+    The same operator, and the same numbers, but the second applies ``Q`` once
+    for its own term and twice more inside the gain. Invisible for a diagonal
+    prior; a third of the cost of every posterior variance, credible interval
+    and pushed-forward property for a correlated one.
+    """
+
+    @staticmethod
+    def counted(operator, tally):
+        """The same operator, counting applications of itself."""
+
+        def value(x):
+            tally.append(1)
+            return operator(x)
+
+        return LinearOperator.from_callables(
+            operator.domain,
+            operator.codomain,
+            value,
+            adjoint=lambda y: (tally.append(1), operator.adjoint(y))[1],
+            traits=operator.traits,
+        )
+
+    @pytest.fixture
+    def setup(self, rng):
+        model = make_weighted_space()
+        data = EuclideanSpace(3)
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(3, model.dim)), form="galerkin"
+        )
+        covariance = positive(model, rng)
+        problem = LinearForwardProblem(
+            forward, error=GaussianMeasure.from_standard_deviation(data, 0.2)
+        )
+        return model, problem, covariance
+
+    def test_two_applications_per_action(self, setup, rng):
+        model, problem, covariance = setup
+        tally = []
+        prior = GaussianMeasure(model, covariance=self.counted(covariance, tally))
+        estimator = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
+
+        posterior = estimator.covariance
+        tally.clear()
+        posterior(model.random(rng=rng))
+        assert len(tally) == 2
+
+    def test_the_operator_is_the_one_it_always_was(self, setup, rng):
+        """Checked against the closed form on a non-diagonal metric, where a
+        Galerkin matrix and a component matrix are different objects."""
+        model, problem, covariance = setup
+        prior = GaussianMeasure(model, covariance=covariance)
+        estimator = LinearGaussianInversion(problem, prior, solver=CholeskySolver())
+
+        gram = model.gram_matrix()
+        prior_components = covariance.matrix(form="components")
+        forward_components = problem.forward_operator.matrix(form="components")
+        noise = 0.04 * np.identity(3)
+        # C_post = Q - Q A* (A Q A* + R)^-1 A Q, all in component matrices,
+        # with the adjoint carrying the metric: A*_c == G^-1 A_c^T G_D, and
+        # G_D is the identity on a Euclidean data space.
+        adjoint_components = np.linalg.solve(gram, forward_components.T)
+        middle = forward_components @ prior_components @ adjoint_components + noise
+        expected = prior_components - prior_components @ adjoint_components @ (
+            np.linalg.solve(middle, forward_components @ prior_components)
+        )
+        assert estimator.covariance.matrix(form="components") == pytest.approx(
+            expected, abs=1e-10
+        )

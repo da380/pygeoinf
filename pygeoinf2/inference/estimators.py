@@ -24,6 +24,7 @@ from ..algebra.operators import AffineOperator, LinearOperator
 from ..algebra.spaces import HilbertSpace
 from ..probability.base import ProbabilityMeasure
 from ..probability.gaussian import GaussianMeasure
+from ..traits import congruence_traits
 
 __all__ = [
     "Estimator",
@@ -294,8 +295,14 @@ class GaussianEstimator(MeasureEstimator):
             def pushed(rng: Any, _sample: Any = self._centred_sample) -> Any:
                 return operator(_sample(rng))
 
+        # A congruence preserves self-adjointness and semidefiniteness, and
+        # that is claimed here rather than left to the composition, which sees
+        # it only when the covariance happens to be one factor: written
+        # ``(I - K A) Q`` it is two, the list flattens, and the palindrome is
+        # no longer visible in it. The rule is the same either way.
+        covariance = (operator @ self._covariance @ operator.adjoint).with_traits(
+            congruence_traits(self._covariance.traits, outer_invertible=False)
+        )
         return GaussianEstimator(
-            operator @ self._mean_map,
-            operator @ self._covariance @ operator.adjoint,
-            centred_sample=pushed,
+            operator @ self._mean_map, covariance, centred_sample=pushed
         )

@@ -25,7 +25,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator, require_coordinates
 from ..algebra.spaces import CoordinateSpace, EuclideanSpace, HilbertSpace
-from ..traits import Traits
+from ..traits import Traits, congruence_traits
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..algebra.direct_sum import DirectSum
@@ -1555,7 +1555,11 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         if noise is not None:
             predicted = codomain.add(predicted, noise.expectation)
         shift = gain(codomain.subtract(value, predicted))
-        updated = covariance - cross @ inverse @ cross.adjoint
+        # (I - C A* N^-1 A) C, not C - C A* N^-1 A C: the same operator, with
+        # C applied twice per action instead of three times. Invisible for a
+        # diagonal covariance and a third of the cost for any other.
+        identity = LinearOperator.identity(self._domain)
+        updated = (identity - cross @ inverse @ operator) @ covariance
 
         sample = None
         if self.can_sample and (noise is None or noise.can_sample):
@@ -1880,11 +1884,17 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             if self._covariance_factor is None
             else operator @ self._covariance_factor
         )
-        covariance = (
-            None
-            if factor is not None or self._covariance is None
-            else operator @ self._covariance @ operator.adjoint
-        )
+        covariance = None
+        if factor is None and self._covariance is not None:
+            # The congruence rule, claimed here rather than left to the
+            # composition: the palindrome is visible to the trait algebra only
+            # when the covariance is a single factor, and a covariance written
+            # as a product -- ``(I - K A) Q``, the posterior's -- is not.
+            covariance = (
+                operator @ self._covariance @ operator.adjoint
+            ).with_traits(
+                congruence_traits(self._covariance.traits, outer_invertible=False)
+            )
         # With no factor to map there is still a sampler: push each draw
         # through the operator. Losing samplability under a linear map would
         # be a gratuitous restriction.

@@ -498,16 +498,31 @@ class NormalOperator(FactoredNormalOperator):
     def posterior_covariance(
         self, inverse: LinearOperator, gain: LinearOperator, /
     ) -> LinearOperator:
-        """``Q - K A Q``, which in the model-space formalism is just ``N^-1``."""
+        """``(I - K A) Q``, which in the model-space formalism is just ``N^-1``.
+
+        Written with ``Q`` factored out rather than as ``Q - K A Q``, which is
+        the same operator and applies ``Q`` three times per action instead of
+        twice -- once for each term, and the gain contains a third. For a
+        diagonal prior that is invisible; for a Matern prior on a mesh or a
+        correlated field it is a third of the cost of every posterior variance,
+        every credible interval and every pushed-forward property.
+
+        Args:
+            inverse: an inverse of this operator.
+            gain: the Kalman gain built from it.
+
+        Returns:
+            The posterior covariance.
+        """
         if self._formalism == "model_space":
             return inverse
-        prior_covariance = self.prior_covariance
+        identity = LinearOperator.identity(self.prior_covariance.domain)
         # A Schur complement, so positive semidefinite -- a posterior
         # covariance always is. The trait algebra cannot see that through a
         # difference, so the claim is made where the reason is known.
-        return (prior_covariance - gain @ self._forward @ prior_covariance).with_traits(
-            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
-        )
+        return (
+            (identity - gain @ self._forward) @ self.prior_covariance
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE)
 
     def right_hand_side(self, residual: Any, /) -> Any:
         """The right-hand side of ``N w = v`` for a shifted data residual.

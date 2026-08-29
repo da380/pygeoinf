@@ -783,6 +783,53 @@ class TestStochasticDivergence:
             bare.kl_divergence_estimate(reference, method="stochastic", samples=4)
 
 
+class TestConditioningAppliesTheCovarianceTwice:
+    """``(I - C A* N^-1 A) C`` rather than ``C - C A* N^-1 A C``: the same
+    operator, one fewer application of ``C`` per action."""
+
+    def test_two_applications_and_the_same_answer(self, rng):
+        from pygeoinf2.numerics.solvers import CholeskySolver
+
+        X = make_dense_metric_space(5)
+        target = EuclideanSpace(2)
+        gram = X.gram_matrix()
+        galerkin = spd(rng, 5)
+        base = GaussianMeasure.from_covariance_matrix(X, galerkin)
+
+        tally = []
+
+        def counted(x):
+            tally.append(1)
+            return base.covariance(x)
+
+        covariance = LinearOperator.self_adjoint(
+            X, counted, traits=Traits.POSITIVE_DEFINITE
+        )
+        measure = GaussianMeasure(X, covariance=covariance)
+        operator = LinearOperator.from_matrix(
+            X, target, rng.normal(size=(2, 5)), form="galerkin"
+        )
+        noise = GaussianMeasure.from_standard_deviation(target, 0.3)
+        conditioned = measure.condition(
+            operator, target.random(rng=rng), noise=noise, solver=CholeskySolver()
+        )
+
+        tally.clear()
+        conditioned.covariance(X.random(rng=rng))
+        assert len(tally) == 2
+
+        components = np.linalg.solve(gram, galerkin)
+        forward = operator.matrix(form="components")
+        adjoint = np.linalg.solve(gram, forward.T)
+        middle = forward @ components @ adjoint + 0.09 * np.identity(2)
+        expected = components - components @ adjoint @ np.linalg.solve(
+            middle, forward @ components
+        )
+        assert conditioned.covariance.matrix(form="components") == pytest.approx(
+            expected, abs=1e-10
+        )
+
+
 class TestPrecisionOnlyMeasures:
     """``covariance is None`` is legal, so it must fail legibly."""
 
