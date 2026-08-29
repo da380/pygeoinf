@@ -316,39 +316,91 @@ def plot_points(
     points: Any,
     /,
     *,
+    data: Any = None,
     ax: Any = None,
     marker: str = "^",
     size: float = 20.0,
     color: str = "black",
+    cmap: str = "RdBu",
+    symmetric: bool = False,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    colorbar: bool | None = None,
+    colorbar_label: str | None = None,
+    colorbar_kwargs: dict | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Scatter a set of points on a map.
+    """Scatter a set of points on a map, optionally coloured by a value.
+
+    A scatter of stations is one thing; a scatter of *measurements* is the
+    other, and it is the one an altimetry or gravity figure is made of. Passing
+    the values as *data* colours the markers by them and gives them a bar to be
+    read against, which is v1's ``plot_points(points, data=...)``. Without it
+    every marker is the one flat *color*.
 
     Args:
         space: the sphere.
         points: ``(latitude, longitude)`` pairs in degrees.
+        data: one value per point, to colour the markers by. Without it they
+            are all *color*.
         ax: axes to draw on. A new map is made if omitted.
         marker: matplotlib marker.
         size: marker area.
-        color: marker colour.
+        color: marker colour, used when there is no *data*.
+        cmap: colour map for *data*. ``RdBu`` by default, as in v1.
+        symmetric: put zero at the middle of the colour scale. Use it for
+            anything signed. Off by default.
+        vmin: lower colour limit; the data's minimum if omitted.
+        vmax: upper colour limit; the data's maximum if omitted.
+        colorbar: attach a colourbar, which needs *data* to mean anything. Off
+            by default unless a *colorbar_label* is given; pass ``False`` to
+            override that. Left on the returned collection as ``.colorbar``.
+        colorbar_label: label for the colourbar, which turns one on.
+        colorbar_kwargs: passed to ``figure.colorbar``, over the defaults.
         **kwargs: passed to ``scatter``.
 
     Returns:
         The ``(axes, collection)`` pair.
+
+    Raises:
+        ValueError: if *data* is given with a value per point missing or
+            spare. Silently colouring the first few would be worse.
     """
     crs = _require_cartopy()
     if ax is None:
         _, ax = subplots(space)
     positions = np.atleast_2d(np.asarray(list(points), dtype=float))
+
+    if data is None:
+        colours: Any = color
+    else:
+        colours = np.asarray(data, dtype=float).ravel()
+        if colours.size != positions.shape[0]:
+            raise ValueError(
+                f"There are {positions.shape[0]} points and {colours.size} "
+                "values to colour them by."
+            )
+        low, high = colour_limits(colours, vmin=vmin, vmax=vmax, symmetric=symmetric)
+        kwargs.setdefault("cmap", cmap)
+        kwargs.setdefault("vmin", low)
+        kwargs.setdefault("vmax", high)
+
     collection = ax.scatter(
         positions[:, 1],
         positions[:, 0],
         transform=crs.PlateCarree(),
         marker=marker,
         s=size,
-        c=color,
+        c=colours,
         **kwargs,
     )
+    wanted = colorbar or (colorbar is None and colorbar_label is not None)
+    if wanted and data is not None:
+        options = dict(shrink=0.7, pad=0.03)
+        options.update(colorbar_kwargs or {})
+        bar = ax.figure.colorbar(collection, ax=ax, **options)
+        if colorbar_label is not None:
+            bar.set_label(colorbar_label)
     return ax, collection
 
 

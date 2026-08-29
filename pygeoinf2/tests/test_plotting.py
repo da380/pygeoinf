@@ -540,6 +540,76 @@ class TestSphereMapOptions:
         assert axis.get_title() == "a map"
 
 
+class TestScatteringPoints:
+    """``plot_points``, which pyslfp's altimetry figures colour by value.
+
+    v2 hard-coded ``c=color``, so ``c=values`` was a duplicate keyword and
+    ``data=values`` was not a keyword at all: there was no way to draw the
+    figure the function exists for.
+    """
+
+    @pytest.fixture
+    def sphere(self):
+        pytest.importorskip("cartopy")
+        pytest.importorskip("pyshtools")
+        import matplotlib.pyplot as plt
+
+        from pygeoinf2.symmetric_space.sphere import Lebesgue
+
+        yield Lebesgue(16)
+        plt.close("all")
+
+    @staticmethod
+    def points():
+        return [(10.0, -30.0), (-45.0, 100.0), (60.0, 170.0), (0.0, 0.0)]
+
+    def test_a_flat_colour_by_default(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        _, collection = plot_points(sphere, self.points())
+        assert collection.get_array() is None
+        assert collection.get_offsets().shape == (4, 2)
+
+    def test_it_colours_by_data(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        values = np.array([-2.0, 0.5, 1.0, 3.0])
+        _, collection = plot_points(sphere, self.points(), data=values)
+        assert np.allclose(collection.get_array(), values)
+        assert collection.get_clim() == (-2.0, 3.0)
+        assert collection.get_cmap().name == "RdBu"
+
+    def test_symmetric_limits_and_a_labelled_bar(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        values = np.array([-2.0, 0.5, 1.0, 3.0])
+        _, collection = plot_points(
+            sphere,
+            self.points(),
+            data=values,
+            symmetric=True,
+            colorbar_label="metres",
+        )
+        assert collection.get_clim() == (-3.0, 3.0)
+        assert collection.colorbar is not None
+        assert collection.colorbar.ax.get_ylabel() == "metres"
+
+    def test_the_longitudes_and_latitudes_are_not_swapped(self, sphere):
+        """Points are ``(latitude, longitude)``; scatter takes ``(x, y)``."""
+        from pygeoinf2.plotting import plot_points
+
+        _, collection = plot_points(sphere, [(10.0, -30.0)])
+        assert np.asarray(collection.get_offsets()[0]) == pytest.approx(
+            np.array([-30.0, 10.0])
+        )
+
+    def test_a_value_per_point_is_required(self, sphere):
+        from pygeoinf2.plotting import plot_points
+
+        with pytest.raises(ValueError, match="4 points and 3 values"):
+            plot_points(sphere, self.points(), data=np.zeros(3))
+
+
 class TestErrorBounds:
     """A bound above and below is what an inference produces; a pair of lines
     reads as two estimates rather than one with an uncertainty."""
