@@ -114,13 +114,36 @@ class TestMonotoneRoot:
                 atol=0.0,
             )
             low, high = result.bracket
-            assert high - low > 1.0
+            assert low <= result.argument <= high
             assert not result.converged
+        # After a single step the bracket is still wide open.
+        low, high = monotone_root(
+            lambda t, _: Evaluation(1.0 / t), 0.3, iterations=1, rtol=0.0, atol=0.0
+        ).bracket
+        assert high - low > 1.0
 
         # With a reachable tolerance it still converges, and to the right root.
         found = monotone_root(lambda t, _: Evaluation(1.0 / t), 0.3, iterations=60)
         assert found.converged
         assert found.argument == pytest.approx(10.0 / 3.0, rel=1e-4)
+
+    def test_it_spends_few_solves_once_bracketed(self):
+        """Brent's method in log t against geometric bisection: measured
+        23-28 solves per root with bisection from three starting points on
+        this shape of quantity, 10-13 with interpolation. Every solve is a
+        linear system in a discrepancy sweep, so the count is the cost."""
+        for initial in (1.0, 1e-3, 1e3):
+            calls = {"n": 0}
+
+            def evaluate(t, _):
+                calls["n"] += 1
+                return Evaluation(1000.0 / (1.0 + t) ** 1.3 + 50.0)
+
+            result = monotone_root(evaluate, 120.0, initial=initial, rtol=1e-6)
+            assert result.converged
+            assert result.argument == pytest.approx(6.73368, rel=1e-5)
+            assert result.evaluations == calls["n"]
+            assert calls["n"] <= 14
 
     def test_the_previous_solution_reaches_the_next_probe(self):
         seen = []
