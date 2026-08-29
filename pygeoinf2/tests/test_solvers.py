@@ -21,7 +21,11 @@ from pygeoinf2.numerics import (
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import DenseMetricSpace, make_weighted_space
+from .conftest import (
+    DenseMetricSpace,
+    make_dense_metric_space,
+    make_weighted_space,
+)
 from .doubles import NoCoordinatesError, StrictSpace
 
 N = 12
@@ -563,9 +567,9 @@ class TestPreconditionedMinRes:
             .solve(operator(wanted))
         )
         assert result.converged
-        assert space.norm(
-            space.subtract(result.solution, wanted)
-        ) < 1e-8 * space.norm(wanted)
+        assert space.norm(space.subtract(result.solution, wanted)) < 1e-8 * space.norm(
+            wanted
+        )
 
     def test_it_is_what_makes_a_dense_metric_solvable(self, rng):
         """The measurement that says the preconditioning is real rather than
@@ -742,7 +746,10 @@ class TestJacobiCanEstimate:
         counts = {}
         for label, preconditioner in [
             ("exact", JacobiPreconditioner()),
-            ("estimated", JacobiPreconditioner(samples=20, rng=np.random.default_rng(1))),
+            (
+                "estimated",
+                JacobiPreconditioner(samples=20, rng=np.random.default_rng(1)),
+            ),
         ]:
             result = (
                 CGSolver(rtol=1e-10, maxiter=2000)
@@ -824,3 +831,82 @@ class TestWoodburyInnerDefault:
         inner = preconditioner._inner_solver()
         assert not inner._strict
         assert inner._rtol >= 1e-4
+
+
+class TestSparsePreconditionerTraits:
+    """A sparse approximate inverse may claim self-adjointness only where it
+    has it.
+
+    Both classes claimed ``SELF_ADJOINT`` unconditionally -- on a
+    non-self-adjoint operator, and on ``form="components"`` of a self-adjoint
+    one over a space whose metric is not the identity, where the inverse's
+    component matrix is ``B^-1`` and ``G B^-1`` is not symmetric.
+    ``check_traits`` fails on a dense Gram, and preconditioned CG would have
+    converged quietly to something else.
+    """
+
+    @staticmethod
+    def preconditioners(form):
+        from pygeoinf2.numerics.preconditioners import (
+            BandedPreconditioner,
+            BlockPreconditioner,
+        )
+
+        return [
+            BandedPreconditioner(1, form=form),
+            BlockPreconditioner([[0, 1], [2, 3]], form=form),
+        ]
+
+    @staticmethod
+    def dense_metric_operator(rng, dim, *, self_adjoint):
+        space = make_dense_metric_space(dim)
+        matrix = rng.standard_normal((dim, dim)) + dim * np.identity(dim)
+        if not self_adjoint:
+            return LinearOperator.from_matrix(space, space, matrix, form="components")
+        symmetric = matrix @ matrix.T + dim * np.identity(dim)
+        return LinearOperator.from_matrix(
+            space,
+            space,
+            symmetric,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_a_non_self_adjoint_operator_gives_no_claim(self, index, rng):
+        operator = self.dense_metric_operator(rng, 8, self_adjoint=False)
+        inverse = self.preconditioners("components")[index](operator)
+        assert not (Traits.SELF_ADJOINT & inverse.traits)
+        check_traits(inverse, rng=rng)
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_the_components_form_gives_no_claim_on_a_dense_metric(self, index, rng):
+        """The operator *is* self-adjoint; the banded components matrix still
+        does not represent a self-adjoint inverse there."""
+        operator = self.dense_metric_operator(rng, 8, self_adjoint=True)
+        inverse = self.preconditioners("components")[index](operator)
+        assert not (Traits.SELF_ADJOINT & inverse.traits)
+        check_traits(inverse, rng=rng)
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_the_galerkin_form_keeps_the_claim(self, index, rng):
+        """Where it is true, it is still made: ``G B^-1 G`` is symmetric."""
+        operator = self.dense_metric_operator(rng, 8, self_adjoint=True)
+        inverse = self.preconditioners("galerkin")[index](operator)
+        assert Traits.SELF_ADJOINT & inverse.traits
+        check_traits(inverse, rng=rng)
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_an_orthonormal_space_keeps_it_in_components(self, index, rng):
+        """There ``G`` is the identity and the two forms coincide."""
+        space = EuclideanSpace(8)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            spd(rng, 8),
+            form="components",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        inverse = self.preconditioners("components")[index](operator)
+        assert Traits.SELF_ADJOINT & inverse.traits
+        check_traits(inverse, rng=rng)
