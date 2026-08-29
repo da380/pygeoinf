@@ -24,6 +24,8 @@ Needs matplotlib.
 import matplotlib.pyplot as plt
 import numpy as np
 
+from pygeoinf2 import plotting
+
 import pygeoinf2 as gi
 from pygeoinf2.algebra.operators import LinearOperator, Operator
 from pygeoinf2.algebra.spaces import EuclideanSpace
@@ -178,6 +180,6 @@ print("  peak, and for an asymmetric density the peak and the average are")
 print("  different points. Every linear method in this library returns a mean.")
 print("  This one returns a mode, and says so.")
 print()
-print("one figure drawn; matplotlib.pyplot.show() displays it")
+print("one figure drawn")
 
-plt.show()
+plotting.show()

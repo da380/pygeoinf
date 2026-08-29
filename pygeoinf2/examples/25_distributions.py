@@ -144,5 +144,5 @@ print("  and the marginals are visibly skewed, which is the thing a Gaussian")
 print("  summary of this measure would have thrown away")
 
 print()
-print("three figures drawn; matplotlib.pyplot.show() displays them")
-plt.show()
+print("three figures drawn")
+plotting.show()

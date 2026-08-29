@@ -19,7 +19,6 @@ comparison uses.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 from pygeoinf2 import plotting
 from pygeoinf2.algebra.operators import LinearOperator
@@ -153,5 +152,5 @@ print("  working correctly, not a failure -- and it is why the answer keeps both
 print("  scenarios rather than choosing. A single Gaussian could only have")
 print("  collapsed to the middle, which is where the truth is not.")
 print()
-print("one figure drawn; matplotlib.pyplot.show() displays it")
-plt.show()
+print("one figure drawn")
+plotting.show()

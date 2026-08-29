@@ -19,7 +19,6 @@ Needs pyshtools and cartopy, which come with the 'sphere' extra.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 from pygeoinf2 import plotting
 from pygeoinf2.numerics.solvers import CGSolver
@@ -127,7 +126,5 @@ plotting.plot(
 )
 panels[3].set_title("Effect of the continents")
 
-print("four panels drawn; matplotlib.pyplot.show() displays them")
-
-
-plt.show()
+print("four panels drawn")
+plotting.show()

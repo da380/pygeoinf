@@ -15,7 +15,6 @@ Needs pyshtools and cartopy, which come with the 'sphere' extra.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 from pygeoinf2 import plotting
 from pygeoinf2.geometry.convex import Ball
@@ -201,5 +200,5 @@ ax, _ = plotting.plot(
 plotting.plot_points(X, centres, ax=ax, color="black", marker="o", size=40.0)
 ax.set_title("The model that maximises cap 0")
 
-print("two panels drawn; matplotlib.pyplot.show() displays them")
-plt.show()
+print("two panels drawn")
+plotting.show()
