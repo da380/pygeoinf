@@ -269,6 +269,50 @@ class TestTheCatalogueMatchesTheCode:
         )
         assert not missing, f"named in the catalogue but not in the code: {missing}"
 
+    # Names the catalogue claimed as Ported that do not exist anywhere in v2.
+    # The dotted-path check above cannot see them, because the rows write them
+    # bare: `deflated_pointwise_variance`, not `gaussian.deflated_...`. Each
+    # was verified absent by grep over the package, and each row now says so.
+    ABSENT_FROM_V2 = (
+        "deflated_pointwise_variance",
+        "deflated_pointwise_std",
+        "LevelSet",
+        "SublevelSet",
+        "Cut",
+        "Bundle",
+    )
+
+    @pytest.mark.parametrize("name", ABSENT_FROM_V2)
+    def test_a_row_naming_something_absent_does_not_claim_it_is_ported(self, name):
+        """The status of the row whose *v1* column names it must not begin
+        with "Ported": that is the exact defect the review named, and these
+        six survived the first pass because the names are written bare."""
+        import importlib
+        import pkgutil
+        import re
+
+        import pygeoinf2
+
+        for module in pkgutil.walk_packages(pygeoinf2.__path__, "pygeoinf2."):
+            if ".tests" in module.name or ".examples" in module.name:
+                continue
+            try:
+                loaded = importlib.import_module(module.name)
+            except Exception:  # pragma: no cover - optional dependencies
+                continue
+            assert not hasattr(loaded, name), (
+                f"{name} exists in {module.name}: the catalogue row can be "
+                f"restored to Ported, and this list shortened"
+            )
+
+        rows = re.findall(r"^\| ([^|]+) \| ([^|]+) \|", self.catalogue(), re.M)
+        claiming = [
+            v1.strip()
+            for v1, status in rows
+            if f"`{name}`" in v1 and status.strip().startswith("Ported")
+        ]
+        assert not claiming, f"{name} does not exist but its row claims Ported"
+
 
 # Parameters whose meaning is fixed across the whole library and documented in
 # one place, so repeating them in every signature is noise rather than
