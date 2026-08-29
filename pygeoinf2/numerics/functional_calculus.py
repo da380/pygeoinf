@@ -33,7 +33,11 @@ from scipy.linalg import eigh_tridiagonal
 
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearOperator
-from ..algebra.spaces import _REORTHOGONALISATION_THRESHOLD, CoordinateSpace, HilbertSpace
+from ..algebra.spaces import (
+    _REORTHOGONALISATION_THRESHOLD,
+    CoordinateSpace,
+    HilbertSpace,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from .randomised import Estimate
@@ -487,16 +491,28 @@ def operator_function(
     A diagonal operator evaluates ``f`` on its eigenvalues, exactly. Anything
     else gets a lazily-applied :class:`OperatorFunction`.
 
-    **Self-adjointness is required on both routes.** It always was on the
-    Lanczos one, and the diagonal one used to skip the check -- so the same
-    request was refused for a general operator and quietly accepted for a
-    diagonal one. It is not a formality: an operator diagonal *in components*
-    is self-adjoint only if its values commute with the metric, which on a
-    non-diagonal Gram matrix they do not. What the exact route computes there
-    is ``f`` applied component by component, which is a functional calculus in
-    the basis but not the spectral one the name promises, and the two differ.
+    **Self-adjointness is required on both routes**, so that one request gets
+    one answer: it always was on the Lanczos route, and the diagonal one used
+    to skip the check.
+
+    The requirement belongs to *this* function rather than to the calculus.
+    The Lanczos route needs it outright -- a three-term recurrence in the
+    space's own inner product computes ``f(A)`` only for self-adjoint ``A`` --
+    and the named helpers below attach traits to the result, ``operator_sqrt``
+    claiming ``POSITIVE_SEMIDEFINITE`` of what it returns, which is true only
+    of the self-adjoint case. An operator diagonal *in components* is
+    self-adjoint only where its values commute with the metric, which on a
+    non-diagonal Gram matrix they do not.
+
+    Where the metric is not diagonal and the exact answer is still wanted,
+    :class:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator` carries its
+    own calculus -- :attr:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator.sqrt`,
+    :attr:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator.log`,
     :meth:`~pygeoinf2.algebra.diagonal.DiagonalLinearOperator.apply_function`
-    is the component-wise operation, for when that is what is wanted.
+    -- which gates on the spectrum instead. That is exact on any metric,
+    because an eigendecomposition is a property of the map; what it does not
+    give there is a self-adjoint result, and it says so through the traits it
+    returns rather than by refusing.
 
     On a Euclidean space, and on every symmetric space here, a diagonal
     operator's metric is diagonal in the same basis, so it commutes and the

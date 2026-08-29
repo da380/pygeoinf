@@ -15,6 +15,13 @@ component matrix ``diag(d)`` the Galerkin matrix is ``G diag(d)``, symmetric
 exactly when ``G`` and ``diag(d)`` commute — so, for general ``d``, exactly
 when ``G`` is diagonal. That is why ``CoordinateSpace.has_diagonal_metric``
 exists, and why this class checks it rather than assuming it.
+
+The functional calculus is a separate question and takes a separate answer.
+An eigendecomposition is a property of the map: the basis vectors are
+eigenvectors and ``d`` is the spectrum on *any* inner product, so ``f(A)`` is
+``diag(f(d))`` however the metric is shaped. The calculus therefore gates on
+the spectrum — ``sqrt`` wants ``d >= 0`` — and leaves the metric to decide
+only what the *result* claims. See ``_require_spectrum``.
 """
 
 from __future__ import annotations
@@ -220,25 +227,60 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
     @property
     def sqrt(self) -> DiagonalLinearOperator[V]:
-        """``A^(1/2)``. Requires positive semidefiniteness."""
-        self._require(Traits.POSITIVE_SEMIDEFINITE, "a square root")
+        """``A^(1/2)``, the operator with the square roots as its spectrum.
+
+        Returns:
+            The diagonal operator ``B`` with ``B B == A``. It is *the*
+            positive semidefinite square root only where ``A`` is
+            self-adjoint, which on a metric that is not diagonal it is not;
+            see :meth:`_require_spectrum`. A caller wanting a covariance
+            factor -- ``L L* == C`` -- needs the self-adjoint case and should
+            check the returned operator's traits.
+
+        Raises:
+            ValueError: if any eigenvalue is negative, naming it.
+        """
+        self._require_spectrum(
+            self._eigenvalues >= 0.0, "a square root", "non-negative eigenvalues"
+        )
         return self.apply_function(np.sqrt)
 
     @property
     def inverse_sqrt(self) -> DiagonalLinearOperator[V]:
-        """``A^(-1/2)``. Requires positive definiteness."""
-        self._require(Traits.POSITIVE_DEFINITE, "an inverse square root")
+        """``A^(-1/2)``.
+
+        Returns:
+            The diagonal operator whose square is ``A^-1``; as for
+            :attr:`sqrt`, self-adjoint only where ``A`` is.
+
+        Raises:
+            ValueError: if any eigenvalue is not strictly positive.
+        """
+        self._require_spectrum(
+            self._eigenvalues > 0.0,
+            "an inverse square root",
+            "strictly positive eigenvalues",
+        )
         return self.apply_function(lambda d: 1.0 / np.sqrt(d))
 
     @property
     def exp(self) -> DiagonalLinearOperator[V]:
-        """``exp(A)``."""
+        """``exp(A)``, defined for any spectrum."""
         return self.apply_function(np.exp)
 
     @property
     def log(self) -> DiagonalLinearOperator[V]:
-        """``log(A)``. Requires positive definiteness."""
-        self._require(Traits.POSITIVE_DEFINITE, "a logarithm")
+        """``log(A)``.
+
+        Returns:
+            The diagonal operator ``B`` with ``exp(B) == A``.
+
+        Raises:
+            ValueError: if any eigenvalue is not strictly positive.
+        """
+        self._require_spectrum(
+            self._eigenvalues > 0.0, "a logarithm", "strictly positive eigenvalues"
+        )
         return self.apply_function(np.log)
 
     def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
@@ -323,8 +365,24 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
 
     @property
     def log_determinant(self) -> float:
-        """``log det A``, exactly. Requires positive definiteness."""
-        self._require(Traits.POSITIVE_DEFINITE, "a log determinant")
+        """``log det A``, exactly.
+
+        The determinant of an endomorphism is the product of its eigenvalues
+        whatever the inner product -- ``det`` is a property of the map, not of
+        the metric -- so this is exact on any space.
+
+        Returns:
+            ``sum(log d)``.
+
+        Raises:
+            ValueError: if any eigenvalue is not strictly positive, so that
+                the logarithm of the determinant is not real.
+        """
+        self._require_spectrum(
+            self._eigenvalues > 0.0,
+            "a log determinant",
+            "strictly positive eigenvalues",
+        )
         return float(np.sum(np.log(self._eigenvalues)))
 
     def __abs__(self) -> DiagonalLinearOperator[V]:
@@ -332,15 +390,71 @@ class DiagonalLinearOperator[V](LinearOperator[V, V]):
         return self.apply_function(np.abs)
 
     def __pow__(self, power: float) -> DiagonalLinearOperator[V]:
-        """``A^p``. Requires positive semidefiniteness for fractional powers."""
+        """``A^p``.
+
+        Args:
+            power: the exponent. A fractional one needs a non-negative
+                spectrum; an integer one is defined for any.
+
+        Returns:
+            The diagonal operator with spectrum ``d ** power``.
+
+        Raises:
+            ValueError: for a fractional power of a spectrum with a negative
+                eigenvalue, naming it.
+        """
         if power != int(power):
-            self._require(Traits.POSITIVE_SEMIDEFINITE, "a fractional power")
+            self._require_spectrum(
+                self._eigenvalues >= 0.0,
+                "a fractional power",
+                "non-negative eigenvalues",
+            )
         return self.apply_function(lambda d: d**power)
 
-    def _require(self, needed: Traits, what: str) -> None:
-        """Raise unless the operator has the trait a calculus step needs."""
-        if needed & self.traits != needed:
-            raise ValueError(
-                f"{what.capitalize()} requires {needed!s}; this operator has "
-                f"{self.traits!s}."
-            )
+    def _require_spectrum(self, admissible: np.ndarray, what: str, needed: str) -> None:
+        """Raise unless every eigenvalue lies where the function needs it.
+
+        **The calculus gates on the spectrum, not on the traits.** A diagonal
+        operator's eigenvectors are the space's basis vectors and its
+        eigenvalues are the stored values *whatever the inner product* -- an
+        eigendecomposition is a statement about the map, not about the metric
+        -- so ``f(A)`` is ``diag(f(d))`` on any space, and what ``f`` needs is
+        that ``d`` lies in its domain.
+
+        Gating on ``POSITIVE_SEMIDEFINITE`` instead, as this used to, refused
+        :attr:`sqrt`, :attr:`log`, :attr:`log_determinant` and fractional
+        powers outright on every space whose Gram matrix is not diagonal:
+        there ``G diag(d)`` is symmetric only where the two commute, so
+        :meth:`_deduce_traits` deduces nothing and the operator "has NONE"
+        however positive its spectrum. That is a true statement about
+        self-adjointness and the wrong question to ask of a square root.
+
+        What the metric does decide is what the *result* is: on a diagonal
+        metric ``sqrt`` returns the positive semidefinite square root, and on
+        any other it returns a square root that is not self-adjoint. The
+        returned operator's traits say which, deduced by the constructor from
+        the same rule, so a caller who needs ``L L* == C`` rather than
+        ``B B == A`` can see that it did not get one.
+
+        Args:
+            admissible: a boolean mask over the eigenvalues, true where the
+                function is defined.
+            what: the operation, for the message.
+            needed: what the spectrum must satisfy, for the message.
+
+        Raises:
+            ValueError: naming the first offending eigenvalue and how many
+                offend.
+        """
+        if bool(np.all(admissible)):
+            return
+        offending = np.flatnonzero(~np.asarray(admissible))
+        first = int(offending[0])
+        raise ValueError(
+            f"{what.capitalize()} needs {needed}; eigenvalue {first} is "
+            f"{self._eigenvalues[first]:g}, and {offending.size} of "
+            f"{self._eigenvalues.size} are inadmissible. Note the gate is on "
+            f"the spectrum, not on the traits: this operator claims "
+            f"{self.traits!s}, which on a metric that is not diagonal is "
+            f"NONE however positive its eigenvalues."
+        )

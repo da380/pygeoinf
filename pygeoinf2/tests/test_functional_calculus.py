@@ -308,6 +308,97 @@ class TestDiagonalOperator:
             singular.inverse
 
 
+class TestTheDiagonalCalculusOnANonDiagonalMetric:
+    """The calculus gates on the spectrum, not on the traits.
+
+    A diagonal operator's eigenvectors are the basis vectors and its
+    eigenvalues are the stored values whatever the inner product, so ``f(A)``
+    is ``diag(f(d))`` on any space. Gating on ``POSITIVE_SEMIDEFINITE``
+    instead refused ``sqrt``, ``log``, ``log_determinant`` and fractional
+    powers on every space whose Gram matrix is not diagonal, where the trait
+    is never deduced however positive the spectrum.
+    """
+
+    @pytest.fixture
+    def dense(self):
+        space = make_dense_metric_space(6)
+        assert not space.has_diagonal_metric
+        values = np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0])
+        operator = DiagonalLinearOperator(space, values)
+        assert operator.traits == Traits.NONE
+        return space, values, operator
+
+    def test_the_square_root_squares_to_the_operator(self, dense, rng):
+        space, values, operator = dense
+        root = operator.sqrt
+        assert np.allclose(root.eigenvalues, np.sqrt(values))
+        probe = space.random(rng=rng)
+        assert space.norm(
+            space.subtract(root(root(probe)), operator(probe))
+        ) < 1e-12 * space.norm(operator(probe))
+
+    def test_but_it_is_not_self_adjoint_there_and_says_so(self, dense, rng):
+        """The metric decides what the result *is*; the traits report it, so
+        a caller needing ``L L* == C`` rather than ``B B == A`` can see that
+        it did not get one."""
+        space, _, operator = dense
+        root = operator.sqrt
+        assert not (Traits.SELF_ADJOINT & root.traits)
+        check_operator(root, rng=rng)
+        probe = space.random(rng=rng)
+        assert space.norm(
+            space.subtract(root(root.adjoint(probe)), operator(probe))
+        ) > 1e-6 * space.norm(operator(probe))
+
+    def test_the_logarithm_exponentiates_back(self, dense, rng):
+        space, values, operator = dense
+        assert np.allclose(operator.log.eigenvalues, np.log(values))
+        assert np.allclose(operator.log.exp.eigenvalues, values)
+
+    def test_the_log_determinant_is_the_sum_of_the_logs(self, dense):
+        """``det`` is a property of the map, not of the metric: the component
+        matrix's determinant, with no Gram correction."""
+        _, values, operator = dense
+        assert operator.log_determinant == pytest.approx(np.sum(np.log(values)))
+
+    def test_fractional_powers_and_the_inverse_root(self, dense):
+        _, values, operator = dense
+        assert np.allclose((operator**0.5).eigenvalues, values**0.5)
+        assert np.allclose(operator.inverse_sqrt.eigenvalues, 1.0 / np.sqrt(values))
+
+    def test_a_bad_spectrum_is_still_refused_and_named(self, dense):
+        space, _, _ = dense
+        indefinite = DiagonalLinearOperator(
+            space, np.array([1.0, -2.0, 3.0, 4.0, 5.0, 6.0])
+        )
+        with pytest.raises(ValueError, match="eigenvalue 1 is -2"):
+            indefinite.sqrt
+        with pytest.raises(ValueError, match="strictly positive"):
+            indefinite.log_determinant
+
+    def test_a_diagonal_metric_is_unaffected(self, rng):
+        """The generalisation must not move the answer where the trait was
+        deduced: there ``d >= 0`` and ``POSITIVE_SEMIDEFINITE`` say the same
+        thing."""
+        space = make_weighted_space()
+        values = np.array([1.0, 2.0, 3.0, 4.0])
+        operator = DiagonalLinearOperator(space, values)
+        assert Traits.POSITIVE_DEFINITE & operator.traits
+        assert Traits.SELF_ADJOINT & operator.sqrt.traits
+        assert np.allclose(operator.sqrt.eigenvalues, np.sqrt(values))
+        assert operator.log_determinant == pytest.approx(np.sum(np.log(values)))
+
+    def test_operator_function_still_requires_self_adjointness(self, dense):
+        """The free function keeps its gate: its Lanczos route needs
+        self-adjointness outright, and ``operator_sqrt`` claims
+        ``POSITIVE_SEMIDEFINITE`` of what it returns."""
+        _, _, operator = dense
+        with pytest.raises(ValueError, match="self-adjoint"):
+            operator_function(operator, np.sqrt)
+        with pytest.raises(ValueError, match="POSITIVE_SEMIDEFINITE"):
+            operator_sqrt(operator)
+
+
 class TestCoordinateFreedom:
     def test_lanczos_never_touches_components(self, rng):
         """The whole point: f(A) on a space with no component map."""
@@ -576,7 +667,9 @@ class TestLanczosOnComponents:
         assert fast_matrix == pytest.approx(slow_matrix, rel=1e-9, abs=1e-9)
         for a, b in zip(fast_basis, slow_basis):
             assert space.norm(space.subtract(a, b)) < 1e-8
-        assert space.norm(space.subtract(fast_root, slow_root)) < 1e-8 * space.norm(slow_root)
+        assert space.norm(space.subtract(fast_root, slow_root)) < 1e-8 * space.norm(
+            slow_root
+        )
         gram = np.array(
             [[space.inner_product(a, b) for b in fast_basis] for a in fast_basis]
         )
@@ -604,7 +697,11 @@ class TestLanczosOnComponents:
         monkeypatch.setattr(expand, "SHExpandDH", count)
         steps = 10
         apply_operator_function(
-            operator, np.sqrt, space.random(rng=np.random.default_rng(3)), max_iterations=steps, rtol=0.0
+            operator,
+            np.sqrt,
+            space.random(rng=np.random.default_rng(3)),
+            max_iterations=steps,
+            rtol=0.0,
         )
         # Two per step -- the operator's own and the result's -- plus the
         # start vector's and its norm's. The coordinate-free route needed
