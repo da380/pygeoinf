@@ -250,7 +250,7 @@ MPI program is a non-starter and should be documented as such.
 
 ## 5. Recommendations
 
-> **Status (2026-08-29, branch `refactor-r2`):** R1–R6 implemented in `parallel.py` and the five loops; R7 follows the algebra hooks (`apply_block`, `_known_matrix`); R8–R10 as recorded. The `Parallel(inner_max_num_threads=)` keyword turned out to be ignored by joblib 1.5.3's reusable executor — the `parallel_config` context form works and is what is used, pinned by a test that reads the workers' environment.
+> **Status (2026-08-29, merged to `refactor`):** R1–R6 implemented in `parallel.py` and the five loops (`542de76`); R7's hooks are in (`6620637`: `apply_block`, `n_jobs` on `diagonals`, `assembled`, the direct solvers, Jacobi, the `random_*` routines, `deflated_diagonal`, `sample_expectation`, the sampling route of `pointwise_variance_at`) — only `with_dense_covariance(n_jobs=)` remains; R8–R10 as recorded, R10's nesting and affinity tests written, the seed-invariance test written. The `Parallel(inner_max_num_threads=)` keyword turned out to be ignored by joblib 1.5.3's reusable executor — the `parallel_config` context form works and is what is used, pinned by a test that reads the workers' environment.
 
 Ordered by value; the first four are small edits to `parallel.py`.
 
