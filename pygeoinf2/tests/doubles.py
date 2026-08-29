@@ -170,6 +170,12 @@ class StrictSpace(CoordinateSpace):
     def random(self, *, rng: Generator | None = None):
         return self._base.random(rng=rng)
 
+    @property
+    def uses_component_fast_paths(self) -> bool:
+        # A coordinate map that raises is not one the library may use for its
+        # internal arithmetic; the coordinate-free paths are what is under test.
+        return False
+
     def to_components(self, x):
         raise NoCoordinatesError(
             "to_components was called on a StrictSpace: this code path is "

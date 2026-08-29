@@ -1030,6 +1030,11 @@ class LinearOperator[X, Y](Operator[X, Y]):
         vectors = tuple(vectors)
         if not vectors:
             raise ValueError("At least one vector is needed.")
+        if isinstance(codomain, CoordinateSpace) and codomain.uses_component_fast_paths:
+            # The adjoint through inner products analyses ``y`` once per
+            # vector; through the stored columns it analyses it once. The
+            # columns are computed on first use, so construction stays free.
+            return _ColumnOperator(codomain, vectors=vectors, orthonormal=orthonormal)
         domain = EuclideanSpace(len(vectors))
 
         def value(c: np.ndarray) -> Y:
@@ -1048,6 +1053,43 @@ class LinearOperator[X, Y](Operator[X, Y]):
             adjoint=adjoint,
             traits=Traits.ISOMETRY if orthonormal else Traits.NONE,
         )
+
+    @classmethod
+    def from_component_columns(
+        cls,
+        codomain: CoordinateSpace[Y],
+        columns: np.ndarray,
+        /,
+        *,
+        orthonormal: bool = False,
+    ) -> LinearOperator[np.ndarray, Y]:
+        """The map ``c -> sum_i c_i v_i`` with the ``v_i`` given by components.
+
+        :meth:`from_vectors` with the vectors already in coordinates, which is
+        how a randomised factorisation has them; it saves synthesising ``k``
+        vectors only to analyse them again.
+
+        Args:
+            codomain: the coordinate space the vectors live in.
+            columns: a ``(dim, k)`` array, one vector's components per column.
+            orthonormal: claim that the family is orthonormal in the space's
+                inner product.
+
+        Returns:
+            The operator from ``R^k`` into the space.
+
+        Raises:
+            ValueError: if the array has no columns or the wrong number of rows.
+        """
+        columns = np.asarray(columns, dtype=float)
+        if columns.ndim != 2 or columns.shape[1] == 0:
+            raise ValueError("At least one column is needed.")
+        if columns.shape[0] != codomain.dim:
+            raise ValueError(
+                f"The columns have {columns.shape[0]} rows; the space has "
+                f"dimension {codomain.dim}."
+            )
+        return _ColumnOperator(codomain, columns=columns, orthonormal=orthonormal)
 
     @classmethod
     def from_tensor_product(
@@ -1328,6 +1370,61 @@ class LinearOperator[X, Y](Operator[X, Y]):
         return _CallableLinearOperator(
             domain, codomain, value, adjoint=adjoint, traits=traits
         )
+
+
+class _ColumnOperator[Y](LinearOperator[np.ndarray, Y]):
+    """``c -> sum_i c_i v_i`` on a coordinate space, through the components.
+
+    Holds the vectors' components as the columns of one array, so the action
+    is one matrix-vector product and a synthesis, and the adjoint one analysis,
+    one metric application and one product: ``[(v_i, y)] == C^T G c_y``.
+    Built from vectors (the columns are computed on first use) or from the
+    columns themselves.
+    """
+
+    def __init__(
+        self,
+        codomain: CoordinateSpace[Y],
+        /,
+        *,
+        vectors: Sequence[Y] | None = None,
+        columns: np.ndarray | None = None,
+        orthonormal: bool = False,
+    ) -> None:
+        if (vectors is None) == (columns is None):
+            raise ValueError("Give either the vectors or their columns.")
+        count = len(vectors) if vectors is not None else columns.shape[1]
+        super().__init__(
+            EuclideanSpace(count),
+            codomain,
+            traits=Traits.ISOMETRY if orthonormal else Traits.NONE,
+        )
+        self._vectors = None if vectors is None else tuple(vectors)
+        self._columns = columns
+
+    @property
+    def columns(self) -> np.ndarray:
+        """The ``(dim, k)`` array of the vectors' components."""
+        if self._columns is None:
+            self._columns = self.codomain.components_of(self._vectors)
+        return self._columns
+
+    @property
+    def vectors(self) -> tuple[Y, ...]:
+        """The vectors themselves, synthesised once if built from columns."""
+        if self._vectors is None:
+            self._vectors = tuple(self.codomain.vectors_from(self._columns))
+        return self._vectors
+
+    def _value(self, c: np.ndarray) -> Y:
+        return self.codomain.from_components(self.columns @ np.asarray(c, dtype=float))
+
+    def _adjoint_value(self, y: Y) -> np.ndarray:
+        weighted = self.codomain.apply_gram(self.codomain.to_components(y))
+        return self.columns.T @ weighted
+
+    def __repr__(self) -> str:
+        return f"ColumnOperator(k={self.domain.dim}, into={self.codomain!r})"
 
 
 class _CallableLinearOperator[X, Y](LinearOperator[X, Y]):

@@ -33,7 +33,7 @@ from scipy.linalg import eigh_tridiagonal
 
 from ..algebra.diagonal import DiagonalLinearOperator
 from ..algebra.operators import LinearOperator
-from ..algebra.spaces import HilbertSpace
+from ..algebra.spaces import _REORTHOGONALISATION_THRESHOLD, CoordinateSpace, HilbertSpace
 
 if TYPE_CHECKING:  # pragma: no cover
     from .randomised import Estimate
@@ -107,6 +107,17 @@ def iter_lanczos_tridiagonalise(
     space: HilbertSpace = operator.domain
     _require_self_adjoint(operator, "Lanczos tridiagonalisation")
 
+    if isinstance(space, CoordinateSpace) and space.uses_component_fast_paths:
+        yield from _iter_lanczos_on_components(
+            operator,
+            space,
+            start,
+            max_iterations,
+            reorthogonalise=reorthogonalise,
+            breakdown_tol=breakdown_tol,
+        )
+        return
+
     norm = space.norm(start)
     if norm == 0.0:
         raise ValueError("The starting vector for Lanczos must be nonzero.")
@@ -149,6 +160,76 @@ def iter_lanczos_tridiagonalise(
         basis.append(space.scale_inplace(1.0 / beta, w))
 
 
+def _iter_lanczos_on_components(
+    operator: LinearOperator,
+    space: CoordinateSpace,
+    start: Any,
+    max_iterations: int,
+    /,
+    *,
+    reorthogonalise: bool,
+    breakdown_tol: float,
+) -> Iterator[tuple[list[Any], np.ndarray]]:
+    """The same iteration with the Krylov basis kept as component columns.
+
+    One analysis and one synthesis per step -- the synthesis is the basis
+    vector the operator is applied to, so it is not extra -- against ``2k + 4``
+    analyses per step through ``inner_product`` on a spectral space. The
+    metric enters only through ``apply_gram``. Reorthogonalisation is
+    classical Gram-Schmidt against the whole basis with Kahan's second pass
+    when the first removes more than ``1 - 1/sqrt(2)`` of the norm, which is
+    one metric application per pass instead of one per basis vector.
+    """
+    c = np.array(space.to_components(start), dtype=float)
+    weighted = space.apply_gram(c)
+    norm = float(np.sqrt(max(float(c @ weighted), 0.0)))
+    if norm == 0.0:
+        raise ValueError("The starting vector for Lanczos must be nonzero.")
+
+    columns = np.empty((space.dim, max_iterations))
+    columns[:, 0] = c / norm
+    basis = [space.from_components(columns[:, 0].copy())]
+    diagonal: list[float] = []
+    off_diagonal: list[float] = []
+
+    previous_beta = 0.0
+    for step in range(max_iterations):
+        w = np.array(space.to_components(operator(basis[-1])), dtype=float)
+        weighted = space.apply_gram(w)
+        current = columns[:, : step + 1]
+        if reorthogonalise:
+            # The first pass's last coefficient is alpha itself, and its
+            # second-to-last is beta; projecting off the whole basis at once
+            # subsumes the three-term recurrence.
+            before = float(np.sqrt(max(float(w @ weighted), 0.0)))
+            coefficients = current.T @ weighted
+            alpha = float(coefficients[-1])
+            w -= current @ coefficients
+            weighted = space.apply_gram(w)
+            beta = float(np.sqrt(max(float(w @ weighted), 0.0)))
+            if beta < _REORTHOGONALISATION_THRESHOLD * before:
+                w -= current @ (current.T @ weighted)
+                weighted = space.apply_gram(w)
+                beta = float(np.sqrt(max(float(w @ weighted), 0.0)))
+        else:
+            alpha = float(columns[:, step] @ weighted)
+            w -= alpha * columns[:, step]
+            if step > 0:
+                w -= previous_beta * columns[:, step - 1]
+            weighted = space.apply_gram(w)
+            beta = float(np.sqrt(max(float(w @ weighted), 0.0)))
+        diagonal.append(alpha)
+
+        yield list(basis), _tridiagonal(diagonal, off_diagonal)
+
+        if beta <= breakdown_tol * max(abs(alpha), 1.0) or step + 1 == max_iterations:
+            return
+        off_diagonal.append(beta)
+        previous_beta = beta
+        columns[:, step + 1] = w / beta
+        basis.append(space.from_components(columns[:, step + 1].copy()))
+
+
 def _tridiagonal(
     diagonal: Sequence[float], off_diagonal: Sequence[float]
 ) -> np.ndarray:
@@ -170,6 +251,7 @@ def lanczos_tridiagonalise(
     /,
     *,
     reorthogonalise: bool = True,
+    breakdown_tol: float = 1e-12,
 ) -> tuple[list[Any], np.ndarray]:
     """Run Lanczos to completion, returning the final basis and matrix.
 
@@ -180,13 +262,18 @@ def lanczos_tridiagonalise(
         reorthogonalise: keep the basis orthogonal against rounding. Worth
             the cost: without it the Lanczos vectors lose orthogonality
             exactly as the method converges.
+        breakdown_tol: as for :func:`iter_lanczos_tridiagonalise`.
 
     Returns:
         The basis and the tridiagonal matrix.
     """
     basis, matrix = [], np.zeros((0, 0))
     for basis, matrix in iter_lanczos_tridiagonalise(
-        operator, start, max_iterations, reorthogonalise=reorthogonalise
+        operator,
+        start,
+        max_iterations,
+        reorthogonalise=reorthogonalise,
+        breakdown_tol=breakdown_tol,
     ):
         pass
     return basis, matrix
@@ -261,22 +348,6 @@ def apply_operator_function(
     result = space.zero()
     for weight, vector in zip(weights, final_basis):
         result = space.axpy(norm * float(weight), vector, result)
-    return result
-
-
-def _combine(
-    space: HilbertSpace,
-    basis: Sequence[Any],
-    matrix: np.ndarray,
-    function: Callable[[np.ndarray], np.ndarray],
-    norm: float,
-) -> Any:
-    """Form ``||x|| Q f(T) e_1`` from the Krylov basis and tridiagonal matrix."""
-    values, vectors = _eigh_tridiagonal(matrix)
-    weights = vectors @ (np.asarray(function(values)) * vectors[0, :])
-    result = space.zero()
-    for weight, q in zip(weights, basis):
-        result = space.axpy(norm * float(weight), q, result)
     return result
 
 

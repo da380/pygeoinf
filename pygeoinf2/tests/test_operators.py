@@ -783,3 +783,48 @@ class TestFormalAdjointLift:
         )
         with pytest.raises(ValueError, match="same vectors"):
             LinearOperator.from_formal_adjoint(EuclideanSpace(5), base, operator)
+
+
+class TestColumnOperator:
+    """``from_vectors`` on a coordinate space stores the components and
+    takes its adjoint through one analysis and one metric application."""
+
+    def test_it_agrees_with_the_coordinate_free_construction(self, rng):
+        from pygeoinf2.algebra.spaces import CoordinateSpace
+
+        space = make_dense_metric_space(20)
+        vectors = [space.random(rng=rng) for _ in range(5)]
+        fast = LinearOperator.from_vectors(space, vectors)
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            CoordinateSpace, "uses_component_fast_paths", property(lambda self: False)
+        )
+        try:
+            slow = LinearOperator.from_vectors(space, vectors)
+        finally:
+            monkeypatch.undo()
+        c = rng.standard_normal(5)
+        assert space.norm(space.subtract(fast(c), slow(c))) < 1e-12
+        y = space.random(rng=rng)
+        assert fast.adjoint(y) == pytest.approx(slow.adjoint(y), rel=1e-12, abs=1e-12)
+        check_operator(fast, rng=rng)
+
+    def test_it_can_be_built_from_columns(self, rng):
+        space = make_dense_metric_space(20)
+        columns = rng.standard_normal((20, 4))
+        operator = LinearOperator.from_component_columns(space, columns)
+        assert np.array_equal(operator.columns, columns)
+        assert len(operator.vectors) == 4
+        check_operator(operator, rng=rng)
+        with pytest.raises(ValueError):
+            LinearOperator.from_component_columns(space, np.zeros((20, 0)))
+        with pytest.raises(ValueError):
+            LinearOperator.from_component_columns(space, np.zeros((7, 2)))
+
+    def test_the_strict_space_falls_back(self, rng):
+        from .doubles import StrictSpace
+
+        strict = StrictSpace(make_weighted_space())
+        operator = LinearOperator.from_vectors(strict, [strict.random(rng=rng)])
+        assert not hasattr(operator, "columns")
+        operator(np.ones(1))

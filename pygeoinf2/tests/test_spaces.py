@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from pygeoinf2.algebra.operators import LinearOperator
-from pygeoinf2.algebra.spaces import EuclideanSpace, Reals
+from pygeoinf2.algebra.spaces import EuclideanSpace, HilbertSpace, Reals
 from pygeoinf2.testing import (
     check_coordinates,
     check_representer,
@@ -312,3 +312,44 @@ class TestMassWeightedSpace:
         elsewhere = DiagonalLinearOperator(EuclideanSpace(3), np.ones(3))
         with pytest.raises(ValueError, match="map .* to itself"):
             MassWeightedSpace(base, elsewhere)
+
+
+class TestOrthonormalisationOnComponents:
+    """``gram_schmidt`` and ``orthonormal_basis`` on a coordinate space work
+    on component arrays, converting each vector once. They must agree with
+    the coordinate-free versions on a Gram matrix that is not diagonal."""
+
+    @pytest.fixture
+    def dense(self):
+        return make_dense_metric_space(40)
+
+    def test_gram_schmidt_matches_the_generic_route(self, dense, rng):
+        vectors = [dense.random(rng=rng) for _ in range(12)]
+        fast = dense.gram_schmidt(vectors)
+        slow = HilbertSpace.gram_schmidt(dense, vectors)
+        for a, b in zip(fast, slow):
+            assert dense.norm(dense.subtract(a, b)) < 1e-10
+        gram = np.array([[dense.inner_product(a, b) for b in fast] for a in fast])
+        assert gram == pytest.approx(np.eye(12), abs=1e-10)
+
+    def test_orthonormal_basis_drops_dependent_vectors(self, dense, rng):
+        x, y = dense.random(rng=rng), dense.random(rng=rng)
+        basis = dense.orthonormal_basis([x, dense.scale(2.0, x), y, dense.add(x, y)])
+        assert len(basis) == 2
+        slow = HilbertSpace.orthonormal_basis(dense, [x, dense.scale(2.0, x), y])
+        for a, b in zip(basis, slow):
+            assert dense.norm(dense.subtract(a, b)) < 1e-10
+
+    def test_gram_schmidt_rejects_dependence_by_index(self, dense, rng):
+        x = dense.random(rng=rng)
+        with pytest.raises(ValueError, match="Vector 1"):
+            dense.gram_schmidt([x, dense.scale(-3.0, x)])
+
+    def test_the_vectors_do_not_alias_the_array(self, rng):
+        """EuclideanSpace's coordinate map does not copy, so the fast path
+        must, or the returned vectors would be views of one array."""
+        space = EuclideanSpace(5)
+        basis = space.orthonormal_basis([space.random(rng=rng) for _ in range(3)])
+        before = basis[1].copy()
+        space.scale_inplace(10.0, basis[0])
+        assert np.array_equal(basis[1], before)

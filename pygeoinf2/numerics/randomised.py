@@ -101,6 +101,95 @@ def _power_iterate(
     return result
 
 
+def _range_options(kwargs: dict) -> dict:
+    """The ``random_range`` options a factorisation forwards, with defaults."""
+    unknown = set(kwargs) - {"oversampling", "power", "block_size", "rtol", "max_rank"}
+    if unknown:
+        raise TypeError(f"Unexpected keyword arguments: {sorted(unknown)}.")
+    return {
+        "oversampling": kwargs.get("oversampling", 10),
+        "power": kwargs.get("power", 1),
+        "block_size": kwargs.get("block_size", 10),
+        "rtol": kwargs.get("rtol", 1e-4),
+        "max_rank": kwargs.get("max_rank", None),
+    }
+
+
+def _fast(space: Any) -> bool:
+    """Whether a space lets the library work on its component arrays."""
+    return isinstance(space, CoordinateSpace) and space.uses_component_fast_paths
+
+
+def _orthonormal_columns(space: CoordinateSpace, vectors: Sequence[Any]) -> np.ndarray:
+    """``orthonormal_basis`` on components, returning the columns."""
+    columns, _ = space._orthonormalise_columns(
+        space.components_of(vectors), rtol=1e-10
+    )
+    return columns
+
+
+def _range_with_columns(
+    operator: LinearOperator,
+    /,
+    *,
+    rank: int | None,
+    oversampling: int,
+    power: int,
+    block_size: int,
+    rtol: float,
+    max_rank: int | None,
+    rng: Generator | None,
+) -> tuple[list[Any], np.ndarray | None]:
+    """``random_range``, also returning the basis as component columns.
+
+    On a coordinate space the basis is carried as columns through the power
+    iteration, so each application's result is analysed exactly once and the
+    basis is never re-analysed by the factorisation that follows; the vectors
+    are synthesised once. Elsewhere the columns are ``None`` and the
+    coordinate-free loops run.
+    """
+    domain, codomain = operator.domain, operator.codomain
+    if not (_fast(domain) and _fast(codomain)):
+        return (
+            random_range(
+                operator,
+                rank=rank,
+                oversampling=oversampling,
+                power=power,
+                block_size=block_size,
+                rtol=rtol,
+                max_rank=max_rank,
+                rng=rng,
+            ),
+            None,
+        )
+
+    ceiling = max_rank if max_rank is not None else min(domain.dim, codomain.dim)
+    if ceiling <= 0:
+        return [], None
+    if rank is not None:
+        if rank <= 0:
+            raise ValueError("rank must be positive.")
+        count = min(rank + oversampling, ceiling)
+        columns = _orthonormal_columns(codomain, _probe_range(operator, count, rng))
+    else:
+        columns = _adaptive_range_on_components(
+            operator, codomain, ceiling, block_size, rtol, rng
+        )
+    for _ in range(power):
+        if columns.shape[1] == 0:
+            break
+        pulled = _orthonormal_columns(
+            domain, [operator.adjoint(q) for q in codomain.vectors_from(columns)]
+        )
+        if pulled.shape[1] == 0:
+            break
+        columns = _orthonormal_columns(
+            codomain, [operator(z) for z in domain.vectors_from(pulled)]
+        )
+    return codomain.vectors_from(columns), columns
+
+
 def random_range(
     operator: LinearOperator,
     /,
@@ -159,6 +248,12 @@ def random_range(
     # -- orthonormal_basis(basis + block) -- redoes every earlier vector's work
     # and throws the residuals away, which turns a linear cost into a cubic
     # one. That is v1's arrangement.
+    if _fast(codomain):
+        columns = _adaptive_range_on_components(
+            operator, codomain, ceiling, block_size, rtol, rng
+        )
+        return _power_iterate(operator, codomain.vectors_from(columns), power)
+
     basis: list[Any] = []
     scale: float | None = None
     while len(basis) < ceiling:
@@ -181,6 +276,65 @@ def random_range(
         if largest <= rtol * scale or not residuals:
             break
     return _power_iterate(operator, basis, power)
+
+
+def _adaptive_range_on_components(
+    operator: LinearOperator,
+    codomain: CoordinateSpace,
+    ceiling: int,
+    block_size: int,
+    rtol: float,
+    rng: Generator | None,
+) -> np.ndarray:
+    """The adaptive loop with the basis kept as component columns.
+
+    Each probe is analysed once; the residual test and the extension are
+    arithmetic on ``(dim, k)`` arrays with the metric through ``apply_gram``.
+    Returns the columns; the caller synthesises vectors once. Same algorithm
+    as the coordinate-free loop above: only the new block is orthogonalised
+    against a basis that is already orthonormal, and the residuals are what
+    extend it.
+    """
+    columns = np.empty((codomain.dim, ceiling))
+    count = 0
+    scale: float | None = None
+    while count < ceiling:
+        block = codomain.components_of(
+            _probe_range(operator, min(block_size, ceiling - count), rng)
+        )
+        weighted = codomain.apply_gram_to_columns(block)
+        norms = np.sqrt(np.maximum(np.einsum("ij,ij->j", block, weighted), 0.0))
+        if scale is None:
+            scale = float(norms.max()) if norms.size else 0.0
+            if scale == 0.0:
+                return []
+
+        # Project the block off the basis, twice, and read the residual norms.
+        residual = block.copy()
+        if count > 0:
+            current = columns[:, :count]
+            for _ in range(2):
+                residual -= current @ (current.T @ weighted)
+                weighted = codomain.apply_gram_to_columns(residual)
+        residual_norms = np.sqrt(
+            np.maximum(np.einsum("ij,ij->j", residual, weighted), 0.0)
+        )
+        largest = float(residual_norms.max()) if residual_norms.size else 0.0
+
+        keep = residual_norms > 1e-12 * scale
+        # The residuals are orthogonal to the basis but not yet to each other.
+        fresh, _ = codomain._orthonormalise_columns(
+            residual[:, keep] / np.where(keep, residual_norms, 1.0)[keep],
+            rtol=1e-10,
+            against=columns[:, :count] if count > 0 else None,
+        )
+        room = ceiling - count
+        added = min(fresh.shape[1], room)
+        columns[:, count : count + added] = fresh[:, :added]
+        count += added
+        if largest <= rtol * scale or not keep.any():
+            break
+    return columns[:, :count]
 
 
 # --------------------------------------------------------------------- #
@@ -379,14 +533,18 @@ def random_eig(
             f"this one claims {operator.traits!s}. Use random_svd otherwise."
         )
     space = operator.domain
-    basis = random_range(operator, rank=rank, rng=rng, **kwargs)
+    basis, columns = _range_with_columns(operator, rank=rank, rng=rng, **_range_options(kwargs))
     if not basis:
         raise ValueError("The operator's range appears to be trivial.")
 
     images = [operator(q) for q in basis]
-    projected = np.array(
-        [[space.inner_product(image, q) for image in images] for q in basis]
-    )
+    if columns is not None:
+        # T == Q^T G (A Q) on component columns: k analyses, not k^2.
+        projected = columns.T @ space.apply_gram_to_columns(space.components_of(images))
+    else:
+        projected = np.array(
+            [[space.inner_product(image, q) for image in images] for q in basis]
+        )
     projected = 0.5 * (projected + projected.T)
     values, vectors = np.linalg.eigh(projected)
 
@@ -395,10 +553,12 @@ def random_eig(
         order = order[:rank]
     values, vectors = values[order], vectors[:, order]
 
-    eigenvectors = [
-        space.mean([])  # placeholder, replaced below
-        for _ in range(0)
-    ]
+    if columns is not None:
+        factor = LinearOperator.from_component_columns(
+            space, columns @ vectors, orthonormal=True
+        )
+        return LowRankEig(factor, values)
+
     eigenvectors = []
     for column in vectors.T:
         vector = space.zero()
@@ -441,12 +601,19 @@ def random_svd(
         ValueError: for a rank exceeding the smaller dimension.
     """
     domain, codomain = operator.domain, operator.codomain
-    basis = random_range(operator, rank=rank, rng=rng, **kwargs)
+    basis, columns = _range_with_columns(operator, rank=rank, rng=rng, **_range_options(kwargs))
     if not basis:
         raise ValueError("The operator's range appears to be trivial.")
 
     pulled = [operator.adjoint(q) for q in basis]
-    gram = np.array([[domain.inner_product(u, v) for v in pulled] for u in pulled])
+    fast = columns is not None
+    if fast:
+        pulled_columns = domain.components_of(pulled)
+        gram = pulled_columns.T @ domain.apply_gram_to_columns(pulled_columns)
+    else:
+        gram = np.array(
+            [[domain.inner_product(u, v) for v in pulled] for u in pulled]
+        )
     gram = 0.5 * (gram + gram.T)
     values, vectors = np.linalg.eigh(gram)
 
@@ -459,6 +626,17 @@ def random_svd(
     keep = singular_values > singular_values.max() * 1e-14 if values.size else []
     singular_values = singular_values[keep]
     vectors = vectors[:, keep]
+
+    if fast:
+        return LowRankSVD(
+            LinearOperator.from_component_columns(
+                codomain, columns @ vectors, orthonormal=True
+            ),
+            singular_values,
+            LinearOperator.from_component_columns(
+                domain, (pulled_columns @ vectors) / singular_values, orthonormal=True
+            ),
+        )
 
     left, right = [], []
     for index, column in enumerate(vectors.T):
@@ -514,6 +692,11 @@ def random_cholesky(
     decomposition = random_eig(operator, rank=rank, rng=rng, **kwargs)
     values = np.clip(decomposition.eigenvalues, 0.0, None)
     space = operator.domain
+    columns = getattr(decomposition.factor, "columns", None)
+    if columns is not None:
+        return LowRankCholesky(
+            LinearOperator.from_component_columns(space, columns * np.sqrt(values))
+        )
     coefficients = decomposition.factor.domain
     scaled = [
         space.scale(
@@ -675,11 +858,16 @@ def deflated_diagonal(
     # sum_i lambda_i (G c_i)(G c_i)^T, so which diagonal is wanted decides
     # how many times the metric appears -- once or twice. On an orthonormal
     # basis the two coincide, which is why this needs a weighted space to test.
-    columns = np.stack(
-        [
-            domain.to_components(low_rank.factor(vector))
-            for vector in np.identity(low_rank.eigenvalues.size)
-        ]
+    stored = getattr(low_rank.factor, "columns", None)
+    columns = (
+        stored.T
+        if stored is not None
+        else np.stack(
+            [
+                domain.to_components(low_rank.factor(vector))
+                for vector in np.identity(low_rank.eigenvalues.size)
+            ]
+        )
     )
     weighted = np.stack([domain.apply_gram(column) for column in columns])
     if form == "galerkin":

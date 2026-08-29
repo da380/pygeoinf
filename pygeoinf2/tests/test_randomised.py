@@ -536,3 +536,123 @@ class TestSamplingToATolerance:
         )
         assert tight.samples > loose.samples
         assert tight.standard_error < loose.standard_error
+
+
+class TestComponentFastPaths:
+    """The randomised routines do their arithmetic on component arrays when
+    the space has them, converting each vector once each way.
+
+    On a spectral space an inner product analyses both arguments, so the
+    coordinate-free route paid O(k^2) transforms for O(k) vectors: measured at
+    lmax 64, ``random_eig(rank=20)`` spent 5794 analyses on 120 operator
+    applications. The count is asserted here so the regression would be loud.
+    """
+
+    @staticmethod
+    def counted_transforms(monkeypatch):
+        import pyshtools.expand as expand
+
+        counts = {"analysis": 0, "synthesis": 0}
+        analysis, synthesis = expand.SHExpandDH, expand.MakeGridDH
+
+        def count_analysis(*args, **kwargs):
+            counts["analysis"] += 1
+            return analysis(*args, **kwargs)
+
+        def count_synthesis(*args, **kwargs):
+            counts["synthesis"] += 1
+            return synthesis(*args, **kwargs)
+
+        monkeypatch.setattr(expand, "SHExpandDH", count_analysis)
+        monkeypatch.setattr(expand, "MakeGridDH", count_synthesis)
+        return counts
+
+    def test_the_sphere_pays_one_analysis_per_vector(self, monkeypatch):
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        pytest.importorskip("pyshtools")
+        space = Sobolev(16, 2.0, 0.3)
+        # An operator whose own cost is exactly two transforms per application.
+        values = 1.0 / (1.0 + np.arange(space.dim))
+        operator = LinearOperator.self_adjoint(
+            space,
+            lambda x: space.from_components(values * space.to_components(x)),
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        rank, oversampling, power = 8, 4, 1
+        counts = self.counted_transforms(monkeypatch)
+        decomposition = random_eig(
+            operator,
+            rank=rank,
+            oversampling=oversampling,
+            power=power,
+            rng=np.random.default_rng(7),
+        )
+        probes = rank + oversampling
+        applications = probes * (1 + 2 * power + 1)  # probes, power steps, images
+        # Every analysis is either the operator's own or the single one the
+        # fast paths make of each application's result: never a per-pair
+        # analysis. The coordinate-free route measured 5794 for 120
+        # applications at lmax 64.
+        assert counts["analysis"] <= 2 * applications
+        assert counts["synthesis"] <= 2 * applications + 2 * probes
+        # One power step on a 1/(1+i) spectrum: approximate, as the method is.
+        assert np.allclose(decomposition.eigenvalues, np.sort(values)[::-1][:rank], rtol=0.05)
+
+    def test_the_two_routes_agree_on_a_dense_metric(self, rng):
+        """The component route against the coordinate-free one it replaces."""
+        from pygeoinf2.algebra.spaces import CoordinateSpace
+
+        space = dense_metric(30, rng)
+        matrix = rng.standard_normal((30, 8))
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            matrix @ matrix.T,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE,
+        )
+        fast = random_eig(operator, rank=8, rng=np.random.default_rng(9))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            CoordinateSpace, "uses_component_fast_paths", property(lambda self: False)
+        )
+        try:
+            slow = random_eig(operator, rank=8, rng=np.random.default_rng(9))
+        finally:
+            monkeypatch.undo()
+        assert fast.eigenvalues == pytest.approx(slow.eigenvalues, rel=1e-10)
+        for _ in range(3):
+            vector = space.random(rng=rng)
+            assert space.norm(space.subtract(fast(vector), slow(vector))) < 1e-9
+
+    def test_the_factor_is_an_isometry_in_the_metric(self, rng):
+        space = dense_metric(25, rng)
+        matrix = rng.standard_normal((25, 25))
+        operator = LinearOperator.from_matrix(
+            space, space, matrix @ matrix.T, form="galerkin", traits=Traits.SELF_ADJOINT
+        )
+        decomposition = random_eig(operator, rank=6, rng=np.random.default_rng(10))
+        columns = decomposition.factor.columns
+        gram = columns.T @ space.apply_gram_to_columns(columns)
+        assert gram == pytest.approx(np.eye(6), abs=1e-10)
+        check_traits(decomposition.factor, rng=rng)
+
+    def test_the_strict_space_takes_the_coordinate_free_route(self, rng):
+        """A space that forbids its coordinate map still gets an answer."""
+        base = make_weighted_space()
+        strict = StrictSpace(base)
+        values = np.array([4.0, 3.0, 0.0, 0.0])
+        operator = LinearOperator.self_adjoint(
+            strict,
+            lambda x: base.from_components(values * base.to_components(x)),
+            traits=Traits.POSITIVE_SEMIDEFINITE,
+        )
+        basis = strict.orthonormal_basis([strict.random(rng=rng) for _ in range(3)])
+        assert len(basis) == 3
+        gram = np.array([[strict.inner_product(a, b) for b in basis] for a in basis])
+        assert gram == pytest.approx(np.eye(3), abs=1e-10)
+        # White noise on a coordinate space is legitimately a coordinate
+        # operation, so the range finder is fed probes drawn on the base.
+        probes = [operator(base.white_noise(rng=rng)) for _ in range(3)]
+        assert len(strict.orthonormal_basis(probes)) == 2

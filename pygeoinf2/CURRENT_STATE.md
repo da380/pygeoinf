@@ -54,6 +54,17 @@ These are the ones that bite.
   convert.
 - **A sphere's vectors are `pyshtools.SHGrid` objects** (**D-1**), not arrays.
   `grid_values` reaches the numbers; `from_grid_values` goes back.
+- **Coordinate-free when it must be, and not otherwise.** Every algorithm
+  runs on a space with no component map, through `inner_product`, `axpy`
+  and the operator's action. On a `CoordinateSpace` the library may do its
+  internal arithmetic on `(dim, k)` component arrays instead — Gram–Schmidt,
+  the Lanczos basis, the range finder, a low-rank factor's adjoint — because
+  an inner product on a spectral space transforms *both* arguments and the
+  coordinate-free forms of those routines paid O(k²) transforms for k vectors
+  (measured at lmax 64: 2650 analyses to orthonormalise 50 fields, 50 on
+  components). The metric enters those paths only through `apply_gram`, so
+  they are exactly as metric-correct as the inner product; a space whose
+  coordinate map is only formal opts out with `uses_component_fast_paths`.
 - **Radii are physical, not angular**, wherever a length is meant. A method
   taking a radius says which in its docstring.
 - **Spherical harmonics are orthonormal, without the Condon–Shortley phase.**

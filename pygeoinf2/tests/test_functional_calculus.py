@@ -24,7 +24,7 @@ from pygeoinf2.numerics.functional_calculus import (
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import make_weighted_space
+from .conftest import make_dense_metric_space, make_weighted_space
 from .doubles import NoCoordinatesError, OpaqueSpace, StrictSpace
 
 N = 16
@@ -541,3 +541,72 @@ class TestLanczosStopsEarly:
         exact = basis @ np.diag(np.sqrt(eigenvalues)) @ basis.T @ vector
         assert np.linalg.norm(result - exact) < 1e-8 * np.linalg.norm(exact)
         assert counted["n"] < 2000  # the O(k^2) route needed 2595
+
+
+class TestLanczosOnComponents:
+    """On a coordinate space the Krylov basis is kept as component columns:
+    one analysis and one synthesis per step, where the coordinate-free
+    iteration analysed both arguments of ``2k + 4`` inner products per step.
+    Measured at lmax 64: 1047 analyses for 30 steps against 152."""
+
+    def test_it_matches_the_coordinate_free_iteration_on_a_dense_metric(self, rng):
+        from pygeoinf2.algebra.spaces import CoordinateSpace
+
+        space = make_dense_metric_space(30)
+        matrix = rng.standard_normal((30, 30))
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            matrix @ matrix.T + np.eye(30),
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        x = space.random(rng=rng)
+        fast_basis, fast_matrix = lanczos_tridiagonalise(operator, x, 12)
+        fast_root = apply_operator_function(operator, np.sqrt, x, max_iterations=12)
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            CoordinateSpace, "uses_component_fast_paths", property(lambda self: False)
+        )
+        try:
+            slow_basis, slow_matrix = lanczos_tridiagonalise(operator, x, 12)
+            slow_root = apply_operator_function(operator, np.sqrt, x, max_iterations=12)
+        finally:
+            monkeypatch.undo()
+        assert fast_matrix == pytest.approx(slow_matrix, rel=1e-9, abs=1e-9)
+        for a, b in zip(fast_basis, slow_basis):
+            assert space.norm(space.subtract(a, b)) < 1e-8
+        assert space.norm(space.subtract(fast_root, slow_root)) < 1e-8 * space.norm(slow_root)
+        gram = np.array(
+            [[space.inner_product(a, b) for b in fast_basis] for a in fast_basis]
+        )
+        assert gram == pytest.approx(np.eye(12), abs=1e-10)
+
+    def test_the_sphere_pays_one_analysis_per_step(self, monkeypatch):
+        pytest.importorskip("pyshtools")
+        import pyshtools.expand as expand
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        space = Sobolev(12, 2.0, 0.3)
+        values = 1.0 + np.arange(space.dim) / space.dim
+        operator = LinearOperator.self_adjoint(
+            space,
+            lambda x: space.from_components(values * space.to_components(x)),
+            traits=Traits.POSITIVE_DEFINITE,
+        )
+        counts = {"analysis": 0}
+        analysis = expand.SHExpandDH
+
+        def count(*args, **kwargs):
+            counts["analysis"] += 1
+            return analysis(*args, **kwargs)
+
+        monkeypatch.setattr(expand, "SHExpandDH", count)
+        steps = 10
+        apply_operator_function(
+            operator, np.sqrt, space.random(rng=np.random.default_rng(3)), max_iterations=steps, rtol=0.0
+        )
+        # Two per step -- the operator's own and the result's -- plus the
+        # start vector's and its norm's. The coordinate-free route needed
+        # 2k + 4 per step.
+        assert counts["analysis"] <= 2 * steps + 3
