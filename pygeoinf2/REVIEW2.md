@@ -36,6 +36,26 @@ extent of reading the cited code; the numbers are the reviewers'.
 > Still open from this list: the rest of §3 (one-to-five-line bugs), §4.2
 > except 4.2.2/4.2.9, §4.3, §4.5, and the questions in §5.
 
+> **Status (2026-08-30, round three, merged to `refactor`).** Everything in
+> this document that was still open is now done, bar the items the user
+> deferred. Four implementers worked in parallel in isolated worktrees, one
+> per file set, one commit per item, each with its tests and the full suite
+> green: **symmetric spaces** (`ff899d4`…`eeddbc1`), **plotting and geometry**
+> (`323039a`…`42e67a9`), **probability and inference** (`da10fe9`…`236ef99`),
+> **algebra, numerics and hygiene** (`79afe07`…`e8e2d6e`). The suite is 2389
+> passing (was 2023 when this review was written) plus 32 slow. End to end,
+> `OMP_NUM_THREADS=1`: **example 21 6.46 s → 1.54 s, example 26 6.36 s → 1.00 s.**
+>
+> Deferred by the user's own answers, not by omission: **3.1, 3.15 and all of
+> §4.5** (Q2, "leave this point open for later consideration" — Mag's code),
+> and **Sphinx** (Q11, "leave this for the moment"). **3.8 is not a bug**: the
+> user's answer to Q4 puts the D-11 guard on the *space*, so
+> `covariance_function` raising on a Lebesgue space is intended, and the guard
+> is now asked for explicitly rather than tripped over. **4.3.2 needed no
+> work**: yesterday's `_known_matrix` hooks and the `dense_limit` change
+> absorbed it — `log_evidence` on example 21's problem is 0.26 s against the
+> 4.33 s measured here, and a second call is free.
+
 ## 0. Verdict
 
 1. **The first review's plan was largely executed, and executed well.** The
@@ -138,18 +158,18 @@ lines I have read myself.
 |---|---|---|---|---|---|
 | 3.1 | `ProximalBundleMethod` reports `converged` at **2× the true support value** on a tight-noise over-determined problem (300 model, 2000 data); `DualFeasibleProperty` returns it. `kkt` gives a value *below* a feasible one, `primal` stops unconverged at its cap without flagging, `smoothed` 0.32 vs truth 0.18. All five routes agree only when the noise set is loose — which is the only case the tests and the CURRENT_STATE "1.7e-8 agreement" table cover. | `numerics/convex.py:866-876`, `inference/backus.py:1026`; R2-N B1 | **high** — wrong answer, no warning | design; Mag's | n/a |
 | 3.2 | `inverse_flexural_operator` **DONE** (`cb70beb`). on a Sobolev space with varying rigidity lifts the L2 operator and claims `POSITIVE_DEFINITE`; it is not self-adjoint in `H^s` (`(Fx,y)=238`, `(x,Fy)=−1.2`). CG raises on the sphere and **silently returns a 1e-4 residual on the circle**. Only Lebesgue spaces are tested; examples use L2 or constant rigidity. | `symmetric_space/base.py:1756`; R2-Y 2.1 | **high** | one line (lift the L2 *inverse*), verified | yes, same defect |
-| 3.3 | `DualFeasibleProperty.dual_cost` memo keyed on `id(certificate)`: a freed-and-reallocated array returns the previous certificate's residual — wrong gradient in 145/200 trials. Latent inside the bundle (which holds references), live for any other `method=`. | `inference/backus.py:1064-1072`; R2-P B1 | medium (latent) | one line (hold the reference) | no |
-| 3.4 | `Sphere.walk_from` past the antipode returns latitude −250°; direct and NUFFT evaluation then disagree by O(1). `to_colatitude_radians` documents a range check it never performs. | `sphere.py:965-978, 1003-1018`; R2-Y 2.2/2.4 | medium | small | — |
+| 3.3 | **DONE** (`da10fe9`). `DualFeasibleProperty.dual_cost` memo keyed on `id(certificate)`: a freed-and-reallocated array returns the previous certificate's residual — wrong gradient in 145/200 trials. Latent inside the bundle (which holds references), live for any other `method=`. | `inference/backus.py:1064-1072`; R2-P B1 | medium (latent) | one line (hold the reference) | no |
+| 3.4 | **DONE** (`5b5f259`). `Sphere.walk_from` past the antipode returns latitude −250°; direct and NUFFT evaluation then disagree by O(1). `to_colatitude_radians` documents a range check it never performs. | `sphere.py:965-978, 1003-1018`; R2-Y 2.2/2.4 | medium | small | — |
 | 3.5 | `LUSolver` factorises **twice** **DONE** (`6620637`). at construction (`_factorise` and `_factorise_transposed` each call `lu_factor`): O(n³) doubled, 91 vs 47 ms at 1500. Introduced by the fix for S Should-12; the test counts applications, not factorisations. | `numerics/solvers.py:398, 409, 461`; R2-A bug 1 | medium (regression) | trivial | v1 factorised once |
-| 3.6 | `from_formal_adjoint` over a `MassWeightedSpace` raises when the base is an equal-but-distinct space (`shares_vectors_with` uses `is`); `EuclideanSpace(n)` is minted freely. | `algebra/spaces.py:683`; R2-A bug 2 | medium | one token (`==`) | — |
-| 3.7 | `with_order`/`with_degree` return a bare `Sphere`: `isinstance(x.with_order(0), Lebesgue)` is false, defeating D-3's stated reason and every such check in pyslfp's `sl/utils.py`. | `sphere.py:1573-1594`; R2-K bug 1 | medium (pyslfp) | small | — |
-| 3.8 | `covariance_function` raises on every Lebesgue space via the D-11 guard; v1's closed form worked on L2. The function is a property of the measure's spectrum, not of the space's order (see §4.2.4). | `symmetric_space/base.py:956-967`; R2-Y 2.3 | medium (regression) | with §4.2.4 | v1 worked |
-| 3.9 | Stochastic KL still returns 369 ± 35 and −351 ± 33 for KL(μ‖μ) at dim 289 — opt-in now, but confidently wrong. P Must-7's fix list was not applied. | `probability/gaussian.py:754-793`; R2-P B3 | medium | fix or delete | — |
-| 3.10 | `hilbert_schmidt_norm`/`nuclear_norm(method="stochastic")` silently form the dense matrix; docstring promises `random_trace`. | `gaussian.py:494-526`; R2-P B2 | low | small | v1 had it |
-| 3.11 | `ConstrainedLeastSquares/MinimumNorm.parameterised(P, **kwargs)` forward to a method taking none → `TypeError`. | `inference/point.py:862, 1025`; R2-P B4 | low | trivial | — |
-| 3.12 | `from_covariance_matrix` refuses PSD-singular input and attaches no precision; v1 took `eigh`, clipped, attached the inverse factor. Not recorded as a decision. | `gaussian.py:380`; R2-P B5 | low (regression) | small | v1 accepted |
-| 3.13 | `BandedPreconditioner`/`BlockPreconditioner` claim `SELF_ADJOINT` on any operator, including `form="components"` of a non-self-adjoint one. | `numerics/preconditioners.py:249, 402`; R2-A bug 5 | low | small | — |
-| 3.14 | `DiagonalLinearOperator` on a non-diagonal metric refuses **DONE** (`6620637`, the `_rebuild`/traits half; `sqrt`/`log_determinant` gating still open). `sqrt`/`log_determinant`; `_rebuild` drops caller traits (`(2·D_sa).traits == NONE`). A Must-4, still open. | `algebra/diagonal.py:126-128, 199-219`; R2-A bug 4 | low | small | — |
+| 3.6 | **DONE** (`79afe07`). `from_formal_adjoint` over a `MassWeightedSpace` raises when the base is an equal-but-distinct space (`shares_vectors_with` uses `is`); `EuclideanSpace(n)` is minted freely. | `algebra/spaces.py:683`; R2-A bug 2 | medium | one token (`==`) | — |
+| 3.7 | **DONE** (`68d561f`, all seven geometries). `with_order`/`with_degree` return a bare `Sphere`: `isinstance(x.with_order(0), Lebesgue)` is false, defeating D-3's stated reason and every such check in pyslfp's `sl/utils.py`. | `sphere.py:1573-1594`; R2-K bug 1 | medium (pyslfp) | small | — |
+| 3.8 | **NOT A BUG** — the user's Q4 answer puts the D-11 guard on the space; it is now requested explicitly (`78b0c94`). `covariance_function` raises on every Lebesgue space via the D-11 guard; v1's closed form worked on L2. The function is a property of the measure's spectrum, not of the space's order (see §4.2.4). | `symmetric_space/base.py:956-967`; R2-Y 2.3 | medium (regression) | with §4.2.4 | v1 worked |
+| 3.9 | **DONE** (`f6a0d62`, folded into one Hutchinson trace; KL(mu||mu) 369 +/- 35 -> 2e-29). Stochastic KL still returns 369 ± 35 and −351 ± 33 for KL(μ‖μ) at dim 289 — opt-in now, but confidently wrong. P Must-7's fix list was not applied. | `probability/gaussian.py:754-793`; R2-P B3 | medium | fix or delete | — |
+| 3.10 | **DONE** (`0d585c2`). `hilbert_schmidt_norm`/`nuclear_norm(method="stochastic")` silently form the dense matrix; docstring promises `random_trace`. | `gaussian.py:494-526`; R2-P B2 | low | small | v1 had it |
+| 3.11 | **DONE** (`5f6e176`). `ConstrainedLeastSquares/MinimumNorm.parameterised(P, **kwargs)` forward to a method taking none → `TypeError`. | `inference/point.py:862, 1025`; R2-P B4 | low | trivial | — |
+| 3.12 | **DONE** (`ebb7a6b`). `from_covariance_matrix` refuses PSD-singular input and attaches no precision; v1 took `eigh`, clipped, attached the inverse factor. Not recorded as a decision. | `gaussian.py:380`; R2-P B5 | low (regression) | small | v1 accepted |
+| 3.13 | **DONE** (`6f330ae`). `BandedPreconditioner`/`BlockPreconditioner` claim `SELF_ADJOINT` on any operator, including `form="components"` of a non-self-adjoint one. | `numerics/preconditioners.py:249, 402`; R2-A bug 5 | low | small | — |
+| 3.14 | `DiagonalLinearOperator` on a non-diagonal metric refuses **DONE** (`6620637` the `_rebuild`/traits half; `e705517` the calculus, which now gates on the spectrum rather than on a trait the metric never grants). `sqrt`/`log_determinant`; `_rebuild` drops caller traits (`(2·D_sa).traits == NONE`). A Must-4, still open. | `algebra/diagonal.py:126-128, 199-219`; R2-A bug 4 | low | small | — |
 | 3.15 | `LevelBundleMethod`: misreports `iterations` **DONE** (`b692230`, the `iterations` misreport only; the rest is Mag's). after an early break; fails on iteration 1 with OSQP where Clarabel solves it; does not converge where the proximal method does and is 10–60× slower; its master problem is dense in the **data dimension** (401 MB per call at 5000 data), not "in the number of cuts" as CURRENT_STATE:99 says. | `convex.py:1319-1369, 1443-1456`; R2-N B2/B3/B6, O4 | medium; Mag's | see §4.5 | v1 also dense |
 | 3.16 | `make_dense_metric_space(dim)` not PD **DONE** (`26baa84`). above dim ≈ 300 (cond 5.7e13 at 300). | `tests/conftest.py:83-103`; R2-A note, R2-N B4 | **high for the test strategy** | scale off-diagonal by `1/√dim` | — |
 
@@ -182,8 +202,8 @@ prototype ran and agreed with the current code to the stated precision.
 | d. `norm` transforms once; CG reuses **DONE** (`849d7c0`). ‖r‖² when unpreconditioned; Krylov loop in coefficients on a `CoordinateSpace` | CG on the sphere: 7.4 analyses + 1.1 syntheses per iteration, 6.4 of them vector algebra | 7 → 4 transforms/it (43 %); full coefficient-space loop: diagonal operator 237 → 0.4 ms, grid operator 22–30 %, model-space normal 1.3× now and ≈10× once point evaluation is components-native | `spaces.py:772`, `solvers.py:750-756` | R2-A 1, R2-K 6 |
 | e. `NormalOperator` fused in components **DONE** (`63ddc8a`, generalised to every product and sum of component-native operators). when `A` is matrix-backed and `Q` diagonal: `A_c(λ ⊙ G⁻¹A_cᵀv) + σ²v` | 4 transforms per application (ex21 lmax 48: 2.7 ms) | 0 transforms (1.2 ms, 2.3×); a CG solve 0.22 → 0.09 s | `inference/normal.py:238` | R2-P 1 |
 | f. `apply_block(vectors)` hook **DONE** (`6620637`)., overridden by matrix/diagonal/`from_vectors`/sums/compositions — also where D-6's `n_jobs` for `random_range` belongs | `random_eig(50)` Euclidean 3000: 240 matvecs, 0.72 s | 4 GEMMs, 0.16 s (4.6×) | `randomised.py:80, 95, 98, 386` | R2-N O2 |
-| g. Lebesgue inner products by DH quadrature: 0 transforms | 2 per inner product | 0 | `spaces.py:772`, sphere | R2-K 6 |
-| h. Block operators skip `_Zero` and start from a copy, not `zero()` (a synthesis on the sphere) | `[[I,0],[I,I]]` on two spheres: 3 syntheses per application | 0 | `algebra/direct_sum.py:416-424, 537-542, 585-590` | R2-A 8 |
+| g. **DONE** (`eeddbc1`, 99x, verified exact to 6e-15). Lebesgue inner products by DH quadrature: 0 transforms | 2 per inner product | 0 | `spaces.py:772`, sphere | R2-K 6 |
+| h. **DONE** (`4c6aed9`, 94x on two spheres). Block operators skip `_Zero` and start from a copy, not `zero()` (a synthesis on the sphere) | `[[I,0],[I,I]]` on two spheres: 3 syntheses per application | 0 | `algebra/direct_sum.py:416-424, 537-542, 585-590` | R2-A 8 |
 
 Risk is low throughout: the metric enters only through `apply_gram`, the
 coordinate-free code stays as the fallback for `OpaqueSpace`, and the results
@@ -194,16 +214,16 @@ is 3.16, so that the tests can run on a dense Gram at these sizes.
 
 | item | now | prototype | ref |
 |---|---|---|---|
-| 1. `plot`: roll the mesh to [−180, 180) with flat cell edges | 1481 ms at lmax 128 (v1 232 ms) | 20 ms (71×), image identical | R2-Y 3.1 |
+| 1. `plot`: **DONE** (`323039a`, 38x on Robinson; the appendix's 71x variant shifted the map half a cell). roll the mesh to [−180, 180) with flat cell edges | 1481 ms at lmax 128 (v1 232 ms) | 20 ms (71×), image identical | R2-Y 3.1 |
 | 2. `flexural_operator` summing grid terms **DONE** (`cb70beb`). per spectral multiplier | 50/54 transforms fwd/adj (v1 24/28), 166 ms | ~6 transforms, est. ~25 ms (~8×); every PCG iteration of the inverse shrinks with it | R2-Y 3.2 |
-| 3. Invariant-measure `sample` via components: `from_components(√(s/g)·z)` | 1 analysis + 2 syntheses (10.3 ms) | 1 synthesis (3.6 ms, 2.8×); `_rebuild` already carries `sample=` | R2-Y 3.3 |
-| 4. `covariance_function` and `pointwise_variance_at` for a `DiagonalLinearOperator` covariance by Legendre closed form / `basis_matrix` | 23–123 ms per 50 distances; 17–116 ms per point | 0.5–1.2 ms; 0.15 ms per point (40–150×); also fixes 3.8 | R2-Y 3.6 |
-| 5. Exact cap averages by closed form `2πR² I_l(cos α)·basis_matrix` | 15 ms per centre (`from_cap` rotation + an unread representer) | 0.2 ms (70×), 7.6e-13 | R2-Y 3.4 |
-| 6. Dense path/ball operators: keep the weight matrix sparse; vectorise node generation, cache `leggauss` | 2000 paths: 1.8–3.3 s nodes, 1.59 s densified product | 0.30 s nodes (11×), 0.018 s product (90×) | R2-Y 3.5, R2-K 3 |
-| 7. `point_evaluation_operator` converts points once, not per application | sphere 14.5 of 37 ms at 10⁵ points; Box 91 % | 1.4× sphere, 2× torus, 10× Box | R2-Y 3.7 |
-| 8. `evaluate`: south-pole value from row means, not a full analysis | 35 % of a forward at lmax 256 | 0.05 ms | R2-Y 3.8 |
+| 3. Invariant-measure `sample` **DONE** (`6ca678f`, 3.3x). via components: `from_components(√(s/g)·z)` | 1 analysis + 2 syntheses (10.3 ms) | 1 synthesis (3.6 ms, 2.8×); `_rebuild` already carries `sample=` | R2-Y 3.3 |
+| 4. `covariance_function` and `pointwise_variance_at` **DONE** (`78b0c94`, 39-94x and 236-277x). for a `DiagonalLinearOperator` covariance by Legendre closed form / `basis_matrix` | 23–123 ms per 50 distances; 17–116 ms per point | 0.5–1.2 ms; 0.15 ms per point (40–150×); also fixes 3.8 | R2-Y 3.6 |
+| 5. Exact cap averages **DONE** (`e127e9e`, 92x). by closed form `2πR² I_l(cos α)·basis_matrix` | 15 ms per centre (`from_cap` rotation + an unread representer) | 0.2 ms (70×), 7.6e-13 | R2-Y 3.4 |
+| 6. Dense path/ball operators: **DONE** (`0b46c88`, 11.6x). keep the weight matrix sparse; vectorise node generation, cache `leggauss` | 2000 paths: 1.8–3.3 s nodes, 1.59 s densified product | 0.30 s nodes (11×), 0.018 s product (90×) | R2-Y 3.5, R2-K 3 |
+| 7. `point_evaluation_operator` converts points once **DONE** (`c8244d9`, 2.0x sphere, 3.2x torus, 19x plane)., not per application | sphere 14.5 of 37 ms at 10⁵ points; Box 91 % | 1.4× sphere, 2× torus, 10× Box | R2-Y 3.7 |
+| 8. `evaluate`: south-pole **DONE** (`a2b1711`, 18.0 -> 0.30 ms). value from row means, not a full analysis | 35 % of a forward at lmax 256 | 0.05 ms | R2-Y 3.8 |
 | 9. Correlated (block-diagonal) measures **DONE** (`8511651`).: transform each field once | 4 + 6 transforms per application, floor 2 + 2; sample 4 + 8 vs 0 + 2 | 2.5× / 6× (pyslfp's `(Dyn, Rho)` prior) | R2-K 5 |
-| 10. `plot_paths` as one `LineCollection`; `plot_corner` density by binned histogram + Gaussian filter | 1294 `ax.plot` calls, 3.9 s in ex21; KDE 8.9 of 12.2 s in ex26 | est. 10–20×; 500× at 6 % contour error | R2-K 2, 7 |
+| 10. `plot_paths` **DONE** (`0aecc89`, 14.7x). **DONE** (`d0487c5`, example 26 7.99 -> 1.15 s). as one `LineCollection`; `plot_corner` density by binned histogram + Gaussian filter | 1294 `ax.plot` calls, 3.9 s in ex21; KDE 8.9 of 12.2 s in ex26 | est. 10–20×; 500× at 6 % contour error | R2-K 2, 7 |
 
 Where v2 already wins, for the record: NUFFT point evaluation is 100–170×
 faster than v1 at 10⁵ points; path-operator application 20–100×; the lift
@@ -213,13 +233,13 @@ adjoint 26 vs 37 ms.
 
 | item | now | after | ref |
 |---|---|---|---|
-| 1. `dense_limit` 512 → ~4000 (or pick by estimated applications) | ex21 evidence, dim 960: stochastic −7270 ± 30 in 4.8 s | exact −7315 in 2.8 s | R2-P 2 |
-| 2. Direct-solver `InverseOperator` exposes `log_determinant` from its factorisation | `log_evidence` after `CholeskySolver`: second full assembly, 4.3 s | free | R2-P 3 |
-| 3. One residual solve shared by the mean and the misfit (v1 did `m₀ + K(d − shift)`) | 2 solves per datum; mixture inversion 2K | 1; K | R2-P 4 |
-| 4. `estimator.push_forward(T)(data)` → use `posterior.push_forward(T)` (identical measure, 0 solves); fix example 21 | 1 solve per property | 0 | R2-P 5 |
-| 5. `DampedSolves` with a direct solver: cache `B.matrix()`, `S.matrix()`, factorise `B + tS` | 23 factorisations, 162 + 162 applications per discrepancy sweep on a 6-datum problem | 1 + 6 + 6 | R2-P 6 |
-| 6. `ambient_ball` O(n) for a diagonal covariance; randomised spectrum or sampling radius otherwise (both were in v1) | O(n³): 1.15 s at 8000, impossible at pyslfp's 10⁵ — and `harden_error` hits it on every Backus route | O(n) | R2-P 7 |
-| 7. Posterior covariance as `(I − KA)Q`, not `Q − KAQ` | 3 `Q` applications per action | 2 | R2-P 8 |
+| 1. `dense_limit` 512 **DONE** (`789eddc`, and `236ef99` for the KL routes, per Q5). → ~4000 (or pick by estimated applications) | ex21 evidence, dim 960: stochastic −7270 ± 30 in 4.8 s | exact −7315 in 2.8 s | R2-P 2 |
+| 2. Direct-solver `InverseOperator` **NOT NEEDED** — absorbed by the `_known_matrix` hooks and item 1; measured 4.33 s -> 0.26 s. exposes `log_determinant` from its factorisation | `log_evidence` after `CholeskySolver`: second full assembly, 4.3 s | free | R2-P 3 |
+| 3. One residual solve shared **DONE** (`2cd1e98`, Q6's memo, content-keyed; 0.15 us at dim 960 against a solve of tens of ms). by the mean and the misfit (v1 did `m₀ + K(d − shift)`) | 2 solves per datum; mixture inversion 2K | 1; K | R2-P 4 |
+| 4. `estimator.push_forward(T)(data)` **DONE** (`35c0b5c`, example 21: 57.8 -> 0.2 ms). → use `posterior.push_forward(T)` (identical measure, 0 solves); fix example 21 | 1 solve per property | 0 | R2-P 5 |
+| 5. `DampedSolves` with a direct solver **DONE** (`7233e30`, 1800 -> 200 applications).: cache `B.matrix()`, `S.matrix()`, factorise `B + tS` | 23 factorisations, 162 + 162 applications per discrepancy sweep on a 6-datum problem | 1 + 6 + 6 | R2-P 6 |
+| 6. `ambient_ball` O(n) **DONE** (`fc162ae`, dim 2000 end to end 9.42 s -> 0.9 ms). for a diagonal covariance; randomised spectrum or sampling radius otherwise (both were in v1) | O(n³): 1.15 s at 8000, impossible at pyslfp's 10⁵ — and `harden_error` hits it on every Backus route | O(n) | R2-P 7 |
+| 7. Posterior covariance as **DONE** (`161c9ff`). `(I − KA)Q`, not `Q − KAQ` | 3 `Q` applications per action | 2 | R2-P 8 |
 | 8. `monotone_root`: Brent **DONE** (`4bf99f5`). in log t after the decade bracketing | 23–28 solves per root | 10–13 | R2-N O5 |
 
 ### 4.4 Fast paths on the operator algebra
@@ -229,7 +249,7 @@ adjoint 26 vs 37 ms.
 | 1. `_known_matrix(form)` hook **DONE** (`6620637`). on `MatrixLinearOperator`, `Diagonal`, `_Identity/_Zero`, `_Scaled`, `_Sum`, `_Composition`, `_Adjoint`, direct-solver inverses, blocks | `(A+B).matrix()` 3.5 s vs 3 ms; `A.adjoint.matrix()` 23 s vs 0.8 s on a dense metric; `Cholesky(M + tI)` 1.6 s (25 s dense metric) vs 78–88 ms | read | R2-A 4 |
 | 2. `_known_diagonals` alongside it **DONE** (`6620637`, Jacobi default unchanged, docstring corrected).; Jacobi reads it | Jacobi on `M + 0.5I`: 2000 applications, 1.9 s | 0.6 ms; on `A*A` the composition cannot be read → restore `samples=20` there | R2-A 7 |
 | 3. Vectorised `matrix()` post-processing **DONE** (`6620637`). (`apply_gram_matrix`/`solve_gram_matrix`) | 43–79 % of the call on a dense Gram | one product/solve | R2-A 5 |
-| 4. `assembled()` stores the components form | CG 320 vs 95 ms on a dense metric (a `solve_gram` per application) | — | R2-A Must-3 row |
+| 4. `assembled()` stores the components form **DONE** (`e8e2d6e`, forward 4.9x on a dense Gram; argued in the message). | CG 320 vs 95 ms on a dense metric (a `solve_gram` per application) | — | R2-A Must-3 row |
 | 5. `MatrixLinearOperator.diagonals` via `np.diagonal` **DONE** (`6620637`).; `DiagonalLinearOperator.matrix()` override | 6.6 ms / 2·dim transforms | 0.07 ms / 0 | R2-A 10 |
 
 ### 4.5 Convex methods (Mag's code — proposals, not instructions)
@@ -242,10 +262,14 @@ adjoint 26 vs 37 ms.
 
 ### 4.6 Small and certain
 
-Lazy `scipy.stats`/`integrate` imports (0.43 → 0.25 s import); `LUSolver`
-once (3.5, **DONE** `6620637`); Lanczos convergence check every k steps instead of an
-`eigh_tridiagonal` per step (30 % of stochastic log-det); `_angles` cached;
-`SubgradientDescent` evaluating `f` twice per iteration (**DONE** `b692230`).
+Lazy `scipy.stats`/`integrate` imports (**DONE** `51a418b` and `236ef99`
+together: 1016 → 880 modules; either alone saves nothing, which is why both
+were needed); `LUSolver` once (3.5, **DONE** `6620637`); the Lanczos
+convergence check (**DONE differently**, `de97ed3` — checking every k steps is
+a *regression*, measured, because skipping a check never saves an operator
+application, so the check itself was made 2.1× cheaper instead); `_angles`
+cached (**DONE** `c8244d9`); `SubgradientDescent` evaluating `f` twice per
+iteration (**DONE** `b692230`).
 
 ## 5. Questions that decide the work
 
@@ -260,7 +284,7 @@ once (3.5, **DONE** `6620637`); Lanczos convergence check every k steps instead 
    Response: Accept recomendation. 
 
 
-2. **What should `DualFeasibleProperty` do given 3.1?** Cross-check routes,
+2. **What should `DualFeasibleProperty` do given 3.1?**  *(Deferred by the user; §4.5, 3.1 and 3.15 untouched.)* Cross-check routes,
    run the primal to a feasibility tolerance rather than an iteration cap,
    or refuse a dual value without a certified gap? And 4.5 as a whole. This
    is Mag's API (D-13) — his call, with the reproduction in R2-N to hand.
@@ -268,7 +292,7 @@ once (3.5, **DONE** `6620637`); Lanczos convergence check every k steps instead 
    Response: Leave this point open for later consideration. 
 
 
-3. **`multiply` truncation** (DESIGN 21.7) costs 2 transforms per product and
+3. **`multiply` truncation** (DESIGN 21.7)  *(Implemented `ff899d4`: products stay on the grid, recorded as DESIGN §35. A product's components are unchanged — `truncate` is `from_components(to_components(·))` — so only the grid representative differs.)* costs 2 transforms per product and
    is why the flexure count doubled. Keep the semantics and fuse inside
    `flexural_operator` (4.2.2), or let `multiply` return an untruncated grid?
 
@@ -276,7 +300,7 @@ once (3.5, **DONE** `6620637`); Lanczos convergence check every k steps instead 
    Response: I think it is fine to work on an untruncated grid. It should be 
    the user's responsibily to pick a discretisation suited to the problem. 
 
-4. **Is D-11 a guard on the space or on the operation?** `covariance_function`
+4. **Is D-11 a guard on the space or on the operation?**  *(Answered: on the space. The guard stays and is now requested explicitly; 3.8 is not a bug.)* `covariance_function`
    and `pointwise_variance` converge whenever the measure's spectrum decays,
    whatever the space's order; 3.8 and 4.2.4 assume the guard is on the
    operation.
@@ -287,44 +311,44 @@ once (3.5, **DONE** `6620637`); Lanczos convergence check every k steps instead 
    but I think that that is probably not the correct thing. 
 
 
-5. `dense_limit`: raise globally in `log_determinant` or only for the
+5. `dense_limit`: raise globally in `log_determinant` or only for  *(Answered: consistently. 4000 everywhere, `789eddc` and `236ef99`.)* the
    evidence?
 
 
    Response: I would be consistent unless there is a strong argument otherwise. 
 
-6. Shared solve (4.3.3): an invisible one-entry memo (content-keyed, not
+6. Shared solve (4.3.3): an invisible one-entry memo  *(Answered: the memo; implemented content-keyed, `2cd1e98`. Its cost is one `to_components` plus a `tobytes` per call: 0.15 µs at dim 960, 1.0 µs at 10⁴, against a solve of tens of milliseconds.)* (content-keyed, not
    `id`) or an explicit `posterior_and_evidence(data)`?
 
    Response: As I understand this point, the first option is quicker, so that that 
    unless there is an obvious cost. but expand if I am missin the point. 
 
-7. `with_order` returning the D-3 subclass — yes? (It changes nothing
+7. `with_order` returning the D-3 subclass  *(Answered yes; `68d561f`.)* — yes? (It changes nothing
    numerically and is what D-3 promised.)
 
    Response: yes, it's just a convenience method that is sometimes of use. 
 
 
-8. Sphere `plot` defaults flipped from v1 (`RdBu`→`viridis`, colorbar on,
+8. Sphere `plot` defaults flipped from v1  *(Answered: restore; `08099dc`.)* (`RdBu`→`viridis`, colorbar on,
    gridlines off, PlateCarree→Robinson) with no recorded reason: keep or
    restore?
 
    Response: Yes, restore. Note that pyslfp defaults to robinson via it's wrapper, but that is its buisness. 
 
-9. Stochastic KL: fix (preconditioned CG, honest error bar) or delete?
+9. Stochastic KL: fix (preconditioned CG, honest error bar) or delete?  *(Answered: fix; `f6a0d62` — fixed, not deleted.)*
 
    Response: Fix if possible. 
 
-10. `ambient_ball` for non-diagonal covariances: v1's randomised spectrum or
+10. `ambient_ball` for non-diagonal covariances  *(Answered: keep close to v1; `fc162ae` restores its dense, spectral and sampling routes.)*: v1's randomised spectrum or
     its sampling radius?
 
    Response: Not a strong view, again, this is Mag's stuff. Keep close to v1. 
 
-11. Sphinx: point RTD at `pygeoinf2` now or at the rename?
+11. Sphinx: point RTD at `pygeoinf2` now or at the rename?  *(Deferred by the user.)*
 
    Response: Leave this for the moment. 
 
-12. Commit the `plt.show()` example edits as they are, or behind a backend
+12. Commit the `plt.show()` example edits as they are, or behind a backend  *(Answered: behind a guard; `c7bc5ce` adds `plotting.show()`, the seven examples converted.)*
     guard so the suite stays warning-free?
 
     Response: This was just me looking at the results. Put behind a guard. 
@@ -333,15 +357,15 @@ once (3.5, **DONE** `6620637`); Lanczos convergence check every k steps instead 
 
 1. Fix the fixture (3.16) — everything after is tested on it. **DONE.**
 2. The one-line bugs: 3.2, 3.3, 3.5, 3.6, 3.7, 3.11, 3.13, 3.14; the
-   docstring and catalogue falsities; export holes.
-3. §4.1 a–d and 4.2.3 (the component-space work), behind Q1. **DONE except 4.2.3.**
-4. §4.2.1, 4.2.5, 4.2.6, 4.2.7 and 4.3 (local, low risk, large).
-5. §4.4 (the hooks) and 4.1 e–f. **DONE** (4.4.4, `assembled()`'s form, left as it was pending Q3-style decision).
+   docstring and catalogue falsities; export holes. **DONE.**
+3. §4.1 a–d and 4.2.3 (the component-space work), behind Q1. **DONE.**
+4. §4.2.1, 4.2.5, 4.2.6, 4.2.7 and 4.3 (local, low risk, large). **DONE**, with 4.2.4, 4.2.8, 4.2.10, 4.1.g and 4.1.h.
+5. §4.4 (the hooks) and 4.1 e–f. **DONE**, including 4.4.4.
 6. §4.2.2 flexure, 4.2.9 correlated measures (new operator class; dense-Gram
    adjoint tests). **DONE.**
-7. §4.5 and 3.1/3.15 with Mag.
+7. §4.5 and 3.1/3.15 with Mag. **Deferred by the user (Q2).**
 8. `review/parallel.md` R1–R7, which several of the above create the hooks
-   for (`apply_block`, `DirectSolver(n_jobs=)`). **DONE** except R7's `with_dense_covariance(n_jobs=)`.
+   for (`apply_block`, `DirectSolver(n_jobs=)`). **DONE**; R7 finished by `99f4b25`.
 
 ## 7. Not done
 
@@ -351,3 +375,28 @@ did not measure. Timings are from a throttling laptop under contention —
 re-measure any number you intend to quote. Nothing in the package was
 modified; this round adds `REVIEW2.md`, `review/r2_*.md`, the appendix-R row
 in `REVIEW.md`, and the scripts under `work/review_r2/`.
+
+## 8. Found while implementing, not in this review
+
+Recorded so the next reader need not rediscover them.
+
+* **A box's `_coordinate_key` was keyed on `type(self)`**, so a Sobolev box and
+  its own Lebesgue view did not share vectors and *every* formal-adjoint lift
+  over a box round-tripped through components. Fixed with 3.7 (`68d561f`).
+* **`with_shape`/`with_degree` on a bounded box returned the enclosing periodic
+  domain**, losing the bounds and the padding. Same commit.
+* **The `marginal` factor hazard is real and was reachable.** With the diagonal
+  calculus loosened (3.14), `marginal` took `block.sqrt` as a covariance
+  factor; off a diagonal metric `L L* != diag(d)`, so the factor disagreed with
+  its covariance and the *sampler* was wrong. Guarded on `has_diagonal_metric`,
+  with a test that fails when the guard is removed (`236ef99`).
+* **Imhof's inversion is the wall in `ambient_ball` once the spectrum is free** —
+  0.8 s at 500 weights, 10.4 s at 2000, hopeless at 10^5. A moment-matched
+  inversion above 1000 weights carries it (3e-5 relative, 1 ms) (`fc162ae`).
+* **`np.linalg.slogdet` is pathological at exactly 4096 on this BLAS** (2.0 s
+  against 0.8 s at 4000), which is why the new `dense_limit` is 4000.
+* **`with_dense_covariance(n_jobs=)` gains nothing from `n_jobs`** in the cases
+  measured: parallel overhead dominates `matrix()` for both cheap and
+  CG-backed covariances. The hook is there; whether it ever pays is open.
+* Cosmetic, left alone: `circle`/`torus`/`line`/`plane` still `repr` as
+  `PeriodicBox(...)`/`Box(...)`; `test_geometry.py` has an unused local at 275.
