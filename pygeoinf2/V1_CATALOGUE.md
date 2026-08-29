@@ -205,13 +205,13 @@ Class-level Ported; see Part 2, where a third of its methods are not.
 
 | v1 | Status | v2 / reason | Your notes |
 |---|---|---|---|
-| `SubgradientDescent`, `SubgradientResult` | Ported | `SubgradientDescent`, `_ConvexResult` | |
-| `Cut`, `Bundle` | Ported | M5 stage 5.9 | |
+| `SubgradientDescent`, `SubgradientResult` | Ported | `SubgradientDescent`, returning `OptimisationResult` | |
+| `Cut`, `Bundle` | Subsumed | The bundle methods keep their cuts as `(subgradient, value, point)` tuples and extend the Gram matrix incrementally (`ProximalBundleMethod._gram`); there are no `Cut`/`Bundle` classes | |
 | `ProximalBundleMethod`, `BundleResult` | Ported | The dual route for a general convex prior. `BundleResult`'s fields are now `OptimisationResult`'s, and its `gap` is documented as a practical criterion rather than a certified bound | |
 | `LevelBundleMethod` | Ported | **D-13**. `numerics.convex.LevelBundleMethod`, with the LP lower bound -- and *that* gap is certified, verified to bracket the true minimum at every stage rather than only at the end | |
 | `QPSolver`, `QPResult` | Ported | **D-13**. `numerics/quadratic_programming.py`, in the OSQP standard form `l <= A x <= u`, which covers equalities and one-sided bounds without a case for each | |
 | `SciPyQPSolver`, `OSQPQPSolver`, `ClarabelQPSolver` | Ported | **D-13**, with `best_available_qp_solver` preferring OSQP, then Clarabel, then SciPy. All three verified to agree to 1e-6 on the same programme. Coordinates are fine here: the QP lives in a finite-dimensional, canonically Euclidean space | |
-| `best_available_qp_solver` | Planned | M5 stage 5.9 | |
+| `best_available_qp_solver` | Ported | **D-13**. `numerics.quadratic_programming.best_available_qp_solver`, preferring OSQP, then Clarabel, then SciPy | |
 | `PrimalKKTSolver`, `KKTResult` | Ported | **D-13**. `numerics.convex.PrimalKKTSolver`, and `route="kkt"` on `support_values`. For balls and ellipsoids the KKT conditions give the answer through a Woodbury reduction that never discretises the model space: 1358x faster than the dual route, and it agrees with the primal one to 1e-11 except where a tight noise ball saturates its second multiplier, which is v1's own limit -- same multiplier, same answer | |
 | `SmoothedDualMaster`, `SmoothedLBFGSSolver` | Ported | **D-13**. `DualFeasibleProperty.smoothed_dual_cost` and `route="smoothed"`, over the existing `LBFGS`. Moreau-Yosida smoothing makes the dual differentiable, so a smooth method replaces the bundle one: 840x faster than the unsmoothed dual and agreeing with the primal route to 2.4e-9, which is better than the KKT route manages | |
 | `ChambollePockSolver`, `ChambollePockResult` | Ported | **D-13**. `numerics.convex.ChambollePockSolver` and `SaddlePointResult`. Projects onto any `ConvexSet` rather than only a ball, which v1 raised for | |

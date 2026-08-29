@@ -27,7 +27,7 @@ support-value machinery is entangled with it and is deliberately left behind.
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import warnings
@@ -425,15 +425,6 @@ class _ImageSupport(SupportFunction):
 # --------------------------------------------------------------------- #
 
 
-@dataclass(frozen=True)
-class _ConvexResult:
-    """Internal: the running state a convex method reports."""
-
-    best_point: Any
-    best_value: float
-    history: list[float] = field(default_factory=list)
-
-
 class SubgradientDescent(Optimiser):
     """Subgradient descent with a diminishing step.
 
@@ -516,7 +507,8 @@ class SubgradientDescent(Optimiser):
     def _minimise(self, functional: Functional, x0: Any) -> OptimisationResult:
         space = functional.domain
         x = space.copy(x0)
-        best_point, best_value = space.copy(x), functional(x)
+        value = functional(x)
+        best_point, best_value = space.copy(x), value
         history = [best_value]
         evaluations = 1
 
@@ -535,8 +527,10 @@ class SubgradientDescent(Optimiser):
                     history,
                 )
 
-            step = self._step(iteration, functional(x), norm)
-            evaluations += 1
+            # The value at x was evaluated at the end of the last iteration;
+            # evaluating it again here doubled the cost of every step for a
+            # number only the Polyak rule reads.
+            step = self._step(iteration, value, norm)
             x = space.axpy(-step, subgradient, x)
 
             value = functional(x)
@@ -1406,6 +1400,7 @@ class LevelBundleMethod:
         ]
         lower = -np.inf
         message = "iteration limit reached"
+        iteration = 0
 
         for iteration in range(1, self._iterations + 1):
             lower = max(lower, self._lower_bound(space, cuts))
@@ -1450,8 +1445,10 @@ class LevelBundleMethod:
                 upper, best_point = value, space.copy(point)
             centre = point
 
+        # ``iteration`` rather than the cap: a break on a failed master
+        # problem used to be reported as the full run.
         return BundleResult(
-            upper, best_point, self._iterations, evaluations, False, message,
+            upper, best_point, iteration, evaluations, False, message,
             upper - lower,
         )
 

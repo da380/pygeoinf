@@ -127,6 +127,7 @@ class ArmijoLineSearch(LineSearch):
     ) -> LineSearchResult:
         space = functional.domain
         step = initial_step
+        evaluation = 0
         for evaluation in range(1, self._max_backtracks + 1):
             trial = space.axpy(step, direction, space.copy(point))
             trial_value = functional(trial)
@@ -135,7 +136,9 @@ class ArmijoLineSearch(LineSearch):
             step *= self._contraction
             if step < self._min_step:
                 break
-        return LineSearchResult(step, point, value, self._max_backtracks, False)
+        # The evaluations actually spent: a stop on ``min_step`` used to be
+        # reported as the full backtrack count.
+        return LineSearchResult(step, point, value, evaluation, False)
 
 
 class StrongWolfeLineSearch(LineSearch):

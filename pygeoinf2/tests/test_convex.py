@@ -571,3 +571,46 @@ class TestBundleResultReadsLikeAnOptimisationResult:
         result = ProximalBundleMethod(iterations=50).minimise(functional, space.zero())
         assert result.evaluations >= result.iterations
         assert result.message
+
+
+class TestReportedCounts:
+    """The counts a result carries are the ones actually spent."""
+
+    def test_the_level_method_reports_the_iteration_it_stopped_at(self, rng):
+        from pygeoinf2.numerics.convex import LevelBundleMethod, SquaredDistance
+        from pygeoinf2.numerics.quadratic_programming import QPResult
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        class Refusing:
+            def solve(self, *args, **kwargs):
+                return QPResult(x=np.zeros(args[1].size), objective=0.0, status="failed")
+
+        space = EuclideanSpace(3)
+        functional = SquaredDistance(space, centre=space.random(rng=rng))
+        result = LevelBundleMethod(iterations=50, qp_solver=Refusing()).minimise(
+            functional, space.zero()
+        )
+        assert not result.converged
+        assert result.message == "the master problem could not be solved"
+        assert result.iterations == 1  # it used to say 50
+        assert result.evaluations == 1
+
+    def test_subgradient_descent_evaluates_once_per_iteration(self, rng):
+        from pygeoinf2.numerics.convex import NormFunctional, SubgradientDescent
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+
+        space = EuclideanSpace(4)
+        base = NormFunctional(space)
+        calls = {"value": 0}
+
+        class Counted(type(base)):
+            def _value(self, x):
+                calls["value"] += 1
+                return base._value(x)
+
+        functional = Counted(space)
+        result = SubgradientDescent(max_iterations=15, gtol=0.0).minimise(
+            functional, space.random(rng=rng)
+        )
+        assert calls["value"] == result.iterations + 1  # used to be twice that
+        assert result.evaluations == calls["value"]

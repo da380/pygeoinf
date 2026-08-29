@@ -640,3 +640,32 @@ class TestOptimisersOnADenseMetric:
         assert space.norm(
             space.subtract(result.minimiser, space.from_components(wanted))
         ) < 1e-4 * space.norm(space.from_components(wanted))
+
+
+class TestArmijoReportsItsEvaluations:
+    def test_a_stop_on_the_minimum_step_counts_what_was_spent(self, rng):
+        """Along a direction of ascent no step passes, and the search stops
+        when the step falls below ``min_step`` -- after far fewer than
+        ``max_backtracks`` evaluations, which is what it used to report."""
+        from pygeoinf2.algebra.spaces import EuclideanSpace
+        from pygeoinf2.numerics.convex import SquaredDistance
+        from pygeoinf2.numerics.line_search import ArmijoLineSearch
+
+        space = EuclideanSpace(3)
+        functional = SquaredDistance(space)
+        point = np.ones(3)
+        calls = {"n": 0}
+        original = functional._value
+
+        def counted(x):
+            calls["n"] += 1
+            return original(x)
+
+        functional._value = counted
+        search = ArmijoLineSearch(max_backtracks=200, min_step=1e-3)
+        result = search(
+            functional, point, np.ones(3), value=functional(point) , slope=-1.0
+        )
+        assert not result.converged
+        assert result.evaluations == calls["n"] - 1  # the value= argument's call
+        assert result.evaluations < 200

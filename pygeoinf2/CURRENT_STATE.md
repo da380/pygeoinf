@@ -107,8 +107,12 @@ Dense fallbacks that remain, and why:
   `as_multivariate_normal`, the dense log-determinant below `dense_limit=512`).
 - `PrimalKKTSolver` — forms two matrices on the **data** space, deliberately:
   that is what keeps the model space undiscretised.
-- `ProximalBundleMethod` / `LevelBundleMethod` — the subproblem is dense in the
-  number of cuts, which is small by construction.
+- `ProximalBundleMethod` — the subproblem is dense in the number of cuts,
+  which is small by construction. `LevelBundleMethod` is **not**: its master
+  QP and its LP bound are formed densely in the *data dimension plus one*
+  (`(n+1)^2` entries; 401 MB per master solve at 5000 data, measured), which
+  is v1's arrangement and a limit on the data size it can take. Its
+  `k`-variable dual is written out in `review/r2_numerics_recipes.md`.
 - `BackusInference` — the joint spectrum, cached per estimator.
 - `InvariantDistancePreconditioner` and the localised preconditioners — sparse
   assembly, not dense; `BlockPreconditioner` and
