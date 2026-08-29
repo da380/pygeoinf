@@ -144,6 +144,29 @@ class TestSphereRenderer:
             plotting.plot(X, np.zeros((3, 3)))
 
 
+class TestShow:
+    """``show()``: what an example script ends with.
+
+    A bare ``pyplot.show()`` warns once per call under Agg, which is the
+    backend the suite runs the examples under, and shows nothing either way.
+    """
+
+    def test_it_does_nothing_under_a_blind_backend(self, recwarn):
+        assert matplotlib.get_backend().lower() == "agg"
+        assert plotting.show() is False
+        assert not [w for w in recwarn if "non-interactive" in str(w.message)]
+
+    def test_it_shows_when_the_backend_has_a_window(self, monkeypatch):
+        """And it is not "the name ends in agg": TkAgg has a window."""
+        import matplotlib.pyplot as plt
+
+        shown = []
+        monkeypatch.setattr(matplotlib, "get_backend", lambda: "TkAgg")
+        monkeypatch.setattr(plt, "show", lambda *a, **k: shown.append(True))
+        assert plotting.show() is True
+        assert shown == [True]
+
+
 class TestDistributions:
     """Marginals and corner plots.
 
