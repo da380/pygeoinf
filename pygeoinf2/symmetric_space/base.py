@@ -1636,45 +1636,20 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             )
 
         laplacian = self.laplacian
-        curvature = self.gaussian_curvature
         rigidity_field = self._as_field(rigidity)
         effective = self.multiply(
             rigidity_field,
             self.subtract(self._as_field(1.0), self._as_field(poisson_ratio)),
         )
-        buoyancy_field = self._as_field(buoyancy)
         laplacian_effective = laplacian(effective)
-
-        def value(w: np.ndarray) -> np.ndarray:
-            laplacian_w = laplacian(w)
-
-            result = laplacian(self.multiply(rigidity_field, laplacian_w))
-
-            # Bochner block: -bochner == tr(Hess D_eff Hess w) + 2 K grad.grad
-            gradients = self.gradient_dot_product(effective, w)
-            bochner = self.scale(0.5, laplacian(gradients))
-            bochner = self.subtract(
-                bochner,
-                self.scale(0.5, self.gradient_dot_product(laplacian_effective, w)),
-            )
-            bochner = self.subtract(
-                bochner,
-                self.scale(0.5, self.gradient_dot_product(effective, laplacian_w)),
-            )
-            bochner = self.subtract(bochner, self.scale(curvature, gradients))
-
-            result = self.subtract(result, bochner)
-            result = self.subtract(
-                result, self.multiply(laplacian_effective, laplacian_w)
-            )
-            if curvature != 0.0:
-                result = self.subtract(
-                    result,
-                    self.scale(curvature, self.multiply(effective, laplacian_w)),
-                )
-            return self.add(result, self.multiply(buoyancy_field, w))
-
-        return LinearOperator.self_adjoint(self, value)
+        return _FlexureOperator(
+            self,
+            rigidity=self.grid_values(rigidity_field),
+            effective=self.grid_values(effective),
+            laplacian_effective=self.grid_values(laplacian_effective),
+            bilaplacian_effective=self.grid_values(laplacian(laplacian_effective)),
+            buoyancy=self.grid_values(self._as_field(buoyancy)),
+        )
 
     def inverse_flexural_operator(
         self,
@@ -1712,6 +1687,27 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             isinstance(value, (int, float, np.floating, np.integer))
             for value in (rigidity, poisson_ratio, buoyancy)
         )
+        if self.order != 0.0 and not constant:
+            # The operator is self-adjoint and positive definite in L2, and
+            # that is where CG must run: lifted to a Sobolev space it keeps
+            # its action but is no longer its own adjoint, so the claim CG
+            # needs would be false there -- it raised on the sphere and
+            # returned a 1e-4 residual as converged on the circle. Inverting
+            # in L2 and lifting the inverse gives the inverse of the lifted
+            # operator, since the lift preserves actions and commutes with
+            # inversion.
+            base = self.with_order(0.0)
+            return lift_formal_adjoint(
+                base.inverse_flexural_operator(
+                    rigidity,
+                    poisson_ratio,
+                    buoyancy,
+                    baseline_rigidity=baseline_rigidity,
+                    baseline_buoyancy=baseline_buoyancy,
+                    solver=solver,
+                ),
+                self,
+            )
         curvature = self.gaussian_curvature
 
         def symbol(D: float, nu: float, rho: float):
@@ -2126,6 +2122,105 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         raise NotImplementedError(
             f"{type(self).__name__} does not implement random_point."
         )
+
+
+
+class _FlexureOperator(LinearOperator):
+    """The variable-coefficient flexure operator on an ``L2`` space, fused.
+
+    The expression in :meth:`SymmetricSpace.flexural_operator` is a sum of
+    pointwise products of the field with the coefficient fields, some of
+    them under one Laplacian and one under two. Applied term by term it
+    cost fifty transforms per application: every ``multiply`` truncates
+    back into the space (an analysis and a synthesis), and every Laplacian
+    re-analyses what was just synthesised. Analysis is linear, so the
+    products under a common multiplier can be summed on the grid and
+    analysed once. Written out, with ``L`` the positive Laplacian, ``K`` the
+    curvature, ``D`` the rigidity, ``E == D (1 - nu)``, ``rho`` the buoyancy
+    and ``w`` the field:
+
+    .. code-block:: text
+
+        Op(w) == G0 + L(G1) + L^2(G2)
+
+        G0 == rho w - (LE)(Lw)/2 + (L^2 E) w/4 + E (L^2 w)/4
+              - K E (Lw)/2 + K (LE) w/2
+        G1 == D (Lw) - E (Lw)/2 - (LE) w/2 - K E w/2
+        G2 == E w/4
+
+    which is what the Bochner block, the rigidity-gradient coupling and the
+    covariant softening collapse to. Seven transforms per application from
+    a field -- three syntheses for ``w``, ``Lw``, ``L^2 w``, three analyses
+    for the ``G``s, one synthesis for the result -- and six from
+    components, which is what a Krylov loop asks for. The components agree
+    with the term-by-term form to rounding: the truncation each ``multiply``
+    applied is exactly the analysis, and analysis is linear.
+
+    Self-adjoint in ``L2``; the Sobolev version is this operator lifted.
+    """
+
+    def __init__(
+        self,
+        space: "SymmetricSpace",
+        /,
+        *,
+        rigidity: np.ndarray,
+        effective: np.ndarray,
+        laplacian_effective: np.ndarray,
+        bilaplacian_effective: np.ndarray,
+        buoyancy: np.ndarray,
+    ) -> None:
+        super().__init__(space, space, traits=Traits.SELF_ADJOINT)
+        self._space = space
+        self._eigenvalues = np.asarray(space.laplacian_eigenvalues, dtype=float)
+        self._curvature = float(space.gaussian_curvature)
+        self._rigidity = np.asarray(rigidity, dtype=float)
+        self._effective = np.asarray(effective, dtype=float)
+        self._laplacian_effective = np.asarray(laplacian_effective, dtype=float)
+        self._bilaplacian_effective = np.asarray(bilaplacian_effective, dtype=float)
+        self._buoyancy = np.asarray(buoyancy, dtype=float)
+
+    def _analyse(self, grid: np.ndarray) -> np.ndarray:
+        space = self._space
+        return space.to_components(space.from_grid_values(grid))
+
+    def _synthesise(self, components: np.ndarray) -> np.ndarray:
+        space = self._space
+        return space.grid_values(space.from_components(components))
+
+    def _action(self, components: np.ndarray) -> np.ndarray:
+        lam, K = self._eigenvalues, self._curvature
+        D, E = self._rigidity, self._effective
+        LE, L2E, rho = self._laplacian_effective, self._bilaplacian_effective, self._buoyancy
+        w = self._synthesise(components)
+        Lw = self._synthesise(lam * components)
+        L2w = self._synthesise(lam**2 * components)
+        G0 = rho * w - 0.5 * LE * Lw + 0.25 * L2E * w + 0.25 * E * L2w
+        if K != 0.0:
+            G0 = G0 - 0.5 * K * E * Lw + 0.5 * K * LE * w
+        G1 = D * Lw - 0.5 * E * Lw - 0.5 * LE * w
+        if K != 0.0:
+            G1 = G1 - 0.5 * K * E * w
+        G2 = 0.25 * E * w
+        return self._analyse(G0) + lam * self._analyse(G1) + lam**2 * self._analyse(G2)
+
+    def _value(self, x: Any) -> Any:
+        space = self._space
+        return space.from_components(self._action(space.to_components(x)))
+
+    def _adjoint_value(self, y: Any) -> Any:
+        return self._value(y)
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._action
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._action
+
+    def __repr__(self) -> str:
+        return f"FlexureOperator({self._space!r})"
 
 
 def _distribute(total: int, weights: np.ndarray) -> np.ndarray:

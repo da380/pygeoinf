@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from pygeoinf2.algebra.spaces import require_module
+from pygeoinf2.numerics.solvers import CGSolver
 from pygeoinf2.symmetric_space import Lebesgue as BoxLebesgue
 from pygeoinf2.testing import check_operator
 from pygeoinf2.traits import Traits
@@ -353,3 +354,145 @@ class TestFlexureInverse:
         solver = CGSolver(preconditioner=LinearOperator.identity(X))
         with pytest.raises(ValueError, match="already has a preconditioner"):
             solver.with_preconditioner(LinearOperator.zero(X))
+
+
+def term_by_term(X, rigidity, poisson_ratio, buoyancy, w):
+    """The flexure operator as first written: every product truncated, every
+    Laplacian applied to a field. The fused operator must agree with this to
+    rounding; it is kept here as the reference the fusion is checked against."""
+    laplacian = X.laplacian
+    curvature = X.gaussian_curvature
+    D = X._as_field(rigidity)
+    E = X.multiply(D, X.subtract(X._as_field(1.0), X._as_field(poisson_ratio)))
+    rho = X._as_field(buoyancy)
+    LE = laplacian(E)
+    Lw = laplacian(w)
+    result = laplacian(X.multiply(D, Lw))
+    gradients = X.gradient_dot_product(E, w)
+    bochner = X.scale(0.5, laplacian(gradients))
+    bochner = X.subtract(bochner, X.scale(0.5, X.gradient_dot_product(LE, w)))
+    bochner = X.subtract(bochner, X.scale(0.5, X.gradient_dot_product(E, Lw)))
+    bochner = X.subtract(bochner, X.scale(curvature, gradients))
+    result = X.subtract(result, bochner)
+    result = X.subtract(result, X.multiply(LE, Lw))
+    if curvature != 0.0:
+        result = X.subtract(result, X.scale(curvature, X.multiply(E, Lw)))
+    return X.add(result, X.multiply(rho, w))
+
+
+class TestFusedFlexure:
+    """REVIEW2 4.2.2: the operator as one sum of grid products under each
+    Laplacian power, analysed once each, instead of fifty transforms."""
+
+    @pytest.fixture(params=["sphere", "circle"])
+    def case(self, request, rng):
+        if request.param == "sphere":
+            X = Lebesgue(16)
+            rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p[0]))
+            poisson = X.project_function(lambda p: 0.25 + 0.1 * np.sin(p[1]))
+            buoyancy = X.project_function(lambda p: 2.0 + 0.3 * np.cos(p[1]))
+        else:
+            from pygeoinf2.symmetric_space.circle import Lebesgue as CircleLebesgue
+
+            X = CircleLebesgue(64)
+            t = X.grid_axes[0] if hasattr(X, "grid_axes") else None
+            rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p))
+            poisson = X.project_function(lambda p: 0.25 + 0.1 * np.sin(2 * p))
+            buoyancy = X.project_function(lambda p: 2.0 + 0.3 * np.sin(p))
+        return X, rigidity, poisson, buoyancy
+
+    def test_it_agrees_with_the_term_by_term_expression(self, case, rng):
+        X, rigidity, poisson, buoyancy = case
+        A = X.flexural_operator(rigidity, poisson, buoyancy)
+        w = X.random(rng=rng)
+        fused = X.to_components(A(w))
+        reference = X.to_components(term_by_term(X, rigidity, poisson, buoyancy, w))
+        assert np.allclose(fused, reference, rtol=1e-10, atol=1e-12 * np.abs(reference).max())
+
+    def test_it_acts_on_components_the_same_way(self, case, rng):
+        X, rigidity, poisson, buoyancy = case
+        A = X.flexural_operator(rigidity, poisson, buoyancy)
+        w = X.random(rng=rng)
+        action = A._components_action()
+        assert action is not None
+        assert np.allclose(action(X.to_components(w)), X.to_components(A(w)))
+
+    def test_an_application_costs_a_handful_of_transforms(self, rng):
+        X = Lebesgue(16)
+        rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p[0]))
+        A = X.flexural_operator(rigidity, 0.25, 2.0)
+        w = X.random(rng=rng)
+        counts = {"analyses": 0, "syntheses": 0}
+        to_components, from_components = X.to_components, X.from_components
+
+        def counting_to(x):
+            counts["analyses"] += 1
+            return to_components(x)
+
+        def counting_from(c):
+            counts["syntheses"] += 1
+            return from_components(c)
+
+        X.to_components, X.from_components = counting_to, counting_from
+        try:
+            A(w)
+            assert counts == {"analyses": 4, "syntheses": 4}
+            counts["analyses"] = counts["syntheses"] = 0
+            A._components_action()(to_components(w))
+            assert counts == {"analyses": 3, "syntheses": 3}
+        finally:
+            del X.to_components, X.from_components
+
+    def test_the_sobolev_version_still_acts_the_same_and_keeps_the_action(self, rng):
+        X = Sobolev(16, 2.0, 0.2)
+        rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p[0]))
+        A = X.flexural_operator(rigidity, 0.25, 2.0)
+        base = X.with_order(0.0).flexural_operator(rigidity, 0.25, 2.0)
+        w = X.random(rng=rng)
+        assert np.allclose(*values(X, A(w), base(w)))
+        action = A._components_action()
+        assert action is not None
+        assert np.allclose(action(X.to_components(w)), X.to_components(A(w)))
+        check_operator(A, rng=rng)
+
+
+class TestFlexureInverseOnASobolevSpace:
+    """REVIEW2 3.2: the inverse used to claim the *lifted* operator positive
+    definite, which it is not in ``H^s`` -- CG raised on the sphere and
+    returned a 1e-4 residual as converged on the circle. It now inverts in
+    ``L2``, where the claim is true, and lifts the inverse."""
+
+    def test_a_varying_rigidity_inverts_on_the_sphere(self, rng):
+        X = Sobolev(12, 2.0, 0.3)
+        rigidity = X.project_function(lambda p: 2.0 + 0.8 * np.cos(p[0]))
+        A = X.flexural_operator(rigidity, 0.25, 3.0)
+        # A tight solve, so that the inverse is linear and has its adjoint to
+        # the accuracy check_operator asks for.
+        inverse = X.inverse_flexural_operator(
+            rigidity, 0.25, 3.0, solver=CGSolver(rtol=1e-13)
+        )
+        w = X.random(rng=rng)
+        residual = X.subtract(A(inverse(w)), w)
+        assert X.norm(residual) < 1e-6 * X.norm(w)
+        check_operator(inverse, rng=rng)
+
+    def test_a_varying_rigidity_inverts_on_the_circle(self, rng):
+        from pygeoinf2.symmetric_space.circle import Sobolev as CircleSobolev
+
+        X = CircleSobolev(64, 2.0, 0.2)
+        rigidity = X.project_function(lambda p: 1.0 + 0.5 * np.cos(p))
+        A = X.flexural_operator(rigidity, 0.25, 3.0)
+        inverse = X.inverse_flexural_operator(
+            rigidity, 0.25, 3.0, solver=CGSolver(rtol=1e-13)
+        )
+        w = X.random(rng=rng)
+        residual = X.subtract(A(inverse(w)), w)
+        assert X.norm(residual) < 1e-7 * X.norm(w)
+        check_operator(inverse, rng=rng)
+
+    def test_constant_coefficients_are_still_exact_on_a_sobolev_space(self, rng):
+        X = Sobolev(12, 2.0, 0.3)
+        A = X.flexural_operator(1.7, 0.25, 3.0)
+        inverse = X.inverse_flexural_operator(1.7, 0.25, 3.0)
+        w = X.random(rng=rng)
+        assert np.allclose(*values(X, A(inverse(w)), w), rtol=1e-10)

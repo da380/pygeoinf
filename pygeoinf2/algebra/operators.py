@@ -1348,9 +1348,31 @@ class LinearOperator[X, Y](Operator[X, Y]):
                     domain.solve_gram(base_domain.apply_gram(pulled))
                 )
 
-            return _CallableLinearOperator(
+            lifted = _CallableLinearOperator(
                 domain, codomain, value, adjoint=adjoint, traits=traits
             )
+            # Where the two spaces on each side share their component map,
+            # the operator's action on components is the lifted operator's,
+            # and the adjoint's is the same formula as above on arrays. So a
+            # lift of an operator that acts on components acts on them too,
+            # and stays inside a fused product or a Krylov loop.
+            same_components = domain.shares_vectors_with(
+                base_domain
+            ) and codomain.shares_vectors_with(base_codomain)
+            action = operator._components_action() if same_components else None
+            adjoint_action = (
+                operator._components_adjoint_action() if same_components else None
+            )
+            if action is not None:
+                lifted._components_action_fn = action
+            if adjoint_action is not None:
+
+                def lifted_adjoint_action(c: np.ndarray) -> np.ndarray:
+                    weighted = base_codomain.solve_gram(codomain.apply_gram(c))
+                    return domain.solve_gram(base_domain.apply_gram(adjoint_action(weighted)))
+
+                lifted._components_adjoint_action_fn = lifted_adjoint_action
+            return lifted
 
         # The coordinate-free route, for a mass-weighted space over a backend
         # with no component map.
@@ -1599,6 +1621,17 @@ class _CallableLinearOperator[X, Y](LinearOperator[X, Y]):
         super().__init__(domain, codomain, traits=traits)
         self._value_fn = value
         self._adjoint_fn = adjoint
+
+    _components_action_fn: Callable[[np.ndarray], np.ndarray] | None = None
+    _components_adjoint_action_fn: Callable[[np.ndarray], np.ndarray] | None = None
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._components_action_fn
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        return self._components_adjoint_action_fn
 
     def _value(self, x: X) -> Y:
         return self._value_fn(x)
