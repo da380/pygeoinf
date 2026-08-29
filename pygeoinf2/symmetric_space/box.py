@@ -29,6 +29,7 @@ from numpy.random import Generator
 
 from ..algebra.operators import LinearOperator
 from ..traits import Traits
+from .base import PreparedPoints
 from .fourier import PeriodicBox
 
 __all__ = ["Box", "Interval", "Lebesgue", "Sobolev"]
@@ -159,17 +160,32 @@ class Box(PeriodicBox):
         """The basis functions at a point of the domain."""
         return super().basis_at(self._to_enclosing(point))
 
-    def _angles(self, points: Sequence[Any]) -> list[np.ndarray]:
-        """Points as angles, through the same seam :meth:`basis_at` uses.
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points as angles, through the same seam :meth:`basis_at` uses.
 
         The enclosing box's grid does not start where the domain does -- the
         padding sits in between -- so a point has to be moved into the
         enclosing coordinates before it becomes an angle. :meth:`basis_at`
-        already did this and this did not, which meant the non-uniform FFT
-        route evaluated the field displaced by exactly the padding while the
-        direct route got it right. Both are now the same map.
+        already did this and the angle conversion did not, which meant the
+        non-uniform FFT route evaluated the field displaced by exactly the
+        padding while the direct route got it right. Both are the same map.
+
+        The move is a Python loop over the points, which is why doing it once
+        per operator rather than once per application matters most here: it
+        was 230 of 254 ms -- 91% -- of an application at 10^5 points
+        (REVIEW2 4.2.7).
+
+        Args:
+            points: points of the domain, or an already prepared set.
+
+        Returns:
+            The prepared points, carrying one angle array per axis.
         """
-        return super()._angles([self._to_enclosing(point) for point in points])
+        if isinstance(points, PreparedPoints):
+            return points
+        points = tuple(points)
+        inside = [self._to_enclosing(point) for point in points]
+        return PreparedPoints(points, data=super().prepare_points(inside).data)
 
     def random_point(self, *, rng: Generator | None = None) -> np.ndarray:
         """A point drawn uniformly from the domain, never from the padding."""

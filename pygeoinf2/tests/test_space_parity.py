@@ -208,6 +208,59 @@ class TestAdoptingAnArray:
         assert np.allclose(values, space.grid_values(field))
 
 
+class TestPointsAreConvertedOnce:
+    """REVIEW2 4.2.7. The conversion from points to whatever the transform
+    consumes depends only on the points, and an observation operator is built
+    once and applied thousands of times. It used to run per application: 91% of
+    one on a bounded box, whose conversion is a Python loop."""
+
+    def test_an_operator_converts_them_once(self, geometry, rng, monkeypatch):
+        from pygeoinf2.symmetric_space.base import PreparedPoints
+
+        _, space = geometry
+        conversions = []
+        original = type(space).prepare_points
+
+        def counting(self, points, /):
+            if not isinstance(points, PreparedPoints):
+                conversions.append(len(tuple(points)))
+            return original(self, points)
+
+        monkeypatch.setattr(type(space), "prepare_points", counting)
+
+        points = space.random_points(12, rng=rng)
+        A = space.point_evaluation_operator(points, unsafe=True)
+        assert len(conversions) == 1
+
+        field = space.random(rng=rng)
+        for _ in range(4):
+            A(field)
+            A.adjoint(rng.normal(size=12))
+        assert len(conversions) == 1
+
+    def test_preparing_twice_is_free(self, geometry, rng):
+        _, space = geometry
+        points = space.random_points(5, rng=rng)
+        prepared = space.prepare_points(points)
+        assert space.prepare_points(prepared) is prepared
+        assert len(prepared) == 5
+        assert list(prepared) == list(points)
+
+    def test_the_prepared_points_give_the_same_answers(self, geometry, rng):
+        _, space = geometry
+        points = space.random_points(7, rng=rng)
+        field = space.random(rng=rng)
+        weights = rng.normal(size=7)
+        prepared = space.prepare_points(points)
+        assert np.allclose(space.evaluate(field, prepared), space.evaluate(field, points))
+        assert np.allclose(
+            space.accumulate(weights, prepared), space.accumulate(weights, points)
+        )
+        assert np.allclose(
+            space.basis_matrix(prepared), space.basis_matrix(points)
+        )
+
+
 class TestNeighbourSearchAndClustering:
     """On the base, so every geometry has them, and by KD-tree."""
 

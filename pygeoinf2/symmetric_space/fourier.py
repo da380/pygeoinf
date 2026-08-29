@@ -30,7 +30,7 @@ from scipy.fft import irfftn, rfftn
 
 from ..algebra.operators import LinearOperator
 from ..algebra.spaces import ArrayVectorMixin
-from .base import SymmetricSpace, lift_formal_adjoint
+from .base import PreparedPoints, SymmetricSpace, lift_formal_adjoint
 
 __all__ = ["PeriodicBox", "Lebesgue", "Sobolev"]
 
@@ -416,6 +416,28 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
 
     def _angles(self, points: Sequence[Any]) -> list[np.ndarray]:
         """Points as one contiguous array of angles per axis."""
+        return self.prepare_points(points).data
+
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points as one contiguous array of angles per axis.
+
+        The conversion the non-uniform FFT starts with, done once for an
+        operator rather than once per application: it was 32 of 61 ms on a
+        512-square torus at 10^5 points (REVIEW2 4.2.7).
+
+        Args:
+            points: points of the box, or an already prepared set.
+
+        Returns:
+            The prepared points, carrying one angle array per axis.
+
+        Raises:
+            ValueError: if the points do not have this box's number of
+                coordinates.
+        """
+        if isinstance(points, PreparedPoints):
+            return points
+        points = tuple(points)
         positions = np.asarray(
             [np.atleast_1d(np.asarray(point, dtype=float)) for point in points]
         )
@@ -424,10 +446,11 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 f"Points need {self.spatial_dimension} coordinates each, got "
                 f"shape {positions.shape}."
             )
-        return [
+        angles = [
             np.ascontiguousarray(2.0 * np.pi * positions[:, axis] / self._lengths[axis])
             for axis in range(self.spatial_dimension)
         ]
+        return PreparedPoints(points, data=angles)
 
     def evaluate(
         self,

@@ -41,7 +41,7 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.operators import LinearFunctional, LinearOperator
-from .base import SymmetricSpace, _distribute
+from .base import PreparedPoints, SymmetricSpace, _distribute
 
 __all__ = ["Sphere", "Lebesgue", "Sobolev"]
 
@@ -645,7 +645,7 @@ class Sphere(SymmetricSpace[Any]):
         """
         from pyshtools.legendre import PlmON
 
-        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
+        positions = self.prepare_points(points).data
 
         indices = self._legendre_indices
         count = positions.shape[0]
@@ -667,11 +667,17 @@ class Sphere(SymmetricSpace[Any]):
         return result / self._radius
 
     def _in_chunks(self, points: Sequence[Any], /) -> Any:
-        """Split points so one basis matrix at a time stays a sensible size."""
-        points = tuple(points)
+        """Split points so one basis matrix at a time stays a sensible size.
+
+        The chunks stay prepared, so the conversion is not redone per chunk.
+        """
+        prepared = self.prepare_points(points)
         per_chunk = max(1, _CHUNK_ENTRIES // max(self.dim, 1))
-        for start in range(0, len(points), per_chunk):
-            yield points[start : start + per_chunk]
+        for start in range(0, len(prepared), per_chunk):
+            stop = start + per_chunk
+            yield PreparedPoints(
+                prepared.points[start:stop], data=prepared.data[start:stop]
+            )
 
     # ----------------------------------------------------------------- #
     #                    The double Fourier sphere                      #
@@ -800,11 +806,32 @@ class Sphere(SymmetricSpace[Any]):
 
     def _angles(self, points: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
         """Points as two contiguous arrays of radians, for the NUFFT."""
-        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
+        positions = self.prepare_points(points).data
         return (
             np.ascontiguousarray(positions[:, 0]),
             np.ascontiguousarray(positions[:, 1]),
         )
+
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points as ``(colatitude, longitude)`` in radians, converted once.
+
+        The conversion every route here starts with: the non-uniform FFT wants
+        the two angles as contiguous arrays and :meth:`basis_matrix` wants the
+        pair. Doing it per application cost 14.5 of 37 ms at 10^5 points
+        (REVIEW2 4.2.7).
+
+        Args:
+            points: ``(latitude, longitude)`` pairs in degrees, or an already
+                prepared set.
+
+        Returns:
+            The prepared points, carrying the ``(n, 2)`` array of radians.
+        """
+        if isinstance(points, PreparedPoints):
+            return points
+        points = tuple(points)
+        positions = self.to_colatitude_radians(np.asarray(list(points), dtype=float))
+        return PreparedPoints(points, data=positions)
 
     def _use_transform(self, count: int) -> bool:
         """Whether the transform route is cheaper than summing the basis.
@@ -849,7 +876,7 @@ class Sphere(SymmetricSpace[Any]):
                 threading, and a call inside a ``joblib`` loop would
                 oversubscribe on top of that. Pass zero for finufft's default.
         """
-        points = tuple(points)
+        points = self.prepare_points(points)
         if not self._use_transform(len(points)):
             components = self.to_components(x)
             return np.concatenate(
@@ -904,7 +931,7 @@ class Sphere(SymmetricSpace[Any]):
         Raises:
             ValueError: if the weight count does not match the points.
         """
-        points = tuple(points)
+        points = self.prepare_points(points)
         values = np.asarray(weights, dtype=float)
         if values.size != len(points):
             raise ValueError(f"Got {values.size} weights for {len(points)} points.")

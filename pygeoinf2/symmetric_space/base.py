@@ -47,7 +47,64 @@ from ..traits import Traits
 if TYPE_CHECKING:  # pragma: no cover
     from ..numerics.solvers import IterativeSolver
 
-__all__ = ["SymmetricSpace", "lift_formal_adjoint"]
+__all__ = ["PreparedPoints", "SymmetricSpace", "lift_formal_adjoint"]
+
+
+class PreparedPoints:
+    """A set of points, converted once into what a geometry's transforms want.
+
+    An observation operator is built once and applied many times, and the
+    conversion from points to whatever the transform consumes -- colatitudes in
+    radians, angles on a periodic axis, coordinates moved into an enclosing box
+    -- depends only on the points. Doing it inside the application was 14.5 of
+    37 ms on a sphere at 10^5 points, 32 of 61 ms on a torus and 230 of 254 ms
+    -- 91% -- on a bounded box, whose conversion is a Python loop over the
+    points (REVIEW2 4.2.7).
+
+    Build one with :meth:`SymmetricSpace.prepare_points` and pass it wherever a
+    sequence of points is taken; it behaves as that sequence, so anything that
+    only counts or iterates them needs to know nothing about it. Passing one
+    back to ``prepare_points`` is free, which is what lets every route accept
+    either without asking which it got.
+
+    Attributes:
+        points: the points themselves, as a tuple.
+        data: whatever the geometry precomputed, or ``None`` where it has
+            nothing to precompute. Its shape is that geometry's business.
+    """
+
+    __slots__ = ("points", "data")
+
+    def __init__(self, points: Sequence[Any], /, *, data: Any = None) -> None:
+        """
+        Args:
+            points: the points.
+            data: the geometry's converted form of them.
+        """
+        self.points = tuple(points)
+        self.data = data
+
+    def __len__(self) -> int:
+        """How many points there are."""
+        return len(self.points)
+
+    def __iter__(self) -> Any:
+        """The points, in order."""
+        return iter(self.points)
+
+    def __getitem__(self, index: Any) -> Any:
+        """One point, or a slice of them.
+
+        Args:
+            index: an index or a slice.
+
+        Returns:
+            The point, or the tuple of points.
+        """
+        return self.points[index]
+
+    def __repr__(self) -> str:
+        return f"PreparedPoints({len(self.points)} points)"
 
 
 class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
@@ -1366,6 +1423,26 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         self._require_point_evaluation("A Dirac functional", unsafe=unsafe)
         return LinearFunctional.from_derivative_components(self, self.basis_at(point))
 
+    def prepare_points(self, points: Sequence[Any], /) -> PreparedPoints:
+        """The points in the form this geometry's evaluation routines want.
+
+        Computed once and reused by every application of an operator built on
+        them; see :class:`PreparedPoints`. The base class has nothing to
+        precompute, so this only wraps them. A geometry whose ``evaluate`` or
+        ``accumulate`` converts the points on the way in overrides it and does
+        that conversion here instead.
+
+        Args:
+            points: the points, or an already prepared set of them.
+
+        Returns:
+            The prepared points. Passing one straight back returns it
+            unchanged.
+        """
+        if isinstance(points, PreparedPoints):
+            return points
+        return PreparedPoints(points)
+
     def basis_matrix(self, points: Sequence[Any], /) -> np.ndarray:
         """The basis at many points, as a ``(len(points), dim)`` array.
 
@@ -1450,9 +1527,12 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         """
         from ..algebra.spaces import EuclideanSpace
 
-        points = tuple(points)
-        if not points:
+        if not len(tuple(points)):
             raise ValueError("At least one point is needed.")
+        # Converted once here rather than once per application: the conversion
+        # depends only on the points, and an observation operator is built once
+        # and applied thousands of times (REVIEW2 4.2.7).
+        points = self.prepare_points(points)
         self._require_point_evaluation("A point evaluation operator", unsafe=unsafe)
         codomain = EuclideanSpace(len(points))
 
