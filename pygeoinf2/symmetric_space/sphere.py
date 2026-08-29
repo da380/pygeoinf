@@ -1555,15 +1555,54 @@ class Sphere(SymmetricSpace[Any]):
     #                            Resolution                             #
     # ----------------------------------------------------------------- #
 
-    def with_degree(self, lmax: int, /) -> Sphere:
-        """The same space, truncated at or extended to a different degree."""
-        return Sphere(
-            lmax,
-            radius=self._radius,
-            order=self._order,
-            length_scale=self._length_scale,
-            sampling=self._sampling,
+    def _rebuilt(
+        self,
+        /,
+        *,
+        lmax: int | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> Sphere:
+        """The same sphere with some of its parameters changed.
+
+        **Returns the D-3 subclass its order names**, not a bare
+        :class:`Sphere`. That is the whole point of D-3: ``Lebesgue`` and
+        ``Sobolev`` exist so that ``isinstance`` answers what it looks like it
+        answers, and a ``with_order``/``with_degree`` that handed back the base
+        class defeated it on every derived space -- pyslfp's ``sl/utils.py``
+        dispatches on exactly that check.
+
+        The one hook the resolution methods build on, so there is one place
+        that knows which class goes with which order.
+
+        Args:
+            lmax: the new truncation. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The sphere, as ``Lebesgue`` at order zero and ``Sobolev``
+            otherwise.
+        """
+        lmax = self._lmax if lmax is None else int(lmax)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(lmax, radius=self._radius, sampling=self._sampling)
+        return Sobolev(
+            lmax, order, scale, radius=self._radius, sampling=self._sampling
         )
+
+    def with_degree(self, lmax: int, /) -> Sphere:
+        """The same space, truncated at or extended to a different degree.
+
+        Args:
+            lmax: the new maximum degree.
+
+        Returns:
+            The space at that truncation, as the subclass its order names.
+        """
+        return self._rebuilt(lmax=lmax)
 
     def degree_transfer_operator(self, target: Sphere, /) -> LinearOperator:
         """Truncation to, or prolongation into, another degree.
@@ -1618,16 +1657,11 @@ class Sphere(SymmetricSpace[Any]):
                 this is a change of order alone.
 
         Returns:
-            The same expansion in the new metric. The components are
-            unchanged; only the inner product moves.
+            The same expansion in the new metric, as :class:`Lebesgue` at order
+            zero and :class:`Sobolev` otherwise. The components are unchanged;
+            only the inner product moves.
         """
-        return Sphere(
-            self._lmax,
-            radius=self._radius,
-            order=order,
-            length_scale=(self._length_scale if length_scale is None else length_scale),
-            sampling=self._sampling,
-        )
+        return self._rebuilt(order=order, length_scale=length_scale)
 
 
 def _read_table(name: str) -> dict[str, np.ndarray]:

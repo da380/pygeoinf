@@ -8,6 +8,8 @@ else, and everything the box provides is available here unchanged.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 from .fourier import PeriodicBox
 
 __all__ = ["Circle", "Lebesgue", "Sobolev"]
@@ -38,6 +40,36 @@ class Circle(PeriodicBox):
             order=order,
             length_scale=length_scale,
         )
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "Circle":
+        """The same circle with some of its parameters changed.
+
+        Overridden so that ``with_order`` and ``with_shape`` give back a circle
+        of the right D-3 subclass rather than a bare
+        :class:`~pygeoinf2.symmetric_space.fourier.PeriodicBox`.
+
+        Args:
+            shape: the new grid, one axis. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        length = self._lengths[0]
+        if order == 0.0:
+            return Lebesgue(shape[0], length=length)
+        return Sobolev(shape[0], order, scale, length=length)
 
 
 class Lebesgue(Circle):

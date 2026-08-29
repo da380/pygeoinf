@@ -115,8 +115,16 @@ class Box(PeriodicBox):
         )
 
     def _coordinate_key(self) -> Hashable:
-        """The grid, which the order and length scale do not touch."""
-        return (type(self), self._shape, self._bounds, self._padding)
+        """The grid and where its points are, which the metric does not touch.
+
+        Tagged by geometry rather than by ``type(self)``, as the sphere's and
+        the periodic box's are: ``Line``, ``Plane``, ``Lebesgue`` and
+        ``Sobolev`` are thin subclasses over one grid and one point map. The
+        bounds and padding stay in the key because they *are* the point map --
+        a bounded box and its enclosing periodic one share a grid but not an
+        idea of where a grid index sits.
+        """
+        return ("box", self._shape, self._bounds, self._padding)
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
@@ -206,14 +214,43 @@ class Box(PeriodicBox):
                 which is what makes this a change of *order* alone.
 
         Returns:
-            The same domain and padding, in the new metric.
+            The same domain and padding in the new metric, as
+            :class:`Lebesgue` at order zero and :class:`Sobolev` otherwise.
         """
-        return Box(
-            self._shape,
-            bounds=self._bounds,
-            padding=self._padding,
-            order=order,
-            length_scale=(self._length_scale if length_scale is None else length_scale),
+        return self._rebuilt(order=order, length_scale=length_scale)
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "Box":
+        """The same bounded domain with some of its parameters changed.
+
+        Overridden from
+        :meth:`~pygeoinf2.symmetric_space.fourier.PeriodicBox._rebuilt` so that
+        the result is a ``Box`` and keeps this box's bounds and padding -- the
+        base class's version would hand back the enclosing periodic domain,
+        which has the same components but not the same idea of where the
+        boundary is -- and so that it is the D-3 subclass its order names.
+
+        Args:
+            shape: the new grid. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(shape, bounds=self._bounds, padding=self._padding)
+        return Sobolev(
+            shape, order, scale, bounds=self._bounds, padding=self._padding
         )
 
     # ----------------------------------------------------------------- #

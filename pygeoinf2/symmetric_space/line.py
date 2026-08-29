@@ -12,6 +12,8 @@ the constructors take one.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 from .box import Box
 
 __all__ = ["Line", "Lebesgue", "Sobolev"]
@@ -48,6 +50,38 @@ class Line(Box):
             padding=None if padding is None else (padding,),
             order=order,
             length_scale=length_scale,
+        )
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "Line":
+        """The same interval with some of its parameters changed.
+
+        Overridden so that ``with_order`` and ``with_shape`` give back a line
+        of the right D-3 subclass rather than a bare
+        :class:`~pygeoinf2.symmetric_space.box.Box`.
+
+        Args:
+            shape: the new grid, one axis. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        (lower, upper), padding = self._bounds[0], self._padding[0]
+        if order == 0.0:
+            return Lebesgue(shape[0], lower=lower, upper=upper, padding=padding)
+        return Sobolev(
+            shape[0], order, scale, lower=lower, upper=upper, padding=padding
         )
 
 

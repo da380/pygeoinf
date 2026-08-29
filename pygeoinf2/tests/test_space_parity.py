@@ -133,6 +133,52 @@ class TestEveryGeometryHasTheGeometry:
         )
 
 
+class TestChangingTheMetricKeepsTheSubclass:
+    """REVIEW2 3.7 / D-3. ``with_order`` returned the bare geometry class, so
+    ``isinstance(X.with_order(0.0), Lebesgue)`` was false on every derived
+    space -- defeating the reason D-3 gives for the subclasses existing, and
+    the check pyslfp's ``sl/utils.py`` dispatches on."""
+
+    @staticmethod
+    def _module(space):
+        import importlib
+
+        return importlib.import_module(type(space).__module__)
+
+    def test_the_order_names_the_class(self, geometry):
+        _, space = geometry
+        module = self._module(space)
+        assert isinstance(space, module.Sobolev)
+        assert isinstance(space.with_order(0.0), module.Lebesgue)
+        assert isinstance(space.with_order(1.5), module.Sobolev)
+
+    def test_changing_the_resolution_keeps_it(self, geometry):
+        _, space = geometry
+        module = self._module(space)
+        assert isinstance(space.with_degree(space.degrees.max() + 2), module.Sobolev)
+        assert isinstance(
+            space.with_order(0.0).with_degree(space.degrees.max() + 2),
+            module.Lebesgue,
+        )
+
+    def test_the_geometry_survives_the_change(self, geometry):
+        """Not only the label: the new space is over the same grid and the
+        same point map, which is what makes it a *view* of this one."""
+        _, space = geometry
+        lebesgue = space.with_order(0.0)
+        assert lebesgue.dim == space.dim
+        assert lebesgue._coordinate_key() == space._coordinate_key()
+        assert space.shares_vectors_with(lebesgue)
+        assert lebesgue.shares_vectors_with(space)
+        point = space.reference_point
+        assert np.allclose(space.basis_at(point), lebesgue.basis_at(point))
+
+    def test_a_lebesgue_view_of_a_lebesgue_space_is_itself(self, geometry):
+        _, space = geometry
+        lebesgue = space.with_order(0.0)
+        assert lebesgue.with_order(0.0) == lebesgue
+
+
 class TestNeighbourSearchAndClustering:
     """On the base, so every geometry has them, and by KD-tree."""
 

@@ -234,8 +234,16 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
         return (self._shape, self._lengths, self._order, self._length_scale)
 
     def _coordinate_key(self) -> Hashable:
-        """The grid, which the order and length scale do not touch."""
-        return (type(self), self._shape, self._lengths)
+        """The grid, which the order and length scale do not touch.
+
+        Tagged by geometry rather than by ``type(self)``, as the sphere's is
+        and for the same reason: ``Circle``, ``Torus``, ``Lebesgue`` and
+        ``Sobolev`` are thin subclasses over one grid and one point map, so
+        keying on the concrete class said two views of one field were different
+        fields -- and a formal-adjoint lift between them round-tripped through
+        components instead of passing the vector straight through.
+        """
+        return ("periodic_box", self._shape, self._lengths)
 
     def __repr__(self) -> str:
         kind = "Lebesgue" if self._order == 0.0 else f"Sobolev(order={self._order})"
@@ -688,12 +696,7 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
             raise ValueError(
                 f"This box has {self.spatial_dimension} axes, got {len(shape)}."
             )
-        return PeriodicBox(
-            shape,
-            lengths=self._lengths,
-            order=self._order,
-            length_scale=self._length_scale,
-        )
+        return self._rebuilt(shape=shape)
 
     def with_degree(self, degree: int, /) -> "PeriodicBox":
         """The same domain, resolved to a given wavenumber on every axis.
@@ -949,14 +952,41 @@ class PeriodicBox(ArrayVectorMixin, SymmetricSpace[np.ndarray]):
                 change of order alone.
 
         Returns:
-            The same domain and grid, in the new metric.
+            The same domain and grid in the new metric, as :class:`Lebesgue` at
+            order zero and :class:`Sobolev` otherwise.
         """
-        return PeriodicBox(
-            self._shape,
-            lengths=self._lengths,
-            order=order,
-            length_scale=(self._length_scale if length_scale is None else length_scale),
-        )
+        return self._rebuilt(order=order, length_scale=length_scale)
+
+    def _rebuilt(
+        self,
+        /,
+        *,
+        shape: Sequence[int] | None = None,
+        order: float | None = None,
+        length_scale: float | None = None,
+    ) -> "PeriodicBox":
+        """The same domain with some of its parameters changed.
+
+        **Returns the D-3 subclass its order names** rather than the base
+        class, which is what makes ``isinstance(X.with_order(0.0), Lebesgue)``
+        true (REVIEW2 3.7). Each geometry over this one -- a circle, a torus, a
+        bounded box -- overrides this and nothing else, so there is a single
+        place per family that knows which class goes with which order.
+
+        Args:
+            shape: the new grid. Unchanged if omitted.
+            order: the new Sobolev order. Unchanged if omitted.
+            length_scale: the new Sobolev length scale. Unchanged if omitted.
+
+        Returns:
+            The space, as ``Lebesgue`` at order zero and ``Sobolev`` otherwise.
+        """
+        shape = self._shape if shape is None else tuple(int(n) for n in shape)
+        order = self._order if order is None else float(order)
+        scale = self._length_scale if length_scale is None else float(length_scale)
+        if order == 0.0:
+            return Lebesgue(shape, lengths=self._lengths)
+        return Sobolev(shape, order, scale, lengths=self._lengths)
 
 
 class Lebesgue(PeriodicBox):
