@@ -27,7 +27,7 @@ from .backus import (
 )
 from .gaussian import LinearGaussianInversion
 from .mixture import LinearGaussianMixtureInversion
-from .normal import NormalOperator
+from .normal import FactoredNormalOperator, Formalism, NormalOperator
 from .preconditioners import (
     InvariantDistancePreconditioner,
     LocalisedPreconditioner,
@@ -60,6 +60,8 @@ __all__ = [
     "BackusInference",
     "LinearGaussianInversion",
     "LinearGaussianMixtureInversion",
+    "FactoredNormalOperator",
+    "Formalism",
     "NormalOperator",
     "NormalDiagonalPreconditioner",
     "LocalisedPreconditioner",

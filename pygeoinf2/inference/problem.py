@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from numpy.random import Generator
-from scipy.stats import chi2
 
 from ..algebra.direct_sum import ColumnLinearOperator
 from ..algebra.operators import LinearOperator, Operator
@@ -206,6 +205,11 @@ class ForwardProblem:
         Raises:
             ValueError: for a level outside ``(0, 1)``.
         """
+        # Imported here rather than at module scope: `scipy.stats` pulls in
+        # about three hundred modules and a quarter of a second, and this is
+        # the only thing in the file that wants it.
+        from scipy.stats import chi2
+
         if not 0.0 < level < 1.0:
             raise ValueError(f"A confidence level lies in (0, 1), got {level}.")
         return float(chi2.ppf(level, self.data_space.dim))

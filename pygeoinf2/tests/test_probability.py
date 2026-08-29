@@ -1304,3 +1304,72 @@ class TestParallelLoops:
                 )
             )
         assert kinds == {"DummyProcess"}
+
+
+class TestAMarginalsFactorMatchesItsCovariance:
+    """``marginal`` gives a diagonal block its square root as a covariance
+    factor, so that the marginal can still be sampled. On a non-diagonal metric
+    that root is not one: ``L`` with component matrix ``diag(r)`` has adjoint
+    ``G^-1 diag(r) G``, so ``L L*`` is ``diag(r) G^-1 diag(r) G`` and equals
+    ``diag(r^2)`` only when the two commute. The sampler is what would be
+    wrong, and nothing would say so.
+    """
+
+    @staticmethod
+    def build(space, values):
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        return DiagonalLinearOperator(space, values).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        )
+
+    @staticmethod
+    def joint(first, second, blocks):
+        from pygeoinf2.algebra.direct_sum import BlockLinearOperator, DirectSum
+        from pygeoinf2.algebra.operators import LinearOperator as _Operator
+
+        total = DirectSum([first, second])
+        zero_upper = _Operator.zero(second, codomain=first)
+        zero_lower = _Operator.zero(first, codomain=second)
+        covariance = BlockLinearOperator(
+            [[blocks[0], zero_upper], [zero_lower, blocks[1]]]
+        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+        return total, GaussianMeasure(total, covariance=covariance)
+
+    def test_on_a_diagonal_metric_the_factor_is_kept(self):
+        first, second = make_weighted_space(), make_weighted_space()
+        values = np.linspace(1.0, 2.0, first.dim)
+        total, measure = self.joint(
+            first,
+            second,
+            [self.build(first, values), self.build(second, values)],
+        )
+        marginal = measure.marginal(0)
+
+        assert marginal.can_sample
+        factor = marginal.covariance_factor
+        assert (factor @ factor.adjoint).matrix(form="components") == pytest.approx(
+            np.diag(values)
+        )
+
+    def test_on_a_dense_metric_it_is_not_offered(self):
+        """Because there it is not a factor of anything."""
+        first, second = make_dense_metric_space(4), make_dense_metric_space(4)
+        values = np.linspace(1.0, 2.0, 4)
+        total, measure = self.joint(
+            first,
+            second,
+            [self.build(first, values), self.build(second, values)],
+        )
+        marginal = measure.marginal(0)
+
+        assert marginal.covariance.matrix(form="components") == pytest.approx(
+            np.diag(values)
+        )
+        assert marginal.covariance_factor is None
+        # ...and the reason: the root would not have been one
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+
+        root = DiagonalLinearOperator(first, np.sqrt(values))
+        product = (root @ root.adjoint).matrix(form="components")
+        assert not np.allclose(product, np.diag(values))

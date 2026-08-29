@@ -861,7 +861,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         max_samples: int | None = None,
         n_jobs: int | None = None,
         rng: Generator | None = None,
-        dense_limit: int = 512,
+        dense_limit: int = 4000,
         **kwargs: Any,
     ) -> float:
         """``D(self || other)`` between two Gaussians on the same space.
@@ -882,6 +882,10 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             n_jobs: workers for the probes.
             rng: the generator for the probes.
             dense_limit: the dimension below which the dense route is taken.
+                Four thousand, matching
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`:
+                measured at dimension 4000, the dense divergence is exact in
+                4.4 s where a hundred probes take 37 s to reach +/- 1.5.
             kwargs: passed to the Lanczos functional calculus.
 
         Returns:
@@ -912,7 +916,7 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
         max_samples: int | None = None,
         n_jobs: int | None = None,
         rng: Generator | None = None,
-        dense_limit: int = 512,
+        dense_limit: int = 4000,
         **kwargs: Any,
     ) -> "Estimate":
         r"""``D(self || other)``, with the uncertainty of however it was got.
@@ -967,7 +971,12 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             n_jobs: workers for the probes.
             rng: the generator for those probes.
             dense_limit: the dimension above which ``"auto"`` stops forming
-                matrices.
+                matrices. Four thousand, matching
+                :func:`~pygeoinf2.numerics.functional_calculus.log_determinant`:
+                the dense route stays both exact and *faster* well past the
+                512 this used to be, measured at 0.09 / 0.63 / 4.4 s against a
+                hundred probes' 1.4 / 9.3 / 37 s at dimensions 960 / 2000 /
+                4000.
             kwargs: passed to
                 :func:`~pygeoinf2.numerics.functional_calculus.operator_function`,
                 which is where *max_iterations* and the Lanczos *rtol* live.
@@ -1882,10 +1891,29 @@ class GaussianMeasure[X](ProbabilityMeasure[X]):
             else domain.component(self._expectation, key)
         )
         # A diagonal block carries its own factor -- the square root of its
-        # eigenvalues -- so the marginal can still be sampled. The general
-        # route cannot say that: if C = L L*, the (i, i) block of C is a sum
-        # over the whole i-th row of L, not L_ii L_ii*.
-        factor = block.sqrt if isinstance(block, DiagonalLinearOperator) else None
+        # eigenvalues -- so the marginal can still be sampled. Two conditions,
+        # not one.
+        #
+        # The general route cannot supply a factor at all: if C == L L*, the
+        # (i, i) block of C is a sum over the whole i-th row of L, not
+        # L_ii L_ii*.
+        #
+        # And a diagonal square root is a square root only when the summand's
+        # metric is diagonal. ``L`` with component matrix ``diag(r)`` has
+        # adjoint ``G^-1 diag(r) G``, so ``L L*`` has component matrix
+        # ``diag(r) G^-1 diag(r) G``, which is ``diag(r^2)`` exactly when the
+        # two commute -- that is, when ``G`` is itself diagonal. Without this
+        # test the marginal comes back with a factor that does not match its
+        # covariance, and it is the *sampler* that is wrong, silently. The
+        # trait deduction used to refuse the square root here for its own
+        # reasons; it no longer does, so the condition is stated where it
+        # belongs.
+        factor = None
+        if (
+            isinstance(block, DiagonalLinearOperator)
+            and block.domain.has_diagonal_metric
+        ):
+            factor = block.sqrt
         return GaussianMeasure(
             block.domain,
             covariance=block,
