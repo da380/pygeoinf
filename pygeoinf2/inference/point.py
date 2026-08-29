@@ -825,7 +825,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         )
 
     def parameterised(
-        self, parameterisation: LinearOperator, /, **kwargs: Any
+        self, parameterisation: LinearOperator, /
     ) -> "ConstrainedLeastSquares":
         """The same estimator restricted to a parameter space.
 
@@ -844,7 +844,6 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         Args:
             parameterisation: ``M``, from the parameter space into the model
                 space.
-            **kwargs: passed to the reduced problem's own parameterisation.
 
         Returns:
             The estimator on the parameter space.
@@ -859,7 +858,7 @@ class ConstrainedLeastSquares(LinearPointEstimator):
         """
         subspace = _parameterised_subspace(self._subspace, parameterisation)
         return type(self)(
-            self._problem.parameterised(parameterisation, **kwargs),
+            self._problem.parameterised(parameterisation),
             subspace,
             damping=self._damping,
             solver=self._solver,
@@ -1013,7 +1012,7 @@ class ConstrainedMinimumNorm(Operator):
         return self._inner
 
     def parameterised(
-        self, parameterisation: LinearOperator, /, **kwargs: Any
+        self, parameterisation: LinearOperator, /
     ) -> "ConstrainedMinimumNorm":
         """The same method restricted to a parameter space.
 
@@ -1022,7 +1021,7 @@ class ConstrainedMinimumNorm(Operator):
         subspace to remember the equation it was built from.
         """
         return type(self)(
-            self._problem.parameterised(parameterisation, **kwargs),
+            self._problem.parameterised(parameterisation),
             _parameterised_subspace(self._subspace, parameterisation),
             level=self._level,
             solver=self._solver,
