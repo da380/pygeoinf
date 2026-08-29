@@ -73,22 +73,56 @@ class TestPointwiseAlgebra:
             *values(X, X.multiplication_operator(f)(u), X.multiply(f, u))
         )
 
-    def test_a_product_is_truncated_back_into_the_space(self, rng):
-        """Otherwise a product is not a well-defined function of its factors.
+    def test_a_product_stays_on_the_grid(self, rng):
+        """REVIEW2 Q3: the product is the product, not its projection.
 
-        The Driscoll-Healy grid is oversampled, so a raw grid product is one of
-        many arrays with those components. Truncating picks the one in the span
-        of the basis, which is what makes the formal-adjoint lift agree with a
-        direct application.
+        The Driscoll-Healy grid is oversampled, so the exact product of two
+        band-limited fields has no equal in the span of the basis. ``multiply``
+        used to pick the projection anyway, at two transforms a product;
+        it now returns the product itself, and :meth:`truncate` is there for a
+        caller who wants the other one. The two have the same components,
+        which is why nothing downstream of an analysis can tell them apart.
         """
         X = Lebesgue(12)
         f = X.project_function(lambda p: 1.5 + np.cos(p[0]))
         u = X.random(rng=rng)
         raw = X.from_grid_values(values(X, f) * values(X, u))
-        truncated = X.multiply(f, u)
-        assert not np.allclose(*values(X, raw, truncated))
-        assert np.allclose(X.to_components(raw), X.to_components(truncated))
-        assert np.allclose(*values(X, truncated, X.truncate(truncated)))
+        product = X.multiply(f, u)
+        assert np.allclose(*values(X, raw, product))
+
+        truncated = X.truncate(product)
+        assert not np.allclose(*values(X, product, truncated))
+        assert np.allclose(X.to_components(product), X.to_components(truncated))
+
+    def test_the_product_is_the_one_a_grid_can_carry(self, rng):
+        """The point of not truncating: on a field the grid can represent
+        exactly, the untruncated product is right and the truncated one is not.
+
+        ``cos(colat)`` is degree one, so its square is degree two and lies well
+        inside the truncation -- there the two agree. Take a field whose square
+        does not fit and they part company: the grid still holds the product at
+        its own points, and the projection has thrown the tail away.
+        """
+        X = Lebesgue(8)
+        f = X.project_function(lambda p: np.exp(np.sin(np.radians(p[0]))))
+        squared = X.multiply(f, f)
+        assert np.allclose(values(X, squared), values(X, f) ** 2)
+        assert not np.allclose(values(X, X.truncate(squared)), values(X, f) ** 2)
+
+    def test_multiplication_stays_self_adjoint_without_the_truncation(self, rng):
+        """Analysis on this grid is a quadrature, so it is the transpose of
+        synthesis and the form ``sum_j w_j f_j u_j v_j`` is symmetric for any
+        grid array ``f`` -- band-limited or not. The truncation was never what
+        made the operator self-adjoint.
+        """
+        X = Lebesgue(10)
+        f = X.project_function(lambda p: np.exp(np.sin(np.radians(p[0]))))
+        A = X.multiplication_operator(f)
+        for _ in range(3):
+            u, v = X.random(rng=rng), X.random(rng=rng)
+            assert np.isclose(
+                X.inner_product(A(u), v), X.inner_product(u, A(v)), rtol=1e-12
+            )
 
     def test_truncation_is_free_on_a_box(self, rng):
         """One component per grid point, so there is nothing to remove."""

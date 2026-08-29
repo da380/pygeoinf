@@ -5191,3 +5191,70 @@ And in the course of that, a bug of my own from §33: `restrict_vector` returned
 not keep alive — the exact hazard `to_components` documents at length two
 methods above it. It copies now. It had been safe only because its one caller
 happened to stack the results into a new array immediately.
+
+## 35. A product is left on the grid (2026-08-30)
+
+§21.7 recorded the opposite decision, and it stands as the record of what was
+believed then: `multiply` truncated its result back into the span of the basis
+so that "the product depends only on its factors". This reverses that. The
+old entry stays where it is; this is a journal.
+
+**What changed.** `SymmetricSpace.multiply` and `SymmetricSpace.sqrt` return
+the grid array, untruncated. `truncate` is unchanged, still public, and is
+what a caller asks for when they want the band-limited representative.
+
+**Why.** Three reasons, in the order they matter.
+
+The first is that the truncated answer is not more correct — it is *less*
+correct, and the argument for it was wrong. A product of two band-limited
+functions is not band-limited, so on an oversampled grid there is no element
+of the span equal to it. The grid holds the exact product at its own points;
+truncating replaces it with a projection and throws away the part the grid
+could still carry. "The product depends only on its factors" was not achieved
+either: two grid arrays with the same components have different products, and
+truncating the *result* does not change that. What truncation bought was that
+the returned array was canonical, which matters only where two grids are
+compared entry by entry — and that is exactly what `truncate` is for.
+
+The second is that nothing downstream can tell. Every consumer that leaves the
+grid analyses, and analysis is linear, so it sees the same components either
+way. `gradient_dot_product` is the case to check: `(f L g + g L f - L(f g))/2`
+has two untruncated terms and one that is band-limited already, and the
+components of the sum are unchanged to rounding. So is `flexural_operator`,
+whose fused form analyses every grid product once (§4.2.2 of REVIEW2). The one
+number that does change is the effective rigidity `D(1 - nu)`, which is now the
+exact product rather than its projection — a better coefficient field, and the
+operator stays self-adjoint either way for the reason below.
+
+The third is the cost. Two transforms per product, on a sphere, on the hot
+path of every variable-coefficient operator: 4.72 ms per `multiply` at
+`lmax` 128 against 0.018 ms, and 4.89 against 0.019 for an application of
+`multiplication_operator` on an `L2` space. `gradient_dot_product` goes from
+29.2 ms to 17.1 ms — the remaining cost is the three Laplacians, which are
+real work.
+
+**Self-adjointness does not depend on the truncation, and the reason is worth
+writing down** rather than leaving to a test. An analysis on these grids *is* a
+quadrature: coefficient `k` is `sum_j w_j phi_k(p_j) v_j` with the grid's own
+positive weights, so analysis is the transpose of synthesis with respect to
+them. The form a multiplication operator induces is therefore
+
+```
+(M u, v) == sum_j w_j f_j (S u)_j (S v)_j
+```
+
+which is manifestly symmetric in `u` and `v` for **any** grid array `f`,
+band-limited or not. The same argument covers every term of the flexure
+operator, each of which is `L^i A M_c S L^j` paired with its transpose
+`L^j A M_c S L^i`. Truncating changed neither side of any of these identities.
+
+**Whose responsibility the aliasing is.** The user's, stated as such: the
+product of two fields resolved at `lmax` needs `2 lmax` to represent, and no
+choice made inside `multiply` can conjure that resolution. Picking a
+discretisation suited to the products a problem takes is a modelling decision,
+and the library's job is to not quietly make it.
+
+**What still truncates, and why.** Nothing in `symmetric_space` does. `truncate`
+itself is untouched and is the identity on a periodic box, where `rfftn` gives
+one component per grid point and there is nothing above the truncation to
+remove — so on every box this whole entry is a no-op.

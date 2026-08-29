@@ -1496,31 +1496,59 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         grid arrays share a set of components and only one of them is in the
         span of the basis.
 
-        That matters as soon as anything leaves the space. A pointwise product
-        of two band-limited functions is not band-limited, so its grid array is
-        one of those non-canonical representatives, and an operation that
-        round-trips through components — the formal-adjoint lift does — would
-        silently disagree with one that does not.
+        Kept, and public, because a caller who wants the band-limited
+        representative of a product — to plot it, to hand it to something that
+        assumes the span of the basis, or to compare two grids entry by entry —
+        has to be able to ask for it. :meth:`multiply` no longer applies it for
+        them; see there for why.
+
+        Args:
+            x: a vector, or any grid array of this space's shape.
+
+        Returns:
+            The vector in the span of the basis with the same components.
         """
         return self.from_components(self.to_components(x))
 
     def multiply(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """The pointwise product, truncated back into the space.
+        """The pointwise product, left on the grid.
 
-        Truncated rather than left on the grid so that the result depends only
-        on the two vectors and not on which grid array happens to represent
-        them; see :meth:`truncate`. The aliasing is still there — it is
-        inherent to multiplying band-limited functions — but it is now
-        committed to once, consistently, rather than resolved differently by
-        each caller.
+        **Not truncated back into the space** (DESIGN.md 35). The product of
+        two band-limited functions is not band-limited, so on an oversampled
+        grid the product has no representative in the span of the basis that is
+        equal to it; truncating picks one, at the cost of an analysis and a
+        synthesis, and *loses* the part of the product the grid could still
+        have carried. Every consumer that leaves the grid analyses anyway —
+        analysis is linear, so it sees the same components either way — and
+        the choice of discretisation is the caller's to make, not this method's
+        to make for them.
+
+        A caller who needs the band-limited representative asks for it with
+        :meth:`truncate`.
+
+        Args:
+            x: one factor.
+            y: the other.
+
+        Returns:
+            The product, as a vector of this space holding the grid values of
+            the product.
         """
-        return self.truncate(
-            self.from_grid_values(self.grid_values(x) * self.grid_values(y))
-        )
+        return self.from_grid_values(self.grid_values(x) * self.grid_values(y))
 
     def sqrt(self, x: np.ndarray) -> np.ndarray:
-        """The pointwise square root, truncated back into the space."""
-        return self.truncate(self.from_grid_values(np.sqrt(self.grid_values(x))))
+        """The pointwise square root, left on the grid.
+
+        Untruncated for the reason :meth:`multiply` is: the square root of a
+        band-limited function is not band-limited.
+
+        Args:
+            x: a non-negative field.
+
+        Returns:
+            Its pointwise square root, on the grid.
+        """
+        return self.from_grid_values(np.sqrt(self.grid_values(x)))
 
     def multiplication_operator(self, f: np.ndarray, /) -> LinearOperator:
         """The operator ``u -> f u``, with the metric handled.
@@ -1532,6 +1560,22 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         self-adjoint, because a formally self-adjoint operator is self-adjoint
         under the new metric only if it commutes with the ratio of the two, and
         multiplication by a varying field does not (§3.5).
+
+        **The claim survives :meth:`multiply` leaving the grid**, and it is
+        worth saying why rather than leaving it to a test. An analysis on this
+        grid *is* a quadrature — coefficient ``k`` is ``sum_j w_j phi_k(p_j)
+        v_j`` with the grid's own positive weights — so it is the transpose of
+        synthesis with respect to those weights. The form is therefore
+        ``sum_j w_j f_j (S u)_j (S v)_j``, which is symmetric in ``u`` and
+        ``v`` for *any* grid array ``f``, band-limited or not. Truncating the
+        product changed neither side of the identity; it only cost two
+        transforms per application.
+
+        Args:
+            f: the field to multiply by.
+
+        Returns:
+            The operator.
         """
         if self.order == 0.0:
             return LinearOperator.self_adjoint(self, lambda u: self.multiply(f, u))
@@ -1568,9 +1612,17 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             grad f . grad g == (f L(g) + g L(f) - L(f g)) / 2
 
         Every term is a pointwise product or a diagonal spectral multiply, so
-        this costs three transforms and no differentiation of the grid. It is
-        what makes the variable-coefficient flexure operator writable without a
-        tangent frame.
+        this costs four transforms — three analyses for the Laplacians, one
+        synthesis for the last of them — and no differentiation of the grid. It
+        is what makes the variable-coefficient flexure operator writable
+        without a tangent frame.
+
+        The result is left on the grid, as the products it is built from are.
+        Its *components* are the same either way: projection is linear, so
+        projecting each term and adding is projecting the sum, and the one term
+        that is already band-limited — ``L(f g)`` — is unchanged by it. So this
+        returns a strictly better grid representative for the same cost, and
+        for two fewer transforms per product.
 
         **The sign is the whole content of this method.** v1 has it the other
         way round, which is verifiable against ``grad sin . grad cos`` on a
@@ -2271,7 +2323,7 @@ class _FlexureOperator(LinearOperator):
     The expression in :meth:`SymmetricSpace.flexural_operator` is a sum of
     pointwise products of the field with the coefficient fields, some of
     them under one Laplacian and one under two. Applied term by term it
-    cost fifty transforms per application: every ``multiply`` truncates
+    cost fifty transforms per application: every ``multiply`` truncated
     back into the space (an analysis and a synthesis), and every Laplacian
     re-analyses what was just synthesised. Analysis is linear, so the
     products under a common multiplier can be summed on the grid and
@@ -2293,8 +2345,10 @@ class _FlexureOperator(LinearOperator):
     a field -- three syntheses for ``w``, ``Lw``, ``L^2 w``, three analyses
     for the ``G``s, one synthesis for the result -- and six from
     components, which is what a Krylov loop asks for. The components agree
-    with the term-by-term form to rounding: the truncation each ``multiply``
-    applied is exactly the analysis, and analysis is linear.
+    with the term-by-term form to rounding: the products are the same grid
+    arrays and analysis is linear. That held while ``multiply`` truncated --
+    the truncation it applied was exactly the analysis -- and it holds now
+    that it does not (DESIGN.md 35).
 
     Self-adjoint in ``L2``; the Sobolev version is this operator lifted.
     """
