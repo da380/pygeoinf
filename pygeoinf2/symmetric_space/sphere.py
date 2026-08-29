@@ -1411,39 +1411,84 @@ class Sphere(SymmetricSpace[Any]):
             ValueError: if the angular radius is outside ``[0, 180]``, or if an
                 average over a cap of zero area is asked for.
         """
+        rows = self.cap_integral_components(
+            [centre], angular_radius, normalise=normalise
+        )
+        return LinearFunctional.from_derivative_components(self, rows[0])
+
+    def cap_integral_components(
+        self,
+        centres: Sequence[Any],
+        angular_radius: float,
+        /,
+        *,
+        normalise: bool = False,
+    ) -> np.ndarray:
+        r"""The derivative components of many cap integrals, in closed form.
+
+        The row of an observation operator that averages over a cap, for every
+        centre at once. What the functional needs is
+        ``g_k == integral over the cap of phi_k``, and the addition theorem
+        gives that in one line: rotate the cap to the pole, where only the
+        zonal harmonic survives the azimuthal integral, and rotate back.
+
+        .. code-block:: text
+
+            g_k == 2 pi R^2 I_l(cos alpha) phi_k(centre)
+
+            I_0(x) == 1 - x
+            I_l(x) == (P_{l-1}(x) - P_{l+1}(x)) / (2l + 1)
+
+        so the whole set of caps is one Legendre evaluation at a single point
+        and one :meth:`basis_matrix`.
+
+        This replaces ``SHCoeffs.from_cap``, which builds the indicator at the
+        pole and *rotates* it to the centre -- 8.5 ms a centre at ``lmax`` 128
+        -- and then a functional whose representer had to be synthesised for
+        nobody to read. Measured at ``lmax`` 128 over 100 centres: 21 ms
+        against 1437 ms, agreeing to 1e-12 (REVIEW2 4.2.5).
+
+        Args:
+            centres: the cap centres, ``(latitude, longitude)`` in degrees.
+            angular_radius: the caps' common half-angle, **in degrees**.
+            normalise: divide by the cap's area, giving the average rather
+                than the integral.
+
+        Returns:
+            A ``(len(centres), dim)`` array, one row per centre.
+
+        Raises:
+            ValueError: if the angular radius is outside ``[0, 180]``, or if an
+                average over a cap of zero area is asked for.
+        """
         if angular_radius < 0.0 or angular_radius > 180.0:
             raise ValueError(
                 f"A cap's angular radius lies in [0, 180] degrees, got "
                 f"{angular_radius}."
             )
-        area_fraction = 0.5 * (1.0 - np.cos(np.radians(angular_radius)))
-        if area_fraction <= 0.0:
+        centres = tuple(centres)
+        cosine = float(np.cos(np.radians(angular_radius)))
+        if 1.0 - cosine <= 0.0:
             if normalise:
                 raise ValueError("A cap of zero area has no average.")
-            return LinearFunctional.from_derivative_components(self, np.zeros(self.dim))
+            return np.zeros((len(centres), self.dim))
 
-        from pyshtools import SHCoeffs
+        # P_0 ... P_{lmax+1} at the single point cos(alpha).
+        legendre = np.polynomial.legendre.legvander(
+            np.array([cosine]), self._lmax + 1
+        )[0]
+        degrees = np.arange(self._lmax + 1)
+        integrals = np.empty(self._lmax + 1)
+        integrals[0] = 1.0 - cosine
+        if self._lmax >= 1:
+            rest = degrees[1:]
+            integrals[1:] = (legendre[rest - 1] - legendre[rest + 1]) / (2 * rest + 1)
 
-        position = np.atleast_2d(np.asarray(centre, dtype=float))[0]
-        cap = SHCoeffs.from_cap(
-            float(angular_radius),
-            self._lmax,
-            clat=float(position[0]),
-            clon=float(position[1]),
-            normalization="ortho",
-            csphase=_NO_CONDON_SHORTLEY,
-            kind="real",
-            degrees=True,
-        )
-        parts, degrees, orders = self._packing
-        coefficients = cap.to_array(lmax=self._lmax)[parts, degrees, orders]
-
-        # from_cap normalises the indicator to global average one. Undo that,
-        # then either keep the physical integral or divide by the cap area.
-        components = coefficients / (self._radius * 4.0 * np.pi)
-        if not normalise:
-            components = components * self.area * area_fraction
-        return LinearFunctional.from_derivative_components(self, components)
+        scale = 2.0 * np.pi * self._radius**2
+        rows = self.basis_matrix(centres) * (scale * integrals[self.degrees])
+        if normalise:
+            rows = rows / (scale * (1.0 - cosine))
+        return rows
 
     def spherical_cap_average(
         self, centre: Any, angular_radius: float, /
@@ -1503,15 +1548,10 @@ class Sphere(SymmetricSpace[Any]):
         from ..algebra.spaces import EuclideanSpace
 
         # `radius` here is a *physical* distance, in the units of self.radius;
-        # spherical_cap_integral takes the half-angle in degrees.
+        # cap_integral_components takes the half-angle in degrees.
         angular_radius = np.degrees(radius / self._radius)
-        rows = np.stack(
-            [
-                self.spherical_cap_integral(
-                    centre, angular_radius, normalise=normalise
-                ).derivative_components
-                for centre in centres
-            ]
+        rows = self.cap_integral_components(
+            centres, angular_radius, normalise=normalise
         )
         return LinearOperator.from_matrix(
             self, EuclideanSpace(len(centres)), rows, form="galerkin"

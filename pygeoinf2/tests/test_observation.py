@@ -172,6 +172,58 @@ class TestAverages:
             area
         )
 
+    def test_the_closed_form_agrees_with_the_rotated_indicator(self, lebesgue, rng):
+        """REVIEW2 4.2.5. The components used to come from
+        ``SHCoeffs.from_cap``, which builds the cap at the pole and rotates it
+        -- 8.5 ms a centre at lmax 128, against 0.2 ms for the addition
+        theorem. This is the check that they are the same components."""
+        from pyshtools import SHCoeffs
+
+        from pygeoinf2.symmetric_space.sphere import _NO_CONDON_SHORTLEY
+
+        centres = lebesgue.random_points(5, rng=rng)
+        for angular in (2.0, 37.0, 90.0, 172.0):
+            rotated = []
+            for centre in centres:
+                cap = SHCoeffs.from_cap(
+                    angular,
+                    lebesgue.lmax,
+                    clat=float(centre[0]),
+                    clon=float(centre[1]),
+                    normalization="ortho",
+                    csphase=_NO_CONDON_SHORTLEY,
+                    kind="real",
+                    degrees=True,
+                )
+                parts, degrees, orders = lebesgue._packing
+                coefficients = cap.to_array(lmax=lebesgue.lmax)[parts, degrees, orders]
+                fraction = 0.5 * (1.0 - np.cos(np.radians(angular)))
+                rotated.append(
+                    coefficients
+                    / (lebesgue.radius * 4.0 * np.pi)
+                    * lebesgue.area
+                    * fraction
+                )
+            closed = lebesgue.cap_integral_components(centres, angular)
+            assert np.allclose(closed, np.stack(rotated), atol=1e-10)
+
+    def test_the_closed_form_normalises_by_the_cap_area(self, lebesgue, rng):
+        centres = lebesgue.random_points(3, rng=rng)
+        angular = 24.0
+        area = (
+            2.0 * np.pi * lebesgue.radius**2 * (1.0 - np.cos(np.radians(angular)))
+        )
+        integrals = lebesgue.cap_integral_components(centres, angular)
+        averages = lebesgue.cap_integral_components(centres, angular, normalise=True)
+        assert np.allclose(averages * area, integrals)
+
+    def test_a_cap_of_zero_area_has_no_average(self, lebesgue):
+        assert np.allclose(lebesgue.cap_integral_components([[0.0, 0.0]], 0.0), 0.0)
+        with pytest.raises(ValueError, match="no average"):
+            lebesgue.cap_integral_components([[0.0, 0.0]], 0.0, normalise=True)
+        with pytest.raises(ValueError, match=r"\[0, 180\]"):
+            lebesgue.cap_integral_components([[0.0, 0.0]], 181.0)
+
     def test_exact_and_quadrature_cap_averages_agree(self, lebesgue, rng):
         """The whole reason for the exact route is that it is cheaper."""
         centre = lebesgue.random_point(rng=rng)
