@@ -518,3 +518,23 @@ class NormalOperator(FactoredNormalOperator):
         if self._formalism == "data_space":
             return residual
         return self.weighted_adjoint()(residual)
+
+    def model_update(self, solved: Any, /) -> Any:
+        """``K v``, finished from ``w == N^-1 right_hand_side(v)``.
+
+        The gain applied to a residual is ``Q A* N^-1 v`` in the data-space
+        formalism and ``N^-1 A* R^-1 v`` in the model-space one. Both begin
+        with the same solve, which :meth:`right_hand_side` sets up and this
+        finishes -- and that solve is also the one the data misfit needs, so
+        splitting the gain here is what lets the posterior mean and the
+        evidence share it instead of computing it twice.
+
+        Args:
+            solved: the solution ``w`` of the normal equations.
+
+        Returns:
+            The model-space update.
+        """
+        if self._formalism == "data_space":
+            return self.prior_covariance(self._forward.adjoint(solved))
+        return solved

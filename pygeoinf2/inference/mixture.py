@@ -193,9 +193,6 @@ class _PushedMixture(MeasureEstimator):
     def __init__(self, base: LinearGaussianMixtureInversion, operator: Any, /) -> None:
         self._base = base
         self._operator = operator
-        self._pushed = [
-            inversion.push_forward(operator) for inversion in base.inversions
-        ]
 
     @property
     def data_space(self) -> HilbertSpace:
@@ -212,9 +209,20 @@ class _PushedMixture(MeasureEstimator):
         return self._base.weights(data)
 
     def __call__(self, data: Any) -> GaussianMixture:
-        """The posterior mixture on the property space."""
+        """The posterior mixture on the property space.
+
+        Each component's *measure* is pushed forward, not its estimator.
+        The two give the identical measure -- same mean, same covariance
+        ``T C T*``, same sampler -- but a pushed estimator re-solves the normal
+        equations, while the measure is already the answer. With the weights
+        needing the same solve again, that was ``2K`` solves for ``K``
+        components where ``K`` will do.
+        """
         return GaussianMixture(
-            [estimator(data) for estimator in self._pushed],
+            [
+                inversion(data).push_forward(self._operator)
+                for inversion in self._base.inversions
+            ],
             weights=self._base.weights(data),
         )
 

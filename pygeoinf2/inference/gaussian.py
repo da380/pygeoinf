@@ -139,6 +139,11 @@ class LinearGaussianInversion(GaussianEstimator):
         # produced them. See normal_log_determinant.
         self._log_determinants: dict[tuple, Any] = {}
         self._solver = solver
+        # The one-entry memo of _residual_solve. Keyed on the *contents* of the
+        # data vector: an id() key is a bug waiting for a freed array's address
+        # to be reused, which is exactly what went wrong in backus.py.
+        self._solved_key: bytes | None = None
+        self._solved: tuple[Any, Any, Any] | None = None
 
     @staticmethod
     def _data_shift(problem: LinearForwardProblem, prior: GaussianMeasure) -> Any:
@@ -376,6 +381,90 @@ class LinearGaussianInversion(GaussianEstimator):
             reduced, self._prior, solver=self._solver, formalism=self._formalism
         )
 
+    def _data_key(self, data: Any, /) -> bytes | None:
+        """A hashable summary of the data vector's contents, or None.
+
+        The memo below must be keyed on what the vector *is*, not on where it
+        happens to live: keying on ``id()`` returns the previous caller's
+        answer as soon as an array is freed and its address reused. The price
+        is one ``to_components`` and one buffer copy per call, which on the
+        Euclidean data space this is nearly always used with is a few
+        microseconds against a solve of tens of milliseconds. A space with no
+        coordinate map cannot be summarised, and there the memo is simply off.
+
+        Args:
+            data: the data vector.
+
+        Returns:
+            The key, or None when the space has no components.
+        """
+        from ..algebra.spaces import CoordinateSpace
+
+        space = self.data_space
+        if not isinstance(space, CoordinateSpace):
+            return None
+        return np.ascontiguousarray(space.to_components(data)).tobytes()
+
+    def _residual_solve(self, data: Any, /) -> tuple[Any, Any, Any]:
+        """``(v, b, w)`` with ``v == d - shift``, ``b`` its right-hand side and
+        ``N w == b``.
+
+        The posterior mean is ``mu + K v`` and the data misfit is a pairing
+        against ``N^-1`` of the same ``v``, so the two differ only in what they
+        do *after* the solve. v1 computed the mean as ``m0 + K(d - shift)`` and
+        shared it; v2 had the mean inside an affine operator and the misfit in
+        its own method, so ``est(data)`` followed by ``log_evidence(data)``
+        cost two solves and a mixture inversion cost ``2K`` where ``K`` would
+        do.
+
+        One entry is enough because the two calls that matter are adjacent.
+        Nothing here is mutated in place, but the tuple is shared, so callers
+        must treat it as read-only.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            The residual, its right-hand side, and the solution.
+        """
+        key = self._data_key(data)
+        if key is not None and self._solved_key == key:
+            return self._solved
+        residual = self.data_space.subtract(
+            data, self._data_shift(self._problem, self._prior)
+        )
+        right_hand_side = self._normal.right_hand_side(residual)
+        result = (residual, right_hand_side, self._inverse(right_hand_side))
+        if key is not None:
+            self._solved_key, self._solved = key, result
+        return result
+
+    def __call__(self, data: Any) -> GaussianMeasure:
+        """The posterior measure for this data.
+
+        As :meth:`~pygeoinf2.inference.estimators.GaussianEstimator.__call__`,
+        but reaching the mean through :meth:`_residual_solve` so that the solve
+        is shared with :meth:`mahalanobis`. :attr:`mean_map` still computes it
+        the plain way, for a caller who wants the affine operator itself.
+
+        Args:
+            data: the observations.
+
+        Returns:
+            The posterior, Gaussian and samplable whenever the prior and the
+            noise are.
+        """
+        _, _, solved = self._residual_solve(data)
+        mean = self._problem.model_space.add(
+            self._prior.expectation, self._normal.model_update(solved)
+        )
+        return GaussianMeasure(
+            self.target_space,
+            expectation=mean,
+            covariance=self.covariance,
+            sample=self._centred_sample,
+        )
+
     def mahalanobis(self, data: Any, /) -> float:
         """``<v, N_d^-1 v>``, the misfit half of the evidence.
 
@@ -413,9 +502,7 @@ class LinearGaussianInversion(GaussianEstimator):
                 "density."
             )
         space = self.data_space
-        residual = space.subtract(data, self._data_shift(self._problem, self._prior))
-        right_hand_side = self._normal.right_hand_side(residual)
-        solved = self._inverse(right_hand_side)
+        residual, right_hand_side, solved = self._residual_solve(data)
         if self._formalism == "data_space":
             return float(space.inner_product(residual, solved))
         precision = self._problem.error_measure.precision

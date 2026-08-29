@@ -792,3 +792,142 @@ class TestSolverSequencing:
             )
         with pytest.raises(TypeError, match="must be a LinearSolver"):
             LinearGaussianInversion(problem, prior, solver="cholesky")
+
+
+class TestTheSharedSolve:
+    """The posterior mean and the data misfit solve the same system.
+
+    ``mean == mu + K(d - shift)`` and ``misfit == <v, N^-1 v>`` both begin with
+    ``N^-1`` applied to the same right-hand side, so ``est(data)`` followed by
+    ``log_evidence(data)`` used to cost two solves and a mixture inversion cost
+    ``2K`` where ``K`` would do. v1 shared it by computing the mean as
+    ``m0 + K(d - shift)``; here a one-entry memo does it.
+    """
+
+    @staticmethod
+    def counting():
+        """A Cholesky solver that counts the solves it performs."""
+        from pygeoinf2.numerics.solvers import InverseOperator, LinearSolver
+
+        counter = {"solves": 0}
+
+        class Counting(LinearSolver):
+            def _invert(self, operator):
+                inner = CholeskySolver()(operator)
+
+                def solve_fn(y, x0):
+                    counter["solves"] += 1
+                    return inner.solve(y, x0=x0)
+
+                return InverseOperator(operator, self, solve_fn, traits=inner.traits)
+
+        return Counting(), counter
+
+    @pytest.fixture(params=["data_space", "model_space"])
+    def inversion(self, request, rng):
+        model = make_weighted_space()
+        data = EuclideanSpace(5)
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(5, model.dim)), form="galerkin"
+        )
+        chol = CholeskySolver()
+        covariance = positive(model, rng)
+        prior = GaussianMeasure(
+            model,
+            covariance=covariance,
+            precision=chol(covariance),
+            expectation=model.random(rng=rng),
+        )
+        noise = GaussianMeasure.from_standard_deviation(data, 0.2)
+        problem = LinearForwardProblem(forward, error=noise)
+        solver, counter = self.counting()
+        return (
+            LinearGaussianInversion(
+                problem, prior, solver=solver, formalism=request.param
+            ),
+            counter,
+            data,
+        )
+
+    def test_the_mean_is_the_one_the_affine_map_gives(self, inversion, rng):
+        """The memo changes how the mean is reached, not what it is -- and
+        ``mean_map`` still computes it the plain way."""
+        estimator, _, space = inversion
+        observed = space.random(rng=rng)
+        model = estimator.target_space
+        difference = model.subtract(
+            estimator(observed).expectation, estimator.mean_map(observed)
+        )
+        assert model.norm(difference) < 1e-10 * model.norm(estimator.mean_map(observed))
+
+    def test_the_posterior_and_the_evidence_share_one_solve(self, inversion, rng):
+        estimator, counter, space = inversion
+        observed = space.random(rng=rng)
+
+        counter["solves"] = 0
+        estimator(observed)
+        estimator.log_evidence(observed)
+        assert counter["solves"] == 1
+
+        counter["solves"] = 0
+        estimator(space.random(rng=rng))
+        assert counter["solves"] == 1
+
+    def test_the_memo_is_keyed_on_the_contents_not_the_address(self, inversion, rng):
+        """An ``id()`` key hands the next array to occupy an address the
+        previous one's answer. A copy with the same contents is a hit; a
+        different vector at the same address is a miss."""
+        import gc
+
+        estimator, counter, space = inversion
+        observed = space.random(rng=rng)
+        first = estimator(observed).expectation
+
+        counter["solves"] = 0
+        again = estimator(np.array(observed, copy=True)).expectation
+        assert counter["solves"] == 0
+        assert space.norm(observed) > 0.0
+        model = estimator.target_space
+        assert model.norm(model.subtract(again, first)) < 1e-12
+
+        for _ in range(50):
+            other = space.random(rng=rng)
+            expected = estimator.mean_map(other)
+            got = estimator(other).expectation
+            assert model.norm(model.subtract(got, expected)) < 1e-8 * model.norm(
+                expected
+            )
+            del other
+            gc.collect()
+
+    def test_a_mixture_costs_one_solve_per_component(self, rng):
+        from pygeoinf2.inference.mixture import LinearGaussianMixtureInversion
+        from pygeoinf2.probability.mixture import GaussianMixture
+
+        model = make_weighted_space()
+        data = EuclideanSpace(4)
+        forward = LinearOperator.from_matrix(
+            model, data, rng.normal(size=(4, model.dim)), form="galerkin"
+        )
+        problem = LinearForwardProblem(
+            forward, error=GaussianMeasure.from_standard_deviation(data, 0.2)
+        )
+        prior = GaussianMixture(
+            [GaussianMeasure.from_standard_deviation(model, s) for s in (0.5, 1.0, 2.0)]
+        )
+        solver, counter = self.counting()
+        inversion = LinearGaussianMixtureInversion(problem, prior, solver=solver)
+
+        counter["solves"] = 0
+        inversion(data.random(rng=rng))
+        assert counter["solves"] == 3
+
+        target = EuclideanSpace(2)
+        pushed = inversion.push_forward(
+            LinearOperator.from_matrix(
+                model, target, rng.normal(size=(2, model.dim)), form="galerkin"
+            )
+        )
+        counter["solves"] = 0
+        pushed(data.random(rng=rng))
+        assert counter["solves"] == 3
