@@ -1568,3 +1568,115 @@ class TestARootFindSaysWhyItStopped:
         result = monotone_root(evaluate, 0.5, initial=1.0)
         assert result.breakdown is None
         assert result.exhausted is not None
+
+
+class TestSpectralBlockOperator:
+    """REVIEW2 4.2.9: a correlated measure's operators act on all their
+    fields at once -- one analysis and one synthesis per field -- and its
+    draws are synthesised straight from white-noise components."""
+
+    @staticmethod
+    def space():
+        pytest.importorskip("pyshtools")
+        from pygeoinf2.symmetric_space.sphere import Sobolev
+
+        return Sobolev(10, 2.0, 0.2)
+
+    @staticmethod
+    def counting(X):
+        counts = {"analyses": 0, "syntheses": 0}
+        to_components, from_components = X.to_components, X.from_components
+
+        def counting_to(x):
+            counts["analyses"] += 1
+            return to_components(x)
+
+        def counting_from(c):
+            counts["syntheses"] += 1
+            return from_components(c)
+
+        X.to_components, X.from_components = counting_to, counting_from
+        return counts
+
+    def test_it_agrees_with_the_grid_of_diagonal_blocks(self, rng):
+        from pygeoinf2.algebra.direct_sum import BlockLinearOperator, DirectSum
+        from pygeoinf2.algebra.diagonal import DiagonalLinearOperator
+        from pygeoinf2.symmetric_space.base import SpectralBlockLinearOperator
+        from pygeoinf2.testing import check_operator
+
+        X = self.space()
+        slices = rng.normal(size=(X.dim, 3, 3))
+        space = DirectSum([X, X, X])
+        fast = SpectralBlockLinearOperator(space, slices)
+        grid = BlockLinearOperator(
+            [
+                [DiagonalLinearOperator(X, slices[:, i, j].copy()) for j in range(3)]
+                for i in range(3)
+            ]
+        )
+        x = space.random(rng=rng)
+        for a, b in zip(fast(x), grid(x)):
+            assert np.allclose(X.to_components(a), X.to_components(b))
+        for a, b in zip(fast.adjoint(x), grid.adjoint(x)):
+            assert np.allclose(X.to_components(a), X.to_components(b))
+        assert fast.matrix(form="galerkin") == pytest.approx(grid.matrix(form="galerkin"))
+        assert fast.diagonals(offsets=(0,), form="galerkin") == pytest.approx(
+            grid.diagonals(offsets=(0,), form="galerkin")
+        )
+        action = fast._components_action()
+        assert np.allclose(action(space.to_components(x)), space.to_components(fast(x)))
+        check_operator(fast, rng=rng)
+
+    def test_an_application_analyses_each_field_once(self, rng):
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.14), X.sobolev_symbol(-2.0, 0.2)],
+            np.array([[1.0, 0.6], [0.6, 1.0]]),
+        )
+        x = measure.domain.random(rng=rng)
+        counts = self.counting(X)
+        try:
+            measure.covariance(x)
+            assert counts == {"analyses": 2, "syntheses": 2}
+            counts["analyses"] = counts["syntheses"] = 0
+            measure.sample(rng=rng)
+            assert counts == {"analyses": 0, "syntheses": 2}
+        finally:
+            del X.to_components, X.from_components
+
+    def test_the_precision_is_carried_and_inverts_the_covariance(self, rng):
+        from pygeoinf2.traits import Traits
+
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.14), X.sobolev_symbol(-2.0, 0.2)],
+            np.array([[1.0, 0.6], [0.6, 1.0]]),
+        )
+        assert measure.precision is not None
+        assert Traits.POSITIVE_DEFINITE & measure.precision.traits
+        x = measure.domain.random(rng=rng)
+        back = measure.precision(measure.covariance(x))
+        for a, b in zip(back, x):
+            assert np.allclose(X.to_components(a), X.to_components(b))
+
+    def test_marginals_and_cross_covariances_are_still_read_off_blocks(self, rng):
+        X = self.space()
+        first = X.heat_symbol(0.14)
+        measure = X.correlated_measure_from_correlations(
+            [first, X.sobolev_symbol(-2.0, 0.2)], np.array([[1.0, 0.3], [0.3, 1.0]])
+        )
+        assert np.allclose(measure.marginal(0).covariance.eigenvalues, first)
+        assert np.allclose(
+            X.spectral_correlations(measure)[X.degrees > 0], 0.3
+        )
+
+    def test_the_draws_have_the_requested_correlation(self, rng):
+        X = self.space()
+        measure = X.correlated_measure_from_correlations(
+            [X.heat_symbol(0.14), X.heat_symbol(0.14)],
+            np.array([[1.0, -0.8], [-0.8, 1.0]]),
+        )
+        draws = measure.samples(3000, rng=rng)
+        u = np.array([X.to_components(draw[0]) for draw in draws])
+        v = np.array([X.to_components(draw[1]) for draw in draws])
+        assert np.corrcoef(u[:, 5], v[:, 5])[0, 1] == pytest.approx(-0.8, abs=0.06)

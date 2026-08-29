@@ -33,8 +33,10 @@ import numpy as np
 from numpy.random import Generator
 
 from ..algebra.diagonal import DiagonalLinearOperator
+from ..algebra.direct_sum import BlockLinearOperator
 from ..algebra.operators import LinearFunctional, LinearOperator
 from ..algebra.spaces import (
+    CoordinateSpace,
     DiagonalMetricSpace,
     HilbertModule,
     HilbertSpace,
@@ -801,30 +803,37 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
         roots = (vectors * np.sqrt(values)[:, None, :]) @ np.swapaxes(vectors, -1, -2)
 
         space = DirectSum([self] * count, labels=labels)
-        factor = BlockLinearOperator(
-            [
-                [
-                    DiagonalLinearOperator(self, np.ascontiguousarray(roots[:, i, j]))
-                    for j in range(count)
-                ]
-                for i in range(count)
-            ]
+        factor = SpectralBlockLinearOperator(space, roots)
+        covariance = SpectralBlockLinearOperator(space, sigma).with_traits(
+            Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE
         )
-        covariance = BlockLinearOperator(
-            [
-                [
-                    DiagonalLinearOperator(self, np.ascontiguousarray(sigma[:, i, j]))
-                    for j in range(count)
-                ]
-                for i in range(count)
-            ]
-        ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_SEMIDEFINITE)
+        # Every slice invertible: the precision is the slice-wise inverse,
+        # which nothing downstream could otherwise recover from the
+        # covariance without a solve per application.
+        precision = None
+        if values.size and values.min() > tolerance:
+            precision = SpectralBlockLinearOperator(
+                space, np.linalg.inv(sigma)
+            ).with_traits(Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE)
+            covariance = covariance.with_traits(Traits.POSITIVE_DEFINITE)
+
+        # A draw is the factor on white noise. Drawn in components it is the
+        # slice product on the white-noise components and one synthesis per
+        # field; through the factor as an operator it was one synthesis for
+        # the noise, an analysis to get back to components, and the
+        # synthesis -- three transforms per field where one is the floor.
+        action = factor._components_action()
+
+        def sample(rng: Generator | None) -> tuple:
+            return space.from_components(action(space.white_noise_components(rng=rng)))
 
         return GaussianMeasure(
             space,
             expectation=None if expectation is None else tuple(expectation),
             covariance=covariance,
             covariance_factor=factor,
+            precision=precision,
+            sample=sample,
         )
 
     def correlated_measure_from_correlations(
@@ -2123,6 +2132,137 @@ class SymmetricSpace[V](HilbertModule[V], DiagonalMetricSpace[V]):
             f"{type(self).__name__} does not implement random_point."
         )
 
+
+
+
+class SpectralBlockLinearOperator(BlockLinearOperator):
+    """A block operator on ``n`` copies of one space, diagonal in the spectrum.
+
+    Block ``(i, j)`` is the diagonal operator with spectrum ``slices[:, i, j]``,
+    so the whole thing is one small ``n x n`` matrix per spectral mode --
+    which is what a correlated measure on several fields is. It is a
+    :class:`~pygeoinf2.algebra.direct_sum.BlockLinearOperator`, so a
+    marginal or a cross-covariance is still read off a block; but it is
+    applied as a whole: every field is analysed once, the slices act on the
+    ``(dim, n)`` array of components, and every field is synthesised once.
+    As a grid of blocks it cost ``n^2`` analyses and ``n^2 + n`` syntheses
+    per application. It acts on components directly, so it fuses into
+    products and Krylov loops like a diagonal operator does.
+
+    The adjoint is the transposed slices, which is right because every copy
+    carries the same diagonal metric.
+    """
+
+    def __new__(cls, space: HilbertSpace, slices: np.ndarray, /) -> "SpectralBlockLinearOperator":
+        # BlockOperator.__new__ dispatches on a grid of blocks; this class is
+        # built from an array and is always linear.
+        return object.__new__(cls)
+
+    def __init__(self, space: HilbertSpace, slices: np.ndarray, /) -> None:
+        """
+        Args:
+            space: a direct sum of ``n`` copies of one coordinate space with
+                a diagonal metric.
+            slices: an array of shape ``(dim, n, n)``.
+
+        Raises:
+            ValueError: if the space is not such a direct sum, or the array
+                has the wrong shape.
+        """
+        from ..algebra.direct_sum import DirectSum
+
+        if not isinstance(space, DirectSum) or not space.subspaces:
+            raise ValueError("A spectral block operator lives on a direct sum.")
+        base = space.subspaces[0]
+        if any(other != base for other in space.subspaces[1:]):
+            raise ValueError("Every summand must be the same space.")
+        if not isinstance(base, CoordinateSpace) or not base.has_diagonal_metric:
+            raise ValueError("The summand must have coordinates and a diagonal metric.")
+        count = len(space.subspaces)
+        array = np.ascontiguousarray(np.asarray(slices, dtype=float))
+        if array.shape != (base.dim, count, count):
+            raise ValueError(
+                f"Expected slices of shape ({base.dim}, {count}, {count}), got "
+                f"{array.shape}."
+            )
+        self._slices = array
+        self._base = base
+        self._count = count
+        super().__init__(
+            [
+                [
+                    DiagonalLinearOperator(base, np.ascontiguousarray(array[:, i, j]))
+                    for j in range(count)
+                ]
+                for i in range(count)
+            ]
+        )
+        # The grid's spaces are equal to *space* but built afresh; keep the
+        # caller's, with its labels.
+        self._domain = space
+        self._codomain = space
+
+    @property
+    def slices(self) -> np.ndarray:
+        """The ``(dim, n, n)`` array, one matrix per spectral mode."""
+        return self._slices
+
+    def _apply_slices(self, columns: np.ndarray, transposed: bool) -> np.ndarray:
+        subscripts = "kji,kj->ki" if transposed else "kij,kj->ki"
+        return np.einsum(subscripts, self._slices, columns)
+
+    def _stack(self, x: tuple) -> np.ndarray:
+        return self._base.components_of(x)
+
+    def _value(self, x: tuple) -> tuple:
+        return tuple(self._base.vectors_from(self._apply_slices(self._stack(x), False)))
+
+    def _adjoint_value(self, y: tuple) -> tuple:
+        return tuple(self._base.vectors_from(self._apply_slices(self._stack(y), True)))
+
+    def _make_adjoint(self) -> LinearOperator:
+        result = SpectralBlockLinearOperator(
+            self.domain, np.ascontiguousarray(np.swapaxes(self._slices, -1, -2))
+        )
+        result._link_adjoint(self)
+        return result
+
+    def _components_action(self) -> Callable[[np.ndarray], np.ndarray] | None:
+        dim, count = self._base.dim, self._count
+
+        def action(c: np.ndarray) -> np.ndarray:
+            columns = np.asarray(c, dtype=float).reshape(count, dim).T
+            return self._apply_slices(columns, False).T.ravel()
+
+        return action
+
+    def _components_adjoint_action(
+        self,
+    ) -> Callable[[np.ndarray], np.ndarray] | None:
+        dim, count = self._base.dim, self._count
+
+        def action(c: np.ndarray) -> np.ndarray:
+            columns = np.asarray(c, dtype=float).reshape(count, dim).T
+            return self._apply_slices(columns, True).T.ravel()
+
+        return action
+
+    def apply_block(
+        self, vectors: Sequence[tuple], /, *, n_jobs: int | None = None
+    ) -> list[tuple]:
+        """Every field of every vector analysed once, then one product.
+
+        Args:
+            vectors: tuples with one field per summand.
+            n_jobs: accepted for the protocol and unused.
+
+        Returns:
+            The images, in order.
+        """
+        return [self._value(x) for x in vectors]
+
+    def __repr__(self) -> str:
+        return f"SpectralBlockLinearOperator({self._count} fields on {self._base!r})"
 
 
 class _FlexureOperator(LinearOperator):
