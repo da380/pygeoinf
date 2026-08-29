@@ -610,6 +610,66 @@ class TestScatteringPoints:
             plot_points(sphere, self.points(), data=np.zeros(3))
 
 
+class TestDrawingPaths:
+    """``plot_paths``. One collection, not one line per path: cartopy
+    re-projects each line it is handed, and a ray network is thousands."""
+
+    @pytest.fixture
+    def sphere(self):
+        pytest.importorskip("cartopy")
+        pytest.importorskip("pyshtools")
+        import matplotlib.pyplot as plt
+
+        from pygeoinf2.symmetric_space.sphere import Lebesgue
+
+        yield Lebesgue(16)
+        plt.close("all")
+
+    def test_every_path_is_in_one_collection(self, sphere):
+        from matplotlib.collections import LineCollection
+
+        from pygeoinf2.plotting import plot_paths
+
+        paths = [((10.0, -30.0), (-20.0, 40.0)), ((0.0, 0.0), (45.0, 90.0))]
+        _, collection = plot_paths(sphere, paths, count=12)
+        assert isinstance(collection, LineCollection)
+        assert len(collection.get_segments()) == 2
+        assert all(piece.shape == (12, 2) for piece in collection.get_segments())
+
+    def test_the_path_follows_the_great_circle(self, sphere):
+        """Not the straight line between the endpoints, which is the whole
+        reason the path is sampled rather than handed over as two points."""
+        from pygeoinf2.plotting import plot_paths
+
+        _, collection = plot_paths(sphere, [((0.0, 0.0), (0.0, 160.0))], count=9)
+        (piece,) = collection.get_segments()
+        # The nodes are a quadrature rule, so they lie inside the path rather
+        # than at its ends; along the equator they stay on it.
+        assert np.all(np.abs(piece[:, 1]) < 1e-8)
+        assert np.all(np.diff(piece[:, 0]) > 0.0)
+        assert 0.0 < piece[0, 0] < piece[-1, 0] < 160.0
+        # The equator is itself a great circle, so that one is straight; a
+        # pair of points on a parallel is not.
+        _, collection = plot_paths(sphere, [((45.0, 0.0), (45.0, 160.0))], count=9)
+        (piece,) = collection.get_segments()
+        assert piece[:, 1].max() > 46.0
+
+    def test_a_dateline_crossing_is_split(self, sphere):
+        """Undivided it would be drawn straight back across the whole map."""
+        from pygeoinf2.plotting import plot_paths
+
+        _, collection = plot_paths(sphere, [((0.0, 170.0), (0.0, -170.0))], count=8)
+        segments = collection.get_segments()
+        assert len(segments) == 2
+        assert sum(piece.shape[0] for piece in segments) == 8
+
+    def test_no_paths_draw_nothing(self, sphere):
+        from pygeoinf2.plotting import plot_paths
+
+        _, collection = plot_paths(sphere, [])
+        assert collection.get_segments() == []
+
+
 class TestErrorBounds:
     """A bound above and below is what an inference produces; a pair of lines
     reads as two estimates rather than one with an uncertainty."""
