@@ -28,7 +28,7 @@ See DESIGN.md section 3.3.
 
 from __future__ import annotations
 
-from typing import Any, Hashable, Sequence
+from typing import Any, Hashable, Iterable, Sequence
 
 import numpy as np
 from numpy.random import Generator
@@ -448,6 +448,47 @@ def _known_block_diagonals(
     return np.concatenate(parts)[None, :]
 
 
+def _accumulate(space: HilbertSpace, images: "Iterable[Any]") -> Any:
+    """Sum a row of block images in *space*, allocating as little as possible.
+
+    Two allocations that a block operator used to make for nothing. The sum
+    used to start from ``space.zero()``, which on a spectral space is a
+    synthesis of an array of zeros; it now starts from a *copy* of the first
+    image, which is a grid copy. The copy is not optional: a block may return
+    its argument unchanged -- ``_Identity`` does -- and ``axpy`` writes into
+    its target.
+
+    And *images* is consumed lazily, so a caller that filters out its
+    structurally zero blocks never applies them: ``_Zero``'s value is a fresh
+    zero vector, one more synthesis, added to no effect.
+
+    Measured on ``[[I, 0], [I, I]]`` over two spheres: three syntheses per
+    application before, none after.
+
+    Args:
+        space: the codomain the images live in.
+        images: the block images to add, lazily.
+
+    Returns:
+        Their sum, a vector owned by the caller. ``space.zero()`` when there
+        are none, which is the only case that still allocates one.
+    """
+    total = None
+    for image in images:
+        if total is None:
+            total = space.copy(image)
+        else:
+            total = space.axpy(1.0, image, total)
+    return space.zero() if total is None else total
+
+
+def _is_zero_block(operator: Operator) -> bool:
+    """Whether a block contributes nothing and need not be applied."""
+    from .nodes import _Zero
+
+    return isinstance(operator, _Zero)
+
+
 class BlockOperator(Operator):
     """An operator between direct sums, given as a grid of operators.
 
@@ -493,14 +534,17 @@ class BlockOperator(Operator):
         return all(operator.has_derivative for row in self._blocks for operator in row)
 
     def _value(self, x: tuple) -> tuple:
-        result = []
-        for i, row in enumerate(self._blocks):
-            codomain = self._codomains[i]
-            y = codomain.zero()
-            for j, operator in enumerate(row):
-                y = codomain.axpy(1.0, operator(x[j]), y)
-            result.append(y)
-        return tuple(result)
+        return tuple(
+            _accumulate(
+                codomain,
+                (
+                    operator(x[j])
+                    for j, operator in enumerate(row)
+                    if not _is_zero_block(operator)
+                ),
+            )
+            for codomain, row in zip(self._codomains, self._blocks)
+        )
 
     def _derivative(self, x: tuple) -> LinearOperator:
         return BlockLinearOperator(
@@ -528,13 +572,17 @@ class BlockLinearOperator(BlockOperator, LinearOperator):
         )
 
     def _adjoint_value(self, y: tuple) -> tuple:
-        result = []
-        for j, domain in enumerate(self._domains):
-            x = domain.zero()
-            for i in range(self.row_dim):
-                x = domain.axpy(1.0, self._blocks[i][j].adjoint(y[i]), x)
-            result.append(x)
-        return tuple(result)
+        return tuple(
+            _accumulate(
+                domain,
+                (
+                    self._blocks[i][j].adjoint(y[i])
+                    for i in range(self.row_dim)
+                    if not _is_zero_block(self._blocks[i][j])
+                ),
+            )
+            for j, domain in enumerate(self._domains)
+        )
 
     def _make_adjoint(self) -> LinearOperator:
         """The adjoint of a block operator is the transposed grid of adjoints."""
@@ -630,11 +678,14 @@ class ColumnLinearOperator(ColumnOperator, LinearOperator):
         )
 
     def _adjoint_value(self, y: tuple) -> object:
-        domain = self.domain
-        x = domain.zero()
-        for operator, yi in zip(self._operators, y):
-            x = domain.axpy(1.0, operator.adjoint(yi), x)
-        return x
+        return _accumulate(
+            self.domain,
+            (
+                operator.adjoint(yi)
+                for operator, yi in zip(self._operators, y)
+                if not _is_zero_block(operator)
+            ),
+        )
 
     def _make_adjoint(self) -> LinearOperator:
         result = RowLinearOperator([op.adjoint for op in self._operators])
@@ -678,11 +729,14 @@ class RowOperator(Operator):
         return all(operator.has_derivative for operator in self._operators)
 
     def _value(self, x: tuple) -> object:
-        codomain = self.codomain
-        y = codomain.zero()
-        for operator, xi in zip(self._operators, x):
-            y = codomain.axpy(1.0, operator(xi), y)
-        return y
+        return _accumulate(
+            self.codomain,
+            (
+                operator(xi)
+                for operator, xi in zip(self._operators, x)
+                if not _is_zero_block(operator)
+            ),
+        )
 
     def _derivative(self, x: tuple) -> LinearOperator:
         return RowLinearOperator(
