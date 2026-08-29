@@ -24,7 +24,11 @@ from pygeoinf2.numerics.functional_calculus import (
 from pygeoinf2.testing import check_operator, check_traits
 from pygeoinf2.traits import Traits
 
-from .conftest import make_dense_metric_space, make_weighted_space
+from .conftest import (
+    DenseMetricSpace,
+    make_dense_metric_space,
+    make_weighted_space,
+)
 from .doubles import NoCoordinatesError, OpaqueSpace, StrictSpace
 
 N = 16
@@ -764,3 +768,87 @@ class TestTheConvergenceCheckIsCheap:
         )
         exact = float(np.linalg.slogdet(matrix)[1])
         assert abs(estimate.value - exact) < 4.0 * estimate.standard_error + 0.5
+
+
+class TestTheDenseLimit:
+    """``dense_limit`` was 512, which sent a 960-dimensional evidence to a
+    stochastic estimate of +/-30 nats in 4.8 s where the dense route was
+    exact in 2.8 s. It is now 4000, and the decision is in two parts: whether
+    the matrix can be *held and factorised* (that is what the limit means),
+    and separately whether it can be *probed* — a matrix that has to be
+    probed costs ``dim`` applications, against the stochastic route's budget
+    of ``samples * max_iterations``."""
+
+    @staticmethod
+    def problem(rng, dim):
+        space = EuclideanSpace(dim)
+        root = rng.standard_normal((dim, dim))
+        matrix = root @ root.T / dim + np.identity(dim)
+        traits = Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE
+        stored = LinearOperator.from_matrix(
+            space, space, matrix, form="components", traits=traits
+        )
+        free = LinearOperator.self_adjoint(
+            space, lambda x, m=matrix: m @ x, traits=traits
+        )
+        return matrix, stored, free
+
+    def test_a_dimension_between_the_old_and_new_limits_is_now_exact(self, rng):
+        matrix, stored, _ = self.problem(rng, 600)
+        estimate = log_determinant(stored)
+        assert estimate.standard_error == 0.0
+        assert estimate.value == pytest.approx(float(np.linalg.slogdet(matrix)[1]))
+
+    def test_above_the_limit_it_is_still_stochastic(self, rng):
+        _, stored, _ = self.problem(rng, 40)
+        assert log_determinant(stored, dense_limit=10).standard_error > 0.0
+
+    def test_a_matrix_that_must_be_probed_respects_the_probe_budget(self, rng):
+        """Below the limit but above ``samples * max_iterations``: reading a
+        matrix is free, probing one is ``dim`` applications, and the two are
+        not the same decision. The stored operator goes dense, the
+        matrix-free one does not."""
+        _, stored, free = self.problem(rng, 60)
+        budget = dict(samples=2, max_iterations=5, dense_limit=1000)
+        assert log_determinant(stored, **budget).standard_error == 0.0
+        assert (
+            log_determinant(free, rng=np.random.default_rng(4), **budget).standard_error
+            > 0.0
+        )
+
+    def test_the_metric_determinant_is_still_subtracted(self, rng):
+        """The Gram factorisation is skipped only where ``log det G == 0``.
+        On a dense Gram it is not, and the answer is the *component* matrix's
+        determinant either way."""
+        # Scaled, so that ``log det G`` is 30 log 3 rather than zero: the
+        # fixture's root is unit lower triangular, so its own determinant is
+        # one and would hide the correction entirely.
+        space = DenseMetricSpace(3.0 * make_dense_metric_space(30).gram_matrix())
+        root = rng.standard_normal((30, 30))
+        # A symmetric Galerkin matrix is what makes the operator self-adjoint
+        # here; its components matrix is then ``G^-1 S``, which is not
+        # symmetric, and it is that one whose determinant is wanted.
+        galerkin = root @ root.T / 30.0 + np.identity(30)
+        operator = LinearOperator.from_matrix(
+            space,
+            space,
+            galerkin,
+            form="galerkin",
+            traits=Traits.SELF_ADJOINT | Traits.POSITIVE_DEFINITE,
+        )
+        components = np.linalg.solve(space.gram_matrix(), galerkin)
+        estimate = log_determinant(operator, method="dense")
+        assert estimate.value == pytest.approx(
+            float(np.linalg.slogdet(components)[1]), rel=1e-10
+        )
+        assert estimate.value != pytest.approx(
+            float(np.linalg.slogdet(galerkin)[1]), rel=1e-6
+        )
+
+    def test_an_orthonormal_space_agrees_with_the_general_route(self, rng):
+        """``log det I == 0``, so the branch that skips it must not move the
+        answer."""
+        matrix, stored, _ = self.problem(rng, 40)
+        assert log_determinant(stored, method="dense").value == pytest.approx(
+            float(np.linalg.slogdet(matrix)[1])
+        )

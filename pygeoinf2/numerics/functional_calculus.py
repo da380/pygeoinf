@@ -645,7 +645,7 @@ def log_determinant(
     method: Literal["auto", "dense", "stochastic"] = "auto",
     samples: int = 100,
     rng: Generator | None = None,
-    dense_limit: int = 512,
+    dense_limit: int = 4000,
     max_iterations: int = 40,
     rtol: float = 1e-3,
     sample_rtol: float | None = None,
@@ -670,13 +670,33 @@ def log_determinant(
     Args:
         operator: a positive definite self-adjoint operator.
         method: ``"dense"`` forms the matrix; ``"stochastic"`` never does;
-            ``"auto"`` takes the dense route when the space is small enough to
-            afford it and has a component map, and the stochastic one
-            otherwise.
+            ``"auto"`` takes the dense route when the space has a component
+            map, is small enough to hold and factorise the matrix
+            (*dense_limit*), and either the operator can hand its matrix over
+            or probing it costs no more than the stochastic route's own
+            budget of applications. The dense route is exact, so where the
+            two cost the same it is the one to take.
         samples: Hutchinson probes, for the stochastic route -- or the first
             block of them when *sample_rtol* is given.
         rng: the generator for those probes.
-        dense_limit: the dimension above which ``"auto"`` goes stochastic.
+        dense_limit: the largest dimension at which ``"auto"`` will form and
+            factorise a ``dim x dim`` matrix. It is a **memory and
+            factorisation** budget, not a statement about applications:
+            ``dim**2`` doubles is 128 MB at 4000 and the ``slogdet`` is
+            ``O(dim**3)``, measured at 0.8 s on one thread. The default was
+            512, which sent a 960-dimensional evidence to a stochastic
+            estimate of +/-30 nats in 4.8 s where the dense route was exact
+            in 2.8 s; measured against the stochastic route on a
+            well-conditioned operator, the dense one is 4.2x faster at 2000
+            and 3.6x at 3000, and exact at both. It is 4000 rather than 4096
+            deliberately: this BLAS is pathological at that power of two,
+            2.0 s against 0.8 s at 4000.
+
+            Whether the *probe* is affordable is decided separately, since a
+            matrix that must be probed costs ``dim`` applications: above
+            ``samples * max_iterations`` -- the stochastic route's own
+            application budget -- the dense route is taken only when the
+            operator can write its matrix down without being applied.
         max_iterations: the Krylov dimension allowed for each ``log(A) z``.
         rtol: the Lanczos budget for each ``log(A) z``. Note
             this ``rtol`` is the *inner* one: it says how well each
@@ -721,14 +741,27 @@ def log_determinant(
         # (measured: 455.4 +/- 2.8 against an exact 456.7 at dimension 1000).
         return Estimate(operator.log_determinant, 0.0, 0)
 
+    matrix: np.ndarray | None = None
     if method == "auto":
         from ..algebra.spaces import CoordinateSpace
 
-        affordable = isinstance(space, CoordinateSpace) and space.dim <= dense_limit
-        method = "dense" if affordable else "stochastic"
+        if not isinstance(space, CoordinateSpace) or space.dim > dense_limit:
+            method = "stochastic"
+        else:
+            # Above the probe budget the dense route is taken only if the
+            # matrix can be *read*: ``_known_matrix`` applies the operator
+            # zero times by contract, so this costs nothing when it answers
+            # None, and hands over the matrix when it does not.
+            matrix = operator._known_matrix("galerkin")
+            method = (
+                "dense"
+                if matrix is not None or space.dim <= samples * max_iterations
+                else "stochastic"
+            )
 
     if method == "dense":
-        matrix = operator.matrix(form="galerkin")
+        if matrix is None:
+            matrix = operator.matrix(form="galerkin")
         sign, logarithm = np.linalg.slogdet(0.5 * (matrix + matrix.T))
         if sign <= 0:
             raise ValueError(
@@ -736,7 +769,12 @@ def log_determinant(
                 "log determinant. It was claimed POSITIVE_DEFINITE; verify that "
                 "with testing.check_traits()."
             )
-        _, metric = np.linalg.slogdet(space.gram_matrix())
+        # ``log det I == 0``. Worth the branch: at dimension 3000 the
+        # factorisation of the identity cost 0.37 s, as much as the operator's
+        # own, and doubled the memory.
+        metric = 0.0
+        if not space.is_orthonormal:
+            _, metric = np.linalg.slogdet(space.gram_matrix())
         return Estimate(float(logarithm - metric), 0.0, 0)
 
     return random_trace(
