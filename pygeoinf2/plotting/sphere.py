@@ -39,11 +39,26 @@ def _(
     projection: Any = None,
     **kwargs: Any,
 ) -> Any:
-    """Axes carrying a map projection, defaulting to Robinson."""
+    """Axes carrying a map projection.
+
+    Args:
+        space: the sphere whose fields will be drawn.
+        rows: number of panel rows.
+        columns: number of panel columns.
+        projection: a cartopy projection. Defaults to ``PlateCarree``, which is
+            v1's default: it is the projection in which the grid is stored, so
+            it is the one that shows the data rather than an opinion about it.
+            A downstream wrapper is free to prefer another -- pyslfp defaults
+            to Robinson -- and that is its business.
+        **kwargs: passed through to ``matplotlib.pyplot.subplots``.
+
+    Returns:
+        The ``(figure, axes)`` pair ``plt.subplots`` returns.
+    """
     import matplotlib.pyplot as pyplot
 
     crs = _require_cartopy()
-    chosen = crs.Robinson() if projection is None else projection
+    chosen = crs.PlateCarree() if projection is None else projection
     kwargs.setdefault("figsize", (6.0 * columns, 3.2 * rows))
     kwargs.setdefault("layout", "constrained")
     return pyplot.subplots(rows, columns, subplot_kw={"projection": chosen}, **kwargs)
@@ -56,16 +71,16 @@ def _(
     /,
     *,
     ax: Any = None,
-    cmap: str = "viridis",
+    cmap: str = "RdBu",
     symmetric: bool = False,
     vmin: float | None = None,
     vmax: float | None = None,
-    colorbar: bool = True,
+    colorbar: bool | None = None,
     colorbar_label: str | None = None,
     coasts: bool = False,
     borders: bool = False,
     rivers: bool = False,
-    gridlines: bool = False,
+    gridlines: bool = True,
     gridlines_kwargs: dict | None = None,
     colorbar_kwargs: dict | None = None,
     map_extent: Sequence[float] | None = None,
@@ -81,20 +96,27 @@ def _(
         space: the sphere.
         field: a field of the space, as an ``SHGrid`` or a bare array of its
             grid values.
-        ax: axes to draw on. A new figure is made if omitted.
-        cmap: colour map.
+        ax: axes to draw on. A new figure is made if omitted, on a
+            ``PlateCarree`` projection.
+        cmap: colour map. ``RdBu`` by default, as in v1: most fields drawn
+            here are signed anomalies, and a diverging map is what those want.
         symmetric: put zero at the middle of the colour scale. Use it for
-            anything signed.
+            anything signed. Off by default.
         vmin: lower colour limit; the field's minimum if omitted.
         vmax: upper colour limit; the field's maximum if omitted.
-        colorbar: attach a colourbar. It is left on the returned mappable as
-            ``.colorbar``, so it can be restyled afterwards.
-        colorbar_label: label for the colourbar.
-        coasts: draw coastlines.
-        borders: draw national borders.
-        rivers: draw rivers.
+        colorbar: attach a colourbar. Off by default, as in v1 -- a bar takes
+            room from the map, and a panel in a grid usually shares one --
+            unless a *colorbar_label* is given, since asking for a label is
+            asking for the bar it goes on. Pass ``False`` to override that. The
+            bar is left on the returned mappable as ``.colorbar``, so it can be
+            restyled afterwards.
+        colorbar_label: label for the colourbar, which turns one on.
+        coasts: draw coastlines. Off by default.
+        borders: draw national borders. Off by default.
+        rivers: draw rivers. Off by default.
         gridlines: draw a latitude and longitude graticule, left on the axes as
-            ``.gridliner``.
+            ``.gridliner``. On by default, as in v1: a map without a graticule
+            leaves the reader to guess where anything is.
         gridlines_kwargs: passed to ``gridlines``. ``lat_interval`` and
             ``lon_interval`` are translated into the locators cartopy wants,
             since those are what a caller actually has in mind.
@@ -187,7 +209,7 @@ def _(
             ax.add_feature(feature.RIVERS, linewidth=0.3)
     if gridlines:
         ax.gridliner = ax.gridlines(**_gridline_options(gridlines_kwargs))
-    if colorbar:
+    if colorbar or (colorbar is None and colorbar_label is not None):
         options = dict(shrink=0.7, pad=0.03)
         options.update(colorbar_kwargs or {})
         bar = ax.figure.colorbar(mappable, ax=ax, **options)

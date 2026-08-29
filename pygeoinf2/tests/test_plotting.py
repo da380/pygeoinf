@@ -494,9 +494,43 @@ class TestSphereMapOptions:
 
         space, values = field
         axis, mappable = plot(
-            space, values, colorbar_kwargs={"orientation": "horizontal"}
+            space,
+            values,
+            colorbar=True,
+            colorbar_kwargs={"orientation": "horizontal"},
         )
         assert mappable.colorbar.orientation == "horizontal"
+
+    def test_the_defaults_are_v1s(self, field):
+        """v2 had flipped four of them with no reason recorded: the colour map
+        from RdBu to viridis, the colourbar on, the graticule off, and the
+        projection from PlateCarree to Robinson. A signed field on a
+        sequential map reads as though it had a sign it does not have, so this
+        is not only a matter of taste."""
+        from pygeoinf2.plotting import plot, subplots
+
+        space, values = field
+        axis, mappable = plot(space, values)
+        assert mappable.get_cmap().name == "RdBu"
+        assert mappable.colorbar is None
+        assert axis.gridliner is not None
+
+        figure, fresh = subplots(space)
+        import cartopy.crs as ccrs
+
+        assert isinstance(fresh.projection, ccrs.PlateCarree)
+
+    def test_a_label_asks_for_the_bar_it_goes_on(self, field):
+        """The bar is off by default, so a label with no bar would be a
+        silently dropped argument. An explicit ``colorbar=False`` still wins."""
+        from pygeoinf2.plotting import plot
+
+        space, values = field
+        _, labelled = plot(space, values, colorbar_label="metres")
+        assert labelled.colorbar is not None
+        assert labelled.colorbar.ax.get_ylabel() == "metres"
+        _, refused = plot(space, values, colorbar=False, colorbar_label="metres")
+        assert refused.colorbar is None
 
     def test_a_title(self, field):
         from pygeoinf2.plotting import plot
