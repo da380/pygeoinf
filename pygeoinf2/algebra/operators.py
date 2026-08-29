@@ -1369,7 +1369,9 @@ class LinearOperator[X, Y](Operator[X, Y]):
 
                 def lifted_adjoint_action(c: np.ndarray) -> np.ndarray:
                     weighted = base_codomain.solve_gram(codomain.apply_gram(c))
-                    return domain.solve_gram(base_domain.apply_gram(adjoint_action(weighted)))
+                    return domain.solve_gram(
+                        base_domain.apply_gram(adjoint_action(weighted))
+                    )
 
                 lifted._components_adjoint_action_fn = lifted_adjoint_action
             return lifted
@@ -1760,7 +1762,9 @@ class MatrixLinearOperator[X, Y](LinearOperator[X, Y]):
     ) -> Callable[[np.ndarray], np.ndarray] | None:
         stored, domain, codomain = self._stored, self.domain, self.codomain
         if self._form == "components":
-            return lambda c: domain.solve_gram(np.asarray(stored.T @ codomain.apply_gram(c)))
+            return lambda c: domain.solve_gram(
+                np.asarray(stored.T @ codomain.apply_gram(c))
+            )
         return lambda c: domain.solve_gram(np.asarray(stored.T @ c))
 
     def _known_diagonals(
@@ -1827,12 +1831,20 @@ class Functional[X](Operator[X, float]):
     """
 
     def __init__(  # noqa: positional - cooperative __init__, see below
-        self, domain: HilbertSpace[X], codomain: HilbertSpace[float] | None = None
+        self,
+        domain: HilbertSpace[X],
+        codomain: HilbertSpace[float] | None = None,
+        /,
     ) -> None:
         # The codomain argument is positional *and* optional, which the
         # keyword-only rule otherwise forbids, because LinearFunctional's MRO
         # has LinearOperator.__init__ calling it as __init__(domain, codomain).
-        # Making it keyword-only breaks that chain. It is always Reals.
+        # Making it keyword-only breaks that chain, and making it *required*
+        # breaks the twenty-odd subclasses that call super().__init__(domain):
+        # a functional's codomain is always Reals and none of them names it.
+        # Positional-only is the part of the rule that can be kept -- it stops
+        # the parameter's *name* becoming API, as LinearFunctional already
+        # does below -- and the escape covers the rest.
         if codomain is not None and codomain != REALS:
             raise ValueError(f"A functional maps into Reals, not {codomain!r}.")
         super().__init__(domain, REALS)

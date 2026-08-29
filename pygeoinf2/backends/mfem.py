@@ -53,6 +53,8 @@ __all__ = [
     "operator_from_linear_forms",
     "solver_from_bilinear_form",
     "functional_from_linear_form",
+    "white_noise_load",
+    "matern_measure",
 ]
 
 

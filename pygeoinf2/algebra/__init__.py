@@ -27,9 +27,12 @@ from .spaces import (
     CoordinateSpace,
     DiagonalMetricSpace,
     EuclideanSpace,
+    HilbertModule,
     HilbertSpace,
+    MassWeightedSpace,
     OrthonormalSpace,
     Reals,
+    require_module,
 )
 
 __all__ = [
@@ -49,14 +52,17 @@ __all__ = [
     "DiagonalMetricSpace",
     "EuclideanSpace",
     "Functional",
+    "HilbertModule",
     "HilbertSpace",
     "Linearisation",
     "LinearFunctional",
     "LinearOperator",
+    "MassWeightedSpace",
     "MatrixLinearOperator",
     "Operator",
     "OrthonormalSpace",
     "QuadraticModel",
     "Reals",
     "require_coordinates",
+    "require_module",
 ]

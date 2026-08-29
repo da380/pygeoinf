@@ -38,9 +38,12 @@ from .algebra.spaces import (
     CoordinateSpace,
     DiagonalMetricSpace,
     EuclideanSpace,
+    HilbertModule,
     HilbertSpace,
+    MassWeightedSpace,
     OrthonormalSpace,
     Reals,
+    require_module,
 )
 from .geometry import (
     AffineSubspace,
@@ -173,9 +176,12 @@ __all__ = [
     "CoordinateSpace",
     "DiagonalMetricSpace",
     "EuclideanSpace",
+    "HilbertModule",
     "HilbertSpace",
+    "MassWeightedSpace",
     "OrthonormalSpace",
     "Reals",
+    "require_module",
     # algebra.operators
     "AffineOperator",
     "Functional",

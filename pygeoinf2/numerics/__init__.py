@@ -106,6 +106,7 @@ from .solvers import (
     LUSolver,
     MinResSolver,
     SolveResult,
+    resolve_solver,
 )
 
 __all__ = [
@@ -123,6 +124,7 @@ __all__ = [
     "weighted_chi2_quantile",
     "weighted_chi2_cdf",
     "RootResult",
+    "resolve_solver",
     "Evaluation",
     "DampedSolves",
     "monotone_root",

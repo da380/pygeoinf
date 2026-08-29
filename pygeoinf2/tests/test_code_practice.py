@@ -360,3 +360,76 @@ class TestDocstringsCarryTheContract:
             f"{path.name} has {len(gaps)} documentation gaps:\n  "
             + "\n  ".join(gaps)
         )
+
+
+class TestTheNamespaceHasNoHoles:
+    """A name that exists but cannot be imported from the package is a hole.
+
+    The re-review found five: ``MassWeightedSpace``, ``HilbertModule`` and
+    ``require_module`` reachable only as ``pygeoinf2.algebra.spaces.X``,
+    ``resolve_solver`` only as ``pygeoinf2.numerics.solvers.resolve_solver``,
+    and the MFEM backend's ``matern_measure`` — which one of the examples
+    imports — missing from its ``__all__``. D-5 says the top-level namespace
+    is the interface; a class documented as the reason
+    ``from_formal_adjoint`` exists has to be in it.
+    """
+
+    @staticmethod
+    def modules_with_exports():
+        """Every importable module in the package that declares ``__all__``."""
+        import importlib
+        import pkgutil
+
+        import pygeoinf2
+
+        found = []
+        for info in pkgutil.walk_packages(pygeoinf2.__path__, prefix="pygeoinf2."):
+            if any(part in SKIP_DIRS for part in info.name.split(".")):
+                continue
+            try:
+                module = importlib.import_module(info.name)
+            except ImportError:  # an optional backend that is not installed
+                continue
+            if hasattr(module, "__all__"):
+                found.append(module)
+        return found
+
+    def test_every_exported_name_resolves(self):
+        offenders = [
+            f"{module.__name__}.{name}"
+            for module in self.modules_with_exports()
+            for name in module.__all__
+            if not hasattr(module, name)
+        ]
+        assert not offenders, "names in __all__ that do not exist:\n  " + "\n  ".join(
+            offenders
+        )
+
+    @pytest.mark.parametrize(
+        "package, names",
+        [
+            (
+                "pygeoinf2",
+                ["MassWeightedSpace", "HilbertModule", "require_module"],
+            ),
+            (
+                "pygeoinf2.algebra",
+                ["MassWeightedSpace", "HilbertModule", "require_module"],
+            ),
+            (
+                "pygeoinf2.numerics",
+                ["resolve_solver", "weighted_chi2_cdf", "weighted_chi2_quantile"],
+            ),
+            (
+                "pygeoinf2.backends.mfem",
+                ["white_noise_load", "matern_measure"],
+            ),
+        ],
+    )
+    def test_the_named_holes_are_closed(self, package, names):
+        import importlib
+
+        module = importlib.import_module(package)
+        for name in names:
+            assert hasattr(module, name), f"{package}.{name} is not reachable"
+            assert name in module.__all__, f"{package}.{name} is not in __all__"

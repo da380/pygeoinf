@@ -854,3 +854,71 @@ class TestColumnOperator:
         operator = LinearOperator.from_vectors(strict, [strict.random(rng=rng)])
         assert not hasattr(operator, "columns")
         operator(np.ones(1))
+
+
+class TestLinearisationIdentity:
+    """``Linearisation`` and ``QuadraticModel`` are frozen dataclasses whose
+    fields hold *vectors*. With the default ``eq=True`` the generated ``==``
+    compared them field by field, which on an array-backed space returns an
+    array whose truth value is an error, and the ``__hash__`` that
+    ``frozen=True`` generates alongside it raised ``TypeError: unhashable
+    type: 'numpy.ndarray'``. ``eq=False`` gives identity for both, which is
+    the only equality a record of one evaluation can honestly offer."""
+
+    @staticmethod
+    def model(rng):
+        from pygeoinf2.algebra.linearisation import Linearisation, QuadraticModel
+
+        space = make_dense_metric_space(4)
+        derivative = LinearOperator.from_matrix(
+            space, space, rng.standard_normal((4, 4)), form="components"
+        )
+        point = space.random(rng=rng)
+        from pygeoinf2.algebra.operators import LinearFunctional
+
+        functional = LinearFunctional.from_representer(space, space.random(rng=rng))
+        return (
+            Linearisation(point, space.random(rng=rng), derivative),
+            QuadraticModel(point, 1.0, functional),
+        )
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_it_hashes(self, index, rng):
+        record = self.model(rng)[index]
+        assert hash(record) == hash(record)
+        assert {record: 1}[record] == 1
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_equality_is_identity_and_does_not_raise(self, index, rng):
+        record = self.model(rng)[index]
+        other = self.model(rng)[index]
+        assert record == record
+        assert record != other
+        assert bool(record != other) is True
+
+
+class TestFunctionalConstructorSignature:
+    """The codomain of a functional is always ``Reals``. It stays positional
+    -- ``LinearOperator.__init__`` calls the next ``__init__`` in the MRO as
+    ``__init__(domain, codomain)``, and twenty-odd subclasses call
+    ``super().__init__(domain)`` -- but it is now positional-*only*, so the
+    parameter's name is not part of the API."""
+
+    def test_the_codomain_is_positional_only(self):
+        import inspect
+
+        from pygeoinf2.algebra.operators import Functional, LinearFunctional
+
+        for cls in (Functional, LinearFunctional):
+            parameter = inspect.signature(cls.__init__).parameters["codomain"]
+            assert parameter.kind is inspect.Parameter.POSITIONAL_ONLY, cls.__name__
+
+    def test_both_call_shapes_still_work(self):
+        from pygeoinf2.algebra.operators import Functional
+        from pygeoinf2.algebra.spaces import Reals
+
+        space = EuclideanSpace(3)
+        assert Functional(space).codomain == Reals()
+        assert Functional(space, Reals()).codomain == Reals()
+        with pytest.raises(ValueError, match="maps into Reals"):
+            Functional(space, space)
